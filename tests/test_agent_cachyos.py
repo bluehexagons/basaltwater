@@ -162,11 +162,28 @@ class CachyOSSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             (Path(home) / "repos/project").mkdir(parents=True)
             url = "https://github.com/example/project.git"
+            results = [subprocess.CompletedProcess([], 0, str(Path(home) / "repos/project") + "\n"),
+                       subprocess.CompletedProcess([], 0, url + "\n")]
             with patch.object(steps, "_home", return_value=Path(home)), \
-                 patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 0, url + "\n")) as run:
+                 patch.object(steps, "run", side_effect=results) as run:
                 steps.prepare_cachyos_workspace(self.config("--repo", url))
-                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_count, 2)
                 self.assertEqual(run.call_args.args[0][-3:], ["remote", "get-url", "origin"])
+
+    def test_existing_destination_cannot_inherit_parent_repository(self):
+        with tempfile.TemporaryDirectory() as home:
+            destination = Path(home) / "repos/project"
+            destination.mkdir(parents=True)
+            personal = destination / "personal.txt"
+            personal.write_text("keep me\n")
+            with patch.object(steps, "_home", return_value=Path(home)), \
+                 patch.object(steps, "run", return_value=subprocess.CompletedProcess(
+                     [], 0, str(destination.parent) + "\n")) as run:
+                with self.assertRaisesRegex(ValueError, "not a repository root"):
+                    steps.prepare_cachyos_workspace(self.config(
+                        "--repo", "https://github.com/example/project.git"))
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(personal.read_text(), "keep me\n")
 
     def test_t3_installs_local_user_unit_and_retains_runtime_on_rerun(self):
         with tempfile.TemporaryDirectory() as home:
@@ -180,10 +197,12 @@ class CachyOSSetupTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, version, "")
             response = unittest.mock.MagicMock()
             response.__enter__.return_value.status = 200
+            response.__enter__.return_value.geturl.return_value = "http://127.0.0.1:3773/"
             with patch.object(steps, "_home", return_value=root), \
                  patch.object(steps, "run", side_effect=command) as run, \
-                 patch.object(steps.urllib.request, "urlopen", return_value=response), \
+                 patch.object(steps.urllib.request, "build_opener") as opener, \
                  patch.object(steps.time, "sleep"):
+                opener.return_value.open.return_value = response
                 config = self.config("--web-interface", "t3code")
                 steps.install_cachyos_t3(config)
                 unit = root / ".config/systemd/user" / steps.T3_SERVICE
@@ -198,6 +217,27 @@ class CachyOSSetupTests(unittest.TestCase):
                 self.assertFalse(any("npm" in call.args[0] for call in run.call_args_list))
                 self.assertFalse(any("restart" in call.args[0] for call in run.call_args_list))
                 self.assertFalse(any("sudo" in call.args[0] for call in run.call_args_list))
+
+    def test_t3_readiness_requires_consecutive_direct_local_successes(self):
+        with tempfile.TemporaryDirectory() as home:
+            # Neither a non-200 response nor a redirect counts toward readiness.
+            responses = []
+            for status, url in [(200, "http://127.0.0.1:3773/"),
+                                (202, "http://127.0.0.1:3773/"),
+                                (200, "http://example.com/"),
+                                *[(200, "http://127.0.0.1:3773/")] * 3]:
+                item = unittest.mock.MagicMock()
+                item.__enter__.return_value.status = status
+                item.__enter__.return_value.geturl.return_value = url
+                responses.append(item)
+            with patch.object(steps, "_home", return_value=Path(home)), \
+                 patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 0, "v24.10.0\n")), \
+                 patch.object(steps.urllib.request, "build_opener") as opener, \
+                 patch.object(steps.time, "sleep"):
+                opener.return_value.open.side_effect = responses
+                steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
+            self.assertEqual(opener.call_args.args[0].proxies, {})
+            self.assertEqual(opener.return_value.open.call_count, 6)
 
     def test_t3_preserves_an_existing_unmanaged_unit(self):
         with tempfile.TemporaryDirectory() as home:

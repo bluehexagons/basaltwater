@@ -184,6 +184,10 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
         if destination.exists() or destination.is_symlink():
             if destination.is_symlink() or not destination.is_dir():
                 raise ValueError(f"Refusing unsafe repository destination: {destination}")
+            result = _user_run(["git", "-C", str(destination), "rev-parse", "--show-toplevel"],
+                               home, capture_output=True, check=False)
+            if result.returncode or Path(result.stdout.strip()).resolve() != destination.resolve():
+                raise ValueError(f"Existing destination is not a repository root: {destination}")
             result = _user_run(["git", "-C", str(destination), "remote", "get-url", "origin"],
                                home, capture_output=True, check=False)
             if result.returncode or result.stdout.strip().rstrip("/") != repository.rstrip("/"):
@@ -251,17 +255,21 @@ def install_cachyos_t3(config: SetupConfig) -> None:
     run(["systemctl", "--user", "enable", T3_SERVICE])
     run(["systemctl", "--user", "restart" if changed else "start", T3_SERVICE])
     url = f"http://127.0.0.1:{config.web_interface_port}/"
+    # A desktop may export proxy settings. Probe this machine directly.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     stable_checks = 0
     for _attempt in range(20):
         active = run(["systemctl", "--user", "is-active", "--quiet", T3_SERVICE], check=False)
         if active.returncode == 0:
             try:
-                with urllib.request.urlopen(url, timeout=2) as response:
-                    if response.status == 200:
+                with opener.open(url, timeout=2) as response:
+                    if response.status == 200 and response.geturl() == url:
                         stable_checks += 1
                         if stable_checks >= 3:
                             print(f"  T3 Code ready: {url}")
                             return
+                    else:
+                        stable_checks = 0
             except (OSError, urllib.error.URLError):
                 stable_checks = 0
         else:

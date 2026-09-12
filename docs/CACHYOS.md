@@ -114,6 +114,12 @@ profile does not save a controller-side host configuration and does not use
 After a failed step, earlier successful installations remain; fix the reported
 problem and rerun. There is no automatic rollback of installed packages.
 
+An existing clone destination must be the root of a Git repository with the
+requested origin. An ordinary directory inside another repository does not
+qualify. If a destination conflicts or a clone was interrupted, inspect and move
+that directory aside yourself, or choose another `--agent-workspace`; setup
+does not delete its contents.
+
 ## Optional T3 Code
 
 ```bash
@@ -126,6 +132,10 @@ Open `http://127.0.0.1:3773` on the workstation. The dedicated runtime lives in
 `~/.config/systemd/user/infra-tools-cachyos-t3.service`. It runs as you with your
 provider credentials and the setup terminal's PATH. Setup checks HTTP readiness;
 provider authentication and a real coding thread must still be verified.
+Readiness probes bypass HTTP proxies and require consecutive successful
+responses from the local URL. If startup fails, inspect the service journal and
+check whether another application already uses port 3773; select another port
+with `--web-interface-port` if needed.
 
 The service starts with your user session. Setup does not enable lingering,
 change suspend policy, configure a gateway, enroll other devices, or expose
