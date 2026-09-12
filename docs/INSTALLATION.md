@@ -14,6 +14,12 @@ published, `dev` follows `main` and `stable` selects the latest published tag.
 Debian is the only officially supported distribution. Ubuntu and Linux Mint are
 recognized as best-effort Debian-compatible hosts.
 
+For an existing CachyOS KDE workstation, use the experimental
+[`agent_cachyos` local setup](CACHYOS.md). It uses the current desktop account,
+installs missing tools through pacman/upstream installers, and leaves OS
+updates and desktop configuration to you. The Debian examples below configure
+a broader host stack and do not apply to CachyOS.
+
 ## Prerequisites
 
 Use a regular account with access to `sudo` on Debian. `sudo` asks for your
@@ -295,7 +301,7 @@ controller channel first, then rerun `setup` or `patch` to update the target.
 ## Unsupported orchestration hosts
 
 The installer can also install the remote-management launcher on another Linux
-distribution, such as CachyOS, but this remains outside the support guarantee.
+distribution, such as Fedora, but this remains outside the support guarantee.
 It asks for an explicit `[y/N]` confirmation, does not attempt to install APT
 packages, and requires these controller commands to already be available:
 
@@ -306,12 +312,9 @@ packages, and requires these controller commands to already be available:
 - `curl` or `wget`
 
 Install the equivalent packages with the host distribution's package manager
-before rerunning the installer. For example, on CachyOS, the equivalent setup
-is approximately:
-
-```bash
-sudo pacman -Syu --needed python git openssh rsync curl ca-certificates tar
-```
+before rerunning the installer. CachyOS has its own limited
+[local coding setup](CACHYOS.md), including prerequisite installation, and does
+not use this unsupported-host confirmation path.
 
 The installer skips local system-package bootstrap on unsupported hosts. Do not
 use `--local-setup` or `--qemu-guest-agent` there; install the launcher and use

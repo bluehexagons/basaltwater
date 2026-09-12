@@ -1,5 +1,9 @@
 # Workstations and desktop applications
 
+For an already installed CachyOS KDE desktop, use the separate
+[`agent_cachyos` local tooling profile](CACHYOS.md). The Debian desktop/RDP
+setup and flags below do not apply to that profile.
+
 The workstation system types build a Debian desktop from the same
 machine-aware setup pipeline used for servers. Choose a profile first, then
 override the desktop, browser, or application choices with flags.

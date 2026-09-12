@@ -225,7 +225,7 @@ class TestInstallScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, log_path, environment = self._create_fixture(directory)
             environment["INFRA_TOOLS_TEST_ROOT"] = "1"
-            environment["INFRA_TOOLS_TEST_OS_ID"] = "cachyos"
+            environment["INFRA_TOOLS_TEST_OS_ID"] = "fedora"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -251,7 +251,7 @@ class TestInstallScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, _log_path, environment = self._create_fixture(directory)
             environment["INFRA_TOOLS_TEST_ROOT"] = "1"
-            environment["INFRA_TOOLS_TEST_OS_ID"] = "cachyos"
+            environment["INFRA_TOOLS_TEST_OS_ID"] = "fedora"
             minimal_bin = os.path.join(directory, "minimal-bin")
             os.makedirs(minimal_bin)
             for command_name in ("sh", "head", "awk", "basename"):
@@ -271,6 +271,41 @@ class TestInstallScript(unittest.TestCase):
             self.assertIn("missing required controller commands", result.stderr)
             self.assertIn("python3", result.stderr)
             self.assertIn("rsync", result.stderr)
+
+    def test_cachyos_local_setup_keeps_the_human_user_without_elevation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, log_path, environment = self._create_fixture(directory)
+            environment.update(INFRA_TOOLS_TEST_NON_ROOT="1", INFRA_TOOLS_TEST_OS_ID="cachyos")
+            environment.pop("SSH_CONNECTION", None)
+            environment.pop("SSH_TTY", None)
+            sudo_log = os.path.join(directory, "sudo.log")
+            environment["INFRA_TOOLS_TEST_SUDO_LOG"] = sudo_log
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", os.path.join(directory, "installed"),
+                 "--local-setup", "agent_cachyos", "--node"],
+                env=environment, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Continue installing", result.stdout)
+            self.assertFalse(os.path.exists(sudo_log))
+            with open(log_path) as handle:
+                calls = [json.loads(line) for line in handle]
+            self.assertEqual(calls[1], ["setup", "agent_cachyos", "localhost", "testuser", "--node"])
+
+    def test_cachyos_rejects_other_local_profiles_before_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, log_path, environment = self._create_fixture(directory)
+            environment.update(INFRA_TOOLS_TEST_NON_ROOT="1", INFRA_TOOLS_TEST_OS_ID="cachyos")
+            environment.pop("SSH_CONNECTION", None)
+            environment.pop("SSH_TTY", None)
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", os.path.join(directory, "installed"),
+                 "--local-setup", "agent_workstation"],
+                env=environment, text=True, capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("only agent_cachyos", result.stderr)
+            self.assertFalse(os.path.exists(log_path))
 
     def test_qemu_guest_agent_flag_is_forwarded_to_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:

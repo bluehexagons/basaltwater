@@ -159,6 +159,10 @@ def _record_setup_failure(error: Exception) -> None:
 
 def _remove_secret_payloads() -> None:
     """Remove uploaded credentials after any setup outcome."""
+    from lib.cachyos import is_cachyos
+
+    if is_cachyos():
+        return  # The local CachyOS profile never stages controller credentials.
     if is_dry_run():
         return
     for payload_dir in (
@@ -375,10 +379,20 @@ def _run_main() -> int:
     
     args = parser.parse_args(_resolve_cli_args(sys.argv[1:]))
 
+    set_dry_run(bool(args.dry_run))
+
+    if args.system_type == "agent_cachyos":
+        from lib.cachyos import cachyos_config_from_args
+
+        return run_cachyos_setup(cachyos_config_from_args(args, for_remote=True))
+    from lib.cachyos import is_cachyos
+
+    if is_cachyos():
+        raise ValueError("CachyOS supports only the local agent_cachyos setup profile")
+
     if args.deploy_latest:
         os.environ["INFRA_TOOLS_DEPENDENCY_MIN_AGE_DAYS"] = "0"
 
-    set_dry_run(bool(args.dry_run))
     if args.dry_run:
         print("=" * 60)
         print("DRY-RUN MODE ENABLED")
@@ -705,6 +719,28 @@ def _run_main() -> int:
         )
     
     return 0
+
+
+def run_cachyos_setup(config: SetupConfig) -> int:
+    """Apply only the local workstation plugin, as the existing desktop user."""
+    from lib.cachyos import preflight_cachyos
+
+    previous_dry_run = is_dry_run()
+    set_dry_run(config.dry_run)
+    try:
+        preflight_cachyos(config)
+        steps = get_steps_for_system_type(config)
+        if config.dry_run:
+            print("CachyOS local workstation plan (hardware checks deferred until apply)")
+            _print_dry_run_plan(steps)
+            return 0
+        for name, function in steps:
+            print(f"\n{name}", flush=True)
+            function(config)
+        print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
+        return 0
+    finally:
+        set_dry_run(previous_dry_run)
 
 
 def main() -> int:

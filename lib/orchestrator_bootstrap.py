@@ -263,6 +263,12 @@ def run_orchestrator_bootstrap(
     install_qemu_guest_agent: bool = False,
 ) -> int:
     """Bootstrap a local orchestration host for infra-tools administration."""
+    from lib.cachyos import is_cachyos, bootstrap_cachyos
+
+    if is_cachyos():
+        return bootstrap_cachyos(script_path, shell, requested_user,
+                                 skip_system_packages=skip_system_packages,
+                                 install_qemu_guest_agent=install_qemu_guest_agent)
     try:
         username, home_dir = resolve_bootstrap_user(requested_user)
     except ValueError as exc:

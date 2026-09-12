@@ -31,6 +31,7 @@ class TestPluginRegistry(unittest.TestCase):
                 "pc_dev",
                 "workstation_dev",
                 "agent_workstation",
+                "agent_cachyos",
                 "agent_code_vm",
                 "control_plane",
                 "agent_vm",
@@ -46,12 +47,13 @@ class TestPluginRegistry(unittest.TestCase):
         registry = get_plugin_registry()
         self.assertEqual(
             [plugin.name for plugin in registry.plugins],
-            ["core", "common", "desktop", "security", "smb", "sync", "web", "proxmox", "server", "workstation"],
+            ["core", "cachyos", "common", "desktop", "security", "smb", "sync", "web", "proxmox", "server", "workstation"],
         )
         self.assertEqual(
             [plugin.plugin_kind for plugin in registry.plugins],
             [
                 "base",
+                "composition",
                 "capability",
                 "capability",
                 "capability",

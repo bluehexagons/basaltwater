@@ -48,6 +48,11 @@ The installer and setup preflight also recognize Ubuntu and Linux Mint as
 best-effort Debian-compatible environments. Debian remains the only officially
 supported distribution.
 
+An experimental, limited [CachyOS + KDE coding profile](docs/CACHYOS.md) adds
+agent tooling to an existing bare-metal workstation through local self-setup.
+It preserves the human account and desktop, leaves OS updates to CachyOS/the
+user, and does not support CachyOS VM/container provisioning or server setup.
+
 The normal direct setup path uses `--machine auto`. Hosted Proxmox setup
 defaults to a VM; select `--machine unprivileged` for the supported LXC path.
 See [Machine types](docs/MACHINE_TYPES.md) for capability and compatibility
@@ -110,6 +115,7 @@ try features and keep a small VM usable.
 | Control planes | Local VM/container administration tools, SSH/rsync, diagnostics, and optional coding agents | [Installation](docs/INSTALLATION.md), [Agent systems](docs/agents/README.md), [Quick reference](docs/QUICK_REFERENCE.md) |
 | Servers | Security hardening, Nginx/SSL, Cloudflare tunnels, language runtimes, deployments, Gogs, and Antistatic | [CLI reference](docs/COMMAND_LINE.md), [Gogs](docs/GOGS.md), [Cloudflare tunnels](docs/CLOUDFLARE.md), [Antistatic](docs/ANTISTATIC.md) |
 | Workstations | XFCE, i3, LXQt, RDP, browsers, and desktop tooling | [Workstations](docs/WORKSTATIONS.md), [XRDP](docs/XRDP.md), [CLI reference](docs/COMMAND_LINE.md) |
+| CachyOS coding | Local agent tooling for an existing KDE workstation; optional localhost T3 | [CachyOS](docs/CACHYOS.md) |
 | Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/SAMBA_SHARES.md), [Managed Syncthing](docs/SYNCTHING.md), [Storage operations](docs/STORAGE_OPERATIONS.md) |
 | Deployments | Single-service deployments and `infra.json` multi-component manifests | [Deployments](docs/DEPLOYMENTS.md), [Deployment safety](docs/DEPLOYMENT_SAFETY.md), [CI/CD](docs/CICD.md) |
 | Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/PROXMOX.md) |

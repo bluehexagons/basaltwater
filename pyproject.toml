@@ -41,5 +41,6 @@ exclude = [
 namespaces = true
 
 [tool.setuptools.package-data]
+common = ["agent_skills/*/SKILL.md"]
 desktop = ["config/*.template"]
 web = ["config/*"]

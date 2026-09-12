@@ -15,6 +15,7 @@ overview.
 | Install infra-tools or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agent systems](agents/README.md) | [Workstations](WORKSTATIONS.md), [Credentials](CREDENTIALS.md) |
+| Add coding tools to an existing CachyOS KDE workstation | [CachyOS local setup](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md) |
 | Deploy an application or publish an internal site | [Deployments](DEPLOYMENTS.md) | [Internal web](INTERNAL_WEB.md), [CI/CD](CICD.md) |
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |
 | Configure alerts, audit visibility, or the panel | [Notifications](NOTIFICATIONS.md) | [Minimal web panel](WEB_PANEL.md), [Authentication hardening](AUTHENTICATION_HARDENING.md) |

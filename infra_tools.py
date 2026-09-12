@@ -1726,6 +1726,10 @@ def deploy_configurations(pattern: str, force: bool, deploy_latest: bool = False
 
 def run_setup_command(args: argparse.Namespace) -> int:
     """Execute the setup command."""
+    if args.system_type == "agent_cachyos":
+        from lib.cachyos import run_cachyos_command
+
+        return run_cachyos_command(args)
     explicit_ipv4 = getattr(args, "static_ipv4", None)
     if getattr(args, "hosted_node", None) and isinstance(explicit_ipv4, str) and explicit_ipv4:
         print(
@@ -2190,6 +2194,13 @@ def main() -> int:
         return 0
     
     if args.command in {"setup", "patch", "shares"} and _is_local_host(args.host):
+        from lib.cachyos import is_cachyos
+
+        if args.command == "setup" and args.system_type == "agent_cachyos":
+            return run_setup_command(args)
+        if is_cachyos():
+            print("Error: CachyOS local setup supports only agent_cachyos; rerun that profile to add tools")
+            return 1
         if not confirm_unsupported_environment(f"{args.command} on the local host"):
             return 1
 
@@ -2247,7 +2258,9 @@ def main() -> int:
             script_path=getattr(args, "script_path", None) or sys.argv[0],
         )
     elif args.command in {"bootstrap", "self-setup"}:
-        if not args.skip_system_packages and not confirm_unsupported_environment("local bootstrap"):
+        from lib.cachyos import is_cachyos
+
+        if not is_cachyos() and not args.skip_system_packages and not confirm_unsupported_environment("local bootstrap"):
             return 1
         return run_orchestrator_bootstrap(
             script_path=sys.argv[0],

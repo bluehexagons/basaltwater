@@ -17,6 +17,7 @@ from common.agent_steps import (
     install_managed_agent_skills,
 )
 from common.godot_web_steps import GODOT_AGENT_SKILLS
+from common.cachyos_steps import CACHYOS_SKILLS, CACHYOS_T3_SKILL
 from common.t3code_steps import T3_AGENT_SKILL_NAMES
 from lib.config import SetupConfig
 from lib.types import StepFunc
@@ -84,6 +85,8 @@ class ManagedAgentSkillTests(unittest.TestCase):
             if entry.is_dir(follow_symlinks=False)
         }
         installed_names = {
+            *CACHYOS_SKILLS,
+            CACHYOS_T3_SKILL,
             *BASE_AGENT_SKILL_NAMES,
             *BROWSER_AGENT_SKILL_NAMES,
             *T3_AGENT_SKILL_NAMES,

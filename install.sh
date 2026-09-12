@@ -163,6 +163,9 @@ validate_host_os() {
     HOST_OS_ID=$(sed -n 's/^ID=//p' /etc/os-release | sed 's/^"//; s/"$//' | head -n 1)
     case "$HOST_OS_ID" in
         debian|ubuntu|linuxmint) ;;
+        cachyos)
+            HOST_OS_SUPPORTED=0
+            ;;
         *)
             HOST_OS_SUPPORTED=0
             if ! confirm_unsupported_host; then
@@ -349,7 +352,17 @@ fi
 if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$INSTALL_QEMU_GUEST_AGENT" -eq 1 ]; then
     fail "--qemu-guest-agent requires the Debian package setup path; install the launcher without this option on an unsupported host"
 fi
-if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$LOCAL_SETUP" -eq 1 ]; then
+if [ "$HOST_OS_ID" = cachyos ]; then
+    [ "$(id -u)" -ne 0 ] || fail "run the CachyOS installer as your desktop user without sudo"
+    [ -z "${SSH_CONNECTION:-}${SSH_TTY:-}" ] || fail "run CachyOS setup locally in a desktop terminal"
+    if [ "$LOCAL_SETUP" -eq 1 ] && [ "$SETUP_SYSTEM_TYPE" != agent_cachyos ]; then
+        fail "CachyOS local setup supports only agent_cachyos"
+    fi
+fi
+if [ "$RUN_SETUP" -eq 1 ] && [ "$1" = agent_cachyos ]; then
+    [ "$HOST_OS_ID" = cachyos ] && [ "$LOCAL_SETUP" -eq 1 ] || fail "agent_cachyos requires local setup on CachyOS"
+fi
+if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$HOST_OS_ID" != cachyos ] && [ "$LOCAL_SETUP" -eq 1 ]; then
     fail "local setup is not supported on an unsupported host; install the launcher and use remote setup instead"
 fi
 
@@ -516,7 +529,19 @@ fi
 EOF
 }
 
-if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$missing_prerequisite" -eq 1 ]; then
+if [ "$HOST_OS_ID" = cachyos ] && [ "$missing_prerequisite" -eq 1 ]; then
+    command -v pacman >/dev/null 2>&1 || fail "CachyOS prerequisites require pacman"
+    printf '%s\n' "Installing missing prerequisites; repository refresh and OS updates remain user-managed."
+    # Query each package so reruns retain installed versions even if the sync
+    # database is newer. Never use -Sy or -Syu in the installer.
+    for package in ca-certificates curl git openssh python rsync tar; do
+        if pacman -Q -- "$package" >/dev/null 2>&1; then
+            continue
+        fi
+        run_privileged pacman -S --needed --noconfirm -- "$package" || fail "resolve the pacman error, update CachyOS normally if needed, and rerun"
+    done
+fi
+if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$HOST_OS_ID" != cachyos ] && [ "$missing_prerequisite" -eq 1 ]; then
     fail "unsupported host is missing required controller commands: $missing_prerequisites; install them manually and rerun the installer"
 fi
 
@@ -676,6 +701,10 @@ run_for_target() {
 }
 
 run_local_setup() {
+    if [ "$HOST_OS_ID" = cachyos ]; then
+        run_for_target python3 "$INSTALL_DIR/infra_tools.py" setup "$@"
+        return
+    fi
     if [ -t 2 ] && [ -r /dev/tty ]; then
         run_privileged env \
             HOME="$TARGET_HOME" \

@@ -14,6 +14,7 @@ managed machine.
 | I need to… | Start here | Then use |
 | --- | --- | --- |
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
+| Add agent tools to an existing CachyOS KDE desktop | [CachyOS local setup](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#agent-skills) |
 | Choose default, passwordless-sudo, or hardened operation | [Agentic coding security](../AGENT_SECURITY.md) | [Workstations](../WORKSTATIONS.md) |
 | Choose a credential workflow | [Credentials overview](../CREDENTIALS.md) | [SSH authentication](../SSH.md) |
 | Seed, rotate, or recover coding-agent auth | [Agent authentication](../AGENT_AUTHENTICATION.md) | [Credentials overview](../CREDENTIALS.md) |
@@ -25,6 +26,9 @@ managed machine.
 | Build or publish a Godot web project | [Godot Engine](../GODOT.md) | [Internal HTTPS sites](../INTERNAL_WEB.md) |
 
 ## Day-two checks
+
+These controller-side checks apply to the Debian-based managed stack. For
+`agent_cachyos`, use the [local checks and rerun workflow](../CACHYOS.md).
 
 Run these commands from the controller after setup or when an agent service
 needs attention:
