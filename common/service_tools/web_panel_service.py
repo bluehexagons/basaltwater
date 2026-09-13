@@ -1223,13 +1223,13 @@ def _linux_trust_script(
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
   certificate='./infra-tools-ca.crt'
-  temporary="${{certificate}}.download"
+  temporary=$(mktemp)
   trap 'rm -f "$temporary"' EXIT
-  # TLS is untrusted until this CA is installed; SHA-256 is checked below.
+  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
   if command -v curl >/dev/null 2>&1; then
-    curl --fail --location --show-error --insecure --output "$temporary" "$download_url"
+    curl --fail --location --proto '=https' --proto-redir '=https' --show-error --output "$temporary" "$download_url"
   elif command -v wget >/dev/null 2>&1; then
-    wget --no-check-certificate --output-document="$temporary" "$download_url"
+    wget --https-only --output-document="$temporary" "$download_url"
   else
     echo 'Install curl or wget, then run this script again.'
     exit 1
@@ -1253,10 +1253,10 @@ def _macos_trust_script(fingerprint: str, download_url: str) -> str:
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
   certificate='./infra-tools-ca.crt'
-  temporary="${{certificate}}.download"
+  temporary=$(mktemp)
   trap 'rm -f "$temporary"' EXIT
-  # TLS is untrusted until this CA is installed; SHA-256 is checked below.
-  curl --fail --location --show-error --insecure --output "$temporary" "$download_url"
+  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
+  curl --fail --location --proto '=https' --proto-redir '=https' --show-error --output "$temporary" "$download_url"
   actual_sha256=$(shasum -a 256 "$temporary")
   actual_sha256=${{actual_sha256%% *}}
   if [ "$actual_sha256" != "$expected_sha256" ]; then
@@ -1340,26 +1340,15 @@ def _render_certificate_trust(
                 f'''$DownloadUrl = '{powershell_url}'
 $ExpectedSha256 = "{fingerprint}"
 $Certificate = Join-Path (Get-Location) "infra-tools-ca.crt"
-$Temporary = "$Certificate.download"
-Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+$Temporary = [System.IO.Path]::GetTempFileName()
 try {{
-  # TLS verification is skipped only for this CA bootstrap; SHA-256 is checked below.
-  if ((Get-Command Invoke-WebRequest).Parameters.ContainsKey("SkipCertificateCheck")) {{
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -SkipCertificateCheck
-  }} else {{
-    $PreviousCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
-    try {{
-      [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{ $true }}
-      Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing
-    }} finally {{
-      [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $PreviousCallback
-    }}
-  }}
-  $ActualSha256 = (Get-FileHash -LiteralPath $Temporary -Algorithm SHA256).Hash.ToLowerInvariant()
+  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
+  Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing -MaximumRedirection 0 -ErrorAction Stop
+  $ActualSha256 = (Get-FileHash -LiteralPath $Temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
   if ($ActualSha256 -ne $ExpectedSha256) {{
     throw "SHA-256 mismatch; certificate was not installed."
   }}
-  Move-Item -LiteralPath $Temporary -Destination $Certificate -Force
+  Move-Item -LiteralPath $Temporary -Destination $Certificate -Force -ErrorAction Stop
 }} catch {{
   Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
   throw
@@ -1376,21 +1365,23 @@ Write-Host "Certificate downloaded, verified, and installed. Fully restart your 
 <span class="trust-summary-note">One-time setup for browsers and other devices</span></span></summary>
 <div class="trust-panel"><strong>Trust this machine on another device</strong>
 <p>Install this machine's public CA once to trust the web panel, hosted sites, and managed HTTPS services. The help stays collapsed when you do not need it.</p>
+<p>For first enrollment, copy <code>/srv/infra-tools/web/infra-tools-ca.crt</code> through an existing trusted SSH connection. Obtain its SHA-256 with <code>infra-web ca</code> over that connection or the VM console. Verify that independent value before installation; a fingerprint on a page opened past a certificate warning is not proof of authenticity.</p>
 <div class="trust-actions"><a class="trust-download" href="{trust_url}">Download VM CA certificate</a></div>
 <code class="fingerprint">SHA-256 {escaped_fingerprint}</code>
 <details><summary>Download, verify, and install with a script</summary>
-<p class="trust-intro">Open a terminal in your Downloads folder (or wherever you want to keep the certificate), then paste the matching script. It downloads the file, verifies this machine's exact fingerprint, and stops before installation if verification fails.</p>
+<p class="trust-intro">These download scripts require HTTPS that your client already trusts. They stop if TLS or the checksum fails. For first enrollment, use the trusted transfer and manual installation steps below. Never bypass a certificate warning to obtain an installation script.</p>
 {scripts}
 </details>
-<details><summary>Manual / GUI installation</summary><p class="trust-intro">Download the certificate above and verify its SHA-256 matches the displayed fingerprint before following the platform steps.</p><ul class="trust-gui">
+<details><summary>Manual / GUI installation</summary><p class="trust-intro">Transfer the certificate over SSH, or download it through an already trusted HTTPS connection, and compare its SHA-256 with the independently obtained fingerprint before following the platform steps.</p><ul class="trust-gui">
 <li><strong>Windows:</strong> download the certificate, open it, choose Install Certificate → Current User, then place it in Trusted Root Certification Authorities.</li>
 <li><strong>macOS:</strong> download it, import it into the System keychain with Keychain Access, open the certificate, and set Trust to Always Trust.</li>
-<li><strong>Firefox on Linux:</strong> Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import. Chromium-based browsers use the operating-system store, so use the script above.</li>
+<li><strong>Linux:</strong> after independent verification, Debian/Ubuntu users can run <code>sudo install -m 0644 infra-tools-ca.crt /usr/local/share/ca-certificates/infra-tools-ca.crt &amp;&amp; sudo update-ca-certificates</code>. On Arch/Fedora, use <code>sudo trust anchor infra-tools-ca.crt &amp;&amp; sudo update-ca-trust</code>.</li>
+<li><strong>Firefox on Linux:</strong> Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import. Chromium-based browsers use the operating-system store.</li>
 <li><strong>ChromeOS:</strong> Certificate Manager → Authorities → Import, then enable website trust.</li>
 <li><strong>Android:</strong> Security &amp; privacy → Install a certificate → CA certificate.</li>
 <li><strong>iPhone / iPad:</strong> install the downloaded profile, then enable it under Settings → General → About → Certificate Trust Settings.</li>
 </ul></details>
-<p class="trust-intro">For a manual transfer, copy <code>/srv/infra-tools/web/infra-tools-ca.crt</code> over SSH and compare its SHA-256 with the value above before installing it.</p>
+<p class="trust-intro">Transfer only the public certificate. Keep the CA private key on the VM.</p>
 </div></details></section>'''
 
 

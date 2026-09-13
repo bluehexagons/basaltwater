@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from lib.remote_utils import run
+from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateStore
 from lib.update_policy import npm_freshness_args
 from lib.deploy_utils import (
@@ -1126,7 +1127,6 @@ class DeploymentOrchestrator:
         """
         import time
         import urllib.error
-        import urllib.request
 
         url = f"http://127.0.0.1:{component.port}{component.health}"
         deadline = time.monotonic() + timeout
@@ -1135,7 +1135,7 @@ class DeploymentOrchestrator:
             if remaining <= 0:
                 break
             try:
-                with urllib.request.urlopen(url, timeout=min(3.0, remaining)) as resp:
+                with open_loopback(url, timeout=min(3.0, remaining)) as resp:
                     if 200 <= resp.status < 300:
                         print(f"  ✓ Health check passed for '{component.name}' ({url} → {resp.status})")
                         return

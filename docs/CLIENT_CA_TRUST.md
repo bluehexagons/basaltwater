@@ -59,6 +59,12 @@ scp USER@VM:/srv/infra-tools/web/infra-tools-ca.crt .
 Another trusted transfer channel is also acceptable. Transfer only
 `infra-tools-ca.crt`; never request or copy the CA private key.
 
+The web panel's download scripts require a client that already trusts the
+HTTPS endpoint. They retain TLS verification and stop on a certificate error;
+they cannot bootstrap an untrusted connection. Obtain first-enrollment
+instructions and the fingerprint through SSH or the VM console. Do not trust
+a script or checksum from a page opened past a certificate warning.
+
 Compare the downloaded file with the `SHA-256` value printed on the VM. On
 Linux:
 

@@ -34,6 +34,10 @@ appropriate. Do not delete state merely to suppress an error.
 
 ## Patch and redeploy
 
+Deployment and gateway readiness requests use literal loopback addresses,
+ignore proxy environment variables, and never follow redirects. Deployment
+activation requires a local 2xx response from the configured health endpoint.
+
 Package, service, and user probes have a 15-second deadline. A timeout or
 unavailable probe raises an explicit unknown-state error and stops dependent
 setup instead of treating the package, service, or user as absent. Repair the

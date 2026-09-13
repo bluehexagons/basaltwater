@@ -8,6 +8,7 @@ and that the generated descriptors drive correct nginx config.
 from __future__ import annotations
 
 import json
+import io
 import os
 import shutil
 import sqlite3
@@ -15,11 +16,14 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
+import urllib.response
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.deployment import DeploymentOrchestrator
+from lib.local_http import open_loopback
 from lib.nginx_config import generate_merged_nginx_config
 from lib.operation_state import OperationStateError, OperationStateStore
 from lib.project_manifest import Component, Manifest, parse_manifest
@@ -49,6 +53,36 @@ def _service_component(**overrides: object) -> Component:
     }
     data.update(overrides)
     return parse_manifest({"version": 1, "components": [data]}).components[0]
+
+
+class TestLoopbackReadiness(unittest.TestCase):
+    @patch.dict(os.environ, {"http_proxy": "http://proxy.invalid:8888", "no_proxy": ""}, clear=True)
+    def test_proxy_environment_is_ignored_and_redirects_never_followed(self):
+        requests = []
+
+        def respond(_handler, request):
+            requests.append(request)
+            response = urllib.response.addinfourl(
+                io.BytesIO(b""), {"Location": "http://external.invalid/health"},
+                request.full_url, 302,
+            )
+            response.msg = "Found"
+            return response
+
+        with patch.object(urllib.request.HTTPHandler, "http_open", respond):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                open_loopback("http://127.0.0.1:8080/health", timeout=1)
+        self.assertEqual(caught.exception.code, 302)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].host, "127.0.0.1:8080")
+        self.assertFalse(requests[0].has_proxy())
+
+    def test_non_loopback_urls_are_rejected_before_opening(self):
+        with patch("urllib.request.build_opener") as opener:
+            for url in ("http://example.com/", "http://192.0.2.1/", "file:///etc/passwd", "http://user@127.0.0.1/"):
+                with self.subTest(url=url), self.assertRaises(ValueError):
+                    open_loopback(url, timeout=1)
+            opener.assert_not_called()
 
 
 class TestGenerateManagedService(unittest.TestCase):
@@ -223,7 +257,7 @@ class TestServiceContext(unittest.TestCase):
     def test_health_check_uses_wall_clock_deadline(self):
         component = _service_component(health="/health")
         with patch(
-            "urllib.request.urlopen",
+            "lib.deployment.open_loopback",
             side_effect=urllib.error.URLError("not ready"),
         ) as urlopen, patch(
             "time.monotonic",

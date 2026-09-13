@@ -35,6 +35,7 @@ if SOURCE_ROOT not in sys.path:
 
 from common.service_tools import godot_web_publish, static_web_publish
 from lib.validation import validate_positive_integer
+from lib.local_http import open_loopback
 
 
 POLICY_FILE = "/etc/infra-tools/internal-web/policy.json"
@@ -951,7 +952,7 @@ def _http_ready(host: str, port: int, path: str, timeout: float = 1.0) -> bool:
         headers={"User-Agent": "infra-web-readiness/1"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_loopback(request, timeout=timeout) as response:
             return response.status < 500
     except urllib.error.HTTPError as exc:
         return exc.code < 500

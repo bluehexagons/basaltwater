@@ -58,17 +58,6 @@ calls and temporary directories; live deployment qualification is separate.
   stop-after-failure explicit, and apply the existing Proxmox maintenance plan's
   HA/Ceph/evacuation policy before mutation.
 
-- **RCF-26 — Medium-High: generated CA bootstrap scripts bypass TLS
-  verification.** Linux/macOS snippets use `curl`/`wget --insecure`, and the
-  Windows snippet disables certificate validation before checking a digest
-  rendered by the same untrusted page. A pre-enrollment MITM can replace both
-  the downloaded CA and displayed digest. This conflicts with the independent
-  transfer/checksum guidance in [`CLIENT_CA_TRUST.md`](../CLIENT_CA_TRUST.md)
-  and [`INTERNAL_WEB.md`](../INTERNAL_WEB.md). **Acceptance:**
-  remove insecure bootstrap downloads; require a trusted transfer (such as SSH)
-  and independently supplied fingerprint, or use TLS only after the client
-  already trusts the issuer.
-
 ## P2 — policy and lower-probability operational concerns
 
 - **RCF-14 — Medium: third-party installers use rolling
@@ -81,13 +70,6 @@ calls and temporary directories; live deployment qualification is separate.
   [`common_steps.py`](../../common/common_steps.py). **Acceptance:**
   select signed releases, a maintained digest manifest, or an explicitly
   accepted rolling channel per tool; expose and retain provenance.
-
-- **RCF-17 — Low: loopback readiness checks may honor proxies.** Default
-  `urllib` openers are used for local health checks without disabling proxy
-  environment variables. Evidence: [`deployment.py`](../../lib/deployment.py),
-  [`infra_web.py`](../../common/service_tools/infra_web.py).
-  **Acceptance:** use a proxy-disabled opener, assert a local response, and test
-  with proxy variables set.
 
 - **RCF-18 — High under repository compromise, architecture
   risk: CI/CD scripts remain a trust boundary.** Repository-authored scripts
@@ -111,8 +93,6 @@ calls and temporary directories; live deployment qualification is separate.
   RCF-18 remains open for build/deploy credential isolation.
 - RCF-20 follows the [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md),
   which owns HA/Ceph, evacuation, and live qualification.
-- RCF-26 belongs to [Internal web](../INTERNAL_WEB.md) and
-  [Client CA trust](../CLIENT_CA_TRUST.md).
 - Close findings after focused failure-path tests, relevant operator
   documentation, and `make check`/`git diff --check` pass. Remove resolved
   entries instead of appending progress notes.
