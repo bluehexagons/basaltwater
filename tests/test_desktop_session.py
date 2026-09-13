@@ -20,6 +20,7 @@ from desktop.session_steps import assert_desktop_idle, configure_session_service
 from lib.config import SetupConfig
 from lib.arg_parser import create_setup_argument_parser
 from lib.desktop_cli import add_desktop_subparser, run_desktop_command
+from lib.setup_report import SetupReport
 
 
 class DesktopControlTests(unittest.TestCase):
@@ -508,11 +509,47 @@ class DesktopMigrationTests(unittest.TestCase):
     @patch("desktop.session_steps.is_dry_run", return_value=False)
     @patch("desktop.session_steps.run")
     def test_active_wayland_desktop_blocks_migration_without_stopping_it(self, run, dry):
-        run.side_effect = [Mock(stdout="1 1000 agent seat0\n"), Mock(stdout="Type=wayland\nClass=user\n")]
+        run.side_effect = [Mock(stdout="1 1000 agent seat0\n"), Mock(returncode=0, stdout="Type=wayland\nClass=user\n")]
         config = SetupConfig(host="vm", username="agent", system_type="agent_workstation")
         with self.assertRaisesRegex(RuntimeError, "log out"):
             assert_desktop_idle(config)
         self.assertEqual(run.call_count, 2)
+
+    @patch("desktop.session_steps.is_dry_run", return_value=False)
+    @patch("lib.remote_utils.is_dry_run", return_value=False)
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_disappearing_session_is_quiet_but_other_failures_block_setup(self, popen, dry, desktop_dry):
+        missing = "Failed to get path for session '31': No session '31' known\n"
+        for remaining, list_code, pgrep_code, error in (
+            ("", 0, 1, None),
+            ("31 1000 agent\n", 0, 1, "Could not inspect login session 31"),
+            ("", 1, 1, "Command failed"),
+            ("", 0, 0, "log out existing XRDP sessions"),
+        ):
+            with self.subTest(remaining=remaining, list_code=list_code, pgrep_code=pgrep_code):
+                popen.reset_mock()
+                popen.side_effect = [
+                    Mock(returncode=code, communicate=Mock(return_value=(stdout, stderr)))
+                    for code, stdout, stderr in (
+                        (0, "31 1000 agent\n", ""),
+                        (1, "", missing),
+                        (list_code, remaining, "Failed to list sessions" if list_code else ""),
+                        (pgrep_code, "", ""),
+                    )
+                ]
+                report = SetupReport()
+                output = io.StringIO()
+                config = SetupConfig(host="vm", username="agent", system_type="agent_vm")
+                with contextlib.redirect_stdout(output), report.capture():
+                    if error:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            assert_desktop_idle(config)
+                    else:
+                        assert_desktop_idle(config)
+                self.assertNotIn(missing.strip(), output.getvalue())
+                if not list_code:
+                    self.assertEqual(report.notes, ())
+                self.assertEqual(popen.call_count, 3 if remaining or list_code else 4)
 
     @patch("desktop.session_steps.is_dry_run", return_value=False)
     @patch("desktop.session_steps.run")

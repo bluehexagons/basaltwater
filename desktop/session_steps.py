@@ -110,7 +110,19 @@ def _assert_no_graphical_sessions() -> None:
         if not line.strip():
             continue
         session_id = line.split()[0]
-        details = run(["loginctl", "show-session", session_id, "-p", "Type", "-p", "Class"], capture_output=True)
+        details = run(["loginctl", "show-session", session_id, "-p", "Type", "-p", "Class"],
+                      capture_output=True, check=False)
+        if details.returncode != 0:
+            # Logout can remove a session between enumeration and inspection.
+            # Confirm its absence instead of matching localized loginctl errors
+            # or letting run() record an expected race in the final setup notes.
+            remaining = run(["loginctl", "list-sessions", "--no-legend"], capture_output=True)
+            if session_id not in {row.split()[0] for row in remaining.stdout.splitlines() if row.strip()}:
+                continue
+            raise RuntimeError(
+                f"Could not inspect login session {session_id} before desktop setup: "
+                f"{details.stderr.strip()}"
+            )
         properties = dict(line.split("=", 1) for line in details.stdout.splitlines() if "=" in line)
         if properties.get("Type") in {"x11", "wayland"} and properties.get("Class") != "greeter":
             raise RuntimeError("Desktop setup deferred: log out existing graphical sessions and rerun; applications were not stopped")

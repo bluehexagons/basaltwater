@@ -271,6 +271,12 @@ Run setup from SSH or a text console when desktop work is saved. Before package
 upgrades, setup automatically requests normal logout of the configured account's
 managed desktop, including a paused desktop, and waits up to 60 seconds plus
 in-flight request time. It then allows up to 10 seconds for logind/sesman cleanup.
+If a session disappears between listing it and reading its properties, setup
+confirms its absence with a fresh session list and continues quietly. Older
+versions could retain `Failed to get path for session …: No session … known`
+in the final run notes even after logout and setup succeeded; that teardown
+race is harmless. A failed session list or an unreadable session that still
+exists continues to block desktop setup, as does a remaining XRDP process.
 No separate logout command or confirmation is required. A canceled logout stops
 setup and leaves agent input paused; no applications are force-killed. Disable
 RDP automatic reconnect during setup. A replacement generation aborts the logout
