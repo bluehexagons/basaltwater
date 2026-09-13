@@ -7,6 +7,12 @@ domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- RCF-08 and 16 implemented: durable receipt reservations recover interrupted
+  job publication; signed-body digests coalesce retries even when unsigned
+  delivery headers change. Executor claims prevent automatic replay after a
+  crash. Admission has pending-count, receipt-count, and free-space limits;
+  old pending jobs expire, and every attempt gets a distinct mapped log.
+  Retention and manual recovery boundaries are documented in CI/CD.
 - Follow-up review fixed stale volume-only parity updates, propagated orphan
   cleanup failures, and rejected special files during scrub inventories.
   SMB checks now handle subdirectories, read-only sync sources, and new

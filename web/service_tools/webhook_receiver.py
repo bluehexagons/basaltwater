@@ -21,7 +21,7 @@ import sys
 import json
 import hmac
 import hashlib
-import secrets
+import re
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
@@ -30,12 +30,11 @@ from typing import Optional
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 from lib.logging_utils import get_service_logger, log_event
-from lib.atomic_io import write_json_atomic
 from web.service_tools.cicd_config import load_config_file
+from web.service_tools.cicd_deliveries import enqueue, recover_pending
 from web.service_tools.cicd_security import (
     DEFAULT_BRANCHES,
     MAX_WEBHOOK_PAYLOAD_BYTES,
-    get_workspace_name,
     validate_branch_ref,
     validate_commit_sha,
     validate_pusher,
@@ -50,6 +49,7 @@ CONFIG_DIR = "/etc/infra_tools/cicd"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "webhook_config.json")
 STATE_DIR = "/var/lib/infra_tools/cicd"
 JOBS_DIR = os.path.join(STATE_DIR, "jobs")
+DELIVERIES_FILE = os.path.join(STATE_DIR, 'deliveries.sqlite3')
 
 # Server configuration
 DEFAULT_PORT = 8765
@@ -57,7 +57,6 @@ WEBHOOK_SECRET_ENV = "WEBHOOK_SECRET"
 
 # Timestamp format for job creation
 TIMESTAMP_FORMAT = '%Y-%m-%d %H:%M:%S'
-TIMESTAMP_FORMAT_FILE = '%Y%m%d_%H%M%S'
 
 
 def verify_github_signature(secret: str, payload: bytes, signature_header: Optional[str]) -> bool:
@@ -70,6 +69,8 @@ def verify_github_signature(secret: str, payload: bytes, signature_header: Optio
         return False
     
     expected_signature = signature_header[7:]  # Remove "sha256=" prefix
+    if re.fullmatch(r'[0-9a-fA-F]{64}', expected_signature) is None:
+        return False
     
     # Compute HMAC-SHA256
     computed_signature = hmac.new(
@@ -79,7 +80,7 @@ def verify_github_signature(secret: str, payload: bytes, signature_header: Optio
     ).hexdigest()
     
     # Constant-time comparison to prevent timing attacks
-    return hmac.compare_digest(computed_signature, expected_signature)
+    return hmac.compare_digest(computed_signature, expected_signature.lower())
 
 
 def load_config() -> dict:
@@ -87,7 +88,8 @@ def load_config() -> dict:
     return load_config_file(CONFIG_FILE)
 
 
-def trigger_cicd_job(repo_url: str, ref: str, commit_sha: str, pusher: str) -> bool:
+def trigger_cicd_job(repo_url: str, ref: str, commit_sha: str, pusher: str, *,
+                     payload_digest: str | None = None, delivery_id: str | None = None) -> bool:
     """
     Trigger CI/CD job by creating a job file in the jobs directory.
     
@@ -111,20 +113,19 @@ def trigger_cicd_job(repo_url: str, ref: str, commit_sha: str, pusher: str) -> b
             "pusher": safe_pusher,
             "timestamp": datetime.now().strftime(TIMESTAMP_FORMAT)
         }
-        
-        timestamp = datetime.now().strftime(TIMESTAMP_FORMAT_FILE)
-        safe_repo_name = get_workspace_name(safe_repo_url)
-        nonce = secrets.token_hex(8)
-        job_file = os.path.join(
-            JOBS_DIR,
-            f"{timestamp}_{safe_repo_name}_{safe_commit_sha[:12]}_{nonce}.json",
-        )
-        # Atomic write so the path activator never sees a half-written file.
-        write_json_atomic(job_file, job_data)
+        if delivery_id is not None:
+            if re.fullmatch(r'[A-Za-z0-9-]{1,128}', delivery_id) is None:
+                raise ValueError('Invalid GitHub delivery ID')
+            job_data['delivery_id'] = delivery_id
+        key = payload_digest or hashlib.sha256(json.dumps(
+            [safe_repo_url, safe_ref, safe_commit_sha, safe_pusher]
+        ).encode()).hexdigest()
+        enqueue(DELIVERIES_FILE, JOBS_DIR, key, job_data)
+        job_file = os.path.join(JOBS_DIR, f'delivery-{key}.json')
         
         log_event(
             logger,
-            "Created CI/CD job",
+            "Accepted CI/CD delivery",
             job_file=job_file,
             repo_url=safe_repo_url,
             commit_sha=safe_commit_sha[:8],
@@ -167,6 +168,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
             return
 
         body = self.rfile.read(content_length)
+        if len(body) != content_length:
+            self.send_error(400, 'Incomplete request body')
+            return
         
         # Get webhook secret from environment
         secret = os.environ.get(WEBHOOK_SECRET_ENV)
@@ -185,7 +189,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
         # Parse JSON payload
         try:
             payload = json.loads(body.decode('utf-8'))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        except (json.JSONDecodeError, UnicodeDecodeError, RecursionError) as e:
             log_event(logger, "Invalid JSON payload", level=40, error=str(e))
             self.send_error(400, "Invalid JSON")
             return
@@ -273,7 +277,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 return
             
             # Trigger CI/CD job
-            success = trigger_cicd_job(repo_url, ref, commit_sha, pusher)
+            delivery_id = self.headers.get('X-GitHub-Delivery')
+            if delivery_id is not None and re.fullmatch(r'[A-Za-z0-9-]{1,128}', delivery_id) is None:
+                self.send_error(400, 'Invalid GitHub delivery ID')
+                return
+            # Only the body is authenticated by GitHub's HMAC. Changing an
+            # unsigned delivery header must not bypass replay protection.
+            success = trigger_cicd_job(
+                repo_url, ref, commit_sha, pusher,
+                payload_digest=hashlib.sha256(body).hexdigest(), delivery_id=delivery_id,
+            )
             
             if success:
                 log_event(logger, "CI/CD job triggered", repo_url=repo_url, commit_sha=commit_sha[:8])
@@ -283,7 +296,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"status": "accepted", "commit": commit_sha[:8]}).encode())
             else:
                 log_event(logger, "Failed to trigger CI/CD job", level=40, repo_url=repo_url, commit_sha=commit_sha[:8])
-                self.send_error(500, "Failed to trigger job")
+                self.send_error(503, "CI/CD admission unavailable; retry later")
         
         elif event_type == 'ping':
             # Handle ping events (sent when webhook is first created)
@@ -331,6 +344,7 @@ def main():
     
     # Create jobs directory if it doesn't exist
     os.makedirs(JOBS_DIR, exist_ok=True)
+    recover_pending(DELIVERIES_FILE, JOBS_DIR)
     
     # Start HTTP server (bind to localhost only for security)
     server_address = ('127.0.0.1', port)

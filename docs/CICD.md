@@ -166,6 +166,39 @@ transferring artifacts and fails the job if it is missing or unreadable.
 After changing the JSON, the next signed push uses the new settings. A ping
 event only verifies webhook connectivity and does not build a repository.
 
+## Delivery receipts and queue limits
+
+Accepted pushes are recorded in `/var/lib/infra_tools/cicd/deliveries.sqlite3`
+before their job file is published. The receipt retains the GitHub delivery ID
+when supplied, repository, commit, and job payload. Deduplication uses the
+authenticated body digest: changing the unsigned delivery-ID header cannot
+replay the same signed request. Duplicate requests receive 202 without creating
+another attempt. Terminal receipts are retained for 30 days from acceptance;
+replay protection does not extend beyond that retention window.
+
+The receiver recovers unpublished pending jobs on restart. Jobs run in receipt
+acceptance order, including recovered reservations. The executor records
+its claim before build side effects, so a crash after claiming does not replay
+a possibly completed deployment. Inspect the journal and build logs before
+deliberately submitting a new push after an interrupted or failed attempt.
+Do not delete the ledger to force retries. Missing, invalid, or unavailable
+receipts retain their queued jobs and fail execution for operator repair.
+Upgrade receiver and executor together for this receipt protocol; old queue
+files without a receipt retain their previous one-attempt behavior.
+
+Admission stops with HTTP 503 at 100 pending jobs, 10,000 retained receipts, or
+less than 128 MiB free on the queue filesystem. The SQLite ledger is limited to
+64 MiB. Reserved but unpublished jobs count toward the queue limit. Receipt-backed
+jobs older than seven days expire before execution. Existing receipts can still
+be acknowledged at the admission limit. Monitor admission failures in the
+receiver journal and restore capacity before retrying rejected deliveries.
+These limits bound admission, not disk usage by trusted build scripts.
+
+Each attempt gets an exclusively created log named with repository, commit,
+job, and a unique suffix under `/var/lib/infra_tools/cicd/logs/`. Its header and
+the executor journal record the job-to-log mapping. Rebuilding the same commit
+does not truncate an earlier log; the existing 30-day log cleanup still applies.
+
 ## Security and execution boundaries
 
 Repository scripts remain trusted code: they execute with the build user's
@@ -210,9 +243,7 @@ confinement does not sandbox commands executed by an approved script.
 - job and privileged request readers open paths without following symlinks or
   blocking on FIFOs, then require regular files. Job reads remain bounded even
   if a file grows after its initial size check
-- delivery IDs are not yet persisted, so a repeated valid GitHub delivery can
-  create another job for the same commit; monitor webhook retries until delivery
-  idempotency is implemented
+- durable receipts coalesce signed delivery retries within the retention window
 
 Quick checks:
 

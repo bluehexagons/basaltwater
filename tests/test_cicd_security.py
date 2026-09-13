@@ -97,7 +97,7 @@ class TestWebhookRequestLimits(unittest.TestCase):
             webhook_receiver,
             "JOBS_DIR",
             jobs_dir,
-        ):
+        ), patch.object(webhook_receiver, 'DELIVERIES_FILE', os.path.join(jobs_dir, 'receipts.sqlite3')):
             result = webhook_receiver.trigger_cicd_job(
                 "https://example.test/org/repo.git",
                 "refs/heads/main",
@@ -106,7 +106,7 @@ class TestWebhookRequestLimits(unittest.TestCase):
             )
 
             self.assertTrue(result)
-            filenames = os.listdir(jobs_dir)
+            filenames = [name for name in os.listdir(jobs_dir) if name.endswith('.json')]
             self.assertEqual(len(filenames), 1)
             self.assertNotIn("https", filenames[0])
             with open(os.path.join(jobs_dir, filenames[0]), encoding="utf-8") as file_obj:

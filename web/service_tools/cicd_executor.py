@@ -21,6 +21,9 @@ import time
 import fcntl
 import pwd
 import stat
+import tempfile
+import hashlib
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from web.service_tools.cicd_config import load_config_file
+from web.service_tools.cicd_deliveries import claim, pending_job_files
 from web.service_tools.cicd_security import (
     DEFAULT_BRANCHES,
     MAX_JOB_FILE_BYTES,
@@ -47,6 +51,7 @@ JOBS_DIR = os.path.join(STATE_DIR, "jobs")
 WORKSPACES_DIR = os.path.join(STATE_DIR, "workspaces")
 LOGS_DIR = os.path.join(STATE_DIR, "logs")
 LOCK_FILE = os.path.join(STATE_DIR, "executor.lock")
+DELIVERIES_FILE = os.path.join(STATE_DIR, 'deliveries.sqlite3')
 
 
 def get_build_home() -> str:
@@ -298,9 +303,21 @@ def process_job(job_file: str) -> bool:
         log_event(logger, 'CI/CD configuration unavailable; retaining job', level=40, error=str(exc))
         return False
     
+    consume = True
     try:
         job_data = _load_job_file(job_file)
         repo_url, ref, branch, commit_sha, pusher = validate_job_data(job_data)
+
+        if 'delivery_key' in job_data:
+            try:
+                claimed = claim(DELIVERIES_FILE, job_file, job_data)
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                consume = False
+                log_event(logger, 'Delivery receipt unavailable; retaining job', level=40, error=str(exc))
+                return False
+            if not claimed:
+                log_event(logger, 'Skipping expired or previously claimed delivery', level=30, job_file=job_file)
+                return False
         
         repos = config.get('repositories', [])
         
@@ -320,7 +337,6 @@ def process_job(job_file: str) -> bool:
             return False
         
         workspace = get_repo_workspace(repo_url)
-        log_file = os.path.join(LOGS_DIR, f"{commit_sha}.log")
         os.makedirs(LOGS_DIR, exist_ok=True)
 
         timestamp = job_data.get('timestamp', 'unknown')
@@ -329,8 +345,15 @@ def process_job(job_file: str) -> bool:
         ):
             timestamp = 'unknown'
         
-        with open(log_file, 'w') as log:
+        job_id = hashlib.sha256(os.path.basename(job_file).encode()).hexdigest()[:12]
+        descriptor, log_file = tempfile.mkstemp(
+            prefix=f'{get_workspace_name(repo_url)}-{commit_sha[:12]}-{job_id}-',
+            suffix='.log', dir=LOGS_DIR,
+        )
+        log_event(logger, 'Created build log', job_file=job_file, log_file=log_file)
+        with os.fdopen(descriptor, 'w') as log:
             log.write(f"CI/CD Build Log\n")
+            log.write(f"Job: {os.path.basename(job_file)}\n")
             log.write(f"{'='*80}\n")
             log.write(f"Repository: {repo_url}\n")
             log.write(f"Branch: {ref}\n")
@@ -396,7 +419,8 @@ def process_job(job_file: str) -> bool:
         return False
     finally:
         try:
-            _consume_job_path(job_file)
+            if consume:
+                _consume_job_path(job_file)
         except OSError as exc:
             log_event(logger, "Failed to remove consumed job", level=30, job_file=job_file, error=str(exc))
 
@@ -707,7 +731,7 @@ def main():
             log_event(logger, "Another executor instance is running, exiting")
             return 0
         
-        job_files = sorted(Path(JOBS_DIR).glob('*.json'))
+        job_files = pending_job_files(DELIVERIES_FILE, JOBS_DIR)
         config = load_config()
         
         if not job_files:
