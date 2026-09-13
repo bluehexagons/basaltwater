@@ -56,6 +56,14 @@ Deployment and gateway readiness requests use literal loopback addresses,
 ignore proxy environment variables, and never follow redirects. Deployment
 activation requires a local 2xx response from the configured health endpoint.
 
+CI/CD jobs share a four-hour execution budget across checkout, install, build,
+test and deployment. Each command uses the smaller of its own limit and the
+remaining job time, with process-group cleanup on timeout. The executor's
+systemd unit can drain multiple jobs without a shorter batch-wide timeout.
+Timeout events include the stage and whether deployment had begun; completed
+remote changes require inspection before retrying. Notification delivery uses
+its own bounded network calls after execution ends.
+
 Package, service, and user probes have a 15-second deadline. A timeout or
 unavailable probe raises an explicit unknown-state error and stops dependent
 setup instead of treating the package, service, or user as absent. Repair the

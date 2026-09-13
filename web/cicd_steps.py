@@ -289,7 +289,8 @@ WorkingDirectory=/opt/infra_tools/web/service_tools
 Environment=HOME=/var/lib/infra_tools/cicd
 Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd
 ExecStart=/usr/bin/python3 /opt/infra_tools/web/service_tools/cicd_executor.py
-TimeoutStartSec=2h
+# Each job owns a four-hour budget; this process may drain several jobs.
+TimeoutStartSec=infinity
 
 # Security hardening (executor must run user-supplied scripts so we cannot
 # apply MemoryDenyWriteExecute or SystemCallFilter without breaking common

@@ -22,7 +22,7 @@ class TestDeploymentPreflight(unittest.TestCase):
         }))
         self.push = self.stack.enter_context(patch('lib.remote_deploy.push_artifact', return_value=True))
         self.nginx = self.stack.enter_context(patch('lib.remote_deploy.push_nginx_config', return_value=True))
-        self.run = self.stack.enter_context(patch.object(cicd_executor.subprocess, 'run', return_value=
+        self.run = self.stack.enter_context(patch.object(cicd_executor, 'run_command', return_value=
             subprocess.CompletedProcess([], 0, '', '')))
         self.stack.enter_context(patch.object(cicd_executor, 'log_event'))
 

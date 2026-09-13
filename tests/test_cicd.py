@@ -640,7 +640,7 @@ class TestRemoteDeploy(unittest.TestCase):
 
 class TestRemoteDeployScriptExecution(unittest.TestCase):
     @patch('web.service_tools.cicd_executor.logger')
-    @patch('web.service_tools.cicd_executor.subprocess.run')
+    @patch('web.service_tools.cicd_executor.run_command')
     @patch('lib.remote_deploy._build_ssh_stdin_script_cmd', return_value=['ssh', 'deploy@app1', 'bash -s --'])
     @patch('lib.remote_deploy.reload_nginx', return_value=True)
     @patch('lib.remote_deploy.push_nginx_config', return_value=True)
@@ -710,7 +710,7 @@ class TestRemoteDeployScriptExecution(unittest.TestCase):
         self.assertFalse(result)
         self.assertIn("Unknown deploy target | deploy_target='missing.example.com'", "\n".join(logs.output))
 
-    @patch('web.service_tools.cicd_executor.subprocess.run', return_value=subprocess.CompletedProcess(args=['ssh'], returncode=0, stdout='ok', stderr=''))
+    @patch('web.service_tools.cicd_executor.run_command', return_value=subprocess.CompletedProcess(args=['ssh'], returncode=0, stdout='ok', stderr=''))
     @patch('lib.remote_deploy._build_ssh_stdin_script_cmd', return_value=['ssh', 'deploy@app1', 'bash -s --'])
     @patch('lib.remote_deploy.reload_nginx', return_value=True)
     @patch('lib.remote_deploy.push_nginx_config', return_value=True)
@@ -763,7 +763,7 @@ class TestExecutorStructuredLogging(unittest.TestCase):
             cicd_executor.load_config()
 
     @patch("web.service_tools.cicd_executor.os.path.lexists", return_value=False)
-    @patch("web.service_tools.cicd_executor.subprocess.run")
+    @patch("web.service_tools.cicd_executor.run_command")
     def test_clone_or_update_repo_logs_clone_and_success(self, mock_run, _mock_exists):
         commit_sha = "a" * 40
         mock_run.side_effect = [
@@ -792,7 +792,7 @@ class TestExecutorStructuredLogging(unittest.TestCase):
         self.assertIn("Checking out authenticated commit | branch='main' commit_sha='aaaaaaaa' repo_url='https://github.com/org/repo.git'", output)
         self.assertIn("Repository checkout prepared | branch='main' commit_sha='aaaaaaaa' repo_url='https://github.com/org/repo.git'", output)
 
-    @patch("web.service_tools.cicd_executor.subprocess.run", return_value=subprocess.CompletedProcess(args=["/bin/bash"], returncode=0, stdout="", stderr=""))
+    @patch("web.service_tools.cicd_executor.run_command", return_value=subprocess.CompletedProcess(args=["/bin/bash"], returncode=0, stdout="", stderr=""))
     @patch("web.service_tools.cicd_executor.get_build_home", return_value="/var/lib/infra_tools/cicd")
     def test_run_script_logs_start_and_success(self, _mock_home, mock_run):
         with tempfile.TemporaryDirectory() as workspace:

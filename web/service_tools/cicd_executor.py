@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
+from lib.cicd_deadline import JOB_TIMEOUT_SECONDS, command_timeout, enter_phase, job_budget, run_command
 from web.service_tools.cicd_config import load_config_file
 from web.service_tools.cicd_deliveries import claim, pending_job_files
 from web.service_tools.cicd_security import (
@@ -79,7 +80,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
                 shutil.rmtree(workspace)
 
         log_event(logger, "Creating fresh repository clone", repo_url=repo_url)
-        result = subprocess.run(
+        result = run_command(
             [
                 'git',
                 'clone',
@@ -105,7 +106,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
         refspec = f"+{ref}:{remote_ref}"
 
         log_event(logger, "Fetching authenticated branch", repo_url=repo_url, branch=branch)
-        result = subprocess.run(
+        result = run_command(
             ['git', 'fetch', '--force', '--prune', 'origin', refspec],
             cwd=workspace,
             capture_output=True,
@@ -116,7 +117,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Failed to fetch repository changes", level=40, repo_url=repo_url, stderr=result.stderr.strip())
             return False
 
-        result = subprocess.run(
+        result = run_command(
             ['git', 'cat-file', '-e', f'{validated_sha}^{{commit}}'],
             cwd=workspace,
             capture_output=True,
@@ -127,7 +128,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Authenticated commit was not fetched", level=40, repo_url=repo_url, commit_sha=validated_sha[:8])
             return False
 
-        result = subprocess.run(
+        result = run_command(
             ['git', 'merge-base', '--is-ancestor', validated_sha, remote_ref],
             cwd=workspace,
             capture_output=True,
@@ -146,7 +147,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             return False
 
         log_event(logger, "Checking out authenticated commit", repo_url=repo_url, branch=branch, commit_sha=validated_sha[:8])
-        result = subprocess.run(
+        result = run_command(
             ['git', 'checkout', '--detach', '--force', validated_sha],
             cwd=workspace,
             capture_output=True,
@@ -157,7 +158,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Failed to checkout authenticated commit", level=40, repo_url=repo_url, commit_sha=validated_sha[:8], stderr=result.stderr.strip())
             return False
 
-        result = subprocess.run(
+        result = run_command(
             ['git', 'clean', '-ffdx'],
             cwd=workspace,
             capture_output=True,
@@ -266,7 +267,7 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
             log.write(f"Running: {script_path}\n")
             log.write(f"{'='*80}\n\n")
             
-            result = subprocess.run(
+            result = run_command(
                 ['/bin/bash', '-lc', script_command],
                 cwd=workspace,
                 env=script_env,
@@ -295,6 +296,18 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
 
 
 def process_job(job_file: str) -> bool:
+    with job_budget() as budget:
+        result = _process_job(job_file)
+        if budget.timed_out:
+            log_event(
+                logger, "CI/CD job timed out", level=40, job_file=job_file,
+                stage=budget.phase, deployment_started=budget.deployment_started,
+            )
+            return False
+        return result
+
+
+def _process_job(job_file: str) -> bool:
     """Process a single CI/CD job."""
     log_event(logger, "Processing job", job_file=job_file)
     try:
@@ -376,6 +389,7 @@ def process_job(job_file: str) -> bool:
         for script_name in ['install', 'build', 'test']:
             script_path = scripts.get(script_name)
             if script_path:
+                enter_phase(script_name)
                 if not run_script(script_path, workspace, log_file):
                     log_event(logger, "Failed at stage", level=40, stage=script_name, repo_url=repo_url, commit_sha=commit_sha[:8])
                     success = False
@@ -386,6 +400,7 @@ def process_job(job_file: str) -> bool:
             deploy_spec = repo_config.get('deploy_spec')
             
             if deploy_target:
+                enter_phase("deploy", deployment=True)
                 success = perform_remote_deployment(
                     workspace, deploy_target, deploy_spec, repo_url, 
                     commit_sha, log_file, repo_config
@@ -393,10 +408,12 @@ def process_job(job_file: str) -> bool:
             else:
                 deploy_script = scripts.get('deploy')
                 if deploy_script:
+                    enter_phase("deploy", deployment=True)
                     if not run_script(deploy_script, workspace, log_file):
                         log_event(logger, "Failed at stage", level=40, stage="deploy", repo_url=repo_url, commit_sha=commit_sha[:8])
                         success = False
         
+        command_timeout(JOB_TIMEOUT_SECONDS)
         notification_configs = load_notification_configs_from_state(logger)
         if notification_configs:
             if success:
@@ -558,7 +575,7 @@ def perform_remote_deployment(
     if script_content is not None:
         ssh_cmd = _build_ssh_stdin_script_cmd(target, remote_path)
         try:
-            result = subprocess.run(
+            result = run_command(
                 ssh_cmd,
                 input=script_content,
                 capture_output=True,

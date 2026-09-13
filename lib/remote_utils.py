@@ -228,9 +228,11 @@ def run(
     timeout: Optional[float] = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     *,
     stdout: IO[str] | int | None = None,
+    stderr: IO[str] | int | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    if capture_output and stdout is not None:
-        raise ValueError("stdout and capture_output cannot be combined")
+    if capture_output and (stdout is not None or stderr is not None):
+        raise ValueError("stdout/stderr and capture_output cannot be combined")
     validated_timeout = _validate_timeout(timeout)
     diagnostic_output = sys.stderr if stdout is not None else sys.stdout
     log_cmd = _redact_command(
@@ -262,10 +264,11 @@ def run(
         command,
         stdin=subprocess.PIPE if input_data is not None else None,
         stdout=subprocess.PIPE if capture_output else stdout,
-        stderr=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else stderr,
         text=text,
         cwd=cwd,
         start_new_session=True,
+        **({"env": env} if env is not None else {}),
     )
     try:
         stdout, stderr = process.communicate(input=input_data, timeout=validated_timeout)

@@ -15,6 +15,7 @@ from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.cicd_deploy_policy import validate_nginx_deployment
 from lib.state_read import StateReadError, read_state_object
+from lib.cicd_deadline import run_command
 
 
 DEPLOY_ADMIN_HELPER = "/usr/local/sbin/infra-tools-deploy-admin"
@@ -138,7 +139,7 @@ def push_artifact(
     rsync_cmd.extend([local_path, remote_target])
     
     try:
-        result = subprocess.run(
+        result = run_command(
             rsync_cmd,
             capture_output=True,
             text=True,
@@ -194,7 +195,7 @@ def push_nginx_config(deployment: JSONDict, target_host: str, domain: str) -> bo
             connect_timeout=30,
         )
         
-        result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=60)
+        result = run_command(scp_cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             print(f"  ✗ Failed to upload nginx config: {result.stderr}")
             return False
@@ -204,7 +205,7 @@ def push_nginx_config(deployment: JSONDict, target_host: str, domain: str) -> bo
         )
         
         ssh_cmd = _build_ssh_cmd(target, remote_cmd)
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        result = run_command(ssh_cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             print(f"  ✗ Failed to install nginx config: {result.stderr}")
             return False
@@ -224,7 +225,7 @@ def reload_nginx(target_host: str) -> bool:
     ssh_cmd = _build_ssh_cmd(target, remote_cmd)
     
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        result = run_command(ssh_cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             print(f"  ✗ Failed to reload nginx: {result.stderr}")
             return False
@@ -246,7 +247,7 @@ def restart_service(target_host: str, service_name: str) -> bool:
     ssh_cmd = _build_ssh_cmd(target, remote_cmd)
     
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        result = run_command(ssh_cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             print(f"  ✗ Failed to restart {service_name}: {result.stderr}")
             return False
@@ -286,7 +287,7 @@ def remove_deployment(target_host: str, deploy_path: str, domain: Optional[str] 
     ssh_cmd = _build_ssh_cmd(target, remote_cmd)
     
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+        result = run_command(ssh_cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             print(f"  ✗ Failed to remove deployment: {result.stderr}")
             return False
@@ -306,7 +307,7 @@ def test_deploy_connection(target_host: str) -> bool:
     ssh_cmd = _build_ssh_cmd(target, shell_join(["echo", "connection ok"]))
     
     try:
-        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=10)
+        result = run_command(ssh_cmd, capture_output=True, text=True, timeout=10)
         if result.returncode != 0:
             print(f"  ✗ Connection failed: {result.stderr}")
             return False

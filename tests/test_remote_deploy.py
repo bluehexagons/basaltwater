@@ -43,12 +43,12 @@ class TestRemoteDeployTargetLoading(unittest.TestCase):
 
 class TestPushArtifact(unittest.TestCase):
     def test_unknown_target_is_rejected_without_rsync(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=None), patch.object(remote_deploy.subprocess, "run") as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=None), patch.object(remote_deploy, "run_command") as run:
             self.assertFalse(remote_deploy.push_artifact("/tmp/build", "missing", "/srv/app"))
         run.assert_not_called()
 
     def test_push_builds_rsync_command_with_excludes_and_trailing_source_slash(self) -> None:
-        with tempfile.TemporaryDirectory() as directory, patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh -i /tmp/deploy-key"), patch.object(remote_deploy, "ssh_batch_mode", return_value=True), patch.object(remote_deploy.subprocess, "run", return_value=completed()) as run:
+        with tempfile.TemporaryDirectory() as directory, patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh -i /tmp/deploy-key"), patch.object(remote_deploy, "ssh_batch_mode", return_value=True), patch.object(remote_deploy, "run_command", return_value=completed()) as run:
             result = remote_deploy.push_artifact(os.path.join(directory, "build"), "app", "/var/www/app", [".git", "*.tmp"])
 
         self.assertTrue(result)
@@ -59,14 +59,14 @@ class TestPushArtifact(unittest.TestCase):
         self.assertEqual(command[-1], "deploy@app.example:/var/www/app")
 
     def test_push_artifact_handles_rsync_failure_and_timeout(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), patch.object(remote_deploy.subprocess, "run", return_value=completed(1, "permission denied")):
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), patch.object(remote_deploy, "run_command", return_value=completed(1, "permission denied")):
             self.assertFalse(remote_deploy.push_artifact("/tmp/build", "app", "/var/www/app"))
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), patch.object(remote_deploy.subprocess, "run", side_effect=subprocess.TimeoutExpired(["rsync"], 300)):
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), patch.object(remote_deploy, "run_command", side_effect=subprocess.TimeoutExpired(["rsync"], 300)):
             self.assertFalse(remote_deploy.push_artifact("/tmp/build", "app", "/var/www/app"))
 
     def test_push_rejects_base_aliases_and_escapes_before_running_commands(self) -> None:
         for path in ("/var/www", "/var/www/.", "/var/www/app/..", "/var/www/..", "/srv/app", "/var/www/a\n"):
-            with self.subTest(path=path), patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy.subprocess, "run") as run:
+            with self.subTest(path=path), patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "run_command") as run:
                 self.assertFalse(remote_deploy.push_artifact("/tmp/build", "app", path))
                 run.assert_not_called()
 
@@ -86,7 +86,7 @@ class TestPushNginxConfig(unittest.TestCase):
             del target
             return ["ssh", remote]
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_scp_command", side_effect=build_scp), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=build_ssh), patch.object(remote_deploy.subprocess, "run", side_effect=[completed(), completed()]) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_scp_command", side_effect=build_scp), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=build_ssh), patch.object(remote_deploy, "run_command", side_effect=[completed(), completed()]) as run:
             result = remote_deploy.push_nginx_config(SITE, "app", "example.com")
 
         self.assertTrue(result)
@@ -97,11 +97,11 @@ class TestPushNginxConfig(unittest.TestCase):
         self.assertIn("install-site example_com", run.call_args_list[1].args[0][-1])
 
     def test_push_nginx_config_rejects_invalid_domain_and_upload_failure(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy.subprocess, "run") as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "run_command") as run:
             self.assertFalse(remote_deploy.push_nginx_config(SITE, "app", "../etc"))
         run.assert_not_called()
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_scp_command", return_value=["scp"]), patch.object(remote_deploy.subprocess, "run", return_value=completed(1, "upload failed")) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_scp_command", return_value=["scp"]), patch.object(remote_deploy, "run_command", return_value=completed(1, "upload failed")) as run:
             self.assertFalse(remote_deploy.push_nginx_config(SITE, "app", "example.com"))
         run.assert_called_once()
 
@@ -112,7 +112,7 @@ class TestRemoteDeploymentOperations(unittest.TestCase):
             del target
             return ["ssh", remote]
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=build_ssh), patch.object(remote_deploy.subprocess, "run", return_value=completed()) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=build_ssh), patch.object(remote_deploy, "run_command", return_value=completed()) as run:
             self.assertTrue(remote_deploy.reload_nginx("app"))
             self.assertTrue(remote_deploy.restart_service("app", "node-api"))
 
@@ -124,16 +124,16 @@ class TestRemoteDeploymentOperations(unittest.TestCase):
             self.assertFalse(remote_deploy.reload_nginx("missing"))
             self.assertFalse(remote_deploy.restart_service("missing", "node-api"))
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy.subprocess, "run", side_effect=subprocess.TimeoutExpired(["ssh"], 60)):
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy, "run_command", side_effect=subprocess.TimeoutExpired(["ssh"], 60)):
             self.assertFalse(remote_deploy.reload_nginx("app"))
             self.assertFalse(remote_deploy.restart_service("app", "node-api"))
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy.subprocess, "run", return_value=completed()) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy, "run_command", return_value=completed()) as run:
             self.assertTrue(remote_deploy.restart_service("app", "nginx"))
         self.assertIn("restart-service nginx", run.call_args.args[0][-1])
 
     def test_remove_deployment_validates_path_and_chains_nginx_cleanup(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy.subprocess, "run", return_value=completed()) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy, "run_command", return_value=completed()) as run:
             self.assertTrue(remote_deploy.remove_deployment("app", "/var/www/shop", "shop.example.com"))
 
         command = run.call_args.args[0][-1]
@@ -141,24 +141,24 @@ class TestRemoteDeploymentOperations(unittest.TestCase):
         self.assertIn("remove-nginx shop_example_com", command)
         self.assertIn("reload-nginx", command)
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy.subprocess, "run") as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "run_command") as run:
             self.assertFalse(remote_deploy.remove_deployment("app", "/etc/passwd", "shop.example.com"))
         run.assert_not_called()
 
     def test_remove_deployment_rejects_invalid_domain_and_timeout(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy.subprocess, "run") as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "run_command") as run:
             self.assertFalse(remote_deploy.remove_deployment("app", "/var/www/shop", "../etc"))
         run.assert_not_called()
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy.subprocess, "run", side_effect=subprocess.TimeoutExpired(["ssh"], 60)):
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy, "run_command", side_effect=subprocess.TimeoutExpired(["ssh"], 60)):
             self.assertFalse(remote_deploy.remove_deployment("app", "/var/www/shop"))
 
     def test_connection_reports_success_failure_and_timeout(self) -> None:
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy.subprocess, "run", return_value=completed()) as run:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", side_effect=lambda target, remote: ["ssh", remote]), patch.object(remote_deploy, "run_command", return_value=completed()) as run:
             self.assertTrue(remote_deploy.test_deploy_connection("app"))
         self.assertIn("echo 'connection ok'", run.call_args.args[0][-1])
 
-        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy.subprocess, "run", side_effect=[completed(1, "denied"), subprocess.TimeoutExpired(["ssh"], 10)]):
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "_build_ssh_cmd", return_value=["ssh"]), patch.object(remote_deploy, "run_command", side_effect=[completed(1, "denied"), subprocess.TimeoutExpired(["ssh"], 10)]):
             self.assertFalse(remote_deploy.test_deploy_connection("app"))
             self.assertFalse(remote_deploy.test_deploy_connection("app"))
 
