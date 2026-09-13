@@ -14,6 +14,33 @@ import lib.machine_state as ms
 from lib.config import DEFAULT_MACHINE_TYPE
 
 
+class TestInvalidStateRecovery(unittest.TestCase):
+    def test_invalid_existing_state_cannot_be_overwritten_by_save(self):
+        for content in ('not json', '[]', '{"version":2}', '{"version":true}'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "machine.json")
+                with open(path, "w") as file:
+                    file.write(content)
+                with patch.object(ms, "STATE_FILE", path), patch.object(ms, "STATE_DIR", directory):
+                    for operation in (ms.can_modify_kernel, lambda: ms.save_machine_state("vm", "server_lite", "agent")):
+                        with self.assertRaisesRegex(ms.StateReadError, "File retained"):
+                            operation()
+                with open(path) as file:
+                    self.assertEqual(file.read(), content)
+
+    def test_unsafe_state_files_fail_without_blocking(self):
+        for kind in ("symlink", "fifo"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "machine.json")
+                if kind == "symlink":
+                    os.symlink(os.path.join(directory, "missing"), path)
+                else:
+                    os.mkfifo(path)
+                with patch.object(ms, "STATE_FILE", path):
+                    with self.assertRaises(ms.StateReadError):
+                        ms.load_machine_state()
+
+
 class TestMachineStateHelpers(unittest.TestCase):
     """Test machine type helper functions by mocking load_machine_state."""
 
@@ -152,14 +179,14 @@ class TestSaveLoadMachineState(unittest.TestCase):
                 self.assertEqual(state['machine_type'], DEFAULT_MACHINE_TYPE)
                 self.assertIsNone(state['system_type'])
 
-    def test_load_corrupt_file_returns_defaults(self):
+    def test_load_corrupt_file_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = os.path.join(tmpdir, 'corrupt.json')
             with open(state_file, 'w') as f:
                 f.write('not valid json')
             with patch.object(ms, 'STATE_FILE', state_file):
-                state = ms.load_machine_state()
-                self.assertEqual(state['machine_type'], DEFAULT_MACHINE_TYPE)
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_machine_state()
 
     def test_save_with_extra_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -227,7 +254,8 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
             with open(config_file, 'w') as f:
                 f.write('{broken')
             with patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
-                self.assertIsNone(ms.load_setup_config())
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_setup_config()
 
 
 class TestMachineStateValidation(unittest.TestCase):
@@ -249,32 +277,31 @@ class TestMachineStateValidation(unittest.TestCase):
                 state = ms.load_machine_state()
                 self.assertEqual(state['machine_type'], 'vm')
 
-    def test_missing_required_key_returns_defaults(self):
+    def test_missing_required_key_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             # Missing 'username'
             state_file = self._write_state(tmpdir, {
                 'machine_type': 'vm', 'system_type': 'server_dev'
             })
             with patch.object(ms, 'STATE_FILE', state_file):
-                state = ms.load_machine_state()
-                self.assertEqual(state['machine_type'], DEFAULT_MACHINE_TYPE)
-                self.assertIsNone(state['username'])
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_machine_state()
 
-    def test_unknown_machine_type_returns_defaults(self):
+    def test_unknown_machine_type_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = self._write_state(tmpdir, {
                 'machine_type': 'quantum_computer', 'system_type': 'server_dev', 'username': 'test'
             })
             with patch.object(ms, 'STATE_FILE', state_file):
-                state = ms.load_machine_state()
-                self.assertEqual(state['machine_type'], DEFAULT_MACHINE_TYPE)
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_machine_state()
 
-    def test_json_list_instead_of_dict_returns_defaults(self):
+    def test_json_list_instead_of_dict_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_file = self._write_state(tmpdir, ["not", "a", "dict"])
             with patch.object(ms, 'STATE_FILE', state_file):
-                state = ms.load_machine_state()
-                self.assertEqual(state['machine_type'], DEFAULT_MACHINE_TYPE)
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_machine_state()
 
     def test_null_machine_type_accepted(self):
         """machine_type=None is accepted (edge case for partial state)."""
@@ -318,37 +345,41 @@ class TestSetupConfigValidation(unittest.TestCase):
                 assert config is not None
                 self.assertEqual(config['host'], '10.0.0.1')
 
-    def test_missing_required_key_returns_none(self):
+    def test_missing_required_key_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             # Missing 'username' (required for runtime operations)
             config_file = self._write_config(tmpdir, {
                 'system_type': 'server_lite'
             })
             with patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
-                self.assertIsNone(ms.load_setup_config())
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_setup_config()
 
-    def test_unknown_system_type_returns_none(self):
+    def test_unknown_system_type_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = self._write_config(tmpdir, {
                 'host': '10.0.0.1', 'username': 'admin', 'system_type': 'moon_base'
             })
             with patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
-                self.assertIsNone(ms.load_setup_config())
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_setup_config()
 
-    def test_unknown_machine_type_returns_none(self):
+    def test_unknown_machine_type_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = self._write_config(tmpdir, {
                 'host': '10.0.0.1', 'username': 'admin',
                 'system_type': 'server_lite', 'machine_type': 'invalid'
             })
             with patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
-                self.assertIsNone(ms.load_setup_config())
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_setup_config()
 
-    def test_json_list_instead_of_dict_returns_none(self):
+    def test_json_list_instead_of_dict_raises_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = self._write_config(tmpdir, [1, 2, 3])
             with patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
-                self.assertIsNone(ms.load_setup_config())
+                with self.assertRaises(ms.StateReadError):
+                    ms.load_setup_config()
 
     def test_valid_machine_type_in_config_accepted(self):
         with tempfile.TemporaryDirectory() as tmpdir:

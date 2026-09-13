@@ -19,6 +19,7 @@ from lib.cache import (
     rename_setup_command,
 )
 from lib.config import SetupConfig
+from lib.state_read import StateReadError
 
 
 class TestGetCachePathForHost(unittest.TestCase):
@@ -118,7 +119,7 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
 
                 self.assertIsNone(loaded)
 
-    def test_load_by_name_skips_corrupted_cache_files(self):
+    def test_load_by_name_rejects_corrupted_cache_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir), patch('lib.cache.get_history_dir', return_value=tmpdir):
                 with open(os.path.join(tmpdir, 'broken.json'), 'w') as f:
@@ -127,10 +128,8 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 config = self._make_config(host='10.0.0.5', friendly_name='My Server', tags=['prod'])
                 save_setup_command(config)
 
-                loaded = load_setup_command('My Server')
-
-                self.assertIsNotNone(loaded)
-                self.assertEqual(loaded.host, '10.0.0.5')
+                with self.assertRaises(StateReadError):
+                    load_setup_command("My Server")
 
     def test_save_with_timing_and_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:

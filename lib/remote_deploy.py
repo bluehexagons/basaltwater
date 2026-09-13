@@ -14,9 +14,11 @@ from lib.ssh_utils import build_scp_command, build_ssh_command, build_rsync_ssh_
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.cicd_deploy_policy import validate_nginx_deployment
+from lib.state_read import StateReadError, read_state_object
 
 
 DEPLOY_ADMIN_HELPER = "/usr/local/sbin/infra-tools-deploy-admin"
+DEPLOY_TARGETS_FILE = "/etc/infra_tools/cicd/deploy_targets.json"
 
 
 def _validate_config_name(domain: str) -> str:
@@ -47,16 +49,13 @@ def _validate_deploy_path(deploy_path: str, base_dir: str) -> str:
 
 def load_deploy_targets() -> dict[str, JSONDict]:
     """Load deploy targets configuration."""
-    targets_file = "/etc/infra_tools/cicd/deploy_targets.json"
-    
-    if not os.path.exists(targets_file):
+    targets = read_state_object(DEPLOY_TARGETS_FILE, versioned=False)
+    if targets is None:
         return {}
-    
-    try:
-        with open(targets_file, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+    for target in targets.values():
+        if not isinstance(target, dict) or not isinstance(target.get("host"), str):
+            raise StateReadError(DEPLOY_TARGETS_FILE, "invalid deployment target structure")
+    return targets
 
 
 def get_deploy_target(target_host: str) -> Optional[JSONDict]:

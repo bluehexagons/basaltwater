@@ -32,16 +32,6 @@ calls and temporary directories; live deployment qualification is separate.
   add a setup-specific deadline, process-group termination, streamed output,
   and tests for hangs and descendants holding pipes.
 
-- **RCF-07 — Medium: corrupt state is treated as missing,
-  default state, or an inconsistent exception.** Cache, machine-state, and
-  deploy-target readers respectively skip/return `None`, synthesize defaults,
-  or return `{}` for some malformed data; valid JSON with the wrong root type
-  can instead raise during field access. Evidence: [`cache.py`](../../lib/cache.py),
-  [`machine_state.py`](../../lib/machine_state.py),
-  [`remote_deploy.py`](../../lib/remote_deploy.py). **Acceptance:**
-  distinguish missing/invalid/unsupported state, quarantine invalid files,
-  provide repair guidance, and refuse mutation when required state is invalid.
-
 - **RCF-10 — Medium: CI/CD service timeout is shorter than a
   valid pipeline.** `TimeoutStartSec=2h`, but up to four sequential stages can
   each run for one hour. Evidence:
@@ -111,9 +101,9 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## Delivery and ownership
 
-- Prioritize recoverable service/setup execution (RCF-04–05), state validation
-  (RCF-07), and CI/CD deadlines and credential cleanup (RCF-10, 12).
-- RCF-05 and 07 use the shared process/state contracts in
+- Prioritize recoverable service/setup execution (RCF-04–05), and CI/CD
+  deadlines and credential cleanup (RCF-10, 12).
+- RCF-05 uses the shared process contracts in
   [Transactional execution](TRANSACTIONAL_EXECUTION.md).
 - RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md);
   RCF-12 complements [Deploy secrets](DEPLOY_SECRETS.md).

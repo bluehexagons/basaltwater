@@ -10,6 +10,7 @@ import time
 from dataclasses import asdict
 from typing import Optional, Any
 
+from lib.state_read import StateReadError, read_state_object
 from lib.config import SetupConfig
 from lib.atomic_io import write_json_atomic
 from lib.validators import validate_username
@@ -87,6 +88,7 @@ def save_setup_command(
     operation: str = "setup",
 ) -> None:
     cache_path = get_cache_path_for_host(config.host)
+    _load_cache_file(cache_path, config.host)
     
     cache_data: dict[str, Any] = {
         "host": config.host,
@@ -219,86 +221,75 @@ def rename_setup_command(
     write_json_atomic(cache_path, cache_data, mode=0o600)
 
 
-def _load_cache_file(cache_path: str, host: str) -> Optional[SetupConfig]:
-    """Load a SetupConfig from a cache file, using the provided host string."""
-    try:
-        with open(cache_path, 'r') as f:
-            data = json.load(f)
-            system_type = data.get('system_type')
-            args_dict = data.get('args', {})
-            if 'name' in data and 'friendly_name' not in args_dict:
-                args_dict['friendly_name'] = data['name']
-            if 'tags' in data and 'tags' not in args_dict:
-                args_dict['tags'] = data['tags']
-            return SetupConfig.from_dict(host, system_type, args_dict)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-        print(f"Warning: Failed to load cached setup for {host}: {e}")
+def _cache_record(path: str) -> dict[str, Any] | None:
+    data = read_state_object(path)
+    if data is None:
         return None
+    if (
+        not isinstance(data.get("host"), str) or not data["host"]
+        or not isinstance(data.get("system_type"), str)
+        or not isinstance(data.get("args"), dict)
+        or ("name" in data and not isinstance(data["name"], str))
+        or ("tags" in data and (not isinstance(data["tags"], list) or not all(isinstance(tag, str) for tag in data["tags"])))
+    ):
+        raise StateReadError(path, "invalid setup cache structure")
+    return data
+
+
+def _load_cache_file(cache_path: str, host: str) -> Optional[SetupConfig]:
+    data = _cache_record(cache_path)
+    if data is None:
+        return None
+    args_dict = dict(data["args"])
+    if "name" in data and "friendly_name" not in args_dict:
+        args_dict["friendly_name"] = data["name"]
+    if "tags" in data and "tags" not in args_dict:
+        args_dict["tags"] = data["tags"]
+    try:
+        config = SetupConfig.from_dict(host, data["system_type"], args_dict)
+        if config.friendly_name is not None and not isinstance(config.friendly_name, str):
+            raise ValueError("Invalid friendly name")
+        if config.tags is not None and (not isinstance(config.tags, list) or not all(isinstance(tag, str) for tag in config.tags)):
+            raise ValueError("Invalid tags")
+        return config
+    except (KeyError, ValueError, TypeError, AttributeError) as exc:
+        raise StateReadError(cache_path, "invalid setup arguments") from exc
 
 
 def _find_cache_by_name(name: str) -> Optional[SetupConfig]:
-    """Search all cache files for one matching by friendly name or tag."""
-    cache_dir = get_setup_cache_dir()
-    if not os.path.exists(cache_dir):
-        return None
     needle = name.lower()
-    try:
-        for filename in os.listdir(cache_dir):
-            if not filename.endswith('.json'):
-                continue
-            filepath = os.path.join(cache_dir, filename)
-            try:
-                with open(filepath, 'r') as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-            cached_name = str(data.get('name', '')).lower()
-            if needle == cached_name:
-                actual_host = data.get('host', '')
-                if actual_host:
-                    return _load_cache_file(filepath, actual_host)
-                continue
-            tags = data.get('tags', [])
-            if isinstance(tags, list) and any(needle == str(t).lower() for t in tags):
-                actual_host = data.get('host', '')
-                if actual_host:
-                    return _load_cache_file(filepath, actual_host)
-    except Exception:
-        pass
+    for config in load_all_setup_commands():
+        if needle == (config.friendly_name or "").lower() or any(
+            needle == tag.lower() for tag in config.tags or []
+        ):
+            return config
     return None
 
 
 def load_setup_command(host: str) -> Optional[SetupConfig]:
     cache_path = get_cache_path_for_host(host)
-    if os.path.exists(cache_path):
+    if os.path.lexists(cache_path):
         return _load_cache_file(cache_path, host)
-    # Fall back to searching by friendly name / tag so callers can use
-    # names like "devweb" instead of the raw IP address.
     return _find_cache_by_name(host)
 
 
 def load_all_setup_commands(workspace: Optional[str] = None) -> list[SetupConfig]:
-    """Load every saved setup command from the workspace cache directory."""
+    """Load all saved configurations; incomplete inventories fail explicitly."""
     cache_dir = get_setup_cache_dir(workspace)
     if not os.path.exists(cache_dir):
         return []
-
-    configs: list[SetupConfig] = []
+    configs = []
     for filename in sorted(os.listdir(cache_dir)):
         if not filename.endswith(".json"):
             continue
-        cache_path = os.path.join(cache_dir, filename)
-        try:
-            with open(cache_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            continue
-        host = data.get("host")
-        if not isinstance(host, str) or not host:
-            continue
-        config = _load_cache_file(cache_path, host)
-        if config is not None:
-            configs.append(config)
+        path = os.path.join(cache_dir, filename)
+        data = _cache_record(path)
+        if data is None:
+            raise StateReadError(path, "cache disappeared during inventory")
+        config = _load_cache_file(path, data["host"])
+        if config is None:
+            raise StateReadError(path, "cache disappeared during inventory")
+        configs.append(config)
     return sorted(configs, key=lambda config: (config.friendly_name or config.host).lower())
 
 

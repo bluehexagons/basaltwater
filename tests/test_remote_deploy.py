@@ -7,13 +7,10 @@ import json
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import mock_open, patch
+from unittest.mock import patch
 
 from lib import remote_deploy
 
-
-def mock_open_text(value: str):
-    return mock_open(read_data=value)
 
 
 TARGET = {
@@ -31,15 +28,18 @@ def completed(returncode: int = 0, stderr: str = "") -> subprocess.CompletedProc
 
 
 class TestRemoteDeployTargetLoading(unittest.TestCase):
-    def test_load_targets_returns_empty_for_missing_or_invalid_file(self) -> None:
-        with patch.object(remote_deploy.os.path, "exists", return_value=False):
-            self.assertEqual(remote_deploy.load_deploy_targets(), {})
+    def test_missing_targets_are_distinct_from_invalid_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "targets.json")
+            with patch.object(remote_deploy, "DEPLOY_TARGETS_FILE", path):
+                self.assertEqual(remote_deploy.load_deploy_targets(), {})
+                for content in ("not json", "[]", '{"app": []}'):
+                    with self.subTest(content=content):
+                        with open(path, "w") as file:
+                            file.write(content)
+                        with self.assertRaises(remote_deploy.StateReadError):
+                            remote_deploy.load_deploy_targets()
 
-        with patch.object(remote_deploy.os.path, "exists", return_value=True), patch("builtins.open", side_effect=OSError):
-            self.assertEqual(remote_deploy.load_deploy_targets(), {})
-
-        with patch.object(remote_deploy.os.path, "exists", return_value=True), patch("builtins.open", mock_open_text("not json")):
-            self.assertEqual(remote_deploy.load_deploy_targets(), {})
 
 class TestPushArtifact(unittest.TestCase):
     def test_unknown_target_is_rejected_without_rsync(self) -> None:

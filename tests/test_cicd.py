@@ -587,14 +587,15 @@ class TestBuildServerSteps(unittest.TestCase):
 class TestRemoteDeploy(unittest.TestCase):
     """Test remote deployment utilities."""
     
-    @patch('lib.remote_deploy.os.path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data='{"app1.example.com": {"host": "app1.example.com"}}')
-    def test_load_deploy_targets(self, mock_file, mock_exists):
+    def test_load_deploy_targets(self):
         """Test loading deploy targets configuration."""
-        mock_exists.return_value = True
-        
         from lib.remote_deploy import load_deploy_targets
-        targets = load_deploy_targets()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'targets.json')
+            with open(path, 'w') as file_obj:
+                json.dump({'app1.example.com': {'host': 'app1.example.com'}}, file_obj)
+            with patch('lib.remote_deploy.DEPLOY_TARGETS_FILE', path):
+                targets = load_deploy_targets()
         
         self.assertIn('app1.example.com', targets)
     

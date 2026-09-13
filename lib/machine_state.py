@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -12,8 +11,10 @@ from contextvars import ContextVar
 from typing import Any, Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.state_read import StateReadError, read_state_object
 from lib.config import AUTO_MACHINE_TYPE, DEFAULT_MACHINE_TYPE, MACHINE_TYPES
 from lib.plugin_registry import get_system_type_names
+from lib.validators import validate_username
 
 
 STATE_DIR = "/opt/infra_tools/state"
@@ -140,6 +141,7 @@ def save_machine_state(
     extra_data: Optional[dict[str, Any]] = None
 ) -> None:
     """Save machine state to the target system."""
+    load_machine_state()
     os.makedirs(STATE_DIR, exist_ok=True)
     
     state: dict[str, Any] = {
@@ -155,7 +157,7 @@ def save_machine_state(
 
 
 def _default_machine_state() -> dict[str, Any]:
-    """Return the default machine state used when no valid state is available."""
+    """Return default state only when the state file is missing."""
     return {
         "machine_type": DEFAULT_MACHINE_TYPE,
         "system_type": None,
@@ -176,28 +178,27 @@ def _validate_machine_state(state: Any) -> Optional[str]:
         return f"Missing required keys: {', '.join(missing)}"
 
     machine_type = state["machine_type"]
-    if machine_type is not None and machine_type not in MACHINE_TYPES:
+    if machine_type is not None and (not isinstance(machine_type, str) or machine_type not in MACHINE_TYPES):
         return f"Unknown machine_type: {machine_type!r}"
+
+    for field in ("system_type", "username"):
+        if state[field] is not None and not isinstance(state[field], str):
+            return f"Invalid {field} type"
+    if state["username"] is not None and not validate_username(state["username"]):
+        return "Invalid username"
 
     return None
 
 
 def load_machine_state() -> dict[str, Any]:
     """Load machine state from the target system."""
-    if not os.path.exists(STATE_FILE):
-        return _default_machine_state()
-
-    try:
-        with open(STATE_FILE, 'r') as f:
-            state = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"Warning: Failed to load machine state: {e}")
+    state = read_state_object(STATE_FILE)
+    if state is None:
         return _default_machine_state()
 
     error = _validate_machine_state(state)
     if error:
-        print(f"Warning: Invalid machine state ({error}), using defaults")
-        return _default_machine_state()
+        raise StateReadError(STATE_FILE, "invalid machine state fields")
 
     return state
 
@@ -301,6 +302,7 @@ def can_restart_system() -> bool:
 
 def save_setup_config(config_dict: dict[str, Any]) -> None:
     """Save the setup configuration to the target system for later recall."""
+    load_setup_config()
     os.makedirs(STATE_DIR, exist_ok=True)
 
     sanitized_config = dict(config_dict)
@@ -321,27 +323,29 @@ def _validate_setup_config(config: Any) -> Optional[str]:
         return f"Missing required keys: {', '.join(missing)}"
 
     system_type = config.get("system_type")
-    if system_type is not None and system_type not in get_system_type_names():
+    if system_type is not None and (not isinstance(system_type, str) or system_type not in get_system_type_names()):
         return f"Unknown system_type: {system_type!r}"
 
     machine_type = config.get("machine_type")
-    if machine_type is not None and machine_type not in MACHINE_TYPES:
+    if machine_type is not None and (not isinstance(machine_type, str) or machine_type not in MACHINE_TYPES):
         return f"Unknown machine_type: {machine_type!r}"
+
+    username = config.get("username")
+    if username is not None and (not isinstance(username, str) or not validate_username(username)):
+        return "Invalid username"
 
     return None
 
 
 def load_setup_config() -> Optional[dict[str, Any]]:
     """Load the setup configuration from the target system."""
-    if not os.path.exists(SETUP_CONFIG_FILE):
+    config = read_state_object(SETUP_CONFIG_FILE)
+    if config is None:
         return None
-    
-    try:
-        with open(SETUP_CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"Warning: Failed to load setup configuration: {e}")
-        return None
+
+    error = _validate_setup_config(config)
+    if error:
+        raise StateReadError(SETUP_CONFIG_FILE, "invalid setup configuration fields")
 
     if isinstance(config, dict) and "password" in config:
         del config["password"]
@@ -349,10 +353,5 @@ def load_setup_config() -> Optional[dict[str, Any]]:
             write_json_atomic(SETUP_CONFIG_FILE, config)
         except OSError as exc:
             print(f"Warning: Failed to remove password from saved setup configuration: {exc}")
-
-    error = _validate_setup_config(config)
-    if error:
-        print(f"Warning: Invalid setup configuration ({error})")
-        return None
 
     return config

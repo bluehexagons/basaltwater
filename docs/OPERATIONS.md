@@ -18,6 +18,20 @@ infra-tools cmd production
 `list` filters by host, friendly name, or tag. `info` shows configuration and
 last-run status. `cmd` reconstructs a safe, redacted setup command.
 
+Saved setup caches, machine/setup state, and deployment-target readers reject
+malformed JSON, wrong record shapes, unsafe file types, and unreadable files.
+Versioned readers accept legacy unversioned records and version 1; unsupported
+versions fail without overwriting data. Reads are capped at 1 MiB. Only missing
+files receive defaults. Cache inventories stop on invalid records rather than
+silently omitting hosts, and saves refuse to overwrite invalid existing cache
+or machine/setup state.
+
+Recovery errors name the affected path without printing its contents. The file
+stays in place as a guard against accidental fresh setup. Restore a verified
+backup, or explicitly move the file to a private quarantine location after
+reviewing the target's actual state and deciding that fresh configuration is
+appropriate. Do not delete state merely to suppress an error.
+
 ## Patch and redeploy
 
 Package, service, and user probes have a 15-second deadline. A timeout or

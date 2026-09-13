@@ -17,6 +17,11 @@ from common.service_tools import auto_restart_if_needed
 
 
 class TestAutoRestartIfNeeded(unittest.TestCase):
+    def setUp(self):
+        config = patch.object(auto_restart_if_needed, "load_setup_config", return_value={})
+        config.start()
+        self.addCleanup(config.stop)
+
     @patch("common.service_tools.auto_restart_if_needed.perform_restart")
     @patch("common.service_tools.auto_restart_if_needed.record_deferral")
     @patch("common.service_tools.auto_restart_if_needed.newer_installed_kernel", return_value="6.12.44+deb13-amd64")
