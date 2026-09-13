@@ -145,6 +145,40 @@ class TestStaticWebPublish(unittest.TestCase):
                     "new site" if failure is None else "old site",
                 )
 
+    def test_scan_failure_preserves_publication_before_copying(self) -> None:
+        for unreadable_root in (False, True):
+            with self.subTest(root=unreadable_root), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                project = root / "project"
+                output = project / "dist"
+                child = output / "unreadable"
+                child.mkdir(parents=True)
+                (output / "index.html").write_text("new site", encoding="utf-8")
+                sites = root / "sites"
+                destination = sites / "agent" / "demo"
+                destination.mkdir(parents=True)
+                (destination / "index.html").write_text("old site", encoding="utf-8")
+                real_scandir = os.scandir
+                failed_path = str(output if unreadable_root else child)
+
+                def scan(path):
+                    if os.fspath(path) == failed_path:
+                        raise PermissionError(13, "Permission denied", failed_path)
+                    return real_scandir(path)
+
+                with (
+                    patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                    patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                    patch.object(static_web_publish.os, "scandir", side_effect=scan),
+                    patch.object(static_web_publish.shutil, "copytree") as copy,
+                    patch.object(static_web_publish, "_replace_site") as activate,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "Could not validate static output"):
+                        static_web_publish.publish(_args(str(project)))
+                    copy.assert_not_called()
+                    activate.assert_not_called()
+                self.assertEqual((destination / "index.html").read_text(), "old site")
+
     def test_remove_requires_confirmation_and_owned_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             sites_root = os.path.join(temporary_dir, "sites")

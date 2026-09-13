@@ -369,8 +369,14 @@ def _publish(args: argparse.Namespace) -> tuple[str, str, dict[str, object]]:
         raise RuntimeError(f"publishing directory is not owned by {account.pw_name}")
 
     lock_path = os.path.join(user_root, f".infra-tools-{game}.lock")
-    with open(lock_path, "a", encoding="utf-8") as lock_file:
-        os.chmod(lock_path, 0o600)
+    descriptor = os.open(
+        lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as lock_file:
+        file_stat = os.fstat(lock_file.fileno())
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise RuntimeError(f"Refusing unsafe game lock: {lock_path}")
+        os.fchmod(lock_file.fileno(), 0o600)
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         staging_dir = tempfile.mkdtemp(prefix=f".{game}-", dir=user_root)
         try:

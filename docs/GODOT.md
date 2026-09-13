@@ -81,6 +81,9 @@ completes a new export, with a per-game lock so unrelated games may publish in
 parallel without conflicting updates. A failed build does not remove the last
 working copy.
 
+Publication lock files must be regular files with no symbolic or additional
+hard links. Unsafe locks stop the export before any staging or permission changes.
+
 Before compression, metadata writes, or permission changes, the publisher
 rejects symlinks, multiply linked files, and special files in generated output.
 An unreadable directory or other scan failure also stops publication; validation

@@ -185,7 +185,10 @@ def _resolve_output(project_dir: str, value: str | None) -> str:
 
 
 def _validate_output_tree(output_dir: str) -> None:
-    for current_dir, directory_names, file_names in os.walk(output_dir):
+    def scan_failed(error: OSError) -> None:
+        raise RuntimeError(f"Could not validate static output: {error.filename}") from error
+
+    for current_dir, directory_names, file_names in os.walk(output_dir, onerror=scan_failed):
         if os.path.islink(current_dir):
             raise ValueError(f"Static output contains a symlink: {current_dir}")
         for name in [*directory_names, *file_names]:

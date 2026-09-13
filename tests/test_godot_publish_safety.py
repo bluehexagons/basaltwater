@@ -14,6 +14,39 @@ from common.service_tools import godot_web_publish as publisher
 
 
 class TestGodotExportValidation(unittest.TestCase):
+    def test_unsafe_lock_stops_export_without_changing_link_target(self) -> None:
+        for kind in ("symlink", "hardlink", "fifo"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                project = root / "project"
+                project.mkdir()
+                (project / "project.godot").write_text('[application]\nconfig/name="Test"\n')
+                games = root / "games"
+                user_root = games / "agent"
+                user_root.mkdir(parents=True)
+                outside = root / "outside"
+                outside.write_text("preserve")
+                outside.chmod(0o644)
+                lock = user_root / ".infra-tools-test.lock"
+                if kind == "symlink":
+                    lock.symlink_to(outside)
+                elif kind == "hardlink":
+                    os.link(outside, lock)
+                else:
+                    os.mkfifo(lock)
+                with (
+                    patch.object(publisher, "GAMES_ROOT", str(games)),
+                    patch.object(publisher, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                    patch.object(publisher.subprocess, "run") as export,
+                ):
+                    args = publisher._parser().parse_args(["test", "--project", str(project)])
+                    with self.assertRaises((OSError, RuntimeError)):
+                        publisher._publish(args)
+                    export.assert_not_called()
+                self.assertEqual(outside.read_text(), "preserve")
+                self.assertEqual(outside.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(list(user_root.iterdir()), [lock])
+
     def test_unreadable_subtree_stops_validation_before_permission_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

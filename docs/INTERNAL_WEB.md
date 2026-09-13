@@ -104,7 +104,9 @@ infra-web publish site docs --open
 `--no-build` requires an existing output directory. `--no-install` skips the
 automatic dependency installation but still runs the build. Static output must
 contain `index.html`, remain inside the project, and contain no symbolic links
-or special files. When an npm project has no lockfile and `node_modules` is
+or special files. An unreadable output directory or other scan error stops
+publication before activation and leaves the previous site intact.
+When an npm project has no lockfile and `node_modules` is
 absent, the automatic `npm install` can create `package-lock.json`; inspect Git
 status before and after publication and handle that file according to the
 project's dependency policy.
