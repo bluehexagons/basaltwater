@@ -75,7 +75,7 @@ reconciliation; the issue triage records their evidence and remaining scope.
 | [RDP desktop agent audit](DESKTOP_AGENT_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | XRDP identity, configuration rollback, workload safety, and live smoke coverage. |
 | [Test slop audit](TEST_SLOP_AUDIT_2026-08-09.md) | Complete reference | Records test-retention decisions; it is not active project work. |
 | [Test suite audit and coverage plan](TEST_SUITE_AUDIT_2026-09-02.md) | Finalized implementation plan | Canonical backlog for test coverage, domain grouping, redundancy reduction, and unowned test-surface decisions. |
-| [Residual codebase audit and remediation plan](CODEBASE_AUDIT_2026-09-13.md) | Active implementation plan | Second-pass findings for installer recovery/path safety, CI/CD identity/configuration, setup concurrency/timeouts, state recovery, and remaining trust-boundary work. |
+| [Residual codebase audit and remediation plan](CODEBASE_AUDIT_2026-09-13.md) | Active implementation plan | Continued findings for installer/path recovery, CI/CD identity/configuration, storage/scrub integrity, setup concurrency/timeouts, internal-web state/CA trust, Proxmox safety, and sysadmin/release command lifecycle. |
 | [Codebase audit](CODEBASE_AUDIT_2026-08-21.md) | Reference with residual items | Earlier cross-cutting packaging, host-key, state, failure-contract, webhook, and destructive-CLI findings; remaining items are consolidated in the current residual plan. |
 
 ## Keeping the portfolio current

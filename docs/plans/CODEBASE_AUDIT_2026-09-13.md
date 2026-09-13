@@ -1,411 +1,358 @@
 # Residual Codebase Audit and Remediation Plan (2026-09-13)
 
-Status: active second-pass audit. This plan records concerns that remain after
-the [2026-08-21 codebase audit](CODEBASE_AUDIT_2026-08-21.md), plus issues
-confirmed by a broader review of the current tree. It is an implementation
-plan, not a claim that the findings have already been fixed. Existing domain
-plans remain the owners for transactional execution, test coverage, Proxmox
-maintenance, and deployment secrets.
+Status: active handoff plan. This is a concise continuation of the
+[2026-08-21 audit](CODEBASE_AUDIT_2026-08-21.md), not a record of completed
+fixes. Existing domain plans remain owners where noted below.
 
-## Scope and verification
+## Review record
 
-The review covered installer activation and interruption paths, setup
-orchestration, durable state and caches, systemd and Nginx generation, CI/CD
-webhooks and deployment, credential staging, third-party installers, command
-timeouts, and destructive Proxmox commands. It used complete-file inspection
-of the affected modules, repository-wide searches for direct process/file
-operations and permissive error handling, focused test/source cross-checks,
-and a direct reproduction of the atomic writer's default file mode.
-
-The repository was clean at the start of the review. The current baseline
-passed `make check`, including Python compilation, documentation and packaging
-checks, wheel smoke testing, and 3,689 unittest cases with one intentional
-skip. No live target, Proxmox host, system service, or external deployment was
-mutated. The optional `coverage` package was not installed in this environment,
-so this plan does not use a new coverage percentage as evidence.
-
-The second pass also reconfirmed the following controls and does not reopen
-them as findings: shared SSH builders require strict workspace host-key
-enrollment, job files reject unsafe file types and sizes, deployment paths are
-bounded below their configured base, manifest activation has health-gated
-rollback, and the shared JSON writer prevents partial replacement. The gaps
-below are mostly at the boundaries around those controls.
+- Reviewed installer activation, setup execution, state/cache readers,
+  systemd/Nginx generation, CI/CD, credentials, network installers, storage
+  and scrub paths, sysadmin/release commands, process timeouts, and destructive
+  Proxmox paths.
+- Baseline was clean and `make check` passed: compilation, docs/package/wheel
+  checks, and 3,689 unittest cases (one intentional skip). No live target,
+  service, Proxmox host, or deployment was mutated. The optional `coverage`
+  package was unavailable.
+- Confirmed controls not reopened: strict workspace host-key enrollment,
+  bounded job/deploy paths, job-file safety checks, manifest health-gated
+  rollback, and atomic JSON replacement.
 
 ## Findings
 
-Severity describes impact if the condition occurs; priority describes the
-recommended delivery order.
+Priority is delivery order; severity is impact if the condition occurs.
+“Carry-forward” means the finding was already known and revalidated.
 
-### P0 — fix before relying on CI/CD or unattended reinstall
+### P0 — address before depending on CI/CD or unattended reinstall
 
-#### RCF-01: CI/CD configuration permissions break the service-user workflow
+- **RCF-01 — High, carry-forward: CI/CD config permissions can break the
+  service.** Initial config creation uses `0644`, while privileged manager
+  updates use atomic-writer default `0600`; the `webhook` receiver then cannot
+  read its config and reports repositories as unconfigured. Evidence:
+  [`cicd_steps.py`](../web/cicd_steps.py:141),
+  [`webhook_manager.py`](../web/service_tools/webhook_manager.py:47),
+  [`atomic_io.py`](../lib/atomic_io.py:48),
+  [`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:84).
+  **Suggested solution:** define one `root:webhook`/`0640` contract, repair
+  existing files, health-check service-user readability, and test distinct
+  manager/receiver identities.
 
-**Severity: High — current functional failure. Carry-forward validation.**
+- **RCF-02 — High, new: interrupted installer activation can strand the old
+  install.** After moving the active tree to backup, `install.sh` activates
+  staged content; `HUP/INT/TERM` only exit, while rollback runs only on
+  selected ordinary failures. An interruption can leave no active install,
+  with recovery directories under `*.backup.*`/`*.new.*`.
+  Evidence: [`install.sh`](../install.sh:580),
+  [`install.sh`](../install.sh:618). **Suggested solution:** model
+  activation as a recoverable state machine, restore backup on interrupted
+  activation, retain actionable recovery state, and test every boundary where
+  the active path is absent.
 
-The initial webhook configuration is written with mode `0644` by
-[`create_default_webhook_config`](../web/cicd_steps.py:141), but the privileged
-`webhook-manager add` and `remove` commands call [`save_config`](../web/service_tools/webhook_manager.py:47),
-which uses [`write_json_atomic`](../lib/atomic_io.py:48) with its default mode
-`0600`. The receiver and executor run as `webhook` ([`cicd_steps.py`](../web/cicd_steps.py:193)),
-so the manager's normal update path changes a readable configuration into a
-root-only file. The receiver catches the permission error and returns an empty
-configuration ([`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:84));
-pushes are then acknowledged as “repository not configured”
-([`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:249)).
+- **RCF-03 — High, carry-forward: `--install-dir` can replace broad existing
+  paths.** Validation requires an absolute path and rejects `/`, but accepts
+  directories such as `/opt` or a home directory; the entire path is moved
+  aside and a replacement installed. Git-dirty protection only covers existing
+  Git worktrees. Evidence: [`install.sh`](../install.sh:307),
+  [`install.sh`](../install.sh:618). **Suggested solution:** require a
+  dedicated parent or managed-install marker; refuse symlinks, mount points,
+  and broad unmanaged directories; require explicit confirmation for
+  migrations.
 
-The audit reproduced the writer's default mode as `0600`. Existing tests round
-trip the file under one account and do not verify the service account's access.
+### P1 — reliability, state integrity, privileged setup, and operator safety
 
-**Plan:** define one owner/mode contract, preferably `root:webhook` with
-`0640`, repair existing files during setup, fail health checks when the service
-cannot read configuration, and add a test that writes as the manager identity
-then reads as the service identity.
+- **RCF-04 — Medium-High, new: service replacement is cleanup-first and
+  non-atomic.** [`cleanup_service`](../lib/systemd_service.py:50) removes the
+  current unit before CI/CD or Gogs writes a replacement with `open(..., 'w')`.
+  A write, reload, or start failure can leave the service absent or truncated,
+  without restoring prior active/enabled state. Evidence:
+  [`cicd_steps.py`](../web/cicd_steps.py:241),
+  [`cicd_steps.py`](../web/cicd_steps.py:312),
+  [`gogs_steps.py`](../web/gogs_steps.py:1236). **Suggested solution:**
+  render/validate a same-directory temporary file, atomically replace it,
+  preserve the prior unit until activation succeeds, and fault-test each
+  failure boundary.
 
-#### RCF-02: Interrupted installer activation can strand the previous install
+- **RCF-05 — Medium-High, carry-forward: remote setup bypasses bounded
+  subprocess execution.** Local and SSH branches use `Popen` followed by
+  unbounded `wait()`, unlike the shared runner with descendant cleanup.
+  Evidence: [`setup_common.py`](../lib/setup_common.py:1382),
+  [`setup_common.py`](../lib/setup_common.py:1445),
+  [`remote_utils.py`](../lib/remote_utils.py:256). **Suggested solution:**
+  add a setup-specific deadline, process-group termination, streamed output,
+  and tests for hangs and descendants holding pipes.
 
-**Severity: High — availability and recovery. New in this pass.**
+- **RCF-06 — Medium, new: operation markers have no interprocess lock.**
+  `begin`, `transition`, and `complete` all use unlocked load-then-write/remove
+  sequences. Atomic replacement prevents partial JSON but not two concurrent
+  owners or phase overwrites. Evidence:
+  [`operation_state.py`](../lib/operation_state.py:122). **Suggested
+  solution:** acquire a non-blocking lock/lease through completion or
+  recovery, define stale-lock handling, and add a two-process ownership test.
 
-After the current installation is moved to a timestamped backup, the installer
-activates the staged source and bootstraps it
-([`install.sh`](../install.sh:618)). The rollback function is only called by
-selected ordinary error branches. The signal handler is instead
-`trap 'exit 1' HUP INT TERM` ([`install.sh`](../install.sh:580)), and the exit
-cleanup only removes the download temporary directory. An interrupt between
-the backup move and a successful activation therefore leaves no live
-`INSTALL_DIR`; the old source remains under `*.backup.*` and the staged source
-may remain under `*.new.*`. A hard kill has the same outcome without even
-running cleanup.
+- **RCF-07 — Medium, carry-forward: corrupt state is treated as missing or
+  default state.** Cache, machine-state, and deploy-target readers respectively
+  skip/return `None`, synthesize defaults, or return `{}` on malformed data.
+  Evidence: [`cache.py`](../lib/cache.py:222),
+  [`machine_state.py`](../lib/machine_state.py:185),
+  [`remote_deploy.py`](../lib/remote_deploy.py:48). **Suggested solution:**
+  distinguish missing/invalid/unsupported state, quarantine invalid files,
+  provide repair guidance, and refuse mutation when required state is invalid.
 
-**Plan:** make activation a single recoverable state machine, install a trap
-that restores the backup when activation is incomplete, retain failed/staged
-directories with an actionable message, and test interrupts at each boundary
-where the active path is absent.
+- **RCF-08 — Medium, carry-forward: valid GitHub deliveries are replayable.**
+  HMAC validation does not persist `X-GitHub-Delivery`; replaying a valid
+  request creates another job for the same commit. Evidence:
+  [`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:205),
+  [`cicd_steps.py`](../web/cicd_steps.py:381). **Suggested solution:** keep a
+  bounded delivery-ID ledger with repository/commit context and expiry, and
+  coalesce duplicates.
 
-#### RCF-03: `--install-dir` accepts broad existing paths and replaces them
+- **RCF-09 — Medium, carry-forward: existing webhook secrets are not
+  reconciled.** Existing secret and environment files are trusted without
+  rechecking ownership, mode, non-empty content, or value agreement. Evidence:
+  [`cicd_steps.py`](../web/cicd_steps.py:101),
+  [`cicd_steps.py`](../web/cicd_steps.py:120). **Suggested solution:** repair
+  or fail closed on unsafe files, require a valid single-line secret, compare
+  canonical and environment values, and verify before enabling services.
 
-**Severity: High — operator safety and potential data loss. Carry-forward
-validation.**
+- **RCF-10 — Medium, carry-forward: CI/CD service timeout is shorter than a
+  valid pipeline.** `TimeoutStartSec=2h`, but up to four sequential stages can
+  each run for one hour. Evidence:
+  [`cicd_steps.py`](../web/cicd_steps.py:271),
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:269),
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:351).
+  **Suggested solution:** choose one total-job deadline, pass remaining time to
+  stages, align systemd, and report whether termination occurred before or
+  during deployment.
 
-The installer only requires an absolute path and rejects `/`
-([`install.sh`](../install.sh:307)). It accepts broad directories such as
-`/opt`, `/usr/local`, or a home directory, then moves the entire directory to a
-backup and installs the staged repository at that exact path
-([`install.sh`](../install.sh:618)). The existing Git-dirty check protects only
-directories that already look like Git worktrees. A typo can therefore move
-unrelated content out of service and, for a root install, recursively change
-ownership of the replacement tree ([`install.sh`](../install.sh:643)).
+- **RCF-11 — Medium, new: CI/CD repository config has no shared schema
+  validator.** Receiver/executor assume arbitrary JSON has the expected root,
+  repository, branch, URL, and script shapes; manager accepts these values
+  without the shared validators. Malformed config can fail after a job is
+  consumed. Evidence: [`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:249),
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:305).
+  **Suggested solution:** define a versioned schema shared by manager,
+  receiver, executor, and setup; validate before writing/enabling and restrict
+  URL/script forms.
 
-**Plan:** restrict paths to a dedicated infra-tools parent or require a
-verified managed-install marker before replacement. Refuse symlinks, mount
-points, and non-leaf broad directories; require an explicit confirmation for
-any exceptional migration.
+- **RCF-12 — Medium, new: secret payload cleanup is not crash-resistant.**
+  Remote agent/pairing/web-panel payloads are removed only by normal `finally`
+  paths. Hard kill or power loss can leave credentials under
+  `/opt/infra_tools`. Evidence: [`remote_setup.py`](../remote_setup.py:160),
+  [`remote_setup.py`](../remote_setup.py:746). **Suggested solution:** use a
+  restrictive temporary location, record expiry/owner, scrub stale payloads
+  at startup, and test interruption without exposing secret contents.
 
-### P1 — reliability, state integrity, and privileged setup
+- **RCF-13 — Medium, carry-forward: snapshot deletion lacks confirmation.**
+  Shell and CLI `delsnapshot` paths call the deletion helper directly; the
+  helper has only `dry_run`, unlike other destructive commands. Evidence:
+  [`proxmox_cli.py`](../lib/proxmox_cli.py:581),
+  [`proxmox_manage.py`](../lib/proxmox_manage.py:926). **Suggested solution:**
+  require confirmation or `--yes` for non-interactive use, retain dry-run, and
+  test refusal and approval.
 
-#### RCF-04: Service replacement is cleanup-first and non-atomic
+- **RCF-19 — Medium-High, new: orphan-volume cleanup is not fail-closed.**
+  `_active_vmids` ignores a failed `qm list` or `pct list`, so valid disks can
+  be classified as orphaned and deleted with `--delete`; failed `pvesm list`
+  calls are also skipped. Evidence:
+  [`proxmox_storage.py`](../lib/proxmox_storage.py:43),
+  [`proxmox_storage.py`](../lib/proxmox_storage.py:102). **Suggested
+  solution:** abort on incomplete inventory, show inventory errors in the
+  result, require a fresh complete scan before deletion, and return failure on
+  any partial cleanup.
 
-**Severity: Medium-High — service outage after interruption or write failure.
-New in this pass.**
+- **RCF-20 — Medium-High, new: rolling Proxmox updates lack bounded SSH
+  execution and resumable checkpoints.** `_ssh_result` calls
+  `subprocess.run` without a timeout; updates then proceed node by node, so a
+  later failure leaves earlier nodes changed and later nodes skipped. Evidence:
+  [`cluster_update.py`](../lib/cluster_update.py:34),
+  [`cluster_update.py`](../lib/cluster_update.py:226). **Suggested solution:**
+  bound each SSH operation, persist per-target phase/result, make resume and
+  stop-after-failure explicit, and apply the existing Proxmox maintenance plan's
+  HA/Ceph/evacuation policy before mutation.
 
-[`cleanup_service`](../lib/systemd_service.py:50) stops, disables, and removes
-the current unit before a replacement is written. CI/CD then writes service
-files directly with `open(..., 'w')` ([`cicd_steps.py`](../web/cicd_steps.py:241),
-[`cicd_steps.py`](../web/cicd_steps.py:312)); the Gogs service follows the same
-pattern ([`gogs_steps.py`](../web/gogs_steps.py:1236)). A disk-full error,
-permission failure, or interruption after cleanup leaves the service absent or
-the file truncated, with no restoration of the previously working unit. This
-is outside the already improved manifest activation path.
+- **RCF-21 — High, new: initial sync/scrub setup ignores mount failures.**
+  `validate_mount_for_sync` returns `False` for an unmounted `/mnt` path, but
+  both setup builders ignore that result and continue through directory creation
+  and the initial rsync/parity operation. A missing mount can redirect work to
+  the underlying filesystem; rsync's delete mode can then remove the wrong
+  files. Evidence: [`sync_steps.py`](../sync/sync_steps.py:62),
+  [`scrub_steps.py`](../sync/scrub_steps.py:83),
+  [`mount_utils.py`](../lib/mount_utils.py:47). **Suggested solution:**
+  fail before any mkdir/write when a required mount check is false, surface the
+  mount error in the operation result, and test that initial work is not called.
 
-**Plan:** render and validate a replacement in a same-directory temporary
-file, atomically install it, preserve the old unit until the new file passes
-validation, and record/restore the prior enabled and active state on failure.
-Add fault-injection tests for write, daemon-reload, enable, start, and health
-failures.
+- **RCF-22 — Medium-High, new: mount diagnostics mutate fixed filenames.**
+  SMB and accessibility checks open `.smb_connectivity_test` or
+  `.accessibility_test` with `w`, then unlink the path. An existing user file
+  can be overwritten and deleted, while interruption can leave a misleading
+  artifact; status inspection is not read-only. Evidence:
+  [`mount_utils.py`](../lib/mount_utils.py:116),
+  [`mount_utils.py`](../lib/mount_utils.py:202). **Suggested solution:** use a
+  unique `O_CREAT|O_EXCL|O_NOFOLLOW` probe, never remove a pre-existing name, and
+  make cleanup safe on every exit path.
 
-#### RCF-05: `run_remote_setup` bypasses the shared subprocess timeout
+- **RCF-23 — Medium-High, new: scrub input scope is not symlink-confined.**
+  The scrub walk includes file symlinks and passes their paths to PAR2; path
+  validation does not reject them, while only the database subtree is excluded
+  by resolved path. A link can make parity generation or repair read outside
+  the declared directory. Evidence: [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:494),
+  [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:507),
+  [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:105). **Suggested
+  solution:** reject symlink files/directories and enforce real-path
+  containment for every source and database operation.
 
-**Severity: Medium-High — unattended setup can hang indefinitely. Carry-forward
-validation.**
+- **RCF-24 — Medium, new: scrub orphan cleanup can act on an incomplete scan.**
+  Both directory walks omit an `onerror` handler. If an unreadable source
+  subtree is skipped, `existing_files` is incomplete and the later orphan pass
+  can delete parity for files that still exist. Evidence:
+  [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:250),
+  [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:494),
+  [`scrub_par2.py`](../sync/service_tools/scrub_par2.py:574). **Suggested
+  solution:** collect scan errors, skip orphan deletion, and fail or report the
+  run until a complete inventory succeeds.
 
-The local and SSH execution branches use direct `subprocess.Popen` and
-unbounded `process.wait()` calls ([`setup_common.py`](../lib/setup_common.py:1382),
-[`setup_common.py`](../lib/setup_common.py:1445)). The shared runner has a
-bounded default and descendant cleanup ([`remote_utils.py`](../lib/remote_utils.py:256)),
-but these paths do not use it. A stuck remote command, shell descendant, or
-pipe holder can keep the controller waiting forever; SSH connection timeouts
-do not bound remote command completion.
+- **RCF-25 — Medium, new: internal-web route and preview mutations lack a
+  shared transaction lock.** Forward and live-preview commands load state,
+  reconcile Nginx/UFW, and write state without interprocess serialization.
+  Concurrent add/remove/start/stop commands can lose records, race port
+  allocation, or leave generated configuration and state disagreeing. Evidence:
+  [`infra_web.py`](../common/service_tools/infra_web.py:640),
+  [`infra_web.py`](../common/service_tools/infra_web.py:1069),
+  [`infra_web.py`](../common/service_tools/infra_web.py:1643). **Suggested
+  solution:** take one root-owned non-blocking lock around load, plan, apply,
+  rollback, and state writes for all forward/preview mutations.
 
-**Plan:** add a setup-specific bounded process wrapper with process-group
-termination, preserve streamed output, and expose the timeout in diagnostics.
-Test local hangs, remote hangs, and descendants that retain output pipes.
+- **RCF-26 — Medium-High, new: generated CA bootstrap scripts bypass TLS
+  verification.** Linux/macOS snippets use `curl`/`wget --insecure`, and the
+  Windows snippet disables certificate validation before checking a digest
+  rendered by the same untrusted page. A pre-enrollment MITM can replace both
+  the downloaded CA and displayed digest. This conflicts with the independent
+  transfer/checksum guidance in [`CLIENT_CA_TRUST.md`](../CLIENT_CA_TRUST.md:48)
+  and [`INTERNAL_WEB.md`](../INTERNAL_WEB.md:248). **Suggested solution:**
+  remove insecure bootstrap downloads; require a trusted transfer (such as SSH)
+  and independently supplied fingerprint, or use TLS only after the client
+  already trusts the issuer.
 
-#### RCF-06: Operation markers lack an interprocess lock
+- **RCF-27 — Low-Medium, new: sysadmin convenience commands lack a completion
+  timeout contract.** User-facing rsync, health, reachability, fan-out, service,
+  mount, and upgrade wrappers call `subprocess.run` without a wall-clock limit.
+  SSH connect/keepalive settings do not bound an established remote command or
+  a stalled filesystem operation. Evidence: [`sysadmin_transfer.py`](../lib/sysadmin_transfer.py:101),
+  [`sysadmin_health.py`](../lib/sysadmin_health.py:119),
+  [`sysadmin_reachable.py`](../lib/sysadmin_reachable.py:57),
+  [`sysadmin_fan.py`](../lib/sysadmin_fan.py:45). **Suggested solution:**
+  route non-interactive helpers through the bounded process-group runner, report
+  timeout as a distinct result, and retain unbounded behavior only for explicit
+  interactive SSH/log-follow commands.
 
-**Severity: Medium — concurrent setup/deploy state corruption. New in this
-pass.**
-
-[`OperationStateStore.begin`](../lib/operation_state.py:122) loads the marker,
-checks for absence, and writes a new UUID. [`transition`](../lib/operation_state.py:155)
-and [`complete`](../lib/operation_state.py:181) use the same unlocked
-load-then-write/remove pattern. Atomic replacement prevents partial JSON but
-does not prevent two processes from both observing an empty marker or from
-overwriting each other's phase. The global target marker is used by
-`remote_setup.py`, so simultaneous invocations on one target can perform
-overlapping mutations and make the recorded identity misleading.
-
-**Plan:** acquire a non-blocking operation lock or lease before `begin`, hold
-it through completion/recovery, and define stale-lock inspection and release.
-Use a two-process test to prove that only one operation can own a marker.
-
-#### RCF-07: Corrupt state is still treated as missing or default state
-
-**Severity: Medium — drift and wrong-target decisions. Carry-forward
-validation.**
-
-Malformed cache files are skipped or returned as `None`
-([`cache.py`](../lib/cache.py:222)), malformed machine state becomes a default
-state ([`machine_state.py`](../lib/machine_state.py:185)), and invalid deploy
-target JSON becomes an empty mapping ([`remote_deploy.py`](../lib/remote_deploy.py:48)).
-This hides corruption behind a successful-looking “no saved setup,” “default
-machine,” or “unknown target” result. In mutation-sensitive callers that can
-create new configuration, skip intended maintenance, or select an incorrect
-workflow.
-
-**Plan:** distinguish missing, invalid, and unsupported-schema state; include
-the exact file and repair action in the error; quarantine invalid files before
-recovery; and refuse mutation when required state is invalid. Add tests for
-each reader and for the operator recovery path.
-
-#### RCF-08: Valid GitHub webhook deliveries remain replayable
-
-**Severity: Medium — repeated builds/deployments. Carry-forward validation.**
-
-The receiver verifies the HMAC and validates the push payload, but it does not
-persist or compare `X-GitHub-Delivery` before creating a new nonce-bearing job
-([`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:205)). Nginx
-forwards the delivery ID ([`cicd_steps.py`](../web/cicd_steps.py:381)), but the
-application discards it. Replaying a captured valid request therefore rebuilds
-and can redeploy the same commit.
-
-**Plan:** persist a bounded delivery-ID ledger with repository/commit context
-and expiry, coalesce duplicates, and keep queue-file consumption as a separate
-malformed-job safety measure. Add a replay regression test.
-
-#### RCF-09: Existing webhook secrets are not re-hardened or reconciled
-
-**Severity: Medium — local disclosure and forged webhook risk. Carry-forward
-validation.**
-
-[`generate_webhook_secret`](../web/cicd_steps.py:101) trusts an existing secret
-file and returns early when an environment file already exists. It does not
-verify ownership, mode, non-empty content, or agreement between the canonical
-secret and the environment file. The mode/ownership repair exists only when
-the file is newly created ([`cicd_steps.py`](../web/cicd_steps.py:120),
-[`cicd_steps.py`](../web/cicd_steps.py:131)). A weakened secret file can be
-read by local users and used to forge accepted webhook requests; a stale
-environment file can make all legitimate requests fail while setup reports
-success.
-
-**Plan:** validate existing files, repair or fail closed on unsafe ownership or
-permissions, require a non-empty single-line secret, and compare the canonical
-and environment values before enabling services.
-
-#### RCF-10: CI/CD service timeout is shorter than a valid pipeline
-
-**Severity: Medium — partial pipeline/deployment. Carry-forward validation.**
-
-The executor service has `TimeoutStartSec=2h`
-([`cicd_steps.py`](../web/cicd_steps.py:271)), while each configured install,
-build, test, and deploy operation can run for up to one hour
-([`cicd_executor.py`](../web/service_tools/cicd_executor.py:269)). The job loop
-can run all of those stages sequentially ([`cicd_executor.py`](../web/service_tools/cicd_executor.py:351)),
-so systemd can kill a valid job after two hours, including during remote
-deployment.
-
-**Plan:** choose one total-job deadline, pass remaining time to each stage,
-align `TimeoutStartSec` with that policy, and report whether termination
-occurred before or during deployment. Add a service-unit contract test.
-
-#### RCF-11: CI/CD repository configuration has no shared schema validator
-
-**Severity: Medium — malformed configuration can consume jobs or fail requests.
-New in this pass.**
-
-The job payload has a validator, but repository configuration is loaded as
-arbitrary JSON by both receiver and executor. Later code assumes that the root
-is a dictionary, every repository is a dictionary, branches are iterable, and
-scripts are path strings ([`webhook_receiver.py`](../web/service_tools/webhook_receiver.py:249),
-[`cicd_executor.py`](../web/service_tools/cicd_executor.py:305)). A malformed
-shape can raise during request handling or be caught by the executor after the
-job has already been consumed. The privileged manager also accepts URLs,
-branches, and script paths without the shared validators.
-
-**Plan:** define a versioned configuration schema and validator shared by
-manager, receiver, executor, and setup; restrict repository URL schemes and
-script path forms; validate before writing; and expose invalid configuration
-in health/status output.
-
-#### RCF-12: Secret payload cleanup is not crash-resistant
-
-**Severity: Medium — credential residue after hard interruption. New in this
-pass.**
-
-Remote setup removes uploaded agent, pairing, and web-panel payload directories
-only from the normal `finally` path ([`remote_setup.py`](../remote_setup.py:160),
-[`remote_setup.py`](../remote_setup.py:746)). A hard kill, power loss, or
-abrupt process termination can leave credentials under `/opt/infra_tools` until
-another setup happens to clean them. There is no startup scrub of stale
-payloads.
-
-**Plan:** use a target-side temporary location with restrictive ownership,
-record an expiry/owner for each payload, scrub stale payloads at startup, and
-test interruption and cleanup failure without logging secret contents.
-
-#### RCF-13: Destructive Proxmox snapshot deletion lacks confirmation
-
-**Severity: Medium — irreversible operator error. Carry-forward validation.**
-
-`delsnapshot` directly calls the deletion helper
-([`proxmox_shell.py`](../lib/proxmox_shell.py:692)), while the management function
-offers only `dry_run` ([`proxmox_manage.py`](../lib/proxmox_manage.py:926)). It
-does not share the explicit confirmation contract used by guest destruction
-and orphan-volume deletion.
-
-**Plan:** require interactive confirmation or `--yes` for non-interactive use,
-retain `--dry-run`, and test refusal, approval, and machine-readable behavior.
+- **RCF-28 — Low-Medium, new: channel switching/upgrades run Git without a
+  timeout.** `channel_manager` invokes fetch, checkout, and inspection commands
+  directly, so a network stall or credential prompt can leave the upgrade CLI
+  waiting indefinitely. Evidence: [`channel_manager.py`](../lib/channel_manager.py:161),
+  [`channel_manager.py`](../lib/channel_manager.py:176). **Suggested solution:**
+  use the shared bounded command runner or an explicit process-group timeout,
+  then preserve and report the last known channel/worktree state on failure.
 
 ### P2 — policy and lower-probability operational concerns
 
-#### RCF-14: Third-party installers use rolling network shell trust
+- **RCF-14 — Medium, carry-forward: third-party installers use rolling
+  network-shell trust.** Codex/Claude/OpenCode, CachyOS, uv, nvm, and the
+  Codex updater execute downloaded content; the updater records a digest but
+  does not compare it to a pinned expected value. Evidence:
+  [`agent_steps.py`](../common/agent_steps.py:544),
+  [`cachyos_steps.py`](../common/cachyos_steps.py:171),
+  [`agent_cli.py`](../lib/agent_cli.py:657),
+  [`common_steps.py`](../common/common_steps.py:1140). **Suggested solution:**
+  select signed releases, a maintained digest manifest, or an explicitly
+  accepted rolling channel per tool; expose and retain provenance.
 
-**Severity: Medium — supply-chain policy gap. Carry-forward validation.**
+- **RCF-15 — Low-Medium, new: package/service/user probes bypass timeouts.**
+  `is_package_installed`, `is_service_active`, and `user_exists` invoke
+  `subprocess.run` without a timeout and are widely used before mutations.
+  Evidence: [`remote_utils.py`](../lib/remote_utils.py:417). **Suggested
+  solution:** use a short probe contract with an explicit “unknown” result and
+  classify required, optional, probe, and cleanup callers.
 
-Codex, Claude, and OpenCode installation paths pipe vendor URLs to shells
-([`agent_steps.py`](../common/agent_steps.py:544)). The CachyOS path downloads
-and executes the same class of installer ([`cachyos_steps.py`](../common/cachyos_steps.py:171));
-the Codex updater records a digest but does not compare it with a pinned
-expected value ([`agent_cli.py`](../lib/agent_cli.py:657)). The uv and nvm paths
-also execute downloaded installer content ([`common_steps.py`](../common/common_steps.py:1140),
-[`common_steps.py`](../common/common_steps.py:1230)). These are user-scoped in
-the reviewed paths, but a compromised upstream, transport proxy, or unexpected
-vendor change still becomes code execution on the target account.
+- **RCF-16 — Low-Medium, new: CI/CD logs can collide and queues can grow
+  without bound.** Logs are keyed only by commit SHA and truncated on open;
+  pending jobs have no age, count, or disk budget. Evidence:
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:323),
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:709).
+  **Suggested solution:** key logs by repository plus job ID, retain a job-log
+  mapping, add backpressure/stale-job policy, and alert on filesystem usage.
 
-**Plan:** select and document a trust model per tool: signed releases, a
-maintained digest manifest, or an explicitly accepted rolling channel. Make
-the selected mode visible in setup/update output and retain provenance for
-each installed artifact.
+- **RCF-17 — Low, new: loopback readiness checks may honor proxies.** Default
+  `urllib` openers are used for local health checks without disabling proxy
+  environment variables. Evidence: [`deployment.py`](../lib/deployment.py:1138),
+  [`infra_web.py`](../common/service_tools/infra_web.py:908). **Suggested
+  solution:** use a proxy-disabled opener, assert a local response, and test
+  with proxy variables set.
 
-#### RCF-15: Local package/service/user probes bypass the timeout contract
+- **RCF-18 — High under repository compromise, carry-forward architecture
+  risk: CI/CD scripts remain a trust boundary.** Repository-authored scripts
+  execute as `webhook` and can stream deploy commands to an app server. HMAC
+  protects ingress, not a compromised repository/configuration or an
+  over-privileged deploy key. Evidence:
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:233),
+  [`cicd_executor.py`](../web/service_tools/cicd_executor.py:533).
+  **Suggested solution:** protect branches, constrain scripts to the checkout,
+  separate build/deploy credentials, minimize remote sudo, and document the
+  accepted trust model.
 
-**Severity: Low-Medium — setup can stall in unusual host environments. New in
-this pass.**
+## Delivery order and ownership
 
-`is_package_installed`, `is_service_active`, and `user_exists` call
-`subprocess.run` without a timeout ([`remote_utils.py`](../lib/remote_utils.py:417)).
-They are used widely before setup mutations. A blocked package database,
-systemd call, or NSS-backed `id` lookup can delay setup independently of the
-one-hour timeout used by the shared command runner.
+1. **CI/CD gate:** RCF-01, 04, 08–11, and 16. Fix identity/config contracts,
+   atomic service replacement, replay handling, queue limits, and tests.
+2. **Installer and setup safety:** RCF-02, 03, 05–07, 12, 15, 21, and 22.
+   Make activation, process waits, markers, state readers, credentials,
+   mount gates, diagnostics, and probes recoverable and bounded.
+3. **Storage integrity:** RCF-23 and 24. Confine scrub scope and make
+   inventory/orphan cleanup fail closed.
+4. **Proxmox/operator safety:** RCF-13, 19, and 20. Confirm destructive
+   actions, fail closed on incomplete inventory, and make rolling updates
+   resumable.
+5. **Trust/readiness policy:** RCF-14, 17, 18, and 26. Select supply-chain
+   policy, isolate loopback checks from proxies, fix CA enrollment, and document
+   CI/CD privileges.
+6. **Command lifecycle:** RCF-25, 27, and 28. Serialize internal-web state
+   mutations and bound remaining sysadmin/release commands.
 
-**Plan:** route these probes through an explicit short probe contract with
-bounded timeout and a clear “unknown” result, then classify each caller as
-required, optional, probe, or cleanup under the existing transactional plan.
+Ownership links:
 
-#### RCF-16: CI/CD log collisions and unbounded queue growth
-
-**Severity: Low-Medium — audit evidence and disk availability. New in this
-pass.**
-
-Build logs are named only by commit SHA and opened with truncation
-([`cicd_executor.py`](../web/service_tools/cicd_executor.py:323)). The same
-commit can occur in multiple repositories, so one job can overwrite another's
-log. The executor processes every pending JSON file in sequence
-([`cicd_executor.py`](../web/service_tools/cicd_executor.py:709)) without a
-queue-size, age, or disk-budget limit. Slow builds and replayed deliveries can
-therefore exhaust the CI/CD state filesystem.
-
-**Plan:** name logs with a repository digest plus job ID, retain an explicit
-job-to-log mapping, add queue backpressure and stale-job policy, and alert
-before the state filesystem reaches a configured threshold.
-
-#### RCF-17: Loopback health checks may honor proxy environment variables
-
-**Severity: Low — environment-dependent readiness. New in this pass.**
-
-The deployment and internal-web readiness checks use the default
-`urllib.request.urlopen` opener ([`deployment.py`](../lib/deployment.py:1138),
-[`infra_web.py`](../common/service_tools/infra_web.py:908)). Unlike the newer
-CachyOS check, they do not explicitly disable proxies. On a host with
-`HTTP_PROXY`/`HTTPS_PROXY` and no matching `NO_PROXY`, a proxy can answer or
-redirect a loopback request, so readiness may validate the proxy rather than
-the local service.
-
-**Plan:** use a proxy-disabled opener for loopback checks, assert the response
-host remains local, and add tests with proxy variables set.
-
-#### RCF-18: CI/CD repository-script execution remains a deliberate trust boundary
-
-**Severity: High under a repository-compromise threat model — accepted design
-risk, not an unauthenticated webhook bypass. Carry-forward architecture
-finding.**
-
-The executor intentionally runs repository-authored scripts and can stream a
-deploy script to a configured app server. The service has useful systemd
-hardening and runs as `webhook`, but the configured scripts still determine
-what that account can do and what remote deployment can change
-([`cicd_executor.py`](../web/service_tools/cicd_executor.py:233),
-[`cicd_executor.py`](../web/service_tools/cicd_executor.py:533)). HMAC protects
-the webhook ingress; it does not protect against a compromised repository,
-over-permissive repository configuration, or an over-privileged deploy key.
-
-**Plan:** keep protected branches and repository review as prerequisites,
-restrict scripts to the checked-out repository where feasible, separate build
-and deploy credentials, minimize remote sudo authority, and document the
-accepted trust assumptions before expanding CI/CD manifest reuse.
-
-## Delivery sequence
-
-The implementation should proceed in slices that leave each boundary more
-recoverable than before:
-
-| Phase | Scope | Exit criteria |
-| --- | --- | --- |
-| 1. CI/CD correctness gate | RCF-01, RCF-09, RCF-11, RCF-16, plus the service-file part of RCF-04 | Manager updates remain readable by `webhook`; existing secret/config files are validated; malformed configuration is rejected before enablement; duplicate/large queue behavior is defined; fault-injection tests cover service-file replacement. |
-| 2. Installer safety | RCF-02 and RCF-03 | A signal or failed activation leaves either the new managed install or the previous one at the active path; broad/unmanaged targets are refused; shell tests cover backup, rollback, interruption, and state preservation. |
-| 3. Setup execution and state | RCF-05, RCF-06, RCF-07, RCF-12, RCF-15 | Local and SSH setup waits are bounded; only one operation owns a target marker; invalid state blocks mutation with remediation; stale secret payloads are scrubbed; probe callers have explicit timeout/failure classes. |
-| 4. Operator safety | RCF-10 and RCF-13 | Total CI/CD duration is coherent with systemd; destructive snapshot deletion requires explicit approval; failure and partial-deployment messages identify the recovery action. |
-| 5. Trust policy | RCF-08, RCF-14, and RCF-18 | Webhook delivery replay is coalesced; installer provenance policy is selected and visible; protected-branch, credential, and remote-sudo assumptions are documented and tested at their boundaries. |
-| 6. Readiness and evidence | RCF-17 and the remaining RCF-16 work | Loopback checks bypass proxies; logs are collision-resistant; queue and disk limits are observable; deployment evidence identifies one immutable job. |
+- RCF-05–07 and 15 extend
+  [Transactional execution](TRANSACTIONAL_EXECUTION.md); do not create a
+  second execution framework.
+- RCF-21–24 extend the storage-operation setup/runtime contract documented in
+  [Storage operations](../STORAGE_OPERATIONS.md); keep mount and scrub safety
+  checks shared by setup and recurring services.
+- RCF-08, 11, 16, and 18 extend
+  [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md); RCF-09 and 12 complement
+  [Deploy secrets](DEPLOY_SECRETS.md).
+- RCF-25 and 26 belong to the internal-web operator contract in
+  [Internal web](../INTERNAL_WEB.md) and [client CA trust](../CLIENT_CA_TRUST.md).
+- RCF-27 and 28 should reuse the shared SSH/process execution contract rather
+  than adding per-command timeout behavior.
+- RCF-13, 19, and 20 feed the
+  [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md), which
+  owns HA/Ceph, evacuation, and live qualification details.
+- The [test suite audit](TEST_SUITE_AUDIT_2026-09-02.md) owns coverage
+  mechanics; this plan names only the regression cases required by findings.
 
 ## Acceptance criteria
 
-- The default CI/CD setup, manager update, receiver, and executor are tested
-  under their actual distinct identities and file permissions.
-- Installer interruption and ordinary failure both preserve a usable active
-  installation or leave an unambiguous recovery directory and message.
-- Every direct setup process has a bounded wait or an explicit documented
-  reason to remain unbounded; process-group cleanup is tested where needed.
-- An operation marker has exclusive ownership, and corrupted or stale state
-  cannot silently turn into a fresh mutation.
-- A repeated valid GitHub delivery creates at most one pending job within the
-  configured retention window.
-- Destructive CLI commands use one documented confirmation contract.
-- Tests remain local, use temporary directories, mock system calls, and do not
-  open real deployment or Proxmox connections.
-- `make check`, `git diff --check`, and the relevant domain suites pass for
-  every implementation slice.
-
-## Ownership and relationship to existing plans
-
-- RCF-05, RCF-06, RCF-07, and RCF-15 extend the active
-  [Transactional execution and reconciliation](TRANSACTIONAL_EXECUTION.md)
-  project; they should not create a second execution framework.
-- RCF-08 and RCF-18 extend the CI/CD boundary covered by
-  [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md).
-- RCF-09 and RCF-12 complement [Deploy secrets](DEPLOY_SECRETS.md).
-- RCF-13 remains an input to the [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md).
-- The [test suite audit](TEST_SUITE_AUDIT_2026-09-02.md) owns the coverage
-  mechanics; this plan adds only the security/reliability cases needed to
-  validate these findings.
-
-Until the corresponding implementation and acceptance criteria land, the
-findings should remain visible in release and deployment readiness reviews.
+- Distinct manager/service identities can read and update CI/CD configuration;
+  malformed config and unsafe secrets fail before enablement.
+- Interrupted install or setup leaves a usable active install/state or an
+  explicit, recoverable failure; all direct mutation processes have a bounded
+  wait or documented exception.
+- Concurrent operations cannot overwrite ownership; invalid state cannot
+  silently become a fresh mutation; repeated deliveries coalesce.
+- Required mounts gate both initial and recurring storage work; diagnostics are
+  non-destructive; scrub scans are complete and confined before parity cleanup.
+- Internal-web route/preview state changes serialize, and generated CA guidance
+  never relies on an unauthenticated download plus same-channel checksum.
+- Destructive Proxmox actions require one documented confirmation contract,
+  complete inventory, and nonzero status on partial failure.
+- Rolling updates expose per-target progress/resume state and policy; tests
+  remain local with mocked system calls/temp directories; `make check` and
+  `git diff --check` pass for each implementation slice.
