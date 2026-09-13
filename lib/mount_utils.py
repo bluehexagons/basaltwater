@@ -5,6 +5,7 @@ import os
 import subprocess
 import time
 import threading
+import tempfile
 from typing import Optional, Any, Callable
 
 
@@ -113,21 +114,8 @@ def validate_smb_connectivity(path: str) -> bool:
         return False
     
     # Test SMB-specific operations
-    test_file = os.path.join(path, '.smb_connectivity_test')
-    
     try:
-        # Test file creation
-        with open(test_file, 'w') as f:
-            f.write('smb test')
-        
-        # Test file read
-        with open(test_file, 'r') as f:
-            content = f.read()
-            if content != 'smb test':
-                raise ValueError("Content mismatch")
-        
-        # Test file deletion
-        os.unlink(test_file)
+        _probe_writable_directory(path)
         
         # Test directory listing (common SMB operation)
         # Optionally check a small listing to assert basic directory operations work
@@ -137,14 +125,21 @@ def validate_smb_connectivity(path: str) -> bool:
         
     except (OSError, IOError, ValueError) as e:
         print(f"SMB connectivity test failed for {path}: {e}")
-        # Cleanup test file if it exists
-        try:
-            if os.path.exists(test_file):
-                os.unlink(test_file)
-        except OSError:
-            # Best-effort cleanup: ignore errors removing temporary test file
-            pass
         return False
+
+
+def _probe_writable_directory(path: str) -> None:
+    """Probe an exclusively created temporary file, never a user's filename."""
+    descriptor, probe = tempfile.mkstemp(prefix='.infra-tools-probe-', dir=path)
+    try:
+        with os.fdopen(descriptor, 'w+') as stream:
+            stream.write('mount test')
+            stream.flush()
+            stream.seek(0)
+            if stream.read() != 'mount test':
+                raise ValueError('Mount probe content mismatch')
+    finally:
+        os.unlink(probe)
 
 
 def get_mount_status_details(path: str) -> dict[str, Any]:
@@ -201,10 +196,9 @@ def get_mount_status_details(path: str) -> dict[str, Any]:
     
     # Test accessibility
     try:
-        test_file = os.path.join(path, '.accessibility_test')
-        with open(test_file, 'w') as f:
-            f.write('test')
-        os.unlink(test_file)
+        # Status is read-only; writable connectivity is a separate probe.
+        with os.scandir(path) as entries:
+            next(entries, None)
         details['accessible'] = True
     except (OSError, IOError):
         details['accessible'] = False

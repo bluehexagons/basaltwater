@@ -62,8 +62,10 @@ def create_sync_service(config: SetupConfig, sync_spec: Optional[list[str]] = No
         logger.log_step("validation", "started", "Validating sync paths and mounts")
         validate_filesystem_path(source, must_exist=True, check_writable=False)
         validate_filesystem_path(destination, check_writable=True)
-        validate_mount_for_sync(source, "source")
-        validate_mount_for_sync(destination, "destination")
+        if not validate_mount_for_sync(source, "source"):
+            raise RuntimeError(f"Required source mount is unavailable: {source}")
+        if not validate_mount_for_sync(destination, "destination"):
+            raise RuntimeError(f"Required destination mount is unavailable: {destination}")
         logger.log_step("validation", "completed", "Sync paths and mounts are valid")
         logger.log_metric("validation_success", True)
 
@@ -79,9 +81,11 @@ def create_sync_service(config: SetupConfig, sync_spec: Optional[list[str]] = No
         if source_on_smb or dest_on_smb:
             logger.log_step("mount_validation_enhanced", "started", "Performing enhanced mount validation")
             if source_on_smb:
-                logger.log_metric("source_smb_connectivity", validate_smb_connectivity(source))
+                if not validate_smb_connectivity(source):
+                    raise RuntimeError(f"Source SMB connectivity failed: {source}")
             if dest_on_smb:
-                logger.log_metric("destination_smb_connectivity", validate_smb_connectivity(destination))
+                if not validate_smb_connectivity(destination):
+                    raise RuntimeError(f"Destination SMB connectivity failed: {destination}")
             logger.log_step("mount_validation_enhanced", "completed", "Enhanced mount validation completed")
 
         print(f"  ✓ Sync spec validated: {source} → {destination}")

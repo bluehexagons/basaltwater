@@ -4,6 +4,18 @@ Status: active handoff plan. This is a concise continuation of the
 [2026-08-21 audit](CODEBASE_AUDIT_2026-08-21.md), not a record of completed
 fixes. Existing domain plans remain owners where noted below.
 
+## Remediation progress
+
+- RCF-21–24 implemented: initial setup honors mount/SMB failures; diagnostics
+  preserve existing files; scrub inventories reject symlinks and abort on scan
+  errors before parity work. Hostile concurrent directory replacement remains
+  outside the path-based PAR2 contract (see Storage operations).
+- Additional scrub fixes: restrict cleanup to exact parity names, verify
+  volume-only parity, reject databases containing the source, and propagate
+  unsuccessful results through the CLI exit status.
+- Findings below retain the original evidence and suggested solutions; entries
+  not listed here remain open.
+
 ## Review record
 
 - Reviewed installer activation, setup execution, state/cache readers,

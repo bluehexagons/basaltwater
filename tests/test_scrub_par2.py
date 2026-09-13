@@ -39,6 +39,17 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
         self.assertEqual(result, scrub_par2.VERIFY_OK)
 
     @patch('sync.service_tools.scrub_par2.subprocess.run')
+    def test_volume_only_parity_is_verified(self, mock_run):
+        base = os.path.join(self.database, 'data.bin.par2')
+        volume = os.path.join(self.database, 'data.bin.vol00+01.par2')
+        os.rename(base, volume)
+        self.assertEqual(
+            scrub_par2.verify_repair(self.file_path, self.directory, self.database, self.log_file),
+            scrub_par2.VERIFY_OK,
+        )
+        self.assertIn(volume, mock_run.call_args.args[0])
+
+    @patch('sync.service_tools.scrub_par2.subprocess.run')
     def test_verification_passes_returns_ok(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout='', stderr='')
         result = scrub_par2.verify_repair(self.file_path, self.directory, self.database, self.log_file)
@@ -67,6 +78,29 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
 
 class TestSetupFailurePropagation(unittest.TestCase):
     """Initial sync and scrub failures must reach the setup orchestrator."""
+
+    def test_mount_failure_prevents_initial_work(self):
+        from sync import scrub_steps, sync_steps
+
+        for module, function, spec in (
+            (sync_steps, sync_steps.create_sync_service, ['/mnt/a', '/mnt/b', 'daily']),
+            (scrub_steps, scrub_steps.create_scrub_service, ['/mnt/a', '/mnt/b', '10%', 'daily']),
+        ):
+            for checks in ([False], [True, False]):
+                with (
+                    self.subTest(module=module.__name__, checks=checks),
+                    patch.object(module, 'create_operation_logger'),
+                    patch.object(module, 'validate_filesystem_path'),
+                    patch.object(module, 'validate_mount_for_sync', side_effect=checks),
+                    patch.object(module, 'ensure_directory') as mkdir,
+                    patch('sync.service_tools.sync_rsync.run_rsync_with_notifications') as sync,
+                    patch.object(scrub_par2, 'scrub_directory') as scrub,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, 'mount is unavailable'):
+                        function(SimpleNamespace(username='agent'), spec)
+                    mkdir.assert_not_called()
+                    sync.assert_not_called()
+                    scrub.assert_not_called()
 
     def test_initial_sync_failure_is_logged_and_raised(self):
         from sync import sync_steps
@@ -103,6 +137,47 @@ class TestSetupFailurePropagation(unittest.TestCase):
 
 
 class TestScrubResultFailures(unittest.TestCase):
+    def test_incomplete_or_symlink_scan_prevents_parity_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, 'data')
+            database = os.path.join(tmp, 'db')
+            os.mkdir(source)
+            os.mkdir(database)
+            link = os.path.join(source, 'escape')
+            os.symlink(tmp, link)
+            with (
+                patch.object(scrub_par2, 'create_operation_logger'),
+                patch.object(scrub_par2, 'log'),
+                patch.object(scrub_par2, 'create_par2') as create,
+                patch.object(scrub_par2, '_cleanup_orphan_par2') as cleanup,
+            ):
+                with self.assertRaisesRegex(ValueError, 'Symlinks'):
+                    scrub_par2.scrub_directory(source, database, 10, 'unused', suppress_notifications=True)
+                os.unlink(link)
+
+                def broken_walk(path, *, onerror):
+                    yield path, [], []
+                    onerror(PermissionError('unreadable subtree'))
+
+                with patch.object(scrub_par2.os, 'walk', side_effect=broken_walk):
+                    with self.assertRaises(PermissionError):
+                        scrub_par2.scrub_directory(source, database, 10, 'unused', suppress_notifications=True)
+                create.assert_not_called()
+                cleanup.assert_not_called()
+
+    def test_cleanup_preserves_similar_filenames(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(scrub_par2, 'log'):
+            names = ['a.par2', 'a.vol00+01.par2', 'a.par2.backup', 'a.par2-other.par2']
+            for name in names:
+                with open(os.path.join(tmp, name), 'w') as stream:
+                    stream.write('keep')
+            scrub_par2._remove_par2_files(os.path.join(tmp, 'a.par2'), 'unused')
+            self.assertEqual(sorted(os.listdir(tmp)), sorted(names[2:]))
+
+    def test_cli_returns_failure_for_unsuccessful_result(self):
+        with patch.object(sys, 'argv', ['scrub', '/data', '/db', '10', '/log']), patch.object(scrub_par2, 'scrub_directory', return_value={'ok': False}):
+            self.assertEqual(scrub_par2.main(), 1)
+
     def test_parity_creation_failure_makes_result_unsuccessful(self):
         operation_logger = Mock()
         with tempfile.TemporaryDirectory() as tmpdir:

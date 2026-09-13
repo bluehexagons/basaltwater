@@ -80,6 +80,19 @@ class TestMountValidation(unittest.TestCase):
 
 
 class TestSmbConnectivity(unittest.TestCase):
+    def test_probe_preserves_existing_diagnostic_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [os.path.join(directory, name) for name in
+                     ('.smb_connectivity_test', '.accessibility_test')]
+            for path in paths:
+                with open(path, 'w') as stream:
+                    stream.write('user data')
+            mount_utils._probe_writable_directory(directory)
+            self.assertEqual(len(os.listdir(directory)), 2)
+            for path in paths:
+                with open(path) as stream:
+                    self.assertEqual(stream.read(), 'user data')
+
     def test_validate_smb_connectivity_checks_type_and_file_operations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stdout = io.StringIO()

@@ -83,8 +83,10 @@ def create_scrub_service(config: SetupConfig, scrub_spec: Optional[list[str]] = 
         logger.log_step("validation", "started", "Validating scrub paths, mounts, and redundancy")
         validate_filesystem_path(directory, must_exist=True, check_writable=False)
         validate_database_path(database_path)
-        validate_mount_for_sync(directory, "directory")
-        validate_mount_for_sync(database_path, "database")
+        if not validate_mount_for_sync(directory, "directory"):
+            raise RuntimeError(f"Required source mount is unavailable: {directory}")
+        if not validate_mount_for_sync(database_path, "database"):
+            raise RuntimeError(f"Required database mount is unavailable: {database_path}")
         redundancy_value = validate_redundancy_percentage(redundancy)
         logger.log_step("validation", "completed", "Scrub inputs are valid")
         logger.log_metric("validation_success", True)
@@ -101,9 +103,11 @@ def create_scrub_service(config: SetupConfig, scrub_spec: Optional[list[str]] = 
         if dir_on_smb or db_on_smb:
             logger.log_step("mount_validation_enhanced", "started", "Performing enhanced mount validation")
             if dir_on_smb:
-                logger.log_metric("directory_smb_connectivity", validate_smb_connectivity(directory))
+                if not validate_smb_connectivity(directory):
+                    raise RuntimeError(f"Source SMB connectivity failed: {directory}")
             if db_on_smb:
-                logger.log_metric("database_smb_connectivity", validate_smb_connectivity(database_path))
+                if not validate_smb_connectivity(database_path):
+                    raise RuntimeError(f"Database SMB connectivity failed: {database_path}")
             logger.log_step("mount_validation_enhanced", "completed", "Enhanced mount validation completed")
 
         print(f"  ✓ Scrub spec validated: {directory}")

@@ -36,6 +36,44 @@ PAR2_CREATE_MAX_BACKOFF_SECONDS = 30
 _LOGGERS: dict[str, Any] = {}
 
 
+def _confined_path(path: str, root: str) -> None:
+    """Reject traversal and symlinks, including existing parent components."""
+    validate_filesystem_path(path)
+    absolute = Path(os.path.abspath(path))
+    base = Path(os.path.abspath(root))
+    if not absolute.is_relative_to(base):
+        raise ValueError(f"Path escapes scrub root: {path}")
+    for component in (absolute, *absolute.parents):
+        if component.is_symlink():
+            raise ValueError(f"Symlinks are not allowed in scrub paths: {component}")
+    if not absolute.resolve().is_relative_to(base.resolve()):
+        raise ValueError(f"Resolved path escapes scrub root: {path}")
+
+
+def _scan_tree(directory: str) -> list[tuple[str, list[str], list[str]]]:
+    """Finish a confined inventory before allowing parity mutations."""
+    _confined_path(directory, directory)
+
+    def fail(error: OSError) -> None:
+        raise error
+
+    entries = []
+    for root, dirs, files in os.walk(directory, onerror=fail):
+        for name in dirs + files:
+            _confined_path(os.path.join(root, name), directory)
+        entries.append((root, dirs, files))
+    return entries
+
+
+def _parity_files(par2_base: str) -> list[str]:
+    """Return only the exact base and recognized PAR2 volume names."""
+    candidates = glob(f"{escape(par2_base)}*")
+    if par2_base.endswith(PAR2_EXTENSION):
+        candidates += glob(f"{escape(par2_base[:-5])}.vol*.par2")
+    return sorted({path for path in candidates
+                   if _par2_base_from_parity_file(path) == par2_base})
+
+
 def log(message: str, log_file: str) -> None:
     """Append message to log file and print to console for systemd journal."""
     logger = _LOGGERS.get(log_file)
@@ -55,21 +93,12 @@ def _remove_par2_files(par2_base: str, log_file: str) -> None:
     - Volume files: filename.par2.vol00+01.par2 (when base exists)
     - Volume-only: filename.vol00+01.par2 (with -n1, strips .par2 before adding .vol)
     """
-    # Pattern 1: Match base file and volumes that append to base (e.g., file.par2.vol00+01.par2)
-    base_pattern_files = glob(f"{escape(par2_base)}*")
-    
-    # Pattern 2: Match volume-only files where par2 strips .par2 extension first
-    # e.g., if par2_base is "file.par2", also check for "file.vol*.par2"
-    volume_only_files = []
-    if par2_base.endswith('.par2'):
-        base_without_par2 = par2_base[:-5]  # Remove '.par2'
-        volume_only_files = glob(f"{escape(base_without_par2)}.vol*.par2")
-    
-    files_to_remove = list(set(base_pattern_files + volume_only_files))
+    files_to_remove = _parity_files(par2_base)
     
     if files_to_remove:
         log(f"Removing {len(files_to_remove)} existing par2 file(s)", log_file)
     for par2_file in files_to_remove:
+        _confined_path(par2_file, os.path.dirname(par2_base))
         try:
             os.remove(par2_file)
         except (IOError, OSError) as e:
@@ -104,6 +133,8 @@ def create_par2(
     
     # Enhanced validation
     try:
+        _confined_path(file_path, directory)
+        _confined_path(par2_base, database)
         validate_filesystem_path(file_path, must_exist=True)
         validate_filesystem_path(database, check_writable=True)
     except ValueError as e:
@@ -124,14 +155,10 @@ def create_par2(
     # Par2 with -n2+ creates base file filename.par2 and volumes filename.par2.vol00+01.par2
     
     # Pattern 1: Base file and volumes that append to it
-    par2_files = glob(f"{escape(par2_base)}*")
+    par2_files = _parity_files(par2_base)
     
-    # Pattern 2: Volume-only files (par2 strips .par2 extension before adding .vol)
-    if par2_base.endswith('.par2'):
-        base_without_par2 = par2_base[:-5]  # Remove '.par2' 
-        volume_only = glob(f"{escape(base_without_par2)}.vol*.par2")
-        par2_files.extend(volume_only)
-        par2_files = list(set(par2_files))  # Remove duplicates
+    for parity_file in par2_files:
+        _confined_path(parity_file, database)
     
     if par2_files:
         if not force:
@@ -225,13 +252,9 @@ def _par2_base_from_parity_file(parity_path: str) -> str:
     - Base + volume: filename.par2.vol00+01.par2 (uses PAR2_VOLUME_MARKER)
     - Volume-only: filename.vol00+01.par2 (created with -n1, no base file)
     """
-    if PAR2_VOLUME_MARKER in parity_path:
-        # Base + volume format: filename.par2.vol00+01.par2
-        return parity_path.split(PAR2_VOLUME_MARKER, 1)[0] + PAR2_EXTENSION
-    elif re.search(r'\.vol\d+\+\d+\.par2$', parity_path):
-        # Volume-only format: filename.vol00+01.par2
-        # Extract base by removing .vol<digits>+<digits>.par2 suffix and adding .par2
-        return re.sub(r'\.vol\d+\+\d+\.par2$', PAR2_EXTENSION, parity_path)
+    if re.search(r'\.vol\d+\+\d+\.par2$', parity_path):
+        base = re.sub(r'\.vol\d+\+\d+\.par2$', '', parity_path)
+        return base if base.endswith(PAR2_EXTENSION) else base + PAR2_EXTENSION
     return parity_path
 
 
@@ -247,7 +270,7 @@ def _cleanup_orphan_par2(
     orphan_count = 0
     total_orphan_size = 0
     
-    for root, _, files in os.walk(database):
+    for root, _, files in _scan_tree(database):
         for filename in files:
             if not filename.endswith(PAR2_EXTENSION):
                 continue
@@ -267,7 +290,7 @@ def _cleanup_orphan_par2(
             # Enhanced orphan validation
             try:
                 # Calculate orphan size before removal
-                orphan_par2_files = glob(f"{escape(par2_base)}*")
+                orphan_par2_files = _parity_files(par2_base)
                 orphan_size = sum(os.path.getsize(f) for f in orphan_par2_files if os.path.exists(f))
                 total_orphan_size += orphan_size
                 
@@ -319,8 +342,14 @@ def verify_repair(file_path: str, directory: str, database: str, log_file: str) 
     relative_path = os.path.relpath(file_path, directory)
     par2_base = os.path.join(database, f"{relative_path}{PAR2_EXTENSION}")
 
-    if not os.path.exists(par2_base):
+    _confined_path(file_path, directory)
+    _confined_path(par2_base, database)
+    parity_files = _parity_files(par2_base)
+    for parity_file in parity_files:
+        _confined_path(parity_file, database)
+    if not parity_files:
         return VERIFY_OK
+    par2_base = par2_base if os.path.exists(par2_base) else parity_files[0]
 
     # Don't log every file verification - only failures and repairs
 
@@ -463,6 +492,12 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
             result["ok"] = False
             return result
         
+        source_inventory = _scan_tree(directory)
+        _confined_path(database, database)
+        if Path(directory).resolve().is_relative_to(Path(database).resolve()):
+            raise ValueError('Scrub database must not contain the source directory')
+        if os.path.isdir(database):
+            _scan_tree(database)
         os.makedirs(database, exist_ok=True)
         
         database_path = Path(database).resolve()
@@ -491,7 +526,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
         
         files_found = 0
         dirs_found = 0
-        for root, dirs, files in os.walk(directory):
+        for root, dirs, files in source_inventory:
             dirs_found += len(dirs)
             files_found += len(files)
             
@@ -524,6 +559,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                         continue  # Skip 0-byte files (create_par2 will skip them anyway)
                     total_file_size += file_size
                 except OSError:
+                    files_failed.append(relative_path)
                     continue
                 
                 if os.path.exists(par2_base):
@@ -749,8 +785,8 @@ def main():
     verify = '--no-verify' not in sys.argv
     
     try:
-        scrub_directory(directory, database, redundancy, log_file, verify)
-        return 0
+        result = scrub_directory(directory, database, redundancy, log_file, verify)
+        return 0 if result.get('ok', False) else 1
     except Exception as e:
         log(f"Error: {e}", log_file)
         return 1

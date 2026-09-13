@@ -29,6 +29,11 @@ fast mode; the first full verify-and-repair scrub waits until the configured
 scrub interval is due. Parity updates run daily thereafter so changed files are
 protected between full scrubs.
 
+Initial setup fails before directory creation or sync/parity work when a required
+mount is missing. Failed SMB connectivity checks also abort initial work. Mount
+status inspection is read-only; explicit SMB write probes use unique temporary
+files and remove only their own probe.
+
 ## Sync behavior
 
 Each due sync runs rsync with archive mode, delayed deletion, partial-transfer
@@ -53,6 +58,13 @@ create useful parity for them.
 Full scrubs report repaired files as warnings and unrepairable files as errors.
 Parity metadata lives under the configured database path; keep it on reliable
 storage separate from the data when possible.
+
+Scrub rejects symlinks in source and database paths, including parent components.
+Both trees must be fully readable before parity changes begin; an incomplete
+inventory aborts the run and preserves orphan parity. Keep these trees stable
+during scrubs: path checks do not protect against a concurrent hostile writer
+replacing directories while PAR2 runs. Cleanup matches only exact parity sets,
+and the CLI returns failure for unsuccessful creation or repair.
 
 ## Inspect and run operations
 
