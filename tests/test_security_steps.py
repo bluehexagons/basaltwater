@@ -386,6 +386,17 @@ class TestConfigureAuditd(unittest.TestCase):
                 "security.security_steps._AUDIT_RULES_FILE", rules_file
             ):
                 configure_auditd(config)
+                with open(rules_file, encoding="utf-8") as rules:
+                    contents = rules.read()
+                self.assertNotIn("-w ", contents)
+                self.assertIn(
+                    "-a always,exit -F path=/etc/passwd -F perm=wa -k identity",
+                    contents,
+                )
+                self.assertIn(
+                    "-a always,exit -F dir=/etc/sudoers.d/ -F perm=wa -k sudoers",
+                    contents,
+                )
                 changed_commands = [
                     call.args[0] for call in mock_run.call_args_list
                 ]

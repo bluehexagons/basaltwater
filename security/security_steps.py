@@ -710,31 +710,31 @@ def configure_auditd(config: SetupConfig) -> None:
 
     audit_rules = """# Managed by infra_tools - audit rules.
 # Identity and authentication files
--w /etc/passwd -p wa -k identity
--w /etc/shadow -p wa -k identity
--w /etc/group -p wa -k identity
--w /etc/gshadow -p wa -k identity
--w /etc/sudoers -p wa -k sudoers
--w /etc/sudoers.d/ -p wa -k sudoers
+-a always,exit -F path=/etc/passwd -F perm=wa -k identity
+-a always,exit -F path=/etc/shadow -F perm=wa -k identity
+-a always,exit -F path=/etc/group -F perm=wa -k identity
+-a always,exit -F path=/etc/gshadow -F perm=wa -k identity
+-a always,exit -F path=/etc/sudoers -F perm=wa -k sudoers
+-a always,exit -F dir=/etc/sudoers.d/ -F perm=wa -k sudoers
 
 # SSH configuration changes
--w /etc/ssh/sshd_config -p wa -k sshd_config
--w /etc/ssh/sshd_config.d/ -p wa -k sshd_config
+-a always,exit -F path=/etc/ssh/sshd_config -F perm=wa -k sshd_config
+-a always,exit -F dir=/etc/ssh/sshd_config.d/ -F perm=wa -k sshd_config
 
 # Privileged command execution (setuid/setgid by non-root sessions)
 -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -k privileged
 -a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=-1 -k privileged
 
 # Kernel module loading/unloading
--w /sbin/insmod -p x -k modules
--w /sbin/rmmod -p x -k modules
--w /sbin/modprobe -p x -k modules
+-a always,exit -F path=/sbin/insmod -F perm=x -k modules
+-a always,exit -F path=/sbin/rmmod -F perm=x -k modules
+-a always,exit -F path=/sbin/modprobe -F perm=x -k modules
 -a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
 
 # Login and session tracking
--w /var/run/utmp -p wa -k session
--w /var/log/wtmp -p wa -k session
--w /var/log/btmp -p wa -k session
+-a always,exit -F path=/var/run/utmp -F perm=wa -k session
+-a always,exit -F path=/var/log/wtmp -F perm=wa -k session
+-a always,exit -F path=/var/log/btmp -F perm=wa -k session
 
 # Enable audit (not immutable - allows future rule updates)
 -e 1
