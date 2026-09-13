@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import os
-import re
 import shlex
 
 from typing import Optional
@@ -98,127 +97,6 @@ def cleanup_service(service_name: str) -> None:
     # Reload systemd to reflect changes
     if needs_reload:
         run("systemctl daemon-reload", check=False)
-
-
-def cleanup_all_infra_services(dry_run: bool = False) -> None:
-    """Remove all systemd units created by infra_tools to ensure clean deployment state.
-    
-    This function treats the current deployment command as the desired baseline state.
-    It removes ALL previously deployed services, timers, and mounts that match
-    infra_tools naming patterns, ensuring no orphaned units remain from previous
-    deployments with different configurations.
-    
-    Args:
-        dry_run: If True, only print what would be removed without actually removing
-    
-    Examples:
-        # Clean up all infra_tools services before applying new configuration
-        cleanup_all_infra_services()
-        
-        # Preview what would be removed (dry run)
-        cleanup_all_infra_services(dry_run=True)
-    """
-    systemd_dir = SYSTEMD_DIR
-    # Patterns for infra_tools-created units
-    # These patterns match services, timers, and mounts created by various components
-    infra_patterns = [
-        # Unified storage operations service (new style)
-        r"^storage-ops\.service$",
-        r"^storage-ops\.timer$",
-        r"^sync-.*\.service$",
-        r"^sync-.*\.timer$",
-        r"^scrub-.*\.service$",
-        r"^scrub-.*\.timer$",
-        r"^scrub-.*-update\.service$",
-        r"^scrub-.*-update\.timer$",
-        # Backup services
-        r"^backup-.*\.service$",
-        r"^backup-.*\.timer$",
-        # Node.js app services
-        r"^node-.*\.service$",
-        # Manifest-defined (infra.json) service components
-        r"^app-.*\.service$",
-        # Auto-update units created by infra_tools. Ruby remains here only to
-        # retire the obsolete unit when upgrading; no Ruby unit is recreated.
-        r"^auto-update-(?:apt|godot|gogs|node|ruby|uv)\.service$",
-        r"^auto-update-(?:apt|godot|gogs|node|ruby|uv)\.timer$",
-        # Auto-restart service
-        r"^auto-restart-if-needed\.service$",
-        r"^auto-restart-if-needed\.timer$",
-        # Recurring security and cleanup maintenance
-        r"^security-monitor\.service$",
-        r"^security-monitor\.timer$",
-        r"^cleanup-maintenance\.service$",
-        r"^cleanup-maintenance\.timer$",
-        r"^user-cache-maintenance\.service$",
-        r"^user-cache-maintenance\.timer$",
-        r"^codex-auth-maintenance\.service$",
-        r"^codex-auth-maintenance\.timer$",
-        # SMB mount units
-        r"^mnt-.*\.mount$",
-        # Antistatic lobby server
-        r"^antistatic\.service$",
-        # Antistatic DB service
-        r"^antistatic-db\.service$",
-        # Gogs service
-        r"^gogs\.service$",
-    ]
-    
-    units_to_remove = []
-    
-    # Scan for matching unit files
-    if os.path.exists(systemd_dir):
-        for filename in os.listdir(systemd_dir):
-            for pattern in infra_patterns:
-                if re.match(pattern, filename):
-                    units_to_remove.append(filename)
-                    break
-    
-    if not units_to_remove:
-        if not dry_run:
-            print("  No existing infra_tools services found")
-        return
-    
-    if dry_run:
-        print(f"  [DRY RUN] Would remove {len(units_to_remove)} unit(s):")
-        for unit in sorted(units_to_remove):
-            print(f"    - {unit}")
-        return
-    
-    print(f"  Cleaning up {len(units_to_remove)} existing infra_tools unit(s)...")
-    
-    # Group by unit type for proper stopping order
-    timers = [u for u in units_to_remove if u.endswith(".timer")]
-    services = [u for u in units_to_remove if u.endswith(".service")]
-    mounts = [u for u in units_to_remove if u.endswith(".mount")]
-    others = [u for u in units_to_remove if not any(u.endswith(ext) for ext in [".timer", ".service", ".mount"])]
-    
-    # Stop in order: timers first (they trigger services), then services, then mounts, then others
-    for unit in timers + services + mounts + others:
-        unit_type = unit.rsplit(".", 1)[1]
-        unit_path = os.path.join(systemd_dir, unit)
-
-        # Stop the unit (ignore errors if not running)
-        run(f"systemctl stop {shlex.quote(unit)}", check=False)
-        
-        # Disable timers/mounts and services with an [Install] section.
-        if unit_type in ("timer", "mount") or (
-            unit_type == "service" and _unit_has_install_section(unit_path)
-        ):
-            run(f"systemctl disable {shlex.quote(unit)}", check=False)
-        
-        # Remove the file
-        try:
-            os.remove(unit_path)
-            print(f"    ✓ Removed {unit}")
-        except OSError as e:
-            print(f"    ✗ Failed to remove {unit}: {e}")
-    
-    # Reload systemd to reflect all changes
-    run("systemctl daemon-reload", check=False)
-    run("systemctl reset-failed", check=False)
-    
-    print(f"  ✓ Cleaned up {len(units_to_remove)} unit(s)")
 
 
 def _systemd_environment_line(key: str, value: str) -> str:

@@ -13,12 +13,12 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.local_http import open_loopback
 from lib.vendor_installer import POLICIES, download_installer
 from lib.agent_maintenance import (
     DEFAULT_HOLD_HOURS,
@@ -1039,7 +1039,7 @@ def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
     try:
         descriptor = os.open(
             path,
-            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
         )
     except OSError:
         return False
@@ -1909,12 +1909,12 @@ def _t3_endpoint_reachable(port: int | None) -> bool:
     if port is None:
         return False
     try:
-        with urllib.request.urlopen(
+        with open_loopback(
             f"http://127.0.0.1:{port}/", timeout=5
         ) as response:
-            return response.status < 500
+            return 200 <= response.status < 300 or 400 <= response.status < 500
     except urllib.error.HTTPError as exc:
-        return exc.code < 500
+        return 400 <= exc.code < 500
     except (OSError, urllib.error.URLError, TimeoutError, ValueError):
         return False
 

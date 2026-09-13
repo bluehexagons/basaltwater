@@ -1,4 +1,4 @@
-# Open Codebase Audit Findings (2026-09-13)
+# Codebase Audit (2026-09-13)
 
 This continues the [2026-08-21 audit](CODEBASE_AUDIT_2026-08-21.md) and tracks
 remaining work only. Resolved findings and implementation history are retained

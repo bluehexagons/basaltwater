@@ -23,8 +23,8 @@ from lib.release_management import (
     write_json_state,
 )
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
-from lib.remote_utils import install_package, run, user_exists, is_service_active
-from lib.systemd_service import cleanup_service
+from lib.remote_utils import install_package, run, user_exists
+from lib.unit_transaction import replace_units
 
 
 ANTISTATIC_USER = "antistatic"
@@ -687,30 +687,11 @@ def setup_antistatic_server(config: SetupConfig) -> None:
     _download_antistatic_binary(_detect_arch())
     _configure_antistatic_environment(config)
 
-    cleanup_service(ANTISTATIC_SERVICE)
-
-    service_file = f"/etc/systemd/system/{ANTISTATIC_SERVICE}.service"
-    with open(service_file, "w", encoding="utf-8") as fh:
-        fh.write(
-            generate_antistatic_service(
-                port,
-                host=service_host,
-                trust_proxy=trust_proxy,
-            )
-        )
-
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {ANTISTATIC_SERVICE}")
-    run(f"systemctl restart {ANTISTATIC_SERVICE}")
+    unit = f"{ANTISTATIC_SERVICE}.service"
+    replace_units({unit: generate_antistatic_service(
+        port, host=service_host, trust_proxy=trust_proxy,
+    )}, activate=(unit,))
     print(f"  ✓ Created and started systemd service: {ANTISTATIC_SERVICE}")
-
-    if is_service_active(ANTISTATIC_SERVICE):
-        print(f"  ✓ {ANTISTATIC_SERVICE} is running")
-    else:
-        raise RuntimeError(
-            f"{ANTISTATIC_SERVICE} failed its startup health check; "
-            f"inspect systemctl status {ANTISTATIC_SERVICE}"
-        )
 
     _maybe_configure_nginx_proxy(config, domain, port, ANTISTATIC_SERVICE)
     _maybe_configure_antistatic_firewall(domain, port)
@@ -738,24 +719,9 @@ def setup_antistatic_db(config: SetupConfig) -> None:
     _ensure_antistatic_db_user()
     _download_antistatic_db_binary(_detect_arch())
 
-    cleanup_service(ANTISTATIC_DB_SERVICE)
-
-    service_file = f"/etc/systemd/system/{ANTISTATIC_DB_SERVICE}.service"
-    with open(service_file, "w", encoding="utf-8") as fh:
-        fh.write(generate_antistatic_db_service(port, host=db_host))
-
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {ANTISTATIC_DB_SERVICE}")
-    run(f"systemctl restart {ANTISTATIC_DB_SERVICE}")
+    unit = f"{ANTISTATIC_DB_SERVICE}.service"
+    replace_units({unit: generate_antistatic_db_service(port, host=db_host)}, activate=(unit,))
     print(f"  ✓ Created and started systemd service: {ANTISTATIC_DB_SERVICE}")
-
-    if is_service_active(ANTISTATIC_DB_SERVICE):
-        print(f"  ✓ {ANTISTATIC_DB_SERVICE} is running")
-    else:
-        print(
-            f"  ⚠ Warning: {ANTISTATIC_DB_SERVICE} may not be running. "
-            f"Check with: systemctl status {ANTISTATIC_DB_SERVICE}"
-        )
 
     _maybe_configure_nginx_proxy(config, domain, port, ANTISTATIC_DB_SERVICE)
     _maybe_configure_direct_port_firewall(domain, port, ANTISTATIC_DB_SERVICE)

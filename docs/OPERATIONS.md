@@ -68,7 +68,7 @@ Timeout events include the stage and whether deployment had begun; completed
 remote changes require inspection before retrying. Notification delivery uses
 its own bounded network calls after execution ends.
 
-Managed application, Gogs, CI/CD, storage-ops and maintenance timer units use
+Managed application, Antistatic, Gogs, CI/CD, storage-ops and maintenance timer units use
 one serialized replacement transaction. Candidates are staged privately on the
 unit filesystem and checked with `systemd-analyze verify` before atomic writes.
 Failed writes, reloads or activation restore previous files, modes, ownership,
