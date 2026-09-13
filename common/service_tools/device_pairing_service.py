@@ -297,7 +297,6 @@ class ConnectJob:
         self._raw_output = ""
         self._output = ""
         self._relay_install_confirmed = False
-        self._started_at = 0.0
         self._finished_at: float | None = None
         self._returncode: int | None = None
         self._error: str | None = None
@@ -325,7 +324,23 @@ class ConnectJob:
                 if self._process is process:
                     self._error = "T3 relay installation confirmation could not be sent"
 
-    def _watch(self, process: subprocess.Popen[str]) -> None:
+    def _expire(self, process: subprocess.Popen[str]) -> None:
+        """Enforce the deadline even when no browser requests a snapshot."""
+        with self._lock:
+            if self._process is not process:
+                return
+            self._error = "The T3 Connect operation expired; start it again"
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        # Reap even if a descendant is keeping the output reader blocked.
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def _watch(self, process: subprocess.Popen[str], timer: threading.Timer) -> None:
         assert process.stdout is not None
         try:
             for chunk in iter(lambda: process.stdout.read(1), ""):
@@ -335,6 +350,7 @@ class ConnectJob:
         except OSError:
             returncode = process.poll()
         finally:
+            timer.cancel()
             process.stdout.close()
             with self._lock:
                 if process.stdin is not None:
@@ -369,7 +385,6 @@ class ConnectJob:
             self._error = None
             self._returncode = None
             self._finished_at = None
-            self._started_at = time.monotonic()
             try:
                 process = subprocess.Popen(
                     self.config["link_command"],
@@ -385,7 +400,10 @@ class ConnectJob:
             except (OSError, ValueError) as exc:
                 raise PairingError("T3 Connect could not be started") from exc
             self._process = process
-        threading.Thread(target=self._watch, args=(process,), daemon=True).start()
+        timer = threading.Timer(CONNECT_JOB_TTL_SECONDS, self._expire, args=(process,))
+        timer.daemon = True
+        timer.start()
+        threading.Thread(target=self._watch, args=(process, timer), daemon=True).start()
 
     def send_input(self, value: str) -> None:
         encoded = value.encode("utf-8")
@@ -416,13 +434,6 @@ class ConnectJob:
             output = self._output
             returncode = self._returncode
             error = self._error
-            started_at = self._started_at
-        if process is not None and time.monotonic() - started_at > CONNECT_JOB_TTL_SECONDS:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            error = "The T3 Connect operation expired; start it again"
         return {
             "active": process is not None,
             "error": error,

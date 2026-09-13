@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import uuid
+import fcntl
+import stat
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Optional
@@ -101,6 +104,35 @@ class OperationStateStore:
     def __init__(self, path: str):
         validate_filesystem_path(path, must_exist=False)
         self.path = os.path.abspath(path)
+        self._lock_finalizer: weakref.finalize | None = None
+
+    def _acquire(self) -> None:
+        if self._lock_finalizer is not None and self._lock_finalizer.alive:
+            return
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        lock_path = self.path + '.lock'
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OperationStateError(f'Unsafe operation lock: {lock_path}')
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise OperationStateError(f'Operation is owned by another process: {self.path}') from exc
+            self._lock_finalizer = weakref.finalize(self, os.close, descriptor)
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def close(self) -> None:
+        """Release ownership while retaining any marker for explicit recovery.
+
+        The stable lock file is never removed. Kernel locks disappear on process
+        exit; a leftover marker still blocks begin until recovered or inspected.
+        """
+        if self._lock_finalizer is not None:
+            self._lock_finalizer()
+            self._lock_finalizer = None
 
     def load(self) -> Optional[OperationRecord]:
         if not os.path.lexists(self.path):
@@ -130,6 +162,7 @@ class OperationStateStore:
         _validate_label(operation_type, "Operation type")
         _validate_label(resource, "Operation resource")
         _validate_label(phase, "Operation phase")
+        self._acquire()
         existing = self.load()
         if existing is not None:
             raise OperationStateError(
@@ -163,6 +196,7 @@ class OperationStateStore:
         _validate_label(phase, "Operation phase")
         if status not in {"in_progress", "recovery_required"}:
             raise ValueError(f"Unsupported operation status: {status}")
+        self._acquire()
         current = self._require_current(operation_id)
         record = OperationRecord(
             schema_version=current.schema_version,
@@ -179,8 +213,10 @@ class OperationStateStore:
         return record
 
     def complete(self, operation_id: str) -> None:
+        self._acquire()
         self._require_current(operation_id)
         remove_file_durable(self.path)
+        self.close()
 
     def _require_current(self, operation_id: str) -> OperationRecord:
         current = self.load()

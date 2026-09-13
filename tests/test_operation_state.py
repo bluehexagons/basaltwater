@@ -6,11 +6,36 @@ import json
 import os
 import tempfile
 import unittest
+import subprocess
+import sys
 
 from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_live_owner_blocks_second_process_and_recovery_can_take_over(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'operation.json')
+            store = OperationStateStore(path)
+            record = store.begin('setup', 'host', 'applying')
+            script = (
+                'from lib.operation_state import OperationStateStore, OperationStateError\n'
+                'import sys\n'
+                'store = OperationStateStore(sys.argv[1])\n'
+                'try:\n'
+                '    store.complete(sys.argv[2])\n'
+                'except OperationStateError:\n'
+                '    sys.exit(7)\n'
+            )
+            command = [sys.executable, '-c', script, path, record.operation_id]
+            blocked = subprocess.run(command, capture_output=True, timeout=10)
+            self.assertEqual(blocked.returncode, 7, blocked.stderr)
+            self.assertEqual(store.load(), record)
+            store.close()
+            recovered = subprocess.run(command, capture_output=True, timeout=10)
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+            self.assertIsNone(store.load())
+
     def test_lifecycle_is_persistent_and_completed_marker_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "operation.json")

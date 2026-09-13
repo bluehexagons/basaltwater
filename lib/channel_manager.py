@@ -12,6 +12,7 @@ from typing import Any
 
 from lib.atomic_io import write_json_atomic
 from lib.installation_info import read_installation_metadata
+from lib.remote_utils import CommandTimeoutError, run
 from lib.types import JSONDict
 from lib.validation import validate_channel, validate_filesystem_path
 
@@ -108,7 +109,8 @@ def switch_channel(repo_path: str, channel: str) -> JSONDict:
     target = _resolve_channel(repo_path, channel)
     _checkout(repo_path, target.ref)
     state = _save_state(repo_path, target)
-    return _state_with_worktree(state, repo_path)
+    state.update(branch=None, managed=True)
+    return state
 
 
 def upgrade_channel(repo_path: str) -> JSONDict:
@@ -134,9 +136,13 @@ def upgrade_channel(repo_path: str) -> JSONDict:
     current_commit = _current_commit(repo_path)
     if current_commit != target.commit:
         _checkout(repo_path, target.ref)
+        branch = None
+    else:
+        branch = _current_branch(repo_path)
     saved_state = _save_state(repo_path, target)
     saved_state["updated"] = current_commit != target.commit
-    return _state_with_worktree(saved_state, repo_path)
+    saved_state.update(branch=branch, managed=True)
+    return saved_state
 
 
 def _validate_repository(repo_path: str) -> str:
@@ -159,13 +165,16 @@ def _setup_snapshot(repo_path: str) -> JSONDict | None:
 
 
 def _run_git(repo_path: str, arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *arguments],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return run(
+            ['env', 'GIT_TERMINAL_PROMPT=0', 'git', *arguments],
+            cwd=repo_path, capture_output=True, text=True, check=False, timeout=300,
+        )
+    except CommandTimeoutError as exc:
+        raise ChannelError(
+            f'Git {arguments[0]} timed out in {repo_path}; saved channel state is unchanged. '
+            'Inspect git status and HEAD before retrying.'
+        ) from exc
 
 
 def _git_failure(action: str, result: subprocess.CompletedProcess[str]) -> ChannelError:
@@ -292,11 +301,4 @@ def _save_state(repo_path: str, target: ChannelTarget) -> JSONDict:
         "updated_at": int(time.time()),
     }
     write_json_atomic(channel_state_path(repo_path), state, mode=0o600, sort_keys=True)
-    return state
-
-
-def _state_with_worktree(state: JSONDict, repo_path: str) -> JSONDict:
-    state["commit"] = _current_commit(repo_path)
-    state["branch"] = _current_branch(repo_path)
-    state["managed"] = True
     return state

@@ -94,7 +94,8 @@ Available commands:
   snapshots <vmid>            List snapshots for a guest
   snapshot <vmid> <name>      Create a snapshot
   rollback <vmid> <name>      Roll back a guest to a snapshot
-  delsnapshot <vmid> <name>   Delete a snapshot
+  delsnapshot <vmid> <name> [--yes] [--dry-run]
+                              Delete a snapshot (asks for confirmation)
   unlock <vmid>               Remove a stuck management lock from a guest
   rolling-update <name> [...] Patch saved node configs in order, rebooting if needed
   top                         Show CPU, memory, storage, and guest counts
@@ -262,7 +263,7 @@ class ProxmoxShell:
                 return 0
             try:
                 self.dispatch(line)
-            except ProxmoxManageError as exc:
+            except (ProxmoxManageError, ProxmoxStorageError) as exc:
                 self._output(f"Error: {exc}")
             except ValueError as exc:
                 self._output(f"Error: {exc}")
@@ -691,12 +692,24 @@ class ProxmoxShell:
 
     def _cmd_delsnapshot(self, args: list[str]) -> None:
         host = self._require_host()
-        if len(args) < 2:
-            raise ValueError("Usage: delsnapshot <vmid> <name>")
-        vmid = self._parse_vmid([args[0]], "delsnapshot")
-        name = args[1]
-        delete_snapshot(host, vmid, name)
-        self._output(f"  Deleted snapshot '{name}' for VMID {vmid} on {host.name}.")
+        dry_run = '--dry-run' in args
+        yes = '--yes' in args or '-y' in args
+        rest = [arg for arg in args if arg not in {'--yes', '-y', '--dry-run'}]
+        if len(rest) != 2:
+            raise ValueError("Usage: delsnapshot <vmid> <name> [--yes] [--dry-run]")
+        vmid = self._parse_vmid([rest[0]], "delsnapshot")
+        name = rest[1]
+        if not dry_run and not yes:
+            try:
+                response = self._input(f"Delete snapshot '{name}' for guest {vmid} on {host.name}? Type 'yes' to confirm: ")
+            except (EOFError, KeyboardInterrupt):
+                response = ''
+            if response.strip().lower() != 'yes':
+                self._output('  Aborted.')
+                return
+        delete_snapshot(host, vmid, name, dry_run=dry_run)
+        prefix = 'Would delete' if dry_run else 'Deleted'
+        self._output(f"  {prefix} snapshot '{name}' for VMID {vmid} on {host.name}.")
 
     def _cmd_top(self, args: list[str]) -> None:
         host = self._require_host()
@@ -760,6 +773,8 @@ class ProxmoxShell:
         host = self._require_host()
         do_delete = "--delete" in args
         skip_confirm = "--yes" in args or "-y" in args
+        if any(arg not in {'--delete', '--yes', '-y', '--dry-run'} for arg in args):
+            raise ValueError('Usage: clean-disks [--delete] [--yes] [--dry-run]')
         orphans = list_orphaned_volumes(host)
         if not orphans:
             self._output("  No orphaned volumes found.")
@@ -771,6 +786,9 @@ class ProxmoxShell:
             )
         if not do_delete:
             self._output("  Run 'clean-disks --delete' to remove them.")
+            return
+        if '--dry-run' in args:
+            self._output('  Dry run — nothing deleted.')
             return
         if not skip_confirm:
             try:
@@ -788,7 +806,7 @@ class ProxmoxShell:
                 delete_volume(host, vol.volid)
                 self._output(f"  Deleted {vol.volid}")
             except ProxmoxStorageError as exc:
-                self._output(f"  Error: {exc}")
+                raise ProxmoxStorageError(f'Cleanup stopped after partial failure: {exc}') from exc
 
     @staticmethod
     def _parse_vmid(args: list[str], cmd: str) -> int:

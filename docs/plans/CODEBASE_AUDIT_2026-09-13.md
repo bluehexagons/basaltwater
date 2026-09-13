@@ -1,11 +1,22 @@
 # Residual Codebase Audit and Remediation Plan (2026-09-13)
 
-Status: active handoff plan. This is a concise continuation of the
-[2026-08-21 audit](CODEBASE_AUDIT_2026-08-21.md), not a record of completed
-fixes. Existing domain plans remain owners where noted below.
+Status: partially remediated. This continues the
+[2026-08-21 audit](CODEBASE_AUDIT_2026-08-21.md). The progress section records
+implemented fixes; original findings remain below for traceability. Existing
+domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- RCF-06 implemented: operation stores hold nonblocking interprocess locks
+  through completion/closure; process exit releases ownership without erasing
+  recovery markers. A separate process regression covers ownership and recovery.
+- RCF-13 and 19 implemented: CLI/shell snapshot confirmation, fail-closed
+  guest/volume inventory, fresh scans before deletion, and explicit partial
+  failure. Additional findings fixed: shared-pool disks belonging to other
+  cluster nodes are protected, and shell cleanup honors `--dry-run`.
+- RCF-28 and 30 implemented: channel Git commands use the shared bounded
+  process-group runner (five minutes); T3 Connect autonomously kills and reaps
+  silent providers after 15 minutes without requiring a browser request.
 - RCF-01, 09, 11 implemented: atomic root:webhook/0640 configuration writes,
   service-identity readability checks, canonical secret reconciliation, shared
   version 1 schema, health failures, and job retention for invalid config.

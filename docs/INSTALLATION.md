@@ -289,6 +289,12 @@ The default installer channel is `dev`, which tracks `main`. Use `stable` when
 you want the latest versioned release. `upgrade` refuses to overwrite local
 worktree changes; commit or stash changes before reinstalling or upgrading.
 
+Channel Git commands have a five-minute deadline and disable terminal credential
+prompts. A timeout terminates the local command group and leaves saved channel
+state unchanged; inspect `git status` and `HEAD` before retrying an interrupted
+checkout. Configure a credential helper or SSH agent before accessing private
+remotes.
+
 `--install-dir` must name a dedicated application directory. The installer
 refuses symlinks, mount points, home directories, broad system paths, and
 unmanaged existing directories. A legacy infra-tools tree with `infra_tools.py`,

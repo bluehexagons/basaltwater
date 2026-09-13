@@ -586,6 +586,7 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
     delsnapshot.add_argument("host", help="Registered host name or address")
     delsnapshot.add_argument("vmid", type=int, help="Guest VMID")
     delsnapshot.add_argument("name", help="Snapshot name to delete")
+    delsnapshot.add_argument('-y', '--yes', action='store_true', help='Confirm snapshot deletion')
     delsnapshot.add_argument(
         "--dry-run",
         action="store_true",
@@ -1411,6 +1412,14 @@ def _cmd_rollback(args: argparse.Namespace, workspace: Optional[str]) -> int:
 
 def _cmd_delsnapshot(args: argparse.Namespace, workspace: Optional[str]) -> int:
     host = _resolve_host(args.host, workspace)
+    if not args.dry_run and not getattr(args, 'yes', False):
+        try:
+            response = input(f"Delete snapshot '{args.name}' for guest {args.vmid} on {host.name}? Type 'yes' to confirm: ")
+        except (EOFError, KeyboardInterrupt):
+            response = ''
+        if response.strip().lower() != 'yes':
+            print('Aborted.')
+            return 1
     delete_snapshot(host, args.vmid, args.name, dry_run=args.dry_run)
     prefix = "Would delete" if args.dry_run else "Deleted"
     print(f"{prefix} snapshot '{args.name}' for VMID {args.vmid} on {host.name}.")

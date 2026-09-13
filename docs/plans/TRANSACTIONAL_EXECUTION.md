@@ -50,6 +50,10 @@ ARCH-08 from the [architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-0
 - `lib.operation_state` defines a schema-versioned, atomically persisted marker
   with explicit in-progress and recovery-required states. It rejects corrupt,
   unsupported, symlinked, and stale-ID updates rather than replacing them.
+  A nonblocking kernel lock protects ownership through completion or store
+  closure; another process cannot transition or remove a live owner's marker.
+  Process exit releases the lock, but recovery must still supply the recorded
+  operation ID. Stable `.lock` files must not be deleted to bypass ownership.
 - Manifest deployment creates that marker before staging, records deterministic
   staging/backup paths and units before activation, clears it after success or
   verified rollback, and retains recovery errors when rollback is incomplete.

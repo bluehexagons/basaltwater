@@ -672,6 +672,10 @@ infra-tools proxmox rollback pve1 101 pre-upgrade
 infra-tools proxmox delsnapshot pve1 101 pre-upgrade
 ```
 
+Snapshot deletion requires typing `yes`, or `--yes` for automation. `--dry-run`
+previews the command without confirmation or deletion. The interactive shell
+uses the same confirmation and dry-run options.
+
 `vm destroy` is permanent and asks for confirmation. For an infra-tools
 provisioned VM, use its exact saved local name; infra-tools resolves the
 registered provider host and VMID, then verifies the observed QEMU name and
@@ -747,6 +751,14 @@ infra-tools proxmox clean-disks pve1 --delete
 `clean-disks` is list-only by default. `--delete` requires typing `yes` unless
 `--yes`/`-y` is supplied; treat it as destructive because an orphaned-volume
 check cannot infer whether an external workflow still needs a volume.
+
+Cleanup aborts if either guest inventory, cluster guest inventory, or an active
+pool's volume listing fails. Cluster-wide guest IDs protect shared-storage disks
+owned by other nodes. Every deletion repeats the complete scan and refuses a
+volume that is no longer orphaned. Keep provisioning and migration paused during
+cleanup: inventory and deletion are separate Proxmox operations. CLI partial
+failures return nonzero; the shell stops cleanup and reports the failure.
+`--dry-run` is honored in both interfaces, including with `--delete --yes`.
 
 After confirming that no backup, migration, or snapshot task is still active,
 clear a stale Proxmox management lock:

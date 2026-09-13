@@ -6,7 +6,10 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from lib import channel_manager
+from lib.remote_utils import CommandTimeoutError
 from lib.channel_manager import ChannelError, get_channel_info, switch_channel, upgrade_channel
 from lib.validation import validate_channel
 
@@ -25,6 +28,13 @@ def _git(cwd: str, *arguments: str) -> str:
 
 
 class TestChannelValidation(unittest.TestCase):
+    def test_git_timeout_is_bounded_and_reported(self) -> None:
+        with patch.object(channel_manager, 'run', side_effect=CommandTimeoutError('git fetch', 300)) as run:
+            with self.assertRaisesRegex(ChannelError, 'saved channel state is unchanged'):
+                channel_manager._run_git('/repository', ['fetch', 'origin'])
+        self.assertEqual(run.call_args.kwargs['timeout'], 300)
+        self.assertEqual(run.call_args.args[0][:3], ['env', 'GIT_TERMINAL_PROMPT=0', 'git'])
+
     def test_accepts_supported_channels(self) -> None:
         for channel in [
             "stable",

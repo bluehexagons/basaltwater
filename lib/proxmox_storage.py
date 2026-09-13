@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import json
 from dataclasses import dataclass
 
 from lib.proxmox_guest import _ssh_opts, _ssh_run
@@ -46,14 +47,31 @@ def _active_vmids(host: ProxmoxHost) -> set[int]:
     for cmd in ("qm list", "pct list"):
         result = _run(host, cmd)
         if result.returncode != 0:
-            continue
-        for line in result.stdout.splitlines()[1:]:   # skip header row
+            raise ProxmoxStorageError(f'Incomplete guest inventory on {host.address}: {cmd} failed')
+        lines = result.stdout.splitlines()
+        if not lines or not lines[0].split() or lines[0].split()[0] != 'VMID':
+            raise ProxmoxStorageError(f'Invalid guest inventory from {cmd} on {host.address}')
+        for line in lines[1:]:
             parts = line.split()
             if parts:
                 try:
                     vmids.add(int(parts[0]))
                 except ValueError:
-                    pass
+                    raise ProxmoxStorageError(f'Invalid VMID in {cmd} inventory on {host.address}')
+    # Shared pools can contain disks belonging to a guest on another node.
+    result = _run(host, 'pvesh get /cluster/resources --type vm --output-format json')
+    if result.returncode != 0:
+        raise ProxmoxStorageError(f'Incomplete cluster guest inventory on {host.address}')
+    try:
+        guests = json.loads(result.stdout)
+        if not isinstance(guests, list):
+            raise ValueError('cluster inventory must be a list')
+        for guest in guests:
+            if not isinstance(guest, dict) or type(guest.get('vmid')) is not int or guest['vmid'] <= 0:
+                raise ValueError('invalid cluster VMID')
+            vmids.add(guest['vmid'])
+    except ValueError as exc:
+        raise ProxmoxStorageError(f'Invalid cluster guest inventory on {host.address}') from exc
     return vmids
 
 
@@ -106,7 +124,7 @@ def list_orphaned_volumes(host: ProxmoxHost) -> list[OrphanedVolume]:
     for storage in _guest_storage_names(host):
         result = _run(host, f"pvesm list {shlex.quote(storage)}")
         if result.returncode != 0:
-            continue
+            raise ProxmoxStorageError(f'Incomplete volume inventory: pvesm list {storage} failed on {host.address}')
         for volid, vmid, size, fmt in _parse_pvesm_list(result.stdout):
             if vmid not in active:
                 orphans.append(OrphanedVolume(
@@ -126,6 +144,8 @@ def delete_volume(
     dry_run: bool = False,
 ) -> None:
     """Delete a storage volume by its volid (e.g. ``local-lvm:vm-999-disk-0``)."""
+    if not dry_run and volid not in {volume.volid for volume in list_orphaned_volumes(host)}:
+        raise ProxmoxStorageError(f'Refusing to delete volume absent from fresh orphan inventory: {volid}')
     result = _run(host, shlex.join(["pvesm", "free", volid]), dry_run=dry_run)
     if result.returncode != 0:
         raise ProxmoxStorageError(

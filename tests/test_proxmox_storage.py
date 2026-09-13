@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_storage import (
+    OrphanedVolume,
     ProxmoxStorageError,
     _parse_pvesm_list,
     delete_volume,
@@ -81,6 +82,7 @@ class TestListOrphanedVolumes(unittest.TestCase):
         mock_run.side_effect = [
             _ok(_QM_LIST),     # qm list
             _ok(_PCT_LIST),    # pct list
+            _ok('[{"vmid": 100}]'),
             _ok(_PVESM_STATUS),
             _ok(_PVESM_LIST_LOCAL_LVM),  # local
             _ok(_PVESM_LIST_LOCAL_LVM),  # local-lvm
@@ -99,6 +101,7 @@ class TestListOrphanedVolumes(unittest.TestCase):
         mock_run.side_effect = [
             _ok(_QM_LIST),
             _ok(_PCT_LIST),
+            _ok('[{"vmid": 100}]'),
             _ok(_PVESM_STATUS),
             _ok(no_orphan_list),
             _ok(no_orphan_list),
@@ -108,12 +111,42 @@ class TestListOrphanedVolumes(unittest.TestCase):
 
     @patch("lib.proxmox_storage._ssh_run")
     def test_raises_on_pvesm_status_failure(self, mock_run: MagicMock) -> None:
-        mock_run.side_effect = [_ok(_QM_LIST), _ok(_PCT_LIST), _fail()]
+        mock_run.side_effect = [_ok(_QM_LIST), _ok(_PCT_LIST), _ok('[]'), _fail()]
         with self.assertRaises(ProxmoxStorageError):
             list_orphaned_volumes(_host())
 
+    def test_incomplete_inventory_never_returns_orphans(self) -> None:
+        success = [_ok(_QM_LIST), _ok(_PCT_LIST), _ok('[]'), _ok(_PVESM_STATUS), _ok(_PVESM_LIST_LOCAL_LVM), _ok(_PVESM_LIST_LOCAL_LVM)]
+        for index in range(len(success)):
+            results = success[:index] + [_fail()]
+            with self.subTest(index=index), patch('lib.proxmox_storage._ssh_run', side_effect=results):
+                with self.assertRaises(ProxmoxStorageError):
+                    list_orphaned_volumes(_host())
+
+    @patch('lib.proxmox_storage._ssh_run')
+    def test_shared_volume_owned_by_other_node_is_not_orphan(self, mock_run):
+        mock_run.side_effect = [
+            _ok(_QM_LIST), _ok(_PCT_LIST), _ok('[{"vmid": 999}]'),
+            _ok(_PVESM_STATUS), _ok(_PVESM_LIST_LOCAL_LVM), _ok(_PVESM_LIST_LOCAL_LVM),
+        ]
+        self.assertEqual(list_orphaned_volumes(_host()), [])
+
 
 class TestDeleteVolume(unittest.TestCase):
+    def setUp(self):
+        scan = patch('lib.proxmox_storage.list_orphaned_volumes', return_value=[
+            OrphanedVolume('local-lvm:vm-999-disk-0', 'local-lvm', 999, '20G'),
+        ])
+        self.scan = scan.start()
+        self.addCleanup(scan.stop)
+
+    @patch('lib.proxmox_storage._ssh_run')
+    def test_rechecks_before_deleting(self, mock_run):
+        self.scan.return_value = []
+        with self.assertRaisesRegex(ProxmoxStorageError, 'fresh orphan inventory'):
+            delete_volume(_host(), 'local-lvm:vm-999-disk-0')
+        mock_run.assert_not_called()
+
     @patch("lib.proxmox_storage._ssh_run")
     def test_calls_pvesm_free(self, mock_run: MagicMock) -> None:
         mock_run.return_value = _ok()

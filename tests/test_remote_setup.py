@@ -165,6 +165,7 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
                 },
             )
 
+            store.close()  # The previous invocation has exited.
             remote_setup._begin_setup_operation(config)
 
             resumed = store.load()
@@ -211,6 +212,7 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
                 status="recovery_required",
             )
 
+            store.close()  # The previous invocation has exited.
             with self.assertRaisesRegex(OperationStateError, started.operation_id):
                 remote_setup._begin_setup_operation(config)
 
@@ -238,6 +240,7 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
                 },
             )
 
+            store.close()  # The previous invocation has exited.
             with self.assertRaisesRegex(OperationStateError, started.operation_id):
                 remote_setup._begin_setup_operation(config)
 
