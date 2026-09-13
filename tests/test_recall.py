@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import io
 import json
+import base64
 import os
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from lib import recall
 from lib.config import SetupConfig
+from lib.remote_utils import CommandTimeoutError
 
 
 def completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -22,7 +25,7 @@ def completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subpro
 class TestRetrieveStoredConfig(unittest.TestCase):
     def test_retrieves_and_decodes_stored_config(self) -> None:
         stored = {"username": "remote", "friendly_name": "production", "tags": "web,prod"}
-        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", return_value=completed(stdout=json.dumps(stored))) as run:
+        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", return_value=completed(stdout=json.dumps(stored))) as run:
             config = recall.retrieve_stored_config("server", "remote", "/tmp/key")
 
         self.assertIsNotNone(config)
@@ -33,19 +36,19 @@ class TestRetrieveStoredConfig(unittest.TestCase):
         self.assertIn("cat /opt/infra_tools/state/setup.json", run.call_args.args[0][-1])
 
     def test_retrieve_returns_none_for_empty_or_invalid_remote_data(self) -> None:
-        for result in (completed(stdout=""), completed(stdout="not json")):
-            with self.subTest(stdout=result.stdout), patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", return_value=result):
+        for result in (completed(stdout=""), completed(stdout="not json"), completed(stdout='[]')):
+            with self.subTest(stdout=result.stdout), patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", return_value=result):
                 self.assertIsNone(recall.retrieve_stored_config("server", "remote"))
 
     def test_retrieve_handles_timeout_and_missing_ssh(self) -> None:
         stderr = io.StringIO()
-        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", side_effect=subprocess.TimeoutExpired(["ssh"], 30)):
+        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", side_effect=CommandTimeoutError('ssh', 30)):
             with redirect_stderr(stderr):
                 self.assertIsNone(recall.retrieve_stored_config("server", "remote"))
         self.assertIn("Timeout retrieving stored config", stderr.getvalue())
 
         stderr = io.StringIO()
-        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", side_effect=FileNotFoundError):
+        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", side_effect=FileNotFoundError):
             with redirect_stderr(stderr):
                 self.assertIsNone(recall.retrieve_stored_config("server", "remote"))
         self.assertIn("SSH command not available", stderr.getvalue())
@@ -59,7 +62,7 @@ class TestReconstructRemoteConfig(unittest.TestCase):
             "deploy": [["example.com", "https://example.com/repo.git"]],
             "samba_shares": ["public"],
         }
-        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", side_effect=[completed(), completed(stdout=json.dumps(reconstructed))]) as run:
+        with patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", side_effect=[completed(), completed(stdout=json.dumps(reconstructed))]) as run:
             result = recall.reconstruct_remote_config("server", "remote", "/tmp/key")
 
         self.assertIsNotNone(result)
@@ -71,11 +74,9 @@ class TestReconstructRemoteConfig(unittest.TestCase):
         self.assertIn("test -f /opt/infra_tools/infra_tools.py", run.call_args_list[0].args[0][-1])
         self.assertIn("reconstruct --compact", run.call_args_list[1].args[0][-1])
 
-    def test_reconstruct_installs_missing_remote_tool_from_temporary_archive(self) -> None:
-        process = MagicMock()
-        process.returncode = 0
+    def test_reconstruct_uses_temporary_remote_source_when_tool_is_missing(self) -> None:
         reconstructed = {"install_python": True}
-        with tempfile.TemporaryDirectory() as temp_root, patch.object(recall.tempfile, "mkdtemp", return_value=os.path.join(temp_root, "build")), patch.object(recall, "copy_project_files") as copy_files, patch.object(recall, "create_tar_from_dir", return_value=b"tar data") as create_tar, patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", side_effect=[completed(1), completed(stdout=json.dumps(reconstructed))]), patch.object(recall.subprocess, "Popen", return_value=process) as popen:
+        with tempfile.TemporaryDirectory() as temp_root, patch.object(recall.tempfile, "mkdtemp", return_value=os.path.join(temp_root, "build")), patch.object(recall, "copy_project_files") as copy_files, patch.object(recall, "create_tar_from_dir", return_value=b"tar data") as create_tar, patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", side_effect=[completed(1), completed(stdout=json.dumps(reconstructed))]) as run:
             os.mkdir(os.path.join(temp_root, "build"))
             result = recall.reconstruct_remote_config("server", "remote")
 
@@ -83,16 +84,45 @@ class TestReconstructRemoteConfig(unittest.TestCase):
         self.assertTrue(result[0].install_python)
         copy_files.assert_called_once_with(os.path.join(temp_root, "build"))
         create_tar.assert_called_once_with(os.path.join(temp_root, "build"))
-        popen.assert_called_once()
-        process.communicate.assert_called_once_with(input=b"tar data", timeout=60)
+        self.assertEqual(run.call_count, 2)
+        invocation = run.call_args
+        self.assertEqual(invocation.kwargs['input_data'], base64.b64encode(b'tar data').decode())
+        self.assertEqual(invocation.kwargs['timeout'], 120)
+        self.assertIn('timeout --kill-after=5s 60s', invocation.args[0][-1])
+        self.assertNotIn('/opt/infra_tools', invocation.args[0][-1])
         self.assertFalse(os.path.exists(os.path.join(temp_root, "build")))
 
-    def test_reconstruct_returns_none_when_remote_install_fails(self) -> None:
-        process = MagicMock()
-        process.returncode = 1
-        with tempfile.TemporaryDirectory() as temp_root, patch.object(recall.tempfile, "mkdtemp", return_value=os.path.join(temp_root, "build")), patch.object(recall, "copy_project_files"), patch.object(recall, "create_tar_from_dir", return_value=b"tar data"), patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall.subprocess, "run", return_value=completed(1)), patch.object(recall.subprocess, "Popen", return_value=process):
-            os.mkdir(os.path.join(temp_root, "build"))
-            self.assertIsNone(recall.reconstruct_remote_config("server", "remote"))
+    def test_reconstruct_cleans_local_source_after_remote_failure_or_timeout(self) -> None:
+        for result in (completed(1), CommandTimeoutError('ssh', 120)):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as temp_root, patch.object(recall.tempfile, "mkdtemp", return_value=os.path.join(temp_root, "build")), patch.object(recall, "copy_project_files"), patch.object(recall, "create_tar_from_dir", return_value=b"tar data"), patch.object(recall, "build_ssh_command", return_value=["ssh"]), patch.object(recall, "run", side_effect=[completed(1), result]):
+                os.mkdir(os.path.join(temp_root, "build"))
+                self.assertIsNone(recall.reconstruct_remote_config("server", "remote"))
+                self.assertFalse(os.path.exists(os.path.join(temp_root, 'build')))
+
+    def test_failed_remote_probe_never_uploads_source(self):
+        with patch.object(recall, 'build_ssh_command', return_value=['ssh']), patch.object(recall, 'run', return_value=completed(255)) as run, patch.object(recall, 'copy_project_files') as copy:
+            self.assertIsNone(recall.reconstruct_remote_config('server', 'remote'))
+            copy.assert_not_called()
+            run.assert_called_once()
+
+    def test_remote_staging_is_cleaned_after_success_bad_archive_and_timeout(self):
+        for content in (b'print("{}")', None, b'import time; time.sleep(60)'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                archive = io.BytesIO()
+                if content is not None:
+                    with tarfile.open(fileobj=archive, mode='w:gz') as tar:
+                        entry = tarfile.TarInfo('infra_tools.py')
+                        entry.size = len(content)
+                        tar.addfile(entry, io.BytesIO(content))
+                script = ('mktemp() { command mktemp -d "$RECALL_TEST_ROOT/stage.XXXXXXXX"; }\n'
+                          + recall.REMOTE_RECONSTRUCT_SCRIPT)
+                result = subprocess.run(
+                    ['timeout', '--kill-after=1s', '1s', 'sh', '-c', script],
+                    input=base64.b64encode(archive.getvalue()).decode(), capture_output=True,
+                    text=True, timeout=5, env={**os.environ, 'RECALL_TEST_ROOT': directory},
+                )
+                self.assertEqual(result.returncode == 0, content == b'print("{}")', result.stderr)
+                self.assertEqual(os.listdir(directory), [])
 
 
 class TestRecallCommand(unittest.TestCase):

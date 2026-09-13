@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from typing import Any, Optional
 
 from lib.config import SetupConfig
-from lib.setup_common import REMOTE_INSTALL_DIR, copy_project_files, create_tar_from_dir
-from lib.ssh_utils import build_ssh_command as _build_ssh_command, chain_remote_commands, shell_join
+from lib.setup_common import copy_project_files, create_tar_from_dir
+from lib.remote_utils import CommandTimeoutError, run
+from lib.ssh_utils import build_ssh_command as _build_ssh_command, shell_join
 
 REMOTE_INFRA_TOOLS_PATH = "/opt/infra_tools/infra_tools.py"
+REMOTE_RECONSTRUCT_SCRIPT = '''set -eu
+umask 077
+recall_stage=$(mktemp -d /tmp/infra-tools-recall.XXXXXXXX)
+trap 'rm -rf -- "$recall_stage"' EXIT
+trap 'exit 1' HUP INT TERM
+base64 -d > "$recall_stage/source.tgz"
+mkdir "$recall_stage/source"
+tar xzf "$recall_stage/source.tgz" -C "$recall_stage/source"
+python3 "$recall_stage/source/infra_tools.py" reconstruct --compact
+'''
 
 
 def build_ssh_command(host: str, username: str, ssh_key: Optional[str] = None) -> list[str]:
@@ -24,19 +35,22 @@ def retrieve_stored_config(host: str, username: str, ssh_key: Optional[str] = No
     """Retrieve the stored configuration from the remote host."""
     remote_config_path = "/opt/infra_tools/state/setup.json"
     try:
-        result = subprocess.run(
+        result = run(
             build_ssh_command(host, username, ssh_key) + [shell_join(["cat", remote_config_path])],
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             config_dict = json.loads(result.stdout)
+            if not isinstance(config_dict, dict):
+                raise ValueError('Stored configuration must be a JSON object')
             system_type = config_dict.get("system_type", "server_dev")
             return SetupConfig.from_dict(host, system_type, config_dict)
-    except subprocess.TimeoutExpired:
+    except CommandTimeoutError:
         print(f"Timeout retrieving stored config from {host}", file=sys.stderr)
-    except json.JSONDecodeError as exc:
+    except ValueError as exc:
         print(f"Invalid JSON in stored config: {exc}", file=sys.stderr)
     except FileNotFoundError:
         print("SSH command not available", file=sys.stderr)
@@ -50,49 +64,47 @@ def reconstruct_remote_config(
 ) -> Optional[tuple[SetupConfig, dict[str, Any]]]:
     """Run the remote reconstruction command and return the inferred config."""
     try:
-        check_result = subprocess.run(
+        check_result = run(
             build_ssh_command(host, username, ssh_key) + [shell_join(["test", "-f", REMOTE_INFRA_TOOLS_PATH])],
             capture_output=True,
             timeout=10,
+            check=False,
         )
-        if check_result.returncode != 0:
-            print("Note: infra-tools not found on remote host. Installing...", file=sys.stderr)
+        if check_result.returncode not in (0, 1):
+            print('Cannot inspect remote infra-tools installation; reconstruction aborted', file=sys.stderr)
+            return None
+        if check_result.returncode == 1:
+            print("Note: remote tool missing; reconstructing from a temporary source directory...", file=sys.stderr)
             build_dir = tempfile.mkdtemp(prefix="infra_recall_")
             try:
                 copy_project_files(build_dir)
                 tar_data = create_tar_from_dir(build_dir)
-                install_process = subprocess.Popen(
+                result = run(
                     build_ssh_command(host, username, ssh_key)
-                    + [
-                        chain_remote_commands(
-                            [
-                                ["mkdir", "-p", REMOTE_INSTALL_DIR],
-                                ["cd", REMOTE_INSTALL_DIR],
-                                ["tar", "xzf", "-"],
-                            ]
-                        )
-                    ],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    + [shell_join(['timeout', '--kill-after=5s', '60s', 'sh', '-c', REMOTE_RECONSTRUCT_SCRIPT])],
+                    input_data=base64.b64encode(tar_data).decode('ascii'),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=False,
                 )
-                install_process.communicate(input=tar_data, timeout=60)
-                if install_process.returncode != 0:
-                    print("Failed to install infra-tools on remote host", file=sys.stderr)
-                    return None
             finally:
                 if os.path.exists(build_dir):
                     shutil.rmtree(build_dir)
 
-        result = subprocess.run(
-            build_ssh_command(host, username, ssh_key)
-            + [shell_join(["python3", REMOTE_INFRA_TOOLS_PATH, "reconstruct", "--compact"])],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        else:
+            result = run(
+                build_ssh_command(host, username, ssh_key)
+                + [shell_join(['timeout', '--kill-after=5s', '60s', "python3", REMOTE_INFRA_TOOLS_PATH, "reconstruct", "--compact"])],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
         if result.returncode == 0 and result.stdout.strip():
             reconstructed = json.loads(result.stdout)
+            if not isinstance(reconstructed, dict):
+                raise ValueError('Reconstruction output must be a JSON object')
             config_dict: dict[str, Any] = {
                 "username": username,
                 "install_go": reconstructed.get("install_go", False),
@@ -109,8 +121,11 @@ def reconstruct_remote_config(
                     extras[key] = reconstructed[key]
             return config, extras
 
-        print(f"Error running reconstruct command: {result.stderr}", file=sys.stderr)
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        if result.returncode in (124, 137):
+            print('Remote reconstruction timed out or was killed; inspect /tmp/infra-tools-recall.* for leftover temporary source', file=sys.stderr)
+        else:
+            print(f"Error running reconstruct command: {result.stderr}", file=sys.stderr)
+    except (CommandTimeoutError, OSError, ValueError) as exc:
         print(f"Error reconstructing configuration: {exc}", file=sys.stderr)
     return None
 

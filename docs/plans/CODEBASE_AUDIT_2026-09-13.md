@@ -7,6 +7,10 @@ domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- RCF-29 implemented: recall uses the shared process-group runner and a remote
+  deadline. Missing tools run from disposable remote source, avoiding extraction
+  into the live install altogether. Tests cover failed probes, local timeouts,
+  and remote staging cleanup on success, archive failure, and timeout.
 - RCF-08 and 16 implemented: durable receipt reservations recover interrupted
   job publication; signed-body digests coalesce retries even when unsigned
   delivery headers change. Executor claims prevent automatic replay after a

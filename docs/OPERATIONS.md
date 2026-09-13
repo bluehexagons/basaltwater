@@ -48,6 +48,15 @@ infra-tools reconstruct
 ```
 
 `reconstruct` analyzes the current host; `recall` targets a remote host.
+If the remote tool is missing, recall uploads source into an exclusively created
+`/tmp/infra-tools-recall.*` directory and runs reconstruction there. It does not
+replace or populate `/opt/infra_tools`. The remote command has a 60-second
+deadline and a five-second termination grace; the local SSH process group has
+a 120-second deadline. Remote hosts need `timeout`, `base64`, `tar`, and Python 3.
+Connection/probe failures abort before upload. Normal completion, extraction
+failure, and handled signals remove temporary source. A hard kill or power loss
+may leave the temporary directory; inspect it after confirming the recall
+process has stopped, then remove it. No installation activation needs rollback.
 
 ## Remove saved configurations
 
