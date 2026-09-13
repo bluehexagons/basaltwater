@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import hashlib
 import os
 import sys
@@ -240,6 +239,11 @@ class TestSetupMainTimingPersistence(unittest.TestCase):
 
 
 class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
+    def setUp(self):
+        sudo = patch("lib.setup_common.ensure_remote_sudo", return_value=True)
+        sudo.start()
+        self.addCleanup(sudo.stop)
+
     def test_copy_project_files_includes_runtime_packages(self):
         from lib import setup_common
 
@@ -270,35 +274,26 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             host="example.com",
             share_credentials=[["mediauser", "supersecret"]],
         )
-        process = MagicMock()
-        process.stdin = io.BytesIO()
-        process.stdout = io.BytesIO(b"")
-        process.wait.return_value = 0
-
         with patch.object(setup_common, "copy_project_files"), \
              patch.object(setup_common, "prepare_deployments"), \
              patch.object(setup_common, "build_ssh_command", return_value=["ssh"]) as mock_build_ssh, \
-             patch("subprocess.Popen", return_value=process):
+             patch.object(setup_common, "run_streamed", return_value=0):
             result = setup_common.run_remote_setup(config)
 
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
         self.assertIn("--args-file", remote_command)
         self.assertNotIn("supersecret", remote_command)
+        self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
 
     def test_remote_ssh_command_preserves_state_before_replacing_runtime(self):
         from lib import setup_common
 
         config = _make_config(host="example.com")
-        process = MagicMock()
-        process.stdin = io.BytesIO()
-        process.stdout = io.BytesIO(b"")
-        process.wait.return_value = 0
-
         with patch.object(setup_common, "copy_project_files"), \
              patch.object(setup_common, "prepare_deployments"), \
              patch.object(setup_common, "build_ssh_command", return_value=["ssh"]) as mock_build_ssh, \
-             patch("subprocess.Popen", return_value=process):
+             patch.object(setup_common, "run_streamed", return_value=0):
             result = setup_common.run_remote_setup(config)
 
         self.assertEqual(result, 0)
@@ -340,15 +335,10 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             static_ipv4="192.168.10.21/24",
             activate_network=True,
         )
-        process = MagicMock()
-        process.stdin = io.BytesIO()
-        process.stdout = io.BytesIO(b"")
-        process.wait.return_value = 0
-
         with patch.object(setup_common, "copy_project_files"), \
              patch.object(setup_common, "build_ssh_command", return_value=["ssh"]), \
              patch.object(setup_common, "finish_network_transition", return_value=0) as mock_finish, \
-             patch("subprocess.Popen", return_value=process):
+             patch.object(setup_common, "run_streamed", return_value=0):
             result = setup_common.run_remote_setup(config)
 
         self.assertEqual(result, 0)
@@ -364,14 +354,9 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             hosted_node="pve1",
             nopasswd=True,
         )
-        process = MagicMock()
-        process.stdin = io.BytesIO()
-        process.stdout = io.BytesIO(b"")
-        process.wait.return_value = 0
-
         with patch.object(setup_common, "copy_project_files"), \
              patch.object(setup_common, "build_ssh_command", return_value=["ssh"]) as mock_build, \
-             patch("subprocess.Popen", return_value=process):
+             patch.object(setup_common, "run_streamed", return_value=0):
             result = setup_common.run_remote_setup(config)
 
         self.assertEqual(result, 0)
@@ -383,7 +368,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("rm -rf /opt/infra_tools", remote_command)
         self.assertIn("tar xzf - -C /opt/infra_tools", remote_command)
-        self.assertIn("python3 /opt/infra_tools/remote_setup.py", remote_command)
+        self.assertIn("python3 -u /opt/infra_tools/remote_setup.py", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_hosted_vm_without_nopasswd_uses_retained_root_ssh(self):
@@ -395,21 +380,16 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             machine_type="vm",
             hosted_node="pve1",
         )
-        process = MagicMock()
-        process.stdin = io.BytesIO()
-        process.stdout = io.BytesIO(b"")
-        process.wait.return_value = 0
-
         with patch.object(setup_common, "copy_project_files"), \
              patch.object(setup_common, "build_ssh_command", return_value=["ssh"]) as mock_build, \
-             patch("subprocess.Popen", return_value=process):
+             patch.object(setup_common, "run_streamed", return_value=0):
             result = setup_common.run_remote_setup(config)
 
         self.assertEqual(result, 0)
         self.assertEqual(mock_build.call_args.args[1], "root")
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("rm -rf /opt/infra_tools", remote_command)
-        self.assertIn("python3 /opt/infra_tools/remote_setup.py", remote_command)
+        self.assertIn("python3 -u /opt/infra_tools/remote_setup.py", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_adopts_only_a_controller_verified_replacement_host(self):
@@ -440,10 +420,6 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         from lib import setup_common
 
         config = _make_config(host="localhost")
-        process = MagicMock()
-        process.stdout = io.StringIO("")
-        process.wait.return_value = 0
-
         with tempfile.TemporaryDirectory() as temp_dir:
             install_dir = os.path.join(temp_dir, "infra_tools")
             state_dir = os.path.join(temp_dir, "state")
@@ -451,12 +427,13 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", state_dir), \
                  patch.object(setup_common, "copy_project_files"), \
                  patch.object(setup_common.os, "geteuid", return_value=0), \
-                 patch("subprocess.Popen", return_value=process) as mock_popen:
+                 patch.object(setup_common, "run_streamed", return_value=0) as mock_stream:
                 result = setup_common.run_remote_setup(config)
 
             self.assertEqual(result, 0)
             self.assertEqual(os.stat(install_dir).st_mode & 0o777, 0o755)
-            self.assertEqual(mock_popen.call_args.kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            self.assertEqual(mock_stream.call_args.kwargs["env"]["PYTHONUNBUFFERED"], "1")
+            self.assertEqual(mock_stream.call_args.kwargs["timeout"], 14400)
 
     def test_local_setup_preserves_managed_git_worktree(self):
         from lib import setup_common

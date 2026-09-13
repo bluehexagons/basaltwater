@@ -25,6 +25,7 @@ except ImportError:
     argcomplete = None
 
 from lib.atomic_io import write_json_atomic
+from lib.streamed_process import run_streamed
 from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
 from lib.credentials import prepare_runtime_config, store_cli_credentials
@@ -58,6 +59,7 @@ from lib.validation import (
     validate_filesystem_path,
     validate_timezone_name,
     validate_workspace_dir,
+    validate_positive_integer,
 )
 from lib.cache import get_cache_path_for_host, save_setup_command
 from lib.arg_parser import create_setup_argument_parser
@@ -1285,6 +1287,9 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
 
 
 def run_remote_setup(config: SetupConfig) -> int:
+    setup_timeout = validate_positive_integer(
+        os.environ.get("INFRA_TOOLS_SETUP_TIMEOUT", "14400"), "Setup timeout",
+    )
     _LAST_REMOTE_ACCESS_DETAILS.clear()
     is_local = config.host in {"localhost", "127.0.0.1", "::1"}
     
@@ -1379,22 +1384,11 @@ def run_remote_setup(config: SetupConfig) -> int:
             env["PYTHONUNBUFFERED"] = "1"
             
             try:
-                process = subprocess.Popen(
-                    command_tokens,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    env=env,
-                    cwd=REMOTE_INSTALL_DIR
+                returncode = run_streamed(
+                    command_tokens, timeout=setup_timeout,
+                    on_output=_relay_setup_output, env=env, cwd=REMOTE_INSTALL_DIR,
                 )
-                
-                if process.stdout is not None:
-                    for line in process.stdout:
-                        _record_remote_access_output(line)
-                        print(line, end='', flush=True)
-                    
-                return finish_network_transition(config, process.wait())
+                return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running local setup: {e}")
                 return finish_network_transition(config, 1)
@@ -1408,7 +1402,7 @@ def run_remote_setup(config: SetupConfig) -> int:
 
             remote_python = "python3"
             remote_script = os.path.join(REMOTE_INSTALL_DIR, "remote_setup.py")
-            remote_cmd_args = [remote_python, remote_script, "--args-file", remote_args_path]
+            remote_cmd_args = [remote_python, "-u", remote_script, "--args-file", remote_args_path]
             remote_shell_cmd = chain_remote_commands(
                 [
                     privileged(_remote_state_migration_command()),
@@ -1431,7 +1425,10 @@ def run_remote_setup(config: SetupConfig) -> int:
                 config.host,
                 remote_user,
                 config.ssh_key,
-                remote_command=remote_shell_cmd,
+                remote_command=shlex.join([
+                    "timeout", "--signal=TERM", "--kill-after=10s", str(setup_timeout),
+                    "/bin/sh", "-c", remote_shell_cmd,
+                ]),
                 batch_mode=ssh_batch_mode(),
                 connect_timeout=30,
                 server_alive_interval=30,
@@ -1442,26 +1439,11 @@ def run_remote_setup(config: SetupConfig) -> int:
             ssh_env["LC_ALL"] = "C"
             
             try:
-                process = subprocess.Popen(
-                    ssh_cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=False,
-                    bufsize=0,
-                    env=ssh_env,
+                returncode = run_streamed(
+                    ssh_cmd, timeout=setup_timeout, on_output=_relay_setup_output,
+                    input_data=tar_data, env=ssh_env,
                 )
-
-                if process.stdin is not None:
-                    process.stdin.write(tar_data)
-                    process.stdin.close()
-
-                if process.stdout is not None:
-                    for line in io.TextIOWrapper(process.stdout, encoding='utf-8'):
-                        _record_remote_access_output(line)
-                        print(line, end='', flush=True)
-
-                return finish_network_transition(config, process.wait())
+                return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running remote setup: {e}")
                 return finish_network_transition(config, 1)
@@ -1469,6 +1451,11 @@ def run_remote_setup(config: SetupConfig) -> int:
     finally:
         if os.path.exists(build_dir):
             shutil.rmtree(build_dir)
+
+
+def _relay_setup_output(line: str) -> None:
+    _record_remote_access_output(line)
+    print(line, end="", flush=True)
 
 
 def setup_main(system_type: str, description: str, success_msg_fn: Callable[[SetupConfig], None]) -> int:

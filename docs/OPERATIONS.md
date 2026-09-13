@@ -34,6 +34,16 @@ appropriate. Do not delete state merely to suppress an error.
 
 ## Patch and redeploy
 
+Local and SSH setup execution has a four-hour deadline, including the SSH
+upload. Set `INFRA_TOOLS_SETUP_TIMEOUT` to a positive number of seconds to
+override it on the controller. Source preparation occurs before this budget.
+Output streams during upload and execution; a stalled input or inherited output
+pipe cannot suppress the deadline. Timeout/cancellation terminates the local
+process group. The SSH command also uses a target-side `timeout` with a
+ten-second kill grace, so loss of the controller does not leave setup unbounded.
+Already completed changes and work detached into separate services are not
+rolled back. Inspect the target and its operation marker before retrying.
+
 Deployment and gateway readiness requests use literal loopback addresses,
 ignore proxy environment variables, and never follow redirects. Deployment
 activation requires a local 2xx response from the configured health endpoint.

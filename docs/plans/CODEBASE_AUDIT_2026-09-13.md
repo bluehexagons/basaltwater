@@ -24,14 +24,6 @@ calls and temporary directories; live deployment qualification is separate.
   replace it, preserve the prior unit until activation succeeds, and
   fault-test each failure boundary.
 
-- **RCF-05 — Medium-High: remote setup bypasses bounded
-  subprocess execution.** Local and SSH branches use `Popen` followed by
-  unbounded `wait()`, unlike the shared runner with descendant cleanup.
-  Evidence: [`setup_common.py`](../../lib/setup_common.py),
-  [`remote_utils.py`](../../lib/remote_utils.py). **Acceptance:**
-  add a setup-specific deadline, process-group termination, streamed output,
-  and tests for hangs and descendants holding pipes.
-
 - **RCF-10 — Medium: CI/CD service timeout is shorter than a
   valid pipeline.** `TimeoutStartSec=2h`, but up to four sequential stages can
   each run for one hour. Evidence:
@@ -83,10 +75,8 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## Delivery and ownership
 
-- Prioritize recoverable service/setup execution (RCF-04–05), and CI/CD
+- Prioritize recoverable service replacement (RCF-04), and CI/CD
   deadlines and credential cleanup (RCF-10, 12).
-- RCF-05 uses the shared process contracts in
-  [Transactional execution](TRANSACTIONAL_EXECUTION.md).
 - RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md);
   RCF-12 complements [Deploy secrets](DEPLOY_SECRETS.md).
   Script confinement and the CI/CD trust contract are already implemented;
