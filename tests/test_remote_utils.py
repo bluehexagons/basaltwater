@@ -70,6 +70,18 @@ class TestRunDryRun(unittest.TestCase):
 
 
 class TestRunCommandDispatch(unittest.TestCase):
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_redirected_output_streams_and_keeps_diagnostics_off_stdout(self, mock_popen):
+        self._completed_process(mock_popen)
+        output = StringIO()
+        errors = StringIO()
+        with patch.dict(os.environ, {"INFRA_TOOLS_VERBOSE": "1"}), redirect_stdout(output), patch("lib.remote_utils.sys.stderr", errors):
+            run(["build"], stdout=errors, timeout=7)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("Running:", errors.getvalue())
+        self.assertIs(mock_popen.call_args.kwargs["stdout"], errors)
+        mock_popen.return_value.communicate.assert_called_once_with(input=None, timeout=7.0)
+
     @staticmethod
     def _completed_process(mock_popen, *, returncode=0, stdout=None, stderr=None):
         process = mock_popen.return_value

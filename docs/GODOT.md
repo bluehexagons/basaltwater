@@ -81,6 +81,11 @@ completes a new export, with a per-game lock so unrelated games may publish in
 parallel without conflicting updates. A failed build does not remove the last
 working copy.
 
+Exports have a one-hour deadline; use `--build-timeout SECONDS` to select a
+positive limit. Timeout terminates the export process group, removes staging,
+and leaves the active publication intact. Compression and activation follow
+only a successful export and are outside this build deadline.
+
 Publication lock files must be regular files with no symbolic or additional
 hard links. Unsafe locks stop the export before any staging or permission changes.
 

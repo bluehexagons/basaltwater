@@ -37,7 +37,7 @@ class TestGodotExportValidation(unittest.TestCase):
                 with (
                     patch.object(publisher, "GAMES_ROOT", str(games)),
                     patch.object(publisher, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
-                    patch.object(publisher.subprocess, "run") as export,
+                    patch.object(publisher, "run") as export,
                 ):
                     args = publisher._parser().parse_args(["test", "--project", str(project)])
                     with self.assertRaises((OSError, RuntimeError)):
@@ -107,7 +107,7 @@ class TestGodotExportValidation(unittest.TestCase):
 
                 stack.enter_context(patch.object(publisher, 'GAMES_ROOT', str(games)))
                 stack.enter_context(patch.object(publisher, '_current_account', return_value=SimpleNamespace(pw_name='agent', pw_uid=os.getuid())))
-                stack.enter_context(patch.object(publisher.subprocess, 'run', side_effect=export))
+                stack.enter_context(patch.object(publisher, 'run', side_effect=export))
                 args = publisher._parser().parse_args(['test', '--project', str(project)])
                 args.precompress = precompress
                 with self.assertRaisesRegex(RuntimeError, 'unsafe'):

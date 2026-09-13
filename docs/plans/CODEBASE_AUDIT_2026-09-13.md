@@ -137,23 +137,13 @@ calls and temporary directories; live deployment qualification is separate.
   retain protected-branch policy, checkout confinement, and the documented
   trust contract.
 
-- **RCF-31 — Low-Medium: project publishers lack build command deadlines.**
-  Static-site dependency installation/build and Godot export call
-  `subprocess.run` without timeouts. The publication lock serializes writers
-  but does not bound a hung package manager or exporter. Evidence:
-  [`static_web_publish.py`](../../common/service_tools/static_web_publish.py),
-  [`godot_web_publish.py`](../../common/service_tools/godot_web_publish.py).
-  **Acceptance:** use the shared bounded process-group runner with an
-  explicit configurable build deadline, clean up on timeout, and add mocked
-  timeout tests.
 
 ## Delivery and ownership
 
 - Prioritize recoverable service/setup execution (RCF-04–05), state validation
   (RCF-07), and CI/CD deadlines and credential cleanup (RCF-10, 12).
-- RCF-05, 07, 15, 27, and 31 use the shared process/state contracts in
-  [Transactional execution](TRANSACTIONAL_EXECUTION.md). Keep build deadlines
-  separate from publication activation.
+- RCF-05, 07, 15, and 27 use the shared process/state contracts in
+  [Transactional execution](TRANSACTIONAL_EXECUTION.md).
 - RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md);
   RCF-12 complements [Deploy secrets](DEPLOY_SECRETS.md).
   Script confinement and the CI/CD trust contract are already implemented;

@@ -114,6 +114,12 @@ project's dependency policy.
 With `--json`, stdout contains only the publication result or error object.
 Dependency installation and build logs stream to stderr, including on failure.
 
+Dependency installation and the build share a one-hour deadline. Set
+`--build-timeout SECONDS` to a positive limit when needed. Timeout terminates
+the command's process group and preserves the existing publication; dependency
+changes in the project are not rolled back. Copying and activation follow a
+successful build and are outside this deadline.
+
 Inspect and remove publications as the owning user:
 
 ```bash

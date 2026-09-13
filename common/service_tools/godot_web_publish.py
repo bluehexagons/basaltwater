@@ -13,11 +13,13 @@ import pwd
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
 import webbrowser
+
+from lib.remote_utils import run
+from lib.validation import validate_positive_integer
 
 
 GAMES_ROOT = "/srv/infra-tools/web/games"
@@ -80,6 +82,8 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Open the published URL in the default browser",
     )
+    parser.add_argument("--build-timeout", type=validate_positive_integer, default=3600,
+                        help="Export deadline in seconds (default: 3600)")
     return parser
 
 
@@ -390,10 +394,11 @@ def _publish(args: argparse.Namespace) -> tuple[str, str, dict[str, object]]:
                 preset,
                 export_path,
             ]
-            result = subprocess.run(
+            result = run(
                 command,
                 check=False,
                 stdout=sys.stderr if args.json else None,
+                timeout=args.build_timeout,
             )
             if result.returncode != 0 or not os.path.isfile(export_path):
                 if result.returncode == 0:

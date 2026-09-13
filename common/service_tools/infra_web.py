@@ -30,6 +30,7 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools import godot_web_publish, static_web_publish
+from lib.validation import validate_positive_integer
 
 
 POLICY_FILE = "/etc/infra-tools/internal-web/policy.json"
@@ -69,6 +70,7 @@ def _parser() -> argparse.ArgumentParser:
     godot.add_argument("--no-precompress", action="store_true")
     godot.add_argument("--json", action="store_true")
     godot.add_argument("--open", action="store_true")
+    godot.add_argument("--build-timeout", type=validate_positive_integer, default=3600)
     site_publish = publish_commands.add_parser(
         "site",
         help="Build and publish a generic static site",
@@ -1856,6 +1858,7 @@ def _publish_godot(args: argparse.Namespace) -> int:
     if args.project_option:
         forwarded.extend(["--project", args.project_option])
     forwarded.extend(["--preset", args.preset])
+    forwarded.extend(["--build-timeout", str(args.build_timeout)])
     if args.debug:
         forwarded.append("--debug")
     if args.no_precompress:

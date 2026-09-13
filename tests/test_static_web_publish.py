@@ -19,6 +19,7 @@ from common.service_tools import static_web_publish
 def _args(project: str, **overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "json": False,
+        "build_timeout": 3600,
         "no_build": True,
         "no_install": False,
         "open": False,
@@ -88,7 +89,7 @@ class TestStaticWebPublish(unittest.TestCase):
                         pass
                 return SimpleNamespace(returncode=0)
 
-            with patch.object(static_web_publish.subprocess, "run", side_effect=run):
+            with patch.object(static_web_publish, "run", side_effect=run):
                 static_web_publish._run_project_build(project, {"scripts": {"build": "vite"}}, install=True)
 
             self.assertEqual(commands, [["npm", "ci"], ["npm", "run", "build"]])
@@ -129,7 +130,7 @@ class TestStaticWebPublish(unittest.TestCase):
                     patch.object(static_web_publish, "SITES_ROOT", str(sites_root)),
                     patch.object(static_web_publish, "_base_url", return_value=None),
                     patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
-                    patch.object(static_web_publish.subprocess, "run", side_effect=run),
+                    patch.object(static_web_publish, "run", side_effect=run),
                     contextlib.redirect_stdout(stdout),
                     contextlib.redirect_stderr(stderr),
                 ):

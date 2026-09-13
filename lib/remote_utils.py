@@ -12,7 +12,7 @@ import signal
 import string
 import subprocess
 import sys
-from typing import Callable, Optional, Sequence
+from typing import Callable, IO, Optional, Sequence
 
 from lib.validation import validate_package_name
 
@@ -226,17 +226,22 @@ def run(
     display_cmd: Optional[str] = None,
     input_data: Optional[str] = None,
     timeout: Optional[float] = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    *,
+    stdout: IO[str] | int | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if capture_output and stdout is not None:
+        raise ValueError("stdout and capture_output cannot be combined")
     validated_timeout = _validate_timeout(timeout)
+    diagnostic_output = sys.stderr if stdout is not None else sys.stdout
     log_cmd = _redact_command(
         display_cmd if display_cmd is not None else _command_text(cmd)
     )
     if _verbose_commands_enabled() or is_dry_run():
-        print(f"  Running: {log_cmd[:80]}..." if len(log_cmd) > 80 else f"  Running: {log_cmd}")
-        sys.stdout.flush()
+        print(f"  Running: {log_cmd[:80]}..." if len(log_cmd) > 80 else f"  Running: {log_cmd}", file=diagnostic_output)
+        diagnostic_output.flush()
     
     if is_dry_run():
-        print("  [DRY-RUN] Command not executed")
+        print("  [DRY-RUN] Command not executed", file=diagnostic_output)
         dry_run_args = [cmd] if isinstance(cmd, str) else list(cmd)
         return subprocess.CompletedProcess(
             args=dry_run_args,
@@ -256,7 +261,7 @@ def run(
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE if input_data is not None else None,
-        stdout=subprocess.PIPE if capture_output else None,
+        stdout=subprocess.PIPE if capture_output else stdout,
         stderr=subprocess.PIPE if capture_output else None,
         text=text,
         cwd=cwd,
@@ -304,8 +309,8 @@ def run(
     if check and result.returncode != 0:
         if getattr(result, 'stderr', None):
             warning = _redact_command(result.stderr) if isinstance(result.stderr, str) else result.stderr
-            print(f"    Warning: {warning[:200]}")
-            sys.stdout.flush()
+            print(f"    Warning: {warning[:200]}", file=diagnostic_output)
+            diagnostic_output.flush()
         raise CommandExecutionError(
             log_cmd,
             result.returncode,

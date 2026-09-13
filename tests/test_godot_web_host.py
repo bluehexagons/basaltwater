@@ -306,7 +306,7 @@ class TestGodotWebPublisher(unittest.TestCase):
                     patch.object(godot_web_publish, "GAMES_ROOT", games),
                     patch.object(godot_web_publish, "_base_url", return_value=None),
                     patch.object(godot_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
-                    patch.object(godot_web_publish.subprocess, "run", side_effect=export),
+                    patch.object(godot_web_publish, "run", side_effect=export),
                     redirect_stdout(output),
                     redirect_stderr(errors),
                 ):
@@ -373,7 +373,7 @@ class TestGodotWebPublisher(unittest.TestCase):
                 patch.object(godot_web_publish, "BASE_URL_FILE", url_file),
                 patch.object(godot_web_publish, "_current_account", return_value=account),
                 patch.object(
-                    godot_web_publish.subprocess,
+                    godot_web_publish,
                     "run",
                     side_effect=create_export,
                 ) as run_export,
@@ -396,7 +396,7 @@ class TestGodotWebPublisher(unittest.TestCase):
     def test_publish_rejects_unsafe_game_name_before_running_godot(self) -> None:
         with (
             patch.object(godot_web_publish, "_current_account") as current_account,
-            patch.object(godot_web_publish.subprocess, "run") as run_export,
+            patch.object(godot_web_publish, "run") as run_export,
         ):
             result = godot_web_publish.main(["../escape"])
 
@@ -424,7 +424,7 @@ class TestGodotWebPublisher(unittest.TestCase):
                 patch.object(godot_web_publish, "GAMES_ROOT", games_root),
                 patch.object(godot_web_publish, "BASE_URL_FILE", os.path.join(temporary_dir, "url")),
                 patch.object(godot_web_publish, "_current_account", return_value=account),
-                patch.object(godot_web_publish.subprocess, "run", side_effect=create_export),
+                patch.object(godot_web_publish, "run", side_effect=create_export),
             ):
                 result = godot_web_publish.main(
                     ["--no-precompress", "--project", project_dir]
@@ -460,7 +460,7 @@ class TestGodotWebPublisher(unittest.TestCase):
                 patch.object(godot_web_publish, "GAMES_ROOT", games_root),
                 patch.object(godot_web_publish, "BASE_URL_FILE", url_file),
                 patch.object(godot_web_publish, "_current_account", return_value=account),
-                patch.object(godot_web_publish.subprocess, "run", side_effect=create_export),
+                patch.object(godot_web_publish, "run", side_effect=create_export),
             ):
                 for _attempt in range(2):
                     output = io.StringIO()

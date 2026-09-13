@@ -14,13 +14,13 @@ import pwd
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
 import webbrowser
 
-from lib.validation import validate_filesystem_path
+from lib.remote_utils import CommandTimeoutError, run
+from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 SITES_ROOT = "/srv/infra-tools/web/sites"
@@ -65,6 +65,8 @@ def add_publish_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--open", action="store_true")
+    parser.add_argument("--build-timeout", type=validate_positive_integer, default=3600,
+                        help="Total install/build deadline in seconds (default: 3600)")
 
 
 def _slugify(value: str) -> str:
@@ -128,6 +130,7 @@ def _run_project_build(
     *,
     install: bool,
     json_output: bool = False,
+    timeout: int = 3600,
 ) -> None:
     if package is None:
         raise ValueError("No package.json found; use --no-build with an existing output")
@@ -135,18 +138,24 @@ def _run_project_build(
     if not isinstance(scripts, dict) or not isinstance(scripts.get("build"), str):
         raise ValueError("package.json has no build script; use --no-build")
     install_command, build_command = _package_commands(project_dir)
+    deadline = time.monotonic() + timeout
     if install and not os.path.isdir(os.path.join(project_dir, "node_modules")):
-        install_result = subprocess.run(
+        install_result = run(
             install_command, cwd=project_dir, check=False,
             stdout=sys.stderr if json_output else None,
+            timeout=timeout,
         )
         if install_result.returncode != 0:
             raise RuntimeError(
                 f"Dependency installation failed with exit code {install_result.returncode}"
             )
-    build_result = subprocess.run(
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CommandTimeoutError("Static-site dependency installation/build", timeout)
+    build_result = run(
         build_command, cwd=project_dir, check=False,
         stdout=sys.stderr if json_output else None,
+        timeout=remaining,
     )
     if build_result.returncode != 0:
         raise RuntimeError(f"Static-site build failed with exit code {build_result.returncode}")
@@ -371,6 +380,7 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
         if not args.no_build:
             _run_project_build(
                 project_dir, package, install=not args.no_install, json_output=args.json,
+                timeout=args.build_timeout,
             )
         output_dir = _resolve_output(project_dir, args.output)
         _validate_output_tree(output_dir)
