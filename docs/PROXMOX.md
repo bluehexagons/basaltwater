@@ -788,9 +788,35 @@ infra-tools proxmox shell
 `probe-cluster` discovers nodes from Proxmox's configured names and seeds the
 host registry. `rolling-update` reuses saved setup commands and workspace
 credentials. It audits every target before changing any node, repeats the audit
-after each update and reboot, and advances only after verification. An automatic
-reboot is refused while guests are running or locked; the remaining nodes are
-then skipped so the operator can migrate or stop workloads deliberately.
+immediately before each node update, after each update and reboot, and advances
+only after verification. Evacuate or shut down guests before starting; running
+or locked guests block updates even without a pending reboot. HA resources,
+local Ceph configuration, and RBD/CephFS storage require operator-managed
+maintenance and are rejected by this command. It does not automate evacuation,
+HA maintenance mode or Ceph flags. These configuration locations follow the
+[Proxmox administration guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.pdf).
+Repository/major-upgrade suitability and backup recovery remain operator checks.
+
+SSH policy/reboot commands have 30-second limits; reachability probes use at
+most 15 seconds and the remaining reboot budget. The first failure stops later
+nodes. The workspace `cluster-update.json` stores per-node phases/results under
+an exclusive lock. Inspect failed targets before resuming with the same ordered
+names and unchanged saved configuration:
+
+```bash
+infra-tools proxmox rolling-update pve1 pve2 pve3 --resume
+```
+
+Completed nodes are skipped; known failed patch runs can be retried explicitly.
+A crash during `patching` or `rebooting` has an uncertain outcome and refuses
+automatic replay. Confirm the old process has stopped, inspect target-side setup
+markers, and finish/verify that node manually. After successful manual patch
+recovery, set only its checkpoint phase to `patched`; after a verified reboot,
+set it to `rebooted`. Resume repeats health/policy checks before proceeding.
+Archive checkpoints privately if abandoning the operation; leave the stable
+lock file in place. Success writes `cluster-update-last.json` and clears the
+active marker. Dry runs do not create or consume checkpoints.
+
 `notifications install-webhook` configures Proxmox's native notification
 matcher; repeat `--severity` to limit routing, and use `--dry-run` before
 writing the endpoint. Treat webhook URLs as sensitive values.

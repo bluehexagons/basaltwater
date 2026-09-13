@@ -8,17 +8,6 @@ Scope: installation and setup, state integrity, CI/CD, storage, Proxmox,
 internal web, and command lifecycles. Automated verification uses mocked system
 calls and temporary directories; live deployment qualification is separate.
 
-## P1 — reliability, privileged setup, and operator safety
-
-- **RCF-20 — Medium-High: rolling Proxmox updates lack bounded SSH
-  execution and resumable checkpoints.** `_ssh_result` calls
-  `subprocess.run` without a timeout; updates then proceed node by node, so a
-  later failure leaves earlier nodes changed and later nodes skipped. Evidence:
-  [`cluster_update.py`](../../lib/cluster_update.py). **Acceptance:**
-  bound each SSH operation, persist per-target phase/result, make resume and
-  stop-after-failure explicit, and apply the existing Proxmox maintenance plan's
-  HA/Ceph/evacuation policy before mutation.
-
 ## P2 — policy and lower-probability operational concerns
 
 - **RCF-14 — Medium: third-party installers use rolling
@@ -47,8 +36,6 @@ calls and temporary directories; live deployment qualification is separate.
 - RCF-18 belongs with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md).
   Script confinement and the CI/CD trust contract are already implemented;
   RCF-18 remains open for build/deploy credential isolation.
-- RCF-20 follows the [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md),
-  which owns HA/Ceph, evacuation, and live qualification.
 - Close findings after focused failure-path tests, relevant operator
   documentation, and `make check`/`git diff --check` pass. Remove resolved
   entries instead of appending progress notes.

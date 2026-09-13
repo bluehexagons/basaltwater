@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
@@ -12,6 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.cluster_update import run_cluster_update
+from lib import cluster_update
 from lib.config import SetupConfig
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport
 from lib.proxmox_manage import ContainerInfo
@@ -43,6 +47,17 @@ def _maintenance_report(
 
 
 class TestClusterUpdate(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.workspace = temp.name
+        env = patch.dict(os.environ, {"INFRA_TOOLS_WORKSPACE": temp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        policy = patch("lib.cluster_update._rolling_policy")
+        policy.start()
+        self.addCleanup(policy.stop)
+
     @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
     @patch("lib.cluster_update.prepare_validated_runtime_config")
     @patch("lib.cluster_update.load_setup_command")
@@ -93,7 +108,9 @@ class TestClusterUpdate(unittest.TestCase):
         mock_maintenance.side_effect = [
             _maintenance_report(),
             _maintenance_report(),
+            _maintenance_report(),
             _maintenance_report(reboot_required=True),
+            _maintenance_report(running_guests=[ContainerInfo(vmid=100, status="running", name="restarted", guest_type="vm")]),
             _maintenance_report(),
             _maintenance_report(),
         ]
@@ -196,7 +213,63 @@ class TestClusterUpdate(unittest.TestCase):
                 rc = run_cluster_update(["pve1", "pve2"])
 
         self.assertEqual(rc, 1)
-        self.assertEqual(mock_execute.call_count, 1)
+        self.assertEqual(mock_execute.call_count, 0)
         mock_reboot_and_wait.assert_not_called()
-        self.assertIn("Reboot blocked: running guests: 100", buf.getvalue())
-        self.assertIn("Skipped after blocked reboot on pve1", buf.getvalue())
+        self.assertIn("Evacuate or shut down guests before updating: running guests: 100", buf.getvalue())
+
+    @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
+    @patch("lib.cluster_update.prepare_validated_runtime_config")
+    @patch("lib.cluster_update.load_setup_command")
+    def test_resume_skips_completed_nodes_and_preserves_final_results(self, load, _prepare, _report):
+        configs = {"pve1": _config("10.0.0.10"), "pve2": _config("10.0.0.11")}
+        load.side_effect = configs.get
+        with patch("infra_tools._execute_patch_config", side_effect=[0, 1]) as execute:
+            self.assertEqual(run_cluster_update(list(configs)), 1)
+        with patch("infra_tools._execute_patch_config", return_value=0) as execute:
+            with self.assertRaisesRegex(ValueError, "Unfinished"):
+                run_cluster_update(list(configs))
+            execute.assert_not_called()
+            self.assertEqual(run_cluster_update(list(configs), resume=True), 0)
+            self.assertEqual([call.args[0].host for call in execute.call_args_list], ["10.0.0.11"])
+        with open(os.path.join(self.workspace, "cluster-update-last.json")) as stream:
+            saved = json.load(stream)
+        self.assertEqual([node["phase"] for node in saved["nodes"]], ["complete", "complete"])
+        self.assertFalse(os.path.exists(os.path.join(self.workspace, "cluster-update.json")))
+
+    @patch("lib.cluster_update._maintenance_report", return_value=_maintenance_report())
+    @patch("lib.cluster_update.prepare_validated_runtime_config")
+    @patch("lib.cluster_update.load_setup_command", return_value=_config("10.0.0.10"))
+    def test_interrupted_mutation_blocks_automatic_replay(self, _load, _prepare, _report):
+        with patch("infra_tools._execute_patch_config", side_effect=KeyboardInterrupt):
+            self.assertEqual(run_cluster_update(["pve1"]), 1)
+        with patch("infra_tools._execute_patch_config") as execute:
+            with self.assertRaisesRegex(ValueError, "manual recovery"):
+                run_cluster_update(["pve1"], resume=True)
+            execute.assert_not_called()
+
+
+class TestRollingPolicyAndDeadlines(unittest.TestCase):
+    def test_policy_rejects_ha_ceph_unknown_and_command_failure(self):
+        for output, code in (("{\"ha\":true,\"ceph\":false}", 0), ("{\"ha\":false,\"ceph\":true}", 0), ("{}", 0), ("not json", 0), ("", 255)):
+            with self.subTest(output=output), patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], code, output)), self.assertRaises(RuntimeError):
+                cluster_update._rolling_policy(_config("10.0.0.10"))
+
+    def test_ssh_command_has_overall_timeout(self):
+        with patch.object(cluster_update, "run") as run:
+            cluster_update._ssh_result(_config("10.0.0.10"), "true", timeout=3)
+        self.assertEqual(run.call_args.kwargs["timeout"], 3)
+
+    def test_poll_uses_remaining_budget_without_final_extra_probe(self):
+        clock = [0.0]
+        def probe(_config, timeout):
+            self.assertEqual(timeout, 2)
+            clock[0] += 2
+            return False
+        with patch.object(cluster_update.time, "monotonic", side_effect=lambda: clock[0]), patch.object(cluster_update.time, "sleep"), patch.object(cluster_update, "_ssh_available", side_effect=probe) as available:
+            self.assertFalse(cluster_update._wait_for_ssh_state(_config("10.0.0.10"), available=True, timeout=2))
+        available.assert_called_once()
+
+    def test_failed_reboot_request_does_not_wait_for_fake_reboot(self):
+        with patch.object(cluster_update, "_ssh_result", return_value=subprocess.CompletedProcess([], 255)), patch.object(cluster_update, "_wait_for_ssh_state") as wait, self.assertRaisesRegex(RuntimeError, "rejected"):
+            cluster_update._reboot_and_wait(_config("10.0.0.10"), 30)
+        wait.assert_not_called()

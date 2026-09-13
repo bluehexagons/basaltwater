@@ -15,8 +15,10 @@ validation.
 
 These are the first P1 safety controls, not completion of either P1 item below.
 Repository suitability, HA/Ceph health, guest evacuation policy, storage-type
-specific checks, and durable transaction records still require larger work and
-live-cluster validation.
+specific checks still require larger work and live-cluster validation. Rolling
+updates now keep durable checkpoints and require explicit resume. Their supported
+policy requires evacuated nodes and rejects HA/Ceph configurations, which remain
+operator-managed until the broader orchestration below is qualified.
 
 ## Scope and current behavior
 
@@ -67,9 +69,9 @@ changes.
 Current daily APT maintenance is node-local and repository-agnostic. The
 separate rolling-update command replays the saved setup. The global
 cleanup-first service gap tracked by `ARCH-05` was removed on 2026-08-19, but
-the update still lacks durable per-node transaction state. It establishes
-basic node health and refuses to reboot a node with running or locked guests,
-but it does not evaluate HA/Ceph policy or evacuate workloads.
+the update now keeps durable per-node transaction state. It establishes basic
+node health, requires evacuation before mutation, and rejects HA/Ceph topologies.
+Automated HA/Ceph maintenance and workload evacuation remain unsupported.
 
 Design a dedicated update transaction that:
 

@@ -97,7 +97,8 @@ Available commands:
   delsnapshot <vmid> <name> [--yes] [--dry-run]
                               Delete a snapshot (asks for confirmation)
   unlock <vmid>               Remove a stuck management lock from a guest
-  rolling-update <name> [...] Patch saved node configs in order, rebooting if needed
+  rolling-update <name> [...] [--resume] [--dry-run]
+                              Patch evacuated nodes using durable checkpoints
   top                         Show CPU, memory, storage, and guest counts
   backups <vmid>              List backups for a guest
   backup <vmid> [--storage POOL] [--mode snapshot|suspend|stop]
@@ -654,10 +655,11 @@ class ProxmoxShell:
             raise ValueError("Usage: rolling-update <name> [<name> ...]")
         from lib.cluster_update import run_cluster_update
         dry_run = "--dry-run" in args
-        targets = [a for a in args if a != "--dry-run"]
+        resume = "--resume" in args
+        targets = [a for a in args if a not in {"--dry-run", "--resume"}]
         if not targets:
             raise ValueError("Usage: rolling-update <name> [<name> ...]")
-        run_cluster_update(targets, workspace=self.state.workspace, dry_run=dry_run)
+        run_cluster_update(targets, workspace=self.state.workspace, dry_run=dry_run, resume=resume)
 
     def _cmd_snapshots(self, args: list[str]) -> None:
         host = self._require_host()

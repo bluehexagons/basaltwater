@@ -168,6 +168,7 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         help="Seconds to wait for each node to come back after reboot (default: 300)",
     )
     rolling_update.set_defaults(_handler=_cmd_rolling_update)
+    rolling_update.add_argument("--resume", action="store_true", help="Resume inspected checkpoints with the original ordered targets")
 
     ls = sub.add_parser("ls", aliases=["list"], help="List guests on a host")
     ls.add_argument("host", help="Registered host name or address")
@@ -830,6 +831,7 @@ def _cmd_rolling_update(args: argparse.Namespace, workspace: Optional[str]) -> i
         workspace=workspace,
         dry_run=args.dry_run,
         reboot_timeout=args.reboot_timeout,
+        resume=args.resume,
     )
 
 

@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
+import json
+import os
+import shlex
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 from lib.cache import load_setup_command
+from lib.atomic_io import write_json_atomic
+from lib.operation_state import OperationStateStore
+from lib.remote_utils import CommandTimeoutError, run
 from lib.config import SetupConfig
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport, collect_maintenance_report
 from lib.setup_common import prepare_validated_runtime_config
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode
-from lib.workspace import set_workspace_dir
+from lib.workspace import get_workspace_dir, set_workspace_dir
 
 
 _LOCALHOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -36,8 +43,9 @@ def _ssh_result(
     remote_command: str,
     *,
     connect_timeout: int = 5,
+    timeout: float = 30,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return run(
         build_ssh_command(
             config.host,
             "root",
@@ -50,25 +58,29 @@ def _ssh_result(
         capture_output=True,
         text=True,
         check=False,
+        timeout=timeout,
     )
 
 
-def _ssh_available(config: SetupConfig) -> bool:
-    return _ssh_result(config, "true").returncode == 0
+def _ssh_available(config: SetupConfig, timeout: float) -> bool:
+    try:
+        return _ssh_result(config, "true", timeout=timeout).returncode == 0
+    except CommandTimeoutError:
+        return False
 
 
 def _wait_for_ssh_state(
     config: SetupConfig,
     *,
     available: bool,
-    timeout: int,
+    timeout: float,
 ) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if _ssh_available(config) == available:
+    deadline = time.monotonic() + timeout
+    while (remaining := deadline - time.monotonic()) > 0:
+        if _ssh_available(config, min(15, remaining)) == available:
             return True
-        time.sleep(_SSH_POLL_INTERVAL)
-    return _ssh_available(config) == available
+        time.sleep(min(_SSH_POLL_INTERVAL, max(0, deadline - time.monotonic())))
+    return False
 
 
 def _maintenance_report(target: str, config: SetupConfig) -> ProxmoxMaintenanceReport:
@@ -87,15 +99,65 @@ def _maintenance_errors(report: ProxmoxMaintenanceReport) -> str:
     return "; ".join(report.errors) or "unknown maintenance preflight failure"
 
 
+_POLICY_PROBE = """import json, os, re, stat
+def read(path, required=False):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except FileNotFoundError:
+        if required:
+            raise
+        return ''
+    with os.fdopen(fd) as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('unsafe policy file')
+        value = stream.read(1048577)
+    if len(value) > 1048576:
+        raise ValueError('policy file too large')
+    return value
+ha = read('/etc/pve/ha/resources.cfg')
+storage = read('/etc/pve/storage.cfg', required=True)
+ceph = read('/etc/pve/ceph.conf') or read('/etc/ceph/ceph.conf')
+print(json.dumps({'ha': any(line.strip() and not line.lstrip().startswith('#') for line in ha.splitlines()),
+                  'ceph': bool(ceph) or bool(re.search(r'(?m)^\\s*(?:rbd|cephfs)\\s*:', storage))}))
+"""
+
+
+def _rolling_policy(config: SetupConfig) -> None:
+    """Reject topologies requiring operator-owned HA/Ceph maintenance."""
+    result = _ssh_result(config, "python3 -c " + shlex.quote(_POLICY_PROBE))
+    if result.returncode != 0:
+        raise RuntimeError("Could not establish HA/Ceph maintenance policy")
+    try:
+        policy = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Invalid HA/Ceph policy probe") from exc
+    if not isinstance(policy, dict) or set(policy) != {"ha", "ceph"} or any(type(value) is not bool for value in policy.values()):
+        raise RuntimeError("Invalid HA/Ceph policy probe")
+    if policy["ha"] or policy["ceph"]:
+        raise RuntimeError("HA/Ceph requires operator-managed maintenance; rolling-update does not evacuate or manage HA/Ceph")
+
+
+def _preflight(target: str, config: SetupConfig, *, evacuated: bool = True) -> ProxmoxMaintenanceReport:
+    report = _maintenance_report(target, config)
+    if not report.healthy:
+        raise RuntimeError("Maintenance preflight failed: " + _maintenance_errors(report))
+    if evacuated and not report.reboot_safe:
+        raise RuntimeError("Evacuate or shut down guests before updating: " + "; ".join(report.reboot_blockers()))
+    _rolling_policy(config)
+    return report
+
+
 def _reboot_and_wait(config: SetupConfig, timeout: int) -> None:
+    deadline = time.monotonic() + timeout
     reboot_command = (
         "nohup sh -lc "
         "'sleep 1 && shutdown -r now \"infra_tools rolling update\"' "
         ">/dev/null 2>&1 </dev/null &"
     )
-    _ssh_result(config, reboot_command, connect_timeout=15)
+    if _ssh_result(config, reboot_command, connect_timeout=15, timeout=min(30, timeout)).returncode != 0:
+        raise RuntimeError(f"{config.host} rejected the reboot request")
 
-    shutdown_timeout = min(
+    shutdown_timeout = min(deadline - time.monotonic(),
         _REBOOT_SHUTDOWN_TIMEOUT,
         max(1, timeout // 3),
     )
@@ -104,7 +166,7 @@ def _reboot_and_wait(config: SetupConfig, timeout: int) -> None:
             f"{config.host} never went offline after the reboot request"
         )
 
-    startup_timeout = max(1, timeout - shutdown_timeout)
+    startup_timeout = max(0, deadline - time.monotonic())
     if not _wait_for_ssh_state(config, available=True, timeout=startup_timeout):
         raise RuntimeError(f"{config.host} did not return over SSH after reboot")
 
@@ -128,205 +190,134 @@ def _print_summary(results: list[ClusterUpdateResult]) -> None:
 
 
 def run_cluster_update(
-    targets: list[str],
-    *,
-    workspace: Optional[str] = None,
-    dry_run: bool = False,
-    reboot_timeout: int = 300,
+    targets: list[str], *, workspace: Optional[str] = None,
+    dry_run: bool = False, reboot_timeout: int = 300, resume: bool = False,
 ) -> int:
     if workspace:
         set_workspace_dir(workspace)
-    if reboot_timeout <= 0:
+    if type(reboot_timeout) is not int or reboot_timeout <= 0:
         raise ValueError("--reboot-timeout must be positive")
+    if not targets or len(targets) != len(set(targets)) or len(targets) > 100:
+        raise ValueError("Supply 1–100 unique rolling-update targets")
+    if dry_run and resume:
+        raise ValueError("--resume cannot be combined with --dry-run")
 
-    prepared: list[tuple[str, SetupConfig]] = []
-    results: list[ClusterUpdateResult] = []
-
+    prepared = []
+    results = []
     for target in targets:
         config = load_setup_command(target)
-        if config is None:
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=None,
-                    status="failed",
-                    details="No saved setup command found",
-                )
-            )
-            continue
-        if config.host in _LOCALHOSTS:
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=config.host,
-                    status="failed",
-                    details="Localhost targets are not supported for rolling updates",
-                )
-            )
-            continue
-        if config.system_type != "server_proxmox":
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=config.host,
-                    status="failed",
-                    details="Saved setup is not a server_proxmox configuration",
-                )
-            )
-            continue
-
-        config.dry_run = dry_run
         try:
+            if config is None:
+                raise ValueError("No saved setup command found")
+            if config.host in _LOCALHOSTS or config.system_type != "server_proxmox":
+                raise ValueError("Rolling updates require remote server_proxmox configurations")
+            config.dry_run = dry_run
+            fingerprint = hashlib.sha256(json.dumps(config.to_dict(), sort_keys=True).encode()).hexdigest()
             prepare_validated_runtime_config(config, workspace)
-        except ValueError as exc:
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=config.host,
-                    status="failed",
-                    details=str(exc),
-                )
-            )
-            continue
-
-        maintenance = _maintenance_report(target, config)
-        if not maintenance.healthy:
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=config.host,
-                    status="failed",
-                    details=f"Maintenance preflight failed: {_maintenance_errors(maintenance)}",
-                )
-            )
-            continue
-        if maintenance.reboot_required and not maintenance.reboot_safe:
-            results.append(
-                ClusterUpdateResult(
-                    target=target,
-                    host=config.host,
-                    status="failed",
-                    reboot_required=True,
-                    details=(
-                        "Maintenance preflight found a pending reboot blocked by "
-                        + "; ".join(maintenance.reboot_blockers())
-                    ),
-                )
-            )
-            continue
-        prepared.append((target, config))
-
+            _preflight(target, config, evacuated=not resume)
+            prepared.append((target, config, fingerprint))
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            results.append(ClusterUpdateResult(target, config.host if config else None, "failed", str(exc)))
     if len(prepared) != len(targets):
         print("Preflight failed; no systems were changed.")
         _print_summary(results)
         return 1
+    if len({config.host for _, config, _ in prepared}) != len(targets):
+        raise ValueError("Rolling-update targets must resolve to distinct hosts")
 
     from infra_tools import _execute_patch_config
 
-    for index, (target, config) in enumerate(prepared):
-        result = ClusterUpdateResult(
-            target=target,
-            host=config.host,
-            status="failed",
-        )
-        results.append(result)
+    if dry_run:
+        return 0 if all(_execute_patch_config(config) == 0 for _, config, _ in prepared) else 1
 
-        if _execute_patch_config(config) != 0:
-            result.details = "Patch run failed"
-            for skipped_target, skipped_config in prepared[index + 1 :]:
-                results.append(
-                    ClusterUpdateResult(
-                        target=skipped_target,
-                        host=skipped_config.host,
-                        status="skipped",
-                        details=f"Skipped after failure on {target}",
-                    )
-                )
-            _print_summary(results)
-            return 1
+    store = OperationStateStore(os.path.join(get_workspace_dir(), "cluster-update.json"))
+    nodes = [dict(target=target, host=config.host, fingerprint=fingerprint, phase="pending",
+                  result=asdict(ClusterUpdateResult(target, config.host, "pending")))
+             for target, config, fingerprint in prepared]
+    try:
+        previous = store.load()
+        if resume:
+            if previous is None or previous.operation_type != "cluster-update":
+                raise ValueError("No rolling-update checkpoint to resume")
+            saved = previous.context.get("nodes")
+            if not isinstance(saved, list) or len(saved) != len(nodes):
+                raise ValueError("Invalid rolling-update checkpoint")
+            for expected, node in zip(nodes, saved):
+                if not isinstance(node, dict) or any(node.get(key) != expected[key] for key in ("target", "host", "fingerprint")):
+                    raise ValueError("Resume requires the original ordered targets and unchanged saved configurations")
+                if node.get("phase") not in {"pending", "patch-failed", "patched", "rebooted", "complete"}:
+                    raise ValueError("Interrupted mutation requires manual recovery before resume; inspect cluster-update.json")
+                try:
+                    result = ClusterUpdateResult(**node["result"])
+                except (TypeError, KeyError) as exc:
+                    raise ValueError("Invalid rolling-update result checkpoint") from exc
+                if result.target != node["target"] or result.host != node["host"]:
+                    raise ValueError("Invalid rolling-update result identity")
+                if result.status not in {"pending", "failed", "skipped", "updated"} or not isinstance(result.details, str) or type(result.reboot_required) is not bool or type(result.rebooted) is not bool:
+                    raise ValueError("Invalid rolling-update result fields")
+                if node["phase"] == "complete" and result.status != "updated":
+                    raise ValueError("Invalid completed rolling-update result")
+            nodes = saved
+            record = store.transition(previous.operation_id, "resuming")
+        else:
+            record = store.begin("cluster-update", "ordered-nodes", "prepared", context={"nodes": nodes})
 
-        result.status = "updated"
-        if dry_run:
-            result.details = "Dry run only"
-            continue
+        def checkpoint():
+            store.transition(record.operation_id, "updating", context={"nodes": nodes})
 
-        maintenance = _maintenance_report(target, config)
-        if not maintenance.healthy:
-            result.status = "failed"
-            result.details = f"Post-update audit failed: {_maintenance_errors(maintenance)}"
-            for skipped_target, skipped_config in prepared[index + 1 :]:
-                results.append(
-                    ClusterUpdateResult(
-                        target=skipped_target,
-                        host=skipped_config.host,
-                        status="skipped",
-                        details=f"Skipped after failure on {target}",
-                    )
-                )
-            _print_summary(results)
-            return 1
-
-        reboot_required = maintenance.reboot_required is True
-        result.reboot_required = reboot_required
-        if not reboot_required:
-            result.details = "No reboot required"
-            continue
-
-        if not maintenance.reboot_safe:
-            result.status = "failed"
-            result.details = "Reboot blocked: " + "; ".join(maintenance.reboot_blockers())
-            for skipped_target, skipped_config in prepared[index + 1 :]:
-                results.append(
-                    ClusterUpdateResult(
-                        target=skipped_target,
-                        host=skipped_config.host,
-                        status="skipped",
-                        details=f"Skipped after blocked reboot on {target}",
-                    )
-                )
-            _print_summary(results)
-            return 1
-
-        try:
-            _reboot_and_wait(config, reboot_timeout)
-        except RuntimeError as exc:
-            result.status = "failed"
-            result.details = str(exc)
-            for skipped_target, skipped_config in prepared[index + 1 :]:
-                results.append(
-                    ClusterUpdateResult(
-                        target=skipped_target,
-                        host=skipped_config.host,
-                        status="skipped",
-                        details=f"Skipped after failure on {target}",
-                    )
-                )
-            _print_summary(results)
-            return 1
-
-        result.rebooted = True
-        maintenance = _maintenance_report(target, config)
-        if not maintenance.healthy or maintenance.reboot_required:
-            result.status = "failed"
-            details = list(maintenance.errors)
-            if maintenance.reboot_required:
-                details.append("reboot-required marker remains after reboot")
-            result.details = "Post-reboot audit failed: " + "; ".join(details)
-            for skipped_target, skipped_config in prepared[index + 1 :]:
-                results.append(
-                    ClusterUpdateResult(
-                        target=skipped_target,
-                        host=skipped_config.host,
-                        status="skipped",
-                        details=f"Skipped after failure on {target}",
-                    )
-                )
-            _print_summary(results)
-            return 1
-        result.details = "Rebooted, reconnected, and verified"
-
-    _print_summary(results)
-    return 0
+        results = [ClusterUpdateResult(**node["result"]) for node in nodes]
+        for index, ((target, config, _), node, result) in enumerate(zip(prepared, nodes, results)):
+            if node["phase"] == "complete":
+                continue
+            try:
+                _preflight(target, config, evacuated=node["phase"] != "rebooted")
+                if node["phase"] in {"pending", "patch-failed"}:
+                    node["phase"] = "patching"
+                    checkpoint()
+                    if _execute_patch_config(config) != 0:
+                        node["phase"] = "patch-failed"
+                        raise RuntimeError("Patch run failed")
+                    node["phase"] = "patched"
+                    checkpoint()
+                maintenance = _preflight(target, config, evacuated=node["phase"] != "rebooted")
+                result.reboot_required = maintenance.reboot_required is True
+                if result.reboot_required:
+                    if node["phase"] == "rebooted":
+                        raise RuntimeError("Reboot-required marker remains after reboot")
+                    node["phase"] = "rebooting"
+                    checkpoint()
+                    _reboot_and_wait(config, reboot_timeout)
+                    result.rebooted = True
+                    node["phase"] = "rebooted"
+                    node["result"] = asdict(result)
+                    checkpoint()
+                    maintenance = _preflight(target, config, evacuated=False)
+                    if maintenance.reboot_required:
+                        raise RuntimeError("Reboot-required marker remains after reboot")
+                result.status = "updated"
+                result.details = "Rebooted, reconnected, and verified" if result.rebooted else "No reboot required"
+                node["phase"] = "complete"
+                node["result"] = asdict(result)
+                checkpoint()
+            except (Exception, KeyboardInterrupt) as exc:
+                result.status = "failed"
+                result.details = str(exc) or type(exc).__name__
+                node["result"] = asdict(result)
+                for later, skipped in zip(nodes[index + 1:], results[index + 1:]):
+                    if later["phase"] != "complete":
+                        skipped.status = "skipped"
+                        skipped.details = f"Skipped after failure on {target}"
+                        later["result"] = asdict(skipped)
+                store.transition(record.operation_id, "stopped", status="recovery_required", context={"nodes": nodes})
+                _print_summary(results)
+                print(f"Checkpoint retained: {store.path}; inspect before using --resume.")
+                return 1
+        write_json_atomic(os.path.join(get_workspace_dir(), "cluster-update-last.json"), {"schema_version": 1, "operation_id": record.operation_id, "nodes": nodes})
+        store.complete(record.operation_id)
+        _print_summary(results)
+        return 0
+    finally:
+        store.close()
 
 
 __all__ = ["ClusterUpdateResult", "run_cluster_update"]

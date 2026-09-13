@@ -168,6 +168,7 @@ class TestProxmoxCliHosts(_CliFixture):
             workspace=self.workspace,
             dry_run=False,
             reboot_timeout=180,
+            resume=False,
         )
 
 
