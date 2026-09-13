@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
+from web.service_tools.cicd_config import load_config_file
 from web.service_tools.cicd_security import (
     DEFAULT_BRANCHES,
     MAX_JOB_FILE_BYTES,
@@ -55,16 +56,7 @@ def get_build_home() -> str:
 
 def load_config() -> dict:
     """Load webhook configuration from JSON file."""
-    if not os.path.exists(CONFIG_FILE):
-        log_event(logger, "Configuration file not found", level=40, config_file=CONFIG_FILE)
-        return {}
-    
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        log_event(logger, "Failed to load configuration", level=40, config_file=CONFIG_FILE, error=str(e))
-        return {}
+    return load_config_file(CONFIG_FILE)
 
 
 def get_repo_workspace(repo_url: str) -> str:
@@ -239,6 +231,9 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
     if not os.path.exists(script_path):
         log_event(logger, "Script not found", level=40, script_path=script_path)
         return False
+    if not Path(script_path).resolve().is_relative_to(Path(workspace).resolve()):
+        log_event(logger, 'Script escapes repository checkout', level=40)
+        return False
 
     build_home = get_build_home()
     nvm_dir = os.path.join(build_home, ".nvm")
@@ -297,12 +292,16 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
 def process_job(job_file: str) -> bool:
     """Process a single CI/CD job."""
     log_event(logger, "Processing job", job_file=job_file)
+    try:
+        config = load_config()
+    except (OSError, ValueError) as exc:
+        log_event(logger, 'CI/CD configuration unavailable; retaining job', level=40, error=str(exc))
+        return False
     
     try:
         job_data = _load_job_file(job_file)
         repo_url, ref, branch, commit_sha, pusher = validate_job_data(job_data)
         
-        config = load_config()
         repos = config.get('repositories', [])
         
         repo_config = None
@@ -483,6 +482,8 @@ def perform_remote_deployment(
     if deploy_script:
         script_path = deploy_script if os.path.isabs(deploy_script) else os.path.join(workspace, deploy_script)
         try:
+            if not Path(script_path).resolve().is_relative_to(Path(workspace).resolve()):
+                raise ValueError('Deploy script escapes repository checkout')
             if not os.path.isfile(script_path):
                 raise ValueError(f"Deploy script is not a regular file: {script_path}")
             with open(script_path, 'r', encoding='utf-8') as script:

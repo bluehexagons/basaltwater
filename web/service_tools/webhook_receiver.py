@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
+from web.service_tools.cicd_config import load_config_file
 from web.service_tools.cicd_security import (
     DEFAULT_BRANCHES,
     MAX_WEBHOOK_PAYLOAD_BYTES,
@@ -83,16 +84,7 @@ def verify_github_signature(secret: str, payload: bytes, signature_header: Optio
 
 def load_config() -> dict:
     """Load webhook configuration from JSON file."""
-    if not os.path.exists(CONFIG_FILE):
-        log_event(logger, "Configuration file not found", level=30, config_file=CONFIG_FILE)
-        return {}
-    
-    try:
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        log_event(logger, "Failed to load configuration", level=40, config_file=CONFIG_FILE, error=str(e))
-        return {}
+    return load_config_file(CONFIG_FILE)
 
 
 def trigger_cicd_job(repo_url: str, ref: str, commit_sha: str, pusher: str) -> bool:
@@ -247,7 +239,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
             )
             
             # Load configuration to check if this repo is configured
-            config = load_config()
+            try:
+                config = load_config()
+            except (OSError, ValueError):
+                self.send_error(503, 'CI/CD configuration unavailable or invalid')
+                return
             repos = config.get('repositories', [])
             
             # Find matching repository configuration
@@ -308,6 +304,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests (health check)."""
         if self.path == '/health':
+            try:
+                load_config()
+            except (OSError, ValueError):
+                self.send_error(503, 'CI/CD configuration unavailable or invalid')
+                return
             self.send_response(200)
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()

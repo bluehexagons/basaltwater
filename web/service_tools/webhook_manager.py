@@ -23,7 +23,7 @@ import subprocess
 import argparse
 from typing import Optional
 
-from lib.atomic_io import write_json_atomic
+from web.service_tools.cicd_config import load_config_file, save_config_file
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
 
 try:
@@ -40,13 +40,12 @@ def load_config() -> dict:
     if not os.path.exists(CONFIG_FILE):
         return {"repositories": []}
     
-    with open(CONFIG_FILE, 'r') as f:
-        return json.load(f)
+    return load_config_file(CONFIG_FILE)
 
 
 def save_config(config: dict) -> None:
     """Save webhook configuration."""
-    write_json_atomic(CONFIG_FILE, config)
+    save_config_file(CONFIG_FILE, config)
     
     print(f"Configuration saved to {CONFIG_FILE}")
 

@@ -12,6 +12,17 @@ from lib.atomic_io import remove_file_durable, write_json_atomic, write_text_ato
 
 
 class TestAtomicIO(unittest.TestCase):
+    def test_ownership_failure_preserves_old_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'config')
+            write_text_atomic(path, 'old')
+            with patch('lib.atomic_io.os.fchown', side_effect=PermissionError('ownership failed')):
+                with self.assertRaises(PermissionError):
+                    write_text_atomic(path, 'new', uid=0, gid=100, mode=0o640)
+            with open(path) as stream:
+                self.assertEqual(stream.read(), 'old')
+            self.assertEqual(os.listdir(directory), ['config'])
+
     def test_json_write_is_complete_and_restrictive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "state.json")

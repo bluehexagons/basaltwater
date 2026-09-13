@@ -44,7 +44,9 @@ class TestConfigurationStorage(unittest.TestCase):
         config = {"repositories": [{"url": "https://example.com/repo.git"}]}
         with tempfile.TemporaryDirectory() as tmp:
             config_path = os.path.join(tmp, "webhook-config.json")
-            with patch.object(webhook_manager, "CONFIG_FILE", config_path):
+            with patch.object(webhook_manager, "CONFIG_FILE", config_path), patch(
+                'web.service_tools.cicd_config.grp.getgrnam', return_value=SimpleNamespace(gr_gid=1234)
+            ), patch('lib.atomic_io.os.fchown'):
                 webhook_manager.save_config(config)
                 self.assertEqual(webhook_manager.load_config(), config)
 

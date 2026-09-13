@@ -6,6 +6,11 @@ fixes. Existing domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- RCF-01, 09, 11 implemented: atomic root:webhook/0640 configuration writes,
+  service-identity readability checks, canonical secret reconciliation, shared
+  version 1 schema, health failures, and job retention for invalid config.
+  RCF-18 is partially mitigated by script confinement and an explicit trust
+  contract; credential isolation still requires deployment-specific policy.
 - RCF-02–03 implemented: one exit rollback guard covers activation failures
   and HUP/INT/TERM at rename boundaries; managed directory checks and explicit
   legacy migration prevent replacement of broad/unmanaged paths. Power-loss

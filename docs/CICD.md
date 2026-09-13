@@ -16,6 +16,11 @@ secret is generated once and stored root-only at
 `/etc/infra_tools/cicd/webhook_secret`; the systemd environment file is
 `/etc/infra_tools/cicd/webhook.env`.
 
+Setup reconciles both secret files to `root:root`/`0600` and regenerates the
+environment from the canonical secret on every run. Empty, multiline, oversized,
+or unsafe secret values fail before service replacement. Secrets must use
+letters, digits, or `._~+/=-`; setup does not rotate an existing valid secret.
+
 ## Build and app server topology
 
 The build server runs the webhook receiver and builds as the dedicated
@@ -107,6 +112,18 @@ sites below `/var/www` are accepted. The filesystem root is never a valid base.
 
 ## Repository configuration
 
+Configuration is stored as `root:webhook`/`0640`; setup and `webhook-manager`
+preserve that contract during atomic updates. Setup verifies schema and reads
+the file as `webhook` before service replacement. `/health` returns 503 for
+unreadable or invalid configuration, and the executor retains queued jobs until
+configuration is repaired.
+
+The shared version 1 schema accepts legacy files without a `version` field.
+Repository URLs must use credential-free HTTPS; branches must be nonempty lists
+of valid branch names. Script paths must be relative to the checkout, with no
+parent traversal; resolved scripts cannot escape through symlinks. Existing
+configurations using absolute scripts must move those scripts into the repository.
+
 Edit `/etc/infra_tools/cicd/webhook_config.json` on the build server. Each
 repository entry selects accepted branches and scripts. A remote deployment
 uses `deploy_target` (a key from `deploy_targets.json`) and an optional
@@ -148,6 +165,13 @@ After changing the JSON, the next signed push uses the new settings. A ping
 event only verifies webhook connectivity and does not build a repository.
 
 ## Security and execution boundaries
+
+Repository scripts remain trusted code: they execute with the build user's
+credentials and can request deployment with that user's deploy key. Protect
+configured branches and review script changes. Use separate build and deploy
+accounts, scope each app-server key and sudo policy to its intended destinations,
+and avoid placing unrelated credentials in the build user's home. Path
+confinement does not sandbox commands executed by an approved script.
 
 - the receiver is localhost-only behind Nginx; expose it through Cloudflare
   Tunnel when that option is configured

@@ -171,7 +171,7 @@ class TestExecutorJobHardening(unittest.TestCase):
             with open(job_path, "w", encoding="utf-8") as file_obj:
                 json.dump({"repo_url": "https://example.test/repo.git"}, file_obj)
 
-            with self.assertLogs(cicd_executor.logger, level="ERROR"):
+            with patch.object(cicd_executor, 'load_config', return_value={'repositories': []}), self.assertLogs(cicd_executor.logger, level="ERROR"):
                 result = cicd_executor.process_job(job_path)
 
             self.assertFalse(result)
@@ -182,7 +182,7 @@ class TestExecutorJobHardening(unittest.TestCase):
             job_path = os.path.join(jobs_dir, "bad.json")
             os.makedirs(job_path)
 
-            with self.assertLogs(cicd_executor.logger, level="ERROR"):
+            with patch.object(cicd_executor, 'load_config', return_value={'repositories': []}), self.assertLogs(cicd_executor.logger, level="ERROR"):
                 result = cicd_executor.process_job(job_path)
 
             self.assertFalse(result)

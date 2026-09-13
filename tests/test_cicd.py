@@ -142,7 +142,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(mock_write_text.call_count, 2)
     
     @patch('web.cicd_steps.os.path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data="existing-secret")
+    @patch('web.cicd_steps._read_webhook_secret', return_value="existing-secret")
     @patch('web.cicd_steps.write_text_atomic')
     @patch('web.cicd_steps.run')
     def test_generate_webhook_secret_existing(self, mock_run, mock_write_text, mock_file, mock_exists):
@@ -157,7 +157,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(secret, "existing-secret")
     
     @patch('web.cicd_steps.os.path.exists')
-    @patch('web.cicd_steps.write_json_atomic')
+    @patch('web.cicd_steps.save_config_file')
     def test_create_default_webhook_config(self, mock_write_json, mock_exists):
         """Test that we create default webhook configuration."""
         mock_exists.return_value = False
@@ -206,7 +206,7 @@ class TestCICDSteps(unittest.TestCase):
         mock_exists.return_value = True
         mock_config = MagicMock()
         
-        with patch('builtins.open', mock_open()) as mock_service_file:
+        with patch('builtins.open', mock_open()) as mock_service_file, patch('web.cicd_steps.generate_webhook_secret'):
             create_webhook_receiver_service(mock_config)
         
         # Should cleanup existing service
@@ -334,13 +334,10 @@ class TestWebhookSignatureVerification(unittest.TestCase):
 
 
 class TestWebhookReceiverStructuredLogging(unittest.TestCase):
-    @patch("web.service_tools.webhook_receiver.os.path.exists", return_value=False)
-    def test_load_config_logs_missing_config(self, _mock_exists):
-        with self.assertLogs(webhook_receiver.logger, level="WARNING") as logs:
-            result = webhook_receiver.load_config()
-
-        self.assertEqual(result, {})
-        self.assertIn("Configuration file not found | config_file=", "\n".join(logs.output))
+    @patch('web.service_tools.webhook_receiver.load_config_file', side_effect=FileNotFoundError)
+    def test_load_config_rejects_missing_config(self, _mock_load):
+        with self.assertRaises(FileNotFoundError):
+            webhook_receiver.load_config()
 
     @patch.dict(os.environ, {"WEBHOOK_SECRET": "secret", "WEBHOOK_PORT": "9123"}, clear=True)
     @patch("web.service_tools.webhook_receiver.os.makedirs")
@@ -759,13 +756,10 @@ class TestRemoteDeployScriptExecution(unittest.TestCase):
 
 
 class TestExecutorStructuredLogging(unittest.TestCase):
-    @patch("web.service_tools.cicd_executor.os.path.exists", return_value=False)
-    def test_load_config_logs_missing_config(self, _mock_exists):
-        with self.assertLogs(cicd_executor.logger, level="ERROR") as logs:
-            result = cicd_executor.load_config()
-
-        self.assertEqual(result, {})
-        self.assertIn("Configuration file not found | config_file=", "\n".join(logs.output))
+    @patch('web.service_tools.cicd_executor.load_config_file', side_effect=FileNotFoundError)
+    def test_load_config_rejects_missing_config(self, _mock_load):
+        with self.assertRaises(FileNotFoundError):
+            cicd_executor.load_config()
 
     @patch("web.service_tools.cicd_executor.os.path.lexists", return_value=False)
     @patch("web.service_tools.cicd_executor.subprocess.run")

@@ -4,16 +4,43 @@ from __future__ import annotations
 
 import os
 import secrets
+import re
+import stat
 
-from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run, is_package_installed
 from lib.systemd_service import cleanup_service
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
+from web.service_tools.cicd_config import load_config_file, save_config_file
 
 
 CICD_USER = "webhook"
 CICD_HOME = "/var/lib/infra_tools/cicd"
+SECRET_FILE = "/etc/infra_tools/cicd/webhook_secret"
+ENV_FILE = "/etc/infra_tools/cicd/webhook.env"
+
+
+def _read_webhook_secret(path: str) -> str:
+    """Read a bounded regular secret without following symlinks or FIFOs."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError('Webhook secret must be a regular file')
+        with os.fdopen(fd, encoding='utf-8') as stream:
+            fd = -1
+            return stream.read(514).removesuffix('\n')
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _check_service_config() -> None:
+    """Check schema and readability under the receiver's actual identity."""
+    run(['runuser', '-u', CICD_USER, '--', '/usr/bin/python3', '-c',
+         "import sys; sys.path.insert(0, '/opt/infra_tools'); "
+         "from web.service_tools.cicd_config import load_config_file; "
+         "load_config_file('/etc/infra_tools/cicd/webhook_config.json')"])
 
 
 def secure_cicd_directories(directories: list[str]) -> None:
@@ -100,29 +127,23 @@ def create_cicd_directories(config: SetupConfig) -> None:
 
 def generate_webhook_secret(config: SetupConfig) -> str:
     """Generate a secure webhook secret and store it in an environment file."""
-    secret_file = "/etc/infra_tools/cicd/webhook_secret"
-    env_file = "/etc/infra_tools/cicd/webhook.env"
+    secret_file = SECRET_FILE
+    env_file = ENV_FILE
     
+    if os.path.islink(secret_file) or os.path.islink(env_file):
+        raise ValueError('Webhook secret and environment paths must not be symlinks')
     if os.path.exists(secret_file):
-        with open(secret_file, 'r') as f:
-            secret = f.read().strip()
-        
-        if os.path.exists(env_file):
-            print("  ✓ Using existing webhook secret")
-            return secret
-        
-        _create_env_file(env_file, secret)
-        print("  ✓ Created environment file for webhook secret")
-        return secret
+        secret = _read_webhook_secret(secret_file)
+    else:
+        secret = secrets.token_urlsafe(32)
+    if not re.fullmatch(r'[A-Za-z0-9._~+/=-]{1,512}', secret):
+        raise ValueError('Webhook secret must be a nonempty single-line environment-safe value')
     
-    secret = secrets.token_urlsafe(32)
-    
-    write_text_atomic(secret_file, secret, mode=0o600)
-    run(["chown", "root:root", "/etc/infra_tools/cicd/webhook_secret"])
+    write_text_atomic(secret_file, secret, mode=0o600, uid=0, gid=0)
     
     _create_env_file(env_file, secret)
     
-    print("  ✓ Generated webhook secret")
+    print("  ✓ Reconciled webhook secret and environment")
     print(f"  ℹ Secret stored in: {secret_file}")
     
     return secret
@@ -134,8 +155,9 @@ def _create_env_file(env_file: str, secret: str) -> None:
         env_file,
         f"WEBHOOK_SECRET={secret}\nWEBHOOK_PORT=8765\n",
         mode=0o600,
+        uid=0,
+        gid=0,
     )
-    run(["chown", "root:root", env_file])
 
 
 def create_default_webhook_config(config: SetupConfig) -> None:
@@ -143,6 +165,7 @@ def create_default_webhook_config(config: SetupConfig) -> None:
     config_file = "/etc/infra_tools/cicd/webhook_config.json"
     
     if os.path.exists(config_file):
+        save_config_file(config_file, load_config_file(config_file))
         print("  ✓ Webhook configuration already exists")
         return
     
@@ -162,7 +185,7 @@ def create_default_webhook_config(config: SetupConfig) -> None:
         ]
     }
     
-    write_json_atomic(config_file, default_config, mode=0o644)
+    save_config_file(config_file, default_config)
     
     print("  ✓ Created default webhook configuration")
     print(f"  ℹ Edit configuration: {config_file}")
@@ -171,20 +194,10 @@ def create_default_webhook_config(config: SetupConfig) -> None:
 def create_webhook_receiver_service(config: SetupConfig) -> None:
     """Create systemd service for webhook receiver."""
     service_name = "webhook-receiver"
+    generate_webhook_secret(config)
+    _check_service_config()
     
     cleanup_service(service_name)
-    
-    secret_file = "/etc/infra_tools/cicd/webhook_secret"
-    env_file = "/etc/infra_tools/cicd/webhook.env"
-    if not os.path.exists(secret_file):
-        print("  ⚠ Webhook secret not found, generating...")
-        generate_webhook_secret(config)
-    
-    if not os.path.exists(env_file):
-        print("  ⚠ Environment file not found, creating...")
-        with open(secret_file, 'r') as f:
-            secret = f.read().strip()
-        _create_env_file(env_file, secret)
     
     service_content = """[Unit]
 Description=Webhook Receiver for CI/CD
@@ -259,6 +272,7 @@ def create_cicd_executor_service(config: SetupConfig) -> None:
     to run when the webhook user could not invoke ``systemctl start``).
     """
     service_name = "cicd-executor"
+    _check_service_config()
     
     # Cleanup existing service (also removes any prior .path unit)
     cleanup_service(service_name)

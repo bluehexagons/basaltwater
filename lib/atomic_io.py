@@ -9,7 +9,10 @@ import tempfile
 from lib.types import JSON
 
 
-def write_text_atomic(path: str, content: str, *, mode: int = 0o600) -> None:
+def write_text_atomic(
+    path: str, content: str, *, mode: int = 0o600,
+    uid: int = -1, gid: int = -1,
+) -> None:
     """Write text using a same-directory temporary file and atomic replace.
 
     The temporary file is flushed and fsynced before replacement, and the
@@ -32,8 +35,10 @@ def write_text_atomic(path: str, content: str, *, mode: int = 0o600) -> None:
             descriptor_open = False
             file_obj.write(content)
             file_obj.flush()
+            if uid != -1 or gid != -1:
+                os.fchown(file_obj.fileno(), uid, gid)
+            os.fchmod(file_obj.fileno(), mode)
             os.fsync(file_obj.fileno())
-        os.chmod(temporary_path, mode)
         os.replace(temporary_path, target_path)
         _fsync_directory(parent_dir)
     finally:
@@ -52,11 +57,13 @@ def write_json_atomic(
     mode: int = 0o600,
     sort_keys: bool = False,
     indent: int | None = 2,
+    uid: int = -1,
+    gid: int = -1,
 ) -> None:
     """Serialize JSON and persist it through :func:`write_text_atomic`."""
 
     content = json.dumps(value, indent=indent, sort_keys=sort_keys) + "\n"
-    write_text_atomic(path, content, mode=mode)
+    write_text_atomic(path, content, mode=mode, uid=uid, gid=gid)
 
 
 def remove_file_durable(path: str) -> bool:
