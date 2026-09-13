@@ -261,6 +261,12 @@ fail the check.
 
 ## Security and state
 
+Forward and preview mutations share a root-owned nonblocking lock at
+`/etc/infra-tools/internal-web/mutation.lock`. A competing command fails before
+reading or changing state; retry after the active command finishes. Ownership
+lasts through rollback and state writes and is released on process exit. Do not
+delete the stable lock file to bypass a running command.
+
 - Static builds and live commands run as the configured non-root owner.
 - Live upstreams are limited to unprivileged loopback ports.
 - Only Nginx's HTTPS listener receives a managed UFW rule.

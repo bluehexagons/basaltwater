@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 import os
 import tempfile
 import unittest
@@ -27,6 +28,9 @@ def _policy() -> dict[str, object]:
 
 
 class TestInfraWebForwarding(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(infra_web, "_gateway_lock", side_effect=nullcontext))
+
     def test_rejects_non_loopback_upstream(self) -> None:
         with self.assertRaisesRegex(ValueError, "loopback"):
             infra_web._parse_upstream("192.0.2.10:3000")
@@ -246,6 +250,9 @@ class TestInfraWebForwarding(unittest.TestCase):
 
 
 class TestInfraWebPreviews(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(infra_web, "_gateway_lock", side_effect=nullcontext))
+
     def test_automatic_vite_command_is_loopback_only_and_strict(self) -> None:
         with tempfile.TemporaryDirectory() as project:
             with open(os.path.join(project, "package.json"), "w", encoding="utf-8") as file_obj:
@@ -414,6 +421,61 @@ class TestInfraWebPreviews(unittest.TestCase):
         apply_forwards.assert_called_once_with([], _policy())
         remove_service.assert_called_once_with(record)
         write_state.assert_called_once_with([])
+
+
+class TestInfraWebMutationLock(unittest.TestCase):
+    def test_competing_mutations_fail_before_reading_state(self):
+        commands = [
+            ["forward", "add", "demo", "--to", "127.0.0.1:3000"],
+            ["forward", "remove", "demo"], ["forward", "prune", "--yes"],
+            ["forward", "reconcile"], ["preview", "start", "demo"],
+            ["preview", "stop", "demo"], ["preview", "prune", "--yes"],
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "mutation.lock")
+            real_fstat = os.fstat
+
+            def root_stat(fd):
+                info = real_fstat(fd)
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink)
+
+            with patch.object(infra_web, "MUTATION_LOCK_FILE", path), patch.object(infra_web.os, "geteuid", return_value=0), patch.object(infra_web.os, "fstat", side_effect=root_stat), patch.object(infra_web, "_load_policy") as load:
+                with infra_web._gateway_lock():
+                    for command in commands:
+                        with self.subTest(command=command), patch("builtins.print"):
+                            self.assertEqual(infra_web.main(command), 1)
+                    load.assert_not_called()
+                # Failure and normal exit both release ownership without unlinking.
+                with self.assertRaises(ValueError):
+                    with infra_web._gateway_lock():
+                        raise ValueError("activation failed")
+                with infra_web._gateway_lock():
+                    self.assertTrue(os.path.isfile(path))
+
+    def test_rejects_unsafe_lock_without_changing_permissions(self):
+        for kind in ("symlink", "hardlink", "fifo", "wrong-owner"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                outside = os.path.join(directory, "outside")
+                with open(outside, "w") as file:
+                    file.write("preserve")
+                os.chmod(outside, 0o644)
+                path = os.path.join(directory, "mutation.lock")
+                if kind == "symlink":
+                    os.symlink(outside, path)
+                elif kind == "hardlink":
+                    os.link(outside, path)
+                elif kind == "fifo":
+                    os.mkfifo(path)
+                else:
+                    with open(path, "w"):
+                        pass
+                owner_check = patch.object(infra_web.os, "fstat", return_value=SimpleNamespace(st_mode=0o100600, st_uid=12345, st_nlink=1)) if kind == "wrong-owner" else nullcontext()
+                with patch.object(infra_web, "MUTATION_LOCK_FILE", path), patch.object(infra_web.os, "geteuid", return_value=0), patch.object(infra_web.os, "fchmod") as chmod, owner_check:
+                    with self.assertRaises((OSError, RuntimeError)):
+                        with infra_web._gateway_lock():
+                            self.fail("Unsafe lock accepted")
+                    chmod.assert_not_called()
+                self.assertEqual(os.stat(outside).st_mode & 0o777, 0o644)
 
 
 class TestInfraWebGames(unittest.TestCase):

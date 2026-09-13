@@ -68,15 +68,6 @@ calls and temporary directories; live deployment qualification is separate.
   stop-after-failure explicit, and apply the existing Proxmox maintenance plan's
   HA/Ceph/evacuation policy before mutation.
 
-- **RCF-25 — Medium: internal-web route and preview mutations lack a
-  shared transaction lock.** Forward and live-preview commands load state,
-  reconcile Nginx/UFW, and write state without interprocess serialization.
-  Concurrent add/remove/start/stop commands can lose records, race port
-  allocation, or leave generated configuration and state disagreeing. Evidence:
-  [`infra_web.py`](../../common/service_tools/infra_web.py).
-  **Acceptance:** take one root-owned non-blocking lock around load, plan, apply,
-  rollback, and state writes for all forward/preview mutations.
-
 - **RCF-26 — Medium-High: generated CA bootstrap scripts bypass TLS
   verification.** Linux/macOS snippets use `curl`/`wget --insecure`, and the
   Windows snippet disables certificate validation before checking a digest
@@ -137,7 +128,6 @@ calls and temporary directories; live deployment qualification is separate.
   retain protected-branch policy, checkout confinement, and the documented
   trust contract.
 
-
 ## Delivery and ownership
 
 - Prioritize recoverable service/setup execution (RCF-04–05), state validation
@@ -150,7 +140,7 @@ calls and temporary directories; live deployment qualification is separate.
   RCF-18 remains open for build/deploy credential isolation.
 - RCF-20 follows the [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md),
   which owns HA/Ceph, evacuation, and live qualification.
-- RCF-25–26 belong to [Internal web](../INTERNAL_WEB.md) and
+- RCF-26 belongs to [Internal web](../INTERNAL_WEB.md) and
   [Client CA trust](../CLIENT_CA_TRUST.md).
 - Close findings after focused failure-path tests, relevant operator
   documentation, and `make check`/`git diff --check` pass. Remove resolved

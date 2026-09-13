@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+from functools import wraps
 import grp
 import hashlib
 import ipaddress
@@ -15,6 +18,7 @@ import shlex
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -34,6 +38,7 @@ from lib.validation import validate_positive_integer
 
 
 POLICY_FILE = "/etc/infra-tools/internal-web/policy.json"
+MUTATION_LOCK_FILE = "/etc/infra-tools/internal-web/mutation.lock"
 FORWARD_STATE_FILE = "/etc/infra-tools/internal-web/forwards.json"
 FORWARD_NGINX_SITE = "/etc/nginx/sites-available/infra-tools-web-forwards"
 FORWARD_NGINX_LINK = "/etc/nginx/sites-enabled/infra-tools-web-forwards"
@@ -51,6 +56,38 @@ _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.*)$")
 _BODY_SIZE_PATTERN = re.compile(r"^([1-9][0-9]{0,9})([kKmMgG]?)$")
 _PROFILES = ("general", "godot", "syncthing")
 _MAX_FORWARD_BODY_BYTES = 1024**3
+
+
+@contextmanager
+def _gateway_lock():
+    """Hold one root-owned lock through planning, activation, and rollback."""
+    if os.geteuid() != 0:
+        raise RuntimeError("Run HTTPS forward and preview mutations with sudo")
+    descriptor = os.open(
+        MUTATION_LOCK_FILE,
+        os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != 0:
+            raise RuntimeError("Refusing unsafe internal-web mutation lock")
+        os.fchmod(descriptor, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another internal-web mutation is running; retry after it finishes") from exc
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _serialized_mutation(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with _gateway_lock():
+            return function(*args, **kwargs)
+    return locked
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1068,6 +1105,7 @@ def _print_ca(as_json: bool) -> int:
     return 0
 
 
+@_serialized_mutation
 def _forward_add(args: argparse.Namespace) -> int:
     name = _validate_name(args.name, "forward name")
     policy = _load_policy()
@@ -1110,6 +1148,7 @@ def _forward_add(args: argparse.Namespace) -> int:
     return 0
 
 
+@_serialized_mutation
 def _forward_remove(args: argparse.Namespace) -> int:
     name = _validate_name(args.name, "forward name")
     policy = _load_policy()
@@ -1174,6 +1213,7 @@ def _forward_print_url(name: str) -> int:
     return 0
 
 
+@_serialized_mutation
 def _forward_prune(confirmed: bool, as_json: bool) -> int:
     if not confirmed:
         raise ValueError("Pruning dead HTTPS forwards requires --yes")
@@ -1205,6 +1245,7 @@ def _forward_prune(confirmed: bool, as_json: bool) -> int:
     return 0
 
 
+@_serialized_mutation
 def _forward_reconcile(as_json: bool) -> int:
     policy = _load_policy()
     routes = _load_forwards(policy)
@@ -1642,6 +1683,7 @@ def _stop_preview_record(
     routes[:] = updated_routes
 
 
+@_serialized_mutation
 def _preview_start(args: argparse.Namespace) -> int:
     if os.geteuid() != 0:
         raise RuntimeError("Run live-preview mutations with sudo")
@@ -1750,6 +1792,7 @@ def _preview_start(args: argparse.Namespace) -> int:
     return 0
 
 
+@_serialized_mutation
 def _preview_stop(name: str, as_json: bool) -> int:
     if os.geteuid() != 0:
         raise RuntimeError("Run live-preview mutations with sudo")
@@ -1825,6 +1868,7 @@ def _preview_logs(name: str, lines: int) -> int:
     return result.returncode
 
 
+@_serialized_mutation
 def _preview_prune(confirmed: bool, as_json: bool) -> int:
     if os.geteuid() != 0:
         raise RuntimeError("Run live-preview mutations with sudo")
