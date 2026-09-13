@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 import time
 import urllib.error
-import urllib.request
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -30,6 +29,7 @@ from lib.auth_failure_bans import (
     remove_nginx_auth_failure_ban,
 )
 from lib.config import SetupConfig
+from lib.local_http import open_loopback
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 from lib.validators import validate_username
@@ -531,7 +531,7 @@ def _t3_local_endpoint_reachable(host: str, port: int) -> bool:
     else:
         local_host = host
     try:
-        with urllib.request.urlopen(
+        with open_loopback(
             f"http://{_url_host(local_host)}:{port}/",
             timeout=2,
         ) as response:

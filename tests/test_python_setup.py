@@ -73,6 +73,14 @@ class TestPythonFlag(unittest.TestCase):
                     common_steps.install_or_update_uv(user_home, username="build-example")
                 )
 
+            download_command = next(
+                call.args[0]
+                for call in mock_run.call_args_list
+                if isinstance(call.args[0], list)
+                and any("astral.sh/uv/install.sh" in str(item) for item in call.args[0])
+            )
+            self.assertEqual(download_command[:2], ["/usr/bin/prlimit", "--fsize=4194304"])
+
         self.assertEqual(observed_modes, [0o644])
 
     @patch("common.common_steps.configure_maintenance_timer")

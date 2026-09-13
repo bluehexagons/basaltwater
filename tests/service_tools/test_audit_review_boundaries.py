@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import urllib.error
 
 from game import antistatic_steps as antistatic
+from common import t3code_steps
 from lib import agent_cli
 
 
@@ -57,3 +58,11 @@ class TestAuditReviewBoundaries(unittest.TestCase):
                 "http://127.0.0.1:8080/", code, "status", {}, None,
             )):
                 self.assertEqual(agent_cli._t3_endpoint_reachable(8080), expected)
+
+    def test_t3_setup_probe_uses_literal_loopback_client(self):
+        response = MagicMock()
+        response.__enter__.return_value.status = 200
+        with patch.object(t3code_steps, "open_loopback", return_value=response) as probe:
+            self.assertTrue(t3code_steps._t3_local_endpoint_reachable("127.0.0.1", 8080))
+
+        probe.assert_called_once_with("http://127.0.0.1:8080/", timeout=2)

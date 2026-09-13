@@ -37,6 +37,7 @@ from lib.homebox_config import (
     DEFAULT_VERSION, homebox_settings, parse_homebox_spec, paths_overlap,
     validate_homebox_path, validate_homebox_settings, validate_homebox_version,
 )
+from lib.local_http import open_loopback
 from lib.machine_state import can_manage_firewall, can_manage_system_services
 from lib.release_management import detect_release_arch, validate_release_sha256_digest
 from lib.remote_utils import install_package, is_dry_run, run
@@ -205,14 +206,18 @@ def release_path(value: dict) -> Path:
     return ROOT / "releases" / f"{value['version']}-{value['archive_sha256']}" / "homebox"
 
 
-def _request_json(url: str, payload: dict | None = None) -> Any:
+def _request_json(url: str, payload: dict | None = None, *, local: bool = False) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, headers={
         "User-Agent": "infra-tools-homebox", "Content-Type": "application/json",
     })
-    # Ignore proxy environment variables for local bootstrap credentials.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(request, timeout=15) as response:
+    if local:
+        response_context = open_loopback(request, timeout=15)
+    else:
+        # Ignore proxy environment variables for upstream release metadata.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        response_context = opener.open(request, timeout=15)
+    with response_context as response:
         body = response.read(2 * 1024 * 1024)
         return json.loads(body) if body else None
 
@@ -512,7 +517,7 @@ def _activate_files(value: dict) -> None:
 
 
 def _status(port: int) -> dict:
-    value = _request_json(f"http://127.0.0.1:{port}{STATUS_PATH}")
+    value = _request_json(f"http://127.0.0.1:{port}{STATUS_PATH}", local=True)
     if not isinstance(value, dict) or value.get("health") is not True:
         raise RuntimeError("HomeBox did not return a healthy API status")
     return value
@@ -587,10 +592,10 @@ def _bootstrap(value: dict) -> None:
             raise RuntimeError("Refusing bootstrap into a nonempty HomeBox user database")
         _request_json(f"http://127.0.0.1:{port}/api/v1/users/register", {
             "name": "HomeBox owner", "email": value["email"], "password": _secrets()["password"],
-        })
+        }, local=True)
         token = _request_json(f"http://127.0.0.1:{port}/api/v1/users/login", {
             "username": value["email"], "password": _secrets()["password"],
-        })
+        }, local=True)
         if not isinstance(token, dict) or not token.get("token"):
             raise RuntimeError("HomeBox initial login verification failed")
         if _database(value)["users"] != 1:

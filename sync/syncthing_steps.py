@@ -12,12 +12,13 @@ import shlex
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from common.storage_steps import assert_declared_storage_mount
 from lib.atomic_io import write_text_atomic
 from lib.config import DEFAULT_SYNCTHING_ROOT, SetupConfig
 from lib.credentials import get_runtime_credential
+from lib.local_http import open_loopback
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, is_package_installed, run
 
@@ -254,7 +255,7 @@ def _put_config(desired: dict[str, Any]) -> None:
         headers={"Content-Type": "application/json", "X-API-Key": api_key},
     )
     try:
-        with urlopen(request, timeout=20) as response:
+        with open_loopback(request, timeout=20) as response:
             if response.status not in {200, 204}:
                 raise RuntimeError(
                     f"Syncthing rejected its managed config (HTTP {response.status})"

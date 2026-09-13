@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
@@ -18,6 +18,7 @@ from sync.syncthing_steps import (
     _preflight_existing_folders,
     _prepare_share_root,
     _render_service,
+    _put_config,
     build_syncthing_policy_config,
     setup_syncthing,
 )
@@ -180,6 +181,17 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
 
 
 class SyncthingCompositionTest(unittest.TestCase):
+    def test_put_config_uses_the_literal_loopback_client(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value.status = 204
+        desired = _current_config()
+        with patch("sync.syncthing_steps.open_loopback", return_value=response) as open_client:
+            _put_config(desired)
+
+        request = open_client.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8384/rest/config")
+        self.assertEqual(open_client.call_args.kwargs, {"timeout": 20})
+
     def test_share_root_rejects_symbolic_link_parent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             target = os.path.join(temporary_dir, "target")

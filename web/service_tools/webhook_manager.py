@@ -21,8 +21,8 @@ import os
 import json
 import subprocess
 import argparse
-from typing import Optional
 
+from lib.local_http import open_loopback
 from web.service_tools.cicd_config import load_config_file, save_config_file
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
 
@@ -230,12 +230,11 @@ def show_status(args: argparse.Namespace) -> int:
     # Show health check
     print("=== Health Check ===")
     try:
-        import urllib.request
-        response = urllib.request.urlopen("http://localhost:8765/health", timeout=2)
-        if response.status == 200:
-            print("✓ Webhook receiver is responding")
-        else:
-            print(f"⚠️  Webhook receiver returned status {response.status}")
+        with open_loopback("http://127.0.0.1:8765/health", timeout=2) as response:
+            if response.status == 200:
+                print("✓ Webhook receiver is responding")
+            else:
+                print(f"⚠️  Webhook receiver returned status {response.status}")
     except Exception as e:
         print(f"✗ Webhook receiver is not responding: {e}")
     

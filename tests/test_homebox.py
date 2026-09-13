@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from infra_tools import create_infra_tools_parser, _patch_preserve_keys
 from lib.arg_parser import create_setup_argument_parser
@@ -177,6 +177,21 @@ class HomeBoxFixture:
             h._activate_files(self.value)
 
 class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
+    def test_local_api_requests_use_literal_loopback_client(self):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"health": true}'
+        with patch.object(h, "open_loopback", return_value=response) as open_client, \
+                patch.object(h.urllib.request, "build_opener") as build_opener:
+            self.assertEqual(
+                h._request_json("http://127.0.0.1:7745/api/v1/status", local=True),
+                {"health": True},
+            )
+
+        request = open_client.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:7745/api/v1/status")
+        self.assertEqual(open_client.call_args.kwargs, {"timeout": 15})
+        build_opener.assert_not_called()
+
     def test_database_probe_uses_owner_identity_for_wal_sidecars(self):
         owner = (self.data / "homebox.db").stat()
         with patch.object(h.os, "geteuid", return_value=owner.st_uid + 1), \

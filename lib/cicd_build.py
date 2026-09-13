@@ -127,6 +127,7 @@ def _export_workspace(workspace: str, output) -> None:
 def _extract_snapshot(source, destination: Path) -> None:
     """Read untrusted framing into a new, broker-private directory."""
     total = count = 0
+    seen: set[str] = set()
     while True:
         command_timeout(300)
         header = source.readline(MAX_HEADER_BYTES + 1)
@@ -143,8 +144,10 @@ def _extract_snapshot(source, destination: Path) -> None:
         if (not isinstance(name, str) or not name or "\0" in name
                 or PurePosixPath(name).is_absolute() or any(part in {"", ".", ".."} for part in name.split("/"))
                 or type(size) is not int or size < 0 or type(entry["executable"]) is not bool
-                or type(entry["directory"]) is not bool or (entry["directory"] and size != 0)):
+                or type(entry["directory"]) is not bool or (entry["directory"] and size != 0)
+                or name in seen):
             raise ValueError("Invalid artifact path or size")
+        seen.add(name)
         total += size
         count += 1
         if total > MAX_SNAPSHOT_BYTES or count > MAX_SNAPSHOT_FILES:

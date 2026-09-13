@@ -30,7 +30,7 @@ from lib.remote_utils import (
 from lib.update_policy import ECOSYSTEM_AUTO_UPGRADE_ENV, npm_freshness_args
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
-from lib.vendor_installer import installer_command, record_installer
+from lib.vendor_installer import MAX_INSTALLER_BYTES, installer_command, record_installer
 
 
 _GO_ARCH_BY_MACHINE = {
@@ -1228,7 +1228,25 @@ def install_or_update_uv(
 
         try:
             download_result = run(
-                f"curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 120 --max-filesize 4194304 https://astral.sh/uv/install.sh -o {safe_installer}",
+                [
+                    "/usr/bin/prlimit",
+                    f"--fsize={MAX_INSTALLER_BYTES}",
+                    "--",
+                    "curl",
+                    "-fsSL",
+                    "--proto",
+                    "=https",
+                    "--proto-redir",
+                    "=https",
+                    "--tlsv1.2",
+                    "--max-time",
+                    "120",
+                    "--max-filesize",
+                    str(MAX_INSTALLER_BYTES),
+                    "https://astral.sh/uv/install.sh",
+                    "-o",
+                    installer_path,
+                ],
                 check=False
             )
             if download_result.returncode != 0:

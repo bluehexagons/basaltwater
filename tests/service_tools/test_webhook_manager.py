@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -260,16 +260,17 @@ class TestServiceCommands(unittest.TestCase):
 
     def test_show_status_reports_service_output_and_health(self):
         service_result = SimpleNamespace(stdout="line one\nline two\n", returncode=0)
-        health_response = SimpleNamespace(status=200)
+        health_response = MagicMock()
+        health_response.__enter__.return_value.status = 200
         output = StringIO()
         with patch.object(webhook_manager.subprocess, "run", return_value=service_result) as run_command, patch(
-            "urllib.request.urlopen", return_value=health_response
-        ) as urlopen, redirect_stdout(output):
+            "web.service_tools.webhook_manager.open_loopback", return_value=health_response
+        ) as open_loopback, redirect_stdout(output):
             result = webhook_manager.show_status(_args())
 
         self.assertEqual(result, 0)
         self.assertEqual(run_command.call_count, 2)
-        urlopen.assert_called_once_with("http://localhost:8765/health", timeout=2)
+        open_loopback.assert_called_once_with("http://127.0.0.1:8765/health", timeout=2)
         self.assertIn("✓ Webhook receiver is responding", output.getvalue())
 
     def test_show_status_reports_non_200_and_health_error(self):
@@ -281,12 +282,20 @@ class TestServiceCommands(unittest.TestCase):
             with self.subTest(expected_text=expected_text):
                 output = StringIO()
                 if isinstance(health_result, BaseException):
-                    urlopen_patch = patch("urllib.request.urlopen", side_effect=health_result)
+                    open_loopback_patch = patch(
+                        "web.service_tools.webhook_manager.open_loopback",
+                        side_effect=health_result,
+                    )
                 else:
-                    urlopen_patch = patch("urllib.request.urlopen", return_value=health_result)
+                    response = MagicMock()
+                    response.__enter__.return_value = health_result
+                    open_loopback_patch = patch(
+                        "web.service_tools.webhook_manager.open_loopback",
+                        return_value=response,
+                    )
                 with patch.object(
                     webhook_manager.subprocess, "run", return_value=service_result
-                ), urlopen_patch, redirect_stdout(output):
+                ), open_loopback_patch, redirect_stdout(output):
                     result = webhook_manager.show_status(_args())
 
                 self.assertEqual(result, 0)

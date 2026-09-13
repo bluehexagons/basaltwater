@@ -29,12 +29,14 @@ class TestVendorInstaller(unittest.TestCase):
         self.payload = b"#!/bin/sh\necho installer\n"
 
     def download(self, command, **kwargs):
-        self.assertEqual(command[0], "curl")
+        self.assertEqual(command[:2], ["/usr/bin/prlimit", f"--fsize={installer.MAX_INSTALLER_BYTES}"])
         self.assertEqual(kwargs["timeout"], 130)
+        curl = command
+        curl = curl[curl.index("curl"):]
         for flag, value in (("--proto", "=https"), ("--proto-redir", "=https"),
                             ("--max-time", "120"), ("--connect-timeout", "15")):
-            self.assertEqual(command[command.index(flag) + 1], value)
-        Path(command[command.index("--output") + 1]).write_bytes(self.payload)
+            self.assertEqual(curl[curl.index(flag) + 1], value)
+        Path(curl[curl.index("--output") + 1]).write_bytes(self.payload)
         return subprocess.CompletedProcess(command, 0, "https://vendor.example/install.sh", "")
 
     def test_acceptance_required_before_any_execution(self):
@@ -81,7 +83,7 @@ class TestVendorInstaller(unittest.TestCase):
     def test_execution_requires_provenance_and_retains_failure_or_interruption(self):
         for interrupted in (False, True):
             def execute(command, **kwargs):
-                if command[0] == "curl":
+                if isinstance(command, list) and "curl" in command:
                     return self.download(command, **kwargs)
                 record = json.loads((self.state / "codex.json").read_text())
                 self.assertEqual(record["status"], "downloaded")

@@ -135,7 +135,9 @@ class TestArtifactSnapshot(unittest.TestCase):
             return json.dumps({"path": path, "size": size, "executable": False, "directory": False}).encode() + b"\n"
         cases = [frame("../secret") + b"x", frame("/secret") + b"x", frame(size=-1),
                  frame(size=100), frame() + b"x" + frame() + b"x", b"{}\n",
-                 b"x" * (build.MAX_HEADER_BYTES + 1), frame(size=build.MAX_SNAPSHOT_BYTES + 1)]
+                 b"x" * (build.MAX_HEADER_BYTES + 1), frame(size=build.MAX_SNAPSHOT_BYTES + 1),
+                 json.dumps({"path": "dir", "size": 0, "executable": False, "directory": True}).encode() + b"\n"
+                 + json.dumps({"path": "dir", "size": 0, "executable": False, "directory": True}).encode() + b"\n"]
         for data in cases:
             with self.subTest(data=data[:50]), tempfile.TemporaryDirectory(dir=self.root) as directory:
                 with self.assertRaises((ValueError, OSError)):

@@ -35,9 +35,15 @@ POLICIES = {
 MAX_INSTALLER_BYTES = 4 * 1024 * 1024
 
 
+def _policy(tool: str) -> tuple[str, str, str]:
+    try:
+        return POLICIES[tool]
+    except KeyError as exc:
+        raise ValueError("Installer has no accepted channel policy") from exc
+
+
 def installer_command(tool: str) -> str:
-    if tool not in POLICIES:
-        raise ValueError("Installer has no accepted channel policy")
+    _policy(tool)
     return shlex.join(["/usr/bin/python3", os.path.abspath(__file__), tool, "--accept-vendor-channel"])
 
 
@@ -56,7 +62,7 @@ def _state_directory() -> Path:
 
 def record_installer(tool: str, path: str, *, effective_url: str | None = None) -> tuple[str, dict]:
     """Persist the latest attempt per tool before executing any downloaded bytes."""
-    source, _, policy = POLICIES[tool]
+    source, _, policy = _policy(tool)
     resolved = effective_url or source
     parsed = urllib.parse.urlsplit(resolved)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
@@ -78,17 +84,22 @@ def record_installer(tool: str, path: str, *, effective_url: str | None = None) 
 
 
 def download_installer(tool: str, directory: str) -> tuple[str, str, dict]:
-    source = POLICIES[tool][0]
+    source = _policy(tool)[0]
     validate_filesystem_path(directory, must_exist=True)
     fd, path = tempfile.mkstemp(prefix=f".{tool}-installer-", suffix=".sh", dir=directory)
     os.close(fd)
     try:
-        downloaded = run([
+        curl = [
             "curl", "--fail", "--silent", "--show-error", "--location",
             "--proto", "=https", "--proto-redir", "=https",
             "--connect-timeout", "15", "--max-time", "120", "--max-filesize", str(MAX_INSTALLER_BYTES),
             "--output", path, "--write-out", "%{url_effective}", source,
-        ], capture_output=True, timeout=130)
+        ]
+        downloaded = run(
+            ["/usr/bin/prlimit", f"--fsize={MAX_INSTALLER_BYTES}", "--", *curl],
+            capture_output=True,
+            timeout=130,
+        )
         state_path, record = record_installer(tool, path, effective_url=downloaded.stdout.strip())
         return path, state_path, record
     except BaseException:
@@ -99,7 +110,7 @@ def download_installer(tool: str, directory: str) -> tuple[str, str, dict]:
 def install(tool: str, *, accept_vendor_channel: bool = False) -> int:
     if not accept_vendor_channel or tool not in POLICIES:
         raise ValueError("Explicit vendor-channel acceptance is required")
-    source, shell, policy = POLICIES[tool]
+    source, shell, policy = _policy(tool)
     print(f"  Installing {tool} under {policy} policy from {source}")
     with tempfile.TemporaryDirectory(prefix="installer-", dir=_state_directory()) as directory:
         path, state_path, record = download_installer(tool, directory)
