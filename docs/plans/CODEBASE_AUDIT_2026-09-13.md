@@ -22,6 +22,8 @@ fixes. Existing domain plans remain owners where noted below.
   rollback, and atomic JSON replacement. Plugin validation and desktop/session
   lifecycle controls were rechecked; the remaining eager plugin-import concern
   is already owned by the [architectural review](ARCHITECTURAL_RISK_REVIEW_2026-08-07.md).
+- Current document revalidation checked every local citation and finding ID;
+  RCF-04 now distinguishes deletion-based replacement from in-place overwrite.
 
 ## Findings
 
@@ -67,12 +69,15 @@ below are authoritative.
 
 ### P1 — reliability, state integrity, privileged setup, and operator safety
 
-- **RCF-04 — Medium-High, new: service replacement is cleanup-first and
-  non-atomic.** [`cleanup_service`](../../lib/systemd_service.py:50) removes
-  the current unit before CI/CD, Gogs, generic, or storage managers write a
-  replacement with `open(..., 'w')`. A write, reload, or start failure can
-  leave the service absent or truncated, without restoring prior
-  active/enabled state. Evidence: [`cicd_steps.py`](../../web/cicd_steps.py:241),
+- **RCF-04 — Medium-High, new: service replacement is destructive or
+  non-atomic.** Several writers delete the existing unit before recreating it;
+  others overwrite the live unit with `open(..., 'w')`. A write, reload, or
+  start failure can therefore leave the service absent or truncated, without
+  restoring prior active/enabled state. Evidence:
+  [`cicd_steps.py`](../../web/cicd_steps.py:175),
+  [`cicd_steps.py`](../../web/cicd_steps.py:242),
+  [`cicd_steps.py`](../../web/cicd_steps.py:264),
+  [`cicd_steps.py`](../../web/cicd_steps.py:313),
   [`gogs_steps.py`](../../web/gogs_steps.py:1236),
   [`systemd_service.py`](../../lib/systemd_service.py:252),
   [`service_manager.py`](../../lib/service_manager.py:71),
