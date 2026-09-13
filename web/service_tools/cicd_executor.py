@@ -19,7 +19,6 @@ import subprocess
 import shlex
 import time
 import fcntl
-import pwd
 import stat
 import tempfile
 import hashlib
@@ -32,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.cicd_deadline import JOB_TIMEOUT_SECONDS, command_timeout, enter_phase, job_budget, run_command
+from lib.cicd_build import BUILD_HOME, BUILD_PATH, artifact_snapshot, receiver_state, run_build_command
 from web.service_tools.cicd_config import load_config_file
 from web.service_tools.cicd_deliveries import claim, pending_job_files
 from web.service_tools.cicd_security import (
@@ -49,15 +49,10 @@ CONFIG_DIR = "/etc/infra_tools/cicd"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "webhook_config.json")
 STATE_DIR = "/var/lib/infra_tools/cicd"
 JOBS_DIR = os.path.join(STATE_DIR, "jobs")
-WORKSPACES_DIR = os.path.join(STATE_DIR, "workspaces")
+WORKSPACES_DIR = os.path.join(BUILD_HOME, "workspaces")
 LOGS_DIR = os.path.join(STATE_DIR, "logs")
 LOCK_FILE = os.path.join(STATE_DIR, "executor.lock")
 DELIVERIES_FILE = os.path.join(STATE_DIR, 'deliveries.sqlite3')
-
-
-def get_build_home() -> str:
-    """Return the home directory for the current build user."""
-    return pwd.getpwuid(os.getuid()).pw_dir
 
 
 def load_config() -> dict:
@@ -80,7 +75,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
                 shutil.rmtree(workspace)
 
         log_event(logger, "Creating fresh repository clone", repo_url=repo_url)
-        result = run_command(
+        result = run_build_command(
             [
                 'git',
                 'clone',
@@ -106,7 +101,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
         refspec = f"+{ref}:{remote_ref}"
 
         log_event(logger, "Fetching authenticated branch", repo_url=repo_url, branch=branch)
-        result = run_command(
+        result = run_build_command(
             ['git', 'fetch', '--force', '--prune', 'origin', refspec],
             cwd=workspace,
             capture_output=True,
@@ -117,7 +112,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Failed to fetch repository changes", level=40, repo_url=repo_url, stderr=result.stderr.strip())
             return False
 
-        result = run_command(
+        result = run_build_command(
             ['git', 'cat-file', '-e', f'{validated_sha}^{{commit}}'],
             cwd=workspace,
             capture_output=True,
@@ -128,7 +123,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Authenticated commit was not fetched", level=40, repo_url=repo_url, commit_sha=validated_sha[:8])
             return False
 
-        result = run_command(
+        result = run_build_command(
             ['git', 'merge-base', '--is-ancestor', validated_sha, remote_ref],
             cwd=workspace,
             capture_output=True,
@@ -147,7 +142,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             return False
 
         log_event(logger, "Checking out authenticated commit", repo_url=repo_url, branch=branch, commit_sha=validated_sha[:8])
-        result = run_command(
+        result = run_build_command(
             ['git', 'checkout', '--detach', '--force', validated_sha],
             cwd=workspace,
             capture_output=True,
@@ -158,7 +153,7 @@ def clone_or_update_repo(repo_url: str, workspace: str, ref: str, commit_sha: st
             log_event(logger, "Failed to checkout authenticated commit", level=40, repo_url=repo_url, commit_sha=validated_sha[:8], stderr=result.stderr.strip())
             return False
 
-        result = run_command(
+        result = run_build_command(
             ['git', 'clean', '-ffdx'],
             cwd=workspace,
             capture_output=True,
@@ -241,10 +236,9 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
         log_event(logger, 'Script escapes repository checkout', level=40)
         return False
 
-    build_home = get_build_home()
+    build_home = BUILD_HOME
     nvm_dir = os.path.join(build_home, ".nvm")
-    local_bin = os.path.join(build_home, ".local", "bin")
-    script_path_env = os.pathsep.join([local_bin, os.environ.get("PATH", "")])
+    script_path_env = BUILD_PATH
     script_command = (
         f"export HOME={shlex.quote(build_home)} && "
         f"export NVM_DIR={shlex.quote(nvm_dir)} && "
@@ -252,13 +246,6 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
         '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; '
         f"exec /bin/bash {shlex.quote(script_path)}"
     )
-    script_env = {
-        **os.environ,
-        "HOME": build_home,
-        "NVM_DIR": nvm_dir,
-        "PATH": script_path_env,
-    }
-    
     try:
         log_event(logger, "Running script", script_path=script_path)
         
@@ -267,10 +254,9 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
             log.write(f"Running: {script_path}\n")
             log.write(f"{'='*80}\n\n")
             
-            result = run_command(
+            result = run_build_command(
                 ['/bin/bash', '-lc', script_command],
                 cwd=workspace,
-                env=script_env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 timeout=3600  # 1 hour timeout
@@ -323,8 +309,9 @@ def _process_job(job_file: str) -> bool:
 
         if 'delivery_key' in job_data:
             try:
-                claimed = claim(DELIVERIES_FILE, job_file, job_data)
-            except (OSError, ValueError, sqlite3.Error) as exc:
+                with receiver_state():
+                    claimed = claim(DELIVERIES_FILE, job_file, job_data)
+            except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
                 consume = False
                 log_event(logger, 'Delivery receipt unavailable; retaining job', level=40, error=str(exc))
                 return False
@@ -400,11 +387,13 @@ def _process_job(job_file: str) -> bool:
             deploy_spec = repo_config.get('deploy_spec')
             
             if deploy_target:
-                enter_phase("deploy", deployment=True)
-                success = perform_remote_deployment(
-                    workspace, deploy_target, deploy_spec, repo_url, 
-                    commit_sha, log_file, repo_config
-                )
+                enter_phase("snapshot")
+                with artifact_snapshot(workspace) as snapshot:
+                    enter_phase("deploy", deployment=True)
+                    success = perform_remote_deployment(
+                        snapshot, deploy_target, deploy_spec, repo_url,
+                        commit_sha, log_file, repo_config
+                    )
             else:
                 deploy_script = scripts.get('deploy')
                 if deploy_script:
@@ -528,7 +517,9 @@ def perform_remote_deployment(
             if not os.path.isfile(script_path):
                 raise ValueError(f"Deploy script is not a regular file: {script_path}")
             with open(script_path, 'r', encoding='utf-8') as script:
-                script_content = script.read()
+                script_content = script.read(1024 * 1024 + 1)
+            if len(script_content.encode('utf-8')) > 1024 * 1024:
+                raise ValueError('Deploy script exceeds 1 MiB')
         except (OSError, ValueError) as exc:
             log_event(logger, "Cannot read required deploy script", level=40, error=str(exc))
             with open(log_file, 'a') as log:
@@ -748,7 +739,8 @@ def main():
             log_event(logger, "Another executor instance is running, exiting")
             return 0
         
-        job_files = pending_job_files(DELIVERIES_FILE, JOBS_DIR)
+        with receiver_state():
+            job_files = pending_job_files(DELIVERIES_FILE, JOBS_DIR)
         config = load_config()
         
         if not job_files:

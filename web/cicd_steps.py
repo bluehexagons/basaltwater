@@ -9,6 +9,7 @@ import stat
 
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
+from lib.cicd_build import BUILD_HOME, BUILD_USER
 from lib.remote_utils import run, is_package_installed
 from lib.unit_transaction import replace_units
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
@@ -60,7 +61,17 @@ def secure_cicd_directories(directories: list[str]) -> None:
 
     for directory in directories:
         run(["chown", f"{CICD_USER}:{CICD_USER}", directory])
-        run(["chmod", "750", directory])
+        run(["chmod", "711" if directory == CICD_HOME else "750", directory])
+
+
+def create_isolated_build_directories() -> None:
+    """Create build-owned directories without recursively touching credentials."""
+    for directory in (BUILD_HOME, f"{BUILD_HOME}/workspaces"):
+        if os.path.islink(directory):
+            raise ValueError(f"Build directory cannot be a symlink: {directory}")
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        run(["chown", f"{BUILD_USER}:{BUILD_USER}", directory])
+        run(["chmod", "700", directory])
 
 
 def install_cicd_dependencies(config: SetupConfig) -> None:
@@ -85,6 +96,12 @@ def install_cicd_dependencies(config: SetupConfig) -> None:
 
 def create_cicd_user(config: SetupConfig) -> None:
     """Create dedicated user for webhook receiver service."""
+    result = run(["id", BUILD_USER], check=False)
+    if result.returncode == 0:
+        run(["usermod", "--home", BUILD_HOME, BUILD_USER])
+    else:
+        run(["useradd", "--system", "--user-group", "--home-dir", BUILD_HOME,
+             "--no-create-home", "--shell", "/usr/sbin/nologin", BUILD_USER])
     user = CICD_USER
     
     result = run(["id", user], check=False)
@@ -112,7 +129,6 @@ def create_cicd_directories(config: SetupConfig) -> None:
     state_directories = [
         CICD_HOME,
         f"{CICD_HOME}/jobs",
-        f"{CICD_HOME}/workspaces",
         f"{CICD_HOME}/logs",
     ]
 
@@ -121,6 +137,7 @@ def create_cicd_directories(config: SetupConfig) -> None:
         os.makedirs(directory, mode=0o750, exist_ok=True)
 
     secure_cicd_directories(state_directories)
+    create_isolated_build_directories()
     
     print("  ✓ Created CI/CD directories")
 
@@ -236,7 +253,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount
-ReadWritePaths=/var/lib/infra_tools/cicd/jobs
+# SQLite also needs to create its rollback journal beside the delivery ledger.
+ReadWritePaths=/var/lib/infra_tools/cicd
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
@@ -275,12 +293,12 @@ After=network.target
 
 [Service]
 Type=oneshot
-User=webhook
-Group=webhook
+User=root
+Group=root
 WorkingDirectory=/opt/infra_tools/web/service_tools
 Environment=HOME=/var/lib/infra_tools/cicd
 Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd
-ExecStart=/usr/bin/python3 /opt/infra_tools/web/service_tools/cicd_executor.py
+ExecStart=/usr/bin/python3 -I /opt/infra_tools/web/service_tools/cicd_executor.py
 # Each job owns a four-hour budget; this process may drain several jobs.
 TimeoutStartSec=infinity
 
@@ -306,7 +324,7 @@ LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 SystemCallArchitectures=native
 ReadWritePaths=/var/lib/infra_tools/cicd /var/log/infra_tools
-CapabilityBoundingSet=
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_OVERRIDE CAP_KILL
 AmbientCapabilities=
 UMask=0027
 

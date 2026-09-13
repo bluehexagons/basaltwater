@@ -71,10 +71,11 @@ class TestCICDSteps(unittest.TestCase):
         
         create_cicd_user(mock_config)
         
-        self.assertEqual(mock_run.call_count, 2)
-        self.assertEqual(mock_run.call_args_list[0][0][0], ['id', 'webhook'])
+        self.assertEqual(mock_run.call_count, 4)
+        self.assertEqual(mock_run.call_args_list[0][0][0], ['id', 'cicd-build'])
+        self.assertEqual(mock_run.call_args_list[2][0][0], ['id', 'webhook'])
         self.assertEqual(
-            mock_run.call_args_list[1][0][0],
+            mock_run.call_args_list[3][0][0],
             ['usermod', '--home', '/var/lib/infra_tools/cicd', 'webhook'],
         )
     
@@ -85,17 +86,19 @@ class TestCICDSteps(unittest.TestCase):
         mock_run.side_effect = [
             MagicMock(returncode=1),  # id fails
             MagicMock(returncode=0),  # useradd succeeds
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
         ]
         mock_config = MagicMock()
         
         create_cicd_user(mock_config)
         
         # Should call both id and useradd
-        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(mock_run.call_count, 4)
         self.assertEqual(mock_run.call_args_list[1][0][0][0], 'useradd')
         self.assertIn('--home-dir', mock_run.call_args_list[1][0][0])
-        self.assertIn('/var/lib/infra_tools/cicd', mock_run.call_args_list[1][0][0])
-        self.assertIn('webhook', mock_run.call_args_list[1][0][0])
+        self.assertIn('/var/lib/infra_tools/cicd/build', mock_run.call_args_list[1][0][0])
+        self.assertIn('cicd-build', mock_run.call_args_list[1][0][0])
     
     @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.os.makedirs')
@@ -206,7 +209,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(replace.call_args.kwargs['activate'], ('webhook-receiver.service',))
         unit = replace.call_args.args[0]['webhook-receiver.service']
         self.assertIn('Environment=HOME=/var/lib/infra_tools/cicd', unit)
-        self.assertIn('ReadWritePaths=/var/lib/infra_tools/cicd/jobs', unit)
+        self.assertIn('ReadWritePaths=/var/lib/infra_tools/cicd\n', unit)
 
     @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
@@ -216,6 +219,9 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(replace.call_args.kwargs['activate'], ('cicd-executor.path',))
         units = replace.call_args.args[0]
         self.assertIn('TimeoutStartSec=infinity', units['cicd-executor.service'])
+        self.assertIn('User=root\nGroup=root', units['cicd-executor.service'])
+        self.assertIn('ExecStart=/usr/bin/python3 -I ', units['cicd-executor.service'])
+        self.assertIn('CAP_SETUID CAP_SETGID CAP_SETPCAP', units['cicd-executor.service'])
         self.assertIn('PathChanged=/var/lib/infra_tools/cicd/jobs', units['cicd-executor.path'])
         self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
 
@@ -445,17 +451,20 @@ class TestBuildServerSteps(unittest.TestCase):
         self.assertEqual(len(ssh_keygen_calls), 1)
 
     @patch('web.build_server_steps.secure_cicd_directories')
+    @patch('web.build_server_steps.create_isolated_build_directories')
     @patch('web.build_server_steps.os.makedirs')
     def test_build_workspace_setup_preserves_file_modes(
         self,
         mock_makedirs,
+        mock_isolated,
         mock_secure_directories,
     ):
         from web.build_server_steps import create_build_workspace_dirs
 
         create_build_workspace_dirs(MagicMock())
 
-        self.assertEqual(mock_makedirs.call_count, 5)
+        self.assertEqual(mock_makedirs.call_count, 4)
+        mock_isolated.assert_called_once()
         mock_secure_directories.assert_called_once()
 
     @patch('web.build_server_steps.install_node_for_user')
@@ -465,7 +474,7 @@ class TestBuildServerSteps(unittest.TestCase):
         from web.build_server_steps import install_build_node
         install_build_node(mock_config)
 
-        mock_install_node.assert_called_once_with('webhook', '/var/lib/infra_tools/cicd')
+        mock_install_node.assert_called_once_with('cicd-build', '/var/lib/infra_tools/cicd/build')
 
     @patch('web.build_server_steps.install_or_update_uv', return_value=True)
     @patch('web.build_server_steps.run')
@@ -481,7 +490,7 @@ class TestBuildServerSteps(unittest.TestCase):
                 for call in mock_run.call_args_list
             )
         )
-        mock_install_uv.assert_called_once_with(user_home='/var/lib/infra_tools/cicd', username='webhook')
+        mock_install_uv.assert_called_once_with(user_home='/var/lib/infra_tools/cicd/build', username='cicd-build')
     
     @patch('web.build_server_steps.os.path.exists')
     @patch('web.build_server_steps.os.makedirs')
@@ -725,7 +734,7 @@ class TestExecutorStructuredLogging(unittest.TestCase):
             cicd_executor.load_config()
 
     @patch("web.service_tools.cicd_executor.os.path.lexists", return_value=False)
-    @patch("web.service_tools.cicd_executor.run_command")
+    @patch("web.service_tools.cicd_executor.run_build_command")
     def test_clone_or_update_repo_logs_clone_and_success(self, mock_run, _mock_exists):
         commit_sha = "a" * 40
         mock_run.side_effect = [
@@ -754,9 +763,8 @@ class TestExecutorStructuredLogging(unittest.TestCase):
         self.assertIn("Checking out authenticated commit | branch='main' commit_sha='aaaaaaaa' repo_url='https://github.com/org/repo.git'", output)
         self.assertIn("Repository checkout prepared | branch='main' commit_sha='aaaaaaaa' repo_url='https://github.com/org/repo.git'", output)
 
-    @patch("web.service_tools.cicd_executor.run_command", return_value=subprocess.CompletedProcess(args=["/bin/bash"], returncode=0, stdout="", stderr=""))
-    @patch("web.service_tools.cicd_executor.get_build_home", return_value="/var/lib/infra_tools/cicd")
-    def test_run_script_logs_start_and_success(self, _mock_home, mock_run):
+    @patch("web.service_tools.cicd_executor.run_build_command", return_value=subprocess.CompletedProcess(args=["/bin/bash"], returncode=0, stdout="", stderr=""))
+    def test_run_script_logs_start_and_success(self, mock_run):
         with tempfile.TemporaryDirectory() as workspace:
             script_path = os.path.join(workspace, "build.sh")
             log_path = os.path.join(workspace, "build.log")
@@ -769,11 +777,10 @@ class TestExecutorStructuredLogging(unittest.TestCase):
         self.assertTrue(result)
         args, kwargs = mock_run.call_args
         self.assertEqual(args[0][:2], ['/bin/bash', '-lc'])
-        self.assertIn('NVM_DIR=/var/lib/infra_tools/cicd/.nvm', args[0][2])
-        self.assertIn('/var/lib/infra_tools/cicd/.local/bin', args[0][2])
+        self.assertIn('NVM_DIR=/var/lib/infra_tools/cicd/build/.nvm', args[0][2])
+        self.assertIn('/var/lib/infra_tools/cicd/build/.local/bin', args[0][2])
         self.assertIn(f'exec /bin/bash {script_path}', args[0][2])
-        self.assertEqual(kwargs['env']['HOME'], '/var/lib/infra_tools/cicd')
-        self.assertTrue(kwargs['env']['PATH'].startswith('/var/lib/infra_tools/cicd/.local/bin'))
+        self.assertNotIn('env', kwargs)
         output = "\n".join(logs.output)
         self.assertIn(f"Running script | script_path='{script_path}'", output)
         self.assertIn(f"Script completed successfully | script_path='{script_path}'", output)

@@ -8,10 +8,11 @@ import json
 from common.common_steps import install_node_for_user, install_or_update_uv
 from lib.atomic_io import write_json_atomic
 from lib.config import SetupConfig
+from lib.cicd_build import BUILD_HOME, BUILD_USER
 from lib.remote_utils import run, is_package_installed
 from lib.ssh_enrollment import is_host_key_enrolled
 from lib.workspace import get_known_hosts_path
-from web.cicd_steps import secure_cicd_directories
+from web.cicd_steps import create_isolated_build_directories, secure_cicd_directories
 
 
 CICD_USER = "webhook"
@@ -141,7 +142,6 @@ def create_build_workspace_dirs(config: SetupConfig) -> None:
     del config
     directories = [
         CICD_HOME,
-        f"{CICD_HOME}/workspaces",
         f"{CICD_HOME}/artifacts",
         f"{CICD_HOME}/logs",
         f"{CICD_HOME}/jobs",
@@ -151,13 +151,14 @@ def create_build_workspace_dirs(config: SetupConfig) -> None:
         os.makedirs(directory, mode=0o750, exist_ok=True)
 
     secure_cicd_directories(directories)
+    create_isolated_build_directories()
 
     print("  ✓ Created build workspace directories")
 
 
 def install_build_node(config: SetupConfig) -> None:
     """Install nvm-managed Node.js for the CI/CD build user."""
-    install_node_for_user(CICD_USER, CICD_HOME)
+    install_node_for_user(BUILD_USER, BUILD_HOME)
 
 
 def install_build_python_tools(config: SetupConfig) -> None:
@@ -165,7 +166,7 @@ def install_build_python_tools(config: SetupConfig) -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(["apt-get", "install", "-y", "-qq", "python3", "python3-venv", "curl"])
 
-    if install_or_update_uv(user_home=CICD_HOME, username=CICD_USER):
+    if install_or_update_uv(user_home=BUILD_HOME, username=BUILD_USER):
         print("  ✓ uv installed for build user")
     else:
         raise RuntimeError("uv installation failed for build user")

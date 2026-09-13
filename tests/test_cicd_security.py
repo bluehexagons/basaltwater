@@ -146,12 +146,12 @@ class TestExecutorJobHardening(unittest.TestCase):
                 text=True,
             ).strip()
 
-            result = cicd_executor.clone_or_update_repo(
-                source,
-                workspace,
-                "refs/heads/main",
-                commit_sha,
-            )
+            # Exercise real Git in a temporary repository; identity dropping is
+            # tested separately with mocked system calls.
+            with patch.object(cicd_executor, "run_build_command", side_effect=subprocess.run):
+                result = cicd_executor.clone_or_update_repo(
+                    source, workspace, "refs/heads/main", commit_sha,
+                )
 
             self.assertTrue(result)
             checked_out_sha = subprocess.check_output(

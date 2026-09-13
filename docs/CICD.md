@@ -23,8 +23,8 @@ letters, digits, or `._~+/=-`; setup does not rotate an existing valid secret.
 
 ## Build and app server topology
 
-The build server runs the webhook receiver and builds as the dedicated
-`webhook` user. An app server only needs nginx, rsync, and the restricted
+The build server runs the webhook receiver as `webhook` and repository code
+as the separate `cicd-build` account. An app server only needs nginx, rsync, and the restricted
 `deploy` account. The build server pushes artifacts over SSH; it does not need
 root access on the app server.
 
@@ -88,7 +88,7 @@ infra-tools cicd connect 192.168.1.60 app.example.com \
 The command validates both saved roles, transfers only the public half of the
 build deploy key, deduplicates the app server's `authorized_keys`, installs the
 verified host key and target definition atomically on the build server, and
-tests SSH as the unprivileged `webhook` build user. It is safe to rerun. Inspect
+tests SSH as the unprivileged `webhook` credential owner. It is safe to rerun. Inspect
 or retest connections with:
 
 ```bash
@@ -151,7 +151,7 @@ uses `deploy_target` (a key from `deploy_targets.json`) and an optional
 ```
 
 `install`, `build`, and `test` run in a fresh, commit-pinned workspace as
-`webhook`. When `deploy_target` is present, artifacts are pushed with rsync,
+`cicd-build`. When `deploy_target` is present, artifacts are pushed with rsync,
 nginx configuration is refreshed, and the optional deploy script is streamed
 to the target directory. Without `deploy_target`, the optional deploy script
 runs locally on the build server. Use repository URLs without embedded
@@ -160,7 +160,7 @@ credentials; the executor rejects credential-bearing URLs.
 Remote destinations must normalize to a strict child of the target's base
 directory. A destination equal to the base (including `/.`) or outside it is
 rejected before rsync can run with `--delete`. When a deploy script is
-configured, it must be a readable regular file; the executor reads it before
+configured, it must be a readable regular file no larger than 1 MiB; the executor reads it before
 transferring artifacts and fails the job if it is missing or unreadable.
 
 After changing the JSON, the next signed push uses the new settings. A ping
@@ -201,12 +201,43 @@ does not truncate an earlier log; the existing 30-day log cleanup still applies.
 
 ## Security and execution boundaries
 
-Repository scripts remain trusted code: they execute with the build user's
-credentials and can request deployment with that user's deploy key. Protect
-configured branches and review script changes. Use separate build and deploy
-accounts, scope each app-server key and sudo policy to its intended destinations,
-and avoid placing unrelated credentials in the build user's home. Path
-confinement does not sandbox commands executed by an approved script.
+The root executor is a credential broker; it never executes repository code
+as root. Git, local scripts and artifact export run as `cicd-build`, with a
+separate UID/group, no supplementary groups or capabilities, no new privileges,
+and a clean environment. The managed home is `/var/lib/infra_tools/cicd/build`
+(0700); workspaces live in its `workspaces` subdirectory. Deployment keys remain
+private under the separate `webhook` home and are not passed to build commands.
+The broker starts Python in isolated mode, so build-managed Python packages
+cannot become broker startup code. Receipt transactions use the receiver's
+identity so SQLite journals remain writable by the receiver.
+
+Before remote deployment, an unprivileged exporter copies build-readable bytes
+to a broker-private snapshot. The broker never reads deploy scripts or artifacts
+directly from a concurrently writable build checkout. Transfers accept at most
+1 GiB of file data and 100,000 file/directory entries, reject symlinks and special
+files, and exclude `.git`, `node_modules`, `__pycache__`, and `*.log`. Export has
+a five-minute command limit and shares the job deadline. Snapshots preserve
+executable bits with safe 0644/0755 modes, ignore supplied ownership, and are
+removed after deployment or failure. A hard kill can leave `snapshot-*` under
+the CI state directory; remove these only after confirming the executor stopped.
+
+Repository scripts remain trusted for the configured application: they control
+the artifacts and optional script executed by the remote `deploy` account.
+Protect configured branches, review script changes, and scope each target key
+and remote sudo policy to its intended destinations. Build accounts share a
+host and network; this is credential separation, not isolation for mutually
+hostile repositories. Do not give `cicd-build` sudo rights, host credentials,
+or privileged group membership. Private Git access needs a separately scoped,
+read-only credential helper in the build home; never reuse a deployment key.
+Approved scripts can read those build credentials and access the network.
+
+Upgrade build servers with `patch` before accepting more jobs. Setup creates
+the separate account/home and reinstalls selected Node/uv toolchains there;
+old workspaces and toolchains under the `webhook` home are left untouched for
+operator cleanup. Move only reviewed read-only Git credentials to the new
+home, not the old home wholesale. Patch app servers for the restricted remote
+sudo policy. Existing bulk mounts at `/var/lib/infra_tools/cicd` still contain
+the new build home, snapshots and logs.
 
 - the receiver is localhost-only behind Nginx; expose it through Cloudflare
   Tunnel when that option is configured
@@ -232,7 +263,7 @@ confinement does not sandbox commands executed by an approved script.
   references that file. Administrator-owned or unrelated service sites are
   preserved; adopting an unmarked legacy site requires administrator review
 - build logs live under `/var/lib/infra_tools/cicd/logs/`
-- build scripts run as the dedicated `webhook` user
+- build scripts run as the dedicated `cicd-build` user
 - `--build-server --node` and `--build-server --python` bootstrap the build
   toolchains for that user
 - the receiver writes one bounded job file and the path unit starts the

@@ -63,6 +63,12 @@ class TestDeploymentPreflight(unittest.TestCase):
         self.run.return_value = subprocess.CompletedProcess([], 1, '', 'failed')
         self.assertFalse(self.deploy(scripts={'deploy': 'deploy.sh'}))
 
+    def test_oversized_script_fails_before_transfer(self) -> None:
+        Path(self.root, 'deploy.sh').write_text('x' * (1024 * 1024 + 1))
+        self.assertFalse(self.deploy(scripts={'deploy': 'deploy.sh'}))
+        self.push.assert_not_called()
+        self.run.assert_not_called()
+
     def test_script_may_be_omitted(self) -> None:
         self.assertTrue(self.deploy())
         self.push.assert_called_once()
