@@ -30,9 +30,9 @@ from lib.remote_utils import (
 from lib.update_policy import ECOSYSTEM_AUTO_UPGRADE_ENV, npm_freshness_args
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from lib.vendor_installer import installer_command, record_installer
 
 
-NVM_VERSION = "v0.40.6"
 _GO_ARCH_BY_MACHINE = {
     "x86_64": "amd64",
     "amd64": "amd64",
@@ -1137,7 +1137,7 @@ def install_node_for_user(
         username,
         user_home,
         f"export NVM_DIR={safe_nvm_dir} && "
-        f"curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/{NVM_VERSION}/install.sh | bash",
+        + installer_command("nvm"),
         check=False
     )
     _chown_existing_paths(username, _user_tool_paths(user_home))
@@ -1228,7 +1228,7 @@ def install_or_update_uv(
 
         try:
             download_result = run(
-                f"curl -fsSL --proto '=https' --tlsv1.2 https://astral.sh/uv/install.sh -o {safe_installer}",
+                f"curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 120 --max-filesize 4194304 https://astral.sh/uv/install.sh -o {safe_installer}",
                 check=False
             )
             if download_result.returncode != 0:
@@ -1242,6 +1242,8 @@ def install_or_update_uv(
             if not _validate_uv_install_script(installer_path):
                 print("  ✗ Downloaded uv installer failed validation")
                 return False
+
+            record_installer("uv", installer_path)
 
             # mkstemp creates a root-only file. The validated installer must
             # be readable by the unprivileged account that executes it.

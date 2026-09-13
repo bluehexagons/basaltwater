@@ -13,7 +13,6 @@ import pwd
 import shlex
 import shutil
 from subprocess import CompletedProcess
-import tempfile
 import time
 from typing import Any
 import urllib.error
@@ -26,17 +25,13 @@ from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run
 from lib.validation import validate_filesystem_path, validate_package_name
+from lib.vendor_installer import install as install_vendor_tool
 
 
 CACHYOS_SKILLS = ("infra-tools-cachyos-workstation", "infra-tools-cachyos-workspace")
 CACHYOS_T3_SKILL = "infra-tools-cachyos-t3code"
 T3_SERVICE = "infra-tools-cachyos-t3.service"
 _MARKER = "# Managed by infra_tools CachyOS setup"
-_INSTALLERS = {
-    "codex": ("https://chatgpt.com/codex/install.sh", "sh"),
-    "claude": ("https://claude.ai/install.sh", "bash"),
-    "opencode": ("https://opencode.ai/install", "bash"),
-}
 
 
 def _home(config: SetupConfig) -> Path:
@@ -165,12 +160,8 @@ def install_cachyos_agents(config: SetupConfig) -> None:
         if shutil.which(tool, path=_tool_path(home)):
             print(f"  Keeping existing {tool}")
             continue
-        url, shell = _INSTALLERS[tool]
-        with tempfile.TemporaryDirectory(prefix="infra-tools-agent-") as temporary:
-            installer = str(Path(temporary) / "install.sh")
-            run(["curl", "--fail", "--location", "--connect-timeout", "15",
-                 "--max-time", "120", "--output", installer, url])
-            _user_run([shell, installer], home)
+        if install_vendor_tool(tool, accept_vendor_channel=True) != 0:
+            raise RuntimeError(f"{tool} installer failed")
         if not shutil.which(tool, path=_tool_path(home)):
             raise RuntimeError(f"{tool} installer finished without an executable on the user PATH")
 

@@ -511,8 +511,8 @@ def _install_script_tool(
     *,
     command: str,
     label: str,
-    installer: str,
 ) -> None:
+    from lib.vendor_installer import installer_command
     if is_dry_run():
         print(f"  [DRY-RUN] Would install {label}")
         return
@@ -530,7 +530,7 @@ def _install_script_tool(
     result = _run_as_login_user(
         config.username,
         user_home,
-        installer,
+        installer_command(command),
         check=False,
     )
     _ensure_agent_shell_path(config)
@@ -547,7 +547,6 @@ def install_codex(config: SetupConfig) -> None:
         config,
         command="codex",
         label="Codex CLI",
-        installer="curl -fsSL https://chatgpt.com/codex/install.sh | env CODEX_NON_INTERACTIVE=1 sh",
     )
 
 
@@ -601,7 +600,6 @@ def install_claude(config: SetupConfig) -> None:
         config,
         command="claude",
         label="Claude Code",
-        installer="curl -fsSL https://claude.ai/install.sh | bash",
     )
 
 
@@ -611,7 +609,6 @@ def install_opencode(config: SetupConfig) -> None:
         config,
         command="opencode",
         label="OpenCode",
-        installer="curl -fsSL https://opencode.ai/install | bash",
     )
 
 

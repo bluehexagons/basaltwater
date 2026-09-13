@@ -53,7 +53,7 @@ class TestNodeSetup(unittest.TestCase):
             return path == "/home/user/.bashrc"
 
         def run_command(command: str, *args, **kwargs):
-            if "curl -o-" in command and "nvm-sh/nvm" in command:
+            if "vendor_installer.py nvm --accept-vendor-channel" in command:
                 nvm_installed["value"] = True
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -72,7 +72,7 @@ class TestNodeSetup(unittest.TestCase):
         self.assertEqual(len(npm_commands), 2)
         self.assertTrue(all("--before=" in command for command in npm_commands))
         self.assertTrue(all("HOME=/home/user USER=user LOGNAME=user" in command for command in npm_commands))
-        self.assertTrue(any("nvm-sh/nvm/v0.40.6/install.sh" in command for command in commands))
+        self.assertTrue(any("vendor_installer.py nvm --accept-vendor-channel" in command for command in commands))
         shell_env.assert_called_once_with("user", "/home/user")
 
     @patch("common.common_steps.open", new_callable=mock_open, read_data='export NVM_DIR="$HOME/.nvm"\n')

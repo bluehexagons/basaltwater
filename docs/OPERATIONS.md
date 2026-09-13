@@ -34,6 +34,10 @@ appropriate. Do not delete state merely to suppress an error.
 
 ## Patch and redeploy
 
+Tool and profile selection accepts the documented per-tool
+[third-party installer channels](INSTALLER_POLICY.md). Installer provenance is
+recorded privately before downloaded code executes.
+
 Local and SSH setup execution has a four-hour deadline, including the SSH
 upload. Set `INFRA_TOOLS_SETUP_TIMEOUT` to a positive number of seconds to
 override it on the controller. Source preparation occurs before this budget.

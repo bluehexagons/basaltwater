@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import io
 import json
 import os
@@ -180,13 +179,8 @@ class TestOfficialAgentInstallers(unittest.TestCase):
             install_claude(self.config)
             install_opencode(self.config)
 
-        commands = [call.kwargs['installer'] for call in installer.call_args_list]
-        self.assertEqual(commands, [
-            'curl -fsSL https://chatgpt.com/codex/install.sh | env CODEX_NON_INTERACTIVE=1 sh',
-            'curl -fsSL https://claude.ai/install.sh | bash',
-            'curl -fsSL https://opencode.ai/install | bash',
-        ])
-        self.assertTrue(all('npm' not in command for command in commands))
+        commands = [call.kwargs['command'] for call in installer.call_args_list]
+        self.assertEqual(commands, ['codex', 'claude', 'opencode'])
 
     def test_user_home_comes_from_account_database(self):
         account = type('Account', (), {'pw_dir': '/srv/agent'})()
@@ -1106,42 +1100,13 @@ class TestAgentUpdate(unittest.TestCase):
 
             updater.assert_not_called()
 
-    def test_codex_installer_download_records_digest_and_private_mode(self):
-        payload = b'#!/bin/sh\necho installer\n'
+    def test_codex_installer_uses_shared_provenance_download(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch('lib.agent_cli.urllib.request.urlopen', return_value=io.BytesIO(payload)):
-                path, digest = _download_codex_installer(directory)
-            try:
-                with open(path, 'rb') as file_obj:
-                    self.assertEqual(file_obj.read(), payload)
-                self.assertEqual(digest, hashlib.sha256(payload).hexdigest())
-                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            finally:
-                os.unlink(path)
-
-    def test_codex_installer_download_enforces_size_limit(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                patch('lib.agent_cli._MAX_INSTALLER_BYTES', 3),
-                patch('lib.agent_cli.urllib.request.urlopen', return_value=io.BytesIO(b'1234')),
-            ):
-                with self.assertRaisesRegex(RuntimeError, 'size limit'):
-                    _download_codex_installer(directory)
-            self.assertEqual(os.listdir(directory), [])
-
-    def test_interrupted_codex_download_removes_partial_installer(self):
-        class InterruptedResponse(io.BytesIO):
-            def read(self, size: int = -1) -> bytes:
-                if self.tell() > 0:
-                    raise OSError('connection reset')
-                return super().read(1)
-
-        with tempfile.TemporaryDirectory() as directory:
-            response = InterruptedResponse(b'partial')
-            with patch('lib.agent_cli.urllib.request.urlopen', return_value=response):
-                with self.assertRaisesRegex(OSError, 'connection reset'):
-                    _download_codex_installer(directory)
-            self.assertEqual(os.listdir(directory), [])
+            with patch('lib.agent_cli.download_installer', return_value=(
+                'installer.sh', 'codex.json', {'observed_sha256': 'digest'},
+            )) as download:
+                self.assertEqual(_download_codex_installer(directory), ('installer.sh', 'digest'))
+            download.assert_called_once_with('codex', directory)
 
     def test_native_updaters_use_vendor_subcommands_without_a_shell(self):
         completed = type('Completed', (), {'returncode': 0})()

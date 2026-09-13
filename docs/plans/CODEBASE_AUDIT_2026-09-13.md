@@ -10,17 +10,6 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## P2 — policy and lower-probability operational concerns
 
-- **RCF-14 — Medium: third-party installers use rolling
-  network-shell trust.** Codex/Claude/OpenCode, CachyOS, uv, nvm, and the
-  Codex updater execute downloaded content; the updater records a digest but
-  does not compare it to a pinned expected value. Evidence:
-  [`agent_steps.py`](../../common/agent_steps.py),
-  [`cachyos_steps.py`](../../common/cachyos_steps.py),
-  [`agent_cli.py`](../../lib/agent_cli.py),
-  [`common_steps.py`](../../common/common_steps.py). **Acceptance:**
-  select signed releases, a maintained digest manifest, or an explicitly
-  accepted rolling channel per tool; expose and retain provenance.
-
 - **RCF-18 — High under repository compromise, architecture
   risk: CI/CD scripts remain a trust boundary.** Repository-authored scripts
   execute as `webhook` and can stream deploy commands to an app server. HMAC

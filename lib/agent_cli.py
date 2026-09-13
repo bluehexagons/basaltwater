@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import pwd
@@ -20,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.vendor_installer import POLICIES, download_installer
 from lib.agent_maintenance import (
     DEFAULT_HOLD_HOURS,
     MAX_HOLD_HOURS,
@@ -49,8 +49,7 @@ _AGENT_STATE_RELATIVE = os.path.join(
     "infra_tools",
     "agent-tools.json",
 )
-_CODEX_INSTALLER_URL = "https://chatgpt.com/codex/install.sh"
-_MAX_INSTALLER_BYTES = 4 * 1024 * 1024
+_CODEX_INSTALLER_URL = POLICIES["codex"][0]
 _UPDATE_TIMEOUT_SECONDS = 600
 _BROWSER_MCP_WRAPPER = "/usr/local/bin/infra-tools-playwright-mcp"
 _BROWSER_DOCTOR_WRAPPER = "/usr/local/bin/infra-tools-playwright-doctor"
@@ -655,41 +654,8 @@ def _restore_executable(path: str, backup_path: str) -> bool:
 
 
 def _download_codex_installer(directory: str) -> tuple[str, str]:
-    request = urllib.request.Request(
-        _CODEX_INSTALLER_URL,
-        headers={"User-Agent": "infra-tools-agent-updater/1"},
-    )
-    descriptor, installer_path = tempfile.mkstemp(
-        dir=directory,
-        prefix=".codex-installer-",
-        suffix=".sh",
-    )
-    digest = hashlib.sha256()
-    size = 0
-    try:
-        with os.fdopen(descriptor, "wb") as file_obj:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                while True:
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    if size > _MAX_INSTALLER_BYTES:
-                        raise RuntimeError("Codex installer exceeds the size limit")
-                    digest.update(chunk)
-                    file_obj.write(chunk)
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
-        if size == 0:
-            raise RuntimeError("Codex installer download was empty")
-        os.chmod(installer_path, 0o600)
-        return installer_path, digest.hexdigest()
-    except (OSError, RuntimeError):
-        try:
-            os.unlink(installer_path)
-        except FileNotFoundError:
-            pass
-        raise
+    path, _state_path, record = download_installer("codex", directory)
+    return path, record["observed_sha256"]
 
 
 def _invoke_agent_update(tool: str, path: str, home: str) -> JSONDict:
@@ -775,6 +741,7 @@ def update_agent_tools(
             "tool": tool,
             "path": path,
             "method": _update_method(tool),
+            "channel_policy": POLICIES[tool][2],
             "before_version": before_version,
             "after_version": before_version,
             "status": "planned" if dry_run else "failed",
@@ -816,7 +783,7 @@ def update_agent_tools(
 
         try:
             invocation = _invoke_agent_update(tool, path, user_home)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
             invocation = {
                 "returncode": None,
                 "method": _update_method(tool),

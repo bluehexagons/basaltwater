@@ -50,8 +50,9 @@ class TestPythonFlag(unittest.TestCase):
         self.assertTrue(common_steps.install_or_update_uv(user_home="/home/user", username="user"))
 
     @patch("common.common_steps._validate_uv_install_script", return_value=True)
+    @patch("common.common_steps.record_installer")
     @patch("common.common_steps.run")
-    def test_uv_installer_is_readable_by_target_user(self, mock_run, _validate):
+    def test_uv_installer_is_readable_by_target_user(self, mock_run, _record, _validate):
         observed_modes = []
         with tempfile.TemporaryDirectory() as user_home:
             installer_path = os.path.join(user_home, "installer.sh")
