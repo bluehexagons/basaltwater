@@ -13,6 +13,16 @@ from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_invalid_marker_types_and_encoding_raise_domain_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'operation.json')
+            for content in (b'{"schema_version":true}', b'{"schema_version":1,"status":[]}', b'\xff', b' ' * (1024 * 1024 + 1)):
+                with self.subTest(content=content[:80]):
+                    with open(path, 'wb') as stream:
+                        stream.write(content)
+                    with self.assertRaises(OperationStateError):
+                        OperationStateStore(path).load()
+
     def test_live_owner_blocks_second_process_and_recovery_can_take_over(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'operation.json')

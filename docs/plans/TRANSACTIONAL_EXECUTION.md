@@ -54,6 +54,9 @@ ARCH-08 from the [architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-0
   closure; another process cannot transition or remove a live owner's marker.
   Process exit releases the lock, but recovery must still supply the recorded
   operation ID. Stable `.lock` files must not be deleted to bypass ownership.
+  Marker reads and writes are capped at 1 MiB; readers require regular files
+  and reject FIFOs without blocking. Invalid field types and encoding produce
+  an operation-state error with the marker path and recovery guidance.
 - Manifest deployment creates that marker before staging, records deterministic
   staging/backup paths and units before activation, clears it after success or
   verified rollback, and retains recovery errors when rollback is incomplete.

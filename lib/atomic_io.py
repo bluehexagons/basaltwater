@@ -4,9 +4,34 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
 
 from lib.types import JSON
+from lib.validation import validate_filesystem_path
+
+
+def read_json_file(path: str, *, max_bytes: int = 1024 * 1024) -> JSON:
+    """Read bounded JSON from a regular file without following the final symlink."""
+    validate_filesystem_path(path)
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError('JSON read limit must be a positive integer')
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f'JSON path must be a regular file: {path}')
+        with os.fdopen(descriptor, 'rb') as stream:
+            descriptor = -1
+            content = stream.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            raise ValueError(f'JSON file exceeds {max_bytes} bytes: {path}')
+        try:
+            return json.loads(content.decode('utf-8'))
+        except RecursionError as exc:
+            raise ValueError(f'JSON nesting is too deep: {path}') from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def write_text_atomic(

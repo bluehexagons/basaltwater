@@ -7,6 +7,14 @@ domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- Follow-up review fixed stale volume-only parity updates, propagated orphan
+  cleanup failures, and rejected special files during scrub inventories.
+  SMB checks now handle subdirectories, read-only sync sources, and new
+  destinations. CI/CD config and operation markers use bounded regular-file
+  reads; invalid marker types/encoding fail explicitly. Malformed successful
+  Proxmox inventory output also aborts cleanup. T3 Connect input writes cannot
+  block the expiry timer while holding the job lock. Regression tests cover
+  each path, including a full input pipe and FIFO configuration.
 - RCF-06 implemented: operation stores hold nonblocking interprocess locks
   through completion/closure; process exit releases ownership without erasing
   recovery markers. A separate process regression covers ownership and recovery.

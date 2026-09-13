@@ -55,7 +55,10 @@ def _active_vmids(host: ProxmoxHost) -> set[int]:
             parts = line.split()
             if parts:
                 try:
-                    vmids.add(int(parts[0]))
+                    vmid = int(parts[0])
+                    if vmid <= 0:
+                        raise ValueError('nonpositive VMID')
+                    vmids.add(vmid)
                 except ValueError:
                     raise ProxmoxStorageError(f'Invalid VMID in {cmd} inventory on {host.address}')
     # Shared pools can contain disks belonging to a guest on another node.
@@ -84,8 +87,15 @@ def _guest_storage_names(host: ProxmoxHost) -> list[str]:
             f"{(result.stderr or '').strip() or 'unknown error'}"
         )
     pools: list[str] = []
-    for line in result.stdout.splitlines()[1:]:
+    lines = result.stdout.splitlines()
+    if not lines or lines[0].split()[:3] != ['Name', 'Type', 'Status']:
+        raise ProxmoxStorageError(f'Invalid storage inventory on {host.address}')
+    for line in lines[1:]:
         parts = line.split()
+        if not parts:
+            continue
+        if len(parts) < 3 or parts[2] not in {'active', 'inactive', 'disabled'}:
+            raise ProxmoxStorageError(f'Invalid storage inventory row on {host.address}: {line}')
         # pvesm status columns: Name Type Status Total Used Available %
         if len(parts) >= 3 and parts[2] == "active":
             pools.append(parts[0])
@@ -98,10 +108,15 @@ def _parse_pvesm_list(stdout: str) -> list[tuple[str, int, str, str]]:
     Only includes guest disk content types (images, rootdir).
     """
     entries: list[tuple[str, int, str, str]] = []
-    for line in stdout.splitlines()[1:]:
+    lines = stdout.splitlines()
+    if not lines or lines[0].split()[:5] != ['Volid', 'Format', 'Type', 'Size', 'VMID']:
+        raise ProxmoxStorageError('Invalid volume inventory header')
+    for line in lines[1:]:
         parts = line.split()
-        if len(parts) < 4:
+        if not parts:
             continue
+        if len(parts) < 4:
+            raise ProxmoxStorageError(f'Invalid volume inventory row: {line}')
         volid = parts[0]
         fmt = parts[1]
         content_type = parts[2]
@@ -111,8 +126,10 @@ def _parse_pvesm_list(stdout: str) -> list[tuple[str, int, str, str]]:
             continue
         try:
             vmid = int(vmid_str)
+            if vmid <= 0:
+                raise ValueError('nonpositive VMID')
         except ValueError:
-            continue
+            raise ProxmoxStorageError(f'Invalid guest volume VMID: {line}')
         entries.append((volid, vmid, size, fmt))
     return entries
 

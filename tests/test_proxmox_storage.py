@@ -67,16 +67,30 @@ class TestParsePvesmList(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0][0], "local-lvm:vm-100-disk-0")
 
-    def test_skips_lines_without_vmid(self) -> None:
+    def test_rejects_guest_volumes_without_vmid(self) -> None:
         stdout = (
             "Volid  Format Type Size VMID\n"
             "local-lvm:base-9000-disk-0 raw images 10G\n"
         )
-        entries = _parse_pvesm_list(stdout)
-        self.assertEqual(entries, [])
+        with self.assertRaises(ProxmoxStorageError):
+            _parse_pvesm_list(stdout)
+
+    def test_rejects_malformed_successful_volume_output(self) -> None:
+        for output in ('', 'unexpected output', 'Volid Format Type Size VMID\ntruncated',
+                       'Volid Format Type Size VMID\npool:disk raw images 10G -1'):
+            with self.subTest(output=output), self.assertRaises(ProxmoxStorageError):
+                _parse_pvesm_list(output)
 
 
 class TestListOrphanedVolumes(unittest.TestCase):
+    def test_malformed_storage_inventory_aborts_before_volume_scan(self):
+        for output in ('', 'unexpected output', 'Name Type Status\npool dir unknown'):
+            with self.subTest(output=output), patch('lib.proxmox_storage._ssh_run', side_effect=[
+                _ok(_QM_LIST), _ok(_PCT_LIST), _ok('[]'), _ok(output),
+            ]):
+                with self.assertRaises(ProxmoxStorageError):
+                    list_orphaned_volumes(_host())
+
     @patch("lib.proxmox_storage._ssh_run")
     def test_identifies_orphaned_volume(self, mock_run: MagicMock) -> None:
         mock_run.side_effect = [

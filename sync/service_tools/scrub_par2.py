@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import os
 import re
+import stat
 import subprocess
 import time
 from glob import glob, escape
@@ -27,7 +28,6 @@ from lib.disk_utils import estimate_operation_duration
 from lib.progress_utils import ProgressTracker, ProgressMessage
 
 PAR2_EXTENSION = ".par2"
-PAR2_VOLUME_MARKER = f"{PAR2_EXTENSION}.vol"
 PAR2_MTIME_TOLERANCE_SECONDS = 1.0
 PAR2_CREATE_RETRIES = 3
 PAR2_CREATE_BACKOFF_SECONDS = 2
@@ -59,8 +59,12 @@ def _scan_tree(directory: str) -> list[tuple[str, list[str], list[str]]]:
 
     entries = []
     for root, dirs, files in os.walk(directory, onerror=fail):
-        for name in dirs + files:
-            _confined_path(os.path.join(root, name), directory)
+        for names, expected_type in ((dirs, stat.S_ISDIR), (files, stat.S_ISREG)):
+            for name in names:
+                path = os.path.join(root, name)
+                _confined_path(path, directory)
+                if not expected_type(os.stat(path, follow_symlinks=False).st_mode):
+                    raise ValueError(f'Scrub inventory contains a non-regular entry: {path}')
         entries.append((root, dirs, files))
     return entries
 
@@ -103,6 +107,7 @@ def _remove_par2_files(par2_base: str, log_file: str) -> None:
             os.remove(par2_file)
         except (IOError, OSError) as e:
             log(f"Error removing par2 file {par2_file}: {e}", log_file)
+            raise
 
 
 def create_par2(
@@ -173,6 +178,7 @@ def create_par2(
                     if operation_logger:
                         operation_logger.log_step("par2_check", "completed", f"Par2 up-to-date: {relative_path}")
                     return True
+                force = True
             except OSError as e:
                 log(f"Cannot check file times for {relative_path}: {e}, forcing recreation", log_file)
                 force = True
@@ -249,7 +255,7 @@ def _par2_base_from_parity_file(parity_path: str) -> str:
     """Get par2 base path from any parity file.
     
     Handles two volume file formats:
-    - Base + volume: filename.par2.vol00+01.par2 (uses PAR2_VOLUME_MARKER)
+    - Base + volume: filename.par2.vol00+01.par2
     - Volume-only: filename.vol00+01.par2 (created with -n1, no base file)
     """
     if re.search(r'\.vol\d+\+\d+\.par2$', parity_path):
@@ -311,6 +317,7 @@ def _cleanup_orphan_par2(
                 if operation_logger:
                     operation_logger.log_error("orphan_removal_failed", str(e), 
                                           {"file": relative_data})
+                raise
     
     if orphan_count > 0:
         log(f"Cleaned up {orphan_count} orphan par2 sets, freed {total_orphan_size // 1024 // 1024}MB", log_file)
@@ -544,13 +551,9 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                 relative_path = os.path.relpath(file_path, directory)
                 existing_files.add(relative_path)
                 par2_base = os.path.join(database, f"{relative_path}{PAR2_EXTENSION}")
-                has_base_parity = os.path.exists(par2_base)
-                has_volume_parity = False
-                if not has_base_parity:
-                    par2_volume_pattern = os.path.join(database, f"{relative_path}{PAR2_VOLUME_MARKER}*")
-                    has_volume_parity = bool(glob(par2_volume_pattern))
+                parity_files = _parity_files(par2_base)
                 force = False
-                is_new_par2 = not (has_base_parity or has_volume_parity)
+                is_new_par2 = not parity_files
                 
                 try:
                     file_size = os.path.getsize(file_path)
@@ -562,9 +565,10 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                     files_failed.append(relative_path)
                     continue
                 
-                if os.path.exists(par2_base):
+                if parity_files:
                     try:
-                        if os.path.getmtime(file_path) > os.path.getmtime(par2_base) + PAR2_MTIME_TOLERANCE_SECONDS:
+                        parity_mtime = max(os.path.getmtime(path) for path in parity_files)
+                        if os.path.getmtime(file_path) > parity_mtime + PAR2_MTIME_TOLERANCE_SECONDS:
                             # Don't log every update - will be in periodic progress
                             force = True
                             files_updated += 1

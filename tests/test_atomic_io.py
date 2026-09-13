@@ -4,14 +4,39 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.atomic_io import remove_file_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic, write_text_atomic
 
 
 class TestAtomicIO(unittest.TestCase):
+    def test_json_reader_rejects_unsafe_paths_and_bounds_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'data.json')
+            write_text_atomic(path, '"é"')
+            self.assertEqual(read_json_file(path, max_bytes=4), 'é')
+            with self.assertRaisesRegex(ValueError, 'exceeds'):
+                read_json_file(path, max_bytes=3)
+            link = os.path.join(directory, 'link')
+            os.symlink(path, link)
+            with self.assertRaises(OSError):
+                read_json_file(link)
+            with self.assertRaisesRegex(ValueError, 'regular file'):
+                read_json_file(directory)
+            fifo = os.path.join(directory, 'fifo')
+            os.mkfifo(fifo)
+            script = (
+                'from lib.atomic_io import read_json_file\nimport sys\n'
+                'try:\n    read_json_file(sys.argv[1])\n'
+                'except ValueError:\n    sys.exit(7)\n'
+            )
+            result = subprocess.run([sys.executable, '-c', script, fifo], capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 7, result.stderr)
+
     def test_ownership_failure_preserves_old_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'config')

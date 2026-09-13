@@ -81,9 +81,10 @@ def create_sync_service(config: SetupConfig, sync_spec: Optional[list[str]] = No
         if source_on_smb or dest_on_smb:
             logger.log_step("mount_validation_enhanced", "started", "Performing enhanced mount validation")
             if source_on_smb:
-                if not validate_smb_connectivity(source):
+                if not validate_smb_connectivity(source, writable=False):
                     raise RuntimeError(f"Source SMB connectivity failed: {source}")
             if dest_on_smb:
+                ensure_directory(destination, config.username)
                 if not validate_smb_connectivity(destination):
                     raise RuntimeError(f"Destination SMB connectivity failed: {destination}")
             logger.log_step("mount_validation_enhanced", "completed", "Enhanced mount validation completed")

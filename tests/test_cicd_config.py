@@ -63,6 +63,21 @@ class TestCicdConfig(unittest.TestCase):
                 handler.do_GET()
             self.assertEqual(handler.send_error.call_args.args[0], 503)
 
+    def test_unsafe_config_file_keeps_job_and_fails_health(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = os.path.join(directory, 'config.json')
+            job = os.path.join(directory, 'job.json')
+            Path(job).write_text('{}')
+            os.mkfifo(config)
+            handler = object.__new__(webhook_receiver.WebhookHandler)
+            handler.path = '/health'
+            handler.send_error = Mock()
+            with patch.object(cicd_executor, 'CONFIG_FILE', config), patch.object(webhook_receiver, 'CONFIG_FILE', config):
+                self.assertFalse(cicd_executor.process_job(job))
+                handler.do_GET()
+            self.assertTrue(os.path.exists(job))
+            self.assertEqual(handler.send_error.call_args.args[0], 503)
+
     def test_existing_secret_reconciles_environment_and_modes(self):
         with tempfile.TemporaryDirectory() as directory:
             secret = Path(directory) / 'secret'

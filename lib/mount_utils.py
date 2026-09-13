@@ -86,11 +86,12 @@ def validate_mount_for_sync(path: str, path_name: str = "path") -> bool:
     return True
 
 
-def validate_smb_connectivity(path: str) -> bool:
+def validate_smb_connectivity(path: str, *, writable: bool = True) -> bool:
     """Test actual SMB functionality for mounted paths.
     
     Args:
         path: Path to test (should be SMB mount)
+        writable: Require writes for destinations; sources may be read-only.
         
     Returns:
         bool: True if SMB connectivity is working, False otherwise
@@ -102,7 +103,7 @@ def validate_smb_connectivity(path: str) -> bool:
     # Check if this looks like an SMB mount
     try:
         result = subprocess.run(
-            ['findmnt', '-n', '-o', 'FSTYPE', path],
+            ['findmnt', '-n', '-o', 'FSTYPE', '--target', path],
             capture_output=True, text=True, check=True
         )
         fstype = result.stdout.strip()
@@ -115,11 +116,13 @@ def validate_smb_connectivity(path: str) -> bool:
     
     # Test SMB-specific operations
     try:
-        _probe_writable_directory(path)
+        if writable:
+            _probe_writable_directory(path)
         
         # Test directory listing (common SMB operation)
         # Optionally check a small listing to assert basic directory operations work
-        _ = list(os.listdir(path))[:5]
+        with os.scandir(path) as entries:
+            next(entries, None)
         print(f"SMB connectivity test passed for {path}")
         return True
         
@@ -168,7 +171,7 @@ def get_mount_status_details(path: str) -> dict[str, Any]:
     try:
         # Get filesystem type and options
         result = subprocess.run(
-            ['findmnt', '-n', '-o', 'FSTYPE,OPTIONS', path],
+            ['findmnt', '-n', '-o', 'FSTYPE,OPTIONS', '--target', path],
             capture_output=True, text=True, check=True
         )
         parts = result.stdout.strip().split()
@@ -184,7 +187,7 @@ def get_mount_status_details(path: str) -> dict[str, Any]:
     if details['fstype'] in ['cifs', 'smb3', 'smb2', 'nfs', 'nfs4']:
         try:
             result = subprocess.run(
-                ['findmnt', '-n', '-o', 'SOURCE', path],
+                ['findmnt', '-n', '-o', 'SOURCE', '--target', path],
                 capture_output=True, text=True, check=True
             )
             source = result.stdout.strip()

@@ -79,6 +79,24 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
 class TestSetupFailurePropagation(unittest.TestCase):
     """Initial sync and scrub failures must reach the setup orchestrator."""
 
+    def test_smb_sync_creates_new_destination_before_probing(self):
+        from sync import sync_steps
+
+        created = set()
+        def ensure(path, _username):
+            created.add(path)
+
+        def probe(path, *, writable=True):
+            if path == '/source':
+                self.assertFalse(writable)
+            else:
+                self.assertIn(path, created)
+            return True
+
+        with patch.object(sync_steps, 'create_operation_logger'), patch.object(sync_steps, 'validate_filesystem_path'), patch.object(sync_steps, 'validate_mount_for_sync', return_value=True), patch.object(sync_steps, 'ensure_directory', side_effect=ensure), patch.object(sync_steps, 'check_path_on_smb_mount', return_value=True), patch.object(sync_steps, 'validate_smb_connectivity', side_effect=probe), patch.object(sync_steps, 'get_disk_usage_details', return_value={'usage_percent': 0}), patch('sync.service_tools.sync_rsync.run_rsync_with_notifications', return_value=0) as sync:
+            sync_steps.create_sync_service(SimpleNamespace(username='agent'), ['/source', '/destination', 'daily'])
+            sync.assert_called_once()
+
     def test_mount_failure_prevents_initial_work(self):
         from sync import scrub_steps, sync_steps
 
@@ -137,6 +155,53 @@ class TestSetupFailurePropagation(unittest.TestCase):
 
 
 class TestScrubResultFailures(unittest.TestCase):
+    def test_stale_volume_only_parity_is_recreated_and_counted_as_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, 'source')
+            database = os.path.join(directory, 'parity')
+            os.mkdir(source)
+            os.mkdir(database)
+            data = os.path.join(source, 'data')
+            volume = os.path.join(database, 'data.vol00+01.par2')
+            for path in (data, volume):
+                with open(path, 'w') as stream:
+                    stream.write('data')
+            os.utime(volume, (10, 10))
+            os.utime(data, (20, 20))
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.subprocess, 'run') as run:
+                result = scrub_par2.scrub_directory(source, database, 10, 'unused', verify=False, suppress_notifications=True)
+                self.assertTrue(result['ok'])
+                self.assertEqual(result['files_updated'], 1)
+                self.assertEqual(result['files_created'], 0)
+                run.assert_called_once()
+                self.assertFalse(os.path.exists(volume))
+                # Direct callers must also recreate stale parity without force=True.
+                with open(volume, 'w') as stream:
+                    stream.write('old')
+                os.utime(volume, (10, 10))
+                self.assertTrue(scrub_par2.create_par2(data, source, database, 10, 'unused'))
+                self.assertEqual(run.call_count, 2)
+
+    def test_cleanup_failure_is_not_reported_as_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, 'source')
+            database = os.path.join(directory, 'parity')
+            os.mkdir(source)
+            os.mkdir(database)
+            with open(os.path.join(database, 'orphan.par2'), 'w') as stream:
+                stream.write('parity')
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.os, 'remove', side_effect=PermissionError('cannot remove')):
+                with self.assertRaises(PermissionError):
+                    scrub_par2.scrub_directory(source, database, 10, 'unused', suppress_notifications=True)
+
+    def test_fifo_in_source_aborts_before_parity_mutation(self):
+        with tempfile.TemporaryDirectory() as source:
+            os.mkfifo(os.path.join(source, 'pipe'))
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2, 'create_par2') as create:
+                with self.assertRaisesRegex(ValueError, 'non-regular'):
+                    scrub_par2.scrub_directory(source, os.path.join(source, 'db'), 10, 'unused', suppress_notifications=True)
+                create.assert_not_called()
+
     def test_incomplete_or_symlink_scan_prevents_parity_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = os.path.join(tmp, 'data')

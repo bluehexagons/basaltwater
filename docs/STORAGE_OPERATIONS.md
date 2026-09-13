@@ -33,6 +33,9 @@ Initial setup fails before directory creation or sync/parity work when a require
 mount is missing. Failed SMB connectivity checks also abort initial work. Mount
 status inspection is read-only; explicit SMB write probes use unique temporary
 files and remove only their own probe.
+Sync source checks require only read access. SMB subdirectories are checked
+against their containing mount, and new sync destinations are created after
+mount validation before their write probe runs.
 
 ## Sync behavior
 
@@ -64,7 +67,9 @@ Both trees must be fully readable before parity changes begin; an incomplete
 inventory aborts the run and preserves orphan parity. Keep these trees stable
 during scrubs: path checks do not protect against a concurrent hostile writer
 replacing directories while PAR2 runs. Cleanup matches only exact parity sets,
-and the CLI returns failure for unsuccessful creation or repair.
+and the CLI returns failure for unsuccessful creation, repair, or cleanup.
+Special files such as FIFOs and sockets abort the inventory. Volume-only parity
+uses the same timestamp/update checks and counters as sets with an index file.
 
 ## Inspect and run operations
 

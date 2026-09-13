@@ -7,7 +7,7 @@ import json
 from pathlib import PurePosixPath
 from urllib.parse import urlsplit
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
 from web.service_tools.cicd_security import validate_branch_ref, validate_repo_url
@@ -61,11 +61,12 @@ def validate_config(config: object) -> dict:
 
 def load_config_file(path: str) -> dict:
     """Fail explicitly on missing, unreadable, or malformed configuration."""
-    with open(path, encoding='utf-8') as stream:
-        return validate_config(json.load(stream))
+    return validate_config(read_json_file(path))
 
 
 def save_config_file(path: str, config: dict) -> None:
     """Publish root:webhook/0640 before the atomic rename makes it visible."""
     validate_config(config)
+    if len((json.dumps(config, indent=2) + '\n').encode('utf-8')) > 1024 * 1024:
+        raise ValueError('CI/CD configuration exceeds 1 MiB')
     write_json_atomic(path, config, mode=0o640, uid=0, gid=grp.getgrnam('webhook').gr_gid)

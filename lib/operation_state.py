@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from lib.atomic_io import remove_file_durable, write_json_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
@@ -74,13 +74,13 @@ def _record_from_dict(payload: object, path: str) -> OperationRecord:
     if not isinstance(payload, dict):
         raise OperationStateError(f"Invalid operation marker {path}: expected a JSON object")
     version = payload.get("schema_version")
-    if version != OPERATION_SCHEMA_VERSION:
+    if type(version) is not int or version != OPERATION_SCHEMA_VERSION:
         raise OperationStateError(
             f"Unsupported operation marker schema in {path}: {version!r}; "
             "move the marker aside for inspection before retrying"
         )
     status = payload.get("status")
-    if status not in {"in_progress", "recovery_required"}:
+    if not isinstance(status, str) or status not in {"in_progress", "recovery_required"}:
         raise OperationStateError(f"Invalid operation marker {path}: unknown status {status!r}")
     context = payload.get("context")
     if not isinstance(context, dict):
@@ -142,9 +142,8 @@ class OperationStateStore:
                 f"Unsafe operation marker {self.path}: marker must not be a symlink"
             )
         try:
-            with open(self.path, encoding="utf-8") as file_obj:
-                payload = json.load(file_obj)
-        except (OSError, json.JSONDecodeError) as exc:
+            payload = read_json_file(self.path)
+        except (OSError, ValueError) as exc:
             raise OperationStateError(
                 f"Invalid operation marker {self.path}: {exc}; "
                 "move the marker aside for inspection before retrying"
@@ -230,4 +229,6 @@ class OperationStateStore:
         return current
 
     def _write(self, record: OperationRecord) -> None:
+        if len((json.dumps(record.to_dict(), indent=2) + '\n').encode('utf-8')) > 1024 * 1024:
+            raise OperationStateError('Operation marker exceeds 1 MiB')
         write_json_atomic(self.path, record.to_dict(), mode=0o600, sort_keys=True)

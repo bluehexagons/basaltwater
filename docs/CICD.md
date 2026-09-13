@@ -117,6 +117,8 @@ preserve that contract during atomic updates. Setup verifies schema and reads
 the file as `webhook` before service replacement. `/health` returns 503 for
 unreadable or invalid configuration, and the executor retains queued jobs until
 configuration is repaired.
+Configuration reads require a regular file, reject symlinks and FIFOs, and are
+limited to 1 MiB. Writers enforce the same size limit before publication.
 
 The shared version 1 schema accepts legacy files without a `version` field.
 Repository URLs must use credential-free HTTPS; branches must be nonempty lists
@@ -203,7 +205,8 @@ confinement does not sandbox commands executed by an approved script.
 - the receiver writes one bounded job file and the path unit starts the
   executor, so the receiver does not need systemd or polkit privileges
 - jobs are consumed after one attempt, including malformed or failed jobs, so
-  one bad payload cannot retrigger forever
+  one bad payload cannot retrigger forever; unavailable or invalid configuration
+  retains jobs without starting an attempt
 - job and privileged request readers open paths without following symlinks or
   blocking on FIFOs, then require regular files. Job reads remain bounded even
   if a file grows after its initial size check

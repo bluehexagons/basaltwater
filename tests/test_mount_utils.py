@@ -80,6 +80,16 @@ class TestMountValidation(unittest.TestCase):
 
 
 class TestSmbConnectivity(unittest.TestCase):
+    def test_readonly_source_uses_containing_mount_and_never_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            child = os.path.join(directory, 'child')
+            os.mkdir(child)
+            with patch.object(mount_utils, 'is_path_mounted', return_value=True), patch.object(mount_utils.subprocess, 'run', return_value=completed(stdout='cifs')) as run, patch.object(mount_utils, '_probe_writable_directory', side_effect=PermissionError('read only')) as probe:
+                self.assertTrue(mount_utils.validate_smb_connectivity(child, writable=False))
+                probe.assert_not_called()
+                self.assertEqual(run.call_args.args[0][-2:], ['--target', child])
+                self.assertFalse(mount_utils.validate_smb_connectivity(child))
+
     def test_probe_preserves_existing_diagnostic_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = [os.path.join(directory, name) for name in

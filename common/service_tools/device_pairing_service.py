@@ -318,11 +318,19 @@ class ConnectJob:
             if self._process is not process or process.stdin is None:
                 return
             try:
-                process.stdin.write("y\n")
-                process.stdin.flush()
+                self._write_input(process, b"y\n")
             except (BrokenPipeError, OSError, ValueError):
                 if self._process is process:
                     self._error = "T3 relay installation confirmation could not be sent"
+
+    @staticmethod
+    def _write_input(process: subprocess.Popen[str], content: bytes) -> None:
+        """Never hold the job lock waiting for a provider to drain its stdin."""
+        assert process.stdin is not None
+        descriptor = process.stdin.fileno()
+        os.set_blocking(descriptor, False)
+        if os.write(descriptor, content) != len(content):
+            raise OSError('Incomplete T3 Connect input write')
 
     def _expire(self, process: subprocess.Popen[str]) -> None:
         """Enforce the deadline even when no browser requests a snapshot."""
@@ -421,8 +429,11 @@ class ConnectJob:
             if process is None or process.stdin is None:
                 raise PairingError("No T3 Connect operation is waiting for input")
             try:
-                process.stdin.write(value + "\n")
-                process.stdin.flush()
+                self._write_input(process, encoded + b"\n")
+            except BlockingIOError as exc:
+                raise PairingError(
+                    "The T3 Connect operation is not accepting input; try again later"
+                ) from exc
             except (BrokenPipeError, OSError, ValueError) as exc:
                 raise PairingError(
                     "The T3 Connect operation is no longer running"

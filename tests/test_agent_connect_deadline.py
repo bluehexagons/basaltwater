@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -10,6 +11,44 @@ from common.service_tools import device_pairing_service as pairing
 
 
 class TestConnectDeadline(unittest.TestCase):
+    def test_full_input_pipe_does_not_block_expiry(self):
+        reader, writer = os.pipe()
+        self.addCleanup(os.close, reader)
+        self.addCleanup(os.close, writer)
+        os.set_blocking(writer, False)
+        while True:
+            try:
+                os.write(writer, b'x' * 4096)
+            except BlockingIOError:
+                break
+        os.set_blocking(writer, True)
+        process = Mock(pid=12345)
+        process.stdin.fileno.return_value = writer
+        job = pairing.ConnectJob({})
+        job._process = process
+        done = threading.Event()
+        errors = []
+
+        def send():
+            try:
+                job.send_input('response')
+            except pairing.PairingError as exc:
+                errors.append(str(exc))
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=send, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(done.wait(1), 'input blocked while holding the job lock')
+            self.assertIn('not accepting input', errors[0])
+            with patch.object(pairing.os, 'killpg') as kill:
+                job._expire(process)
+                kill.assert_called_once()
+        finally:
+            os.read(reader, 4096)
+            thread.join(timeout=1)
+
     def test_silent_process_expires_without_snapshot_requests(self):
         killed = threading.Event()
         finished = threading.Event()
