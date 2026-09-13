@@ -6,6 +6,10 @@ fixes. Existing domain plans remain owners where noted below.
 
 ## Remediation progress
 
+- RCF-02–03 implemented: one exit rollback guard covers activation failures
+  and HUP/INT/TERM at rename boundaries; managed directory checks and explicit
+  legacy migration prevent replacement of broad/unmanaged paths. Power-loss
+  recovery and bootstrap side-effect limits are documented in Installation.
 - RCF-21–24 implemented: initial setup honors mount/SMB failures; diagnostics
   preserve existing files; scrub inventories reject symlinks and abort on scan
   errors before parity work. Hostile concurrent directory replacement remains

@@ -289,6 +289,21 @@ The default installer channel is `dev`, which tracks `main`. Use `stable` when
 you want the latest versioned release. `upgrade` refuses to overwrite local
 worktree changes; commit or stash changes before reinstalling or upgrading.
 
+`--install-dir` must name a dedicated application directory. The installer
+refuses symlinks, mount points, home directories, broad system paths, and
+unmanaged existing directories. A legacy infra-tools tree with `infra_tools.py`,
+`remote_setup.py`, and `lib/` requires `--migrate-existing-install` on its first
+reinstall. Successful installs record `.infra_tools/managed-install` for later
+reinstalls; migration still refuses dirty Git worktrees.
+
+Activation failures and HUP/INT/TERM interruptions restore the previous source
+tree. The installer keeps staged or failed source alongside it for inspection
+and prints recovery paths if restoration fails. SIGKILL or power loss cannot
+run shell traps: inspect the adjacent `.backup.*`, `.new.*`, and `.failed.*`
+directories and restore the previous backup to the install path before retrying.
+Source rollback does not undo package or launcher changes already made by
+bootstrap. Run only one installer for a given destination at a time.
+
 These channel commands manage the controller installation. A remote `setup`
 or `patch` run sends a complete snapshot of the controller's current source to
 the target and replaces the target's `/opt/infra_tools` runtime with it while

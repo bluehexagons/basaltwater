@@ -17,6 +17,7 @@ LOCAL_SETUP_REQUESTED=0
 INSTALL_QEMU_GUEST_AGENT=0
 HOST_OS_SUPPORTED=1
 HOST_OS_ID=""
+MIGRATE_EXISTING=0
 
 usage() {
     cat <<'EOF'
@@ -33,6 +34,8 @@ Options:
   --ref REF             Compatibility alias for --channel; bare refs are branches
   --install-dir PATH   Source destination (default: /opt/infra_tools as root,
                        otherwise ~/.local/share/infra_tools)
+  --migrate-existing-install
+                       Permit replacement of a legacy infra-tools source tree
   --user USER          User receiving local tools and completions
   --shell SHELL        bash, zsh, fish, or tcsh (default: target user's shell)
   --qemu-guest-agent   Install, start, and enable Proxmox's qemu-guest-agent
@@ -228,6 +231,10 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || fail "--install-dir requires a value"
             INSTALL_DIR=$2
             shift 2
+            ;;
+        --migrate-existing-install)
+            MIGRATE_EXISTING=1
+            shift
             ;;
         --user)
             [ "$#" -ge 2 ] || fail "--user requires a value"
@@ -561,6 +568,37 @@ if [ "$HOST_OS_SUPPORTED" -eq 1 ] && [ "$missing_prerequisite" -eq 1 ]; then
         ca-certificates git openssh-client python3 rsync
 fi
 
+python3 - "$INSTALL_DIR" "$TARGET_HOME" "$MIGRATE_EXISTING" <<'EOF'
+from __future__ import annotations
+import os
+from pathlib import Path
+import sys
+
+target = Path(sys.argv[1])
+home = Path(sys.argv[2])
+def refuse(reason: str) -> None:
+    sys.exit(f"infra-tools installer: refusing install directory {target}: {reason}")
+
+if str(target) != os.path.normpath(sys.argv[1]) or '..' in target.parts:
+    refuse('use a normalized absolute path')
+if target == home or target in home.parents:
+    refuse('home directory or its ancestor')
+if len(target.parts) < 3 or str(target) in ('/var/lib', '/usr/local', '/usr/share', '/var/cache'):
+    refuse('use a dedicated application directory')
+for part in (target, *target.parents):
+    if part.is_symlink():
+        refuse('symlink path component')
+if os.path.ismount(target):
+    refuse('mount point')
+if target.exists():
+    marker = target / '.infra_tools' / 'managed-install'
+    managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'infra-tools-v1\n'
+    if not managed:
+        legacy = (target / 'infra_tools.py').is_file() and (target / 'remote_setup.py').is_file() and (target / 'lib').is_dir()
+        if sys.argv[3] != '1' or not legacy:
+            refuse('unmanaged directory; legacy source trees require --migrate-existing-install')
+EOF
+
 if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.infra_tools/channel.json" ]; then
     existing_channel=$(python3 -c \
         'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("channel", ""))' \
@@ -577,17 +615,46 @@ if [ -e "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
     fi
 fi
 
-TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/infra_tools_install.XXXXXX")
+BACKUP_DIR=""
+STAGED_DIR="${INSTALL_DIR}.new.$$"
+ACTIVATION_PENDING=0
+rollback_install() {
+    # If the first rename never happened, the original tree is still active.
+    if [ -n "$BACKUP_DIR" ] && [ ! -e "$BACKUP_DIR" ]; then
+        return
+    fi
+    FAILED_DIR="${INSTALL_DIR}.failed.$$"
+    if [ -e "$INSTALL_DIR" ]; then
+        if [ -e "$FAILED_DIR" ] || ! mv "$INSTALL_DIR" "$FAILED_DIR"; then
+            printf 'Recovery required: active=%s backup=%s staged=%s\n' "$INSTALL_DIR" "$BACKUP_DIR" "$STAGED_DIR" >&2
+            return 1
+        fi
+    fi
+    if [ -n "$BACKUP_DIR" ]; then
+        if ! mv "$BACKUP_DIR" "$INSTALL_DIR"; then
+            printf 'Recovery required: restore %s to %s; failed source=%s\n' "$BACKUP_DIR" "$INSTALL_DIR" "$FAILED_DIR" >&2
+            return 1
+        fi
+        printf 'Installation failed; previous install restored. Failed source: %s; staged source: %s\n' "$FAILED_DIR" "$STAGED_DIR" >&2
+    else
+        printf 'Installation failed; failed source: %s; staged source: %s\n' "$FAILED_DIR" "$STAGED_DIR" >&2
+    fi
+}
 cleanup() {
-    rm -rf "$TEMP_DIR"
+    install_status=$?
+    trap - EXIT
+    trap '' HUP INT TERM
+    if [ "$ACTIVATION_PENDING" -eq 1 ]; then
+        rollback_install || install_status=1
+    fi
+    exit "$install_status"
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 INSTALL_PARENT=$(dirname "$INSTALL_DIR")
 mkdir -p "$INSTALL_PARENT"
-STAGED_DIR="${INSTALL_DIR}.new.$$"
-[ ! -e "$STAGED_DIR" ] || fail "staging path already exists: $STAGED_DIR"
+[ ! -e "$STAGED_DIR" ] && [ ! -L "$STAGED_DIR" ] || fail "staging path already exists: $STAGED_DIR"
 
 printf 'Cloning infra_tools repository (%s)...\n' "$CHANNEL"
 if ! git clone "$REPOSITORY_URL" "$STAGED_DIR"; then
@@ -601,54 +668,38 @@ if ! git -C "$STAGED_DIR" checkout --detach "$TARGET_REF" >/dev/null; then
     fail "could not check out channel: $CHANNEL"
 fi
 
-BACKUP_DIR=""
-rollback_install() {
-    FAILED_DIR="${INSTALL_DIR}.failed.$$"
-    if [ -e "$INSTALL_DIR" ]; then
-        mv "$INSTALL_DIR" "$FAILED_DIR"
-    fi
-    if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR" ]; then
-        mv "$BACKUP_DIR" "$INSTALL_DIR"
-        printf 'Installation failed; previous install restored. Failed source kept at %s\n' "$FAILED_DIR" >&2
-    else
-        printf 'Installation failed; failed source kept at %s\n' "$FAILED_DIR" >&2
-    fi
-}
-
 if [ -e "$INSTALL_DIR" ]; then
     BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%s).$$"
-    [ ! -e "$BACKUP_DIR" ] || fail "backup path already exists: $BACKUP_DIR"
+    [ ! -e "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ] || fail "backup path already exists: $BACKUP_DIR"
+fi
+# Set the rollback guard before either rename, including signal boundaries.
+ACTIVATION_PENDING=1
+if [ -n "$BACKUP_DIR" ]; then
     mv "$INSTALL_DIR" "$BACKUP_DIR"
 fi
 if ! mv "$STAGED_DIR" "$INSTALL_DIR"; then
-    if [ -n "$BACKUP_DIR" ] && [ -e "$BACKUP_DIR" ]; then
-        mv "$BACKUP_DIR" "$INSTALL_DIR"
-    fi
     fail "could not activate downloaded source"
 fi
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/state" ]; then
     if ! cp -a "$BACKUP_DIR/state" "$INSTALL_DIR/state"; then
-        rollback_install
         fail "could not preserve existing infra_tools state"
     fi
 fi
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/.infra_tools" ]; then
     if ! cp -a "$BACKUP_DIR/.infra_tools" "$INSTALL_DIR/.infra_tools"; then
-        rollback_install
         fail "could not preserve existing channel state"
     fi
 fi
 write_channel_state
+printf 'infra-tools-v1\n' > "$INSTALL_DIR/.infra_tools/managed-install"
 
 if [ "$(id -u)" -eq 0 ] && [ "$TARGET_USER" != "root" ]; then
     TARGET_UID=$(getent passwd "$TARGET_USER" | awk -F: 'NR == 1 { print $3 }')
     TARGET_GID=$(getent passwd "$TARGET_USER" | awk -F: 'NR == 1 { print $4 }')
     if [ -z "$TARGET_UID" ] || [ -z "$TARGET_GID" ]; then
-        rollback_install
         fail "could not determine target user ownership"
     fi
     if ! chown -R "$TARGET_UID:$TARGET_GID" "$INSTALL_DIR"; then
-        rollback_install
         fail "could not assign the managed repository to $TARGET_USER"
     fi
 fi
@@ -658,7 +709,6 @@ if [ "$(id -u)" -eq 0 ]; then
     if ! run_bootstrap env HOME="$TARGET_HOME" python3 "$INSTALL_DIR/infra_tools.py" bootstrap \
         --shell "$SHELL_NAME" \
         --user "$TARGET_USER"; then
-        rollback_install
         exit 1
     fi
 else
@@ -666,19 +716,18 @@ else
         --shell "$SHELL_NAME" \
         --user "$TARGET_USER" \
         --skip-system-packages; then
-        rollback_install
         exit 1
     fi
 fi
 
 USER_LAUNCHER="$TARGET_HOME/.local/bin/infra-tools"
 if [ ! -x "$USER_LAUNCHER" ]; then
-    rollback_install
     fail "bootstrap completed without creating $USER_LAUNCHER"
 fi
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
     chmod 700 "$BACKUP_DIR"
 fi
+ACTIVATION_PENDING=0
 
 printf '\ninfra-tools installed successfully.\n'
 printf '  Source: %s\n' "$INSTALL_DIR"

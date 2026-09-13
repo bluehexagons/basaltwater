@@ -18,6 +18,90 @@ INSTALL_SCRIPT = os.path.join(PROJECT_ROOT, "install.sh")
 
 
 class TestInstallScript(unittest.TestCase):
+    def _mark_managed(self, install_dir: str) -> None:
+        os.makedirs(os.path.join(install_dir, '.infra_tools'), exist_ok=True)
+        with open(os.path.join(install_dir, '.infra_tools', 'managed-install'), 'w') as stream:
+            stream.write('infra-tools-v1\n')
+
+    def test_interruptions_restore_old_install_at_rename_boundaries(self):
+        for boundary in ('before-backup', 'after-backup', 'after-activation'):
+            for signal in ('HUP', 'INT', 'TERM'):
+                with self.subTest(boundary=boundary, signal=signal), tempfile.TemporaryDirectory() as directory:
+                    _, _, environment = self._create_fixture(directory)
+                    install_dir = os.path.join(directory, 'installed')
+                    self._mark_managed(install_dir)
+                    old_file = os.path.join(install_dir, 'old-version')
+                    with open(old_file, 'w') as stream:
+                        stream.write('old')
+                    wrapper = os.path.join(directory, 'bin', 'mv')
+                    with open(wrapper, 'w') as stream:
+                        stream.write(textwrap.dedent('''\
+                            #!/bin/sh
+                            case "$2" in
+                                *.backup.*)
+                                    if [ "$TEST_BOUNDARY" = before-backup ]; then
+                                        kill -s "$TEST_SIGNAL" "$PPID"
+                                        exit 1
+                                    fi
+                                    /usr/bin/mv "$@" || exit 1
+                                    if [ "$TEST_BOUNDARY" = after-backup ]; then
+                                        kill -s "$TEST_SIGNAL" "$PPID"
+                                    fi
+                                    ;;
+                                *)
+                                    /usr/bin/mv "$@" || exit 1
+                                    case "$1" in
+                                        *.new.*)
+                                            if [ "$TEST_BOUNDARY" = after-activation ]; then
+                                                kill -s "$TEST_SIGNAL" "$PPID"
+                                            fi
+                                            ;;
+                                    esac
+                                    ;;
+                            esac
+                            '''))
+                    os.chmod(wrapper, 0o755)
+                    environment.update(TEST_BOUNDARY=boundary, TEST_SIGNAL=signal)
+                    result = subprocess.run(
+                        ['sh', INSTALL_SCRIPT, '--install-dir', install_dir],
+                        env=environment, text=True, capture_output=True, timeout=20,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    with open(old_file) as stream:
+                        self.assertEqual(stream.read(), 'old')
+
+    def test_refuses_unmanaged_and_symlink_install_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, _, environment = self._create_fixture(directory)
+            unmanaged = os.path.join(directory, 'unmanaged')
+            os.mkdir(unmanaged)
+            symlink = os.path.join(directory, 'link')
+            os.symlink(unmanaged, symlink)
+            for target in (home, unmanaged, symlink, '/opt'):
+                with self.subTest(target=target):
+                    result = subprocess.run(
+                        ['sh', INSTALL_SCRIPT, '--install-dir', target],
+                        env=environment, text=True, capture_output=True, timeout=20,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('refusing install directory', result.stderr)
+            self.assertTrue(os.path.isdir(unmanaged))
+
+    def test_legacy_migration_requires_explicit_option(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, environment = self._create_fixture(directory)
+            install_dir = os.path.join(directory, 'installed')
+            os.makedirs(os.path.join(install_dir, 'lib'))
+            for name in ('infra_tools.py', 'remote_setup.py'):
+                with open(os.path.join(install_dir, name), 'w') as stream:
+                    stream.write('# legacy source\n')
+            command = ['sh', INSTALL_SCRIPT, '--install-dir', install_dir]
+            refused = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
+            self.assertNotEqual(refused.returncode, 0)
+            migrated = subprocess.run(command + ['--migrate-existing-install'], env=environment, text=True, capture_output=True, timeout=20)
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            self.assertTrue(os.path.isfile(os.path.join(install_dir, '.infra_tools', 'managed-install')))
+
     def test_help_uses_explicit_agent_tool_options(self):
         result = subprocess.run(
             ["sh", INSTALL_SCRIPT, "--help"],
@@ -494,6 +578,7 @@ class TestInstallScript(unittest.TestCase):
             _home, _log_path, environment = self._create_fixture(directory)
             install_dir = os.path.join(directory, "installed")
             os.makedirs(install_dir)
+            self._mark_managed(install_dir)
             with open(os.path.join(install_dir, "old-version"), "w", encoding="utf-8") as file_obj:
                 file_obj.write("old")
             old_state = os.path.join(install_dir, "state")
@@ -557,6 +642,7 @@ class TestInstallScript(unittest.TestCase):
             environment["INFRA_TOOLS_TEST_BOOTSTRAP_FAIL"] = "1"
             install_dir = os.path.join(directory, "installed")
             os.makedirs(install_dir)
+            self._mark_managed(install_dir)
             old_marker = os.path.join(install_dir, "old-version")
             with open(old_marker, "w", encoding="utf-8") as file_obj:
                 file_obj.write("old")
