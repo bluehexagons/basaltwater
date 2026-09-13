@@ -30,6 +30,27 @@ from lib.remote_utils import (
     confirm_unsupported_environment,
 )
 from lib.validators import validate_username
+from lib import remote_utils
+
+
+class TestProbeDeadlines(unittest.TestCase):
+    def test_service_bus_failure_is_not_inactive(self):
+        with patch.object(remote_utils.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "bus unavailable")):
+            with self.assertRaises(remote_utils.ProbeError):
+                remote_utils.is_service_active("nginx")
+
+    def test_probe_timeout_never_becomes_absence_or_triggers_install(self):
+        for probe, value in ((remote_utils.is_package_installed, "curl"), (remote_utils.is_service_active, "nginx"), (remote_utils.user_exists, "agent")):
+            with self.subTest(probe=probe.__name__), patch.object(remote_utils.subprocess, "run", side_effect=subprocess.TimeoutExpired("probe", 15)) as command, patch.object(remote_utils, "run") as install:
+                with self.assertRaisesRegex(remote_utils.ProbeError, "state is unknown"):
+                    remote_utils.install_with_verify("test", ["install"], lambda: probe(value))
+                install.assert_not_called()
+                self.assertEqual(command.call_args.kwargs["timeout"], 15)
+
+    def test_missing_probe_reports_unknown_even_in_dry_run(self):
+        with patch.object(remote_utils, "_dry_run", True), patch.object(remote_utils.subprocess, "run", side_effect=FileNotFoundError):
+            with self.assertRaises(remote_utils.ProbeError):
+                remote_utils.user_exists("agent")
 
 
 class TestDryRun(unittest.TestCase):

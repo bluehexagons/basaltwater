@@ -79,18 +79,6 @@ calls and temporary directories; live deployment qualification is separate.
   and independently supplied fingerprint, or use TLS only after the client
   already trusts the issuer.
 
-- **RCF-27 — Low-Medium: sysadmin convenience commands lack a completion
-  timeout contract.** User-facing rsync, health, reachability, fan-out, service,
-  mount, and upgrade wrappers call `subprocess.run` without a wall-clock limit.
-  SSH connect/keepalive settings do not bound an established remote command or
-  a stalled filesystem operation. Evidence: [`sysadmin_transfer.py`](../../lib/sysadmin_transfer.py),
-  [`sysadmin_health.py`](../../lib/sysadmin_health.py),
-  [`sysadmin_reachable.py`](../../lib/sysadmin_reachable.py),
-  [`sysadmin_fan.py`](../../lib/sysadmin_fan.py). **Acceptance:**
-  route non-interactive helpers through the bounded process-group runner, report
-  timeout as a distinct result, and retain unbounded behavior only for explicit
-  interactive SSH/log-follow commands.
-
 ## P2 — policy and lower-probability operational concerns
 
 - **RCF-14 — Medium: third-party installers use rolling
@@ -103,13 +91,6 @@ calls and temporary directories; live deployment qualification is separate.
   [`common_steps.py`](../../common/common_steps.py). **Acceptance:**
   select signed releases, a maintained digest manifest, or an explicitly
   accepted rolling channel per tool; expose and retain provenance.
-
-- **RCF-15 — Low-Medium: package/service/user probes bypass timeouts.**
-  `is_package_installed`, `is_service_active`, and `user_exists` invoke
-  `subprocess.run` without a timeout and are widely used before mutations.
-  Evidence: [`remote_utils.py`](../../lib/remote_utils.py). **Acceptance:**
-  use a short probe contract with an explicit “unknown” result and classify
-  required, optional, probe, and cleanup callers.
 
 - **RCF-17 — Low: loopback readiness checks may honor proxies.** Default
   `urllib` openers are used for local health checks without disabling proxy
@@ -132,7 +113,7 @@ calls and temporary directories; live deployment qualification is separate.
 
 - Prioritize recoverable service/setup execution (RCF-04–05), state validation
   (RCF-07), and CI/CD deadlines and credential cleanup (RCF-10, 12).
-- RCF-05, 07, 15, and 27 use the shared process/state contracts in
+- RCF-05 and 07 use the shared process/state contracts in
   [Transactional execution](TRANSACTIONAL_EXECUTION.md).
 - RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md);
   RCF-12 complements [Deploy secrets](DEPLOY_SECRETS.md).

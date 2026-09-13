@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command
 
@@ -67,5 +67,5 @@ def run_key_push(
 
     cmd = build_ssh_command(host, username, ssh_key, batch_mode=False, remote_command=remote_script)
     print(f"Installing public key on {username}@{host}…")
-    result = subprocess.run(cmd)
+    result = run_command(cmd)
     return result.returncode

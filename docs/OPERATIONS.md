@@ -20,6 +20,13 @@ last-run status. `cmd` reconstructs a safe, redacted setup command.
 
 ## Patch and redeploy
 
+Package, service, and user probes have a 15-second deadline. A timeout or
+unavailable probe raises an explicit unknown-state error and stops dependent
+setup instead of treating the package, service, or user as absent. Repair the
+reported command before retrying. These read-only probes also run in dry-run
+mode; optional diagnostics must explicitly catch `ProbeError` if they can
+continue without the answer.
+
 `patch` merges targeted options into the saved configuration and executes the
 remote setup flow:
 

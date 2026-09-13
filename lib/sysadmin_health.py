@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode
 
@@ -116,7 +116,7 @@ def run_health(
         remote_command=_HEALTH_SCRIPT,
     )
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_command(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         print(f"Error connecting to {host}:", file=sys.stderr)
         if result.stderr:

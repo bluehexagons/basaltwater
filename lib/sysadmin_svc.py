@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
 import sys
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command
 
@@ -52,7 +52,7 @@ def run_svc(
         remote += f" && systemctl status {shlex.quote(unit)} --no-pager"
 
     cmd = build_ssh_command(host, username, ssh_key, batch_mode=False, remote_command=remote)
-    result = subprocess.run(cmd)
+    result = run_command(cmd)
     # systemctl status returns 3 for inactive units — treat as success for display
     if action == "status" and result.returncode == 3:
         return 0
@@ -75,5 +75,7 @@ def run_logs(
 
     remote = " ".join(parts)
     cmd = build_ssh_command(host, username, ssh_key, batch_mode=False, remote_command=remote)
-    os.execvp(cmd[0], cmd)
-    return 0  # pragma: no cover
+    if follow:
+        os.execvp(cmd[0], cmd)
+        return 0  # pragma: no cover
+    return run_command(cmd, timeout=120).returncode

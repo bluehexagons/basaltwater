@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode
 
@@ -42,7 +42,7 @@ def _run_remote(
         connect_timeout=15,
         remote_command=command,
     )
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_command(cmd, capture_output=True, text=True)
     return host, result.returncode, result.stdout, result.stderr
 
 

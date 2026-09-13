@@ -11,6 +11,15 @@ passphrase. For piped commands and parallel operations, preload the key with
 important for `fan`, `df`, and `reachable`, which may create several SSH
 connections at once.
 
+Non-interactive commands use a one-hour command deadline, including transfers,
+mount operations, service changes, key installation, and each fan-out/upgrade
+target. Health and one-shot logs use 120 seconds; reachability uses a 10-second
+total bound in addition to its 5-second connection limit. Timeout terminates
+the local process group and reports status 124 (aggregate commands report a
+failed host). Completed remote mutations are not rolled back, and detached
+remote work may require inspection before retrying. Interactive `ssh` and
+explicit `logs --follow` sessions remain unbounded.
+
 ## Command Index
 
 | Command | Summary |
@@ -367,8 +376,8 @@ not affect the result for other hosts.
 
 ## reachable
 
-Probe hosts via SSH and print a latency table. Hosts that do not respond within
-5 seconds are marked unreachable.
+Probe hosts via SSH and print a latency table. Connections have a 5-second
+limit and the full probe has a 10-second deadline.
 
 ```
 infra-tools reachable [<hosts>] [options]

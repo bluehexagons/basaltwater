@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import fnmatch
-import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode
 from lib.workspace import get_setup_cache_dir
@@ -54,7 +54,9 @@ def _probe_host(host: str, username: Optional[str], ssh_key: Optional[str]) -> t
     )
 
     start = time.monotonic()
-    result = subprocess.run(cmd, capture_output=True)
+    result = run_command(cmd, capture_output=True, timeout=10)
+    if result.returncode == 124:
+        print(f"{host}: command timed out", file=sys.stderr)
     elapsed_ms = (time.monotonic() - start) * 1000
     return host, result.returncode == 0, elapsed_ms
 

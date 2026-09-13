@@ -419,12 +419,34 @@ def detect_os() -> str:
     }[distro_id]
 
 
+class ProbeError(RuntimeError):
+    """A required system probe could not determine the requested state."""
+
+
+def _probe(command: list[str]) -> subprocess.CompletedProcess[str]:
+    # Probes still execute in dry-run mode, but never authorize mutation when
+    # the operating system cannot answer. These fixed system tools do not run
+    # repository-authored scripts.
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProbeError(
+            f"System state is unknown: {_command_text(command)} could not complete "
+            "within the probe contract. Repair the probe before retrying setup."
+        ) from exc
+    expected_codes = {"dpkg-query": {0, 1}, "systemctl": {0, 3, 4}, "id": {0, 1}}
+    if result.returncode not in expected_codes[command[0]]:
+        raise ProbeError(
+            f"System state is unknown: {_command_text(command)} exited "
+            f"with unexpected status {result.returncode}. Repair the probe before retrying setup."
+        )
+    return result
+
+
 def is_package_installed(package: str) -> bool:
     safe_package = validate_package_name(package)
-    result = subprocess.run(
+    result = _probe(
         ["dpkg-query", "-W", "-f=${Status}", safe_package],
-        capture_output=True,
-        text=True,
     )
     return result.returncode == 0 and "install ok installed" in result.stdout
 
@@ -479,17 +501,15 @@ def install_package(name: str, package: str, install_cmd: Command) -> bool:
 
 
 def is_service_active(service: str) -> bool:
-    result = subprocess.run(
+    result = _probe(
         ["systemctl", "is-active", service],
-        capture_output=True,
     )
     return result.returncode == 0
 
 
 def user_exists(username: str) -> bool:
-    result = subprocess.run(
+    result = _probe(
         ["id", username],
-        capture_output=True,
     )
     return result.returncode == 0
 

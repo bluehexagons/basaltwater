@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_rsync_ssh_transport, ssh_batch_mode
 
@@ -98,7 +98,7 @@ def run_push(
 
     if dry_run:
         print("Dry run — no files will be transferred.")
-    result = subprocess.run(cmd)
+    result = run_command(cmd)
     return result.returncode
 
 
@@ -130,5 +130,5 @@ def run_pull(
 
     if dry_run:
         print("Dry run — no files will be transferred.")
-    result = subprocess.run(cmd)
+    result = run_command(cmd)
     return result.returncode

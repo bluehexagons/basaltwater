@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 from typing import Optional
 
+from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import get_workspace_known_hosts_path, ssh_batch_mode
 
@@ -93,7 +93,7 @@ def run_mount(
     cmd = ["sshfs", f"{username}@{host}:{remote_path}", local_path, "-o", ",".join(opts)]
 
     print(f"Mounting {username}@{host}:{remote_path} → {local_path}")
-    result = subprocess.run(cmd)
+    result = run_command(cmd)
     if result.returncode == 0:
         print("Mounted successfully.")
     return result.returncode
@@ -105,7 +105,7 @@ def run_umount(target: str) -> int:
 
     # If target is not a path, try to find a mount using the host name
     if not os.path.exists(target) and not target.startswith("/"):
-        result = subprocess.run(
+        result = run_command(
             ["findmnt", "--source-regex", f".*{target}.*", "-n", "-o", "TARGET"],
             capture_output=True,
             text=True,
@@ -125,7 +125,7 @@ def run_umount(target: str) -> int:
     # Try fusermount first (user-space), fall back to umount
     for cmd in [["fusermount", "-u", target], ["umount", target]]:
         if shutil.which(cmd[0]):
-            result = subprocess.run(cmd)
+            result = run_command(cmd)
             if result.returncode == 0:
                 print(f"Unmounted {target}")
                 return 0

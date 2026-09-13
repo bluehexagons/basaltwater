@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from lib import sysadmin_fan, sysadmin_health, sysadmin_keys, sysadmin_mount
 from lib import sysadmin_reachable, sysadmin_ssh, sysadmin_transfer, sysadmin_upgrade
+from lib import sysadmin_process, sysadmin_svc
+from lib.remote_utils import CommandTimeoutError
 
 
 def completed(
@@ -24,10 +26,27 @@ def completed(
     return subprocess.CompletedProcess(["mock"], returncode, stdout, stderr)
 
 
+class TestSysadminDeadlines(unittest.TestCase):
+    def test_timeout_returns_distinct_failure_with_diagnostic(self):
+        with patch.object(sysadmin_process, "run", side_effect=CommandTimeoutError("ssh", 7)) as run:
+            result = sysadmin_process.run_command(["ssh"], capture_output=True, timeout=7)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("timed out", result.stderr)
+        run.assert_called_once_with(["ssh"], check=False, capture_output=True, text=True, timeout=7)
+
+    def test_log_follow_is_explicitly_unbounded_but_snapshot_is_not(self):
+        with patch.object(sysadmin_svc, "_resolve_credentials", return_value=("agent", None)), patch.object(sysadmin_svc, "build_ssh_command", return_value=["ssh"]), patch.object(sysadmin_svc, "run_command", return_value=completed(124)) as run, patch.object(sysadmin_svc.os, "execvp") as execute:
+            self.assertEqual(sysadmin_svc.run_logs("server", "demo"), 124)
+            run.assert_called_once_with(["ssh"], timeout=120)
+            execute.assert_not_called()
+            self.assertEqual(sysadmin_svc.run_logs("server", "demo", follow=True), 0)
+            execute.assert_called_once_with("ssh", ["ssh"])
+
+
 class TestSysadminFan(unittest.TestCase):
     def test_run_remote_resolves_saved_credentials_and_invokes_ssh(self) -> None:
         config = SimpleNamespace(username="saved", ssh_key="/tmp/saved")
-        with patch.object(sysadmin_fan, "load_setup_command", return_value=config), patch.object(sysadmin_fan, "ssh_batch_mode", return_value=True), patch.object(sysadmin_fan, "build_ssh_command", return_value=["ssh"]) as build, patch.object(sysadmin_fan.subprocess, "run", return_value=completed(stdout="ok")) as run:
+        with patch.object(sysadmin_fan, "load_setup_command", return_value=config), patch.object(sysadmin_fan, "ssh_batch_mode", return_value=True), patch.object(sysadmin_fan, "build_ssh_command", return_value=["ssh"]) as build, patch.object(sysadmin_fan, "run_command", return_value=completed(stdout="ok")) as run:
             result = sysadmin_fan._run_remote("server", "uname -a", None, None)
 
         self.assertEqual(result, ("server", 0, "ok", ""))
@@ -88,7 +107,7 @@ class TestSysadminHealth(unittest.TestCase):
     def test_run_health_uses_saved_credentials_and_formats_disk_warning(self) -> None:
         result = completed(stdout="=== DISK ===\nFilesystem Use%\n/dev/sda 90%\n=== END ===\n")
         stdout = io.StringIO()
-        with patch.object(sysadmin_health, "load_setup_command", return_value=SimpleNamespace(username="saved", ssh_key="/tmp/saved")), patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"] ) as build, patch.object(sysadmin_health, "ssh_batch_mode", return_value=True), patch.object(sysadmin_health.subprocess, "run", return_value=result):
+        with patch.object(sysadmin_health, "load_setup_command", return_value=SimpleNamespace(username="saved", ssh_key="/tmp/saved")), patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"] ) as build, patch.object(sysadmin_health, "ssh_batch_mode", return_value=True), patch.object(sysadmin_health, "run_command", return_value=result):
             with redirect_stdout(stdout):
                 self.assertEqual(sysadmin_health.run_health("server"), 0)
 
@@ -98,7 +117,7 @@ class TestSysadminHealth(unittest.TestCase):
 
     def test_run_health_returns_remote_error(self) -> None:
         stderr = io.StringIO()
-        with patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"]), patch.object(sysadmin_health.subprocess, "run", return_value=completed(255, stderr="permission denied")):
+        with patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"]), patch.object(sysadmin_health, "run_command", return_value=completed(255, stderr="permission denied")):
             with redirect_stderr(stderr):
                 result = sysadmin_health.run_health("server", username="admin")
         self.assertEqual(result, 255)
@@ -112,7 +131,7 @@ class TestSysadminKeys(unittest.TestCase):
             with open(pubkey_path, "w", encoding="utf-8") as key_file:
                 key_file.write("ssh-ed25519 AAAA user's-key\n")
 
-            with patch.object(sysadmin_keys, "load_setup_command", return_value=SimpleNamespace(username="saved", ssh_key="/tmp/auth")), patch.object(sysadmin_keys, "build_ssh_command", return_value=["ssh", "server"]) as build, patch.object(sysadmin_keys.subprocess, "run", return_value=completed(0)) as run:
+            with patch.object(sysadmin_keys, "load_setup_command", return_value=SimpleNamespace(username="saved", ssh_key="/tmp/auth")), patch.object(sysadmin_keys, "build_ssh_command", return_value=["ssh", "server"]) as build, patch.object(sysadmin_keys, "run_command", return_value=completed(0)) as run:
                 result = sysadmin_keys.run_key_push("server", pubkey_path=pubkey_path)
 
         self.assertEqual(result, 0)
@@ -137,7 +156,7 @@ class TestSysadminMount(unittest.TestCase):
     def test_mount_creates_mountpoint_and_builds_read_only_options(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             mountpoint = os.path.join(directory, "mount")
-            with patch.object(sysadmin_mount.shutil, "which", return_value="/usr/bin/sshfs"), patch.object(sysadmin_mount, "get_workspace_known_hosts_path", return_value="/tmp/known_hosts"), patch.object(sysadmin_mount, "ssh_batch_mode", return_value=True), patch.object(sysadmin_mount.subprocess, "run", return_value=completed()) as run:
+            with patch.object(sysadmin_mount.shutil, "which", return_value="/usr/bin/sshfs"), patch.object(sysadmin_mount, "get_workspace_known_hosts_path", return_value="/tmp/known_hosts"), patch.object(sysadmin_mount, "ssh_batch_mode", return_value=True), patch.object(sysadmin_mount, "run_command", return_value=completed()) as run:
                 result = sysadmin_mount.run_mount("server:/srv/data", mountpoint, username="admin", ssh_key="/tmp/key", port=2222, read_only=True)
 
             self.assertTrue(os.path.isdir(mountpoint))
@@ -159,7 +178,7 @@ class TestSysadminMount(unittest.TestCase):
             local_mount = os.path.join(directory, "mount")
             os.mkdir(local_mount)
             which = lambda command: None if command == "fusermount" else "/usr/bin/umount"
-            with patch.object(sysadmin_mount.shutil, "which", side_effect=which), patch.object(sysadmin_mount.subprocess, "run", side_effect=[completed(stdout=f"{local_mount}\n"), completed(0)]) as run:
+            with patch.object(sysadmin_mount.shutil, "which", side_effect=which), patch.object(sysadmin_mount, "run_command", side_effect=[completed(stdout=f"{local_mount}\n"), completed(0)]) as run:
                 result = sysadmin_mount.run_umount("server")
 
         self.assertEqual(result, 0)
@@ -167,14 +186,14 @@ class TestSysadminMount(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0], ["umount", local_mount])
 
     def test_umount_rejects_multiple_mounts(self) -> None:
-        with patch.object(sysadmin_mount.os.path, "exists", return_value=False), patch.object(sysadmin_mount.subprocess, "run", return_value=completed(stdout="/mnt/a\n/mnt/b\n")):
+        with patch.object(sysadmin_mount.os.path, "exists", return_value=False), patch.object(sysadmin_mount, "run_command", return_value=completed(stdout="/mnt/a\n/mnt/b\n")):
             self.assertEqual(sysadmin_mount.run_umount("server"), 1)
 
 
 class TestSysadminReachable(unittest.TestCase):
     def test_probe_host_uses_saved_credentials_and_reports_latency(self) -> None:
         config = SimpleNamespace(username="saved", ssh_key="/tmp/key")
-        with patch.object(sysadmin_reachable, "load_setup_command", return_value=config), patch.object(sysadmin_reachable, "ssh_batch_mode", return_value=True), patch.object(sysadmin_reachable, "build_ssh_command", return_value=["ssh"]) as build, patch.object(sysadmin_reachable.subprocess, "run", return_value=completed()), patch.object(sysadmin_reachable.time, "monotonic", side_effect=[10.0, 10.025]):
+        with patch.object(sysadmin_reachable, "load_setup_command", return_value=config), patch.object(sysadmin_reachable, "ssh_batch_mode", return_value=True), patch.object(sysadmin_reachable, "build_ssh_command", return_value=["ssh"]) as build, patch.object(sysadmin_reachable, "run_command", return_value=completed()), patch.object(sysadmin_reachable.time, "monotonic", side_effect=[10.0, 10.025]):
             result = sysadmin_reachable._probe_host("server", None, None)
         self.assertEqual(result[:2], ("server", True))
         self.assertAlmostEqual(result[2], 25.0)
@@ -230,7 +249,7 @@ class TestSysadminSsh(unittest.TestCase):
 
 class TestSysadminTransfer(unittest.TestCase):
     def test_push_dry_run_builds_delete_command_without_confirmation(self) -> None:
-        with patch.object(sysadmin_transfer.shutil, "which", return_value="/usr/bin/rsync"), patch.object(sysadmin_transfer, "build_rsync_ssh_transport", return_value="ssh -i /tmp/key -p 2222"), patch.object(sysadmin_transfer, "ssh_batch_mode", return_value=True), patch.object(sysadmin_transfer.subprocess, "run", return_value=completed(3)) as run, patch("builtins.input") as input_mock:
+        with patch.object(sysadmin_transfer.shutil, "which", return_value="/usr/bin/rsync"), patch.object(sysadmin_transfer, "build_rsync_ssh_transport", return_value="ssh -i /tmp/key -p 2222"), patch.object(sysadmin_transfer, "ssh_batch_mode", return_value=True), patch.object(sysadmin_transfer, "run_command", return_value=completed(3)) as run, patch("builtins.input") as input_mock:
             result = sysadmin_transfer.run_push("./dist", "server:/srv/app", username="admin", ssh_key="/tmp/key", port=2222, delete=True, dry_run=True)
 
         self.assertEqual(result, 3)
@@ -241,13 +260,13 @@ class TestSysadminTransfer(unittest.TestCase):
         self.assertIn("--dry-run", command)
 
     def test_push_requires_confirmation_for_destructive_delete(self) -> None:
-        with patch("builtins.input", return_value="n"), patch.object(sysadmin_transfer.subprocess, "run") as run:
+        with patch("builtins.input", return_value="n"), patch.object(sysadmin_transfer, "run_command") as run:
             result = sysadmin_transfer.run_push("./dist", "server:/srv", delete=True)
         self.assertEqual(result, 1)
         run.assert_not_called()
 
     def test_pull_defaults_to_remote_basename_and_rejects_invalid_remote(self) -> None:
-        with patch.object(sysadmin_transfer.shutil, "which", return_value="/usr/bin/rsync"), patch.object(sysadmin_transfer, "build_rsync_ssh_transport", return_value="ssh"), patch.object(sysadmin_transfer.subprocess, "run", return_value=completed()) as run:
+        with patch.object(sysadmin_transfer.shutil, "which", return_value="/usr/bin/rsync"), patch.object(sysadmin_transfer, "build_rsync_ssh_transport", return_value="ssh"), patch.object(sysadmin_transfer, "run_command", return_value=completed()) as run:
             self.assertEqual(sysadmin_transfer.run_pull("server:/srv/data"), 0)
         self.assertIn("data", run.call_args.args[0])
         self.assertEqual(sysadmin_transfer.run_pull("server"), 1)
