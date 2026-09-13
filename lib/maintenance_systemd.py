@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import tempfile
 from typing import Optional
 
-from lib.remote_utils import is_dry_run, run
+from lib.remote_utils import is_dry_run
+from lib.unit_transaction import replace_units
 from lib.systemd_service import SYSTEMD_DIR
 from lib.validation import validate_filesystem_path, validate_service_name_uniqueness
 from lib.validators import validate_username
@@ -26,32 +26,6 @@ def _validate_unit_value(value: str, name: str) -> None:
 def _escape_environment_value(value: str) -> str:
     """Escape a value for a quoted systemd Environment directive."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def _write_unit_atomically(path: str, content: str) -> None:
-    """Replace a unit file without exposing systemd to partial content."""
-    validate_filesystem_path(path, must_exist=False)
-    temporary_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=os.path.dirname(path),
-            prefix=f".{os.path.basename(path)}.",
-            delete=False,
-        ) as handle:
-            temporary_path = handle.name
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary_path, 0o644)
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path:
-            try:
-                os.unlink(temporary_path)
-            except FileNotFoundError:
-                pass
 
 
 def configure_maintenance_timer(
@@ -159,8 +133,6 @@ def configure_maintenance_timer(
         _validate_unit_value(value, f"environment variable {name}")
         environment_lines += f'Environment="{name}={_escape_environment_value(value)}"\n'
 
-    service_file = os.path.join(SYSTEMD_DIR, f"{service_name}.service")
-    timer_file = os.path.join(SYSTEMD_DIR, f"{service_name}.timer")
     network_lines = "Wants=network-online.target\nAfter=network-online.target\n" if network_online else ""
     service_content = f"""[Unit]
 Description={service_desc}
@@ -197,33 +169,13 @@ WantedBy=timers.target
         print(f"  [DRY-RUN] Would configure {check_name} {purpose} timer")
         return True
 
-    _write_unit_atomically(service_file, service_content)
-    _write_unit_atomically(timer_file, timer_content)
-
-    timer_unit = f"{service_name}.timer"
-    reload_result = run("systemctl daemon-reload", check=False)
-    if reload_result.returncode != 0:
-        print(f"  ⚠ {check_name} {purpose} units written but systemd could not reload")
-        return False
-
-    enable_result = run(f"systemctl enable {shlex.quote(timer_unit)}", check=False)
-    if enable_result.returncode != 0:
-        print(f"  ⚠ {check_name} {purpose} timer could not be enabled")
-        return False
-
-    # ``start`` is a no-op for an already-active timer, so it can leave the
-    # previous trigger calculation in place after a unit update. Restarting is
-    # also valid for a newly installed timer and guarantees that reruns apply
-    # the replacement schedule immediately.
-    restart_result = run(f"systemctl restart {shlex.quote(timer_unit)}", check=False)
-    if restart_result.returncode != 0:
-        print(f"  ⚠ {check_name} {purpose} timer could not be restarted")
-        return False
-
-    enabled_result = run(f"systemctl is-enabled {shlex.quote(timer_unit)}", check=False)
-    active_result = run(f"systemctl is-active {shlex.quote(timer_unit)}", check=False)
-    if enabled_result.returncode != 0 or active_result.returncode != 0:
-        print(f"  ⚠ {check_name} {purpose} timer failed post-install verification")
+    try:
+        replace_units(
+            {f"{service_name}.service": service_content, f"{service_name}.timer": timer_content},
+            activate=(f"{service_name}.timer",), unit_dir=SYSTEMD_DIR,
+        )
+    except Exception as exc:
+        print(f"  ⚠ {check_name} {purpose} replacement failed: {exc}")
         return False
 
     trigger_summary = schedule or f"after boot: {on_boot_sec}"

@@ -5,6 +5,9 @@ import os
 import re
 import shlex
 
+from typing import Optional
+
+from lib.unit_transaction import replace_units
 from lib.remote_utils import run
 from lib.validation import (
     validate_environment_variable_name,
@@ -218,69 +221,6 @@ def cleanup_all_infra_services(dry_run: bool = False) -> None:
     print(f"  ✓ Cleaned up {len(units_to_remove)} unit(s)")
 
 
-def generate_node_service(app_name: str, app_path: str, port: int = 4000,
-                         web_user: str = "www-data", web_group: str = "www-data",
-                         build_dir: str = "dist") -> str:
-    """Generate systemd service configuration for a Node.js application."""
-    return f"""[Unit]
-Description=Node app: {app_name}
-After=network.target
-
-[Service]
-Type=simple
-User={web_user}
-Group={web_group}
-WorkingDirectory={app_path}
-Environment="NODE_ENV=production"
-Environment="PORT={port}"
-ExecStart=/usr/local/bin/npx -y serve -s {build_dir} -l {port}
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-"""
-
-
-def create_node_service(app_name: str, app_path: str, port: int,
-                       web_user: str, web_group: str) -> None:
-    """Create and enable a Node.js systemd service."""
-    service_name = f"node-{app_name}"
-    service_file = os.path.join(SYSTEMD_DIR, f"{service_name}.service")
-    
-    # Clean up existing service before creating new one
-    cleanup_service(service_name)
-    
-    build_dir = "dist"
-    if os.path.exists(os.path.join(app_path, "build")):
-        build_dir = "build"
-    elif os.path.exists(os.path.join(app_path, "out")):
-        build_dir = "out"
-    
-    service_content = generate_node_service(app_name, app_path, port, web_user, web_group, build_dir)
-    
-    try:
-        with open(service_file, 'w') as f:
-            f.write(service_content)
-    except PermissionError as e:
-        raise PermissionError(f"Failed to write service file {service_file}. Need root permissions.") from e
-    
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {service_name}")
-    run(f"systemctl restart {service_name}")
-    
-    print(f"  ✓ Created and started systemd service: {service_name}")
-    
-    import time
-    time.sleep(1)
-    
-    result = run(f"systemctl is-active {service_name}", check=False)
-    if result.returncode != 0:
-        print(f"  ⚠ Warning: {service_name} may not be running. Check with: systemctl status {service_name}")
-    else:
-        print(f"  ✓ {service_name} is running")
-
-
 def _systemd_environment_line(key: str, value: str) -> str:
     """Render a validated environment value for a systemd unit line."""
     validate_environment_variable_name(key)
@@ -297,7 +237,7 @@ def generate_managed_service(name: str, exec_start: str, working_dir: str,
                              writable_paths: Optional[list[str]] = None) -> str:
     """Generate a hardened systemd unit for a manifest service component.
 
-    Unlike the Node generator this makes no assumptions about the
+    This makes no assumptions about the
     runtime: the component supplies its own ExecStart (a binary path or full
     command) and reads its configuration (including which port to bind) from
     ``env_file`` or ``runtime_env``. infra_tools only needs the port for the
@@ -359,31 +299,8 @@ def generate_managed_service(name: str, exec_start: str, working_dir: str,
 
 def _install_and_start_unit(service_name: str, unit_content: str) -> None:
     """Write a unit file, (re)load, enable, restart, and verify it is active."""
-    service_file = os.path.join(SYSTEMD_DIR, f"{service_name}.service")
-
-    # Clean up any previous unit before installing the new one.
-    cleanup_service(service_name)
-
-    try:
-        with open(service_file, 'w') as f:
-            f.write(unit_content)
-    except PermissionError as e:
-        raise PermissionError(f"Failed to write service file {service_file}. Need root permissions.") from e
-
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {shlex.quote(service_name)}")
-    run(f"systemctl restart {shlex.quote(service_name)}")
-
-    print(f"  ✓ Created and started systemd service: {service_name}")
-
-    import time
-    time.sleep(1)
-
-    result = run(f"systemctl is-active {shlex.quote(service_name)}", check=False)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"{service_name} did not become active; check systemctl status {service_name}"
-        )
+    unit = f"{service_name}.service"
+    replace_units({unit: unit_content}, activate=(unit,), unit_dir=SYSTEMD_DIR)
     print(f"  ✓ {service_name} is running")
 
 

@@ -70,7 +70,7 @@ class TestGogsConfigPermissions(unittest.TestCase):
             with (
                 patch.object(gogs_steps, "write_gogs_state"),
                 patch.object(gogs_steps, "_configure_git_ssh_access"),
-                patch.object(gogs_steps, "cleanup_service"),
+                patch.object(gogs_steps, "replace_units"),
                 patch.object(gogs_steps, "is_service_active", return_value=True),
                 patch.object(gogs_steps, "_wait_for_gogs_ready"),
                 patch.object(gogs_steps, "_ensure_gogs_admin_account"),

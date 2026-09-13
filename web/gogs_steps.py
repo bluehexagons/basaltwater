@@ -25,7 +25,7 @@ from lib.release_management import (
     write_json_state,
 )
 from lib.remote_utils import generate_password, is_service_active, run, user_exists
-from lib.systemd_service import cleanup_service
+from lib.unit_transaction import replace_units
 from web.cloudflare_steps import run_cloudflare_tunnel_setup
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
 from web.web_steps import install_nginx
@@ -1233,14 +1233,8 @@ def _complete_gogs_setup(
             )
         run("systemctl reload nginx")
 
-    cleanup_service(GOGS_SERVICE)
-    service_file = f"/etc/systemd/system/{GOGS_SERVICE}.service"
-    with open(service_file, "w", encoding="utf-8") as file_obj:
-        file_obj.write(generate_gogs_service(config_path))
-
-    run("systemctl daemon-reload")
-    run(f"systemctl enable {GOGS_SERVICE}")
-    run(f"systemctl restart {GOGS_SERVICE}")
+    unit = f"{GOGS_SERVICE}.service"
+    replace_units({unit: generate_gogs_service(config_path)}, activate=(unit,))
     print(f"  ✓ Created and started systemd service: {GOGS_SERVICE}")
 
     if is_service_active(GOGS_SERVICE):
@@ -1328,7 +1322,6 @@ def setup_gogs(config: SetupConfig) -> None:
     assert_declared_storage_mount(config, data_path)
     _gogs_backing_filesystem(data_path)
 
-    run(f"systemctl stop {GOGS_SERVICE}", check=False)
     _reconcile_gogs_direct_firewall(config, port)
 
     _ensure_gogs_dependencies()

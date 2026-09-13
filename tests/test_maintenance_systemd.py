@@ -6,7 +6,6 @@ import os
 import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -18,8 +17,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
     def test_writes_hardened_units_and_verifies_timer(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(
             "lib.maintenance_systemd.SYSTEMD_DIR", unit_dir
-        ), patch("lib.maintenance_systemd.run") as mock_run:
-            mock_run.return_value = SimpleNamespace(returncode=0)
+        ), patch("lib.maintenance_systemd.replace_units") as mock_run:
 
             configured = configure_maintenance_timer(
                 service_name="auto-update-test",
@@ -33,10 +31,8 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
             )
 
             self.assertTrue(configured)
-            with open(os.path.join(unit_dir, "auto-update-test.service"), encoding="utf-8") as handle:
-                service_content = handle.read()
-            with open(os.path.join(unit_dir, "auto-update-test.timer"), encoding="utf-8") as handle:
-                timer_content = handle.read()
+            service_content = mock_run.call_args.args[0]["auto-update-test.service"]
+            timer_content = mock_run.call_args.args[0]["auto-update-test.timer"]
 
         self.assertIn("Wants=network-online.target", service_content)
         self.assertIn("After=network-online.target", service_content)
@@ -46,22 +42,12 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
         self.assertIn("Persistent=true", timer_content)
         self.assertIn("AccuracySec=1min", timer_content)
         self.assertIn("RandomizedDelaySec=30min", timer_content)
-        commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertEqual(
-            commands,
-            [
-                "systemctl daemon-reload",
-                "systemctl enable auto-update-test.timer",
-                "systemctl restart auto-update-test.timer",
-                "systemctl is-enabled auto-update-test.timer",
-                "systemctl is-active auto-update-test.timer",
-            ],
-        )
+        self.assertEqual(mock_run.call_args.kwargs["activate"], ("auto-update-test.timer",))
 
     def test_skips_when_prerequisite_is_missing(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(
             "lib.maintenance_systemd.SYSTEMD_DIR", unit_dir
-        ), patch("lib.maintenance_systemd.run") as mock_run:
+        ), patch("lib.maintenance_systemd.replace_units") as mock_run:
             configured = configure_maintenance_timer(
                 service_name="auto-update-test",
                 service_desc="Auto-update test runtime",
@@ -79,8 +65,8 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
     def test_reports_daemon_reload_failure_without_disabling_existing_timer(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(
             "lib.maintenance_systemd.SYSTEMD_DIR", unit_dir
-        ), patch("lib.maintenance_systemd.run") as mock_run:
-            mock_run.return_value = SimpleNamespace(returncode=1)
+        ), patch("lib.maintenance_systemd.replace_units") as mock_run:
+            mock_run.side_effect = RuntimeError("activation failed; restored")
 
             configured = configure_maintenance_timer(
                 service_name="auto-update-test",
@@ -92,9 +78,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
             )
 
         self.assertFalse(configured)
-        commands = [call.args[0] for call in mock_run.call_args_list]
-        self.assertEqual(commands, ["systemctl daemon-reload"])
-        self.assertFalse(any("disable" in command for command in commands))
+        mock_run.assert_called_once()
 
     def test_rejects_injected_unit_values(self):
         with self.assertRaisesRegex(ValueError, "control characters"):
@@ -110,8 +94,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
     def test_supports_boot_and_calendar_triggers_without_network_dependency(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(
             "lib.maintenance_systemd.SYSTEMD_DIR", unit_dir
-        ), patch("lib.maintenance_systemd.run") as mock_run:
-            mock_run.return_value = SimpleNamespace(returncode=0)
+        ), patch("lib.maintenance_systemd.replace_units") as mock_run:
             configured = configure_maintenance_timer(
                 service_name="restart-check",
                 service_desc="Restart check",
@@ -122,10 +105,8 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
                 check_name="Restart",
                 network_online=False,
             )
-            with open(os.path.join(unit_dir, "restart-check.service"), encoding="utf-8") as handle:
-                service_content = handle.read()
-            with open(os.path.join(unit_dir, "restart-check.timer"), encoding="utf-8") as handle:
-                timer_content = handle.read()
+            service_content = mock_run.call_args.args[0]["restart-check.service"]
+            timer_content = mock_run.call_args.args[0]["restart-check.timer"]
 
         self.assertTrue(configured)
         self.assertNotIn("network-online.target", service_content)
@@ -135,8 +116,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
     def test_sandboxes_user_service_with_bounded_writable_path(self):
         with tempfile.TemporaryDirectory() as unit_dir, patch(
             "lib.maintenance_systemd.SYSTEMD_DIR", unit_dir
-        ), patch("lib.maintenance_systemd.run") as mock_run:
-            mock_run.return_value = SimpleNamespace(returncode=0)
+        ), patch("lib.maintenance_systemd.replace_units") as mock_run:
             configured = configure_maintenance_timer(
                 service_name="credential-check",
                 service_desc="Credential check",
@@ -148,11 +128,7 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
                 sandbox_user_service=True,
                 writable_paths=("/home/agent/.config/tool",),
             )
-            with open(
-                os.path.join(unit_dir, "credential-check.service"),
-                encoding="utf-8",
-            ) as handle:
-                service_content = handle.read()
+            service_content = mock_run.call_args.args[0]["credential-check.service"]
 
         self.assertTrue(configured)
         self.assertIn("User=agent", service_content)

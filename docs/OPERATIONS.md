@@ -64,6 +64,21 @@ Timeout events include the stage and whether deployment had begun; completed
 remote changes require inspection before retrying. Notification delivery uses
 its own bounded network calls after execution ends.
 
+Managed application, Gogs, CI/CD, storage-ops and maintenance timer units use
+one serialized replacement transaction. Candidates are staged privately on the
+unit filesystem and checked with `systemd-analyze verify` before atomic writes.
+Failed writes, reloads or activation restore previous files, modes, ownership,
+enablement and active state. Timer/path updates do not restart a running oneshot.
+This restores unit configuration, not application data changed during startup.
+
+A crash or failed rollback leaves `/etc/systemd/system/.infra-tools-unit-operation.json`
+and blocks further replacements. Its `backup_dir` contains private `previous.json`
+with the old unit text, metadata and activation states. After confirming the
+original setup process has stopped, restore those files (remove units recorded
+as null), reload systemd, and restore the recorded enabled/active states. Verify
+the services before archiving the marker and backup privately; keep the stable
+`.lock` file in place. Do not clear the marker merely to force a retry.
+
 Package, service, and user probes have a 15-second deadline. A timeout or
 unavailable probe raises an explicit unknown-state error and stops dependent
 setup instead of treating the package, service, or user as absent. Repair the

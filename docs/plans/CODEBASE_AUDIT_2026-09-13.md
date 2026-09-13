@@ -10,20 +10,6 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## P1 — reliability, privileged setup, and operator safety
 
-- **RCF-04 — Medium-High: service replacement is destructive or
-  non-atomic.** Several writers delete the existing unit before recreating it;
-  others overwrite the live unit with `open(..., 'w')`. A write, reload, or
-  start failure can therefore leave the service absent or truncated, without
-  restoring prior active/enabled state. Evidence:
-  [`cicd_steps.py`](../../web/cicd_steps.py),
-  [`gogs_steps.py`](../../web/gogs_steps.py),
-  [`systemd_service.py`](../../lib/systemd_service.py),
-  [`service_manager.py`](../../lib/service_manager.py),
-  [`storage_ops_steps.py`](../../sync/storage_ops_steps.py).
-  **Acceptance:** render/validate a same-directory temporary file, atomically
-  replace it, preserve the prior unit until activation succeeds, and
-  fault-test each failure boundary.
-
 - **RCF-20 — Medium-High: rolling Proxmox updates lack bounded SSH
   execution and resumable checkpoints.** `_ssh_result` calls
   `subprocess.run` without a timeout; updates then proceed node by node, so a
@@ -58,7 +44,6 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## Delivery and ownership
 
-- Prioritize recoverable service replacement (RCF-04).
 - RCF-18 belongs with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md).
   Script confinement and the CI/CD trust contract are already implemented;
   RCF-18 remains open for build/deploy credential isolation.

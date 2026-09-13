@@ -12,44 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lib.systemd_service import (
     cleanup_all_infra_services,
     cleanup_service,
-    generate_node_service,
 )
-
-
-class TestGenerateNodeService(unittest.TestCase):
-    def test_contains_unit_section(self):
-        content = generate_node_service('myapp', '/var/www/myapp')
-        self.assertIn('[Unit]', content)
-        self.assertIn('[Service]', content)
-        self.assertIn('[Install]', content)
-
-    def test_app_name_in_description(self):
-        content = generate_node_service('myapp', '/var/www/myapp')
-        self.assertIn('myapp', content)
-
-    def test_default_port(self):
-        content = generate_node_service('myapp', '/var/www/myapp')
-        self.assertIn('PORT=4000', content)
-
-    def test_custom_port(self):
-        content = generate_node_service('myapp', '/var/www/myapp', port=5000)
-        self.assertIn('PORT=5000', content)
-
-    def test_web_user(self):
-        content = generate_node_service('myapp', '/var/www/myapp', web_user='deploy')
-        self.assertIn('User=deploy', content)
-
-    def test_working_directory(self):
-        content = generate_node_service('myapp', '/var/www/myapp')
-        self.assertIn('WorkingDirectory=/var/www/myapp', content)
-
-    def test_build_dir(self):
-        content = generate_node_service('myapp', '/var/www/myapp', build_dir='build')
-        self.assertIn('build', content)
-
-    def test_node_env_production(self):
-        content = generate_node_service('myapp', '/var/www/myapp')
-        self.assertIn('NODE_ENV=production', content)
 
 
 class TestCleanupFunctions(unittest.TestCase):

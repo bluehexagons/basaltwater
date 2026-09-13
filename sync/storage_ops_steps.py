@@ -15,7 +15,7 @@ from typing import Any
 from lib.config import SetupConfig
 from lib.setup_common import REMOTE_INSTALL_DIR
 from lib.remote_utils import run, is_dry_run
-from lib.systemd_service import cleanup_service
+from lib.unit_transaction import replace_units
 from lib.task_utils import (
     get_mount_points_from_config,
     has_mount_paths,
@@ -67,8 +67,6 @@ def create_storage_ops_service(config: SetupConfig, **_kwargs: Any) -> None:
 
     print("\n  Creating unified storage operations service...")
 
-    # Clean up any existing service
-    cleanup_service(SERVICE_NAME)
     
     # Lock files are automatically cleaned up on reboot (stored in /run/lock tmpfs)
     # Don't remove them during service creation as they may belong to running operations
@@ -109,12 +107,6 @@ TimeoutStartSec=14400
 WantedBy=multi-user.target
 """
 
-    # Write service file
-    with open(SERVICE_FILE, 'w') as f:
-        f.write(service_content)
-
-    print(f"    ✓ Created service: {SERVICE_NAME}.service")
-
     # Build timer file content - run hourly at :00
     timer_content = f"""[Unit]
 Description=Timer for unified storage operations
@@ -129,17 +121,10 @@ RandomizedDelaySec=30
 WantedBy=timers.target
 """
 
-    # Write timer file
-    with open(TIMER_FILE, 'w') as f:
-        f.write(timer_content)
-
-    print(f"    ✓ Created timer: {SERVICE_NAME}.timer (hourly)")
-
-    # Reload systemd and enable/start timer
-    run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", f"{SERVICE_NAME}.timer"])
-    run(["systemctl", "start", f"{SERVICE_NAME}.timer"])
-    run(["systemctl", "--no-pager", "status", f"{SERVICE_NAME}.timer"], check=False)
+    replace_units(
+        {os.path.basename(SERVICE_FILE): service_content, os.path.basename(TIMER_FILE): timer_content},
+        activate=(f"{SERVICE_NAME}.timer",), unit_dir=os.path.dirname(SERVICE_FILE),
+    )
 
     print(f"    ✓ Storage operations timer started")
     print(f"    ℹ Run 'systemctl status {SERVICE_NAME}.timer' to check status")

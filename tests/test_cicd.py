@@ -197,66 +197,28 @@ class TestCICDSteps(unittest.TestCase):
         saved_config = mock_save.call_args.args[0]
         self.assertEqual(saved_config['repositories'][0]['branches'], ['main'])
     
-    @patch('web.cicd_steps.cleanup_service')
-    @patch('web.cicd_steps.os.path.exists')
-    @patch('builtins.open', new_callable=mock_open, read_data="test-secret")
+    @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
-    def test_create_webhook_receiver_service(self, mock_run, mock_file, mock_exists, mock_cleanup):
-        """Test webhook receiver service creation."""
-        mock_exists.return_value = True
-        mock_config = MagicMock()
-        
-        with patch('builtins.open', mock_open()) as mock_service_file, patch('web.cicd_steps.generate_webhook_secret'):
-            create_webhook_receiver_service(mock_config)
-        
-        # Should cleanup existing service
-        mock_cleanup.assert_called_once_with('webhook-receiver')
-        
-        # Should reload systemd
-        reload_calls = [call for call in mock_run.call_args_list if call.args[0] == ['systemctl', 'daemon-reload']]
-        self.assertGreater(len(reload_calls), 0)
-        
-        # Should enable and start service
-        enable_calls = [call for call in mock_run.call_args_list if 'enable' in str(call)]
-        start_calls = [call for call in mock_run.call_args_list if 'start' in str(call)]
-        self.assertGreater(len(enable_calls), 0)
-        self.assertGreater(len(start_calls), 0)
-        written_service = ''.join(call.args[0] for call in mock_service_file().write.call_args_list)
-        self.assertIn('Environment=HOME=/var/lib/infra_tools/cicd', written_service)
-        self.assertIn('Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd', written_service)
-        self.assertIn('ReadWritePaths=/var/lib/infra_tools/cicd/jobs', written_service)
-        self.assertNotIn('ReadWritePaths=/var/lib/infra_tools/cicd\n', written_service)
-    
-    @patch('web.cicd_steps.cleanup_service')
+    @patch('web.cicd_steps.generate_webhook_secret')
+    def test_create_webhook_receiver_service(self, _secret, _run, replace):
+        create_webhook_receiver_service(MagicMock())
+        replace.assert_called_once()
+        self.assertEqual(replace.call_args.kwargs['activate'], ('webhook-receiver.service',))
+        unit = replace.call_args.args[0]['webhook-receiver.service']
+        self.assertIn('Environment=HOME=/var/lib/infra_tools/cicd', unit)
+        self.assertIn('ReadWritePaths=/var/lib/infra_tools/cicd/jobs', unit)
+
+    @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
-    def test_create_cicd_executor_service(self, mock_run, mock_cleanup):
-        """Test CI/CD executor service creation."""
-        mock_config = MagicMock()
-        
-        with patch('builtins.open', mock_open()) as mock_file:
-            create_cicd_executor_service(mock_config)
-        
-        # Should cleanup existing service
-        mock_cleanup.assert_called_once_with('cicd-executor')
-        
-        # Should reload systemd
-        reload_calls = [call for call in mock_run.call_args_list if 'daemon-reload' in str(call)]
-        self.assertGreater(len(reload_calls), 0)
-        written_service = ''.join(call.args[0] for call in mock_file().write.call_args_list)
-        self.assertIn('Environment=HOME=/var/lib/infra_tools/cicd', written_service)
-        self.assertIn('Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd', written_service)
-        # Path unit must be created and enabled so the unprivileged webhook user
-        # can trigger the executor by writing job files instead of calling systemctl.
-        self.assertIn('PathChanged=/var/lib/infra_tools/cicd/jobs', written_service)
-        self.assertIn('Unit=cicd-executor.service', written_service)
-        path_enable_calls = [
-            c for c in mock_run.call_args_list
-            if c.args[0] == ['systemctl', 'enable', 'cicd-executor.path']
-        ]
-        self.assertGreater(len(path_enable_calls), 0,
-                           "cicd-executor.path must be enabled so the webhook receiver "
-                           "can trigger jobs without systemctl/polkit privileges")
-    
+    def test_create_cicd_executor_service(self, _run, replace):
+        create_cicd_executor_service(MagicMock())
+        replace.assert_called_once()
+        self.assertEqual(replace.call_args.kwargs['activate'], ('cicd-executor.path',))
+        units = replace.call_args.args[0]
+        self.assertIn('TimeoutStartSec=infinity', units['cicd-executor.service'])
+        self.assertIn('PathChanged=/var/lib/infra_tools/cicd/jobs', units['cicd-executor.path'])
+        self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
+
     def test_trigger_cicd_job_does_not_call_systemctl(self):
         """Verify the unprivileged webhook receiver only writes job files."""
         import inspect

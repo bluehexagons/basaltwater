@@ -37,7 +37,7 @@ class TestCreateStorageOpsService(unittest.TestCase):
     @patch("sync.storage_ops_steps.run")
     @patch("sync.storage_ops_steps.open")
     @patch("sync.storage_ops_steps.os.makedirs")
-    @patch("sync.storage_ops_steps.cleanup_service")
+    @patch("sync.storage_ops_steps.replace_units")
     @patch("sync.storage_ops_steps.is_dry_run", return_value=True)
     def test_skips_file_changes_in_dry_run(self, _dry_run, cleanup, makedirs, file_open, run_cmd):
         config = SetupConfig(

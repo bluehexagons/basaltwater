@@ -10,7 +10,7 @@ import stat
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run, is_package_installed
-from lib.systemd_service import cleanup_service
+from lib.unit_transaction import replace_units
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
 from web.service_tools.cicd_config import load_config_file, save_config_file
 
@@ -197,7 +197,6 @@ def create_webhook_receiver_service(config: SetupConfig) -> None:
     generate_webhook_secret(config)
     _check_service_config()
     
-    cleanup_service(service_name)
     
     service_content = """[Unit]
 Description=Webhook Receiver for CI/CD
@@ -251,14 +250,9 @@ SyslogIdentifier=webhook-receiver
 WantedBy=multi-user.target
 """
     
-    service_file = f"/etc/systemd/system/{service_name}.service"
-    with open(service_file, 'w') as f:
-        f.write(service_content)
-    
-    run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", f"{service_name}.service"])
-    run(["systemctl", "start", f"{service_name}.service"])
-    
+    unit = f"{service_name}.service"
+    replace_units({unit: service_content}, activate=(unit,))
+
     print(f"  ✓ Created and started {service_name}.service")
 
 
@@ -274,8 +268,6 @@ def create_cicd_executor_service(config: SetupConfig) -> None:
     service_name = "cicd-executor"
     _check_service_config()
     
-    # Cleanup existing service (also removes any prior .path unit)
-    cleanup_service(service_name)
     
     service_content = """[Unit]
 Description=CI/CD Job Executor
@@ -324,10 +316,6 @@ StandardError=journal
 SyslogIdentifier=cicd-executor
 """
     
-    service_file = f"/etc/systemd/system/{service_name}.service"
-    with open(service_file, 'w') as f:
-        f.write(service_content)
-    
     # Path activator: triggers the executor whenever a job file is written by
     # the webhook receiver. The receiver runs as an unprivileged user that
     # cannot call ``systemctl start`` directly, so this is required.
@@ -344,14 +332,11 @@ Unit=cicd-executor.service
 WantedBy=multi-user.target
 """
     
-    path_file = f"/etc/systemd/system/{service_name}.path"
-    with open(path_file, 'w') as f:
-        f.write(path_content)
-    
-    run(["systemctl", "daemon-reload"])
-    run(["systemctl", "enable", f"{service_name}.path"])
-    run(["systemctl", "start", f"{service_name}.path"])
-    
+    replace_units(
+        {f"{service_name}.service": service_content, f"{service_name}.path": path_content},
+        activate=(f"{service_name}.path",),
+    )
+
     print(f"  ✓ Created {service_name}.service and {service_name}.path")
 
 
