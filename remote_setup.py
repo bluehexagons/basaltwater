@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sys
 import time
 
@@ -173,7 +174,10 @@ def _remove_secret_payloads() -> None:
         if not os.path.isdir(payload_dir):
             continue
         try:
-            shutil.rmtree(payload_dir)
+            if os.path.islink(payload_dir):
+                os.unlink(payload_dir)
+            else:
+                shutil.rmtree(payload_dir)
         except OSError as exc:
             print(
                 f"Warning: Failed to remove secret payload {payload_dir}: {exc}",
@@ -760,4 +764,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    def terminate_setup(_signum, _frame):
+        raise KeyboardInterrupt("Setup terminated")
+    signal.signal(signal.SIGTERM, terminate_setup)
     sys.exit(main())

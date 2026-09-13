@@ -243,6 +243,11 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         sudo = patch("lib.setup_common.ensure_remote_sudo", return_value=True)
         sudo.start()
         self.addCleanup(sudo.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        payload_root = patch("lib.setup_payloads.PAYLOAD_ROOT", directory.name)
+        payload_root.start()
+        self.addCleanup(payload_root.stop)
 
     def test_copy_project_files_includes_runtime_packages(self):
         from lib import setup_common
@@ -282,7 +287,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
 
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
-        self.assertIn("--args-file", remote_command)
+        self.assertIn("-m lib.setup_payloads --timeout", remote_command)
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
 
@@ -368,7 +373,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("rm -rf /opt/infra_tools", remote_command)
         self.assertIn("tar xzf - -C /opt/infra_tools", remote_command)
-        self.assertIn("python3 -u /opt/infra_tools/remote_setup.py", remote_command)
+        self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_hosted_vm_without_nopasswd_uses_retained_root_ssh(self):
@@ -389,7 +394,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(mock_build.call_args.args[1], "root")
         remote_command = mock_build.call_args.kwargs["remote_command"]
         self.assertIn("rm -rf /opt/infra_tools", remote_command)
-        self.assertIn("python3 -u /opt/infra_tools/remote_setup.py", remote_command)
+        self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
     def test_adopts_only_a_controller_verified_replacement_host(self):

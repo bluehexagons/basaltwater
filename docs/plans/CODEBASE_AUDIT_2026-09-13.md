@@ -33,14 +33,6 @@ calls and temporary directories; live deployment qualification is separate.
   stages, align systemd, and report whether termination occurred before or
   during deployment.
 
-- **RCF-12 — Medium: secret payload cleanup is not crash-resistant.**
-  Remote agent/pairing/web-panel payloads are removed only by normal `finally`
-  paths. Hard kill or power loss can leave credentials under
-  `/opt/infra_tools`. Evidence: [`remote_setup.py`](../../remote_setup.py).
-  **Acceptance:** use a
-  restrictive temporary location, record expiry/owner, scrub stale payloads
-  at startup, and test interruption without exposing secret contents.
-
 - **RCF-20 — Medium-High: rolling Proxmox updates lack bounded SSH
   execution and resumable checkpoints.** `_ssh_result` calls
   `subprocess.run` without a timeout; updates then proceed node by node, so a
@@ -75,10 +67,9 @@ calls and temporary directories; live deployment qualification is separate.
 
 ## Delivery and ownership
 
-- Prioritize recoverable service replacement (RCF-04), and CI/CD
-  deadlines and credential cleanup (RCF-10, 12).
-- RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md);
-  RCF-12 complements [Deploy secrets](DEPLOY_SECRETS.md).
+- Prioritize recoverable service replacement (RCF-04) and CI/CD deadlines
+  (RCF-10).
+- RCF-10 and 18 belong with [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md).
   Script confinement and the CI/CD trust contract are already implemented;
   RCF-18 remains open for build/deploy credential isolation.
 - RCF-20 follows the [Proxmox maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md),

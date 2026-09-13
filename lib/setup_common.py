@@ -26,6 +26,7 @@ except ImportError:
 
 from lib.atomic_io import write_json_atomic
 from lib.streamed_process import run_streamed
+from lib.setup_payloads import PAYLOAD_NAMES, link_payloads, move_payloads, payload_workspace
 from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
 from lib.credentials import prepare_runtime_config, store_cli_credentials
@@ -446,7 +447,7 @@ def _activate_local_runtime(build_dir: str) -> None:
         destination = os.path.join(REMOTE_INSTALL_DIR, item)
         if os.path.isdir(destination) and not os.path.islink(destination):
             shutil.rmtree(destination)
-        elif os.path.exists(destination):
+        elif os.path.lexists(destination):
             os.unlink(destination)
 
         source = os.path.join(build_dir, item)
@@ -1011,11 +1012,24 @@ def prepare_agent_payload(config: SetupConfig, payload_dir: str) -> None:
     )
 
 
-def create_tar_from_dir(source_dir: str) -> bytes:
+def create_tar_from_dir(source_dir: str, *, exclude_payloads: bool = False) -> bytes:
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
-        tar.add(source_dir, arcname=".")
+        def include(member):
+            parts = member.name.removeprefix("./").split("/")
+            return None if exclude_payloads and parts[0] in PAYLOAD_NAMES else member
+        tar.add(source_dir, arcname=".", filter=include)
     return tar_buffer.getvalue()
+
+
+def _create_payload_archive(source_dir: str) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name in PAYLOAD_NAMES:
+            path = os.path.join(source_dir, name)
+            if os.path.lexists(path):
+                archive.add(path, arcname=name)
+    return buffer.getvalue()
 
 
 def create_argument_parser(description: str, allow_steps: bool = False) -> argparse.ArgumentParser:
@@ -1374,8 +1388,6 @@ def run_remote_setup(config: SetupConfig) -> int:
             print("Running setup locally...")
             print(f"{'='*60}")
             
-            _activate_local_runtime(build_dir)
-            
             env = os.environ.copy()
             env["LC_ALL"] = "C"
             # The child writes through a pipe so setup progress is relayed by
@@ -1384,31 +1396,42 @@ def run_remote_setup(config: SetupConfig) -> int:
             env["PYTHONUNBUFFERED"] = "1"
             
             try:
-                returncode = run_streamed(
-                    command_tokens, timeout=setup_timeout,
-                    on_output=_relay_setup_output, env=env, cwd=REMOTE_INSTALL_DIR,
-                )
+                with payload_workspace(setup_timeout) as payload:
+                    move_payloads(build_dir, payload)
+                    _activate_local_runtime(build_dir)
+                    link_payloads(payload, REMOTE_INSTALL_DIR)
+                    command_tokens[-1] = os.path.join(payload, REMOTE_ARGS_FILENAME)
+                    try:
+                        returncode = run_streamed(
+                            command_tokens, timeout=setup_timeout,
+                            on_output=_relay_setup_output, env=env, cwd=REMOTE_INSTALL_DIR,
+                        )
+                    finally:
+                        for name in PAYLOAD_NAMES:
+                            path = os.path.join(REMOTE_INSTALL_DIR, name)
+                            if os.path.islink(path):
+                                os.unlink(path)
                 return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running local setup: {e}")
                 return finish_network_transition(config, 1)
         else:
-            tar_data = create_tar_from_dir(build_dir)
+            runtime_data = create_tar_from_dir(build_dir, exclude_payloads=True)
+            tar_data = runtime_data + _create_payload_archive(build_dir)
             
             def privileged(command: list[str]) -> list[str]:
                 if remote_user == "root":
                     return command
                 return ["sudo", "-n", *command]
 
-            remote_python = "python3"
-            remote_script = os.path.join(REMOTE_INSTALL_DIR, "remote_setup.py")
-            remote_cmd_args = [remote_python, "-u", remote_script, "--args-file", remote_args_path]
+            remote_cmd_args = ["python3", "-u", "-m", "lib.setup_payloads", "--timeout", str(setup_timeout)]
             remote_shell_cmd = chain_remote_commands(
                 [
                     privileged(_remote_state_migration_command()),
                     privileged(["rm", "-rf", REMOTE_INSTALL_DIR]),
                     privileged(["mkdir", "-p", REMOTE_INSTALL_DIR]),
-                    privileged(["tar", "xzf", "-", "-C", REMOTE_INSTALL_DIR]),
+                    privileged(["/bin/bash", "-o", "pipefail", "-c",
+                        f"head -c {len(runtime_data)} | tar xzf - -C {shlex.quote(REMOTE_INSTALL_DIR)} --no-same-owner"]),
                     privileged(
                         [
                             "ln",
@@ -1418,6 +1441,7 @@ def run_remote_setup(config: SetupConfig) -> int:
                         ]
                     ),
                     privileged(["chmod", "0755", REMOTE_INSTALL_DIR]),
+                    ["cd", REMOTE_INSTALL_DIR],
                     privileged(remote_cmd_args),
                 ]
             )

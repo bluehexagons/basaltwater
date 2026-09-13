@@ -44,6 +44,14 @@ ten-second kill grace, so loss of the controller does not leave setup unbounded.
 Already completed changes and work detached into separate services are not
 rolled back. Inspect the target and its operation marker before retrying.
 
+Setup credentials and argument files travel in a separate archive and are
+staged under `/run/infra-tools-setup/payload-*` (directories 0700, files 0600).
+The installed source tree contains only temporary links to that private lease.
+Normal exit removes it; reboot clears `/run`. Each lease records its owner,
+process ID and expiry (setup deadline plus one minute). Startup removes expired
+leases only after acquiring their lock, leaving active setup untouched. Uploads
+reject links, traversal, more than 10,000 entries, or over 64 MiB of payload data.
+
 Deployment and gateway readiness requests use literal loopback addresses,
 ignore proxy environment variables, and never follow redirects. Deployment
 activation requires a local 2xx response from the configured health endpoint.

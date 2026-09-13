@@ -1106,7 +1106,10 @@ def copy_agent_tooling_payload(config: SetupConfig) -> None:
             _configure_git_identity(config)
     finally:
         if os.path.isdir(REMOTE_AGENT_PAYLOAD_DIR):
-            shutil.rmtree(REMOTE_AGENT_PAYLOAD_DIR)
+            if os.path.islink(REMOTE_AGENT_PAYLOAD_DIR):
+                os.unlink(REMOTE_AGENT_PAYLOAD_DIR)
+            else:
+                shutil.rmtree(REMOTE_AGENT_PAYLOAD_DIR)
             print("  Removed uploaded agent configuration payload")
 
 
