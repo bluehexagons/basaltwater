@@ -495,6 +495,10 @@ class T3CodeWebTest(unittest.TestCase):
                     "common.t3code_steps._user_systemctl",
                     return_value=completed,
                 ) as systemctl,
+                patch(
+                    "common.t3code_steps.shutil.which",
+                    return_value="/bin/true",
+                ),
                 patch("common.t3code_steps.os.chown"),
                 patch(
                     "common.t3code_steps.LEGACY_T3_SERVICE_FILE",

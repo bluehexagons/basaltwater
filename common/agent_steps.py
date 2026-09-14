@@ -664,7 +664,6 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
         for tool in AGENT_UPDATE_TOOLS
         if tool in config.selected_agent_tools()
     ]
-    user_home = _user_home(config)
     freshly_installed = getattr(config, _FRESH_AGENT_TOOLS_ATTRIBUTE, set())
     if not isinstance(freshly_installed, set):
         freshly_installed = set()
@@ -683,6 +682,7 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
             + ", ".join(selected)
         )
         return
+    user_home = _user_home(config)
     externally_managed = [
         tool
         for tool in selected

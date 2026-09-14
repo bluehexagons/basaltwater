@@ -94,9 +94,17 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
     user_home = get_user_home(config.username)
     command = shlex.join([_PYTHON, script])
     print("  Running user cache cleanup now (this may take a while)...")
-    target_uid = pwd.getpwnam(config.username).pw_uid
+    effective_uid = os.geteuid()
     try:
-        if os.geteuid() == target_uid:
+        if effective_uid == 0:
+            result = _run_as_login_user(
+                config.username,
+                user_home,
+                command,
+                check=False,
+                capture_output=True,
+            )
+        elif effective_uid == pwd.getpwnam(config.username).pw_uid:
             result = run(
                 [_PYTHON, script],
                 check=False,
