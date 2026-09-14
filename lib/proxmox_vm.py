@@ -2392,7 +2392,11 @@ def _provision_vm_locked(
     user_data_path = _upload_user_data(
         user_data, hostname, snippet_pool, node_ip, user, ssh_opts, dry_run=dry_run
     )
-    user_data_ref = f"{snippet_pool}:snippets/infra_tools-{hostname}.yaml"
+    user_data_ref = (
+        f"{snippet_pool}:snippets/{os.path.basename(user_data_path)}"
+        if user_data_path
+        else None
+    )
     vm_started = False
     provision_complete = False
 
