@@ -122,6 +122,7 @@ class TestSetupMaintenance(unittest.TestCase):
                 "_validated_script",
                 side_effect=lambda path, _label: path,
             ),
+            patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
             patch.object(setup_maintenance, "run", side_effect=timeout),
         ):
             setup_maintenance.run_setup_maintenance(self.config)
