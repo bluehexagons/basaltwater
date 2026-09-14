@@ -98,6 +98,23 @@ def _ensure_fallback_handler(logger: Logger, level: int = INFO) -> None:
     logger.addHandler(handler)
 
 
+def _journal_stream_available() -> bool:
+    """Return whether systemd is already collecting this process's output."""
+
+    return bool(os.environ.get("JOURNAL_STREAM"))
+
+
+def _remove_stream_handlers(logger: Logger) -> None:
+    """Remove fallback stream handlers before installing one journal stream."""
+
+    for handler in list(logger.handlers):
+        if isinstance(handler, StreamHandler) and not isinstance(
+            handler, RotatingFileHandler
+        ):
+            logger.removeHandler(handler)
+            handler.close()
+
+
 def _can_write_log_path(log_path: Path) -> bool:
     """Return true when the current process should try file logging there."""
     try:
@@ -214,8 +231,13 @@ def get_service_logger(
     effective_console_output = console_output and not _test_mode_enabled()
     
     logger = get_rotating_logger(service_name, str(log_file), level=level)
-    
+
     if effective_console_output:
+        if _journal_stream_available():
+            # A non-root systemd service cannot open /var/log directly and
+            # receives a stderr fallback from get_rotating_logger().  Remove
+            # that fallback before adding stdout so journald sees one record.
+            _remove_stream_handlers(logger)
         # Check if stdout console handler already exists (explicit loop helps type-checkers)
         has_console = False
         for h in logger.handlers:
@@ -237,7 +259,7 @@ def get_service_logger(
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
     
-    if use_syslog and not _test_mode_enabled():
+    if use_syslog and not _test_mode_enabled() and not _journal_stream_available():
         try:
             syslog_handler = SysLogHandler(address='/dev/log')
             syslog_handler.setLevel(level)

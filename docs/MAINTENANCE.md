@@ -37,6 +37,10 @@ sudo systemctl list-timers --all \
 sudo journalctl -u auto-update-apt.service -n 100 --no-pager
 ```
 
+Scheduled services use systemd's journal as their console sink. When systemd
+provides a journal stream, infra-tools suppresses the additional syslog sink so
+each event appears once in `journalctl`.
+
 Required host timers are verified during setup. Failure to reload, enable,
 start, or confirm the security-monitor, APT-update, cleanup, user-cache, or
 restart timer stops setup. When the replacement APT timer cannot be verified,

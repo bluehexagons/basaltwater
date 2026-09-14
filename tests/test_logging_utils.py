@@ -105,6 +105,35 @@ class TestGetServiceLogger(unittest.TestCase):
 
         syslog_handler.assert_not_called()
 
+    def test_systemd_journal_uses_one_console_stream_without_syslog_duplicate(self):
+        with (
+            patch.dict(
+                os.environ,
+                {"JOURNAL_STREAM": "8:9", "INFRA_TOOLS_TEST": "0"},
+            ),
+            patch("lib.logging_utils.SysLogHandler") as syslog_handler,
+        ):
+            logger = get_service_logger(
+                "test_service_journal_once",
+                use_syslog=True,
+                console_output=True,
+            )
+
+        try:
+            stream_handlers = [
+                handler
+                for handler in logger.handlers
+                if isinstance(handler, logging.StreamHandler)
+                and getattr(handler, "stream", None) is sys.stdout
+            ]
+            self.assertEqual(len(stream_handlers), 1)
+            self.assertIs(stream_handlers[0].stream, sys.stdout)
+            syslog_handler.assert_not_called()
+        finally:
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                handler.close()
+
 
 class TestLogMessage(unittest.TestCase):
     def test_log_message(self):
