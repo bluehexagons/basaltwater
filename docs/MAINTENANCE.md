@@ -208,6 +208,13 @@ archives require the official feed's full SHA-256 digest before extraction.
 
 ## Cleanup and State Safety
 
+An explicit setup rerun runs the same bounded system cleanup and user-cache
+cleanup jobs once, after the selected installation and reconciliation steps.
+This gives an infrequently started VM a maintenance opportunity without
+waiting for its next timer trigger. Successful cleanup stays compact in setup
+output; failures remain visible and the persistent timer retries them later.
+Dry-run setup only shows the planned step and does not execute cleanup.
+
 `cleanup-maintenance` removes disposable APT caches, rotates journals before
 enforcing both the `100M` size ceiling and a 30-day age ceiling, invokes the
 system logrotate policy, removes recognized crash-report files older than 30
@@ -237,8 +244,9 @@ unversioned Debian/Ubuntu tracking metapackages, other flavours, and unknown
 custom kernel names are left alone. APT determines actual removals from its
 dependency and retention rules; infra-tools never deletes boot images directly.
 
-Rerun setup to deploy this behavior for the next weekly cleanup. Preview the
-manual selections it would release without changing anything:
+Rerun setup to deploy this behavior and perform one cleanup immediately.
+The weekly timer handles later runs. Preview the manual selections it would
+release without changing anything:
 
 ```bash
 cd /opt/infra_tools

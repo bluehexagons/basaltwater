@@ -39,6 +39,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
         configure_proxmox_host_memory_safety,
     )
     from common.steps import check_restart_required, configure_swap
+    from common.setup_maintenance import run_setup_maintenance
     from security.steps import (
         configure_auto_restart,
         configure_auto_updates,
@@ -69,6 +70,7 @@ def build_server_proxmox_steps(config: SetupConfig) -> list[tuple[str, StepFunc]
         ("Configuring automatic security updates", configure_auto_updates),
         ("Configuring cleanup maintenance service", configure_cleanup_maintenance),
         ("Configuring automatic restart service", configure_auto_restart),
+        ("Running setup maintenance", run_setup_maintenance),
         ("Checking if restart required", check_restart_required),
     ]
     if (

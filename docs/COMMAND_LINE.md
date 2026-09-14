@@ -1279,8 +1279,10 @@ requires the local `gh` CLI to be authenticated.
 ### Recurring Host Maintenance
 
 Security monitoring, package updates, ecosystem updates, restart checks, and
-cleanup are installed as systemd services and timers during setup. Inspect them
-with:
+cleanup are installed as systemd services and timers during setup. Each
+standard setup rerun also runs one bounded cleanup pass near the end, so a
+dormant host does not have to wait for the next scheduled trigger. Inspect the
+recurring jobs with:
 
 ```bash
 sudo systemctl list-timers --all '*auto-*' '*security-monitor*' '*cleanup-*'

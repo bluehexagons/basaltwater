@@ -138,6 +138,7 @@ def extend_control_plane_steps(config: SetupConfig, steps: list[tuple[str, StepF
 def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     """Return the standard final verification steps for built-in setup flows."""
 
+    from common.setup_maintenance import run_setup_maintenance
     from common.steps import (
         check_restart_required,
         configure_static_network,
@@ -148,6 +149,7 @@ def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     if config.static_ipv4 or config.static_ipv6:
         steps.append(("Staging static network configuration", configure_static_network))
     steps.append(("Ensuring python command alias", ensure_python_alias))
+    steps.append(("Running setup maintenance", run_setup_maintenance))
     steps.append(("Checking if restart required", check_restart_required))
     return steps
 
