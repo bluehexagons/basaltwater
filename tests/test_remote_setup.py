@@ -20,6 +20,13 @@ from lib.operation_state import OperationStateError, OperationStateStore
 from lib.remote_utils import set_dry_run
 
 
+def setUpModule():
+    # These remote Debian fixtures must not inherit the workstation's distro.
+    distro = patch("lib.cachyos.is_cachyos", return_value=False)
+    distro.start()
+    unittest.addModuleCleanup(distro.stop)
+
+
 class TestRemoteSetupArgsFile(unittest.TestCase):
     def tearDown(self):
         remote_setup._active_setup_operation = None
@@ -505,6 +512,8 @@ class TestAgentPayloadCleanup(unittest.TestCase):
             payload_dir = os.path.join(directory, "agent_payload")
             os.makedirs(payload_dir)
             with patch.object(remote_setup, "REMOTE_AGENT_PAYLOAD_DIR", payload_dir), \
+                 patch.object(remote_setup, "REMOTE_DEVICE_PAIRING_PAYLOAD_DIR", os.path.join(directory, "pairing")), \
+                 patch.object(remote_setup, "REMOTE_WEB_PANEL_PAYLOAD_DIR", os.path.join(directory, "panel")), \
                  patch.object(remote_setup, "_run_main", side_effect=RuntimeError("failed")):
                 with self.assertRaisesRegex(RuntimeError, "failed"):
                     remote_setup.main()

@@ -16,6 +16,13 @@ from lib import orchestrator_bootstrap
 import infra_tools
 
 
+def setUpModule():
+    # These fixtures exercise Debian bootstrap, regardless of the developer OS.
+    distro = patch("lib.cachyos.is_cachyos", return_value=False)
+    distro.start()
+    unittest.addModuleCleanup(distro.stop)
+
+
 class TestResolveBootstrapUser(unittest.TestCase):
     @patch.dict("lib.orchestrator_bootstrap.os.environ", {"SUDO_USER": "admin"}, clear=False)
     @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)
@@ -34,6 +41,11 @@ class TestResolveBootstrapUser(unittest.TestCase):
 
 
 class TestInstallSystemPackages(unittest.TestCase):
+    def setUp(self):
+        available = patch("lib.orchestrator_bootstrap.shutil.which", return_value="/usr/bin/apt-get")
+        available.start()
+        self.addCleanup(available.stop)
+
     @patch("lib.orchestrator_bootstrap.ensure_debian_package_sources")
     @patch("lib.orchestrator_bootstrap._run_apt_command")
     @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)
@@ -105,6 +117,11 @@ class TestInstallSystemPackages(unittest.TestCase):
 
 
 class TestRunOrchestratorBootstrap(unittest.TestCase):
+    def setUp(self):
+        cleanup = patch("lib.orchestrator_bootstrap.retire_legacy_tmpfiles_conf", return_value=False)
+        cleanup.start()
+        self.addCleanup(cleanup.stop)
+
     @patch("infra_tools.confirm_unsupported_environment", return_value=False)
     @patch("infra_tools.run_orchestrator_bootstrap")
     def test_bootstrap_refuses_unsupported_host_without_confirmation(

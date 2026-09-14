@@ -56,6 +56,10 @@ git diff --check
 
 Tests run on Debian and must not modify the local system. Use `--dry-run` for
 setup-plan validation; never run a test against a real target.
+When running those tests from a CachyOS workstation, fixtures must mock the
+target distribution, package-manager discovery, and account privileges. A
+Debian test must not accidentally enter the local CachyOS setup path or inspect
+and remove files from the developer's host.
 
 ## Repository maps
 
