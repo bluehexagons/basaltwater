@@ -758,9 +758,12 @@ The optional `HOST USER` form runs that update as the target VM user. Run
 installation. Remote doctor and update use the workspace `known_hosts` file
 with strict host-key checking, like other managed SSH operations.
 
-Rerunning setup skips an already available command. Use
-`infra-tools agent update` when you want to update the user-installed terminal
-agents. For example, when an operator is logged in as another account:
+Setup reruns still skip the official installer when a selected command is
+already available, then reconcile selected user-installed terminal agents
+through the verified updater. Executables owned outside the target user's home
+are left to their package manager. Use `infra-tools agent update` for an
+agent-only update outside setup or when you want to select tools explicitly.
+For example, when an operator is logged in as another account:
 
 ```bash
 sudo -u agent -H sh -lc \

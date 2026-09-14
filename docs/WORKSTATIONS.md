@@ -171,8 +171,9 @@ not a literal value in shell history. For a local Debian GNOME machine, use
 the [installer handoff](INSTALLATION.md#set-up-a-debian-gnome-desktop-control-plane), which
 converts graphical access to the shared XRDP session after console logout.
 
-Agent updates are deliberate rather than automatic; host APT, security,
-cleanup, and restart maintenance still runs as described in
+Agent updates run during an explicit setup rerun or deliberate agent command;
+there is no background agent-update timer. Host APT, security, cleanup, and
+restart maintenance still runs as described in
 [`MAINTENANCE.md`](./MAINTENANCE.md). The default restart policy may force a
 restart after seven days of active-session deferrals, so long-running hosts
 should use `--no-auto-restart --auto-restart-force-days 0` and manage pending

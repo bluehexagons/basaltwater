@@ -392,6 +392,10 @@ class TestOfficialAgentInstallers(unittest.TestCase):
         with (
             patch("common.agent_steps._user_home", return_value="/home/agent"),
             patch(
+                "common.agent_steps._tool_path",
+                side_effect=lambda _config, tool: f"/home/agent/.local/bin/{tool}",
+            ),
+            patch(
                 "common.agent_steps._run_as_login_user",
                 return_value=completed,
             ) as run_as_user,
@@ -427,6 +431,35 @@ class TestOfficialAgentInstallers(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "network unavailable"):
                 update_managed_agent_tools(config)
+
+    def test_setup_skips_redundant_update_for_newly_installed_tool(self):
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            agent_tools=["codex"],
+        )
+        config._freshly_installed_agent_tools = {"codex"}
+        with patch("common.agent_steps._run_as_login_user") as run_as_user:
+            update_managed_agent_tools(config)
+
+        run_as_user.assert_not_called()
+
+    def test_setup_leaves_externally_managed_tool_with_package_manager(self):
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            agent_tools=["codex"],
+        )
+        with (
+            patch("common.agent_steps._user_home", return_value="/home/agent"),
+            patch("common.agent_steps._tool_path", return_value="/usr/bin/codex"),
+            patch("common.agent_steps._run_as_login_user") as run_as_user,
+        ):
+            update_managed_agent_tools(config)
+
+        run_as_user.assert_not_called()
 
     def test_agent_vm_launcher_refuses_symlink_destination(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -44,6 +44,7 @@ BROWSER_AGENT_SKILL_NAMES = (
 )
 _SKILL_COMPATIBLE_AGENT_TOOLS = frozenset({"codex", "opencode"})
 _AGENT_CLI_MARKER = "# Managed by infra_tools agent setup"
+_FRESH_AGENT_TOOLS_ATTRIBUTE = "_freshly_installed_agent_tools"
 _GIT_IDENTITY_PAYLOAD_PATH = os.path.join("config", "git", "identity.json")
 _MAX_GIT_IDENTITY_PAYLOAD_BYTES = 16 * 1024
 
@@ -486,6 +487,32 @@ def install_git_lfs_for_agent_repositories(config: SetupConfig) -> None:
     print("  Git LFS installed and initialized")
 
 
+def _tool_path(
+    config: SetupConfig,
+    command: str,
+    extra_path: str = "",
+) -> str | None:
+    """Return the executable resolved by the target user's managed PATH."""
+
+    user_home = _user_home(config)
+    path_prefix = '$HOME/.local/bin:$HOME/.opencode/bin'
+    if extra_path:
+        path_prefix = f"{extra_path}:{path_prefix}"
+    result = _run_as_login_user(
+        config.username,
+        user_home,
+        f'export PATH="{path_prefix}:$PATH" && command -v {shlex.quote(command)}',
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return None
+    lines = (result.stdout or "").strip().splitlines()
+    if len(lines) != 1 or not os.path.isabs(lines[0]):
+        return None
+    return lines[0]
+
+
 def _tool_available(config: SetupConfig, command: str, extra_path: str = "") -> bool:
     user_home = _user_home(config)
     path_prefix = '$HOME/.local/bin:$HOME/.opencode/bin'
@@ -499,6 +526,16 @@ def _tool_available(config: SetupConfig, command: str, extra_path: str = "") -> 
         capture_output=True,
     )
     return result.returncode == 0
+
+
+def _path_within(path: str, parent: str) -> bool:
+    """Return whether a resolved path remains below the expected parent."""
+
+    try:
+        resolved_parent = os.path.realpath(parent)
+        return os.path.commonpath((os.path.realpath(path), resolved_parent)) == resolved_parent
+    except ValueError:
+        return False
 
 
 def _ensure_agent_shell_path(config: SetupConfig) -> None:
@@ -538,6 +575,11 @@ def _install_script_tool(
     if result.returncode != 0 or not _tool_available(config, command):
         raise RuntimeError(f"{label} installation failed")
 
+    freshly_installed = getattr(config, _FRESH_AGENT_TOOLS_ATTRIBUTE, None)
+    if not isinstance(freshly_installed, set):
+        freshly_installed = set()
+        setattr(config, _FRESH_AGENT_TOOLS_ATTRIBUTE, freshly_installed)
+    freshly_installed.add(command)
     print(f"  {label} installed")
 
 
@@ -617,11 +659,22 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
 
     from lib.agent_cli import AGENT_UPDATE_TOOLS
 
-    selected = [
+    requested = [
         tool
         for tool in AGENT_UPDATE_TOOLS
         if tool in config.selected_agent_tools()
     ]
+    user_home = _user_home(config)
+    freshly_installed = getattr(config, _FRESH_AGENT_TOOLS_ATTRIBUTE, set())
+    if not isinstance(freshly_installed, set):
+        freshly_installed = set()
+    skipped = [tool for tool in requested if tool in freshly_installed]
+    selected = [tool for tool in requested if tool not in freshly_installed]
+    if skipped:
+        print(
+            "  Skipping redundant agent update for tools installed in this setup: "
+            + ", ".join(skipped)
+        )
     if not selected:
         return
     if is_dry_run():
@@ -630,6 +683,21 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
             + ", ".join(selected)
         )
         return
+    externally_managed = [
+        tool
+        for tool in selected
+        if (path := _tool_path(config, tool)) is not None
+        and not _path_within(path, user_home)
+    ]
+    if externally_managed:
+        selected = [tool for tool in selected if tool not in externally_managed]
+        print(
+            "  Skipping agent updates for externally managed executables: "
+            + ", ".join(externally_managed)
+            + " (the owning package manager controls these tools)"
+        )
+    if not selected:
+        return
 
     validate_filesystem_path(AGENT_CLI_SOURCE, must_exist=True)
     if os.path.islink(AGENT_CLI_SOURCE) or not os.path.isfile(AGENT_CLI_SOURCE):
@@ -637,7 +705,6 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
             f"Agent management source is not a regular file: {AGENT_CLI_SOURCE}"
         )
 
-    user_home = _user_home(config)
     update_command = " ".join(
         (
             "/usr/bin/python3",
@@ -666,7 +733,13 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "update failed").strip()
         if len(detail) > 2000:
-            detail = "… " + detail[-1997:]
+            head_length = 1000
+            tail_length = 2000 - head_length
+            detail = (
+                detail[:head_length].rstrip()
+                + "\n... output omitted ...\n"
+                + detail[-tail_length:].lstrip()
+            )
         raise RuntimeError(
             f"Managed agent update failed ({', '.join(selected)}): {detail}"
         )
