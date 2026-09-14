@@ -299,6 +299,48 @@ Managed Git worktrees work locally through `infra-tools agent workspace`.
 Other VM-oriented agent diagnostics, authentication rotation, maintenance
 commands, desktop control, and gateway helpers are outside this profile.
 
+## Read-only desktop doctor
+
+Run from the existing desktop user's terminal, without sudo:
+
+```bash
+infra-tools local cachyos-doctor
+infra-tools local cachyos-doctor --json
+```
+
+This initial qualification tool reports native prerequisite package versions,
+owned Wayland/user-bus sockets, already-owned KWin/portal/accessibility bus
+names, and systemd user-unit state for PipeWire, WirePlumber, and optional T3.
+It does not launch applications, activate portal or accessibility services,
+open listeners, capture the desktop, or install dependencies. On other operating
+systems or when run as root it returns a deferred host result without desktop
+probes. It can inspect CachyOS VM prerequisites, but setup still requires bare
+metal and a VM does not qualify hardware behavior.
+
+Each subprocess uses a three-second deadline and a 16 KiB output limit with
+process-group cleanup on timeout or overflow. Only validated package versions
+and fixed status messages reach the report. Environment values, raw errors,
+journals, window contents, device names, and personal paths are omitted.
+The report includes the account name, package versions, and observation time;
+review that metadata before sharing it. The command writes no report file.
+
+JSON schema version 1 contains a `capabilities` array. Every record carries
+`name`, `state`, `reason`, `owner`, `session`, `origin`, `sensitivity`,
+`observed_at`, `last_verified`, `version`, `selected`, `interactive_required`,
+and its own `schema_version`. Selection and pending permission may be `null`
+(unknown); consumers must not interpret that as `false`. Prerequisites marked
+`available` prove only the observation described by their reason. They do not
+prove usable input, capture, rendering, provider authentication, or a functioning
+application. `last_verified` remains `null` until live qualification is recorded.
+Managed browser, AT-SPI, and portal control remain unselected and deferred.
+
+Exit code 0 means the diagnostic report was produced, including deferred
+results. Exit code 1 indicates that the account or diagnostic contract could
+not be resolved. There is no setup persistence or web-panel integration in
+this first milestone. The remaining implementation and release gates are in
+the [agentic desktop plan](plans/CACHYOS_AGENTIC_DESKTOP.md); record live results
+using its [qualification checklist](plans/CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md).
+
 ## Hardware acceptance checks
 
 Before treating a workstation as validated:

@@ -1,4 +1,4 @@
-"""Focused maintenance commands for the local Debian system."""
+"""Local Debian maintenance and read-only CachyOS qualification diagnostics."""
 
 from __future__ import annotations
 
@@ -112,13 +112,18 @@ def add_local_subparser(subparsers: argparse._SubParsersAction) -> None:
 
     parser = subparsers.add_parser(
         "local",
-        help="Maintain the local Debian system without a full setup",
+        help="Maintain local Debian or inspect CachyOS desktop prerequisites",
         description=(
             "Run focused local maintenance operations. Mutating commands require "
             "root; use --dry-run where available to inspect the action first."
         ),
     )
     commands = parser.add_subparsers(dest="local_command", help="Local maintenance commands")
+
+    doctor_parser = commands.add_parser(
+        "cachyos-doctor", help="Read-only CachyOS desktop qualification prerequisites",
+    )
+    doctor_parser.add_argument("--json", action="store_true", help="Emit versioned capability metadata")
 
     install_parser = commands.add_parser("install", help="Install one or more APT packages")
     install_parser.add_argument("packages", nargs="+", metavar="PACKAGE")
@@ -287,7 +292,10 @@ def _run_network_command(args: argparse.Namespace) -> int:
 def run_local_command(args: argparse.Namespace) -> int:
     """Dispatch a focused local maintenance command."""
 
+    from lib.cachyos_doctor import run_cachyos_doctor
+
     handlers = {
+        "cachyos-doctor": run_cachyos_doctor,
         "install": _run_install_command,
         "update": _run_update_command,
         "desktop": _run_desktop_command,
@@ -300,7 +308,7 @@ def run_local_command(args: argparse.Namespace) -> int:
     if handler is None:
         print(
             "Error: local command required "
-            "(install, update, desktop, browser, hostname, ip, network)"
+            "(install, update, desktop, browser, hostname, ip, network, cachyos-doctor)"
         )
         return 1
     try:

@@ -1,9 +1,10 @@
 # CachyOS agentic desktop capabilities
 
-Status: proposed, unscheduled P3 follow-on. This plan depends on the P0/P1
-reliability and state contracts, and on a live qualification pass on a real
-CachyOS Plasma session. It is a delivery plan for future work, not a request to
-enable desktop control on existing installations.
+Status: implementation started; live qualification pending. Portable contracts
+and read-only diagnostics can be implemented before qualification. Setup
+mutations and machine-use feature release remain gated on the P0 live pass.
+The development host is Debian, which cannot supply CachyOS/Plasma acceptance
+evidence. Do not mark this project complete from mocked or headless tests.
 
 ## Objective
 
@@ -25,9 +26,13 @@ system.
 
 - Keep the existing human user, KDE Plasma session, GPU/driver setup, network
   policy, firewall, login manager, and OS update policy under user control.
-- Install only current packages from enabled CachyOS/Arch repositories. Do not
+- Install system dependencies only from enabled CachyOS/Arch repositories. Do not
   add AUR, Flatpak, opaque vendor installers, or an automatic full-system
-  upgrade to this profile.
+  upgrade to this profile. Existing user-managed coding agents and T3 retain
+  their documented upstream installation paths. The selected Playwright runtime
+  is a separate, explicit exception: pin its package and matching upstream
+  Chromium revision under a private user-owned prefix. Never run Playwright's
+  Debian-oriented `install-deps` or `--with-deps` on CachyOS.
 - Keep machine-use features disabled unless selected during setup. No default
   screen capture, input injection, clipboard export, remote bind, credential
   copying, or unattended background agent.
@@ -55,15 +60,18 @@ The implementation must distinguish three layers:
 Pixel or uinput fallbacks are a final, separately reviewed option. `wtype` may
 be considered for text-only entry after KWin testing. `ydotool` should not be
 offered by default because its broad input path would weaken the session
- boundary. Existing X11 helpers can remain available only to the desktop
- profile that owns them.
+boundary. Existing X11 helpers can remain available only to the desktop
+profile that owns them.
 
 ## Delivery sequence
 
 ### P0 — compatibility and capability contract
 
 Before adding setup mutations, qualify a disposable CachyOS x86_64 KDE
-Wayland machine and record:
+Wayland machine and record the following. A VM may exercise diagnostic and
+session helpers, but the existing setup profile intentionally rejects VMs;
+full setup acceptance requires disposable bare metal. Do not bypass the
+hardware check or interpret VM results as GPU/hardware qualification.
 
 - Plasma, KWin, Wayland, PipeWire, portal backend, AT-SPI, Python GObject, and
   browser package versions.
@@ -82,6 +90,14 @@ panel. Each result should include a capability name, `available`, `deferred`, or
 `vm-local`, `portal`, or `t3-preview`, whether interaction is required, and a
 sensitivity marker. Keep this separate from package installation success so a
 healthy agent update is not reported as an unhealthy desktop.
+
+Record observation time separately from successful live verification. A
+package or bus-name check proves only that prerequisite, never usable desktop
+control. Unknown selection and permission state must remain unknown rather
+than being inferred from installed packages. Query only already-owned bus
+names; do not activate portal or accessibility services as a doctor side effect.
+Do not publish environment values, raw journal output, window titles, device
+names, or personal mount paths in the default support record.
 
 **Gate:** a live test must show that probing the machine does not alter the
 desktop, start a remote listener, or capture data. Unsupported capabilities
@@ -117,7 +133,8 @@ matching and artifact constraints that this work must preserve.
 
 **Acceptance:** a local test page can be opened, interacted with, and captured
 from a fresh context; setup reruns are idempotent; an interrupted update leaves
-the old pair usable; credentials and cookies never enter managed paths; and a
+the old pair usable; personal credentials and cookies are never imported,
+transient task profiles are private and removed after the task; and a
 failed browser launch identifies the missing dependency or session condition.
 
 ### P1 — read-only desktop and host observability
@@ -138,7 +155,9 @@ wrappers. Return redacted, size-limited records suitable for the web panel and
 support snapshots. Observability must not imply control or silently grant
 additional permissions.
 
-For screenshots, qualify the
+For single screenshots, qualify the
+[Screenshot portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Screenshot.html).
+For continuous capture, qualify the
 [XDG ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)
 with the KDE backend and PipeWire. The first capture should require the normal
 user consent flow; saved images must be private, bounded, and removable.
@@ -168,6 +187,11 @@ stale-reference rejection, password/secret redaction, and a clear
 `interactive_required` result when the user must decide. The
 [AT-SPI2 API](https://docs.gtk.org/atspi2/) is the source of truth for exposed
 roles, actions, text, and state.
+
+AT-SPI access is not a portal permission boundary: a same-user process may
+observe other accessible applications. Enforce task/window scope in the helper,
+keep it opt-in, and disclose this limitation. Do not claim that a managed
+helper can sandbox arbitrary code already executing as the desktop user.
 
 **Acceptance:** a controlled editor workflow can create and save a file; a
 dialog wait survives a slow application; an element from another window cannot
@@ -249,12 +273,21 @@ Start with narrow, explicit options rather than a broad `--agentic` switch:
 - existing application bundle flags and `--web-interface t3code` remain
   independent.
 
-Persist selected capabilities and versions in the existing setup state with
-schema validation and provenance. Add doctor fields for selected, available,
-  deferred, failed, and last-verified. Every command and web-panel record
-  should carry the capability origin, owning user, sensitivity, and whether a
-  human interaction is pending. Keep error text actionable and avoid treating
-  optional capability failures as failures of unrelated agent updates.
+The CachyOS profile currently bypasses controller-side setup persistence.
+Introduce a private, versioned user-local selection record at the target-side
+setup boundary; do not assume the generic saved-host cache exists. Separate
+requested selection from the last successful reconciliation and preserve the
+last known-good runtime on failure. Validate schema, ownership, and symlinks;
+serialize no credentials. Omission stops management without deleting data.
+
+Add doctor fields for selection (nullable until known), state, observation
+time, and last successful live verification. Every command and web-panel
+record should carry the capability origin, owning user, sensitivity, and
+whether human interaction is pending (nullable when unknown). Keep error text
+actionable and avoid treating optional capability failures as failures of
+unrelated agent updates. Initially expose read-only diagnostics through
+`infra-tools local cachyos-doctor --json`; this command must also explain an
+unsupported host without probing its unrelated desktop.
 
 ## Security and privacy requirements
 
@@ -318,14 +351,30 @@ portal/AT-SPI features pass their acceptance cases; updates recover cleanly;
 and the T3 Code desktop app remains an optional client rather than a second
 desktop-control implementation.
 
+## Implementation record
+
+- Implemented the versioned capability metadata contract and
+  `infra-tools local cachyos-doctor [--json]`, with fixed read-only probes,
+  bounded streaming, local bus addressing, and no service activation.
+- Added mocked contract, parser, privacy, ownership, and probe-bound tests,
+  operator documentation, and workstation skill guidance.
+- Live P0 qualification is pending; no CachyOS machine has been supplied.
+  Use the [qualification checklist](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
+  to record evidence. No setup mutation or machine-use flag has been enabled.
+- Browser runtime/isolation, selection persistence, full host/application
+  diagnostics, AT-SPI operations, portal leases/input/capture, application
+  workflows, recovery, and web-panel integration remain unimplemented. This
+  milestone is the P0 portable foundation, not completion of P0 or the project.
+
 ## Open decisions and issue slices
 
 Resolve these in order and record the result in the relevant issue or plan:
 
-1. Pinned Playwright-managed Chromium versus a distro browser with an explicit
-   compatibility check.
+1. Use pinned Playwright-managed Chromium as the explicit user-runtime
+   exception above; qualify CachyOS dependencies before enabling setup.
 2. Portal permission lifetime and whether restored permission tokens are ever
-   enabled by default.
+   enabled by default. Default to no restored permission tokens; consent and
+   a fresh lease are required for each control session.
 3. The minimum reliable GTK/Qt application matrix for AT-SPI.
 4. Whether any uinput fallback can meet the security boundary; default answer is
    no until demonstrated otherwise.

@@ -32,7 +32,13 @@ own test commands. For GUI-only validation, launch the application in the user's
 desktop session and arrange human testing. Do not assume XRDP, X11 automation,
 a managed gateway, remote pairing, or VM maintenance services exist here.
 
-Prefer read-only diagnostics such as `command -v`, tool version checks,
+Start desktop prerequisite diagnosis with `infra-tools local cachyos-doctor --json`
+as the desktop user. It does not activate services or capture content.
+An available package, socket, or bus owner is only a prerequisite observation;
+it does not verify automation or permission. Treat null selection/permission
+fields as unknown and keep live qualification separate from observation time.
+
+Additional read-only diagnostics include `command -v`, tool version checks,
 `pacman -Q`, and user service logs. Graphics diagnostics may use `vulkaninfo`
 or `glxinfo` when installed; a successful CLI check does not prove GPU rendering.
 An agent running as this account has the account's access to personal files.
