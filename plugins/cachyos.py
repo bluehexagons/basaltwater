@@ -43,7 +43,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     validate_cachyos_config(config)
     steps = [
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
-        ("Installing missing coding agents for the current user", install_cachyos_agents),
+        ("Installing or updating coding agents for the current user", install_cachyos_agents),
         ("Preparing the local coding workspace", prepare_cachyos_workspace),
         ("Installing CachyOS workstation skills", install_cachyos_skills),
     ]

@@ -616,6 +616,14 @@ def _agent_update_environment(home: str, owner: pwd.struct_passwd) -> dict[str, 
             "XDG_STATE_HOME": os.path.join(home, ".local", "state"),
             "CODEX_HOME": os.path.join(home, ".codex"),
             "NVM_DIR": os.path.join(home, ".nvm"),
+            # Setup and scheduled refreshes must never wait for a vendor
+            # installer's optional confirmation prompt.
+            "CODEX_NON_INTERACTIVE": "1",
+            "CI": "1",
+            "NONINTERACTIVE": "1",
+            "NON_INTERACTIVE": "1",
+            "npm_config_yes": "true",
+            "NPM_CONFIG_YES": "true",
         }
     )
     return environment
@@ -705,6 +713,7 @@ def _invoke_agent_update(tool: str, path: str, home: str) -> JSONDict:
             timeout=_UPDATE_TIMEOUT_SECONDS,
             env=environment,
             cwd=home,
+            input_data="",
         )
         return {
             "returncode": result.returncode,

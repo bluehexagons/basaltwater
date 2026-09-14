@@ -1299,7 +1299,11 @@ class TestAgentUpdate(unittest.TestCase):
         self.assertNotIn('/home/loren', environment['PATH'])
         self.assertNotIn('OLDPWD', environment)
         self.assertNotIn('NPM_CONFIG_PREFIX', environment)
+        self.assertEqual(environment['CODEX_NON_INTERACTIVE'], '1')
+        self.assertEqual(environment['NON_INTERACTIVE'], '1')
+        self.assertEqual(environment['npm_config_yes'], 'true')
         self.assertEqual(runner.call_args.kwargs['cwd'], home)
+        self.assertEqual(runner.call_args.kwargs['input_data'], '')
 
     def test_native_updater_timeout_reports_bounded_failure(self):
         with tempfile.TemporaryDirectory() as home:

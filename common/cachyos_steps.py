@@ -68,7 +68,22 @@ def _tool_path(home: Path) -> str:
 
 
 def _user_run(command: list[str], home: Path, **kwargs: Any) -> CompletedProcess[str]:
-    return run(["env", "PATH=" + _tool_path(home), "CODEX_NON_INTERACTIVE=1", *command], **kwargs)
+    kwargs.setdefault("input_data", "")
+    return run(
+        [
+            "env",
+            "PATH=" + _tool_path(home),
+            "CODEX_NON_INTERACTIVE=1",
+            "CI=1",
+            "NONINTERACTIVE=1",
+            "NON_INTERACTIVE=1",
+            "GIT_TERMINAL_PROMPT=0",
+            "npm_config_yes=true",
+            "NPM_CONFIG_YES=true",
+            *command,
+        ],
+        **kwargs,
+    )
 
 
 def _directory(path: Path) -> None:
@@ -265,7 +280,9 @@ def install_cachyos_skills(config: SetupConfig) -> None:
 
 def _unit_quote(value: str) -> str:
     # systemd expands percent specifiers even inside double quotes.
-    return json.dumps(value.replace("%", "%%"))
+    # Keep UTF-8 characters literal; systemd's unit parser does not implement
+    # JSON's ``\uXXXX`` escape form.
+    return json.dumps(value.replace("%", "%%"), ensure_ascii=False)
 
 
 def _unit_path(value: str) -> str:

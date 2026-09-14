@@ -199,6 +199,13 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.install_cachyos_agents(self.config())
         run.assert_not_called()
 
+    def test_user_commands_close_stdin_and_disable_prompts(self):
+        with patch.object(steps, "run") as run:
+            steps._user_run(["git", "--version"], Path("/home/human"))
+        command = run.call_args.args[0]
+        self.assertIn("GIT_TERMINAL_PROMPT=0", command)
+        self.assertEqual(run.call_args.kwargs["input_data"], "")
+
     def test_user_managed_agents_are_updated(self):
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(
@@ -350,6 +357,12 @@ class CachyOSSetupTests(unittest.TestCase):
                 steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
             self.assertEqual(opener.call_args.args[0].proxies, {})
             self.assertEqual(opener.return_value.open.call_count, 6)
+
+    def test_t3_unit_preserves_unicode_environment_values(self):
+        self.assertEqual(
+            steps._unit_quote("PATH=/home/é/.local/bin"),
+            '"PATH=/home/é/.local/bin"',
+        )
 
     def test_t3_preserves_an_existing_unmanaged_unit(self):
         with tempfile.TemporaryDirectory() as home:

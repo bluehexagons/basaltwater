@@ -41,8 +41,11 @@ installing Python aliases. Open a new terminal after installation. Other shells
 need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
 The default tools are Git, ripgrep, native build prerequisites, GitHub CLI, and
-Codex. Agent CLIs use their upstream user installers. Existing user-managed
-executables are refreshed on rerun; system-managed executables are retained.
+Codex. Agent CLIs use their upstream user installers. Initial agent installs,
+rerun refreshes, runtime installs, and repository checks run without waiting for
+terminal input; missing package installation is the only setup step that may
+prompt, for the desktop user's sudo password. Existing user-managed executables
+are refreshed on rerun; system-managed executables are retained.
 No account is created; passwords, group membership,
 sudo policy, provider settings, credentials, and Git identity remain yours.
 Run the selected provider's local login when needed. For example:
