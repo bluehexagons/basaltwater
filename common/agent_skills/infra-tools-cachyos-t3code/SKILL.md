@@ -53,9 +53,22 @@ to install a second upstream `t3code.service`. Use `connect unlink` or
 `connect logout` to disable it. The service follows the user session unless the
 user deliberately enables systemd lingering.
 
-Rerunning setup retains the installed runtime and starts the service. An explicit
-configuration change may restart it; check for active work first. To stop it
-persistently, use `systemctl --user disable --now infra-tools-cachyos-t3.service`.
+Rerunning setup with T3 selected stages the latest runtime, validates its CLI,
+native PTY shell, and unit, then restarts the service. Finish active work first,
+and retain the chosen host, port, and workspace options on the command. Use
+setup for updates; direct npm installs into the managed root bypass staging.
+The stable `bin/t3` link remains the entry point for pairing and Connect.
+
+Failed activation restores the previous runtime and unit, but does not reverse
+application database migrations. Incomplete recovery retains private snapshots
+in the runtime root's `.activation` directory; resolve the service error and
+rerun setup to retry recovery. Preserve that directory until recovery completes.
+The current and previous managed releases are retained after successful updates.
+HTTP UI reachability is not proof of a working provider thread; unknown HTTP
+routes can return the frontend HTML. Test a thread and terminal in the client.
+
+To stop the service persistently, use
+`systemctl --user disable --now infra-tools-cachyos-t3.service`.
 Omitting the web-interface flag on a later setup does not uninstall the service.
 
 This profile does not install the VM gateway, device-pairing helpers, managed

@@ -127,9 +127,13 @@ infra-tools setup agent_cachyos localhost --web-interface t3code
 systemctl --user status infra-tools-cachyos-t3.service
 ```
 
-The runtime is under `~/.local/share/infra-tools/cachyos-t3`, and the unit is
-`~/.config/systemd/user/infra-tools-cachyos-t3.service`. Setup checks HTTP
-readiness, but provider login and a real coding thread still need verification.
+The runtime is under `~/.local/share/infra-tools/cachyos-t3/releases`, and the
+unit is `~/.config/systemd/user/infra-tools-cachyos-t3.service`. The stable
+`~/.local/share/infra-tools/cachyos-t3/bin/t3` link selects the current release
+for pairing and Connect commands. Setup validates the CLI, a disposable native
+PTY shell, the generated unit, and HTTP UI reachability. Provider login and a
+real coding thread still need verification. HTTP 200 alone is not backend
+health: an unknown route such as `/api/health` can return the frontend HTML.
 If port 3773 is busy, rerun with another port from 1024 through 65535.
 
 ### T3 Connect
@@ -204,7 +208,8 @@ systemd-analyze verify "$HOME/.config/systemd/user/infra-tools-cachyos-t3.servic
 ```
 
 The service follows the user session; lingering is not enabled. An existing
-upstream `t3code.service` is stopped rather than adopted. To stop this managed
+upstream `t3code.service` is refused without being stopped or adopted. Manage
+that unit with its original installer before selecting this service. To stop this managed
 service persistently:
 
 ```bash
@@ -213,15 +218,35 @@ systemctl --user disable --now infra-tools-cachyos-t3.service
 
 Use `journalctl --user -u infra-tools-cachyos-t3.service` for startup errors.
 The generic VM T3 pairing and update commands do not manage this unit. For a
-deliberate runtime update, stop active work, stop the unit, update the dedicated
-prefix as yourself, and start it again:
+deliberate runtime update, finish active work and rerun setup as yourself:
 
 ```bash
-systemctl --user stop infra-tools-cachyos-t3.service
-npm install --global --prefix "$HOME/.local/share/infra-tools/cachyos-t3" \
-  --allow-scripts=node-pty,msgpackr-extract t3@latest
-systemctl --user start infra-tools-cachyos-t3.service
+infra-tools setup agent_cachyos localhost --web-interface t3code
 ```
+
+Keep your selected host, port, and workspace options when rerunning. Each T3
+setup stages `t3@latest` in a separate release directory, checks its CLI and
+native terminal dependency, then validates the unit before stopping the old
+service. Activation switches the CLI link and unit and starts the new runtime.
+Even an unchanged T3 version is rebuilt and restarted so a Node upgrade does
+not leave an incompatible native addon. Do not use `npm install --prefix` on
+the managed root; it bypasses staging and can replace the stable CLI link.
+
+Installation/validation failures leave the old service untouched. Activation
+failures restore the previous runtime, unit permissions, and enabled/running
+state. An interrupted activation leaves private recovery snapshots in
+`~/.local/share/infra-tools/cachyos-t3/.activation`; the next setup retries
+recovery before installing. If recovery is incomplete, retain that directory
+and both runtimes while resolving the reported service error. Edits made to the
+unit or CLI link outside setup are preserved for manual inspection.
+
+Rollback covers runtime and service configuration, **not T3 database migrations**.
+Back up application data before updates that may change its schema. Successful
+updates retain the current and previous managed release, prune older marked
+releases, and leave legacy npm files and unmarked directories alone. New files
+created by the service use `UMask=0077`; existing personal data permissions are
+not changed. Missing optional-provider warnings (for example, Claude on a
+Codex-only installation) do not by themselves mean the selected provider failed.
 
 See the upstream [T3 installation guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md)
 and [remote-access guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md)
@@ -241,7 +266,7 @@ for current provider, client, and T3 Connect requirements.
   the cleanup error and rerun setup. This profile has no automatic cache retry.
 - Reruns retain installed software, credentials, and repositories. Omitting an
   option does not uninstall it; existing repositories are never pulled, reset,
-  or recursively chowned. A T3 configuration change can restart its service.
+  or recursively chowned. Selecting T3 on a rerun updates and restarts its service.
 - `infra-tools upgrade` updates infra-tools itself. If a CachyOS mirror or DNS
   lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
   workflow and rerun.
@@ -283,6 +308,7 @@ results separately.
 
 For contributors, `plugins/cachyos.py` owns composition, `lib/cachyos.py` owns
 the local support boundary, and `common/cachyos_steps.py` owns target-side
-operations. The CLI routes directly to the CachyOS runner rather than the SSH
+operations; `common/cachyos_t3.py` owns staged T3 activation and recovery. The
+CLI routes directly to the CachyOS runner rather than the SSH
 host lifecycle. Keep additions explicitly allowed and independently tested;
 mock pacman, sudo, downloads, service operations, and hardware probes.

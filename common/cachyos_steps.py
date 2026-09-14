@@ -6,17 +6,13 @@ system upgrades, account policy, desktop configuration, or update timers.
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import pwd
 import shlex
 import shutil
 from subprocess import CompletedProcess
-import time
 from typing import Any
-import urllib.error
-import urllib.request
 
 from common.agent_steps import (
     BASE_AGENT_SKILL_NAMES, BROWSER_AGENT_SKILL_NAMES, install_managed_agent_skills,
@@ -313,134 +309,10 @@ def install_cachyos_skills(config: SetupConfig) -> None:
     )
 
 
-def _unit_quote(value: str) -> str:
-    # systemd expands percent specifiers even inside double quotes.
-    # Keep UTF-8 characters literal; systemd's unit parser does not implement
-    # JSON's ``\uXXXX`` escape form.
-    return json.dumps(value.replace("%", "%%"), ensure_ascii=False)
-
-
-def _unit_path(value: str) -> str:
-    """Escape a path value for a systemd setting such as WorkingDirectory."""
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise ValueError("T3 unit path contains a control character")
-    return (
-        value.replace("\\", "\\x5c")
-        .replace("%", "%%")
-        .replace(" ", "\\x20")
-    )
-
-
-def _t3_url_host(host: str) -> str:
-    return f"[{host}]" if ":" in host and not host.startswith("[") else host
-
-
 def install_cachyos_t3(config: SetupConfig) -> None:
-    home = _home(config)
-    version = _user_run(["node", "--version"], home, capture_output=True).stdout.strip()
-    try:
-        major, minor, _patch = (int(part) for part in version.lstrip("v").split("."))
-    except ValueError as exc:
-        raise RuntimeError(f"Cannot determine Node version: {version}") from exc
-    if not ((major == 22 and minor >= 16) or (major == 23 and minor >= 11)
-            or (major == 24 and minor >= 10) or major > 24):
-        raise RuntimeError("T3 requires Node 22.16+, 23.11+, or 24.10+; update your Node runtime and rerun")
-    prefix = home / ".local/share/infra-tools/cachyos-t3"
-    binary = prefix / "bin/t3"
-    unit = home / ".config/systemd/user" / T3_SERVICE
-    if (home / ".config/systemd/user/t3code.service").exists():
-        raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
-    # Refuse unrelated unit files before installing a runtime.
-    if unit.exists() and (_MARKER not in unit.read_text() or unit.is_symlink()):
-        raise ValueError(f"Refusing to overwrite unmanaged file: {unit}")
-    if binary.is_symlink():
-        resolved_binary = Path(os.path.realpath(binary))
-        try:
-            managed_binary = os.path.commonpath(
-                (str(resolved_binary), str(prefix.resolve()))
-            ) == str(prefix.resolve())
-        except ValueError:
-            managed_binary = False
-        if not managed_binary or not resolved_binary.is_file():
-            raise ValueError(f"Refusing unsafe T3 runtime executable: {binary}")
-    elif binary.exists() and not binary.is_file():
-        raise ValueError(f"Refusing unsafe T3 runtime executable: {binary}")
-    _directory(prefix)
-    previous_version: str | None = None
-    if binary.is_file():
-        previous_check = _user_run(
-            [str(binary), "--version"],
-            home,
-            capture_output=True,
-            check=False,
-        )
-        if previous_check.returncode == 0:
-            previous_output = (
-                previous_check.stdout or previous_check.stderr or ""
-            ).strip()
-            if previous_output:
-                previous_version = previous_output.splitlines()[0]
-    if not binary.is_file():
-        _user_run(["npm", "install", "--global", "--prefix", str(prefix),
-                   "--allow-scripts=node-pty,msgpackr-extract", "t3@latest"], home)
-    else:
-        _user_run(
-            ["npm", "install", "--global", "--prefix", str(prefix),
-             "--allow-scripts=node-pty,msgpackr-extract", "t3@latest"],
-            home,
-        )
-    current_check = _user_run(
-        [str(binary), "--version"], home, capture_output=True
-    )
-    current_output = (current_check.stdout or current_check.stderr or "").strip()
-    if not current_output:
-        raise RuntimeError("T3 runtime did not report a version")
-    updated = previous_version is None or current_output.splitlines()[0] != previous_version
-    workspace = str(Path(config.agent_workspace) if config.agent_workspace else home / "repos")
-    host = config.web_interface_host or "127.0.0.1"
-    content = (
-        f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
-        "\n[Service]\nType=simple\n"
-        f"WorkingDirectory={_unit_path(workspace)}\n"
-        f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
-        f"ExecStart={_unit_quote(str(binary))} serve --host {host} "
-        f"--port {config.web_interface_port} --no-browser\n"
-        "Restart=on-failure\nRestartSec=5\n"
-        "\n[Install]\nWantedBy=default.target\n"
-    )
-    changed = _write_managed(unit, content)
-    run(["systemctl", "--user", "daemon-reload"])
-    run(["systemctl", "--user", "enable", T3_SERVICE])
-    run(
-        [
-            "systemctl",
-            "--user",
-            "restart" if changed or updated else "start",
-            T3_SERVICE,
-        ]
-    )
-    url = f"http://{_t3_url_host(host)}:{config.web_interface_port}/"
-    # A desktop may export proxy settings. Probe this machine directly.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    stable_checks = 0
-    for _attempt in range(20):
-        active = run(["systemctl", "--user", "is-active", "--quiet", T3_SERVICE], check=False)
-        if active.returncode == 0:
-            try:
-                with opener.open(url, timeout=2) as response:
-                    if response.status == 200 and response.geturl() == url:
-                        stable_checks += 1
-                        if stable_checks >= 3:
-                            print(f"  T3 Code ready: {url}")
-                            return
-                    else:
-                        stable_checks = 0
-            except (OSError, urllib.error.URLError):
-                stable_checks = 0
-        else:
-            stable_checks = 0
-        time.sleep(1)
-    raise RuntimeError(f"T3 failed readiness; inspect journalctl --user -u {T3_SERVICE}")
+    from common.cachyos_t3 import install
+
+    install(config)
 
 
 def report_cachyos_readiness(config: SetupConfig) -> None:
