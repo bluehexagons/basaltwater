@@ -116,9 +116,12 @@ def install_missing_packages(packages: list[str]) -> None:
     result = run(command, check=False, interactive=os.geteuid() != 0)
     if result.returncode:
         raise RuntimeError(
-            "Package installation failed. Resolve the pacman error, update CachyOS "
-            "through its normal full-system update workflow if needed, then rerun setup. "
-            "infra-tools does not refresh repositories or upgrade the OS."
+            "Package installation failed. If pacman reported 'Could not resolve host', "
+            "check DNS and access to the configured mirror (for example, with "
+            "`resolvectl query archlinux.cachyos.org`). Resolve the pacman error, "
+            "update CachyOS through its normal full-system update workflow if needed, "
+            "then rerun setup. infra-tools does not change DNS, refresh repositories, "
+            "or upgrade the OS."
         )
 
 

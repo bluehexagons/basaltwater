@@ -109,7 +109,7 @@ class CachyOSSetupTests(unittest.TestCase):
 
     def test_package_failure_stops_with_recovery_instructions(self):
         with patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 1)), \
-             self.assertRaisesRegex(RuntimeError, "update CachyOS"):
+             self.assertRaisesRegex(RuntimeError, "Could not resolve host.*update CachyOS"):
             steps.install_missing_packages(["git"])
 
     def test_package_input_validated_before_commands(self):

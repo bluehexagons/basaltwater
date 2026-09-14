@@ -103,6 +103,21 @@ Dependency resolution can still install or change dependencies.
 If repositories are stale or dependencies conflict, setup stops; resolve the
 error through CachyOS's normal update workflow and rerun.
 
+Package downloads use the mirrors already configured on the workstation. A
+malware-filtering DNS service can incorrectly block a package mirror and cause
+pacman messages such as `Could not resolve host: archlinux.cachyos.org`. Check
+the configured resolver and mirror before rerunning, for example:
+
+```bash
+resolvectl query archlinux.cachyos.org
+getent hosts archlinux.cachyos.org
+```
+
+Use a resolver that permits the trusted CachyOS/Arch mirrors or allowlist the
+mirror in the DNS policy. Setup does not replace DNS or rewrite pacman mirror
+lists; keep the normal full-system update and mirror maintenance in CachyOS's
+own workflow.
+
 Do not use `pacman -Sy` as a repair step: Arch-based systems do not support
 partial upgrades. See [CachyOS updates](https://wiki.cachyos.org/configuration/post_install_setup/)
 and [Arch system maintenance](https://wiki.archlinux.org/title/System_maintenance).
