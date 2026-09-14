@@ -52,7 +52,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
     "agent": (
         "tests/test_agent_*.py",
         "tests/test_browser_automation.py",
-        "tests/test_cachyos_doctor.py",
+        "tests/test_cachyos_*.py",
         "tests/test_device_pairing.py",
         "tests/test_git_credentials.py",
         "tests/test_t3_agent_skills.py",

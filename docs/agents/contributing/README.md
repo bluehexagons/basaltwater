@@ -60,6 +60,9 @@ When running those tests from a CachyOS workstation, fixtures must mock the
 target distribution, package-manager discovery, and account privileges. A
 Debian test must not accidentally enter the local CachyOS setup path or inspect
 and remove files from the developer's host.
+Register new test modules in the appropriate `TEST_SUITE_PATTERNS` entry in
+`run_tests.py`; the default suite checks that every discovered module belongs
+to a domain suite.
 
 ## Repository maps
 
