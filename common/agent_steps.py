@@ -7,6 +7,7 @@ import os
 import pwd
 import shlex
 import shutil
+import sys
 import tempfile
 
 from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
@@ -634,6 +635,43 @@ def configure_codex_auth_maintenance(config: SetupConfig) -> None:
     )
     if not configured:
         raise RuntimeError("Codex authentication maintenance timer failed verification")
+
+
+def run_codex_auth_maintenance(config: SetupConfig) -> None:
+    """Run one best-effort Codex authentication check during setup."""
+
+    if is_dry_run():
+        print("  [DRY-RUN] Would check Codex authentication freshness")
+        return
+
+    maintenance_script = os.path.join(
+        os.path.dirname(__file__),
+        "service_tools",
+        "codex_auth_maintenance.py",
+    )
+    validate_filesystem_path(maintenance_script, must_exist=True)
+    if os.path.islink(maintenance_script) or not os.path.isfile(maintenance_script):
+        raise RuntimeError(
+            f"Codex authentication maintenance source is not a regular file: "
+            f"{maintenance_script}"
+        )
+
+    user_home = _user_home(config)
+    result = _run_as_login_user(
+        config.username,
+        user_home,
+        shlex.join(["/usr/bin/python3", maintenance_script]),
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        print("  ✓ Codex authentication freshness check completed")
+    else:
+        print(
+            "  ⚠ Codex authentication remains unhealthy; the agent readiness "
+            "check will report the required follow-up",
+            file=sys.stderr,
+        )
 
 
 def install_claude(config: SetupConfig) -> None:

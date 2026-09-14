@@ -2249,6 +2249,71 @@ def _record_post_update_readiness(tools: StrList) -> JSONDict:
     )
 
 
+def _readiness_failure_details(record: JSONDict) -> list[str]:
+    """Return safe, actionable details for an unhealthy readiness record."""
+
+    details: list[str] = []
+    tools = record.get("tools")
+    if isinstance(tools, list):
+        for tool_record in tools:
+            if not isinstance(tool_record, dict):
+                continue
+            tool = tool_record.get("tool")
+            if not isinstance(tool, str):
+                continue
+            if tool_record.get("installed") is not True:
+                details.append(f"{tool}: executable is not available")
+                continue
+            if tool_record.get("credential_healthy") is False:
+                credential_status = tool_record.get("credential_status")
+                status = (
+                    credential_status.get("status")
+                    if isinstance(credential_status, dict)
+                    else None
+                )
+                details.append(
+                    f"{tool}: credentials need attention"
+                    + (f" ({status})" if isinstance(status, str) else "")
+                )
+
+    capabilities = record.get("capabilities")
+    if isinstance(capabilities, list):
+        for capability_record in capabilities:
+            if not isinstance(capability_record, dict):
+                continue
+            if capability_record.get("healthy") is True:
+                continue
+            capability = capability_record.get("capability")
+            if not isinstance(capability, str):
+                continue
+            checks = capability_record.get("checks")
+            failed_checks = (
+                [
+                    check
+                    for check, healthy in checks.items()
+                    if isinstance(check, str) and healthy is not True
+                ]
+                if isinstance(checks, dict)
+                else []
+            )
+            if failed_checks:
+                details.append(
+                    f"{capability}: failed checks: {', '.join(failed_checks)}"
+                )
+                continue
+            issues = capability_record.get("issues")
+            safe_issues = (
+                [issue for issue in issues if isinstance(issue, str)]
+                if isinstance(issues, list)
+                else []
+            )
+            details.append(
+                f"{capability}: "
+                + ("issues: " + ", ".join(safe_issues) if safe_issues else "unhealthy")
+            )
+    return details
+
+
 def run_agent_command(args: argparse.Namespace) -> int:
     """Run a local or remote agent-tool command."""
     if args.agent_command == "maintenance":
@@ -2388,6 +2453,9 @@ def run_agent_command(args: argparse.Namespace) -> int:
                     else "UNHEALTHY"
                 )
                 print(f"  {'✓' if status == 'healthy' else '✗'} post-update readiness: {status}")
+                if status != "healthy":
+                    for detail in _readiness_failure_details(readiness_record):
+                        print(f"      {detail}")
         if readiness_error is not None:
             print(
                 f"Error: post-update readiness could not be recorded: {readiness_error}",

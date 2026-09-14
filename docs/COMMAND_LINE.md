@@ -763,6 +763,9 @@ already available, then reconcile selected user-installed terminal agents
 through the verified updater. Executables owned outside the target user's home
 are left to their package manager. Use `infra-tools agent update` for an
 agent-only update outside setup or when you want to select tools explicitly.
+Codex-enabled setup reruns also perform one bounded authentication freshness
+check before the updater, giving renewable credentials a chance to recover on
+an infrequently started VM.
 For example, when an operator is logged in as another account:
 
 ```bash

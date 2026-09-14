@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
 import textwrap
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from common.agent_steps import configure_codex_auth_maintenance
+from common.agent_steps import (
+    configure_codex_auth_maintenance,
+    run_codex_auth_maintenance,
+)
 from common.service_tools import codex_auth_maintenance
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
@@ -240,6 +245,58 @@ class TestCodexAuthMaintenanceSetup(unittest.TestCase):
         self.assertEqual(arguments["writable_paths"], ("/home/agent/.codex",))
         self.assertEqual(arguments["timeout"], "2min")
 
+    def test_setup_runs_one_auth_freshness_check_as_target_user(self) -> None:
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            install_codex=True,
+        )
+        result = SimpleNamespace(
+            returncode=0,
+            stdout="Codex authentication is current\n",
+            stderr="",
+        )
+        with (
+            patch(
+                "common.agent_steps._user_home",
+                return_value="/home/agent",
+            ),
+            patch(
+                "common.agent_steps._run_as_login_user",
+                return_value=result,
+            ) as run_as_user,
+            redirect_stdout(io.StringIO()),
+        ):
+            run_codex_auth_maintenance(config)
+
+        run_as_user.assert_called_once()
+        self.assertEqual(run_as_user.call_args.args[:2], ("agent", "/home/agent"))
+        self.assertIn("codex_auth_maintenance.py", run_as_user.call_args.args[2])
+        self.assertTrue(run_as_user.call_args.kwargs["capture_output"])
+
+    def test_setup_auth_check_warns_but_does_not_mask_update_failure(self) -> None:
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            install_codex=True,
+        )
+        result = SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="Codex authentication refresh failed\n",
+        )
+        error_output = io.StringIO()
+        with (
+            patch("common.agent_steps._user_home", return_value="/home/agent"),
+            patch("common.agent_steps._run_as_login_user", return_value=result),
+            redirect_stderr(error_output),
+        ):
+            run_codex_auth_maintenance(config)
+
+        self.assertIn("remains unhealthy", error_output.getvalue())
+
     def test_agent_setup_places_maintenance_after_auth_payload(self) -> None:
         config = SetupConfig(
             host="host",
@@ -261,6 +318,13 @@ class TestCodexAuthMaintenanceSetup(unittest.TestCase):
         self.assertLess(
             step_names.index("Configuring Codex security policy"),
             step_names.index(maintenance),
+        )
+        freshness = "Checking Codex authentication freshness"
+        self.assertIn(freshness, step_names)
+        self.assertLess(step_names.index(maintenance), step_names.index(freshness))
+        self.assertLess(
+            step_names.index(freshness),
+            step_names.index("Updating managed agent tools"),
         )
 
 

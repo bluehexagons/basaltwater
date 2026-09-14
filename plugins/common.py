@@ -26,6 +26,7 @@ PLUGIN = PluginDefinition(
         "install_github_cli",
         "install_codex",
         "configure_codex_auth_maintenance",
+        "run_codex_auth_maintenance",
         "install_claude",
         "install_opencode",
         "update_managed_agent_tools",
@@ -228,6 +229,7 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         copy_agent_tooling_payload,
         clone_agent_repositories,
         configure_codex_auth_maintenance,
+        run_codex_auth_maintenance,
         install_agent_cli_launcher,
         install_agent_workflow_skills,
         install_git_for_agent_repositories,
@@ -279,6 +281,12 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
             (
                 "Configuring Codex authentication maintenance",
                 configure_codex_auth_maintenance,
+            )
+        )
+        steps.append(
+            (
+                "Checking Codex authentication freshness",
+                run_codex_auth_maintenance,
             )
         )
 
@@ -393,6 +401,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         copy_agent_tooling_payload,
         clone_agent_repositories,
         configure_codex_auth_maintenance,
+        run_codex_auth_maintenance,
         install_agent_cli_launcher,
         install_agent_workflow_skills,
         install_git_for_agent_repositories,
@@ -428,6 +437,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "install_github_cli": install_github_cli,
         "install_codex": install_codex,
         "configure_codex_auth_maintenance": configure_codex_auth_maintenance,
+        "run_codex_auth_maintenance": run_codex_auth_maintenance,
         "install_claude": install_claude,
         "install_opencode": install_opencode,
         "update_managed_agent_tools": update_managed_agent_tools,

@@ -160,6 +160,11 @@ check after boot. It asks Codex to refresh file-backed ChatGPT authentication
 only when safe metadata reports stale or uncertain state. It does not refresh
 API-key auth.
 
+An explicit setup rerun performs the same bounded freshness check once after
+installing or configuring Codex, before the managed agent update. This gives a
+dormant VM a chance to renew its cached login before setup records post-update
+readiness.
+
 If Codex authentication fails:
 
 ```bash

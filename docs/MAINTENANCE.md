@@ -162,6 +162,9 @@ copied login safe to share across concurrently running VMs.
 The service gets a private temporary directory, no privilege-gaining path, a
 read-only home and system view, and write access only to that user's `.codex`
 directory. It still needs outbound network access to refresh with the provider.
+An explicit setup rerun also invokes this check once before updating the
+managed agent tools, so an infrequently started VM can refresh renewable
+credentials without waiting for the next timer trigger.
 
 From the control system, the equivalent remote workflow is
 `infra-tools agent update HOST USER --dry-run` followed by the same command

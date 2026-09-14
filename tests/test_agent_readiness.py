@@ -417,7 +417,16 @@ class TestAgentReadinessCLI(unittest.TestCase):
         args = self._parser().parse_args(
             ["agent", "update", "--tool", "codex", "--json"]
         )
-        updates = [{"tool": "codex", "status": "current"}]
+        updates = [
+            {
+                "tool": "codex",
+                "status": "current",
+                "before_version": "codex-cli 0.154.0",
+                "after_version": "codex-cli 0.154.0",
+                "method": "codex installer",
+                "path": "/home/agent/.local/bin/codex",
+            }
+        ]
         errors = io.StringIO()
         with (
             patch("lib.agent_cli.update_agent_tools", return_value=updates),
@@ -432,6 +441,48 @@ class TestAgentReadinessCLI(unittest.TestCase):
         recorder.assert_called_once_with(["codex"])
         self.assertEqual(json.loads(output.getvalue()), updates)
         self.assertIn("post-update readiness is unhealthy", errors.getvalue())
+
+    def test_update_explains_unhealthy_post_update_checks(self) -> None:
+        args = self._parser().parse_args(["agent", "update", "--tool", "codex"])
+        updates = [
+            {
+                "tool": "codex",
+                "status": "current",
+                "before_version": "codex-cli 0.154.0",
+                "after_version": "codex-cli 0.154.0",
+                "method": "codex installer",
+                "path": "/home/agent/.local/bin/codex",
+            }
+        ]
+        readiness = {
+            "healthy": False,
+            "tools": [
+                {
+                    "tool": "codex",
+                    "installed": True,
+                    "credential_healthy": False,
+                    "credential_status": {"status": "refresh_required"},
+                }
+            ],
+            "capabilities": [
+                {
+                    "capability": "t3code",
+                    "healthy": False,
+                    "checks": {"service_active": False, "endpoint": True},
+                }
+            ],
+        }
+        output = io.StringIO()
+        with (
+            patch("lib.agent_cli.update_agent_tools", return_value=updates),
+            patch("lib.agent_cli._record_post_update_readiness", return_value=readiness),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(run_agent_command(args), 1)
+
+        rendered = output.getvalue()
+        self.assertIn("codex: credentials need attention (refresh_required)", rendered)
+        self.assertIn("t3code: failed checks: service_active", rendered)
 
 
 if __name__ == "__main__":
