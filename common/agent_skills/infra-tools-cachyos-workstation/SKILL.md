@@ -59,8 +59,9 @@ Qt; it does not enable libvirt, grant packet-capture permissions, or change
 network policy. These options do not install AUR or Flatpak packages, graphics
 drivers, or application-specific configuration.
 
-This profile does not install machine-use automation. T3 Code's optional local
-service is a coding web interface; the T3 Code desktop app can be used as the
-interactive client without enabling that service. Keep the profile's native
-package, agent, workspace, and readiness checks even when using the desktop app;
-they provide setup and repeatability that the client does not provision.
+This profile does not install machine-use automation. T3 Code's optional service
+supports same-machine access, direct pairing from a trusted private LAN, and
+T3 Connect; use the dedicated `infra-tools-cachyos-t3code` skill for its
+service, pairing, and Connect commands. Keep the profile's native package,
+agent, workspace, and readiness checks even when using the desktop app; they
+provide setup and repeatability that the client does not provision.

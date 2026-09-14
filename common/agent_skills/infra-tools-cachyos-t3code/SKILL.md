@@ -1,6 +1,6 @@
 ---
 name: infra-tools-cachyos-t3code
-description: Operate the optional localhost or private-LAN T3 Code user service installed by the CachyOS coding profile.
+description: Operate the optional local or private-LAN T3 Code user service and T3 Connect installed by the CachyOS coding profile.
 metadata:
   managed-by: infra_tools
 ---

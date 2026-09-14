@@ -34,8 +34,8 @@ after each run using the test machine's existing tools.
 | Slow/unavailable diagnostic | Bounded timeout or output-limit result; no orphaned helper | Not run |
 | Report privacy | No credentials, journal content, personal paths, or UI content in JSON | Not run |
 
-Record failures and remediation with source commit and retest date. Passing
-this table allows implementation of setup mutations; it does not release a
+Record failures and remediation with source commit and retest date. This table
+qualifies the existing setup and diagnostic contract; it does not release a
 machine-use capability. Keep the table unpassed until evidence exists.
 
 ## Later capability gates
@@ -46,6 +46,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | Layer | Acceptance evidence | Result |
 | --- | --- | --- |
 | Setup/state | Fresh/rerun/interrupted setup, private validated selection records, disabled management preserves data | Not implemented |
+| T3 access | Local pairing, private-LAN pairing from another device, T3 Connect link/status/unlink, service restart and logout behavior | Not run |
 | Browser | Pinned runtime pair, isolated local page interaction/capture, strict HTTPS, origin restrictions including redirects and subresources | Not implemented |
 | Browser recovery | Interrupted update retains old pair; bounded private artifacts and task profile cleanup | Not implemented |
 | GTK/Qt AT-SPI | Controlled editor save, slow dialog, foreign-window/stale-reference rejection, secret-field redaction | Not implemented |

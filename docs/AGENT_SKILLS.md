@@ -14,6 +14,12 @@ Its installer reconciles known managed VM skills while preserving personal
 skills. See the [CachyOS guide](CACHYOS.md#skills-diagnostics-and-boundaries) for
 scope and reruns.
 
+| CachyOS skill | Use it for |
+| --- | --- |
+| `infra-tools-cachyos-workstation` | Native package bundles, diagnostics, and desktop/session boundaries |
+| `infra-tools-cachyos-workspace` | User-owned repository workspaces and safe reruns |
+| `infra-tools-cachyos-t3code` | The local T3 service, pairing, and T3 Connect |
+
 A normal agent-enabled setup that selects Codex or OpenCode receives these
 base skills:
 

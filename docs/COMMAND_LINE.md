@@ -120,6 +120,7 @@ tools, not for an LXC container.
 | `agent_vm` | Headless agent coding VM; defaults to GitHub CLI and Codex |
 | `agent_workstation` | Graphical agent coding workstation; adds Firefox ESR |
 | `agent_code_vm` | Full graphical agent VM with T3 Code and Geany; Playwright is opt-in |
+| `agent_cachyos` | Local coding tools for an existing CachyOS KDE workstation; requires local setup on CachyOS |
 | `workstation_desktop` | Desktop workstation with GUI |
 | `workstation_dev` | Developer workstation |
 | `pc_dev` | PC development environment |
@@ -388,8 +389,10 @@ See [`GODOT.md`](./GODOT.md) for the artifact and headless-use contract, and
 
 ### Agent host flags
 
-These flags prepare a Debian VM or local control plane for agentic coding. They
-work with any setup type. `agent_vm` is the recommended terminal-only profile,
+These flags prepare a Debian VM or local control plane for agentic coding. Their
+availability remains profile-specific; `agent_cachyos` accepts only its local
+workstation subset documented in [CachyOS](CACHYOS.md). `agent_vm` is the
+recommended terminal-only profile,
 `agent_workstation` adds a desktop and Firefox ESR, and `agent_code_vm` adds
 the common T3 Code web service, Geany, RDP, private source ranges, protected T3
 pairing, read-write Git, and active auth sources. Playwright remains an explicit
@@ -490,15 +493,15 @@ rm -f "$HOME/.infra_tools-install.sh"
 | `--harden-user` / `--no-harden-user` | Apply or remove the password lock, private home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled lingering; enabling implies agent hardening and is incompatible with RDP |
 | `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |
 | `--no-agent-tool TOOL[,TOOL...]` | Disable one or more profile-default provider tools |
-| `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code` |
-| `--web-interface-host IP` | Bind address for the selected web interface; defaults to loopback, or `0.0.0.0` when a source is supplied |
+| `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
+| `--web-interface-host IP` | Bind address for the selected web interface; managed VM/server defaults to loopback or `0.0.0.0` with a source, while CachyOS accepts loopback or an explicit private IPv4 |
 | `--web-interface-port PORT` | TCP port for the selected web interface; default `3773` |
-| `--web-interface-source IP_OR_CIDR` | Add a private source specifically for direct web-interface access; repeatable; either this or a compatible generic source enables a non-loopback bind |
+| `--web-interface-source IP_OR_CIDR` | Managed VM/server source restriction for direct web-interface access; repeatable; CachyOS uses `--web-interface-host` for direct LAN mode |
 | `--no-web-interface` | Disable profile-provided web interfaces |
 | `--no-web-interface-source` | Clear profile-provided web-interface source ranges |
 | `--web-port PORT` | Manage an additional TCP web port through guest UFW; repeatable and source-restricted when generic sources are set |
 | `--no-default-web-ports` | Disable the agent-VM defaults of TCP 80, 443, 8080, and 8081 |
-| `--device-pairing PROVIDER` | Install the protected browser enrollment portal for a provider; repeatable, currently `t3code` |
+| `--device-pairing PROVIDER` | Install the protected browser enrollment portal for a provider; repeatable, currently `t3code`; unavailable for `agent_cachyos`, which uses native T3 pairing |
 | `--device-pairing-port PORT` | Pairing portal port; default `3774` and must differ from the web-interface port |
 | `--device-pairing-auth-file PATH` | Controller-local Nginx htpasswd file for the portal; transient and not saved |
 | `--device-pairing-password PASS` | Controller-local portal password; hashed locally, transient, and not saved; the portal username defaults to the setup username |
@@ -581,12 +584,14 @@ the loopback/HTTPS boundary. The optional
 link through Nginx Basic Auth. Setup publishes the portal through the managed
 HTTPS gateway by default; see [DEVICE_PAIRING.md](DEVICE_PAIRING.md).
 
-After a LAN T3 Code service is installed, obtain its one-time administrative
-pairing URL from the control system with `infra-tools agent web pair HOST USER`
-(add `--key PATH` when needed). The resulting app session includes T3's
-`access:write` scope for pairing-link and client-session management. Opening the
-bare service address is expected to show T3's pairing-key form; it is not an
-authenticated session.
+For a managed VM/server with a LAN T3 Code service, obtain its one-time
+administrative pairing URL from the control system with
+`infra-tools agent web pair HOST USER` (add `--key PATH` when needed). The
+resulting app session includes T3's `access:write` scope for pairing-link and
+client-session management. Opening the bare service address is expected to show
+T3's pairing-key form; it is not an authenticated session. The local CachyOS
+profile does not use this controller-side command; generate its native pairing
+link and configure T3 Connect from the [CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
 
 When the protected portal is selected, open the printed **T3 Code pairing
 HTTPS endpoint**, answer the Basic Auth challenge, and pair the current browser

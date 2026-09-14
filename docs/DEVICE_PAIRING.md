@@ -20,6 +20,11 @@ Basic Auth protects the ability to issue a link. T3 still authenticates the
 resulting connection, owns the per-device session, and provides session
 revocation. infra-tools does not create a permanent shared T3 token.
 
+This protected portal is for the managed Debian/VM profiles. The `agent_cachyos`
+profile intentionally does not install the portal or its gateway; use the
+native `t3 pair` and `t3 connect link` flows in the
+[CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
+
 ## Configure it
 
 Prepare an Nginx-compatible password file on the controller. This example

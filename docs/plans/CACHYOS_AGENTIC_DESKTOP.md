@@ -1,8 +1,8 @@
 # CachyOS agentic desktop capabilities
 
-Status: implementation started; live qualification pending. Portable contracts
-and read-only diagnostics can be implemented before qualification. Setup
-mutations and machine-use feature release remain gated on the P0 live pass.
+Status: initial native setup and T3 access slice implemented; live qualification
+pending. Portable contracts and read-only diagnostics can be implemented before
+qualification. Machine-use feature release remains gated on the P0 live pass.
 The development host is Debian, which cannot supply CachyOS/Plasma acceptance
 evidence. Do not mark this project complete from mocked or headless tests.
 
@@ -15,12 +15,12 @@ install, update, observe, and recover, and should give an agent bounded access
 to browser and desktop workflows when the user explicitly enables those
 capabilities.
 
-The current profile already covers native package installation for the coding,
-creative, media, gaming, remote desktop, and sysadmin bundles, user-managed
-Codex/OpenCode updates, workspaces, and an optional loopback T3 Code service.
-The next work should add capability contracts and safe integrations around that
-foundation rather than replace it with a second desktop or provisioning
-system.
+The current profile covers native package installation for the coding, creative,
+media, gaming, remote desktop, and sysadmin bundles, user-managed Codex/OpenCode
+updates, workspaces, and an optional T3 Code service with loopback access,
+private-LAN pairing, and documented T3 Connect setup. The next work should add
+capability contracts and safe integrations around that foundation rather than
+replace it with a second desktop or provisioning system.
 
 ## Boundaries and non-goals
 
@@ -271,7 +271,8 @@ Start with narrow, explicit options rather than a broad `--agentic` switch:
 - a separate accessibility capability selection if AT-SPI proves useful before
   portal input is ready;
 - existing application bundle flags and `--web-interface t3code` remain
-  independent.
+  independent; T3 Connect authorization remains an interactive, post-setup CLI
+  flow using the managed runtime.
 
 The CachyOS profile currently bypasses controller-side setup persistence.
 Introduce a private, versioned user-local selection record at the target-side
@@ -294,9 +295,10 @@ unsupported host without probing its unrelated desktop.
 - Run under the existing user account and active session; package installation
   is the only operation that may request `sudo`, and only for selected native
   dependencies.
-- Bind local services to loopback unless an existing, separately reviewed
-  gateway explicitly publishes them. Do not expose portal or browser control
-  endpoints directly on the network.
+- Bind local services to loopback by default. Direct T3 private-LAN binding is
+  an explicit pairing option; T3 Connect uses the loopback origin expected by
+  its managed relay. Do not expose portal or browser-control endpoints directly
+  on the network.
 - Treat page text, accessibility labels, files, and screenshots as untrusted
   input. Do not let UI content change setup policy, package sources, credentials,
   or control scope.
@@ -326,7 +328,8 @@ machine with Plasma Wayland and cover:
 4. portal consent, screenshot, input, clipboard opt-in, revoke, logout, and
    pause/handoff;
 5. AT-SPI inspection and a save workflow in both GTK and Qt applications;
-6. GPU, audio, Sunshine/Moonlight, OBS, and T3 Code readiness;
+6. GPU, audio, Sunshine/Moonlight, OBS, T3 Code local/LAN pairing, and T3
+   Connect readiness;
 7. concurrent human use, a second login, reboot, and active application update;
 8. support snapshot redaction and web-panel rendering of unavailable,
    deferred, and pending-interaction states.
@@ -360,7 +363,10 @@ desktop-control implementation.
   operator documentation, and workstation skill guidance.
 - Live P0 qualification is pending; no CachyOS machine has been supplied.
   Use the [qualification checklist](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
-  to record evidence. No setup mutation or machine-use flag has been enabled.
+  to record evidence. No machine-use flag has been enabled.
+- The initial native package, workspace, user-service, private-LAN pairing, and
+  T3 Connect guidance is implemented; live service and hardware qualification
+  remain open.
 - Browser runtime/isolation, selection persistence, full host/application
   diagnostics, AT-SPI operations, portal leases/input/capture, application
   workflows, recovery, and web-panel integration remain unimplemented. This
