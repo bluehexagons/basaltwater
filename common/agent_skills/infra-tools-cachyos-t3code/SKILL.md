@@ -24,6 +24,16 @@ from an existing T3 desktop installation. Provider CLIs must work in this accoun
 and be authenticated through their normal local login. If provider discovery
 fails, inspect the unit's PATH and the provider binary path in T3 settings.
 
+To connect a browser or desktop client, run:
+
+```bash
+( cd "$HOME" && "$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair )
+```
+
+Open the printed `Pairing URL` in the browser, or paste it into the desktop
+client. Opening the bare localhost address redirects to T3's pairing page. This
+profile binds to loopback, so clients on another device cannot connect.
+
 Rerunning setup retains the installed runtime and starts the service. An explicit
 configuration change may restart it; check for active work first. To stop it
 persistently, use `systemctl --user disable --now infra-tools-cachyos-t3.service`.

@@ -299,11 +299,12 @@ the app's **Settings → Connections → Add environment** screen:
 ```
 
 The command prints a QR code, pairing URL, and token. Treat the URL and token as
-credentials and use the link only once. A browser opened directly on this
-workstation can use `http://127.0.0.1:3773` without pairing. The generated URL
-uses loopback, so a phone or another computer cannot reach this profile; remote
-pairing requires a separately managed network or Tailscale exposure, which
-`agent_cachyos` does not configure.
+credentials and use the link only once. Opening the bare
+`http://127.0.0.1:3773` address in a browser redirects to T3's pairing page;
+open the generated `Pairing URL` itself in the browser, or paste it into the
+desktop app. The generated URL uses loopback, so a phone or another computer
+cannot reach this profile; remote pairing requires a separately managed network
+or Tailscale exposure, which `agent_cachyos` does not configure.
 
 If a setup run from an older checkout reported `has a bad unit file setting`,
 update infra-tools and rerun the same setup command. The managed unit is
