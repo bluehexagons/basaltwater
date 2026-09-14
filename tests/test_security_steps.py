@@ -390,13 +390,16 @@ class TestConfigureAuditd(unittest.TestCase):
                     contents = rules.read()
                 self.assertNotIn("-w ", contents)
                 self.assertIn(
-                    "-a always,exit -F path=/etc/passwd -F perm=wa -k identity",
+                    "-a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity",
                     contents,
                 )
                 self.assertIn(
-                    "-a always,exit -F dir=/etc/sudoers.d/ -F perm=wa -k sudoers",
+                    "-a always,exit -F arch=b32 -F dir=/etc/sudoers.d/ -F perm=wa -k sudoers",
                     contents,
                 )
+                for line in contents.splitlines():
+                    if "-F perm=" in line:
+                        self.assertIn("-F arch=", line)
                 changed_commands = [
                     call.args[0] for call in mock_run.call_args_list
                 ]

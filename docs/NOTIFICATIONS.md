@@ -78,7 +78,10 @@ For enablement, disablement, rotation, retention, and API limits, see
 
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
-> setup state because scheduled jobs need it.
+> setup state because scheduled jobs need it. Scheduled jobs also receive a
+> root-owned `/etc/infra-tools/notifications.json` subset containing only the
+> notification targets and level, so they do not need access to the full
+> root-only setup state.
 
 ## Choose a delivery level
 

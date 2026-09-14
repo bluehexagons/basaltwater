@@ -623,8 +623,8 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
         sender = NotificationSender(configs, logger=logger)
     """
     try:
-        from lib.machine_state import load_setup_config
-        setup_config = load_setup_config()
+        from lib.machine_state import load_notification_state
+        setup_config = load_notification_state()
         if setup_config and 'notify_specs' in setup_config:
             notify_specs = setup_config['notify_specs']
             if not isinstance(notify_specs, list):

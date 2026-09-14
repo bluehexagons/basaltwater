@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -202,19 +203,26 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
     def test_save_and_load_setup_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, 'setup.json')
+            notification_file = os.path.join(tmpdir, 'notifications.json')
             with patch.object(ms, 'STATE_DIR', tmpdir), \
-                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
+                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                 patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
                 ms.save_setup_config({'timezone': 'UTC', 'username': 'test',
                                       'host': '10.0.0.1', 'system_type': 'server_lite'})
                 loaded = ms.load_setup_config()
                 assert loaded is not None
                 self.assertEqual(loaded['timezone'], 'UTC')
+                notification_state = ms.load_notification_state()
+                assert notification_state is not None
+                self.assertEqual(notification_state['notify_specs'], [])
 
     def test_save_setup_config_excludes_password(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, 'setup.json')
+            notification_file = os.path.join(tmpdir, 'notifications.json')
             with patch.object(ms, 'STATE_DIR', tmpdir), \
-                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file):
+                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                 patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
                 ms.save_setup_config({
                     'username': 'test',
                     'system_type': 'workstation_dev',
@@ -225,6 +233,57 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
 
             assert loaded is not None
             self.assertNotIn('password', loaded)
+
+    def test_save_setup_config_writes_only_notification_subset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, 'setup.json')
+            notification_file = os.path.join(tmpdir, 'notifications.json')
+            with patch.object(ms, 'STATE_DIR', tmpdir), \
+                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                 patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
+                ms.save_setup_config({
+                    'username': 'test',
+                    'system_type': 'server_web',
+                    'notify_specs': [['webhook', 'https://example.com/hook#token']],
+                    'notification_level': 'warning',
+                    'git_auth_token': 'must-not-be-copied',
+                })
+
+                notification_state = ms.load_notification_state()
+
+            assert notification_state is not None
+            self.assertEqual(
+                notification_state['notify_specs'],
+                [['webhook', 'https://example.com/hook#token']],
+            )
+            self.assertEqual(notification_state['notification_level'], 'warning')
+            self.assertNotIn('git_auth_token', notification_state)
+
+    @patch.object(ms.pwd, 'getpwnam', return_value=SimpleNamespace(pw_gid=1234))
+    @patch.object(ms, 'write_json_atomic')
+    def test_notification_state_uses_target_primary_group(self, mock_write, _getpwnam):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_file = os.path.join(tmpdir, 'setup.json')
+            notification_file = os.path.join(tmpdir, 'notifications.json')
+            with patch.object(ms, 'STATE_DIR', tmpdir), \
+                 patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                 patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
+                ms.save_setup_config({
+                    'username': 'agent',
+                    'system_type': 'server_web',
+                    'notify_specs': [],
+                })
+
+        notification_call = mock_write.call_args_list[-1]
+        self.assertEqual(notification_call.args[0], notification_file)
+        self.assertEqual(notification_call.kwargs['mode'], 0o640)
+        self.assertEqual(notification_call.kwargs['gid'], 1234)
+
+    def test_load_missing_notification_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notification_file = os.path.join(tmpdir, 'missing.json')
+            with patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
+                self.assertIsNone(ms.load_notification_state())
 
     def test_load_setup_config_removes_legacy_password_from_disk(self):
         with tempfile.TemporaryDirectory() as tmpdir:

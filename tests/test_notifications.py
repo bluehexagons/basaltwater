@@ -841,7 +841,28 @@ class TestSendNotificationSafe(unittest.TestCase):
 
 
 class TestLoadNotificationConfigsFromState(unittest.TestCase):
-    @patch('lib.machine_state.load_setup_config', side_effect=ValueError('bad state'))
+    @patch(
+        'lib.machine_state.load_notification_state',
+        return_value={
+            'notify_specs': [['mailbox', 'ops@example.com']],
+            'notification_level': 'warning',
+        },
+    )
+    def test_loads_readable_notification_state(self, _mock_notification):
+        configs = load_notification_configs_from_state()
+
+        self.assertEqual(len(configs), 1)
+        self.assertEqual(configs[0].target, 'ops@example.com')
+        self.assertEqual(configs[0].level, 'warning')
+
+    @patch('lib.machine_state.load_notification_state', return_value=None)
+    @patch('lib.machine_state.load_setup_config', side_effect=AssertionError)
+    def test_missing_notification_state_does_not_read_full_setup_state(
+        self, _mock_setup, _mock_notification
+    ):
+        self.assertEqual(load_notification_configs_from_state(), [])
+
+    @patch('lib.machine_state.load_notification_state', side_effect=ValueError('bad state'))
     def test_logs_structured_warning_on_load_failure(self, _mock_load):
         log_stream = io.StringIO()
         logger = logging.getLogger('test.notifications.state')
@@ -858,7 +879,7 @@ class TestLoadNotificationConfigsFromState(unittest.TestCase):
         self.assertIn("error='bad state'", output)
 
     @patch(
-        'lib.machine_state.load_setup_config',
+        'lib.machine_state.load_notification_state',
         return_value={'notify_specs': [['webhook', 'ftp://invalid.example/hook']]},
     )
     def test_rejects_corrupt_saved_notification_targets(self, _mock_load):
@@ -876,7 +897,7 @@ class TestLoadNotificationConfigsFromState(unittest.TestCase):
         )
 
     @patch(
-        'lib.machine_state.load_setup_config',
+        'lib.machine_state.load_notification_state',
         return_value={
             'notify_specs': [
                 ['webhook', 'ftp://invalid.example/hook'],

@@ -179,7 +179,7 @@ class TestNotificationLevelDelivery(unittest.TestCase):
         self.assertNotIn("Notification suppressed", stream.getvalue())
 
     @patch(
-        "lib.machine_state.load_setup_config",
+        "lib.machine_state.load_notification_state",
         return_value={
             "notify_specs": [["mailbox", "ops@example.com"]],
             "notification_level": "warning",
@@ -192,7 +192,7 @@ class TestNotificationLevelDelivery(unittest.TestCase):
         self.assertEqual(configs[0].level, "warning")
 
     @patch(
-        "lib.machine_state.load_setup_config",
+        "lib.machine_state.load_notification_state",
         return_value={
             "notify_specs": [["mailbox", "ops@example.com"]],
             "notification_level": "corrupt",

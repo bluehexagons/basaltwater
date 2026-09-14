@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -25,6 +26,11 @@ _MACHINE_STATE_REQUIRED_KEYS = ("machine_type", "system_type", "username")
 _SETUP_CONFIG_REQUIRED_KEYS = ("username", "system_type")
 STATE_FILE = os.path.join(STATE_DIR, "machine.json")
 SETUP_CONFIG_FILE = os.path.join(STATE_DIR, "setup.json")
+# Scheduled jobs run as the configured account, while the full setup state is
+# intentionally root-only.  Keep the small notification subset in a separate
+# root-owned file so those jobs can read it without gaining access to secrets
+# from the rest of setup.json.
+NOTIFICATION_CONFIG_FILE = "/etc/infra-tools/notifications.json"
 
 _LXC_VIRTUALIZATIONS = {"lxc", "lxc-libvirt", "openvz", "systemd-nspawn"}
 _OCI_VIRTUALIZATIONS = {"docker", "podman", "rkt", "oci"}
@@ -309,6 +315,29 @@ def save_setup_config(config_dict: dict[str, Any]) -> None:
     sanitized_config.pop("password", None)
     write_json_atomic(SETUP_CONFIG_FILE, sanitized_config)
 
+    username = sanitized_config.get("username")
+    notification_group = -1
+    if isinstance(username, str):
+        try:
+            notification_group = pwd.getpwnam(username).pw_gid
+        except KeyError:
+            # Unit tests and partially provisioned targets may not have the
+            # account yet.  A root-only file is safer than guessing a group;
+            # the next successful setup will reconcile its ownership.
+            pass
+
+    notification_state = {
+        "version": 1,
+        "notify_specs": sanitized_config.get("notify_specs") or [],
+        "notification_level": sanitized_config.get("notification_level"),
+    }
+    write_json_atomic(
+        NOTIFICATION_CONFIG_FILE,
+        notification_state,
+        mode=0o640 if notification_group != -1 else 0o600,
+        gid=notification_group,
+    )
+
 
 def _validate_setup_config(config: Any) -> Optional[str]:
     """Validate setup config structure.
@@ -355,3 +384,9 @@ def load_setup_config() -> Optional[dict[str, Any]]:
             print(f"Warning: Failed to remove password from saved setup configuration: {exc}")
 
     return config
+
+
+def load_notification_state() -> Optional[dict[str, Any]]:
+    """Load the least-privileged notification state used by service jobs."""
+
+    return read_state_object(NOTIFICATION_CONFIG_FILE)
