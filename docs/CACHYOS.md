@@ -38,6 +38,17 @@ codex login
 gh auth login
 ```
 
+Provider login does not configure Git commit identity. If readiness reports a
+missing identity, set your own `user.name` and `user.email` with
+`git config --global`, or configure them within each repository. Setup never
+guesses an identity or changes an existing one. The default-identity check runs
+outside a project; repository-specific overrides may differ.
+
+`--git-lfs` initializes missing per-user LFS filters before cloning repositories.
+Existing system/user filter values and repository hooks are preserved, including
+custom filters. Readiness checks filter presence; test transfers in your project
+to verify custom filters and remote authentication.
+
 The launcher is `~/.local/bin/infra-tools`; open a new terminal if the
 installer's PATH change is not visible. Bash, Zsh, and Fish are supported.
 Other shells need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
@@ -225,6 +236,9 @@ for current provider, client, and T3 Connect requirements.
 - A package install may prompt for sudo. Agent CLIs, the T3 runtime, cache
   cleanup, and repository checks are otherwise noninteractive. No update timers
   are installed.
+- Cache cleanup runs after tool readiness. If cleanup fails, setup reports an
+  incomplete result and returns nonzero; installed tools are retained. Resolve
+  the cleanup error and rerun setup. This profile has no automatic cache retry.
 - Reruns retain installed software, credentials, and repositories. Omitting an
   option does not uninstall it; existing repositories are never pulled, reset,
   or recursively chowned. A T3 configuration change can restart its service.
@@ -253,6 +267,11 @@ infra-tools local cachyos-doctor --json
 It does not install, launch, capture, open listeners, or write a report. A
 successful report proves only the observations it lists; it does not prove GPU
 rendering, desktop input, provider authentication, or an end-to-end thread.
+The command runs without the Debian maintenance confirmation, including with
+`--json` in a noninteractive session. Browser observations recognize Chromium,
+Firefox, Brave, and Cachy Browser native packages. An absent optional browser
+package does not mean there is no usable browser; custom installations are not
+inventoried, and the doctor does not launch a browser to test it.
 
 Before calling a workstation validated, record its CachyOS, Plasma, kernel,
 GPU/driver, and tool versions; repeat setup; authenticate an agent; complete a

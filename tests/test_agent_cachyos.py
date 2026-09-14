@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import io
 from pathlib import Path
 import subprocess
 import tempfile
@@ -253,6 +254,66 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.reconcile_cachyos_user_cache(config)
         reconcile.assert_called_once_with(config)
 
+    def test_cache_failure_is_not_reported_as_complete(self):
+        with patch("common.setup_maintenance.run_user_cache_maintenance", return_value=False), \
+                self.assertRaisesRegex(RuntimeError, "no automatic cache retry"):
+            steps.reconcile_cachyos_user_cache(self.config())
+
+    def test_lfs_initializes_only_missing_filters_without_hooks(self):
+        values = {"filter.lfs.smudge": "custom smudge\n", "filter.lfs.required": "false\n"}
+        def command(argv, home, **kwargs):
+            self.assertEqual(kwargs["cwd"], "/")
+            if "--get-all" in argv:
+                value = values.get(argv[-1])
+                return subprocess.CompletedProcess(argv, 0 if value else 1, value or "", "")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps, "_user_run", side_effect=command) as run:
+            steps.configure_cachyos_git_lfs(self.config("--git-lfs"))
+        writes = [call.args[0] for call in run.call_args_list if "--add" in call.args[0]]
+        self.assertEqual(writes, [
+            ["git", "config", "--global", "--add", "filter.lfs.clean", "git-lfs clean -- %f"],
+            ["git", "config", "--global", "--add", "filter.lfs.process", "git-lfs filter-process"],
+        ])
+
+    def test_lfs_query_errors_do_not_overwrite_configuration(self):
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 3, "", "private")) as run, \
+                self.assertRaisesRegex(RuntimeError, "Cannot read Git configuration"):
+            steps.configure_cachyos_git_lfs(self.config("--git-lfs"))
+        self.assertEqual(run.call_count, 1)
+
+    def test_lfs_configuration_follows_package_installation(self):
+        with patch.object(steps, "cachyos_packages", return_value=["git-lfs"]), \
+                patch.object(steps, "install_missing_packages") as packages, \
+                patch.object(steps, "configure_cachyos_git_lfs") as configure:
+            config = self.config("--git-lfs")
+            steps.install_cachyos_packages(config)
+            packages.assert_called_once_with(["git-lfs"])
+            configure.assert_called_once_with(config)
+            configure.reset_mock()
+            steps.install_cachyos_packages(self.config())
+            configure.assert_not_called()
+
+    def test_readiness_warns_about_identity_without_disclosing_values(self):
+        def command(argv, home, **kwargs):
+            code = 128 if "GIT_AUTHOR_IDENT" in argv else 0
+            return subprocess.CompletedProcess(argv, code, "private identity", "private error")
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name), \
+                patch.object(steps, "_user_run", side_effect=command), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            steps.report_cachyos_readiness(self.config())
+        self.assertIn("commits may fail", output.getvalue())
+        self.assertNotIn("private", output.getvalue())
+
+    def test_readiness_rejects_empty_lfs_filters(self):
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name), \
+                patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+                self.assertRaisesRegex(RuntimeError, "filters are incomplete"):
+            steps.report_cachyos_readiness(self.config("--git-lfs"))
+
     def test_go_readiness_uses_the_go_version_subcommand(self):
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(steps.shutil, "which", side_effect=lambda name, **kwargs: "/usr/bin/" + name), \
@@ -290,15 +351,16 @@ class CachyOSSetupTests(unittest.TestCase):
 
     def test_existing_repository_is_checked_but_never_pulled(self):
         with tempfile.TemporaryDirectory() as home:
-            (Path(home) / "repos/project").mkdir(parents=True)
+            (Path(home) / "repos/project/.git").mkdir(parents=True)
             url = "https://github.com/example/project.git"
             results = [subprocess.CompletedProcess([], 0, str(Path(home) / "repos/project") + "\n"),
-                       subprocess.CompletedProcess([], 0, url + "\n")]
+                       subprocess.CompletedProcess([], 0, url + "\n"),
+                       subprocess.CompletedProcess([], 0, str(Path(home) / "repos/project/.git") + "\n")]
             with patch.object(steps, "_home", return_value=Path(home)), \
                  patch.object(steps, "run", side_effect=results) as run:
                 steps.prepare_cachyos_workspace(self.config("--repo", url))
-                self.assertEqual(run.call_count, 2)
-                self.assertEqual(run.call_args.args[0][-3:], ["remote", "get-url", "origin"])
+                self.assertEqual(run.call_count, 3)
+                self.assertEqual(run.call_args.args[0][-2:], ["rev-parse", "--absolute-git-dir"])
 
     def test_existing_destination_cannot_inherit_parent_repository(self):
         with tempfile.TemporaryDirectory() as home:
@@ -314,6 +376,15 @@ class CachyOSSetupTests(unittest.TestCase):
                         "--repo", "https://github.com/example/project.git"))
             self.assertEqual(run.call_count, 1)
             self.assertEqual(personal.read_text(), "keep me\n")
+
+    def test_unwritable_workspace_fails_before_cloning(self):
+        with tempfile.TemporaryDirectory() as home, \
+                patch.object(steps, "_home", return_value=Path(home)), \
+                patch("lib.validation.os.access", return_value=False), \
+                patch.object(steps, "_user_run") as run, \
+                self.assertRaisesRegex(ValueError, "not writable"):
+            steps.prepare_cachyos_workspace(self.config("--repo", "https://github.com/example/project.git"))
+        run.assert_not_called()
 
     def test_t3_refreshes_local_runtime_on_rerun(self):
         with tempfile.TemporaryDirectory() as home:

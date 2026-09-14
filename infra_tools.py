@@ -2315,7 +2315,7 @@ def main() -> int:
     elif args.command == "network":
         return run_network_command(args)
     elif args.command == "local":
-        if not confirm_unsupported_environment("local maintenance"):
+        if args.local_command != "cachyos-doctor" and not confirm_unsupported_environment("local maintenance"):
             return 1
         return run_local_command(args)
     elif args.command == "desktop":

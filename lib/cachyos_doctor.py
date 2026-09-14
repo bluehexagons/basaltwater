@@ -23,10 +23,11 @@ from lib.validators import validate_username
 SCHEMA_VERSION = 1
 PROBE_TIMEOUT = 3.0
 OUTPUT_LIMIT = 16384
+BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser")
 PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
     "xdg-desktop-portal", "xdg-desktop-portal-kde", "at-spi2-core",
-    "python-gobject", "chromium", "firefox",
+    "python-gobject", *BROWSER_PACKAGES,
 )
 _NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}", re.ASCII)
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:+_~\-]{0,127}", re.ASCII)
@@ -182,6 +183,7 @@ def collect_cachyos_doctor() -> dict[str, object]:
                "Owned Wayland socket exists; active compositor and rendering are not verified." if wayland_ready else
                "Run from a KDE Wayland terminal with its owned Wayland socket.")
 
+        installed_browsers = []
         for package in PACKAGES:
             validate_package_name(package)
             status, output = _probe(["/usr/bin/pacman", "-Q", "--", package], uid)
@@ -192,6 +194,13 @@ def collect_cachyos_doctor() -> dict[str, object]:
                    "Native package installed; this does not verify application behavior." if version else
                    "Package unavailable or query inconclusive; inspect pacman locally and install native dependencies if needed.",
                    version=version)
+            if version and package in BROWSER_PACKAGES:
+                installed_browsers.append(package)
+
+        record("browser.native", "available" if installed_browsers else "deferred",
+               "Native browser package detected; launch, default selection, and automation are not verified."
+               if installed_browsers else
+               "No recognized native browser package observed; custom installations may still be usable.")
 
         for name, bus_name in (
             ("session.portal", "org.freedesktop.portal.Desktop"),

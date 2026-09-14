@@ -85,7 +85,7 @@ def _run_system_cleanup() -> bool:
     return True
 
 
-def _run_user_cache_cleanup(config: SetupConfig) -> bool:
+def _run_user_cache_cleanup(config: SetupConfig, *, scheduled_retry: bool) -> bool:
     """Run user-scoped cache cleanup and return whether it completed successfully."""
     if config.username == "root":
         return True
@@ -95,6 +95,8 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
     command = shlex.join([_PYTHON, script])
     print("  Running user cache cleanup now (this may take a while)...")
     effective_uid = os.geteuid()
+    retry = ("the scheduled job will retry" if scheduled_retry else
+             "resolve the error and rerun setup; no automatic retry is scheduled")
     try:
         if effective_uid == 0:
             result = _run_as_login_user(
@@ -122,13 +124,13 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
             )
     except (CommandTimeoutError, OSError) as exc:
         print(
-            "  ⚠ User cache cleanup failed; the scheduled job will retry: "
+            f"  ⚠ User cache cleanup failed; {retry}: "
             f"{_failure_detail(exc)}"
         )
         return False
     if result.returncode != 0:
         print(
-            "  ⚠ User cache cleanup failed; the scheduled job will retry: "
+            f"  ⚠ User cache cleanup failed; {retry}: "
             f"{_failure_detail(result)}"
         )
         return False
@@ -136,12 +138,12 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
     return True
 
 
-def run_user_cache_maintenance(config: SetupConfig) -> None:
+def run_user_cache_maintenance(config: SetupConfig) -> bool:
     """Run only the target-user cache job for profiles without host timers."""
     if is_dry_run():
         print("  [DRY-RUN] Would run user cache maintenance")
-        return
-    _run_user_cache_cleanup(config)
+        return True
+    return _run_user_cache_cleanup(config, scheduled_retry=False)
 
 
 def run_setup_maintenance(config: SetupConfig) -> None:
@@ -157,4 +159,4 @@ def run_setup_maintenance(config: SetupConfig) -> None:
         return
 
     _run_system_cleanup()
-    _run_user_cache_cleanup(config)
+    _run_user_cache_cleanup(config, scheduled_retry=True)

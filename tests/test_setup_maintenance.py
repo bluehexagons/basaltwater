@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import io
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -98,9 +99,23 @@ class TestSetupMaintenance(unittest.TestCase):
         run.assert_called_once()
         run_as_user.assert_not_called()
 
+    def test_timerless_failure_returns_false_and_requests_manual_retry(self) -> None:
+        with (
+            patch.object(setup_maintenance, "is_dry_run", return_value=False),
+            patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
+            patch.object(setup_maintenance.os, "geteuid", return_value=0),
+            patch.object(setup_maintenance, "_validated_script", return_value="/fixture/cleanup.py"),
+            patch.object(setup_maintenance, "_run_as_login_user", return_value=subprocess.CompletedProcess([], 1, "", "cleanup failed")),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            self.assertFalse(setup_maintenance.run_user_cache_maintenance(self.config))
+        self.assertIn("no automatic retry is scheduled", output.getvalue())
+        self.assertNotIn("scheduled job will retry", output.getvalue())
+
     def test_cleanup_failures_are_reported_without_aborting_setup(self) -> None:
         failed = SimpleNamespace(returncode=1, stdout="", stderr="cleanup failed")
         with (
+            patch.object(setup_maintenance.os, "geteuid", return_value=0),
             patch.object(setup_maintenance, "is_dry_run", return_value=False),
             patch.object(
                 setup_maintenance,
@@ -116,6 +131,8 @@ class TestSetupMaintenance(unittest.TestCase):
     def test_cleanup_timeouts_are_reported_without_aborting_setup(self) -> None:
         timeout = CommandTimeoutError("maintenance", 3600)
         with (
+            patch.object(setup_maintenance.os, "geteuid", return_value=0),
+            patch.object(setup_maintenance, "_run_as_login_user", side_effect=timeout),
             patch.object(setup_maintenance, "is_dry_run", return_value=False),
             patch.object(
                 setup_maintenance,

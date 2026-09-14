@@ -205,6 +205,36 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
 
 def install_cachyos_packages(config: SetupConfig) -> None:
     install_missing_packages(cachyos_packages(config))
+    if config.install_git_lfs:
+        configure_cachyos_git_lfs(config)
+
+
+_LFS_FILTERS = {
+    "filter.lfs.clean": "git-lfs clean -- %f",
+    "filter.lfs.smudge": "git-lfs smudge -- %f",
+    "filter.lfs.process": "git-lfs filter-process",
+    "filter.lfs.required": "true",
+}
+
+
+def _git_config_values(home: Path, key: str) -> list[str]:
+    # Query outside a project so repository-local settings cannot mask a
+    # missing user default. Honor existing system and user configuration.
+    result = _user_run(["git", "config", "--get-all", key], home,
+                       cwd="/", capture_output=True, check=False, timeout=15)
+    if result.returncode not in (0, 1):
+        raise RuntimeError("Cannot read Git configuration; inspect git config locally")
+    return result.stdout.splitlines() if result.returncode == 0 else []
+
+
+def configure_cachyos_git_lfs(config: SetupConfig) -> None:
+    """Fill missing LFS defaults without replacing filters or repository hooks."""
+    home = _home(config)
+    for key, default in _LFS_FILTERS.items():
+        if not _git_config_values(home, key):
+            _user_run(["git", "config", "--global", "--add", key, default], home,
+                      cwd="/", capture_output=True, timeout=15)
+    print("  Git LFS filters configured; existing values and repository hooks retained")
 
 
 def install_cachyos_agents(config: SetupConfig) -> None:
@@ -246,6 +276,7 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
     home = _home(config)
     workspace = Path(config.agent_workspace) if config.agent_workspace else home / "repos"
     _directory(workspace)
+    validate_filesystem_path(str(workspace), must_exist=True, check_writable=True)
     for repository in config.agent_repos or []:
         destination = workspace / repository.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
         if destination.exists() or destination.is_symlink():
@@ -259,6 +290,10 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
                                home, capture_output=True, check=False)
             if result.returncode or result.stdout.strip().rstrip("/") != repository.rstrip("/"):
                 raise ValueError(f"Existing repository has a different origin: {destination}")
+            validate_filesystem_path(str(destination), must_exist=True, check_writable=True)
+            result = _user_run(["git", "-C", str(destination), "rev-parse", "--absolute-git-dir"],
+                               home, capture_output=True)
+            validate_filesystem_path(result.stdout.strip(), must_exist=True, check_writable=True)
             print(f"  Keeping existing repository path: {destination}")
             continue
         _user_run(["git", "clone", "--", repository, str(destination)], home)
@@ -425,6 +460,19 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
         if result.returncode:
             raise RuntimeError(f"{command} failed its version check")
         print(f"  {command}: executable verified")
+    identity = _user_run(["git", "var", "GIT_AUTHOR_IDENT"], home,
+                         cwd="/", capture_output=True, check=False, timeout=15)
+    if identity.returncode:
+        print("  WARNING: Default Git author identity unavailable; commits may fail. "
+              "Configure user.name and user.email with git config --global, or set "
+              "them per repository. Provider login does not configure commit identity.")
+    else:
+        print("  Git author identity: available outside a project; repository overrides may differ")
+    if config.install_git_lfs:
+        if any(not any(value.strip() for value in _git_config_values(home, key))
+               for key in _LFS_FILTERS):
+            raise RuntimeError("Git LFS filters are incomplete; inspect git config and rerun --git-lfs")
+        print("  Git LFS: filters present; custom filters and remote transfers require a project test")
     for enabled, commands in (
         (config.install_av_tools, ("ffmpeg", "ffprobe", "magick")),
         (config.install_gl_tools, ("glxinfo", "vulkaninfo")),
@@ -470,4 +518,7 @@ def reconcile_cachyos_user_cache(config: SetupConfig) -> None:
     """Run target-user cache maintenance during setup on hosts without timers."""
     from common.setup_maintenance import run_user_cache_maintenance
 
-    run_user_cache_maintenance(config)
+    if not run_user_cache_maintenance(config):
+        raise RuntimeError("Coding tools were installed, but user cache maintenance is incomplete. "
+                           "Resolve the reported cleanup error and rerun setup; "
+                           "this profile has no automatic cache retry timer.")

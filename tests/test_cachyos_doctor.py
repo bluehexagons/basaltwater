@@ -199,6 +199,37 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["schema_version"], 1)
         mutate.assert_not_called()
 
+    def test_main_doctor_bypasses_distribution_prompt_and_emits_only_json(self):
+        with patch("sys.argv", ["infra-tools", "local", "cachyos-doctor", "--json"]), \
+                patch("sys.stdout", new_callable=io.StringIO) as output, \
+                patch.object(infra_tools, "confirm_unsupported_environment") as confirm, \
+                patch("lib.local_cli._run_step") as mutate:
+            self.assertEqual(infra_tools.main(), 0)
+        self.assertEqual(json.loads(output.getvalue())["schema_version"], 1)
+        confirm.assert_not_called()
+        mutate.assert_not_called()
+
+    def test_main_mutating_local_command_keeps_distribution_guard(self):
+        with patch("sys.argv", ["infra-tools", "local", "update"]), \
+                patch.object(infra_tools, "confirm_unsupported_environment", return_value=False) as confirm, \
+                patch.object(infra_tools, "run_local_command") as dispatch:
+            self.assertEqual(infra_tools.main(), 1)
+        confirm.assert_called_once_with("local maintenance")
+        dispatch.assert_not_called()
+
+    def test_brave_only_host_has_native_browser_without_claiming_automation(self):
+        def probe(command, uid):
+            if command[0] == "/usr/bin/pacman" and command[-1] in doctor.BROWSER_PACKAGES:
+                return ("ok", "brave-bin 1:1.95.101-1\n") if command[-1] == "brave-bin" else ("error", "")
+            return self.healthy_probe(command, uid)
+
+        self.probe.side_effect = probe
+        records = {item["name"]: item for item in doctor.collect_cachyos_doctor()["capabilities"]}
+        self.assertEqual(records["browser.native"]["state"], "available")
+        self.assertIsNone(records["browser.native"]["selected"])
+        self.assertEqual(records["package.firefox"]["state"], "deferred")
+        self.assertEqual(records["browser.playwright"]["state"], "deferred")
+
 
 if __name__ == "__main__":
     unittest.main()
