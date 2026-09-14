@@ -321,6 +321,39 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.report_cachyos_readiness(self.config("--go"))
         self.assertIn(["/usr/bin/go", "version"], [call.args[0][-2:] for call in run.call_args_list])
 
+    def test_readiness_checks_all_selected_language_commands(self):
+        for command in ("node", "npm", "pnpm", "python", "uv"):
+            for failure in ("missing", "broken"):
+                with self.subTest(command=command, failure=failure):
+                    def which(name, **kwargs):
+                        return None if name == command and failure == "missing" else "/usr/bin/" + name
+
+                    def run(argv, home, **kwargs):
+                        code = int(argv[0] == "/usr/bin/" + command and failure == "broken")
+                        return subprocess.CompletedProcess(argv, code, "version\n", "")
+
+                    with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                            patch.object(steps.shutil, "which", side_effect=which), \
+                            patch.object(steps, "_user_run", side_effect=run), \
+                            self.assertRaisesRegex(RuntimeError, command):
+                        steps.report_cachyos_readiness(self.config("--node", "--python"))
+
+    def test_readiness_uses_last_lfs_value_and_preserves_empty_overrides(self):
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name), \
+                patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 0, "version\n", "")) as run, \
+                patch.object(steps, "_git_config_values", return_value=["system default", ""]):
+            steps.configure_cachyos_git_lfs(self.config("--git-lfs"))
+            run.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, "resolve empty overrides"):
+                steps.report_cachyos_readiness(self.config("--git-lfs"))
+
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name), \
+                patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 0, "version\n", "")), \
+                patch.object(steps, "_git_config_values", return_value=["", "custom filter"]):
+            steps.report_cachyos_readiness(self.config("--git-lfs"))
+
     def test_shell_setup_is_additive_and_idempotent(self):
         for shell in ("bash", "zsh", "fish"):
             with self.subTest(shell=shell), tempfile.TemporaryDirectory() as home:

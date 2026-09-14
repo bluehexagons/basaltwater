@@ -318,11 +318,15 @@ def install_cachyos_t3(config: SetupConfig) -> None:
 def report_cachyos_readiness(config: SetupConfig) -> None:
     home = _home(config)
     commands = ["git", "rg", *config.selected_agent_tools()]
-    for enabled, command in ((config.install_node, "node"), (config.install_python, "uv"),
-                             (config.install_go, "go"), (config.install_git_lfs, "git-lfs"),
-                             (config.install_godot, "godot")):
+    for enabled, selected_commands in (
+        (config.install_node, ("node", "npm", "pnpm")),
+        (config.install_python, ("python", "uv")),
+        (config.install_go, ("go",)),
+        (config.install_git_lfs, ("git-lfs",)),
+        (config.install_godot, ("godot",)),
+    ):
         if enabled:
-            commands.append(command)
+            commands.extend(selected_commands)
     for command in commands:
         executable = shutil.which(command, path=_tool_path(home))
         if executable is None:
@@ -341,9 +345,13 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
     else:
         print("  Git author identity: available outside a project; repository overrides may differ")
     if config.install_git_lfs:
-        if any(not any(value.strip() for value in _git_config_values(home, key))
-               for key in _LFS_FILTERS):
-            raise RuntimeError("Git LFS filters are incomplete; inspect git config and rerun --git-lfs")
+        for key in _LFS_FILTERS:
+            values = _git_config_values(home, key)
+            # Git uses the last value for these scalar settings. An empty
+            # user override must not be masked by a populated system default.
+            if not values or not values[-1].strip():
+                raise RuntimeError("Git LFS filters are incomplete; inspect git config "
+                                   "and resolve empty overrides before rerunning --git-lfs")
         print("  Git LFS: filters present; custom filters and remote transfers require a project test")
     for enabled, commands in (
         (config.install_av_tools, ("ffmpeg", "ffprobe", "magick")),

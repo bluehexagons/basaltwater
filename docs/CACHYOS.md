@@ -46,8 +46,10 @@ outside a project; repository-specific overrides may differ.
 
 `--git-lfs` initializes missing per-user LFS filters before cloning repositories.
 Existing system/user filter values and repository hooks are preserved, including
-custom filters. Readiness checks filter presence; test transfers in your project
-to verify custom filters and remote authentication.
+custom filters. Readiness checks that the last (effective) value of each filter
+setting is nonempty. Empty overrides are preserved and reported for you to
+resolve; rerunning setup alone will not replace them. Test transfers in your
+project to verify custom filters and remote authentication.
 
 The launcher is `~/.local/bin/infra-tools`; open a new terminal if the
 installer's PATH change is not visible. Bash, Zsh, and Fish are supported.
@@ -97,6 +99,9 @@ its own web UI on a trusted network.
 T3 selects Node automatically and requires Codex, Claude, or OpenCode. Python
 is also installed when needed for native Node module builds. Existing
 version-manager runtimes are retained when their commands are on PATH.
+Readiness runs version checks for all selected language commands: Node, npm,
+and pnpm for `--node`, and Python and uv for `--python`. A missing or broken
+companion tool makes setup incomplete even if the main runtime works.
 
 ## T3 Code: host locally or on a trusted LAN
 
