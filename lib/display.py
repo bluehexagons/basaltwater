@@ -392,6 +392,12 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         print(f"Agent tools: {', '.join(config.selected_agent_tools())}")
     if config.godot_bundles:
         print(f"Godot bundles: {', '.join(config.godot_bundles)}")
+    if config.install_sunshine:
+        print("Sunshine: Yes (native CachyOS package)")
+    if config.install_moonlight:
+        print("Moonlight: Yes (native CachyOS package)")
+    if config.install_gaming:
+        print("Gaming bundle: Yes (native CachyOS packages)")
     effective_web_ports = config.effective_web_ports()
     if effective_web_ports:
         exposure = "source-restricted" if access_sources else "global"

@@ -349,6 +349,14 @@ list. Neither preview is a completed live setup.
 | `--gl-tools` | Install the minimal OpenGL inspection and debugging bundle: Mesa utilities and apitrace |
 | `--godot` | Install the newest stable verified Godot Engine release for graphical or headless use |
 | `--godot-bundle BUNDLE` | Add `web` or `publishing`; repeatable and automatically enables `--godot` |
+| `--gaming` | CachyOS `agent_cachyos` only: install the native gaming libraries, launchers, and tools bundle |
+| `--sunshine` | CachyOS `agent_cachyos` only: install the native Sunshine game-stream host package |
+| `--moonlight` | CachyOS `agent_cachyos` only: install the native Moonlight Qt game-stream client package |
+
+The CachyOS-only gaming flags use the packages in the workstation's configured
+repositories. They do not install graphics drivers, open firewall ports, or
+configure application credentials; see the [CachyOS workstation guide](CACHYOS.md)
+for the post-install Sunshine service and pairing steps.
 
 Selecting a managed runtime also installs its update timer. Godot is fetched
 from the official release channel rather than Debian's package version and is

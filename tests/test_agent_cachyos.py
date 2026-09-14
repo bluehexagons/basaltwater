@@ -14,6 +14,7 @@ import infra_tools
 import remote_setup
 from common import cachyos_steps as steps
 from lib.cachyos import cachyos_config_from_args, preflight_cachyos
+from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
 
 
@@ -116,6 +117,44 @@ class CachyOSSetupTests(unittest.TestCase):
         with patch.object(steps, "run") as run, self.assertRaises(ValueError):
             steps.install_missing_packages(["git;touch /tmp/unwanted"])
         run.assert_not_called()
+
+    def test_native_graphics_flags_select_cachyos_packages(self):
+        config = self.config("--gaming", "--sunshine", "--moonlight")
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+             patch.object(steps.shutil, "which", return_value=None):
+            packages = steps.cachyos_packages(config)
+        self.assertIn("cachyos-gaming-meta", packages)
+        self.assertIn("cachyos-gaming-applications", packages)
+        self.assertIn("sunshine", packages)
+        self.assertIn("moonlight-qt", packages)
+
+    def test_native_graphics_flags_round_trip_and_reject_other_profiles(self):
+        config = self.config("--gaming", "--sunshine", "--moonlight")
+        self.assertIn("--gaming", config.to_remote_args())
+        self.assertIn("--sunshine", config.to_setup_command())
+        self.assertTrue(config.to_dict()["install_moonlight"])
+        with self.assertRaisesRegex(ValueError, "require the agent_cachyos profile"):
+            SetupConfig(
+                host="example.com",
+                username="human",
+                system_type="server_lite",
+                install_sunshine=True,
+            )
+
+    def test_native_streaming_readiness_checks_commands(self):
+        config = self.config("--sunshine", "--moonlight")
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+             patch.object(
+                 steps.shutil,
+                 "which",
+                 side_effect=lambda name, **kwargs: "/usr/bin/" + name,
+             ), \
+             patch.object(
+                 steps,
+                 "run",
+                 return_value=subprocess.CompletedProcess([], 0, "version\n"),
+             ):
+            steps.report_cachyos_readiness(config)
 
     def test_existing_agents_are_not_updated(self):
         with patch.object(steps, "_home", return_value=Path("/home/human")), \

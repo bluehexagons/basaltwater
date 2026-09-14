@@ -387,6 +387,9 @@ class SetupConfig:
     install_av_tools: bool = False
     install_gl_tools: bool = False
     install_godot: bool = False
+    install_sunshine: bool = False
+    install_moonlight: bool = False
+    install_gaming: bool = False
     godot_bundles: Optional[StrList] = None
     install_gh: bool = False
     install_codex: bool = False
@@ -551,6 +554,13 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             self.install_python = True
+
+        if self.system_type != "agent_cachyos" and (
+            self.install_sunshine or self.install_moonlight or self.install_gaming
+        ):
+            raise ValueError(
+                "--sunshine, --moonlight, and --gaming require the agent_cachyos profile"
+            )
 
         if self.enable_syncthing and self.syncthing_admin is None:
             self.syncthing_admin = "syncthing-admin"
@@ -1027,6 +1037,12 @@ class SetupConfig:
 
         if self.install_godot:
             args.append("--godot")
+        if self.install_sunshine:
+            args.append("--sunshine")
+        if self.install_moonlight:
+            args.append("--moonlight")
+        if self.install_gaming:
+            args.append("--gaming")
         for bundle in self.godot_bundles or []:
             args.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1487,6 +1503,12 @@ class SetupConfig:
 
         if self.install_godot:
             cmd_parts.append("--godot")
+        if self.install_sunshine:
+            cmd_parts.append("--sunshine")
+        if self.install_moonlight:
+            cmd_parts.append("--moonlight")
+        if self.install_gaming:
+            cmd_parts.append("--gaming")
         for bundle in self.godot_bundles or []:
             cmd_parts.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1848,6 +1870,9 @@ class SetupConfig:
         )
         data['install_av_tools'] = bool(self.install_av_tools)
         data['install_gl_tools'] = bool(self.install_gl_tools)
+        data['install_sunshine'] = bool(self.install_sunshine)
+        data['install_moonlight'] = bool(self.install_moonlight)
+        data['install_gaming'] = bool(self.install_gaming)
         data['harden_agent'] = bool(self.harden_agent)
         data['harden_user'] = bool(self.harden_user)
         data['enable_syncthing'] = bool(self.enable_syncthing)
@@ -2346,6 +2371,9 @@ class SetupConfig:
             install_av_tools=getattr(args, 'install_av_tools', False),
             install_gl_tools=getattr(args, 'install_gl_tools', False),
             install_godot=getattr(args, 'install_godot', False),
+            install_sunshine=getattr(args, 'install_sunshine', False) is True,
+            install_moonlight=getattr(args, 'install_moonlight', False) is True,
+            install_gaming=getattr(args, 'install_gaming', False) is True,
             godot_bundles=(
                 getattr(args, 'godot_bundles', None)
                 if isinstance(getattr(args, 'godot_bundles', None), list)

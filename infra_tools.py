@@ -790,6 +790,12 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             features.append("AV tools")
         if args.get("install_gl_tools"):
             features.append("OpenGL tools")
+        if args.get("install_sunshine"):
+            features.append("Sunshine")
+        if args.get("install_moonlight"):
+            features.append("Moonlight")
+        if args.get("install_gaming"):
+            features.append("CachyOS gaming bundle")
         if args.get("install_gh"):
             features.append("GitHub CLI")
         if args.get("install_codex"):

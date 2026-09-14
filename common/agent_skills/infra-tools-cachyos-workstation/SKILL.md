@@ -14,7 +14,8 @@ manager, account groups, network, firewall, or power policy.
 
 To add supported tools, rerun `infra-tools setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
-or `--gl-tools`. Preview with `--dry-run`. Existing executables are retained;
+`--gl-tools`, `--gaming`, `--sunshine`, or `--moonlight`. Preview with
+`--dry-run`. Existing executables are retained;
 setup is not a tool updater. Authentication uses the provider's local login.
 
 Packages use pacman, not APT. infra-tools installs missing packages using the
@@ -33,3 +34,11 @@ Prefer read-only diagnostics such as `command -v`, tool version checks,
 or `glxinfo` when installed; a successful CLI check does not prove GPU rendering.
 An agent running as this account has the account's access to personal files.
 Keep work inside the requested project and preserve existing application settings.
+
+The gaming flags use CachyOS-native packages. `--gaming` installs the gaming
+libraries, launchers, and tools bundle; `--sunshine` installs the game-stream
+host; and `--moonlight` installs the Qt client. The setup does not install
+graphics drivers, enable Sunshine, or change firewall policy. After reviewing
+network exposure, the desktop owner can start the user service with
+`systemctl --user --now enable sunshine` and complete pairing in Sunshine's web
+UI.

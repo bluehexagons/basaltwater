@@ -765,6 +765,27 @@ def add_setup_arguments(
         help="Install the latest stable Godot Engine for graphical and headless use",
     )
     parser.add_argument(
+        "--sunshine",
+        dest="install_sunshine",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help="Install the native CachyOS Sunshine game-stream host package",
+    )
+    parser.add_argument(
+        "--moonlight",
+        dest="install_moonlight",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help="Install the native CachyOS Moonlight Qt game-stream client package",
+    )
+    parser.add_argument(
+        "--gaming",
+        dest="install_gaming",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help="Install CachyOS's native gaming libraries, launchers, and tools",
+    )
+    parser.add_argument(
         "--godot-bundle",
         dest="godot_bundles",
         action="append",

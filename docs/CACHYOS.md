@@ -67,7 +67,8 @@ patterns:
 | Minimal coding tools | *(no extra flags)* |
 | Node/Python development | `--node --python --git-lfs` |
 | Local T3 Code service | `--web-interface t3code` (Node tooling is implied) |
-| Game and media work | `--node --godot --av-tools --gl-tools` |
+| Game and media work | `--gaming --node --godot --av-tools --gl-tools` |
+| Game streaming workstation | `--gaming --sunshine --moonlight` |
 | Additional agent | `--agent-tool opencode` or `--agent-tool claude` |
 
 For example, the complete initial command for a local T3 Code service is:
@@ -100,6 +101,9 @@ installs the launcher and prerequisites; only the subsequent setup is a preview.
 | `--godot` | Install the distro's Godot when absent; no export-template bundle or managed updater |
 | `--av-tools` | Install missing FFmpeg and ImageMagick commands |
 | `--gl-tools` | Install missing Mesa diagnostic and Vulkan diagnostic commands; no driver installation |
+| `--gaming` | Install CachyOS's native gaming libraries, launchers, and tools (`cachyos-gaming-meta` and `cachyos-gaming-applications`) |
+| `--sunshine` | Install the native CachyOS Sunshine game-stream host package; setup does not open firewall ports or create credentials |
+| `--moonlight` | Install the native CachyOS Moonlight Qt game-stream client package |
 | `--repo HTTPS_URL` | Clone a missing repository; repeatable; existing origins must match |
 | `--agent-workspace /absolute/path` | Clone destination, defaulting to `~/repos`; must be writable by you |
 | `--web-interface t3code` | Install the optional localhost user service; implies Node tooling |
@@ -112,6 +116,39 @@ For example, add game and media tools and another agent:
 infra-tools setup agent_cachyos localhost \
   --agent-tool opencode --node --python --git-lfs --godot --av-tools --gl-tools
 ```
+
+For a graphical gaming and streaming workstation, use the native CachyOS
+gaming bundle and select the host, client, or both:
+
+```bash
+infra-tools setup agent_cachyos localhost --gaming --sunshine --moonlight
+```
+
+`--gaming` installs CachyOS's `cachyos-gaming-meta` and
+`cachyos-gaming-applications` packages, which provide the gaming libraries and
+the supported launchers and tools. `--sunshine` and `--moonlight` use the
+native packages from the configured CachyOS repositories; they do not install
+graphics drivers. The package split follows the [CachyOS gaming
+guide](https://wiki.cachyos.org/configuration/gaming/); the [CachyOS package
+index](https://packages.cachyos.org/) supplies the currently configured native
+package versions. Installing Sunshine does not start its user service or
+change the firewall. After reviewing the network exposure and choosing a
+pairing password, start it in the desktop session with:
+
+```bash
+systemctl --user --now enable sunshine
+```
+
+Keep Sunshine's streaming and web UI ports on a trusted LAN or VPN. The
+profile leaves firewall policy and Sunshine's application configuration to the
+desktop owner. Complete pairing from Sunshine's local web UI, then use
+Moonlight on the client device.
+
+Other current native CachyOS/Arch desktop packages are good candidates for
+future opt-in bundles, including OBS Studio, Blender, Kdenlive, and Krita.
+They remain separate until their project files, codecs, plugins, and GPU
+workflows have setup-specific checks rather than being silently added to the
+gaming bundle.
 
 An existing version-manager installation is retained when its commands are on
 the invoking shell's PATH. Setup checks executable availability and selected

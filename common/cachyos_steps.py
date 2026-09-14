@@ -143,6 +143,12 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
         commands += [("ffmpeg", "ffmpeg"), ("magick", "imagemagick")]
     if config.install_gl_tools:
         commands += [("glxinfo", "mesa-utils"), ("vulkaninfo", "vulkan-tools")]
+    if config.install_sunshine:
+        packages.append("sunshine")
+    if config.install_moonlight:
+        packages.append("moonlight-qt")
+    if config.install_gaming:
+        packages.extend(("cachyos-gaming-meta", "cachyos-gaming-applications"))
     for command, package in commands:
         if not shutil.which(command, path=_tool_path(home)):
             packages.append(package)
@@ -360,6 +366,19 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
                 if not shutil.which(command, path=_tool_path(home)):
                     raise RuntimeError(f"Requested command missing: {command}")
                 print(f"  {command}: available; media/GPU behavior requires a project test")
+    for enabled, command, package in (
+        (config.install_sunshine, "sunshine", "sunshine"),
+        (config.install_moonlight, "moonlight", "moonlight-qt"),
+    ):
+        if enabled:
+            if not shutil.which(command, path=_tool_path(home)):
+                raise RuntimeError(f"Requested command missing: {command}")
+            print(f"  {command}: native CachyOS package available ({package})")
+    if config.install_gaming:
+        print(
+            "  CachyOS gaming bundle: native gaming libraries, launchers, and tools requested; "
+            "verify the intended GPU and games interactively"
+        )
     print("  Provider authentication: use each provider's local login; existing credentials retained")
     print("  KDE automation and managed Playwright: not installed")
 

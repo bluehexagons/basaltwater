@@ -21,7 +21,8 @@ _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools",
-    "install_godot", "agent_workspace", "agent_repos", "web_interfaces",
+    "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
+    "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port",
 }
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
