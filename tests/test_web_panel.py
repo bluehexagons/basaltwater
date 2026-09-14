@@ -996,6 +996,7 @@ class WebPanelRenderingTest(unittest.TestCase):
             "version": 1,
             "title": "Coding VM",
             "host": "agent-vm.local",
+            "panel_url": "https://agent-vm.local/",
             "system_type": "agent_code_vm",
             "username": "agent",
             "services": [],
@@ -1022,6 +1023,7 @@ class WebPanelRenderingTest(unittest.TestCase):
         )
 
         self.assertEqual(manifest["title"], "Coding VM")
+        self.assertEqual(manifest["panel_url"], "http://agent-vm.local/")
         self.assertTrue(manifest["features"]["t3_update"])
         self.assertFalse(manifest["features"]["t3_github_readiness"])
         self.assertFalse(manifest["features"]["t3_git_identity_readiness"])
@@ -1547,6 +1549,11 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("infra-tools setup agent_vm", rendered)
         self.assertIn("PANEL_HOST", rendered)
         self.assertIn("local network", rendered)
+        self.assertIn("Reveal full sender link", rendered)
+        self.assertIn(
+            "https://agent-vm.local/api/v1/notifications#" + "a" * 43,
+            rendered,
+        )
         self.assertIn("Backup &lt;failed&gt;", rendered)
         self.assertIn("reported system agent-2", rendered)
         self.assertIn("receipt address when investigating", rendered)

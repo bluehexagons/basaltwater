@@ -493,9 +493,12 @@ def _run_main() -> int:
         except Exception as e:
             error_msg = f"Step '{name}' failed: {e}"
             elapsed = time.monotonic() - step_started
-            print(f"  ✗ {error_msg} ({elapsed:.1f}s)")
-            if report is not None:
-                report.error(error_msg, step=name)
+            # SetupReport observes this progress line. Keep the summary on one
+            # line so a multiline exception does not become several run notes;
+            # the original exception is still retained for the traceback and
+            # setup notification below.
+            summary_error = " ".join(error_msg.split())
+            print(f"  ✗ {summary_error} ({elapsed:.1f}s)")
             setup_errors.append(error_msg)
             if config.notify_specs:
                 send_setup_notification(

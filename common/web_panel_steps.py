@@ -207,7 +207,7 @@ def build_web_panel_manifest(
     title = config.friendly_name or config.system_hostname or _preferred_host(
         config, identities
     )
-    return {
+    manifest = {
         "version": 1,
         "title": title,
         "host": host,
@@ -222,6 +222,10 @@ def build_web_panel_manifest(
             "notification_ingest": config.web_panel_notification_ingest is True,
         },
     }
+    if config.web_panel_port is not None:
+        scheme = "https" if config.enable_ssl else "http"
+        manifest["panel_url"] = _http_url(host, config.web_panel_port, scheme)
+    return manifest
 
 
 def render_web_panel_nginx(

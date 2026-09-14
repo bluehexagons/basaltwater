@@ -47,7 +47,11 @@ The endpoint uses a fixed path on the same origin as the panel:
 https://panel.example/api/v1/notifications
 ```
 
-Setup creates a bearer token on the panel host. Read it there with `sudo`:
+Setup creates a bearer token on the panel host. On the administrator panel,
+open **Notifications** and expand **Reveal full sender link** to copy the
+complete target. The link includes the token and is ready to use with a sender
+setup command. For scripted workflows, read the token on the panel host with
+`sudo`:
 
 ```bash
 sudo cat /etc/infra-tools/web-panel/notification-ingest.token
@@ -55,7 +59,8 @@ sudo cat /etc/infra-tools/web-panel/notification-ingest.token
 
 ### 2. Configure each sender
 
-Append the token as the webhook URL fragment:
+Append the token as the webhook URL fragment (or paste the complete link shown
+by the panel):
 
 ```bash
 infra-tools patch sender.example agent \

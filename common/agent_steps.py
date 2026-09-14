@@ -731,7 +731,12 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
         capture_output=True,
     )
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "update failed").strip()
+        output = [
+            str(stream).strip()
+            for stream in (result.stdout, result.stderr)
+            if stream and str(stream).strip()
+        ]
+        detail = "\n".join(output) or "update failed"
         if len(detail) > 2000:
             head_length = 1000
             tail_length = 2000 - head_length

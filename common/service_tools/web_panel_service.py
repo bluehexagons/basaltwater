@@ -144,6 +144,18 @@ def _load_manifest(path: str) -> dict[str, Any]:
     ):
         if not isinstance(value["features"].get(name, False), bool):
             raise RuntimeError("Web panel manifest has invalid feature settings")
+    panel_url = value.get("panel_url")
+    if panel_url is not None:
+        safe_panel_url = _safe_url(panel_url)
+        if not safe_panel_url:
+            raise RuntimeError("Web panel manifest has an invalid panel_url")
+        parsed_panel_url = urllib.parse.urlsplit(safe_panel_url)
+        if (
+            parsed_panel_url.path != "/"
+            or parsed_panel_url.query
+            or parsed_panel_url.fragment
+        ):
+            raise RuntimeError("Web panel manifest has an invalid panel_url")
     return value
 
 
@@ -636,6 +648,24 @@ class WebPanelState:
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
+
+    def notification_ingest_url(self) -> str | None:
+        """Return the complete administrator-only sender URL, when available."""
+
+        if not self.notification_ingest_enabled() or not self._ingest_token:
+            return None
+        panel_url = _safe_url(self.manifest.get("panel_url"))
+        if not panel_url:
+            return None
+        parsed = urllib.parse.urlsplit(panel_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.path != "/"
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        return f"{panel_url.rstrip('/')}{WEB_PANEL_NOTIFICATION_ENDPOINT}#{self._ingest_token}"
 
     def audit_snapshot(self) -> dict[str, Any]:
         return load_audit_snapshot(self._audit_snapshot_path)
@@ -1592,10 +1622,18 @@ def _render_notification_section(state: WebPanelState) -> str:
             )
         content = _render_event_history(rows)
     count = len(events)
+    full_link = state.notification_ingest_url()
+    link_help = ""
+    if full_link:
+        link_help = f'''<details class="notification-link"><summary>Reveal full sender link</summary>
+<p>This link includes the bearer token. Reveal it only on this administrator panel and treat it as a credential.</p>
+<pre><code>{html.escape(full_link)}</code></pre>
+<p>Paste this complete URL as the target for <code>--notify webhook</code> on a managed sender that can reach this panel.</p></details>'''
     return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
 <p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
 <span class="count">{count} received</span></div>
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
+{link_help}
 <details class="notification-help"><summary>Configure an infra-tools sender</summary>
 <p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. During an initial sender setup, replace the placeholders with its profile, host, account, and a reachable panel host:</p>
 <p>Read the token on this panel host with <code>sudo cat /etc/infra-tools/web-panel/notification-ingest.token</code>.</p>

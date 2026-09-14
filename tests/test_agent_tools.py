@@ -432,6 +432,32 @@ class TestOfficialAgentInstallers(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "network unavailable"):
                 update_managed_agent_tools(config)
 
+    def test_setup_agent_update_failure_includes_both_output_streams(self):
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            agent_tools=["codex"],
+        )
+        failed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 1,
+                "stdout": "Agent update result\n  ✗ codex: post_update_verification",
+                "stderr": "codex: accepted vendor-rolling; SHA-256 abc123; provenance /state/codex.json",
+            },
+        )()
+        with (
+            patch("common.agent_steps._user_home", return_value="/home/agent"),
+            patch("common.agent_steps._run_as_login_user", return_value=failed),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "(?s)Agent update result.*post_update_verification.*accepted vendor-rolling",
+            ):
+                update_managed_agent_tools(config)
+
     def test_setup_skips_redundant_update_for_newly_installed_tool(self):
         config = SetupConfig(
             host="host",

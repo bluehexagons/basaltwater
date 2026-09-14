@@ -86,7 +86,18 @@ add `--web-panel-notification-ingest` to the setup command above.
 | Payload | infra-tools notification schema version 2 |
 | History | Latest 100 accepted events |
 
-The token is created once and preserved across setup runs. On the panel host:
+The token is created once and preserved across setup runs. After the panel is
+updated, open **Notifications** and expand **Reveal full sender link**. The
+complete URL is ready to paste into a sender setup command:
+
+```bash
+infra-tools setup agent_vm SENDER_HOST SENDER_USER \
+  --notify webhook 'https://PANEL_HOST/api/v1/notifications#TOKEN_FROM_PANEL_HOST'
+```
+
+The full URL includes the bearer token. Reveal it only on this administrator
+panel and treat it as a credential. For scripted workflows, the token can
+still be read directly on the panel host:
 
 ```bash
 sudo cat /etc/infra-tools/web-panel/notification-ingest.token
