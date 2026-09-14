@@ -287,6 +287,15 @@ responses from the local URL. If startup fails, inspect the service journal and
 check whether another application already uses port 3773; select another port
 with `--web-interface-port` if needed.
 
+If a setup run from an older checkout reported `has a bad unit file setting`,
+update infra-tools and rerun the same setup command. The managed unit is
+rewritten with systemd-compatible path escaping. You can validate it before
+starting T3 with:
+
+```bash
+systemd-analyze verify "$HOME/.config/systemd/user/infra-tools-cachyos-t3.service"
+```
+
 The service starts with your user session. Setup does not enable lingering,
 change suspend policy, configure a gateway, enroll other devices, or expose
 network listeners beyond IPv4 loopback. An existing upstream `t3code.service`

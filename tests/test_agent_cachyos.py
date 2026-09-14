@@ -213,6 +213,17 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.install_cachyos_agents(self.config())
         update.assert_called_once_with(["codex"], home="/home/human")
 
+    def test_new_agent_installers_are_non_interactive(self):
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+             patch.object(steps.shutil, "which", side_effect=[
+                 None, "/home/human/.local/bin/codex",
+             ]), \
+             patch.object(steps, "install_vendor_tool", return_value=0) as install:
+            steps.install_cachyos_agents(self.config())
+        install.assert_called_once_with(
+            "codex", accept_vendor_channel=True, non_interactive=True,
+        )
+
     def test_setup_reconciles_user_cache(self):
         config = self.config()
         with patch(
@@ -307,6 +318,8 @@ class CachyOSSetupTests(unittest.TestCase):
                 content = unit.read_text()
                 self.assertIn("serve --host 127.0.0.1 --port 3773", content)
                 self.assertIn(str(binary), content)
+                self.assertIn("WorkingDirectory=" + str(root / "repos"), content)
+                self.assertNotIn('WorkingDirectory="', content)
                 self.assertNotIn("User=", content)
                 self.assertTrue(any("npm" in call.args[0] for call in run.call_args_list))
                 run.reset_mock()

@@ -102,6 +102,24 @@ class TestVendorInstaller(unittest.TestCase):
             self.assertEqual(record["status"], "interrupted" if interrupted else "failed")
             self.assertEqual([p.name for p in self.state.iterdir()], ["codex.json"])
 
+    def test_non_interactive_install_closes_stdin_and_sets_prompt_guards(self):
+        def execute(command, **kwargs):
+            if isinstance(command, list) and "curl" in command:
+                return self.download(command, **kwargs)
+            self.assertEqual(kwargs["input_data"], "")
+            self.assertEqual(kwargs["env"]["CI"], "1")
+            self.assertEqual(kwargs["env"]["NON_INTERACTIVE"], "1")
+            self.assertEqual(kwargs["env"]["npm_config_yes"], "true")
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(installer, "run", side_effect=execute):
+            self.assertEqual(
+                installer.install(
+                    "codex", accept_vendor_channel=True, non_interactive=True,
+                ),
+                0,
+            )
+
     def test_provenance_write_failure_prevents_execution(self):
         with patch.object(installer, "run", side_effect=self.download) as runner, patch.object(
             installer, "write_json_atomic", side_effect=OSError("disk full"),

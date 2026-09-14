@@ -107,7 +107,12 @@ def download_installer(tool: str, directory: str) -> tuple[str, str, dict]:
         raise
 
 
-def install(tool: str, *, accept_vendor_channel: bool = False) -> int:
+def install(
+    tool: str,
+    *,
+    accept_vendor_channel: bool = False,
+    non_interactive: bool = False,
+) -> int:
     if not accept_vendor_channel or tool not in POLICIES:
         raise ValueError("Explicit vendor-channel acceptance is required")
     source, shell, policy = _policy(tool)
@@ -116,8 +121,24 @@ def install(tool: str, *, accept_vendor_channel: bool = False) -> int:
         path, state_path, record = download_installer(tool, directory)
         environment = dict(os.environ)
         environment["CODEX_NON_INTERACTIVE"] = "1"
+        if non_interactive:
+            environment.update({
+                "CI": "1",
+                "NONINTERACTIVE": "1",
+                "NON_INTERACTIVE": "1",
+                "npm_config_yes": "true",
+                "NPM_CONFIG_YES": "true",
+            })
         try:
-            result = run([f"/bin/{shell}", path], check=False, env=environment, timeout=3600)
+            run_kwargs = {
+                "check": False,
+                "env": environment,
+                "timeout": 3600,
+            }
+            if non_interactive:
+                # Keep an installer from blocking the setup terminal on a read.
+                run_kwargs["input_data"] = ""
+            result = run([f"/bin/{shell}", path], **run_kwargs)
             record.update(status="succeeded" if result.returncode == 0 else "failed", returncode=result.returncode)
             return result.returncode
         except BaseException:

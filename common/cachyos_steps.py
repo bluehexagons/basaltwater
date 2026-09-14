@@ -217,7 +217,11 @@ def install_cachyos_agents(config: SetupConfig) -> None:
                     f"{tool} update failed; inspect its private agent update record"
                 )
             continue
-        if install_vendor_tool(tool, accept_vendor_channel=True) != 0:
+        if install_vendor_tool(
+            tool,
+            accept_vendor_channel=True,
+            non_interactive=True,
+        ) != 0:
             raise RuntimeError(f"{tool} installer failed")
         if not shutil.which(tool, path=_tool_path(home)):
             raise RuntimeError(f"{tool} installer finished without an executable on the user PATH")
@@ -262,6 +266,17 @@ def install_cachyos_skills(config: SetupConfig) -> None:
 def _unit_quote(value: str) -> str:
     # systemd expands percent specifiers even inside double quotes.
     return json.dumps(value.replace("%", "%%"))
+
+
+def _unit_path(value: str) -> str:
+    """Escape a path value for a systemd setting such as WorkingDirectory."""
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("T3 unit path contains a control character")
+    return (
+        value.replace("\\", "\\x5c")
+        .replace("%", "%%")
+        .replace(" ", "\\x20")
+    )
 
 
 def install_cachyos_t3(config: SetupConfig) -> None:
@@ -329,7 +344,7 @@ def install_cachyos_t3(config: SetupConfig) -> None:
     content = (
         f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
         "\n[Service]\nType=simple\n"
-        f"WorkingDirectory={_unit_quote(workspace)}\n"
+        f"WorkingDirectory={_unit_path(workspace)}\n"
         f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
         f"ExecStart={_unit_quote(str(binary))} serve --host 127.0.0.1 "
         f"--port {config.web_interface_port} --no-browser\n"
