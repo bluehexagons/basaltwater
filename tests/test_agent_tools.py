@@ -31,6 +31,7 @@ from common.agent_steps import (
     install_git_for_agent_repositories,
     install_git_lfs_for_agent_repositories,
     install_opencode,
+    update_managed_agent_tools,
 )
 from lib.agent_auth import (
     _remote_set_script,
@@ -375,6 +376,57 @@ class TestOfficialAgentInstallers(unittest.TestCase):
                 'installer',
             ],
         )
+
+    def test_setup_updates_selected_agent_tools_as_target_user(self):
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            agent_tools=["codex", "claude", "opencode"],
+        )
+        completed = type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "updated\n", "stderr": ""},
+        )()
+        with (
+            patch("common.agent_steps._user_home", return_value="/home/agent"),
+            patch(
+                "common.agent_steps._run_as_login_user",
+                return_value=completed,
+            ) as run_as_user,
+        ):
+            update_managed_agent_tools(config)
+
+        run_as_user.assert_called_once()
+        command = run_as_user.call_args.args[2]
+        self.assertIn("agent update", command)
+        self.assertIn("--tool codex", command)
+        self.assertIn("--tool claude", command)
+        self.assertIn("--tool opencode", command)
+        self.assertTrue(run_as_user.call_args.kwargs["capture_output"])
+
+    def test_setup_agent_update_failure_is_visible(self):
+        config = SetupConfig(
+            host="host",
+            username="agent",
+            system_type="server_dev",
+            agent_tools=["codex"],
+        )
+        failed = type(
+            "Completed",
+            (),
+            {"returncode": 1, "stdout": "", "stderr": "network unavailable"},
+        )()
+        with (
+            patch("common.agent_steps._user_home", return_value="/home/agent"),
+            patch(
+                "common.agent_steps._run_as_login_user",
+                return_value=failed,
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "network unavailable"):
+                update_managed_agent_tools(config)
 
     def test_agent_vm_launcher_refuses_symlink_destination(self):
         with tempfile.TemporaryDirectory() as directory:

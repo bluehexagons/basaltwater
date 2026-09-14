@@ -450,6 +450,76 @@ class T3CodeWebTest(unittest.TestCase):
                 )
             run_as_user.assert_not_called()
 
+    def test_refresh_keeps_an_unchanged_service_running(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            workspace = os.path.join(home, "repos")
+            os.makedirs(workspace)
+            node_bin = self._write_node_tools(home)
+            binary = self._write_upstream_runtime(home)
+            service_file = os.path.join(
+                home,
+                ".config",
+                "systemd",
+                "user",
+                "t3code.service",
+            )
+            os.makedirs(os.path.dirname(service_file), exist_ok=True)
+            with open(service_file, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# upstream managed\n")
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with (
+                patch("common.t3code_steps.install_package", return_value=True),
+                patch("common.t3code_steps._ensure_user_manager"),
+                patch(
+                    "common.t3code_steps._node_bin_directory",
+                    return_value=node_bin,
+                ),
+                patch(
+                    "common.t3code_steps._install_t3_npm_shim",
+                    return_value=(os.path.join(home, "npm-shim"), False),
+                ),
+                patch(
+                    "common.t3code_steps._configure_t3_service_drop_in",
+                    return_value=False,
+                ),
+                patch(
+                    "common.t3code_steps._run_as_login_user",
+                    return_value=completed,
+                ) as updater,
+                patch(
+                    "common.t3code_steps._t3_native_runtime_healthy",
+                    return_value=True,
+                ),
+                patch("common.t3code_steps._wait_for_t3_service"),
+                patch(
+                    "common.t3code_steps._user_systemctl",
+                    return_value=completed,
+                ) as systemctl,
+                patch("common.t3code_steps.os.chown"),
+                patch(
+                    "common.t3code_steps.LEGACY_T3_SERVICE_FILE",
+                    os.path.join(home, "legacy.service"),
+                ),
+            ):
+                self.assertEqual(
+                    _install_t3_service(
+                        home,
+                        "agent",
+                        os.getuid(),
+                        os.getgid(),
+                        workspace,
+                        "127.0.0.1",
+                        3773,
+                        refresh=True,
+                    ),
+                    binary,
+                )
+
+            updater.assert_called_once()
+            actions = [call.args[2] for call in systemctl.call_args_list]
+            self.assertIn("start", actions)
+            self.assertNotIn("restart", actions)
+
     def test_t3_loginctl_shim_supplies_explicit_username(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             real_loginctl = os.path.join(home, "real-loginctl")
@@ -952,7 +1022,7 @@ class T3CodeWebTest(unittest.TestCase):
                 patch(
                     "common.t3code_steps._install_t3_service",
                     return_value=binary,
-                ),
+                ) as install_service,
                 patch("common.t3code_steps._ensure_t3_agent_skill", return_value=False),
                 patch("common.t3code_steps._remove_connect_restart_units"),
                 patch("common.t3code_steps._remove_device_pairing"),
@@ -967,6 +1037,9 @@ class T3CodeWebTest(unittest.TestCase):
                         agent_workspace=workspace,
                     )
                 )
+
+            install_service.assert_called_once()
+            self.assertTrue(install_service.call_args.kwargs["refresh"])
 
             wrapper = os.path.join(
                 home,

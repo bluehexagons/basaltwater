@@ -260,6 +260,7 @@ class TestAgentStorage(unittest.TestCase):
         names = [name for name, _function in steps]
         t3_index = names.index("Installing T3 Code web interface")
         self.assertEqual(names[t3_index + 1], "Reconciling agent storage")
+        self.assertIn("Updating managed agent tools", names)
         self.assertEqual(
             resolve_custom_step("reconcile_agent_storage").__name__,
             "reconcile_agent_storage",

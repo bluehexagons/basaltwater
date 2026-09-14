@@ -54,8 +54,11 @@ unless readiness or unrelated operations fail too.
 
 ## Updates
 
-T3 Code does not silently update. Prefer the connected client's explicit
-**Update server** action. For a host-side update, set `T3_RELEASE` to `latest`
+When T3 Code is selected, an infra-tools setup rerun checks the upstream
+service and updates it when a newer release is available. A healthy service is
+restarted only when the runtime or managed configuration changes. Prefer the
+connected client's explicit **Update server** action when an update should be
+performed outside setup. For a host-side update, set `T3_RELEASE` to `latest`
 or the exact version required by the client, then run:
 
 ```bash
@@ -87,11 +90,13 @@ creates a short-lived project policy allowing only `node-pty` and
 `msgpackr-extract`, and removes it before publication. Other npm commands pass
 through unchanged.
 
-If the UI update rolled back with a native-module load error, rerun the VM's
-infra-tools setup first. It repairs the retained candidate without stopping
-the working active version; then retry **Update server**. The doctor repairs
-and verifies the active runtime. `infra-tools agent update` is not a T3
-updater; it updates selected Codex, Claude Code, and OpenCode installations.
+If the UI update or setup rerun rolled back with a native-module load error,
+rerun the VM's infra-tools setup. It repairs the retained candidate without
+stopping the working active version; then retry **Update server**. The doctor
+repairs and verifies the active runtime. `infra-tools agent update` is not a
+T3 updater; setup reruns update selected Codex, Claude Code, and OpenCode
+installations as well, while the command remains available for an agent-only
+update.
 Do not start a second foreground T3 server on the managed port.
 
 ## Long-running work

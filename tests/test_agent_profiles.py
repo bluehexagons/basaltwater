@@ -37,6 +37,7 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Installing CLI tools", step_names)
         self.assertIn("Installing GitHub CLI", step_names)
         self.assertIn("Installing Codex CLI", step_names)
+        self.assertIn("Updating managed agent tools", step_names)
         self.assertIn("Ensuring python command alias", step_names)
         self.assertNotIn("Installing desktop environment", step_names)
 
@@ -52,6 +53,7 @@ class TestAgentProfiles(unittest.TestCase):
         self.assertIn("Installing browser", step_names)
         self.assertIn("Installing GitHub CLI", step_names)
         self.assertIn("Installing Codex CLI", step_names)
+        self.assertIn("Updating managed agent tools", step_names)
 
     def test_agent_code_vm_adds_t3_and_geany_without_browser_fallback(self) -> None:
         config = SetupConfig.from_args(_setup_args(), "agent_code_vm")

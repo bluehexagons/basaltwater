@@ -612,6 +612,67 @@ def install_opencode(config: SetupConfig) -> None:
     )
 
 
+def update_managed_agent_tools(config: SetupConfig) -> None:
+    """Update selected user-scoped terminal agents after setup installation."""
+
+    from lib.agent_cli import AGENT_UPDATE_TOOLS
+
+    selected = [
+        tool
+        for tool in AGENT_UPDATE_TOOLS
+        if tool in config.selected_agent_tools()
+    ]
+    if not selected:
+        return
+    if is_dry_run():
+        print(
+            "  [DRY-RUN] Would update managed agent tools: "
+            + ", ".join(selected)
+        )
+        return
+
+    validate_filesystem_path(AGENT_CLI_SOURCE, must_exist=True)
+    if os.path.islink(AGENT_CLI_SOURCE) or not os.path.isfile(AGENT_CLI_SOURCE):
+        raise RuntimeError(
+            f"Agent management source is not a regular file: {AGENT_CLI_SOURCE}"
+        )
+
+    user_home = _user_home(config)
+    update_command = " ".join(
+        (
+            "/usr/bin/python3",
+            shlex.quote(AGENT_CLI_SOURCE),
+            "agent",
+            "update",
+            *(
+                item
+                for tool in selected
+                for item in ("--tool", shlex.quote(tool))
+            ),
+        )
+    )
+    print(
+        "  Updating managed agent tools: "
+        + ", ".join(selected)
+        + " (vendor checks may take a while)"
+    )
+    result = _run_as_login_user(
+        config.username,
+        user_home,
+        update_command,
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "update failed").strip()
+        if len(detail) > 2000:
+            detail = "… " + detail[-1997:]
+        raise RuntimeError(
+            f"Managed agent update failed ({', '.join(selected)}): {detail}"
+        )
+    print("  Managed agent tools are current: " + ", ".join(selected))
+
+
 def _payload_path(*parts: str) -> str:
     return os.path.join(REMOTE_AGENT_PAYLOAD_DIR, *parts)
 

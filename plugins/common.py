@@ -28,6 +28,7 @@ PLUGIN = PluginDefinition(
         "configure_codex_auth_maintenance",
         "install_claude",
         "install_opencode",
+        "update_managed_agent_tools",
         "install_agent_cli_launcher",
         "install_agent_workflow_skills",
         "install_t3code_web",
@@ -234,6 +235,7 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         install_github_cli,
         install_opencode,
         reconcile_agent_storage,
+        update_managed_agent_tools,
     )
     from common.agent_security_steps import configure_codex_security_policy
     from common.t3code_steps import install_t3code_web
@@ -304,6 +306,13 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
 
     if config.has_agent_features():
         steps.append(("Reconciling agent storage", reconcile_agent_storage))
+
+    # Run the agent updater after T3 and storage reconciliation so its
+    # post-update readiness record observes the complete setup state.
+    if {"codex", "claude", "opencode"}.intersection(
+        config.selected_agent_tools()
+    ):
+        steps.append(("Updating managed agent tools", update_managed_agent_tools))
 
     if config.browser_automation:
         from common.browser_automation_steps import install_browser_automation
@@ -390,6 +399,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         install_codex,
         install_github_cli,
         install_opencode,
+        update_managed_agent_tools,
         reconcile_agent_storage,
     )
     from common.agent_security_steps import (
@@ -418,6 +428,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "configure_codex_auth_maintenance": configure_codex_auth_maintenance,
         "install_claude": install_claude,
         "install_opencode": install_opencode,
+        "update_managed_agent_tools": update_managed_agent_tools,
         "install_agent_cli_launcher": install_agent_cli_launcher,
         "install_agent_workflow_skills": install_agent_workflow_skills,
         "install_t3code_web": install_t3code_web,

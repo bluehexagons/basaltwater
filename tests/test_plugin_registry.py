@@ -247,6 +247,7 @@ class TestPluginRegistry(unittest.TestCase):
         self.assertIn("Installing Codex CLI", step_names)
         self.assertIn("Installing Claude Code", step_names)
         self.assertIn("Installing OpenCode", step_names)
+        self.assertIn("Updating managed agent tools", step_names)
         self.assertIn("Installing T3 Code web interface", step_names)
         self.assertIn("Copying agent tool configuration", step_names)
         self.assertIn("Cloning agent repositories on target", step_names)
@@ -335,6 +336,7 @@ class TestPluginRegistry(unittest.TestCase):
         self.assertIn("Installing Codex CLI", step_names)
         self.assertIn("Installing Claude Code", step_names)
         self.assertIn("Installing OpenCode", step_names)
+        self.assertIn("Updating managed agent tools", step_names)
         self.assertIn("Copying agent tool configuration", step_names)
         self.assertIn("Cloning agent repositories on target", step_names)
         self.assertLess(

@@ -129,11 +129,12 @@ not uninstall the Ruby packages or stop an existing legacy Rails application.
 
 GitHub CLI is installed from its APT repository and therefore follows the APT
 job. Explicitly selected Codex CLI, Claude Code, and OpenCode installations
-remain outside recurring root updates; their rebuildable caches are covered
-by the separate user maintenance job. T3 Code's per-user service is also not
-silently updated. Use the client's **Update server** action, the npm 12-safe
-host command in [`T3_CODE.md`](T3_CODE.md), or rerun setup with
-`--refresh-packages`. Run
+are reconciled by each setup run as the target user; their rebuildable caches
+are covered by the separate user maintenance job. T3 Code's per-user service
+is also checked and updated whenever its interface is selected. Use the
+client's **Update server** action or the npm 12-safe host command in
+[`T3_CODE.md`](T3_CODE.md) when an update should be performed outside setup.
+Run
 `infra-tools agent update --dry-run` and then `infra-tools agent update` as the
 account that owns the terminal tools (for example,
 `sudo -u agent -H infra-tools agent update --tool codex`) for a deliberate
@@ -143,8 +144,9 @@ record. After a non-dry-run update, infra-tools also records a redacted
 tools-and-host readiness result, including T3 Code when it is installed. The
 update command exits nonzero if that audit is unhealthy or cannot be saved.
 The update environment is reset to that account's home so a caller's working
-directory and PATH cannot redirect the vendor installer. Setup still skips an
-installer when its command is already present.
+directory and PATH cannot redirect the vendor installer. Setup still uses the
+official installer when a selected command is missing, then runs the same
+verified update path on subsequent setup steps.
 
 Codex-enabled setups separately install a non-root authentication maintenance
 timer. It inspects only redacted freshness metadata from `~/.codex/auth.json`.

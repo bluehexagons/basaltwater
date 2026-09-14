@@ -142,10 +142,12 @@ setup rerun or maintenance schedule because that could terminate the agent
 session performing the setup; refresh/update paths already restart when the
 managed runtime or service configuration actually changes.
 
-T3 Code does not silently update after setup. A normal infra-tools rerun keeps
-the active healthy version. The T3 client can offer an explicit **Update
-server** action for this background service; prefer that action after active
-agent work and terminal commands finish. Keep the client open while the
+When T3 Code is selected, every infra-tools setup run checks the upstream
+service for a newer release. A healthy service is restarted only when the
+runtime changes or its managed configuration needs it, so routine reruns do
+not interrupt an unchanged session. The T3 client can also offer an explicit
+**Update server** action for this background service; prefer that action after
+active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
 set `T3_RELEASE` to the exact version required by the connected client. Use
 `latest` only when the client is also on the latest release:
@@ -173,13 +175,14 @@ infra-tools agent doctor --capability t3code --fix
 ```
 
 The direct command and infra-tools setup operate on the same upstream-managed
-user service. To update through setup, rerun the saved command with
-`--refresh-packages`, preserving its existing options.
+user service. To update through setup, rerun the saved command with its
+existing options; `--refresh-packages` is only needed when APT packages should
+also be refreshed.
 
-During a refresh, an upstream updater failure does not take down a previously
-working installation. If the managed service file and active runtime remain
-valid, infra-tools restarts and health-checks that runtime, reports that the
-runtime was retained instead of updated, and continues setup. A first install,
+During an automatic setup update, an upstream updater failure does not take
+down a previously working installation. If the managed service file and active
+runtime remain valid, infra-tools health-checks that runtime, reports that it
+was retained instead of updated, and continues setup. A first install,
 a damaged runtime, or a failed readiness check remains fatal. Updater failures
 include bounded diagnostics from both the beginning and end of npm's output so
 an earlier npm error is not hidden by a later successful native-build message.

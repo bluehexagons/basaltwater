@@ -76,9 +76,10 @@ variant. Running both checks on a combined VM therefore verifies the combined
 skill rather than accepting independent Playwright-only and T3-only guidance.
 
 An older VM receives the current base set when its saved setup is rerun from an
-updated infra-tools control plane. `infra-tools agent update` updates Codex,
-Claude Code, or OpenCode executables; it does not refresh infra-tools or these
-skills.
+updated infra-tools control plane. The same setup rerun also updates selected
+Codex, Claude Code, and OpenCode executables through the verified user-scoped
+updater; `infra-tools agent update` remains available for an agent-only update.
+Neither command refreshes infra-tools or these skills.
 
 For an explicit `--steps` setup, `install_agent_workflow_skills` installs the
 base and selected browser set. The Playwright, T3 Code, and Godot capability

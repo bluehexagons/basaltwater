@@ -929,7 +929,7 @@ def _install_t3_service(
             "restart"
             if drop_in_changed
             or npm_shim_changed
-            or update_needed
+            or (update_needed and binary != previous_binary)
             or native_repaired
             else "start"
         )
@@ -1754,7 +1754,9 @@ def install_t3code_web(config: SetupConfig) -> None:
         workspace,
         host,
         port,
-        refresh=config.refresh_packages,
+        # A selected T3 Code interface is reconciled on every setup run so
+        # infrequently used VMs receive upstream service updates as well.
+        refresh=True,
     )
     pair_wrapper = os.path.join(home, ".local", "bin", "t3code-pair")
     t3_cli_wrapper = os.path.join(

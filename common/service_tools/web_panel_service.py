@@ -627,6 +627,7 @@ class WebPanelState:
         self.action_status = "idle"
         self.action_message = ""
         self.action_output = ""
+        self.action_started_at: float | None = None
         self._overview: list[dict[str, str]] = []
         self._overview_at = 0.0
         self._service_health: list[dict[str, str]] = []
@@ -698,6 +699,7 @@ class WebPanelState:
             self.action_status = "running"
             self.action_message = "Updating T3 Code…"
             self.action_output = ""
+            self.action_started_at = time.monotonic()
         threading.Thread(target=self._run_t3_update_guarded, daemon=True).start()
         return True
 
@@ -835,6 +837,7 @@ class WebPanelState:
             self.action_status = status
             self.action_message = message
             self.action_output = output.strip()
+            self.action_started_at = None
 
 
 _PAGE_STYLE = """
@@ -1682,10 +1685,27 @@ def render_page(state: WebPanelState) -> str:
             else ""
         )
         role = "alert" if state.action_status == "failed" else "status"
+        message = state.action_message
+        if state.action_status == "running":
+            timeout_minutes = max(1, int(_T3_UPDATE_TIMEOUT_SECONDS // 60))
+            started_at = state.action_started_at
+            if isinstance(started_at, (int, float)):
+                elapsed = max(0, int(time.monotonic() - started_at))
+                minutes, seconds = divmod(elapsed, 60)
+                message = (
+                    f"{message} Still running · {minutes}m {seconds:02d}s elapsed. "
+                    "This panel refreshes every 3 seconds; the updater times out "
+                    f"after {timeout_minutes} minutes."
+                )
+            else:
+                message = (
+                    f"{message} Still running. This panel refreshes every 3 seconds; "
+                    f"the updater times out after {timeout_minutes} minutes."
+                )
         status = (
             f'<aside class="status {html.escape(state.action_status)}" role="{role}" '
             f'aria-live="polite"><strong>Maintenance status</strong>'
-            f"<p>{html.escape(state.action_message)}</p>{output}</aside>"
+            f"<p>{html.escape(message)}</p>{output}</aside>"
         )
 
     title = str(manifest.get("title") or "Managed machine")

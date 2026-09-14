@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 import unittest
 from contextlib import contextmanager, nullcontext, redirect_stdout
@@ -1591,6 +1592,7 @@ class WebPanelEventTest(unittest.TestCase):
         state = WebPanelState(self._t3_manifest())
         state.action_status = "running"
         state.action_message = "Updating T3 Code…"
+        state.action_started_at = time.monotonic() - 125
         with (
             patch(
                 "common.service_tools.web_panel_service.discover_infra_web_services",
@@ -1607,6 +1609,8 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Update in progress…", rendered)
         self.assertIn('button type="submit" disabled', rendered)
         self.assertIn('role="status"', rendered)
+        self.assertIn("2m 05s elapsed", rendered)
+        self.assertIn("refreshes every 3 seconds", rendered)
 
     def test_empty_sections_explain_why_they_have_no_entries(self) -> None:
         state = WebPanelState(

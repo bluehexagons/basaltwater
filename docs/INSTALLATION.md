@@ -171,9 +171,10 @@ Every setup also exposes the system `python3` interpreter as the conventional
 `python` command when that alias is missing. The separate `--python` option
 still controls the additional uv-based Python tooling bundle.
 
-Setup reruns reuse completed package and tool work. Use `--refresh-packages`
-when you deliberately want a new APT update/upgrade and versioned runtime
-check; the flag is one-shot and is not retained in the saved setup command.
+Setup reruns reuse completed package work while reconciling selected agent tools
+and the T3 Code service. Use `--refresh-packages` when you deliberately want a
+new APT update/upgrade and versioned runtime check; the flag is one-shot and is
+not retained in the saved setup command.
 
 ## Verify the installation
 
