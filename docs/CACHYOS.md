@@ -23,8 +23,15 @@ after you enter your own password:
 curl --fail --location --connect-timeout 15 --max-time 120 \
   --output "$HOME/.infra_tools-install.sh" \
   https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
-sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos
+sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
+  --node --python --git-lfs
 ```
+
+The final line is the setup for this machine. Choose its flags before running
+it; this example is a general coding workstation with Node.js, Python, and Git
+LFS in addition to the default Git, ripgrep, build tools, GitHub CLI, and Codex.
+Remove any of those flags or replace them with the options in the table below
+to match the machine's role. The installer and setup then run as one operation.
 
 The `dev` channel contains this new profile on `main`; older release tags do
 not. The source defaults to `~/.local/share/infra_tools` (or the configured XDG
@@ -49,13 +56,32 @@ Authenticate before adding private repositories. Your existing Git credential
 helpers and SSH-agent environment are retained. Setup accepts HTTPS repository
 URLs and does not copy credentials from another host.
 
-## Select tools
+## Choose setup flags
 
-After installation, preview or apply the profile directly:
+For a machine that does not need the general coding-workstation example above,
+replace the setup command's final flag suffix with one of these use-case
+patterns:
+
+| Use case | Flags to append to `--local-setup agent_cachyos` |
+| --- | --- |
+| Minimal coding tools | *(no extra flags)* |
+| Node/Python development | `--node --python --git-lfs` |
+| Local T3 Code service | `--web-interface t3code` (Node tooling is implied) |
+| Game and media work | `--node --godot --av-tools --gl-tools` |
+| Additional agent | `--agent-tool opencode` or `--agent-tool claude` |
+
+For example, the complete initial command for a local T3 Code service is:
+
+```bash
+sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
+  --web-interface t3code
+```
+
+To preview a chosen initial configuration before applying it, install the
+launcher without `--local-setup`, then run the same flags with `--dry-run`:
 
 ```bash
 infra-tools setup agent_cachyos localhost --node --python --git-lfs --dry-run
-infra-tools setup agent_cachyos localhost --node --python --git-lfs
 ```
 
 `--dry-run` prints the step plan without installing software or changing files.
