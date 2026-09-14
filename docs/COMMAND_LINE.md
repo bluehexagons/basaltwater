@@ -352,6 +352,10 @@ list. Neither preview is a completed live setup.
 | `--gaming` | CachyOS `agent_cachyos` only: install the native gaming libraries, launchers, and tools bundle |
 | `--sunshine` | CachyOS `agent_cachyos` only: install the native Sunshine game-stream host package |
 | `--moonlight` | CachyOS `agent_cachyos` only: install the native Moonlight Qt game-stream client package |
+| `--obs` | CachyOS `agent_cachyos` only: install native OBS Studio |
+| `--blender` | CachyOS `agent_cachyos` only: install native Blender |
+| `--kdenlive` | CachyOS `agent_cachyos` only: install native Kdenlive |
+| `--krita` | CachyOS `agent_cachyos` only: install native Krita |
 
 The CachyOS-only gaming flags use the packages in the workstation's configured
 repositories. They do not install graphics drivers, open firewall ports, or

@@ -69,6 +69,7 @@ patterns:
 | Local T3 Code service | `--web-interface t3code` (Node tooling is implied) |
 | Game and media work | `--gaming --node --godot --av-tools --gl-tools` |
 | Game streaming workstation | `--gaming --sunshine --moonlight` |
+| Creative workstation | `--obs --blender --kdenlive --krita` |
 | Additional agent | `--agent-tool opencode` or `--agent-tool claude` |
 
 For example, the complete initial command for a local T3 Code service is:
@@ -104,6 +105,10 @@ installs the launcher and prerequisites; only the subsequent setup is a preview.
 | `--gaming` | Install CachyOS's native gaming libraries, launchers, and tools (`cachyos-gaming-meta` and `cachyos-gaming-applications`) |
 | `--sunshine` | Install the native CachyOS Sunshine game-stream host package; setup does not open firewall ports or create credentials |
 | `--moonlight` | Install the native CachyOS Moonlight Qt game-stream client package |
+| `--obs` | Install native OBS Studio for recording and live streaming |
+| `--blender` | Install native Blender for 3D creation and rendering |
+| `--kdenlive` | Install native Kdenlive for non-linear video editing |
+| `--krita` | Install native Krita for digital painting and image editing |
 | `--repo HTTPS_URL` | Clone a missing repository; repeatable; existing origins must match |
 | `--agent-workspace /absolute/path` | Clone destination, defaulting to `~/repos`; must be writable by you |
 | `--web-interface t3code` | Install the optional localhost user service; implies Node tooling |
@@ -145,10 +150,10 @@ desktop owner. Complete pairing from Sunshine's local web UI, then use
 Moonlight on the client device.
 
 Other current native CachyOS/Arch desktop packages are good candidates for
-future opt-in bundles, including OBS Studio, Blender, Kdenlive, and Krita.
-They remain separate until their project files, codecs, plugins, and GPU
-workflows have setup-specific checks rather than being silently added to the
-gaming bundle.
+additional opt-in flags as their project files, codecs, plugins, and GPU
+workflows need separate checks. The four creative flags above install only the
+selected applications; they do not install AUR packages, graphics drivers, or
+application-specific plugins.
 
 An existing version-manager installation is retained when its commands are on
 the invoking shell's PATH. Setup checks executable availability and selected

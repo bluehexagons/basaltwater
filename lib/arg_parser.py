@@ -785,6 +785,19 @@ def add_setup_arguments(
         default=None if not for_remote else False,
         help="Install CachyOS's native gaming libraries, launchers, and tools",
     )
+    for option, destination, description in (
+        ("--obs", "install_obs", "Install the native CachyOS OBS Studio package"),
+        ("--blender", "install_blender", "Install the native CachyOS Blender package"),
+        ("--kdenlive", "install_kdenlive", "Install the native CachyOS Kdenlive package"),
+        ("--krita", "install_krita", "Install the native CachyOS Krita package"),
+    ):
+        parser.add_argument(
+            option,
+            dest=destination,
+            action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+            default=None if not for_remote else False,
+            help=description,
+        )
     parser.add_argument(
         "--godot-bundle",
         dest="godot_bundles",

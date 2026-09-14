@@ -796,6 +796,14 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             features.append("Moonlight")
         if args.get("install_gaming"):
             features.append("CachyOS gaming bundle")
+        if args.get("install_obs"):
+            features.append("OBS Studio")
+        if args.get("install_blender"):
+            features.append("Blender")
+        if args.get("install_kdenlive"):
+            features.append("Kdenlive")
+        if args.get("install_krita"):
+            features.append("Krita")
         if args.get("install_gh"):
             features.append("GitHub CLI")
         if args.get("install_codex"):

@@ -390,6 +390,10 @@ class SetupConfig:
     install_sunshine: bool = False
     install_moonlight: bool = False
     install_gaming: bool = False
+    install_obs: bool = False
+    install_blender: bool = False
+    install_kdenlive: bool = False
+    install_krita: bool = False
     godot_bundles: Optional[StrList] = None
     install_gh: bool = False
     install_codex: bool = False
@@ -555,11 +559,19 @@ class SetupConfig:
         if self.install_data_analysis_tools:
             self.install_python = True
 
-        if self.system_type != "agent_cachyos" and (
-            self.install_sunshine or self.install_moonlight or self.install_gaming
-        ):
+        cachyos_native_software = (
+            self.install_sunshine,
+            self.install_moonlight,
+            self.install_gaming,
+            self.install_obs,
+            self.install_blender,
+            self.install_kdenlive,
+            self.install_krita,
+        )
+        if self.system_type != "agent_cachyos" and any(cachyos_native_software):
             raise ValueError(
-                "--sunshine, --moonlight, and --gaming require the agent_cachyos profile"
+                "--gaming, --sunshine, --moonlight, --obs, --blender, "
+                "--kdenlive, and --krita require the agent_cachyos profile"
             )
 
         if self.enable_syncthing and self.syncthing_admin is None:
@@ -1043,6 +1055,14 @@ class SetupConfig:
             args.append("--moonlight")
         if self.install_gaming:
             args.append("--gaming")
+        if self.install_obs:
+            args.append("--obs")
+        if self.install_blender:
+            args.append("--blender")
+        if self.install_kdenlive:
+            args.append("--kdenlive")
+        if self.install_krita:
+            args.append("--krita")
         for bundle in self.godot_bundles or []:
             args.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1509,6 +1529,14 @@ class SetupConfig:
             cmd_parts.append("--moonlight")
         if self.install_gaming:
             cmd_parts.append("--gaming")
+        if self.install_obs:
+            cmd_parts.append("--obs")
+        if self.install_blender:
+            cmd_parts.append("--blender")
+        if self.install_kdenlive:
+            cmd_parts.append("--kdenlive")
+        if self.install_krita:
+            cmd_parts.append("--krita")
         for bundle in self.godot_bundles or []:
             cmd_parts.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1873,6 +1901,10 @@ class SetupConfig:
         data['install_sunshine'] = bool(self.install_sunshine)
         data['install_moonlight'] = bool(self.install_moonlight)
         data['install_gaming'] = bool(self.install_gaming)
+        data['install_obs'] = bool(self.install_obs)
+        data['install_blender'] = bool(self.install_blender)
+        data['install_kdenlive'] = bool(self.install_kdenlive)
+        data['install_krita'] = bool(self.install_krita)
         data['harden_agent'] = bool(self.harden_agent)
         data['harden_user'] = bool(self.harden_user)
         data['enable_syncthing'] = bool(self.enable_syncthing)
@@ -2374,6 +2406,10 @@ class SetupConfig:
             install_sunshine=getattr(args, 'install_sunshine', False) is True,
             install_moonlight=getattr(args, 'install_moonlight', False) is True,
             install_gaming=getattr(args, 'install_gaming', False) is True,
+            install_obs=getattr(args, 'install_obs', False) is True,
+            install_blender=getattr(args, 'install_blender', False) is True,
+            install_kdenlive=getattr(args, 'install_kdenlive', False) is True,
+            install_krita=getattr(args, 'install_krita', False) is True,
             godot_bundles=(
                 getattr(args, 'godot_bundles', None)
                 if isinstance(getattr(args, 'godot_bundles', None), list)

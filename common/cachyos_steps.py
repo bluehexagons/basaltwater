@@ -149,6 +149,14 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
         packages.append("moonlight-qt")
     if config.install_gaming:
         packages.extend(("cachyos-gaming-meta", "cachyos-gaming-applications"))
+    for enabled, package in (
+        (config.install_obs, "obs-studio"),
+        (config.install_blender, "blender"),
+        (config.install_kdenlive, "kdenlive"),
+        (config.install_krita, "krita"),
+    ):
+        if enabled:
+            packages.append(package)
     for command, package in commands:
         if not shutil.which(command, path=_tool_path(home)):
             packages.append(package)
@@ -379,6 +387,16 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
             "  CachyOS gaming bundle: native gaming libraries, launchers, and tools requested; "
             "verify the intended GPU and games interactively"
         )
+    for enabled, command, package in (
+        (config.install_obs, "obs", "obs-studio"),
+        (config.install_blender, "blender", "blender"),
+        (config.install_kdenlive, "kdenlive", "kdenlive"),
+        (config.install_krita, "krita", "krita"),
+    ):
+        if enabled:
+            if not shutil.which(command, path=_tool_path(home)):
+                raise RuntimeError(f"Requested command missing: {command}")
+            print(f"  {command}: native CachyOS package available ({package})")
     print("  Provider authentication: use each provider's local login; existing credentials retained")
     print("  KDE automation and managed Playwright: not installed")
 

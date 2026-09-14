@@ -119,7 +119,10 @@ class CachyOSSetupTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_native_graphics_flags_select_cachyos_packages(self):
-        config = self.config("--gaming", "--sunshine", "--moonlight")
+        config = self.config(
+            "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",
+            "--kdenlive", "--krita",
+        )
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(steps.shutil, "which", return_value=None):
             packages = steps.cachyos_packages(config)
@@ -127,12 +130,21 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertIn("cachyos-gaming-applications", packages)
         self.assertIn("sunshine", packages)
         self.assertIn("moonlight-qt", packages)
+        self.assertIn("obs-studio", packages)
+        self.assertIn("blender", packages)
+        self.assertIn("kdenlive", packages)
+        self.assertIn("krita", packages)
 
     def test_native_graphics_flags_round_trip_and_reject_other_profiles(self):
-        config = self.config("--gaming", "--sunshine", "--moonlight")
+        config = self.config(
+            "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",
+            "--kdenlive", "--krita",
+        )
         self.assertIn("--gaming", config.to_remote_args())
         self.assertIn("--sunshine", config.to_setup_command())
         self.assertTrue(config.to_dict()["install_moonlight"])
+        self.assertTrue(config.to_dict()["install_obs"])
+        self.assertIn("--krita", config.to_remote_args())
         with self.assertRaisesRegex(ValueError, "require the agent_cachyos profile"):
             SetupConfig(
                 host="example.com",
@@ -142,7 +154,9 @@ class CachyOSSetupTests(unittest.TestCase):
             )
 
     def test_native_streaming_readiness_checks_commands(self):
-        config = self.config("--sunshine", "--moonlight")
+        config = self.config(
+            "--sunshine", "--moonlight", "--obs", "--blender", "--kdenlive", "--krita"
+        )
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(
                  steps.shutil,

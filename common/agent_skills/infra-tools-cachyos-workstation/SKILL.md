@@ -14,8 +14,8 @@ manager, account groups, network, firewall, or power policy.
 
 To add supported tools, rerun `infra-tools setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
-`--gl-tools`, `--gaming`, `--sunshine`, or `--moonlight`. Preview with
-`--dry-run`. Existing executables are retained;
+`--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
+`--kdenlive`, or `--krita`. Preview with `--dry-run`. Existing executables are retained;
 setup is not a tool updater. Authentication uses the provider's local login.
 
 Packages use pacman, not APT. infra-tools installs missing packages using the
@@ -42,3 +42,7 @@ graphics drivers, enable Sunshine, or change firewall policy. After reviewing
 network exposure, the desktop owner can start the user service with
 `systemctl --user --now enable sunshine` and complete pairing in Sunshine's web
 UI.
+
+The creative application flags install only the selected native repository
+packages: `--obs`, `--blender`, `--kdenlive`, and `--krita`. They do not install
+AUR packages, graphics drivers, or application-specific plugins.

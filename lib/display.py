@@ -398,6 +398,14 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         print("Moonlight: Yes (native CachyOS package)")
     if config.install_gaming:
         print("Gaming bundle: Yes (native CachyOS packages)")
+    for enabled, name in (
+        (config.install_obs, "OBS Studio"),
+        (config.install_blender, "Blender"),
+        (config.install_kdenlive, "Kdenlive"),
+        (config.install_krita, "Krita"),
+    ):
+        if enabled:
+            print(f"{name}: Yes (native CachyOS package)")
     effective_web_ports = config.effective_web_ports()
     if effective_web_ports:
         exposure = "source-restricted" if access_sources else "global"

@@ -22,6 +22,7 @@ _OPTIONS = {
     "agent_tools", "no_agent_tools", "install_node", "install_python",
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
+    "install_obs", "install_blender", "install_kdenlive", "install_krita",
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port",
 }
