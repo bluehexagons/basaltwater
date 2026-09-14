@@ -165,6 +165,7 @@ unprivileged panel cannot read raw audit logs.
 | Maximum entries | 100, including no more than 25 routine privileged commands |
 | Included context | Category, time, paths, actors, operations, and executables when available |
 | Excluded data | Raw audit records, command arguments, and `proctitle` |
+| Setup activity | Events recorded during a managed setup are omitted from the feed and counted in the page notice |
 | Health checks | Kernel auditing, auditd service, query result, and loaded managed keys |
 | Staleness | Snapshots older than 15 minutes are marked degraded |
 

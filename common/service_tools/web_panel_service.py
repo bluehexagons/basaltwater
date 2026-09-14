@@ -1453,6 +1453,7 @@ def _render_audit_section(state: WebPanelState) -> str:
     status = str(snapshot.get("status", "unavailable"))
     generated_at = str(snapshot.get("generated_at", ""))
     issues = snapshot.get("issues", [])
+    suppressed_setup_events = snapshot.get("suppressed_setup_events", 0)
     issue_html = ""
     if isinstance(issues, list) and issues:
         issue_rows = "".join(
@@ -1462,6 +1463,18 @@ def _render_audit_section(state: WebPanelState) -> str:
             '<aside class="audit-issues" role="status">'
             "<strong>Audit coverage needs attention</strong>"
             f"<ul>{issue_rows}</ul></aside>"
+        )
+    suppression_html = ""
+    if (
+        isinstance(suppressed_setup_events, int)
+        and not isinstance(suppressed_setup_events, bool)
+        and suppressed_setup_events > 0
+    ):
+        event_label = "event" if suppressed_setup_events == 1 else "events"
+        suppression_html = (
+            '<p class="endpoint">'
+            f"Omitted {suppressed_setup_events:,} routine audit {event_label} "
+            "recorded during a managed infra-tools setup.</p>"
         )
     if events:
         rows = []
@@ -1517,7 +1530,7 @@ def _render_audit_section(state: WebPanelState) -> str:
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
 <p class="section-kicker">Security activity</p><h2 id="audit-heading">System audit log</h2></div>
 <span class="count">{count} event{"" if count == 1 else "s"} · {html.escape(status_label)}</span>
-</div>{issue_html}{content}</section>'''
+</div>{issue_html}{suppression_html}{content}</section>'''
 
 
 def _render_notification_section(state: WebPanelState) -> str:

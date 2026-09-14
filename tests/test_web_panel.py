@@ -1368,6 +1368,69 @@ class WebPanelEventTest(unittest.TestCase):
 
     @patch("common.service_tools.web_panel_audit_export.shutil.which")
     @patch("common.service_tools.web_panel_audit_export.subprocess.run")
+    def test_audit_export_suppresses_managed_setup_activity(
+        self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
+    ) -> None:
+        mock_which.side_effect = lambda name: f"/usr/sbin/{name}"
+        now = datetime(2026, 9, 14, 12, 30, tzinfo=timezone.utc)
+        inside = int((now - timedelta(minutes=10)).timestamp())
+        outside = int((now - timedelta(minutes=2)).timestamp())
+
+        def audit_record(timestamp: int, serial: int) -> str:
+            return (
+                f"type=SYSCALL msg=audit({timestamp}.0:{serial}): "
+                'syscall=openat auid=agent exe="/usr/bin/sudo"\n'
+            )
+
+        output = audit_record(inside, 1) + "----" + audit_record(outside, 2)
+
+        def run_audit(command: list[str], **kwargs: object) -> SimpleNamespace:
+            if command == ["auditctl", "-s"]:
+                result = "enabled 1\npid 123\n"
+            elif command == ["auditctl", "-l"]:
+                result = "\n".join(
+                    f"-w /example/{key} -p wa -k {key}"
+                    for key in (
+                        "identity",
+                        "sudoers",
+                        "sshd_config",
+                        "modules",
+                        "privileged",
+                    )
+                )
+            else:
+                result = output
+            kwargs["stdout"].write(result.encode("utf-8"))
+            return SimpleNamespace(returncode=0)
+
+        mock_run.side_effect = run_audit
+        local_now = now.astimezone().replace(tzinfo=None)
+        setup_window = (
+            local_now - timedelta(minutes=20),
+            local_now - timedelta(minutes=8),
+        )
+
+        with patch(
+            "common.service_tools.web_panel_audit_export.managed_setup_audit_window",
+            return_value=setup_window,
+        ) as mock_window:
+            snapshot = collect_audit_snapshot(now=now)
+
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["suppressed_setup_events"], 5)
+        self.assertEqual(len(snapshot["events"]), 5)
+        self.assertTrue(
+            all(event["timestamp"] == datetime.fromtimestamp(
+                outside, timezone.utc
+            ).isoformat(timespec="seconds") for event in snapshot["events"])
+        )
+        mock_window.assert_called_once_with(
+            local_now - timedelta(hours=24),
+            local_now,
+        )
+
+    @patch("common.service_tools.web_panel_audit_export.shutil.which")
+    @patch("common.service_tools.web_panel_audit_export.subprocess.run")
     def test_audit_export_reports_disabled_kernel_auditing(
         self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
     ) -> None:
@@ -1424,6 +1487,7 @@ class WebPanelEventTest(unittest.TestCase):
                         "generated_at": "2026-09-02T12:00:00+00:00",
                         "status": "degraded",
                         "issues": ["Expected audit rule is not loaded: modules."],
+                        "suppressed_setup_events": 95,
                         "events": [
                             {
                                 "key": "sudoers",
@@ -1474,6 +1538,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Administrator access policy changed", rendered)
         self.assertIn("Audit coverage needs attention", rendered)
         self.assertIn("Expected audit rule is not loaded: modules.", rendered)
+        self.assertIn("Omitted 95 routine audit events", rendered)
         self.assertIn("Collection incomplete", rendered)
         self.assertIn("Notifications", rendered)
         self.assertIn(WEB_PANEL_NOTIFICATION_ENDPOINT, rendered)

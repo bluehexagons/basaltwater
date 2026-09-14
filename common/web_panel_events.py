@@ -26,6 +26,7 @@ _MAX_NOTIFICATION_BYTES = 32 * 1024
 _MAX_NOTIFICATION_EVENTS = 100
 _MAX_AUDIT_EVENTS = 100
 _MAX_AUDIT_ISSUES = 10
+_MAX_AUDIT_SUPPRESSED_EVENTS = 1_000_000
 _MAX_DATA_DEPTH = 6
 _MAX_DATA_ITEMS = 100
 _MAX_AUDIT_SNAPSHOT_AGE = timedelta(minutes=15)
@@ -250,6 +251,13 @@ def load_audit_snapshot(
         events, list
     ):
         return unavailable()
+    suppressed_setup_events = payload.get("suppressed_setup_events", 0)
+    if (
+        not isinstance(suppressed_setup_events, int)
+        or isinstance(suppressed_setup_events, bool)
+        or not 0 <= suppressed_setup_events <= _MAX_AUDIT_SUPPRESSED_EVENTS
+    ):
+        suppressed_setup_events = 0
     if (
         not isinstance(generated_at, str)
         or not generated_at
@@ -319,6 +327,7 @@ def load_audit_snapshot(
         "generated_at": generated_at,
         "issues": safe_issues,
         "events": safe_events,
+        "suppressed_setup_events": suppressed_setup_events,
     }
 
 

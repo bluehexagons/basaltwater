@@ -23,6 +23,7 @@ if SOURCE_ROOT not in sys.path:
 
 from common.web_panel_events import WEB_PANEL_AUDIT_SNAPSHOT
 from lib.atomic_io import write_json_atomic
+from lib.security_activity import managed_setup_audit_window
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -159,6 +160,26 @@ def _record_timestamp(record: str) -> datetime | None:
     return local_time.astimezone(timezone.utc)
 
 
+def _local_naive(value: datetime) -> datetime:
+    """Return a datetime in the host timezone without timezone metadata."""
+
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=None)
+    return value.astimezone().replace(tzinfo=None)
+
+
+def _timestamp_in_window(
+    timestamp: datetime,
+    window: tuple[datetime, datetime] | None,
+) -> bool:
+    """Return whether an audit event occurred during managed setup."""
+
+    if window is None:
+        return False
+    local_timestamp = _local_naive(timestamp)
+    return window[0] <= local_timestamp <= window[1]
+
+
 def _parse_record(key: str, record: str) -> JSONDict | None:
     timestamp = _record_timestamp(record)
     if timestamp is None:
@@ -199,6 +220,7 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         "status": "ok",
         "issues": [],
         "events": [],
+        "suppressed_setup_events": 0,
     }
     if not shutil.which("ausearch"):
         snapshot["status"] = "unavailable"
@@ -213,7 +235,10 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
     if health_status == "unavailable":
         return snapshot
 
-    since = generated.astimezone() - timedelta(hours=24)
+    local_generated = _local_naive(generated)
+    since = local_generated - timedelta(hours=24)
+    setup_window = managed_setup_audit_window(since, local_generated)
+    suppressed_setup_events = 0
     events: list[JSONDict] = []
     for key in _AUDIT_KEYS:
         query_result = _run_bounded(
@@ -240,6 +265,12 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         for record in output.split("----"):
             if "type=" not in record:
                 continue
+            timestamp = _record_timestamp(record)
+            if timestamp is None:
+                continue
+            if _timestamp_in_window(timestamp, setup_window):
+                suppressed_setup_events += 1
+                continue
             event = _parse_record(key, record)
             if event is not None:
                 events.append(event)
@@ -254,6 +285,7 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         key=lambda event: str(event.get("timestamp", "")), reverse=True
     )
     snapshot["events"] = retained_events[:_MAX_EVENTS]
+    snapshot["suppressed_setup_events"] = suppressed_setup_events
     return snapshot
 
 
