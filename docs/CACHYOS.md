@@ -241,6 +241,37 @@ does not delete its contents.
 
 ## Optional T3 Code
 
+The CachyOS profile supports a local, user-owned T3 Code service. Its T3
+specific options are:
+
+| Option | Effect |
+| --- | --- |
+| `--web-interface t3code` | Install or reconcile the dedicated `infra-tools-cachyos-t3.service` user unit and its runtime. This also selects Node.js and requires at least one provider CLI. |
+| `--web-interface-port PORT` | Listen on `127.0.0.1:PORT`; the default is `3773` and the allowed range is `1024`–`65535`. |
+| `--web-interface-host 127.0.0.1` | Explicitly repeat the fixed loopback bind. Other addresses are rejected. |
+| `--agent-tool gh,codex,claude,opencode` | Select the provider CLIs available to the T3 service. The default is GitHub CLI plus Codex; T3 requires Codex, Claude, or OpenCode. |
+| `--agent-workspace /absolute/path` | Set the service working directory; it defaults to `~/repos`. |
+| `--repo HTTPS_URL` | Clone a missing repository into that workspace; existing repositories are checked but never pulled. |
+| `--dry-run` | Show the T3 step in the plan without probing the host or changing the service. |
+
+The service does not support `--t3code-ready`, device pairing, web-interface
+source allowlists, non-loopback binds, gateways, or remote setup. Those options
+belong to the VM/server T3 path and are rejected for `agent_cachyos`. `--node`
+is implicit when T3 is selected; the setup also installs Python for native
+Node module builds when it is missing.
+
+Copy and paste this complete block in the existing KDE terminal to install the
+launcher and configure the default local T3 service in one operation:
+
+```bash
+curl --fail --location --connect-timeout 15 --max-time 120 \
+  --output "$HOME/.infra_tools-install.sh" \
+  https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
+sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
+  --agent-tool gh --agent-tool codex --web-interface t3code \
+  --web-interface-port 3773
+```
+
 ```bash
 infra-tools setup agent_cachyos localhost --web-interface t3code
 systemctl --user status infra-tools-cachyos-t3.service
