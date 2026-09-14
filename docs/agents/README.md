@@ -14,7 +14,7 @@ managed machine.
 | I need to… | Start here | Then use |
 | --- | --- | --- |
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
-| Add agent tools to an existing CachyOS KDE desktop | [CachyOS local setup](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#agent-skills) |
+| Add agent tools to an existing CachyOS KDE desktop | [CachyOS local setup](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |
 | Choose default, passwordless-sudo, or hardened operation | [Agentic coding security](../AGENT_SECURITY.md) | [Workstations](../WORKSTATIONS.md) |
 | Choose a credential workflow | [Credentials overview](../CREDENTIALS.md) | [SSH authentication](../SSH.md) |
 | Seed, rotate, or recover coding-agent auth | [Agent authentication](../AGENT_AUTHENTICATION.md) | [Credentials overview](../CREDENTIALS.md) |

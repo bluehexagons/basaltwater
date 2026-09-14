@@ -5,7 +5,7 @@ metadata:
   managed-by: infra_tools
 ---
 
-# Local T3 Code
+# Local T3 Code and T3 Connect
 
 The `agent_cachyos --web-interface t3code` setup uses the current desktop account
 and a dedicated user unit, `infra-tools-cachyos-t3.service`. It binds to
@@ -36,6 +36,22 @@ client. Opening the bare localhost address redirects to T3's pairing page. This
 profile binds to loopback by default. Pass `--web-interface-host` a private
 IPv4 address during setup to allow clients on the trusted LAN; firewall policy
 and address stability remain the workstation owner's responsibility.
+
+For cloud access through T3 Connect, keep the default loopback bind and run the
+following as the desktop user. Complete the browser sign-in, restart the
+managed service, and check the saved link:
+
+```bash
+"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.t3"
+systemctl --user restart infra-tools-cachyos-t3.service
+"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.t3"
+```
+
+T3 Connect is separate from direct LAN pairing and does not require port
+forwarding. Use `connect link` here instead of `connect`: the latter may offer
+to install a second upstream `t3code.service`. Use `connect unlink` or
+`connect logout` to disable it. The service follows the user session unless the
+user deliberately enables systemd lingering.
 
 Rerunning setup retains the installed runtime and starts the service. An explicit
 configuration change may restart it; check for active work first. To stop it

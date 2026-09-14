@@ -11,7 +11,8 @@ The limited [`agent_cachyos` profile](CACHYOS.md) has a separate catalog:
 `infra-tools-cachyos-workstation`, `infra-tools-cachyos-workspace`, and optional
 `infra-tools-cachyos-t3code`. It does not receive the VM or browser skills below.
 Its installer reconciles known managed VM skills while preserving personal
-skills. See the [CachyOS guide](CACHYOS.md#agent-skills) for scope and reruns.
+skills. See the [CachyOS guide](CACHYOS.md#skills-diagnostics-and-boundaries) for
+scope and reruns.
 
 A normal agent-enabled setup that selects Codex or OpenCode receives these
 base skills:

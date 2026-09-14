@@ -4,9 +4,10 @@ infra-tools supports T3 Code as a server-side web interface. It does not install
 or manage the T3 Code desktop AppImage.
 
 For an existing CachyOS KDE workstation, use the limited local profile described
-in the [CachyOS guide](CACHYOS.md#optional-t3-code). That path supports only a
-loopback user service; its options and copy/paste setup example are documented
-there. The VM/server options below do not apply to `agent_cachyos`.
+in the [CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
+That path supports loopback access, direct private-LAN pairing, and optional
+T3 Connect setup; its options and copy/paste examples are documented there.
+The VM/server options below do not apply to `agent_cachyos`.
 
 Use either the focused profile:
 
