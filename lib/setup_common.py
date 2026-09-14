@@ -63,6 +63,7 @@ from lib.validation import (
     validate_positive_integer,
 )
 from lib.cache import get_cache_path_for_host, save_setup_command
+from lib.concurrency import ResourceBusyError, resource_lock
 from lib.arg_parser import create_setup_argument_parser
 from lib.display import print_setup_summary
 from lib.interactive_setup import prompt_for_missing_passwords, run_interactive_setup
@@ -136,6 +137,74 @@ def _repository_cache_path(cache_dir: str, git_url: str, repo_name: str) -> str:
     return os.path.join(cache_dir, f"{repo_name}-{url_digest}")
 
 
+def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> bool:
+    """Create or refresh one cache while its caller owns the cache lock."""
+    if not os.path.exists(cache_path):
+        print(f"  Caching {git_url}...")
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        result = subprocess.run(
+            ["git", "clone", git_url, cache_path],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"  Error cloning repository: {result.stderr}")
+            return False
+        print(f"  ✓ Cached to {cache_path}")
+        return True
+
+    print(f"  Updating cached repository {repo_name}...")
+    result = subprocess.run(
+        ["git", "-C", cache_path, "fetch", "--all"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        print(f"  Error fetching updates: {result.stderr}")
+        return False
+
+    result = subprocess.run(
+        ["git", "-C", cache_path, "symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode == 0:
+        default_branch = result.stdout.strip()
+    else:
+        for branch in ["origin/main", "origin/master"]:
+            result = subprocess.run(
+                ["git", "-C", cache_path, "rev-parse", "--verify", branch],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                default_branch = branch
+                break
+        else:
+            print("  Error: Could not determine default branch")
+            return False
+
+    for command, label in (
+        (["git", "-C", cache_path, "reset", "--hard", default_branch], "resetting"),
+        (["git", "-C", cache_path, "clean", "-fdx"], "cleaning"),
+    ):
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  Error {label} repository: {result.stderr}")
+            return False
+    print("  ✓ Updated cached repository")
+    return True
+
+
 def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, Optional[str]]]:
     repo_name = git_url.rstrip('/').split('/')[-1]
     if repo_name.endswith('.git'):
@@ -171,109 +240,19 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
     
     if cache_dir:
         cache_path = _repository_cache_path(cache_dir, git_url, repo_name)
-        
-        if os.path.exists(cache_path):
-            print(f"  Updating cached repository {repo_name}...")
-            if not dry_run:
-                try:
-                    result = subprocess.run(
-                        ["git", "-C", cache_path, "fetch", "--all"],
-                        capture_output=True,
-                        text=True,
-                        timeout=300
-                    )
-                    if result.returncode != 0:
-                        print(f"  Error fetching updates: {result.stderr}")
-                        return None
-                    
-                    result = subprocess.run(
-                        ["git", "-C", cache_path, "symbolic-ref", "refs/remotes/origin/HEAD", "--short"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if result.returncode == 0:
-                        default_branch = result.stdout.strip()
-                    else:
-                        for branch in ["origin/main", "origin/master"]:
-                            result = subprocess.run(
-                                ["git", "-C", cache_path, "rev-parse", "--verify", branch],
-                                capture_output=True,
-                                text=True,
-                                timeout=10
-                            )
-                            if result.returncode == 0:
-                                default_branch = branch
-                                break
-                        else:
-                            print(f"  Error: Could not determine default branch")
-                            return None
-                    
-                    result = subprocess.run(
-                        ["git", "-C", cache_path, "reset", "--hard", default_branch],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if result.returncode != 0:
-                        print(f"  Error resetting repository: {result.stderr}")
-                        return None
-
-                    result = subprocess.run(
-                        ["git", "-C", cache_path, "clean", "-fdx"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if result.returncode != 0:
-                        print(f"  Error cleaning repository: {result.stderr}")
-                        return None
-
-                    print(f"  ✓ Updated cached repository")
-                except Exception as e:
-                    print(f"  Error updating repository: {e}")
+        try:
+            with resource_lock("git-cache", cache_path, wait=True):
+                if not _refresh_repository_cache(git_url, cache_path, repo_name):
                     return None
-            else:
-                print(f"  [DRY RUN] Would fetch and reset cached repository")
-        else:
-            print(f"  Caching {git_url}...")
-            if not dry_run:
-                try:
-                    os.makedirs(cache_dir, exist_ok=True)
-                    result = subprocess.run(
-                        ["git", "clone", git_url, cache_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=300
-                    )
-                    if result.returncode != 0:
-                        print(f"  Error cloning repository: {result.stderr}")
-                        return None
-                    print(f"  ✓ Cached to {cache_path}")
-                except Exception as e:
-                    print(f"  Error caching repository: {e}")
-                    return None
-            else:
-                print(f"  [DRY RUN] Would clone to cache")
-        
-        if not dry_run:
-            try:
                 if os.path.exists(clone_path):
                     shutil.rmtree(clone_path)
                 shutil.copytree(cache_path, clone_path, symlinks=True)
-                print(f"  ✓ Copied to {clone_path}")
-            except Exception as e:
-                print(f"  Error copying repository: {e}")
-                return None
-        else:
-            print(f"  [DRY RUN] Would copy to {clone_path}")
-        
-        commit_hash = None
-        if not dry_run:
+            print(f"  ✓ Copied to {clone_path}")
             from lib.deploy_utils import get_git_commit_hash
-            commit_hash = get_git_commit_hash(clone_path)
-        
-        return (clone_path, commit_hash)
+            return (clone_path, get_git_commit_hash(clone_path))
+        except Exception as exc:
+            print(f"  Error preparing repository cache: {exc}")
+            return None
     else:
         print(f"  Cloning {git_url}...")
         if dry_run:
@@ -1301,6 +1280,23 @@ def remove_replaced_setup_cache(previous_host: Optional[str], current_host: str)
 
 
 def run_remote_setup(config: SetupConfig) -> int:
+    """Run one setup while preventing overlapping mutation of the same target."""
+    if config.dry_run:
+        return _run_remote_setup_locked(config)
+    lock_target = (
+        "local"
+        if config.host in {"localhost", "127.0.0.1", "::1"}
+        else config.host.lower().rstrip(".")
+    )
+    try:
+        with resource_lock("setup-target", lock_target):
+            return _run_remote_setup_locked(config)
+    except ResourceBusyError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+
+def _run_remote_setup_locked(config: SetupConfig) -> int:
     setup_timeout = validate_positive_integer(
         os.environ.get("INFRA_TOOLS_SETUP_TIMEOUT", "14400"), "Setup timeout",
     )
@@ -1445,13 +1441,25 @@ def run_remote_setup(config: SetupConfig) -> int:
                     privileged(remote_cmd_args),
                 ]
             )
+            locked_remote_shell_cmd = shlex.join(
+                [
+                    "flock",
+                    "--exclusive",
+                    "--nonblock",
+                    "--verbose",
+                    "/run/lock/infra-tools-setup.lock",
+                    "/bin/sh",
+                    "-c",
+                    remote_shell_cmd,
+                ]
+            )
             ssh_cmd = build_ssh_command(
                 config.host,
                 remote_user,
                 config.ssh_key,
                 remote_command=shlex.join([
                     "timeout", "--signal=TERM", "--kill-after=10s", str(setup_timeout),
-                    "/bin/sh", "-c", remote_shell_cmd,
+                    "/bin/sh", "-c", locked_remote_shell_cmd,
                 ]),
                 batch_mode=ssh_batch_mode(),
                 connect_timeout=30,

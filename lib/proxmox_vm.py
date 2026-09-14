@@ -43,6 +43,7 @@ from lib.config import SetupConfig
 from lib.proxmox_guest import (
     ProvisionError,
     _build_guest_hostname,
+    _create_with_vmid_retry,
     _get_bridge_prefix_length,
     _get_guest_gateway,
     _get_host_nameservers,
@@ -54,6 +55,7 @@ from lib.proxmox_guest import (
     _wait_for_guest_ssh,
     auto_detect_bridge,
     enroll_provisioned_guest_host_keys,
+    guest_provisioning_locks,
 )
 from lib.proxmox_memory import (
     DEFAULT_BALLOON_TARGET_PERCENT,
@@ -1994,6 +1996,43 @@ def provision_vm(
     verify_existing_storage: bool = False,
     attach_missing_data_disks: Optional[set[str]] = None,
 ) -> None:
+    """Reserve this guest identity and run the VM provisioning workflow."""
+    call_options = {
+        "image": image,
+        "allow_existing_data_disks": allow_existing_data_disks,
+        "require_existing_vm": require_existing_vm,
+        "require_existing_name": require_existing_name,
+        "start_existing_vm": start_existing_vm,
+        "verify_existing_bridge": verify_existing_bridge,
+        "verify_existing_storage": verify_existing_storage,
+        "attach_missing_data_disks": attach_missing_data_disks,
+    }
+    if config.dry_run:
+        return _provision_vm_locked(config, **call_options)
+    node_ip = cast(str, config.hosted_node)
+    static_ipv4 = ipaddress.ip_interface(config.static_ipv4) if config.static_ipv4 else None
+    target_ip = str(static_ipv4.ip) if static_ipv4 else config.host
+    hostname = config.system_hostname or _build_guest_hostname(
+        target_ip,
+        config.friendly_name,
+        default_prefix="vm",
+    )
+    with guest_provisioning_locks(node_ip, target_ip, hostname):
+        return _provision_vm_locked(config, **call_options)
+
+
+def _provision_vm_locked(
+    config: SetupConfig,
+    *,
+    image: Optional[str] = None,
+    allow_existing_data_disks: bool = False,
+    require_existing_vm: bool = False,
+    require_existing_name: bool = False,
+    start_existing_vm: bool = False,
+    verify_existing_bridge: bool = False,
+    verify_existing_storage: bool = False,
+    attach_missing_data_disks: Optional[set[str]] = None,
+) -> None:
     """Orchestrate Proxmox VM provisioning.
 
     Args:
@@ -2378,15 +2417,11 @@ def provision_vm(
             "disk_ssd": disk_ssd,
             "disk_hardware_settings": disk_hardware_settings,
         }
-        try:
-            _create_vm(**create_kwargs)
-        except ProvisionError as exc:
-            if "already exists" not in str(exc).lower():
-                raise
-            print(f"  ⚠ VMID {vmid} was allocated concurrently; retrying with a new VMID")
-            vmid = _get_next_vmid(node_ip, user, ssh_opts)
-            create_kwargs["vmid"] = vmid
-            _create_vm(**create_kwargs)
+        vmid = _create_with_vmid_retry(
+            _create_vm,
+            lambda: _get_next_vmid(node_ip, user, ssh_opts),
+            create_kwargs,
+        )
         vm_started = True
         _wait_for_guest_agent(
             vmid,

@@ -288,8 +288,37 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
+        self.assertIn(
+            "flock --exclusive --nonblock --verbose "
+            "/run/lock/infra-tools-setup.lock",
+            remote_command,
+        )
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
+
+    def test_overlapping_same_target_setup_is_rejected_before_staging(self):
+        from lib import setup_common
+        from lib.concurrency import resource_lock
+
+        config = _make_config(host="example.com")
+        with resource_lock("setup-target", "example.com"):
+            with patch.object(setup_common, "copy_project_files") as copy_files:
+                result = setup_common.run_remote_setup(config)
+
+        self.assertEqual(result, 1)
+        copy_files.assert_not_called()
+
+    def test_local_target_aliases_share_one_setup_lock(self):
+        from lib import setup_common
+        from lib.concurrency import resource_lock
+
+        config = _make_config(host="127.0.0.1")
+        with resource_lock("setup-target", "local"):
+            with patch.object(setup_common, "copy_project_files") as copy_files:
+                result = setup_common.run_remote_setup(config)
+
+        self.assertEqual(result, 1)
+        copy_files.assert_not_called()
 
     def test_remote_ssh_command_preserves_state_before_replacing_runtime(self):
         from lib import setup_common

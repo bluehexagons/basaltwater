@@ -8,6 +8,7 @@ import os
 import subprocess
 
 from lib.atomic_io import write_json_atomic
+from lib.concurrency import resource_lock
 from lib.config import SetupConfig
 from lib.git_credentials import (
     MAX_GIT_CA_BUNDLE_BYTES,
@@ -70,8 +71,7 @@ def _ensure_secure_credentials_file(path: str) -> None:
         raise ValueError(f"Credential store must use 0600 permissions: {path}")
 
 
-def load_workspace_credentials(workspace: str | None = None) -> dict[str, str]:
-    """Load saved workspace credentials."""
+def _load_workspace_credentials_unlocked(workspace: str | None = None) -> dict[str, str]:
     ensure_workspace_dir(workspace)
     credentials_path = get_credentials_path(workspace)
     if not os.path.exists(credentials_path):
@@ -107,8 +107,16 @@ def load_workspace_credentials(workspace: str | None = None) -> dict[str, str]:
     return credentials
 
 
-def save_workspace_credentials(credentials: dict[str, str], workspace: str | None = None) -> None:
-    """Persist workspace credentials using the versioned JSON layout."""
+def load_workspace_credentials(workspace: str | None = None) -> dict[str, str]:
+    """Load saved workspace credentials."""
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        return _load_workspace_credentials_unlocked(workspace)
+
+
+def _save_workspace_credentials_unlocked(
+    credentials: dict[str, str], workspace: str | None = None
+) -> None:
     ensure_workspace_dir(workspace)
     credentials_path = get_credentials_path(workspace)
     normalized_credentials = {
@@ -126,21 +134,32 @@ def save_workspace_credentials(credentials: dict[str, str], workspace: str | Non
     write_json_atomic(credentials_path, payload, mode=0o600, sort_keys=True)
 
 
+def save_workspace_credentials(credentials: dict[str, str], workspace: str | None = None) -> None:
+    """Persist workspace credentials using the versioned JSON layout."""
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        _save_workspace_credentials_unlocked(credentials, workspace)
+
+
 def set_workspace_credential(username: str, password: str, workspace: str | None = None) -> None:
     """Add or replace a workspace credential."""
-    credentials = load_workspace_credentials(workspace)
-    credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
-    save_workspace_credentials(credentials, workspace)
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        credentials = _load_workspace_credentials_unlocked(workspace)
+        credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
+        _save_workspace_credentials_unlocked(credentials, workspace)
 
 
 def remove_workspace_credential(username: str, workspace: str | None = None) -> bool:
     """Remove a saved workspace credential."""
     normalized_username = _normalize_credential_username(username)
-    credentials = load_workspace_credentials(workspace)
-    removed = credentials.pop(normalized_username, None) is not None
-    if removed or os.path.exists(get_credentials_path(workspace)):
-        save_workspace_credentials(credentials, workspace)
-    return removed
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        credentials = _load_workspace_credentials_unlocked(workspace)
+        removed = credentials.pop(normalized_username, None) is not None
+        if removed or os.path.exists(path):
+            _save_workspace_credentials_unlocked(credentials, workspace)
+        return removed
 
 
 def list_workspace_credentials(workspace: str | None = None) -> list[str]:
@@ -163,7 +182,15 @@ def get_runtime_credential(config: SetupConfig, username: str) -> str | None:
 
 def store_cli_credentials(config: SetupConfig, workspace: str | None = None) -> None:
     """Persist credentials supplied on the command line."""
-    credentials = load_workspace_credentials(workspace)
+    path = get_credentials_path(workspace)
+    with resource_lock("workspace-credentials", path, wait=True):
+        _store_cli_credentials_unlocked(config, workspace)
+
+
+def _store_cli_credentials_unlocked(
+    config: SetupConfig, workspace: str | None = None
+) -> None:
+    credentials = _load_workspace_credentials_unlocked(workspace)
     if config.share_credentials:
         for username, password in config.share_credentials:
             credentials[_normalize_credential_username(username)] = _normalize_credential_password(password)
@@ -190,7 +217,7 @@ def store_cli_credentials(config: SetupConfig, workspace: str | None = None) -> 
     if not credentials:
         return
 
-    save_workspace_credentials(credentials, workspace)
+    _save_workspace_credentials_unlocked(credentials, workspace)
 
 
 def _collect_required_credential_usernames(config: SetupConfig) -> list[str]:

@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional, cast
 
 from lib.atomic_io import write_json_atomic
+from lib.concurrency import resource_lock
 from lib.types import JSONDict, JSONList
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host, validate_username
@@ -188,8 +189,9 @@ def _load_raw(path: str) -> JSONList:
     return cast(JSONList, data)
 
 
-def load_proxmox_hosts(workspace: Optional[str] = None) -> list[ProxmoxHost]:
-    """Load all registered Proxmox hosts."""
+def _load_proxmox_hosts_unlocked(
+    workspace: Optional[str] = None,
+) -> list[ProxmoxHost]:
     path = get_proxmox_hosts_path(workspace)
     raw = _load_raw(path)
     hosts: list[ProxmoxHost] = []
@@ -207,11 +209,17 @@ def load_proxmox_hosts(workspace: Optional[str] = None) -> list[ProxmoxHost]:
     return hosts
 
 
-def save_proxmox_hosts(
+def load_proxmox_hosts(workspace: Optional[str] = None) -> list[ProxmoxHost]:
+    """Load all registered Proxmox hosts."""
+    path = get_proxmox_hosts_path(workspace)
+    with resource_lock("proxmox-hosts", path, wait=True):
+        return _load_proxmox_hosts_unlocked(workspace)
+
+
+def _save_proxmox_hosts_unlocked(
     hosts: list[ProxmoxHost],
     workspace: Optional[str] = None,
 ) -> str:
-    """Persist the registry, returning the file path."""
     for host in hosts:
         _validate_host_record(host)
     ensure_workspace_dir(workspace)
@@ -219,6 +227,16 @@ def save_proxmox_hosts(
     payload = [host.to_dict() for host in hosts]
     write_json_atomic(path, payload, mode=0o600, sort_keys=True)
     return path
+
+
+def save_proxmox_hosts(
+    hosts: list[ProxmoxHost],
+    workspace: Optional[str] = None,
+) -> str:
+    """Persist the registry, returning the file path."""
+    path = get_proxmox_hosts_path(workspace)
+    with resource_lock("proxmox-hosts", path, wait=True):
+        return _save_proxmox_hosts_unlocked(hosts, workspace)
 
 
 def find_proxmox_host(
@@ -299,38 +317,40 @@ def add_proxmox_host(
     """
     _validate_host_record(host)
 
-    hosts = load_proxmox_hosts(workspace)
-    name_lc = host.name.lower()
-    address_lc = host.address.lower().rstrip(".")
-    matching_indexes = [
-        index
-        for index, existing in enumerate(hosts)
-        if existing.name.lower() == name_lc
-        or existing.address.lower().rstrip(".") == address_lc
-    ]
-    if len(matching_indexes) > 1:
-        raise ValueError(
-            f"Proxmox host name or address matches multiple existing records"
-        )
-    matching_index = matching_indexes[0] if matching_indexes else None
-    if matching_index is not None:
-        existing = hosts[matching_index]
-        if not replace:
-            if existing.name.lower() == name_lc:
-                raise ValueError(
-                    f"Proxmox host '{host.name}' already exists; "
-                    f"use replace=True to update"
-                )
+    path = get_proxmox_hosts_path(workspace)
+    with resource_lock("proxmox-hosts", path, wait=True):
+        hosts = _load_proxmox_hosts_unlocked(workspace)
+        name_lc = host.name.lower()
+        address_lc = host.address.lower().rstrip(".")
+        matching_indexes = [
+            index
+            for index, existing in enumerate(hosts)
+            if existing.name.lower() == name_lc
+            or existing.address.lower().rstrip(".") == address_lc
+        ]
+        if len(matching_indexes) > 1:
             raise ValueError(
-                f"Proxmox host address '{host.address}' already exists as "
-                f"'{existing.name}'; use replace=True to update"
+                "Proxmox host name or address matches multiple existing records"
             )
-        hosts[matching_index] = host
-        save_proxmox_hosts(hosts, workspace)
+        matching_index = matching_indexes[0] if matching_indexes else None
+        if matching_index is not None:
+            existing = hosts[matching_index]
+            if not replace:
+                if existing.name.lower() == name_lc:
+                    raise ValueError(
+                        f"Proxmox host '{host.name}' already exists; "
+                        f"use replace=True to update"
+                    )
+                raise ValueError(
+                    f"Proxmox host address '{host.address}' already exists as "
+                    f"'{existing.name}'; use replace=True to update"
+                )
+            hosts[matching_index] = host
+            _save_proxmox_hosts_unlocked(hosts, workspace)
+            return host
+        hosts.append(host)
+        _save_proxmox_hosts_unlocked(hosts, workspace)
         return host
-    hosts.append(host)
-    save_proxmox_hosts(hosts, workspace)
-    return host
 
 
 def sync_proxmox_host(
@@ -340,20 +360,22 @@ def sync_proxmox_host(
     """Insert or merge a host by matching either name or address."""
     _validate_host_record(host)
 
-    hosts = load_proxmox_hosts(workspace)
-    name_lc = host.name.lower()
-    for index, existing in enumerate(hosts):
-        if (
-            existing.name.lower() == name_lc
-            or existing.address.lower().rstrip(".")
-            == host.address.lower().rstrip(".")
-        ):
-            hosts[index] = merge_proxmox_host(existing, host)
-            save_proxmox_hosts(hosts, workspace)
-            return hosts[index]
-    hosts.append(host)
-    save_proxmox_hosts(hosts, workspace)
-    return host
+    path = get_proxmox_hosts_path(workspace)
+    with resource_lock("proxmox-hosts", path, wait=True):
+        hosts = _load_proxmox_hosts_unlocked(workspace)
+        name_lc = host.name.lower()
+        for index, existing in enumerate(hosts):
+            if (
+                existing.name.lower() == name_lc
+                or existing.address.lower().rstrip(".")
+                == host.address.lower().rstrip(".")
+            ):
+                hosts[index] = merge_proxmox_host(existing, host)
+                _save_proxmox_hosts_unlocked(hosts, workspace)
+                return hosts[index]
+        hosts.append(host)
+        _save_proxmox_hosts_unlocked(hosts, workspace)
+        return host
 
 
 def remove_proxmox_host(
@@ -363,25 +385,26 @@ def remove_proxmox_host(
     needle = name_or_address.strip()
     needle_lc = needle.lower()
     path = get_proxmox_hosts_path(workspace)
-    raw = _load_raw(path)
-    retained: JSONList = []
-    for entry in raw:
-        if not isinstance(entry, dict):
+    with resource_lock("proxmox-hosts", path, wait=True):
+        raw = _load_raw(path)
+        retained: JSONList = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                retained.append(entry)
+                continue
+            name = entry.get("name")
+            address = entry.get("address")
+            if (
+                isinstance(name, str)
+                and name.lower() == needle_lc
+            ) or (
+                isinstance(address, str)
+                and address.lower().rstrip(".") == needle_lc.rstrip(".")
+            ):
+                continue
             retained.append(entry)
-            continue
-        name = entry.get("name")
-        address = entry.get("address")
-        if (
-            isinstance(name, str)
-            and name.lower() == needle_lc
-        ) or (
-            isinstance(address, str)
-            and address.lower().rstrip(".") == needle_lc.rstrip(".")
-        ):
-            continue
-        retained.append(entry)
-    if len(retained) == len(raw):
-        return False
-    ensure_workspace_dir(workspace)
-    write_json_atomic(path, retained, mode=0o600, sort_keys=True)
-    return True
+        if len(retained) == len(raw):
+            return False
+        ensure_workspace_dir(workspace)
+        write_json_atomic(path, retained, mode=0o600, sort_keys=True)
+        return True

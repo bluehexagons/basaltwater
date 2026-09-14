@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.proxmox_guest import (
     _build_guest_hostname,
+    _create_with_vmid_retry,
     _get_guest_gateway,
     _get_host_nameservers,
     _parse_corosync_config,
@@ -26,6 +27,7 @@ from lib.proxmox_guest import (
     probe_proxmox_host,
     refresh_managed_guest_host_keys,
     resolve_guest_ssh_key,
+    guest_provisioning_locks,
 )
 
 
@@ -45,6 +47,47 @@ class TestBuildGuestHostname(unittest.TestCase):
             _build_guest_hostname("10.0.0.50", None),
             "guest-10-0-0-50",
         )
+
+
+class TestProvisioningConcurrency(unittest.TestCase):
+    def test_same_guest_identity_cannot_be_provisioned_twice(self) -> None:
+        with guest_provisioning_locks("pve1", "10.0.0.50", "web-1"):
+            with self.assertRaisesRegex(ProvisionError, "already provisioning"):
+                with guest_provisioning_locks("pve1", "10.0.0.50", "web-1"):
+                    pass
+
+    def test_distinct_guest_identities_can_hold_locks_together(self) -> None:
+        with guest_provisioning_locks("pve1", "10.0.0.50", "web-1"):
+            with guest_provisioning_locks("pve1", "10.0.0.51", "web-2"):
+                pass
+
+    def test_vmid_collisions_are_retried_until_creation_succeeds(self) -> None:
+        attempts: list[int] = []
+        next_ids = iter([101, 102])
+
+        def create_guest(*, vmid: int) -> None:
+            attempts.append(vmid)
+            if vmid < 102:
+                raise ProvisionError(f"guest {vmid} already exists")
+
+        vmid = _create_with_vmid_retry(
+            create_guest,
+            lambda: next(next_ids),
+            {"vmid": 100},
+        )
+
+        self.assertEqual(vmid, 102)
+        self.assertEqual(attempts, [100, 101, 102])
+
+    def test_non_collision_creation_error_is_not_retried(self) -> None:
+        with self.assertRaisesRegex(ProvisionError, "storage unavailable"):
+            _create_with_vmid_retry(
+                lambda **_kwargs: (_ for _ in ()).throw(
+                    ProvisionError("storage unavailable")
+                ),
+                lambda: 101,
+                {"vmid": 100},
+            )
 
 
 class TestGuestSshKeyResolution(unittest.TestCase):

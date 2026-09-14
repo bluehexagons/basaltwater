@@ -99,6 +99,30 @@ recover from a legitimate host-key change before either infra-tools or plain
 metadata are not trusted automatically; verify them independently and use
 `infra-tools ssh-key enroll HOST` when workspace enrollment is required.
 
+## Concurrent setup and provisioning
+
+Independent setup processes on one controller may target different servers at
+the same time. Controller staging directories and setup payload leases are
+unique per run, shared repository caches are locked per repository, and
+workspace credential, Proxmox-host, and SSH host-key updates are serialized so
+one writer cannot discard another writer's changes. History records also carry
+a unique run suffix when multiple operations finish during the same second.
+
+Only one setup may mutate a particular target at a time. The controller rejects
+an overlapping same-target run, and the target holds
+`/run/lock/infra-tools-setup.lock` while `/opt/infra_tools` is replaced and the
+remote setup executes. This target lock also protects against a second
+controller using a separate workspace.
+
+Multiple VM or LXC provisions on one Proxmox node can proceed concurrently when
+their requested IPv4 addresses and hostnames differ. On one controller,
+infra-tools reserves both guest identity fields for the full provider workflow.
+Because Proxmox's `nextid` lookup does not reserve the returned VMID, QEMU and
+LXC creation retry bounded VMID collisions. Provisioning from different
+controllers is not yet protected by the controller-local guest-identity locks;
+coordinate those callers externally to prevent simultaneous claims for the
+same address or hostname.
+
 ## Host-safety defaults
 
 The `server_proxmox` flow uses Proxmox's native firewall rather than UFW and

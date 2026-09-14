@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 import ipaddress
 import os
 import re
@@ -10,8 +11,10 @@ import shlex
 import subprocess
 import sys
 import time
-from typing import Optional
+from collections.abc import Iterator
+from typing import Any, Callable, Optional
 
+from lib.concurrency import ResourceBusyError, resource_lock
 from lib.proxmox_hosts import ProxmoxHost, ProxmoxHostFacts, ProxmoxStoragePool
 from lib.ssh_enrollment import replace_scanned_host_keys
 from lib.ssh_utils import (
@@ -28,6 +31,55 @@ from lib.validators import validate_username
 
 class ProvisionError(Exception):
     """Raised when guest provisioning fails."""
+
+
+@contextmanager
+def guest_provisioning_locks(
+    node: str,
+    target_ip: str,
+    hostname: str,
+) -> Iterator[None]:
+    """Reserve guest identity on this controller while allowing other guests."""
+    resources = sorted(
+        {
+            f"{node}|address|{target_ip}",
+            f"{node}|hostname|{hostname.lower()}",
+        }
+    )
+    try:
+        with ExitStack() as stack:
+            for resource in resources:
+                stack.enter_context(resource_lock("proxmox-guest", resource))
+            yield
+    except ResourceBusyError as exc:
+        raise ProvisionError(
+            f"Another infra-tools process is already provisioning {hostname} "
+            f"({target_ip}) on {node}"
+        ) from exc
+
+
+def _create_with_vmid_retry(
+    create_guest: Callable[..., None],
+    get_next_vmid: Callable[[], int],
+    create_kwargs: dict[str, Any],
+    *,
+    attempts: int = 8,
+) -> int:
+    """Create a guest, retrying IDs that another provision claimed first."""
+    for attempt in range(attempts):
+        vmid = int(create_kwargs["vmid"])
+        try:
+            create_guest(**create_kwargs)
+            return vmid
+        except ProvisionError as exc:
+            if "already exists" not in str(exc).lower() or attempt + 1 == attempts:
+                raise
+            print(
+                f"  ⚠ VMID {vmid} was allocated concurrently; "
+                "retrying with a new VMID"
+            )
+            create_kwargs["vmid"] = get_next_vmid()
+    raise AssertionError("unreachable VMID retry state")
 
 
 def _ssh_opts(hosted_key: Optional[str] = None) -> StrList:

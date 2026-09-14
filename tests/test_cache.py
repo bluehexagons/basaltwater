@@ -219,6 +219,20 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
 
                 self.assertEqual(os.listdir(history_dir), [])
 
+    def test_completed_runs_in_same_second_get_distinct_history_files(self):
+        with tempfile.TemporaryDirectory() as cache_dir, tempfile.TemporaryDirectory() as history_dir:
+            with patch('lib.cache.get_setup_cache_dir', return_value=cache_dir), patch('lib.cache.get_history_dir', return_value=history_dir):
+                config = self._make_config()
+                for _index in range(2):
+                    save_setup_command(
+                        config,
+                        start_time=1700000000.0,
+                        end_time=1700000045.0,
+                        success=True,
+                    )
+
+                self.assertEqual(len(os.listdir(history_dir)), 2)
+
     def test_rename_setup_command_preserves_metadata_and_history(self):
         with tempfile.TemporaryDirectory() as cache_dir, tempfile.TemporaryDirectory() as history_dir:
             with patch('lib.cache.get_setup_cache_dir', return_value=cache_dir), patch('lib.cache.get_history_dir', return_value=history_dir):

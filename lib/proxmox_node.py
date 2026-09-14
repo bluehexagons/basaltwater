@@ -17,6 +17,7 @@ from lib.config import SetupConfig
 from lib.proxmox_guest import (
     ProvisionError,
     _build_guest_hostname,
+    _create_with_vmid_retry,
     _get_bridge_prefix_length,
     _get_guest_gateway,
     _get_host_nameservers,
@@ -30,6 +31,7 @@ from lib.proxmox_guest import (
     _wait_for_guest_ssh,
     auto_detect_bridge,
     enroll_provisioned_guest_host_keys,
+    guest_provisioning_locks,
 )
 from lib.types import NestedStrList, StrList
 from lib.validation import parse_memory_mib
@@ -434,6 +436,20 @@ def _create_container(
 
 
 def provision_container(config: SetupConfig) -> None:
+    """Reserve this guest identity and provision an LXC container."""
+    if config.dry_run:
+        return _provision_container_locked(config)
+    node_ip = cast(str, config.hosted_node)
+    static_ipv4 = ipaddress.ip_interface(config.static_ipv4) if config.static_ipv4 else None
+    target_ip = str(static_ipv4.ip) if static_ipv4 else config.host
+    hostname = config.system_hostname or _build_container_hostname(
+        target_ip, config.friendly_name
+    )
+    with guest_provisioning_locks(node_ip, target_ip, hostname):
+        return _provision_container_locked(config)
+
+
+def _provision_container_locked(config: SetupConfig) -> None:
     """Orchestrate LXC container provisioning on a Proxmox host.
 
     Args:
@@ -601,28 +617,33 @@ def provision_container(config: SetupConfig) -> None:
         )
 
     try:
-        # Create container
-        _create_container(
-            vmid=vmid,
-            target_ip=target_ip,
-            template_path=template_path,
-            memory_mb=memory_mb,
-            cores=config.container_cores,
-            root_pool=root_pool,
-            storage_amount=storage_amount,
-            cidr_prefix=cidr_prefix,
-            bridge=bridge,
-            gateway=gateway,
-            nameservers=nameservers,
-            hostname=hostname,
-            node_ip=node_ip,
-            user=user,
-            ssh_opts=ssh_opts,
-            privileged=privileged,
-            dry_run=dry_run,
-            ssh_pubkey_remote_path=remote_pubkey_path,
-            ipv6_cidr=config.static_ipv6,
-            gateway6=config.network_gateway6,
+        # pvesh's nextid endpoint reports an available ID but does not reserve
+        # it. Other guest provisions may claim it before pct create does.
+        vmid = _create_with_vmid_retry(
+            _create_container,
+            lambda: _get_next_vmid(node_ip, user, ssh_opts),
+            {
+                "vmid": vmid,
+                "target_ip": target_ip,
+                "template_path": template_path,
+                "memory_mb": memory_mb,
+                "cores": config.container_cores,
+                "root_pool": root_pool,
+                "storage_amount": storage_amount,
+                "cidr_prefix": cidr_prefix,
+                "bridge": bridge,
+                "gateway": gateway,
+                "nameservers": nameservers,
+                "hostname": hostname,
+                "node_ip": node_ip,
+                "user": user,
+                "ssh_opts": ssh_opts,
+                "privileged": privileged,
+                "dry_run": dry_run,
+                "ssh_pubkey_remote_path": remote_pubkey_path,
+                "ipv6_cidr": config.static_ipv6,
+                "gateway6": config.network_gateway6,
+            },
         )
 
         # Wait for sshd in the container to come up before handing off to remote_setup.

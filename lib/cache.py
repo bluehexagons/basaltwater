@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+import uuid
 from dataclasses import asdict
 from typing import Optional, Any
 
@@ -45,7 +46,11 @@ def _get_history_path_for_run(host: str, operation: str, end_time: float) -> str
     safe_host = re.sub(r"[^a-zA-Z0-9._-]", "_", normalized_host)
     host_hash = hashlib.sha256(normalized_host.encode()).hexdigest()[:8]
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(end_time))
-    return os.path.join(history_dir, f"{timestamp}_{operation}_{safe_host}_{host_hash}.json")
+    run_id = uuid.uuid4().hex[:12]
+    return os.path.join(
+        history_dir,
+        f"{timestamp}_{operation}_{safe_host}_{host_hash}_{run_id}.json",
+    )
 
 
 def _write_history_entry(

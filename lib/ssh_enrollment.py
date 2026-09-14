@@ -8,6 +8,7 @@ import subprocess
 from typing import Callable, Optional
 
 from lib.atomic_io import write_text_atomic
+from lib.concurrency import resource_lock
 from lib.ssh_utils import get_workspace_known_hosts_path
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_host
@@ -149,19 +150,22 @@ def _persist_scan(
     ):
         raise RuntimeError(f"refusing unsafe known_hosts file: {known_hosts}")
 
-    existing_lines: list[str] = []
-    if os.path.exists(known_hosts):
-        with open(known_hosts, encoding="utf-8") as file_obj:
-            existing_lines = file_obj.read().splitlines()
-    if existing_lines:
-        matches = _matching_known_host_lines(
-            known_hosts,
-            _known_hosts_name(host, port),
-        )
-        existing_lines = [line for line in existing_lines if line.strip() not in matches]
+    with resource_lock("known-hosts", known_hosts, wait=True):
+        existing_lines: list[str] = []
+        if os.path.exists(known_hosts):
+            with open(known_hosts, encoding="utf-8") as file_obj:
+                existing_lines = file_obj.read().splitlines()
+        if existing_lines:
+            matches = _matching_known_host_lines(
+                known_hosts,
+                _known_hosts_name(host, port),
+            )
+            existing_lines = [
+                line for line in existing_lines if line.strip() not in matches
+            ]
 
-    updated_lines = [*existing_lines, *scan.splitlines()]
-    write_text_atomic(known_hosts, "\n".join(updated_lines) + "\n", mode=0o600)
+        updated_lines = [*existing_lines, *scan.splitlines()]
+        write_text_atomic(known_hosts, "\n".join(updated_lines) + "\n", mode=0o600)
     return known_hosts
 
 
