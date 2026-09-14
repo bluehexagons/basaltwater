@@ -439,7 +439,7 @@ class TestAgentReadinessCLI(unittest.TestCase):
             redirect_stderr(errors),
         ):
             self.assertEqual(run_agent_command(args), 1)
-        recorder.assert_called_once_with(["codex"], include_capabilities=True)
+        recorder.assert_called_once_with(["codex"])
         self.assertEqual(json.loads(output.getvalue()), updates)
         self.assertIn("post-update readiness is unhealthy", errors.getvalue())
 
@@ -485,7 +485,7 @@ class TestAgentReadinessCLI(unittest.TestCase):
         self.assertIn("codex: credentials need attention (refresh_required)", rendered)
         self.assertIn("t3code: failed checks: service_active", rendered)
 
-    def test_update_tools_only_readiness_omits_unrelated_capabilities(self) -> None:
+    def test_update_tools_only_readiness_gates_on_tools_but_records_capabilities(self) -> None:
         args = self._parser().parse_args(
             ["agent", "update", "--tool", "codex", "--tools-only-readiness"]
         )
@@ -499,18 +499,84 @@ class TestAgentReadinessCLI(unittest.TestCase):
                 "path": "/home/agent/.local/bin/codex",
             }
         ]
-        readiness = {"healthy": True, "tools": [], "capabilities": []}
+        readiness = {
+            "healthy": False,
+            "tools": [
+                {
+                    "tool": "codex",
+                    "installed": True,
+                    "credential_healthy": True,
+                }
+            ],
+            "capabilities": [
+                {
+                    "capability": "host",
+                    "healthy": False,
+                    "errors": ["maintenance last failed"],
+                }
+            ],
+        }
+        output = io.StringIO()
+        errors = io.StringIO()
         with (
             patch("lib.agent_cli.update_agent_tools", return_value=updates),
             patch(
                 "lib.agent_cli._record_post_update_readiness",
                 return_value=readiness,
             ) as recorder,
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(run_agent_command(args), 0)
+
+        recorder.assert_called_once_with(["codex"])
+        self.assertIn("post-update readiness (selected tools): healthy", output.getvalue())
+        self.assertIn("broader post-update readiness: UNHEALTHY", output.getvalue())
+        self.assertIn("Warning: broader post-update readiness is unhealthy", errors.getvalue())
+
+    def test_default_update_selects_only_installed_user_managed_tools(self) -> None:
+        args = self._parser().parse_args(
+            ["agent", "update", "--dry-run", "--json"]
+        )
+        updates = [
+            {
+                "tool": "codex",
+                "status": "planned",
+                "before_version": "codex-cli 0.154.0",
+                "after_version": "codex-cli 0.154.0",
+                "method": "codex installer",
+                "path": "/home/agent/.local/bin/codex",
+            }
+        ]
+        with (
+            patch(
+                "lib.agent_cli._default_user_managed_update_tools",
+                return_value=["codex"],
+            ),
+            patch("lib.agent_cli.update_agent_tools", return_value=updates) as updater,
             redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(run_agent_command(args), 0)
 
-        recorder.assert_called_once_with(["codex"], include_capabilities=False)
+        updater.assert_called_once_with(["codex"], dry_run=True)
+
+    def test_default_update_is_noop_when_no_user_managed_tools_are_installed(self) -> None:
+        args = self._parser().parse_args(
+            ["agent", "update", "--dry-run", "--json"]
+        )
+        output = io.StringIO()
+        with (
+            patch(
+                "lib.agent_cli._default_user_managed_update_tools",
+                return_value=[],
+            ),
+            patch("lib.agent_cli.update_agent_tools") as updater,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(run_agent_command(args), 0)
+
+        updater.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), [])
 
     def test_readiness_failure_details_include_host_errors(self) -> None:
         details = _readiness_failure_details(

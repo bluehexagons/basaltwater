@@ -725,13 +725,15 @@ written with mode `0600`. Browser configuration is inventoried without starting
 Chromium; add `--browser-smoke` when it is relevant to exercise an explicitly
 installed Playwright fallback for the report.
 
-`agent update` deliberately updates the three user-installed terminal agents;
-it is never run by an automatic host timer. The command uses each vendor's
-supported path: OpenAI's standalone installer for Codex, `claude update`, and
-`opencode upgrade`. It refuses executables resolved outside the current user's
-home so package-manager installations remain under their package manager. It
-must be run as the account that owns that home and reports the exact executable
-path being updated; `/home/loren/.local/bin/codex` and
+`agent update` deliberately updates installed user-managed terminal agents; it
+is never run by an automatic host timer. With no `--tool` selection, it skips
+absent or externally managed agents. An explicit `--tool` selection still
+reports a missing or externally managed executable as an error. The command
+uses each vendor's supported path: OpenAI's standalone installer for Codex,
+`claude update`, and `opencode upgrade`. It refuses executables resolved
+outside the current user's home so package-manager installations remain under
+their package manager. It must be run as the account that owns that home and
+reports the exact executable path being updated; `/home/loren/.local/bin/codex` and
 `/home/agent/.local/bin/codex` are separate installations.
 Before changing a tool it checks `--version` and `--help`, retains the previous
 executable, writes an atomic `in_progress` record, and repeats both checks after
@@ -752,9 +754,10 @@ nonzero even when the vendor updater itself succeeded. Inspect the evidence
 with `infra-tools agent doctor --last-record`; update JSON output retains its
 existing per-tool result-array contract. The setup-internal invocation uses
 `--tools-only-readiness` so an unrelated pre-existing T3 or host condition does
-not make a successful terminal-agent update fail; run the default command or
-`infra-tools agent doctor --capability host --capability t3code` for the full
-audit.
+not make a successful terminal-agent update fail. The complete host/T3 result is
+still stored and a warning points to the follow-up check; run the default
+command or `infra-tools agent doctor --capability host --capability t3code` for
+the full audit.
 
 The optional `HOST USER` form runs that update as the target VM user. Run
 `infra-tools agent update HOST USER --dry-run`, then repeat it without

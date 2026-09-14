@@ -769,12 +769,12 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
         check=False,
         capture_output=True,
     )
+    output = [
+        str(stream).strip()
+        for stream in (result.stdout, result.stderr)
+        if stream and str(stream).strip()
+    ]
     if result.returncode != 0:
-        output = [
-            str(stream).strip()
-            for stream in (result.stdout, result.stderr)
-            if stream and str(stream).strip()
-        ]
         detail = "\n".join(output) or "update failed"
         if len(detail) > 2000:
             head_length = 1000
@@ -786,6 +786,14 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
             )
         raise RuntimeError(
             f"Managed agent update failed ({', '.join(selected)}): {detail}"
+        )
+    if any(
+        "Warning: broader post-update readiness is unhealthy" in item
+        for item in output
+    ):
+        print(
+            "  ⚠ Managed agent tools are current, but broader host/T3 readiness "
+            "needs attention; run the composite agent doctor check"
         )
     print("  Managed agent tools are current: " + ", ".join(selected))
 

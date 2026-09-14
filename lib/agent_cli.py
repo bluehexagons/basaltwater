@@ -240,8 +240,8 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         "--tools-only-readiness",
         action="store_true",
         help=(
-            "After updating, verify only selected terminal tools; omit the full "
-            "host and T3 readiness audit"
+            "After updating, gate success on selected terminal tools while still "
+            "recording host and T3 readiness"
         ),
     )
     update.add_argument("-k", "--key", dest="ssh_key", help="SSH private key path")
@@ -538,6 +538,17 @@ def _within_home(path: str, home: str) -> bool:
         return os.path.commonpath((os.path.realpath(path), resolved_home)) == resolved_home
     except ValueError:
         return False
+
+
+def _default_user_managed_update_tools(home: str) -> list[str]:
+    """Return installed terminal agents owned by the current agent home."""
+
+    return [
+        tool
+        for tool in DEFAULT_UPDATE_TOOLS
+        if (path := _tool_path(tool, home)) is not None
+        and _within_home(path, home)
+    ]
 
 
 def _validate_update_identity(home: str) -> pwd.struct_passwd:
@@ -2240,21 +2251,15 @@ def _t3_readiness_expected(home: str) -> bool:
     )
 
 
-def _record_post_update_readiness(
-    tools: StrList,
-    *,
-    include_capabilities: bool = True,
-) -> JSONDict:
+def _record_post_update_readiness(tools: StrList) -> JSONDict:
     """Run and persist the selected post-update checks for this agent home."""
     from lib.agent_readiness import record_agent_readiness
 
     home = os.path.abspath(os.path.expanduser("~"))
     tool_results = inspect_agent_tools(tools, home=home)
-    capability_results: list[JSONDict] = []
-    if include_capabilities:
-        capability_results.append(inspect_host_readiness(home))
-        if _t3_readiness_expected(home):
-            capability_results.append(inspect_t3code(home))
+    capability_results = [inspect_host_readiness(home)]
+    if _t3_readiness_expected(home):
+        capability_results.append(inspect_t3code(home))
     return record_agent_readiness(
         tool_results,
         capability_results,
@@ -2341,6 +2346,29 @@ def _readiness_failure_details(record: JSONDict) -> list[str]:
     return details
 
 
+def _selected_tools_readiness_healthy(
+    record: JSONDict,
+    selected: StrList,
+) -> bool:
+    """Return whether every explicitly selected tool passed readiness."""
+
+    tools = record.get("tools")
+    if not isinstance(tools, list):
+        return False
+    by_name = {
+        tool_record.get("tool"): tool_record
+        for tool_record in tools
+        if isinstance(tool_record, dict)
+        and isinstance(tool_record.get("tool"), str)
+    }
+    return all(
+        isinstance(tool_record := by_name.get(tool), dict)
+        and tool_record.get("installed") is True
+        and tool_record.get("credential_healthy") is not False
+        for tool in selected
+    )
+
+
 def run_agent_command(args: argparse.Namespace) -> int:
     """Run a local or remote agent-tool command."""
     if args.agent_command == "maintenance":
@@ -2407,7 +2435,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
         return 1
 
     if args.agent_command == "update":
-        selected = list(args.agent_update_tools or DEFAULT_UPDATE_TOOLS)
+        requested_tools = list(args.agent_update_tools or [])
+        selected = requested_tools or list(DEFAULT_UPDATE_TOOLS)
         tools_only_readiness = bool(getattr(args, "tools_only_readiness", False))
         try:
             target = _remote_agent_target(
@@ -2434,6 +2463,16 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 remote_arguments,
                 timeout=(_UPDATE_TIMEOUT_SECONDS * len(selected)) + 60,
             )
+        if not requested_tools:
+            selected = _default_user_managed_update_tools(
+                os.path.abspath(os.path.expanduser("~"))
+            )
+            if not selected:
+                if args.json:
+                    print("[]")
+                else:
+                    print("No installed user-managed terminal agents found")
+                return 0
         try:
             results = update_agent_tools(selected, dry_run=args.dry_run)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -2443,10 +2482,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
         readiness_error: Optional[str] = None
         if not args.dry_run:
             try:
-                readiness_record = _record_post_update_readiness(
-                    selected,
-                    include_capabilities=not tools_only_readiness,
-                )
+                readiness_record = _record_post_update_readiness(selected)
             except (OSError, RuntimeError, ValueError) as exc:
                 readiness_error = str(exc)
         if args.json:
@@ -2480,13 +2516,26 @@ def run_agent_command(args: argparse.Namespace) -> int:
                         f" at {result.get('path') or 'unknown path'}"
                     )
             if readiness_record is not None:
-                status = (
-                    "healthy"
-                    if readiness_record.get("healthy") is True
-                    else "UNHEALTHY"
+                overall_healthy = readiness_record.get("healthy") is True
+                gate_healthy = (
+                    _selected_tools_readiness_healthy(readiness_record, selected)
+                    if tools_only_readiness
+                    else overall_healthy
                 )
-                print(f"  {'✓' if status == 'healthy' else '✗'} post-update readiness: {status}")
-                if status != "healthy":
+                label = (
+                    "post-update readiness (selected tools)"
+                    if tools_only_readiness
+                    else "post-update readiness"
+                )
+                status = "healthy" if gate_healthy else "UNHEALTHY"
+                print(
+                    f"  {'✓' if gate_healthy else '✗'} {label}: {status}"
+                )
+                if tools_only_readiness and not overall_healthy:
+                    print("  ⚠ broader post-update readiness: UNHEALTHY")
+                if not gate_healthy or (
+                    not overall_healthy and not tools_only_readiness
+                ):
                     for detail in _readiness_failure_details(readiness_record):
                         print(f"      {detail}")
         if readiness_error is not None:
@@ -2494,14 +2543,24 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 f"Error: post-update readiness could not be recorded: {readiness_error}",
                 file=sys.stderr,
             )
-        elif (
-            args.json
-            and readiness_record is not None
-            and readiness_record.get("healthy") is not True
+        elif readiness_record is not None and not (
+            _selected_tools_readiness_healthy(readiness_record, selected)
+            if tools_only_readiness
+            else readiness_record.get("healthy") is True
         ):
             print(
                 "Error: post-update readiness is unhealthy; inspect it with "
                 "infra-tools agent doctor --last-record",
+                file=sys.stderr,
+            )
+        elif (
+            tools_only_readiness
+            and readiness_record is not None
+            and readiness_record.get("healthy") is not True
+        ):
+            print(
+                "Warning: broader post-update readiness is unhealthy; inspect it "
+                "with infra-tools agent doctor --capability host --capability t3code",
                 file=sys.stderr,
             )
         updates_healthy = all(
@@ -2513,7 +2572,11 @@ def run_agent_command(args: argparse.Namespace) -> int:
             or (
                 readiness_error is None
                 and readiness_record is not None
-                and readiness_record.get("healthy") is True
+                and (
+                    _selected_tools_readiness_healthy(readiness_record, selected)
+                    if tools_only_readiness
+                    else readiness_record.get("healthy") is True
+                )
             )
         )
         return 0 if updates_healthy and readiness_healthy else 1
