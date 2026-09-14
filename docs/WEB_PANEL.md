@@ -19,6 +19,8 @@ The overview comes first; **Refresh dashboard** requests a new page (host and
 service snapshots are cached for up to 30 seconds). Navigation, service links,
 expandable histories, and maintenance forms work without JavaScript. Activity
 feeds initially show five events; expand the remaining history when needed.
+The dashboard and on-demand views use the same navigation shell so their links
+remain consistent as sections are added.
 
 ## Install the panel
 
@@ -92,8 +94,9 @@ sudo cat /etc/infra-tools/web-panel/notification-ingest.token
 
 ### Add a sender
 
-Use the endpoint as a normal webhook target and put the token in its URL
-fragment:
+Use the endpoint as a normal webhook target from a sender that can reach the
+panel over the local network or another available network, and put the token in
+its URL fragment:
 
 ```bash
 infra-tools patch sender.example agent \

@@ -10,6 +10,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
+from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
 
 
@@ -131,7 +132,13 @@ def collect_jobs() -> JobSnapshot:
         _COLLECTOR.release()
 
 
-def render_jobs(load: bool, style: str, host: str) -> str:
+def render_jobs(
+    load: bool,
+    style: str,
+    host: str,
+    *,
+    notification_ingest: bool = False,
+) -> str:
     content = '<p class="empty">Select Load scheduled jobs to inspect maintenance timers and their last runs.</p>'
     if load:
         snapshot = collect_jobs()
@@ -160,14 +167,19 @@ def render_jobs(load: bool, style: str, host: str) -> str:
 <dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a></section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
-<title>Scheduled jobs · {html.escape(host)}</title><style>{style}</style></head><body>
-<a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong>infra-tools</strong><div class="nav-links">
-<a href="/">Dashboard</a><a href="/#services-heading">Services</a><a href="/services">Local service status</a><a href="/jobs" aria-current="page">Scheduled jobs</a><a href="/logs">Service diagnostics</a></div></nav>
-<main id="main" tabindex="-1"><header><p class="eyebrow">infra-tools web panel</p><h1>Scheduled jobs</h1>
-<p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>
-<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>
+    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>Scheduled jobs</h1>
+<p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>'''
+    body = f'''<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>
 <p class="endpoint">A snapshot of managed system timers. Times use the host timezone; interval deadlines are approximate. Inactive job services are normal between runs. Results may reset after a reboot or service-manager reload.</p>
-{content}<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer></main></body></html>'''
+{content}'''
+    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    return render_document(
+        title=f"Scheduled jobs · {host}",
+        style=style,
+        header=header,
+        content=body,
+        navigation=panel_navigation(
+            current="jobs", include_notifications=notification_ingest
+        ),
+        footer=footer,
+    )

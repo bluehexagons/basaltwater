@@ -416,11 +416,13 @@ class WebPanelLifecycleTest(unittest.TestCase):
                 _ensure_event_storage("agent")
 
             self.assertEqual(stat.S_IMODE(os.stat(data_dir).st_mode), 0o750)
+            self.assertEqual(stat.S_IMODE(os.stat(temporary).st_mode), 0o710)
             self.assertEqual(stat.S_IMODE(os.stat(audit_dir).st_mode), 0o2750)
             self.assertEqual(
                 stat.S_IMODE(os.stat(notification_dir).st_mode), 0o700
             )
             mock_chown.assert_any_call(data_dir, 0, 1002)
+            mock_chown.assert_any_call(temporary, 0, 1002)
             mock_chown.assert_any_call(audit_dir, 0, 1002)
             mock_chown.assert_any_call(notification_dir, 1001, 1002)
 
@@ -1475,6 +1477,9 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Collection incomplete", rendered)
         self.assertIn("Notifications", rendered)
         self.assertIn(WEB_PANEL_NOTIFICATION_ENDPOINT, rendered)
+        self.assertIn("--notify webhook", rendered)
+        self.assertIn("PANEL_HOST", rendered)
+        self.assertIn("local network", rendered)
         self.assertIn("Backup &lt;failed&gt;", rendered)
         self.assertIn("reported system agent-2", rendered)
         self.assertIn("receipt address when investigating", rendered)

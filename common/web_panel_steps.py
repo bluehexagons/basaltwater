@@ -413,6 +413,18 @@ def _ensure_event_storage(service_user: str) -> None:
     """Create separate least-privilege audit and notification data stores."""
 
     service_account = pwd.getpwnam(service_user)
+    storage_parent = os.path.dirname(os.path.abspath(WEB_PANEL_DATA_DIR))
+    validate_filesystem_path(storage_parent, must_exist=False)
+    if os.path.lexists(storage_parent) and (
+        os.path.islink(storage_parent) or not os.path.isdir(storage_parent)
+    ):
+        raise RuntimeError(f"Refusing unsafe web panel storage parent: {storage_parent}")
+    # The durable setup state directory is root-only by default.  Grant the
+    # panel group traversal of the parent while keeping directory listing and
+    # all unrelated state files private.
+    os.makedirs(storage_parent, mode=0o710, exist_ok=True)
+    os.chown(storage_parent, 0, service_account.pw_gid)
+    os.chmod(storage_parent, 0o710)
     for path in (WEB_PANEL_DATA_DIR, WEB_PANEL_AUDIT_DIR, WEB_PANEL_NOTIFICATION_DIR):
         validate_filesystem_path(path, must_exist=False)
         if os.path.lexists(path) and (

@@ -36,6 +36,7 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
     WEB_PANEL_INGEST_TOKEN,
@@ -1427,17 +1428,23 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
-<title>Local service status · {host}</title><style>{_PAGE_STYLE}</style></head><body>
-<a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong>infra-tools</strong><div class="nav-links">
-<a href="/">Dashboard</a><a href="/#services-heading">Web services</a><a href="/services" aria-current="page">Local service status</a><a href="/jobs">Scheduled jobs</a><a href="/logs">Service diagnostics</a></div></nav>
-<main id="main" tabindex="-1"><header><p class="eyebrow">infra-tools web panel</p><h1>Local service status</h1>
-<p class="lede">Process state for supported services on <code>{host}</code>.</p></header>
-<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
+    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>Local service status</h1>
+<p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
+    body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks fixed system services and the panel user's T3 Code service. It does not prove public DNS, TLS, or application readiness.</p>
-{content}<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer></main></body></html>'''
+{content}'''
+    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    return render_document(
+        title=f"Local service status · {state.manifest['host']}",
+        style=_PAGE_STYLE,
+        header=header,
+        content=body,
+        navigation=panel_navigation(
+            current="services",
+            include_notifications=state.notification_ingest_enabled(),
+        ),
+        footer=footer,
+    )
 
 
 def _render_audit_section(state: WebPanelState) -> str:
@@ -1573,6 +1580,11 @@ def _render_notification_section(state: WebPanelState) -> str:
 <p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
 <span class="count">{count} received</span></div>
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
+<details class="notification-help"><summary>Configure an infra-tools sender</summary>
+<p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. Replace the placeholders with the sender account, a reachable panel host, and the token shown on the panel host.</p>
+<pre><code>infra-tools patch SENDER_HOST SENDER_USER \\
+  --notify webhook 'https://PANEL_HOST{WEB_PANEL_NOTIFICATION_ENDPOINT}#TOKEN_FROM_PANEL_HOST'</code></pre>
+<p>The token fragment becomes a bearer header and is not sent in the request path. Keep the full fragment-bearing URL private.</p></details>
 {content}</section>'''
 
 
@@ -1662,7 +1674,7 @@ def render_page(state: WebPanelState) -> str:
             f"<p>{html.escape(state.action_message)}</p>{output}</aside>"
         )
 
-    title = html.escape(str(manifest.get("title") or "Managed machine"))
+    title = str(manifest.get("title") or "Managed machine")
     host = html.escape(manifest["host"])
     username = html.escape(manifest["username"])
     system_type = html.escape(_system_type_label(manifest["system_type"]))
@@ -1678,37 +1690,12 @@ def render_page(state: WebPanelState) -> str:
         if isinstance(record, dict) and record.get("value")
     )
     access_label = f"{access_count} method" + ("" if access_count == 1 else "s")
-    navigation = [
-        ("overview-heading", "Overview"), ("services-heading", "Services"),
-        ("audit-heading", "Security activity"),
-    ]
-    if notification_section:
-        navigation.append(("notifications-heading", "Notifications"))
-    navigation.append(("access-heading", "Access"))
-    if trust_section:
-        navigation.append(("trust", "Certificate trust"))
-    if action:
-        navigation.append(("maintenance-heading", "Maintenance"))
-    nav_links = "".join(f'<a href="#{target}">{label}</a>' for target, label in navigation)
-    nav_links += '<a href="/logs">Service diagnostics</a>'
-    nav_links += '<a href="/jobs">Scheduled jobs</a>'
-    nav_links += '<a href="/services">Local service status</a>'
-
-    return f'''<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">{refresh}
-<title>Web panel · {title}</title>
-<style>{_PAGE_STYLE}</style></head><body>
-<a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong>infra-tools</strong><div class="nav-links">{nav_links}</div></nav>
-<main id="main" tabindex="-1">
-<header><p class="eyebrow">infra-tools web panel</p><h1>{title}</h1>
+    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>{html.escape(title)}</h1>
 <p class="lede">Services, system health, security activity, and available maintenance for <code>{host}</code>.</p>
 <dl class="meta"><div><dt>System</dt><dd>{system_type}</dd></div>
 <div><dt>User</dt><dd>{username}</dd></div></dl>
-<a class="refresh-link" href="/">Refresh dashboard</a></header>
-{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
+<a class="refresh-link" href="/">Refresh dashboard</a></header>'''
+    body = f'''{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 <p class="section-kicker">Host health</p><h2 id="overview-heading">System overview</h2></div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid">{overview_cards}</dl></section>
@@ -1719,14 +1706,34 @@ def render_page(state: WebPanelState) -> str:
 <section aria-labelledby="access-heading"><div class="section-heading"><div>
 <p class="section-kicker">Connect directly</p><h2 id="access-heading">Access</h2></div>
 <span class="count">{access_label}</span></div>{access_content}</section><div id="trust">{trust_section}</div>{action}
-<footer><span>Managed by infra-tools</span><span>Authenticated as {username}</span></footer>
-</main></body></html>'''
+'''
+    footer = f'<footer><span>Managed by infra-tools</span><span>Authenticated as {username}</span></footer>'
+    return render_document(
+        title=f"Web panel · {title}",
+        style=_PAGE_STYLE,
+        header=header,
+        content=body,
+        navigation=panel_navigation(
+            current="dashboard",
+            include_notifications=bool(notification_section),
+            include_trust=bool(trust_section),
+            include_maintenance=bool(action),
+        ),
+        footer=footer,
+        refresh=refresh,
+    )
 
 
 class WebPanelHandler(BaseHTTPRequestHandler):
     server_version = "infra-tools-web-panel/1"
     sys_version = ""
     state: WebPanelState
+
+    def _notifications_enabled(self) -> bool:
+        """Return the optional feature state for test doubles and live state."""
+
+        enabled = getattr(self.state, "notification_ingest_enabled", None)
+        return bool(enabled()) if callable(enabled) else False
 
     def _send(
         self,
@@ -1771,7 +1778,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(
                 HTTPStatus.OK,
-                render_diagnostics(query, _PAGE_STYLE, self.state.manifest["host"]),
+                render_diagnostics(
+                    query,
+                    _PAGE_STYLE,
+                    self.state.manifest["host"],
+                    notification_ingest=self._notifications_enabled(),
+                ),
                 "text/html",
             )
             return
@@ -1783,7 +1795,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(
                 HTTPStatus.OK,
-                render_jobs(load, _PAGE_STYLE, self.state.manifest["host"]),
+                render_jobs(
+                    load,
+                    _PAGE_STYLE,
+                    self.state.manifest["host"],
+                    notification_ingest=self._notifications_enabled(),
+                ),
                 "text/html",
             )
             return

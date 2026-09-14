@@ -15,6 +15,7 @@ import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from common.service_tools.web_panel_templates import panel_navigation, render_document
 
 SYSTEM_UNITS = {
     "nginx.service": "Web gateway",
@@ -287,7 +288,13 @@ def _property_value(key: str, value: str) -> str:
     return value
 
 
-def render_diagnostics(query: DiagnosticQuery, style: str, host: str) -> str:
+def render_diagnostics(
+    query: DiagnosticQuery,
+    style: str,
+    host: str,
+    *,
+    notification_ingest: bool = False,
+) -> str:
     """Render a separate screen; opening the form never invokes a collector."""
 
     content = '<p class="empty">Choose a service and select Load diagnostics. No log query has run yet.</p>'
@@ -321,15 +328,9 @@ def render_diagnostics(query: DiagnosticQuery, style: str, host: str) -> str:
         *([] if query.service == "t3code.service" else ["sudo"]),
         *_journal_command(query), "--output=short-iso", "--utc",
     ])
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">
-<title>Service diagnostics · {html.escape(host)}</title><style>{style}</style></head><body>
-<a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong>infra-tools</strong><div class="nav-links">
-<a href="/">Dashboard</a><a href="/#services-heading">Services</a><a href="/#audit-heading">Security activity</a><a href="/services">Local service status</a><a href="/jobs">Scheduled jobs</a><a href="/logs" aria-current="page">Service diagnostics</a></div></nav>
-<main id="main" tabindex="-1"><header><p class="eyebrow">infra-tools web panel</p><h1>Service diagnostics</h1>
-<p class="lede">Inspect runtime details and recent logs on <code>{html.escape(host)}</code>.</p></header>
-<form class="diagnostic-filters" method="get" action="/logs">
+    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>Service diagnostics</h1>
+<p class="lede">Inspect runtime details and recent logs on <code>{html.escape(host)}</code>.</p></header>'''
+    body = f'''<form class="diagnostic-filters" method="get" action="/logs">
 <div><label for="service-filter">Service</label><select id="service-filter" name="service">{_options(SOURCES, query.service)}</select></div>
 <div><label for="window-filter">Time window</label><select id="window-filter" name="window">{_options(WINDOWS, query.window)}</select></div>
 <div><label for="priority-filter">Severity</label><select id="priority-filter" name="priority">{_options(PRIORITIES, query.priority)}</select></div>
@@ -338,5 +339,15 @@ def render_diagnostics(query: DiagnosticQuery, style: str, host: str) -> str:
 <p class="endpoint">Only logs readable by the panel account are included. System and user journals have separate permissions. Messages are supplied by services; review them before sharing.</p>
 {content}<details><summary>Continue inspection over SSH</summary>
 <p>Run on this host for the same filters. System logs may require administrator access; user logs belong to the signed-in Linux user.</p>
-<pre><code>{html.escape(ssh_command)}</code></pre></details>
-<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer></main></body></html>'''
+<pre><code>{html.escape(ssh_command)}</code></pre></details>'''
+    footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
+    return render_document(
+        title=f"Service diagnostics · {host}",
+        style=style,
+        header=header,
+        content=body,
+        navigation=panel_navigation(
+            current="logs", include_notifications=notification_ingest
+        ),
+        footer=footer,
+    )
