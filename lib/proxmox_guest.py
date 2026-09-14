@@ -105,6 +105,7 @@ def _ssh_run(
     log_cmd: Optional[str] = None,
     quiet: bool = False,
     input_data: Optional[str] = None,
+    timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
     """Run a command on the Proxmox host via SSH."""
     display_cmd = log_cmd if log_cmd is not None else cmd
@@ -136,7 +137,7 @@ def _ssh_run(
         input=input_data,
         capture_output=True,
         text=True,
-        timeout=ssh_process_timeout(120, batch_mode=ssh_batch_mode()),
+        timeout=ssh_process_timeout(timeout, batch_mode=ssh_batch_mode()),
     )
     if result.returncode != 0:
         stderr = result.stderr.strip()

@@ -24,10 +24,12 @@ The flow is:
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 import ipaddress
 import json
 import os
 import re
+import secrets
 import shlex
 import time
 from dataclasses import dataclass
@@ -1536,31 +1538,41 @@ def _download_image_to_host(
             f"Failed to prepare image storage path on {node_ip}: "
             f"{(mkdir_result.stderr or mkdir_result.stdout or '').strip() or 'mkdir failed'}"
         )
+    partial_path = f"{remote_path}.part"
     fetch = (
         f"if [ ! -f {shlex.quote(remote_path)} ]; then "
-        f"wget -q --https-only --show-progress -O {shlex.quote(remote_path)}.part "
+        f"trap {shlex.quote(f'rm -f {shlex.quote(partial_path)}')} EXIT; "
+        f"wget -q --https-only --show-progress -O {shlex.quote(partial_path)} "
         f"{shlex.quote(image.url)} && "
-        f"mv {shlex.quote(remote_path)}.part {shlex.quote(remote_path)}; "
+        f"mv {shlex.quote(partial_path)} {shlex.quote(remote_path)}; "
+        "trap - EXIT; "
         f"fi"
     )
+    commands = [fetch]
+    if image.sha512:
+        commands.append(
+            f"echo {shlex.quote(image.sha512 + '  ' + remote_path)} "
+            "| sha512sum -c -"
+        )
+    image_lock = hashlib.sha256(remote_path.encode("utf-8")).hexdigest()[:24]
+    locked_fetch = shlex.join(
+        [
+            "flock",
+            "--exclusive",
+            f"/run/lock/infra-tools-image-{image_lock}.lock",
+            "/bin/sh",
+            "-c",
+            " && ".join(commands),
+        ]
+    )
     print(f"  Downloading cloud image: {image.url}")
-    result = _ssh_run(node_ip, user, ssh_opts, fetch)
+    result = _ssh_run(node_ip, user, ssh_opts, locked_fetch, timeout=1800)
     if result.returncode != 0:
         raise ProvisionError(
-            f"Failed to download cloud image on {node_ip}: "
+            f"Failed to stage cloud image on {node_ip}: "
             f"{(result.stderr or result.stdout or '').strip() or 'unknown error'}"
         )
     if image.sha512:
-        check = (
-            f"echo {shlex.quote(image.sha512 + '  ' + remote_path)} "
-            f"| sha512sum -c -"
-        )
-        verify = _ssh_run(node_ip, user, ssh_opts, check)
-        if verify.returncode != 0:
-            raise ProvisionError(
-                f"SHA-512 verification failed for {image.filename} on {node_ip}: "
-                f"{(verify.stderr or verify.stdout or '').strip()}"
-            )
         print(f"  ✓ SHA-512 verified")
     else:
         print(f"  ⚠ No SHA-512 pinned for {image.filename}; skipping verification")
@@ -1656,7 +1668,7 @@ def _upload_user_data(
     dry_run: bool,
 ) -> Optional[str]:
     """Write the rendered user-data to a snippet on the node and return its path."""
-    filename = f"infra_tools-{hostname}.yaml"
+    filename = f"infra_tools-{hostname}-{secrets.token_hex(8)}.yaml"
     snippet_ref = f"{storage_pool}:snippets/{filename}"
     if dry_run:
         return "/var/lib/vz/snippets/infra_tools-userdata.dryrun.yaml"

@@ -161,6 +161,43 @@ class TestImageStorage(unittest.TestCase):
             "pvesm path local:iso/debian.img",
             mock_run.call_args_list[0].args[3],
         )
+        download_command = mock_run.call_args_list[2].args[3]
+        self.assertIn("flock --exclusive /run/lock/infra-tools-image-", download_command)
+        self.assertIn("debian.img.part", download_command)
+        self.assertEqual(mock_run.call_args_list[2].kwargs["timeout"], 1800)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_download_verifies_image_while_holding_remote_lock(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(
+                returncode=0,
+                stdout="/var/lib/vz/import/debian.qcow2\n",
+                stderr="",
+            ),
+            MagicMock(returncode=0, stdout="", stderr=""),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ]
+        image = _ResolvedImage(
+            url="https://example.com/debian.qcow2",
+            sha512="a" * 128,
+            filename="debian.qcow2",
+            storage_ref=None,
+        )
+
+        _download_image_to_host(
+            image,
+            "local",
+            "import",
+            "10.0.0.10",
+            "root",
+            [],
+            dry_run=False,
+        )
+
+        command = mock_run.call_args_list[2].args[3]
+        self.assertIn("flock --exclusive /run/lock/infra-tools-image-", command)
+        self.assertIn("sha512sum -c -", command)
+        self.assertEqual(mock_run.call_count, 3)
 
 
 class TestGuestAgentWait(unittest.TestCase):
@@ -301,17 +338,22 @@ class TestUserDataUpload(unittest.TestCase):
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
 
-        path = _upload_user_data(
-            "#cloud-config\nhostname: __HOSTNAME__\n",
-            "vm-01",
-            "local",
-            "192.0.2.10",
-            "root",
-            ["-i", "/keys/proxmox"],
-            dry_run=False,
-        )
+        with patch("lib.proxmox_vm.secrets.token_hex", return_value="run123"):
+            path = _upload_user_data(
+                "#cloud-config\nhostname: __HOSTNAME__\n",
+                "vm-01",
+                "local",
+                "192.0.2.10",
+                "root",
+                ["-i", "/keys/proxmox"],
+                dry_run=False,
+            )
 
         self.assertEqual(path, "/var/lib/vz/snippets/infra-tools-vm.yaml")
+        self.assertIn(
+            "pvesm path local:snippets/infra_tools-vm-01-run123.yaml",
+            mock_run.call_args_list[0].args[3],
+        )
         upload_call = mock_run.call_args_list[2]
         self.assertEqual(
             upload_call.kwargs["input_data"],
