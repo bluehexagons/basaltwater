@@ -296,6 +296,10 @@ def _unit_path(value: str) -> str:
     )
 
 
+def _t3_url_host(host: str) -> str:
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
 def install_cachyos_t3(config: SetupConfig) -> None:
     home = _home(config)
     version = _user_run(["node", "--version"], home, capture_output=True).stdout.strip()
@@ -358,12 +362,13 @@ def install_cachyos_t3(config: SetupConfig) -> None:
         raise RuntimeError("T3 runtime did not report a version")
     updated = previous_version is None or current_output.splitlines()[0] != previous_version
     workspace = str(Path(config.agent_workspace) if config.agent_workspace else home / "repos")
+    host = config.web_interface_host or "127.0.0.1"
     content = (
         f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
         "\n[Service]\nType=simple\n"
         f"WorkingDirectory={_unit_path(workspace)}\n"
         f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
-        f"ExecStart={_unit_quote(str(binary))} serve --host 127.0.0.1 "
+        f"ExecStart={_unit_quote(str(binary))} serve --host {host} "
         f"--port {config.web_interface_port} --no-browser\n"
         "Restart=on-failure\nRestartSec=5\n"
         "\n[Install]\nWantedBy=default.target\n"
@@ -379,7 +384,7 @@ def install_cachyos_t3(config: SetupConfig) -> None:
             T3_SERVICE,
         ]
     )
-    url = f"http://127.0.0.1:{config.web_interface_port}/"
+    url = f"http://{_t3_url_host(host)}:{config.web_interface_port}/"
     # A desktop may export proxy settings. Probe this machine directly.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     stable_checks = 0

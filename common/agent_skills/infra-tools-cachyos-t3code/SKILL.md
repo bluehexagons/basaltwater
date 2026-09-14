@@ -1,6 +1,6 @@
 ---
 name: infra-tools-cachyos-t3code
-description: Operate the optional localhost T3 Code user service installed by the CachyOS coding profile.
+description: Operate the optional localhost or private-LAN T3 Code user service installed by the CachyOS coding profile.
 metadata:
   managed-by: infra_tools
 ---
@@ -9,8 +9,9 @@ metadata:
 
 The `agent_cachyos --web-interface t3code` setup uses the current desktop account
 and a dedicated user unit, `infra-tools-cachyos-t3.service`. It binds to
-`127.0.0.1:3773`, unless another unprivileged port was selected. It runs with
-the user session; setup does not enable lingering or remote exposure.
+`127.0.0.1:3773` by default, or to the explicitly selected private IPv4 address
+and port. It runs with the user session; setup does not enable lingering or
+configure firewall rules.
 
 Inspect service state and recent logs as the user:
 
@@ -27,12 +28,14 @@ fails, inspect the unit's PATH and the provider binary path in T3 settings.
 To connect a browser or desktop client, run:
 
 ```bash
-( cd "$HOME" && "$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair )
+"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
 ```
 
 Open the printed `Pairing URL` in the browser, or paste it into the desktop
 client. Opening the bare localhost address redirects to T3's pairing page. This
-profile binds to loopback, so clients on another device cannot connect.
+profile binds to loopback by default. Pass `--web-interface-host` a private
+IPv4 address during setup to allow clients on the trusted LAN; firewall policy
+and address stability remain the workstation owner's responsibility.
 
 Rerunning setup retains the installed runtime and starts the service. An explicit
 configuration change may restart it; check for active work first. To stop it

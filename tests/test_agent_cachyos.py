@@ -51,6 +51,20 @@ class CachyOSSetupTests(unittest.TestCase):
                 self.assertEqual(infra_tools.run_setup_command(args), 1)
                 execute.assert_not_called()
 
+    def test_t3_lan_bind_accepts_private_ipv4_and_rejects_public(self):
+        config = self.config(
+            "--web-interface", "t3code", "--web-interface-host", "192.168.1.50",
+        )
+        self.assertEqual(config.web_interface_host, "192.168.1.50")
+        parser, _, _ = infra_tools.create_infra_tools_parser()
+        for host in ("8.8.8.8", "0.0.0.0", "2001:db8::10"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(ValueError, "private IPv4"):
+                    cachyos_config_from_args(parser.parse_args([
+                        "setup", "agent_cachyos", "localhost", "human",
+                        "--web-interface", "t3code", "--web-interface-host", host,
+                    ]))
+
     def test_rejects_remote_target(self):
         parser, _, _ = infra_tools.create_infra_tools_parser()
         args = parser.parse_args(["setup", "agent_cachyos", "example.com", "human"])
@@ -357,6 +371,41 @@ class CachyOSSetupTests(unittest.TestCase):
                 steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
             self.assertEqual(opener.call_args.args[0].proxies, {})
             self.assertEqual(opener.return_value.open.call_count, 6)
+
+    def test_t3_lan_unit_binds_and_probes_selected_private_address(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            binary = root / ".local/share/infra-tools/cachyos-t3/bin/t3"
+
+            def command(argv, **kwargs):
+                if "npm" in argv and "install" in argv:
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.write_text("#!/bin/sh\n")
+                version = "v24.10.0\n" if "node" in argv else "0.0.40\n"
+                return subprocess.CompletedProcess(argv, 0, version, "")
+
+            response = unittest.mock.MagicMock()
+            response.__enter__.return_value.status = 200
+            response.__enter__.return_value.geturl.return_value = (
+                "http://192.168.1.50:3773/"
+            )
+            with patch.object(steps, "_home", return_value=root), \
+                 patch.object(steps, "run", side_effect=command), \
+                 patch.object(steps.urllib.request, "build_opener") as opener, \
+                 patch.object(steps.time, "sleep"):
+                opener.return_value.open.return_value = response
+                steps.install_cachyos_t3(self.config(
+                    "--web-interface", "t3code",
+                    "--web-interface-host", "192.168.1.50",
+                ))
+
+            unit = root / ".config/systemd/user" / steps.T3_SERVICE
+            content = unit.read_text()
+            self.assertIn("--host 192.168.1.50", content)
+            self.assertEqual(
+                opener.return_value.open.call_args.args[0],
+                "http://192.168.1.50:3773/",
+            )
 
     def test_t3_unit_preserves_unicode_environment_values(self):
         self.assertEqual(

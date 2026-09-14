@@ -56,11 +56,11 @@ gh auth login
 ```
 
 This profile does not install machine-use automation, managed Playwright, or
-KDE input/screenshot helpers. The optional `--web-interface t3code` service is
-only the localhost coding web interface; the T3 Code desktop app can be used
-as its client without enabling that service. Keep the profile's setup and
-readiness checks when using the desktop app because they provision native
-packages, agent tools, workspaces, and user-owned state that the client does
+KDE input/screenshot helpers. The optional `--web-interface t3code` service is a
+localhost or explicitly selected private-LAN coding web interface; the T3 Code
+desktop app can be used as its client without enabling that service. Keep the
+profile's setup and readiness checks when using the desktop app because they
+provision native packages, agent tools, workspaces, and user-owned state that the client does
 not install.
 
 Authenticate before adding private repositories. Your existing Git credential
@@ -139,7 +139,7 @@ installs the launcher and prerequisites; only the subsequent setup is a preview.
 | `--sysadmin-tools` | Install native Nmap, tcpdump, DNS tools, virt-manager, and Wireshark Qt |
 | `--repo HTTPS_URL` | Clone a missing repository; repeatable; existing origins must match |
 | `--agent-workspace /absolute/path` | Clone destination, defaulting to `~/repos`; must be writable by you |
-| `--web-interface t3code` | Install the optional localhost user service; implies Node tooling |
+| `--web-interface t3code` | Install the optional localhost or private-LAN user service; implies Node tooling |
 | `--web-interface-port PORT` | T3 HTTP port, default 3773; must be 1024–65535 |
 | `--machine hardware` | Optional declaration; apply still verifies actual bare metal |
 
@@ -250,18 +250,19 @@ specific options are:
 | Option | Effect |
 | --- | --- |
 | `--web-interface t3code` | Install or reconcile the dedicated `infra-tools-cachyos-t3.service` user unit and its runtime. This also selects Node.js and requires at least one provider CLI. |
-| `--web-interface-port PORT` | Listen on `127.0.0.1:PORT`; the default is `3773` and the allowed range is `1024`–`65535`. |
-| `--web-interface-host 127.0.0.1` | Explicitly repeat the fixed loopback bind. Other addresses are rejected. |
+| `--web-interface-port PORT` | Listen on the selected host and port; the default is `127.0.0.1:3773` and the allowed port range is `1024`–`65535`. |
+| `--web-interface-host 127.0.0.1` | Bind to loopback (the default), or set a private IPv4 address such as `192.168.1.50` to allow trusted LAN clients. |
 | `--agent-tool gh,codex,claude,opencode` | Select the provider CLIs available to the T3 service. The default is GitHub CLI plus Codex; T3 requires Codex, Claude, or OpenCode. |
 | `--agent-workspace /absolute/path` | Set the service working directory; it defaults to `~/repos`. |
 | `--repo HTTPS_URL` | Clone a missing repository into that workspace; existing repositories are checked but never pulled. |
 | `--dry-run` | Show the T3 step in the plan without probing the host or changing the service. |
 
-The service does not support `--t3code-ready`, device pairing, web-interface
-source allowlists, non-loopback binds, gateways, or remote setup. Those options
-belong to the VM/server T3 path and are rejected for `agent_cachyos`. `--node`
-is implicit when T3 is selected; the setup also installs Python for native
-Node module builds when it is missing.
+The profile does not provision the VM/server `--t3code-ready` flow, device-
+pairing broker, web-interface source allowlists, gateways, or remote setup.
+Native T3 pairing still works: when a private LAN bind is selected, the T3
+`pair` command emits a one-time URL using that address. `--node` is implicit
+when T3 is selected; the setup also installs Python for native Node module
+builds when it is missing.
 
 Copy and paste this complete block in the existing KDE terminal to install the
 launcher and configure the default local T3 service in one operation:
@@ -295,16 +296,26 @@ pairing link from the managed runtime and paste the complete `Pairing URL` into
 the app's **Settings → Connections → Add environment** screen:
 
 ```bash
-( cd "$HOME" && "$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair )
+"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
 ```
 
 The command prints a QR code, pairing URL, and token. Treat the URL and token as
 credentials and use the link only once. Opening the bare
 `http://127.0.0.1:3773` address in a browser redirects to T3's pairing page;
 open the generated `Pairing URL` itself in the browser, or paste it into the
-desktop app. The generated URL uses loopback, so a phone or another computer
-cannot reach this profile; remote pairing requires a separately managed network
-or Tailscale exposure, which `agent_cachyos` does not configure.
+desktop app. For LAN pairing, replace the loopback host and rerun setup with the
+workstation's private IPv4 address:
+
+```bash
+infra-tools setup agent_cachyos localhost --web-interface t3code \
+  --web-interface-host 192.168.1.50
+```
+
+Then run the same `t3 pair` command; its URL will use `192.168.1.50`. Allow TCP
+3773 (or the selected port) from the trusted LAN in the workstation firewall.
+infra-tools does not change firewall rules or provide the VM pairing broker.
+Use a static or reserved workstation address so the user service remains
+reachable after DHCP changes.
 
 If a setup run from an older checkout reported `has a bad unit file setting`,
 update infra-tools and rerun the same setup command. The managed unit is
@@ -317,7 +328,8 @@ systemd-analyze verify "$HOME/.config/systemd/user/infra-tools-cachyos-t3.servic
 
 The service starts with your user session. Setup does not enable lingering,
 change suspend policy, configure a gateway, enroll other devices, or expose
-network listeners beyond IPv4 loopback. An existing upstream `t3code.service`
+network listeners unless you explicitly select a private LAN bind. An existing
+upstream `t3code.service`
 causes setup to stop rather than adopt or replace it. A separately installed T3
 desktop client is outside this profile's ownership.
 
@@ -410,7 +422,8 @@ Before treating a workstation as validated:
 3. Authenticate an agent, complete a small edit/test workflow, and create and
    remove a managed worktree using a disposable test repository.
 4. If selected, open T3, run a provider thread and terminal command, log out/in,
-   and verify the user service. Check that only loopback is listening.
+   and verify the user service. Check that only the selected loopback or LAN
+   address is listening.
 5. If selected, open a Godot test project, run it on the intended GPU, and check
    media conversion and Vulkan/OpenGL diagnostics. CLI versions alone do not
    validate rendering, audio, fullscreen behavior, or GPU selection.
