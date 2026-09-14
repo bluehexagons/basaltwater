@@ -45,6 +45,18 @@ class TestNotificationLevelCli(unittest.TestCase):
 
         self.assertIsNone(omitted.notification_level)
         self.assertEqual(selected.notification_level, "warning")
+        self.assertIsNone(omitted.notification_strict_https)
+
+    def test_strict_https_flag_supports_explicit_enable_and_disable(self) -> None:
+        enabled = self.parser.parse_args(
+            ["server.example", "--notification-strict-https"]
+        )
+        disabled = self.parser.parse_args(
+            ["server.example", "--no-notification-strict-https"]
+        )
+
+        self.assertTrue(enabled.notification_strict_https)
+        self.assertFalse(disabled.notification_strict_https)
 
     def test_invalid_level_is_rejected(self) -> None:
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
@@ -55,11 +67,17 @@ class TestNotificationLevelCli(unittest.TestCase):
 
 class TestNotificationLevelConfig(unittest.TestCase):
     def test_level_round_trips_through_setup_state_and_commands(self) -> None:
-        config = _setup_config(notification_level="warning")
+        config = _setup_config(
+            notification_level="warning",
+            notification_strict_https=True,
+        )
 
         self.assertIn("--notification-level warning", config.to_remote_args())
         self.assertIn("--notification-level warning", config.to_setup_command())
+        self.assertIn("--notification-strict-https", config.to_remote_args())
+        self.assertIn("--notification-strict-https", config.to_setup_command())
         self.assertEqual(config.to_dict()["notification_level"], "warning")
+        self.assertTrue(config.to_dict()["notification_strict_https"])
 
         restored = SetupConfig.from_dict(
             config.host,
@@ -67,18 +85,27 @@ class TestNotificationLevelConfig(unittest.TestCase):
             dict(config.to_dict()),
         )
         self.assertEqual(restored.notification_level, "warning")
+        self.assertTrue(restored.notification_strict_https)
 
     def test_patch_omission_preserves_level_and_explicit_value_changes_it(self) -> None:
-        cached = _setup_config(notification_level="warning")
+        cached = _setup_config(
+            notification_level="warning",
+            notification_strict_https=True,
+        )
 
         preserved = merge_setup_configs(cached, _setup_config())
         changed = merge_setup_configs(
             cached,
-            _setup_config(notification_level="error"),
+            _setup_config(
+                notification_level="error",
+                notification_strict_https=False,
+            ),
         )
 
         self.assertEqual(preserved.notification_level, "warning")
         self.assertEqual(changed.notification_level, "error")
+        self.assertTrue(preserved.notification_strict_https)
+        self.assertFalse(changed.notification_strict_https)
 
     def test_invalid_programmatic_level_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Notification level must be"):
@@ -91,6 +118,14 @@ class TestNotificationLevelConfig(unittest.TestCase):
 
         self.assertEqual(runtime.notification_level, "off")
         self.assertEqual(runtime.to_dict()["notification_level"], "off")
+
+    def test_runtime_config_keeps_saved_strict_https_setting(self) -> None:
+        runtime = RuntimeConfig.from_setup_config(
+            _setup_config(notification_strict_https=True)
+        )
+
+        self.assertTrue(runtime.notification_strict_https)
+        self.assertTrue(runtime.to_dict()["notification_strict_https"])
 
 
 class TestNotificationLevelDelivery(unittest.TestCase):

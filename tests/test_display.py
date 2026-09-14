@@ -58,6 +58,21 @@ class TestRdpDisplay(unittest.TestCase):
 
         self.assertIn("Notifications: 1 target(s)", output.getvalue())
 
+    def test_setup_summary_shows_strict_notification_tls_policy(self) -> None:
+        config = SetupConfig(
+            host="agent-vm",
+            username="agent",
+            system_type="server_dev",
+            notify_specs=[["webhook", "https://hooks.example.com/event"]],
+            notification_strict_https=True,
+        )
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print_setup_summary(config)
+
+        self.assertIn("strict HTTPS", output.getvalue())
+
     def test_setup_summary_makes_global_exposure_visible(self) -> None:
         config = SetupConfig(
             host="agent-vm",

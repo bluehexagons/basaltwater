@@ -215,6 +215,7 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
                 notification_state = ms.load_notification_state()
                 assert notification_state is not None
                 self.assertEqual(notification_state['notify_specs'], [])
+                self.assertFalse(notification_state['notification_strict_https'])
 
     def test_save_setup_config_excludes_password(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -246,6 +247,7 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
                     'system_type': 'server_web',
                     'notify_specs': [['webhook', 'https://example.com/hook#token']],
                     'notification_level': 'warning',
+                    'notification_strict_https': True,
                     'git_auth_token': 'must-not-be-copied',
                 })
 
@@ -257,6 +259,7 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
                 [['webhook', 'https://example.com/hook#token']],
             )
             self.assertEqual(notification_state['notification_level'], 'warning')
+            self.assertTrue(notification_state['notification_strict_https'])
             self.assertNotIn('git_auth_token', notification_state)
 
     @patch.object(ms.pwd, 'getpwnam', return_value=SimpleNamespace(pw_gid=1234))

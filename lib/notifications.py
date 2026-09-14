@@ -54,11 +54,13 @@ class NotificationConfig:
     type: Literal["webhook", "mailbox"]
     target: str = field(repr=False)
     level: NotificationLevel = DEFAULT_NOTIFICATION_LEVEL
+    strict_https: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.target, str):
             self.target = self.target.strip()
         self.level = normalize_notification_level(self.level)
+        self.strict_https = normalize_notification_strict_https(self.strict_https)
     
     def __str__(self) -> str:
         return f"{self.type}:{notification_target_summary(self.type, self.target)}"
@@ -182,7 +184,11 @@ class NotificationSender:
                     continue
                 eligible_count += 1
                 if config.type == "webhook":
-                    self._send_webhook(config.target, notification)
+                    self._send_webhook(
+                        config.target,
+                        notification,
+                        strict_https=config.strict_https,
+                    )
                 elif config.type == "mailbox":
                     self._send_mailbox(config.target, notification)
             except Exception as e:
@@ -212,7 +218,13 @@ class NotificationSender:
         
         return all_succeeded
     
-    def _send_webhook(self, url: str, notification: Notification) -> None:
+    def _send_webhook(
+        self,
+        url: str,
+        notification: Notification,
+        *,
+        strict_https: bool = False,
+    ) -> None:
         """Send webhook notification via HTTP POST."""
         request_url, bearer_token = _webhook_request_target(url)
         data = json.dumps(notification.to_dict()).encode('utf-8')
@@ -233,7 +245,10 @@ class NotificationSender:
                 method='POST',
             )
             try:
-                with _open_webhook_request(request) as response:
+                with _open_webhook_request(
+                    request,
+                    strict_https=strict_https,
+                ) as response:
                     status = int(response.status)
                     if not 200 <= status < 300:
                         raise urllib.error.HTTPError(
@@ -451,12 +466,14 @@ def send_notification_safe(
 def parse_notification_args(
     notify_args: Optional[list[list[str]]],
     notification_level: object = None,
+    strict_https: object = None,
 ) -> list[NotificationConfig]:
     """Parse notification arguments from command line."""
     if not notify_args:
         return []
 
     level = normalize_notification_level(notification_level)
+    strict_tls = normalize_notification_strict_https(strict_https)
     
     configs: list[NotificationConfig] = []
     seen: set[tuple[str, str]] = set()
@@ -471,6 +488,7 @@ def parse_notification_args(
             type=cast(Literal["webhook", "mailbox"], notif_type),
             target=target.strip(),
             level=level,
+            strict_https=strict_tls,
         )
         try:
             validate_notification_config(config)
@@ -495,6 +513,7 @@ def validate_notification_config(config: NotificationConfig) -> None:
     ):
         raise ValueError("Invalid notification configuration")
     normalize_notification_level(config.level)
+    normalize_notification_strict_https(config.strict_https)
     target = config.target.strip()
     if not target:
         raise ValueError(f"Notification target for {config.type} must not be empty")
@@ -604,6 +623,36 @@ def notification_level_from_state(
         return DEFAULT_NOTIFICATION_LEVEL
 
 
+def normalize_notification_strict_https(value: object) -> bool:
+    """Return whether HTTPS notification webhooks must verify certificates."""
+
+    if value is None:
+        return False
+    if not isinstance(value, bool):
+        raise ValueError("Strict notification HTTPS setting must be boolean")
+    return value
+
+
+def notification_strict_https_from_state(
+    value: object,
+    logger: Optional[Logger] = None,
+) -> bool:
+    """Load the saved strict HTTPS setting without disabling notifications."""
+
+    try:
+        return normalize_notification_strict_https(value)
+    except ValueError as exc:
+        if logger:
+            log_event(
+                logger,
+                "Invalid saved notification HTTPS setting; using default",
+                level=WARNING,
+                error=str(exc),
+                notification_strict_https=False,
+            )
+        return False
+
+
 def load_notification_configs_from_state(logger: Optional[Logger] = None) -> list[NotificationConfig]:
     """Load notification configs from saved machine state.
     
@@ -633,6 +682,10 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
                 setup_config.get("notification_level"),
                 logger,
             )
+            strict_https = notification_strict_https_from_state(
+                setup_config.get("notification_strict_https"),
+                logger,
+            )
             configs: list[NotificationConfig] = []
             seen: set[tuple[str, str]] = set()
             invalid_count = 0
@@ -640,6 +693,7 @@ def load_notification_configs_from_state(logger: Optional[Logger] = None) -> lis
                 parsed = parse_notification_args(
                     [notify_spec],
                     notification_level=notification_level,
+                    strict_https=strict_https,
                 )
                 if not parsed:
                     invalid_count += 1
@@ -678,6 +732,7 @@ def send_setup_notification(
     friendly_name: Optional[str] = None,
     logger: Optional[Logger] = None,
     notification_level: object = None,
+    strict_https: object = None,
 ) -> bool:
     """Send a notification summarizing setup results.
 
@@ -690,6 +745,8 @@ def send_setup_notification(
         friendly_name: Optional human-readable name for this system
         logger: Optional logger for debugging
         notification_level: Delivery threshold for this system
+        strict_https: Require certificate and hostname verification for HTTPS
+            webhook targets
 
     Returns:
         True if all notifications were sent successfully, False otherwise
@@ -697,6 +754,7 @@ def send_setup_notification(
     configs = parse_notification_args(
         notify_specs,
         notification_level=notification_level,
+        strict_https=strict_https,
     )
     if not configs:
         return True
@@ -817,9 +875,31 @@ class _RejectWebhookRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _open_webhook_request(request: urllib.request.Request) -> Any:
-    opener = urllib.request.build_opener(_RejectWebhookRedirects())
+def _open_webhook_request(
+    request: urllib.request.Request,
+    *,
+    strict_https: bool = False,
+) -> Any:
+    handlers: list[Any] = [_RejectWebhookRedirects()]
+    if request.type == "https":
+        handlers.append(
+            urllib.request.HTTPSHandler(
+                context=_webhook_ssl_context(strict_https),
+            )
+        )
+    opener = urllib.request.build_opener(*handlers)
     return opener.open(request, timeout=NETWORK_TIMEOUT_SECONDS)
+
+
+def _webhook_ssl_context(strict_https: bool) -> ssl.SSLContext:
+    """Return the configured TLS policy for an HTTPS webhook."""
+
+    if strict_https:
+        return ssl.create_default_context()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 def _webhook_retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:

@@ -185,6 +185,38 @@ def _remove_secret_payloads() -> None:
             )
 
 
+def _send_setup_notification(
+    *,
+    notify_specs: Optional[list[list[str]]],
+    system_type: str,
+    host: str,
+    success: bool,
+    errors: Optional[list[str]] = None,
+    friendly_name: Optional[str] = None,
+    notification_level: object = None,
+    strict_https: object = None,
+) -> bool:
+    """Send the setup result and make best-effort delivery failures visible."""
+
+    delivered = send_setup_notification(
+        notify_specs=notify_specs,
+        system_type=system_type,
+        host=host,
+        success=success,
+        errors=errors,
+        friendly_name=friendly_name,
+        notification_level=notification_level,
+        strict_https=strict_https,
+    )
+    if not delivered:
+        print(
+            "  ⚠ Setup notification delivery was incomplete; check the saved "
+            "webhook URL, token, notification level, and receiver connectivity.",
+            file=sys.stderr,
+        )
+    return delivered
+
+
 def extract_repo_name(git_url: str) -> str:
     repo_name = git_url.rstrip('/').split('/')[-1]
     if repo_name.endswith('.git'):
@@ -501,7 +533,7 @@ def _run_main() -> int:
             print(f"  ✗ {summary_error} ({elapsed:.1f}s)")
             setup_errors.append(error_msg)
             if config.notify_specs:
-                send_setup_notification(
+                _send_setup_notification(
                     notify_specs=config.notify_specs,
                     system_type=config.system_type,
                     host=config.host,
@@ -509,6 +541,7 @@ def _run_main() -> int:
                     errors=setup_errors,
                     friendly_name=config.friendly_name,
                     notification_level=config.notification_level,
+                    strict_https=config.notification_strict_https,
                 )
             raise
         elapsed = time.monotonic() - step_started
@@ -716,13 +749,14 @@ def _run_main() -> int:
     print("=" * 60)
     
     if config.notify_specs:
-        send_setup_notification(
+        _send_setup_notification(
             notify_specs=config.notify_specs,
             system_type=config.system_type,
             host=config.host,
             success=True,
             friendly_name=config.friendly_name,
             notification_level=config.notification_level,
+            strict_https=config.notification_strict_https,
         )
     
     return 0

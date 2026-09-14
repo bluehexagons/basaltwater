@@ -1296,6 +1296,15 @@ def add_setup_arguments(
             "threshold while retaining recovery events; off disables delivery"
         ),
     )
+    parser.add_argument(
+        "--notification-strict-https",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help=(
+            "Require certificate and hostname verification for HTTPS notification "
+            "webhooks (default accepts self-signed certificates)"
+        ),
+    )
     
     parser.add_argument("--antistatic-server", dest="antistatic_server",
                         metavar="[DOMAIN][:PORT]",

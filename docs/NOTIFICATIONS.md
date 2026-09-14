@@ -23,6 +23,16 @@ infra-tools setup server_lite fileserver admin \
 Use `infra-tools info HOST` to check the saved target count and delivery level.
 Use `infra-tools cmd HOST` to inspect the reconstructed setup command.
 
+HTTPS webhook delivery accepts self-signed certificates by default so a sender
+can notify an infra-tools panel that uses its VM-local CA. This keeps the
+connection encrypted but does not authenticate the receiver's certificate or
+hostname. Add `--notification-strict-https` to require the sender's normal CA
+bundle and hostname checks; use `--no-notification-strict-https` on a patch to
+return to the default compatibility mode. The setting applies to setup,
+scheduled jobs, and other outbound notifications saved on that system.
+Use strict mode when the network is not already trusted or the receiver's
+identity must be authenticated.
+
 ## Send notifications to an infra-tools web panel
 
 The web panel can receive and display notifications from other managed
@@ -72,6 +82,10 @@ infra-tools removes the fragment from the URL and sends it in the
 `Authorization: Bearer ...` header. The token does not enter the HTTP request
 path or Nginx access log.
 
+The sender accepts the panel's self-signed certificate by default. To require
+the panel certificate to chain to a trusted public or locally installed CA,
+append `--notification-strict-https` to that setup or patch command.
+
 ### 3. Verify delivery
 
 Open the panel and check **Notifications** after the sender's setup finishes.
@@ -84,9 +98,9 @@ For enablement, disablement, rotation, retention, and API limits, see
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
 > setup state because scheduled jobs need it. Scheduled jobs also receive a
-> root-owned `/etc/infra-tools/notifications.json` subset containing only the
-> notification targets and level, so they do not need access to the full
-> root-only setup state.
+> root-owned `/etc/infra-tools/notifications.json` subset containing the
+> notification targets, level, and HTTPS policy, so they do not need access to
+> the full root-only setup state.
 
 ## Choose a delivery level
 
@@ -197,6 +211,11 @@ instead of parsing prose.
 Delivery is best effort and does not change the underlying job result.
 Incomplete delivery is logged. Invalid saved targets are skipped without
 disabling other targets.
+
+Setup follows the same best-effort rule. If its completion or failure
+notification cannot be delivered, setup prints a warning with the checks to
+make; inspect the sender output and service logs before treating the receiver
+history as complete.
 
 Common checks:
 

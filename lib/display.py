@@ -511,11 +511,17 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
     notification_configs = parse_notification_args(
         config.notify_specs,
         notification_level=notification_level,
+        strict_https=config.notification_strict_https,
     )
     if notification_configs:
+        tls_mode = (
+            "strict HTTPS"
+            if config.notification_strict_https is True
+            else "self-signed HTTPS accepted"
+        )
         print(
             f"Notifications: {len(notification_configs)} target(s) "
-            f"(level: {notification_level})"
+            f"(level: {notification_level}; {tls_mode})"
         )
         for notification_config in notification_configs:
             print(

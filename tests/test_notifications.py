@@ -24,6 +24,7 @@ from lib.notifications import (
     NotificationSender,
     _RejectWebhookRedirects,
     _open_webhook_request,
+    _webhook_ssl_context,
     load_notification_configs_from_state,
     notification_target_summary,
     parse_notification_args,
@@ -396,6 +397,48 @@ class TestNotificationSender(unittest.TestCase):
         self.assertEqual(request.get_header('Authorization'), f'Bearer {token}')
         self.assertNotIn(token, request.full_url)
 
+    @patch('lib.notifications._open_webhook_request')
+    def test_webhook_defaults_to_self_signed_compatible_tls(self, mock_open):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.status = 202
+        response.__exit__.return_value = False
+        mock_open.return_value = response
+        sender = NotificationSender(
+            [NotificationConfig(type='webhook', target='https://panel.example/hook')]
+        )
+
+        self.assertTrue(
+            sender.send(
+                Notification(subject='Test', job='sync', status='good', message='ok')
+            )
+        )
+
+        self.assertFalse(mock_open.call_args.kwargs['strict_https'])
+
+    @patch('lib.notifications._open_webhook_request')
+    def test_webhook_strict_tls_is_forwarded_to_request(self, mock_open):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.status = 202
+        response.__exit__.return_value = False
+        mock_open.return_value = response
+        sender = NotificationSender(
+            [
+                NotificationConfig(
+                    type='webhook',
+                    target='https://panel.example/hook',
+                    strict_https=True,
+                )
+            ]
+        )
+
+        self.assertTrue(
+            sender.send(
+                Notification(subject='Test', job='sync', status='good', message='ok')
+            )
+        )
+
+        self.assertTrue(mock_open.call_args.kwargs['strict_https'])
+
     @patch('lib.notifications.time.sleep')
     @patch('lib.notifications._open_webhook_request')
     def test_webhook_retries_transient_failures_with_the_same_event_id(
@@ -510,10 +553,43 @@ class TestNotificationSender(unittest.TestCase):
 
         handler = mock_build.call_args.args[0]
         self.assertIsInstance(handler, _RejectWebhookRedirects)
+        https_handler = mock_build.call_args.args[1]
+        self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
+        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(https_handler._context.check_hostname)
         mock_build.return_value.open.assert_called_once_with(
             request,
             timeout=30,
         )
+
+    @patch('urllib.request.build_opener')
+    def test_webhook_requests_can_install_strict_tls_handler(self, mock_build):
+        response = unittest.mock.MagicMock()
+        mock_build.return_value.open.return_value = response
+        request = urllib.request.Request(
+            'https://hooks.example.com/private',
+            data=b'{}',
+            method='POST',
+        )
+
+        self.assertIs(_open_webhook_request(request, strict_https=True), response)
+
+        https_handler = mock_build.call_args.args[1]
+        self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
+        self.assertEqual(https_handler._context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(https_handler._context.check_hostname)
+
+    def test_webhook_tls_context_defaults_to_allowing_self_signed_certificates(self):
+        context = _webhook_ssl_context(False)
+
+        self.assertEqual(context.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(context.check_hostname)
+
+    def test_webhook_tls_context_can_require_normal_certificate_checks(self):
+        context = _webhook_ssl_context(True)
+
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
 
 class TestParseNotificationArgs(unittest.TestCase):
@@ -527,6 +603,15 @@ class TestParseNotificationArgs(unittest.TestCase):
         configs = parse_notification_args([['webhook', 'https://example.com/hook']])
         self.assertEqual(len(configs), 1)
         self.assertEqual(configs[0].type, 'webhook')
+        self.assertFalse(configs[0].strict_https)
+
+    def test_strict_https_is_applied_to_webhook_targets(self):
+        configs = parse_notification_args(
+            [['webhook', 'https://example.com/hook']],
+            strict_https=True,
+        )
+
+        self.assertTrue(configs[0].strict_https)
 
     def test_valid_mailbox(self):
         configs = parse_notification_args([['mailbox', 'admin@example.com']])
@@ -846,6 +931,7 @@ class TestLoadNotificationConfigsFromState(unittest.TestCase):
         return_value={
             'notify_specs': [['mailbox', 'ops@example.com']],
             'notification_level': 'warning',
+            'notification_strict_https': True,
         },
     )
     def test_loads_readable_notification_state(self, _mock_notification):
@@ -854,6 +940,7 @@ class TestLoadNotificationConfigsFromState(unittest.TestCase):
         self.assertEqual(len(configs), 1)
         self.assertEqual(configs[0].target, 'ops@example.com')
         self.assertEqual(configs[0].level, 'warning')
+        self.assertTrue(configs[0].strict_https)
 
     @patch('lib.machine_state.load_notification_state', return_value=None)
     @patch('lib.machine_state.load_setup_config', side_effect=AssertionError)

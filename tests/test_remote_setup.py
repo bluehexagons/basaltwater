@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -35,6 +36,20 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
 
         self.assertIn("Run notes:", output.getvalue())
         self.assertIn("optional browser check was skipped", output.getvalue())
+
+    @patch("remote_setup.send_setup_notification", return_value=False)
+    def test_setup_notification_delivery_failure_is_visible(self, _send):
+        output = io.StringIO()
+        with redirect_stdout(output), patch("sys.stderr", new_callable=io.StringIO) as error_output:
+            delivered = remote_setup._send_setup_notification(
+                notify_specs=[["webhook", "https://panel.example/hook"]],
+                system_type="server_lite",
+                host="agent-vm",
+                success=True,
+            )
+
+        self.assertFalse(delivered)
+        self.assertIn("delivery was incomplete", error_output.getvalue())
 
     def test_remembered_state_is_finalized_only_after_steps_succeed(self):
         args = SimpleNamespace(

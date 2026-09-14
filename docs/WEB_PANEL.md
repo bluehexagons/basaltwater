@@ -127,6 +127,14 @@ The sender converts the fragment to an `Authorization: Bearer ...` header; the
 fragment is not sent in the request URL. Open **Notifications** after the
 sender's setup completes to verify delivery.
 
+Webhook senders accept this panel's self-signed VM-local certificate by
+default. Add `--notification-strict-https` when the sender should require the
+certificate to chain to its normal trusted CA bundle and match the panel host;
+the same setting applies to setup and scheduled notifications. On a patch,
+`--no-notification-strict-https` restores the default compatibility mode.
+Use strict mode when the sender crosses an untrusted network or receiver
+identity needs certificate authentication.
+
 See [Notifications](NOTIFICATIONS.md) for delivery levels, event meaning, the
 full payload contract, and retry behavior.
 

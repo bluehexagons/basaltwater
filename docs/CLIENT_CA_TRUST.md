@@ -65,6 +65,15 @@ they cannot bootstrap an untrusted connection. Obtain first-enrollment
 instructions and the fingerprint through SSH or the VM console. Do not trust
 a script or checksum from a page opened past a certificate warning.
 
+Infra-tools webhook senders have a separate compatibility setting. They accept
+self-signed HTTPS receiver certificates by default, so a sender can notify a
+panel that uses this VM-local CA without installing that CA on the sender. Use
+`--notification-strict-https` on the sender setup or patch when certificate
+chain and hostname verification are required; then install this CA (after
+independent fingerprint verification) in the sender's normal trust store, or
+use a publicly trusted receiver certificate. This setting does not change
+browser trust or the trust used by other tools.
+
 Compare the downloaded file with the `SHA-256` value printed on the VM. On
 Linux:
 

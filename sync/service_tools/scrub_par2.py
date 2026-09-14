@@ -444,6 +444,9 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                             setup_config.get('notification_level'),
                             notif_logger,
                         ),
+                        strict_https=(
+                            setup_config.get('notification_strict_https') is True
+                        ),
                     )
                 friendly_name = setup_config.get('friendly_name')
         except (ImportError, OSError, ValueError, KeyError, TypeError) as e:

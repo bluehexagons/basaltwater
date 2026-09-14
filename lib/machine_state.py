@@ -330,6 +330,9 @@ def save_setup_config(config_dict: dict[str, Any]) -> None:
         "version": 1,
         "notify_specs": sanitized_config.get("notify_specs") or [],
         "notification_level": sanitized_config.get("notification_level"),
+        "notification_strict_https": (
+            sanitized_config.get("notification_strict_https") is True
+        ),
     }
     write_json_atomic(
         NOTIFICATION_CONFIG_FILE,

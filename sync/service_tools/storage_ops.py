@@ -321,6 +321,7 @@ def execute_storage_operations() -> dict:
             config.notification_level,
             logger,
         ),
+        strict_https=config.notification_strict_https,
     )
     
     log_event(
@@ -627,6 +628,7 @@ def main():
                 config_dict.get('notification_level'),
                 logger,
             ),
+            strict_https=config_dict.get('notification_strict_https') is True,
         )
         friendly_name = config_dict.get('friendly_name')
     

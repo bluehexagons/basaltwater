@@ -26,6 +26,8 @@ class RuntimeConfig:
         scrub_specs: List of scrub specifications [dir, db, redundancy, freq]
         notify_specs: List of notification specifications [type, target]
         notification_level: Outbound notification threshold for this system
+        notification_strict_https: Require certificate and hostname verification
+            for HTTPS notification webhooks
         smb_mounts: List of SMB mount specifications [mountpoint, ip, creds, share, subdir]
     """
     username: str
@@ -36,6 +38,7 @@ class RuntimeConfig:
     friendly_name: Optional[str] = None
     smb_mounts: Optional[list[list[str]]] = None
     notification_level: Optional[str] = None
+    notification_strict_https: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RuntimeConfig":
@@ -56,6 +59,7 @@ class RuntimeConfig:
             friendly_name=data.get("friendly_name"),
             smb_mounts=data.get("smb_mounts"),
             notification_level=data.get("notification_level"),
+            notification_strict_https=data.get("notification_strict_https") is True,
         )
 
     @classmethod
@@ -77,6 +81,9 @@ class RuntimeConfig:
             friendly_name=getattr(config, 'friendly_name', None),
             smb_mounts=config.smb_mounts,
             notification_level=getattr(config, 'notification_level', None),
+            notification_strict_https=(
+                getattr(config, 'notification_strict_https', None) is True
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -94,6 +101,7 @@ class RuntimeConfig:
             "notify_specs": self.notify_specs,
             "smb_mounts": self.smb_mounts,
             "notification_level": self.notification_level,
+            "notification_strict_https": self.notification_strict_https,
         }
 
     def has_storage_ops(self) -> bool:

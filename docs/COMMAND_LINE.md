@@ -1191,6 +1191,7 @@ Cloudflare ingress is not supported.
 | `--scrub DIR DBPATH REDUNDANCY FREQ` | Configure par2 integrity checking |
 | `--notify TYPE TARGET` | Configure notifications |
 | `--notification-level LEVEL` | Set outbound volume to `verbose`, `normal` (default), `warning`, `error`, or `off`; local logs are unaffected |
+| `--notification-strict-https` | Require CA and hostname verification for HTTPS notification webhooks; omitted by default so self-signed receivers work |
 
 Samba shares are authenticated and hardened; `TYPE` is `read` or `write`, and
 `PATH` is one absolute directory. The metadata-cache option moves only Samba's

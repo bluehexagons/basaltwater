@@ -469,6 +469,7 @@ class SetupConfig:
     scrub_specs: Optional[NestedStrList] = None
     notify_specs: Optional[NestedStrList] = None
     notification_level: MaybeStr = None
+    notification_strict_https: Optional[bool] = None
     antistatic_server: MaybeStr = None  # "DOMAIN[:port]" spec
     antistatic_admin: MaybeStr = None  # Username; password stays in the credential store
     antistatic_db: MaybeStr = None  # "DOMAIN[:port]" spec
@@ -580,6 +581,10 @@ class SetupConfig:
 
         validate_godot_bundle_settings(self)
         validate_notification_level(self.notification_level)
+        if self.notification_strict_https is not None and not isinstance(
+            self.notification_strict_https, bool
+        ):
+            raise ValueError("notification_strict_https must be boolean")
         validate_syncthing_settings(self)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
         self.godot_bundles = selected_godot_bundles or None
@@ -1204,6 +1209,8 @@ class SetupConfig:
             args.append(
                 f"--notification-level {shlex.quote(self.notification_level)}"
             )
+        if self.notification_strict_https is True:
+            args.append("--notification-strict-https")
         
         if self.antistatic_server:
             args.append(f"--antistatic-server {shlex.quote(self.antistatic_server)}")
@@ -1750,6 +1757,8 @@ class SetupConfig:
             cmd_parts.append(
                 f"--notification-level {shlex.quote(self.notification_level)}"
             )
+        if self.notification_strict_https is True:
+            cmd_parts.append("--notification-strict-https")
         
         # Antistatic lobby server
         if self.antistatic_server:
@@ -1845,6 +1854,7 @@ class SetupConfig:
         data['web_panel_notification_ingest'] = bool(
             self.web_panel_notification_ingest
         )
+        data['notification_strict_https'] = bool(self.notification_strict_https)
         if self.enable_syncthing and not self.syncthing_root:
             data['syncthing_root'] = DEFAULT_SYNCTHING_ROOT
         # Live activation is a one-shot controller operation. Persisting it
@@ -2442,6 +2452,9 @@ class SetupConfig:
             scrub_specs=getattr(args, 'scrub_specs', None),
             notify_specs=getattr(args, 'notify_specs', None),
             notification_level=_optional_str_arg(args, 'notification_level'),
+            notification_strict_https=_optional_bool_arg(
+                args, 'notification_strict_https'
+            ),
             antistatic_server=getattr(args, 'antistatic_server', None),
             antistatic_admin=getattr(args, 'antistatic_admin', None),
             antistatic_db=getattr(args, 'antistatic_db', None),
