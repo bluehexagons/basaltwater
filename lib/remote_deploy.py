@@ -8,6 +8,7 @@ import subprocess
 import shlex
 import tempfile
 import posixpath
+import secrets
 from typing import Optional
 
 from lib.ssh_utils import build_scp_command, build_ssh_command, build_rsync_ssh_transport, chain_remote_commands, shell_join, ssh_batch_mode
@@ -183,7 +184,10 @@ def push_nginx_config(deployment: JSONDict, target_host: str, domain: str) -> bo
         user = target.get('user', 'deploy')
         host = target['host']
         
-        remote_temp_path = f"/tmp/infra-tools-nginx-{config_name}.json"
+        operation_id = secrets.token_hex(16)
+        remote_temp_path = (
+            f"/tmp/infra-tools-nginx-{config_name}-{operation_id}.json"
+        )
         scp_cmd = build_scp_command(
             host,
             user,
@@ -201,7 +205,13 @@ def push_nginx_config(deployment: JSONDict, target_host: str, domain: str) -> bo
             return False
         
         remote_cmd = shell_join(
-            ["sudo", DEPLOY_ADMIN_HELPER, "install-site", config_name]
+            [
+                "sudo",
+                DEPLOY_ADMIN_HELPER,
+                "install-site",
+                config_name,
+                operation_id,
+            ]
         )
         
         ssh_cmd = _build_ssh_cmd(target, remote_cmd)

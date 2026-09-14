@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 
 # The installed executable uses root-owned supporting code. Module imports
 # leave sys.path alone so repository tests cannot load a stale /opt checkout.
@@ -29,11 +32,13 @@ NGINX_ENABLED_DIR = "/etc/nginx/sites-enabled"
 NGINX_BINARY = "/usr/sbin/nginx"
 SYSTEMCTL_BINARY = "/bin/systemctl"
 STAGED_CONFIG_PREFIX = "/tmp/infra-tools-nginx-"
+NGINX_LOCK_PATH = "/run/lock/infra-tools/deploy-nginx.lock"
 MAX_NGINX_CONFIG_BYTES = 1024 * 1024
 DEPLOY_POLICY_FILE = '/etc/infra_tools/cicd/deploy_policy.json'
 
 _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,253}$")
 _SERVICE_NAME_PATTERN = re.compile(r"^node-[a-z0-9][a-z0-9_.-]{0,126}$")
+_OPERATION_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 
 def validate_config_name(value: str) -> str:
@@ -51,6 +56,45 @@ def validate_service_name(value: str) -> str:
     if base_name.endswith(".service") or not _SERVICE_NAME_PATTERN.fullmatch(base_name):
         raise ValueError("invalid deploy service name")
     return f"{base_name}.service"
+
+
+def validate_operation_id(value: str) -> str:
+    """Validate a controller-generated deployment operation identifier."""
+
+    if not _OPERATION_ID_PATTERN.fullmatch(value):
+        raise ValueError("invalid deployment operation ID")
+    return value
+
+
+@contextmanager
+def _nginx_mutation_lock() -> Iterator[None]:
+    """Serialize nginx configuration validation and rollback transactions."""
+
+    lock_dir = os.path.dirname(NGINX_LOCK_PATH)
+    os.makedirs(lock_dir, mode=0o700, exist_ok=True)
+    directory_info = os.lstat(lock_dir)
+    if (
+        not stat.S_ISDIR(directory_info.st_mode)
+        or directory_info.st_uid != os.geteuid()
+        or directory_info.st_mode & 0o077
+    ):
+        raise ValueError(f"unsafe nginx lock directory: {lock_dir}")
+    descriptor = os.open(
+        NGINX_LOCK_PATH,
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+        0o600,
+    )
+    try:
+        lock_info = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(lock_info.st_mode)
+            or lock_info.st_uid != os.geteuid()
+        ):
+            raise ValueError(f"unsafe nginx lock file: {NGINX_LOCK_PATH}")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def _run_checked(command: list[str]) -> None:
@@ -182,11 +226,14 @@ def _allowed_site_roots() -> list[str]:
     return roots
 
 
-def install_nginx_config(config_name: str) -> None:
+def install_nginx_config(config_name: str, operation_id: str) -> None:
     """Render a bounded site request locally; never install uploaded nginx text."""
 
     safe_name = validate_config_name(config_name)
-    staged_path = f"{STAGED_CONFIG_PREFIX}{safe_name}.json"
+    safe_operation_id = validate_operation_id(operation_id)
+    staged_path = (
+        f"{STAGED_CONFIG_PREFIX}{safe_name}-{safe_operation_id}.json"
+    )
     content, _mode, owner_uid = _read_regular_file(staged_path, MAX_NGINX_CONFIG_BYTES)
 
     sudo_uid = os.environ.get("SUDO_UID")
@@ -264,6 +311,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install_parser = subparsers.add_parser("install-site")
     install_parser.add_argument("config_name")
+    install_parser.add_argument("operation_id")
 
     remove_parser = subparsers.add_parser("remove-nginx")
     remove_parser.add_argument("config_name")
@@ -284,12 +332,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _build_parser().parse_args(argv)
     try:
-        if args.command == "install-site":
-            install_nginx_config(args.config_name)
-        elif args.command == "remove-nginx":
-            remove_nginx_config(args.config_name)
-        elif args.command == "reload-nginx":
-            reload_nginx()
+        if args.command in {"install-site", "remove-nginx", "reload-nginx"}:
+            with _nginx_mutation_lock():
+                if args.command == "install-site":
+                    install_nginx_config(args.config_name, args.operation_id)
+                elif args.command == "remove-nginx":
+                    remove_nginx_config(args.config_name)
+                else:
+                    reload_nginx()
         elif args.command == "restart-service":
             restart_service(args.service_name)
     except (OSError, RuntimeError, ValueError) as exc:

@@ -257,7 +257,9 @@ the new build home, snapshots and logs.
   type. The app server validates them and renders configuration using its own
   installed template and TLS certificates. Raw nginx directives, proxy targets,
   and log destinations cannot be supplied by the build server. Generated sites
-  refuse to serve symlinks, and their roots must resolve below an allowed base
+  refuse to serve symlinks, and their roots must resolve below an allowed base.
+  Each upload uses a per-run staged filename, and the privileged helper
+  serializes nginx writes, validation, and rollback on the app server
 - existing nginx sites can only be replaced or removed when their file starts
   with the infra-tools deployment generator marker and their enabled link
   references that file. Administrator-owned or unrelated service sites are

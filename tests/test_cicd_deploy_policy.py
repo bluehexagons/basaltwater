@@ -15,6 +15,7 @@ from web.service_tools import deploy_admin
 
 
 SITE = {'domain': 'example.com', 'path': '/', 'serve_path': '/var/www/site', 'project_type': 'static'}
+OPERATION_ID = "0123456789abcdef0123456789abcdef"
 
 
 class TestStructuredSiteValidation(unittest.TestCase):
@@ -60,8 +61,10 @@ class TestPrivilegedSiteRendering(unittest.TestCase):
         self.cert = self.stack.enter_context(patch('lib.nginx_config.get_ssl_cert_path', return_value=('/target/site.crt', '/target/site.key')))
 
     def install(self, request) -> None:
-        Path(self.prefix + 'example_com.json').write_text(json.dumps(request))
-        deploy_admin.install_nginx_config('example_com')
+        Path(
+            self.prefix + f'example_com-{OPERATION_ID}.json'
+        ).write_text(json.dumps(request))
+        deploy_admin.install_nginx_config('example_com', OPERATION_ID)
 
     def test_renders_on_target_with_fixed_security_policy(self) -> None:
         self.install({**SITE, 'serve_path': str(self.sites / 'app')})

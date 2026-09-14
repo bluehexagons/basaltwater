@@ -93,8 +93,14 @@ class TestPushNginxConfig(unittest.TestCase):
         self.assertEqual(len(captured_source), 1)
         self.assertFalse(os.path.exists(captured_source[0]))
         self.assertEqual(run.call_count, 2)
-        self.assertIn("example_com.json", run.call_args_list[0].args[0][2])
+        remote_path = run.call_args_list[0].args[0][2]
+        self.assertRegex(
+            remote_path,
+            r"infra-tools-nginx-example_com-[a-f0-9]{32}\.json$",
+        )
         self.assertIn("install-site example_com", run.call_args_list[1].args[0][-1])
+        operation_id = remote_path.removesuffix(".json").rsplit("-", 1)[1]
+        self.assertIn(operation_id, run.call_args_list[1].args[0][-1])
 
     def test_push_nginx_config_rejects_invalid_domain_and_upload_failure(self) -> None:
         with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "run_command") as run:
