@@ -170,6 +170,11 @@ arguments, starts a bounded systemd service as the requesting user, waits for
 HTTP readiness, and then creates the managed HTTPS forward. The service is not
 enabled at boot.
 
+When dependencies are missing, installation runs as the requesting user with a
+30-minute process-group deadline. Gateway and systemd control commands have a
+60-second deadline; a timeout aborts the mutation and leaves the existing
+publication or route in place where rollback is possible.
+
 Override automatic Vite detection with an explicit argv command after `--`.
 Use `{host}` and `{port}` placeholders without shell interpolation:
 

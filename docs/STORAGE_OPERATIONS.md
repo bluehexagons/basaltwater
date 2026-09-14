@@ -36,6 +36,8 @@ files and remove only their own probe.
 Sync source checks require only read access. SMB subdirectories are checked
 against their containing mount, and new sync destinations are created after
 mount validation before their write probe runs.
+`mountpoint` and `findmnt` probes are bounded to 15 seconds; a timed-out probe
+is treated as an unavailable mount so setup cannot write through a stale mount.
 
 ## Sync behavior
 

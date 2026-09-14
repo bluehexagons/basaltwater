@@ -38,6 +38,7 @@ from lib.agent_auth import (
     set_agent_credential,
 )
 from lib.agent_credentials import inspect_codex_auth_payload
+from lib.remote_utils import CommandTimeoutError
 from lib.agent_cli import (
     _repair_t3_native_runtime,
     _t3_port,
@@ -1121,7 +1122,7 @@ class TestAgentUpdate(unittest.TestCase):
                         tool,
                     )
                     expected = [path, 'update' if tool == 'claude' else 'upgrade']
-                    with patch('lib.agent_cli.subprocess.run', return_value=completed) as runner:
+                    with patch('lib.agent_cli.run_command', return_value=completed) as runner:
                         result = _invoke_agent_update(tool, expected[0], home)
                     self.assertEqual(runner.call_args.args[0], expected)
                     self.assertNotIn('shell', runner.call_args.kwargs)
@@ -1141,7 +1142,7 @@ class TestAgentUpdate(unittest.TestCase):
                     'CODEX_HOME': '/home/loren/.codex',
                     'NPM_CONFIG_PREFIX': '/home/loren/.npm-global',
                 },
-            ), patch('lib.agent_cli.subprocess.run', return_value=completed) as runner:
+            ), patch('lib.agent_cli.run_command', return_value=completed) as runner:
                 _invoke_agent_update(
                     'claude',
                     os.path.join(home, '.local', 'bin', 'claude'),
@@ -1157,6 +1158,25 @@ class TestAgentUpdate(unittest.TestCase):
         self.assertNotIn('OLDPWD', environment)
         self.assertNotIn('NPM_CONFIG_PREFIX', environment)
         self.assertEqual(runner.call_args.kwargs['cwd'], home)
+
+    def test_native_updater_timeout_reports_bounded_failure(self):
+        with tempfile.TemporaryDirectory() as home:
+            with patch(
+                'lib.agent_cli.run_command',
+                side_effect=CommandTimeoutError(
+                    'claude update',
+                    600,
+                ),
+            ) as runner:
+                result = _invoke_agent_update(
+                    'claude',
+                    os.path.join(home, '.local', 'bin', 'claude'),
+                    home,
+                )
+
+        self.assertEqual(result['failure'], 'timeout')
+        self.assertIsNone(result['returncode'])
+        self.assertEqual(runner.call_args.kwargs['timeout'], 600)
 
     def test_tool_lookup_does_not_use_another_account_path(self):
         with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as other_home:

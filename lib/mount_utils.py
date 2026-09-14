@@ -9,6 +9,26 @@ import tempfile
 from typing import Optional, Any, Callable
 
 
+_MOUNT_PROBE_TIMEOUT_SECONDS = 15
+
+
+def _run_mount_command(
+    command: list[str],
+    *,
+    check: bool = False,
+    text: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run a fixed mount probe within a bounded diagnostic window."""
+
+    return subprocess.run(
+        command,
+        capture_output=True,
+        check=check,
+        text=text,
+        timeout=_MOUNT_PROBE_TIMEOUT_SECONDS,
+    )
+
+
 def is_path_under_mnt(path: str) -> bool:
     """Check if path is under /mnt directory."""
     return path == '/mnt' or path.startswith('/mnt/')
@@ -23,10 +43,10 @@ def get_mount_ancestor(path: str) -> Optional[str]:
     """
     current = path
     while current and current != '/':
-        result = subprocess.run(
-            ['mountpoint', '-q', current],
-            capture_output=True
-        )
+        try:
+            result = _run_mount_command(['mountpoint', '-q', current])
+        except (OSError, subprocess.TimeoutExpired):
+            return None
         if result.returncode == 0:
             return current
         current = os.path.dirname(current)
@@ -60,10 +80,10 @@ def validate_mount_for_sync(path: str, path_name: str = "path") -> bool:
     import sys
     
     # Check if path itself is a mount point
-    result = subprocess.run(
-        ['mountpoint', '-q', path],
-        capture_output=True
-    )
+    try:
+        result = _run_mount_command(['mountpoint', '-q', path])
+    except (OSError, subprocess.TimeoutExpired):
+        result = subprocess.CompletedProcess(['mountpoint', '-q', path], 124)
     
     if result.returncode == 0:
         # Path is a mount point, all good
@@ -102,15 +122,16 @@ def validate_smb_connectivity(path: str, *, writable: bool = True) -> bool:
     
     # Check if this looks like an SMB mount
     try:
-        result = subprocess.run(
+        result = _run_mount_command(
             ['findmnt', '-n', '-o', 'FSTYPE', '--target', path],
-            capture_output=True, text=True, check=True
+            text=True,
+            check=True,
         )
-        fstype = result.stdout.strip()
+        fstype = (result.stdout or '').strip()
         if fstype not in ['cifs', 'smb3', 'smb2']:
             print(f"Path {path} is not an SMB mount (type: {fstype})")
             return False
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         print(f"Could not determine filesystem type for {path}")
         return False
     
@@ -170,30 +191,32 @@ def get_mount_status_details(path: str) -> dict[str, Any]:
     
     try:
         # Get filesystem type and options
-        result = subprocess.run(
+        result = _run_mount_command(
             ['findmnt', '-n', '-o', 'FSTYPE,OPTIONS', '--target', path],
-            capture_output=True, text=True, check=True
+            text=True,
+            check=True,
         )
-        parts = result.stdout.strip().split()
+        parts = (result.stdout or '').strip().split()
         if len(parts) >= 1:
             details['fstype'] = parts[0]
         if len(parts) >= 2:
             details['mount_options'] = parts[1]
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         # If findmnt fails, leave fstype and options as None; details stay usable.
         pass
     
     # Check for remote server (SMB/NFS)
     if details['fstype'] in ['cifs', 'smb3', 'smb2', 'nfs', 'nfs4']:
         try:
-            result = subprocess.run(
+            result = _run_mount_command(
                 ['findmnt', '-n', '-o', 'SOURCE', '--target', path],
-                capture_output=True, text=True, check=True
+                text=True,
+                check=True,
             )
-            source = result.stdout.strip()
+            source = (result.stdout or '').strip()
             if '//' in source or ':' in source:
                 details['remote_server'] = source
-        except subprocess.CalledProcessError:
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             # If findmnt fails, leave remote_server as None.
             pass
     

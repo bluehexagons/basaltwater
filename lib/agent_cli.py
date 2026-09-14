@@ -35,6 +35,7 @@ from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
 from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_host, validate_username
+from lib.remote_utils import CommandTimeoutError, run as run_command
 
 
 AGENT_DOCTOR_TOOLS = ("gh", "codex", "claude", "opencode")
@@ -677,7 +678,7 @@ def _invoke_agent_update(tool: str, path: str, home: str) -> JSONDict:
         method = "opencode upgrade"
 
     try:
-        result = subprocess.run(
+        result = run_command(
             command,
             check=False,
             capture_output=True,
@@ -691,7 +692,7 @@ def _invoke_agent_update(tool: str, path: str, home: str) -> JSONDict:
             "method": method,
             "installer_sha256": installer_sha256,
         }
-    except subprocess.TimeoutExpired:
+    except CommandTimeoutError:
         return {
             "returncode": None,
             "method": method,

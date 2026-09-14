@@ -321,7 +321,7 @@ class TestInfraWebPreviews(unittest.TestCase):
                     "_resolve_preview_executable",
                     return_value=["/home/agent/.nvm/current/bin/npm", "ci"],
                 ),
-                patch.object(infra_web.subprocess, "run", return_value=completed) as run,
+                patch.object(infra_web, "run_command", return_value=completed) as run,
             ):
                 infra_web._install_preview_dependencies(project, account)
 
@@ -329,6 +329,30 @@ class TestInfraWebPreviews(unittest.TestCase):
         self.assertEqual(command[:4], ["runuser", "-u", "agent", "--"])
         self.assertIn("HOME=/home/agent", command)
         self.assertEqual(command[-2:], ["/home/agent/.nvm/current/bin/npm", "ci"])
+        self.assertEqual(
+            run.call_args.kwargs["timeout"],
+            infra_web._PREVIEW_INSTALL_TIMEOUT_SECONDS,
+        )
+
+    def test_preview_dependency_install_timeout_is_reported(self) -> None:
+        account = SimpleNamespace(pw_dir="/home/agent", pw_name="agent")
+        timeout = infra_web.CommandTimeoutError(
+            "npm ci",
+            infra_web._PREVIEW_INSTALL_TIMEOUT_SECONDS,
+        )
+        with tempfile.TemporaryDirectory() as project:
+            with open(os.path.join(project, "package-lock.json"), "w", encoding="utf-8"):
+                pass
+            with (
+                patch.object(
+                    infra_web,
+                    "_resolve_preview_executable",
+                    return_value=["/home/agent/.nvm/current/bin/npm", "ci"],
+                ),
+                patch.object(infra_web, "run_command", side_effect=timeout),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exceeded 1800 seconds"):
+                    infra_web._install_preview_dependencies(project, account)
 
     def test_preview_start_waits_then_applies_route_and_records_state(self) -> None:
         with tempfile.TemporaryDirectory() as project:

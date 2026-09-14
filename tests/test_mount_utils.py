@@ -32,8 +32,9 @@ class TestMountPathHelpers(unittest.TestCase):
     def test_get_mount_ancestor_returns_closest_mounted_parent(self) -> None:
         checked = []
 
-        def run(command: list[str], capture_output: bool):
+        def run(command: list[str], capture_output: bool, **kwargs):
             del capture_output
+            del kwargs
             checked.append(command[-1])
             return completed(0 if command[-1] == "/mnt/data" else 1)
 
@@ -48,6 +49,14 @@ class TestMountPathHelpers(unittest.TestCase):
             result = mount_utils.get_mount_ancestor("/tmp/data")
         self.assertIsNone(result)
         self.assertEqual(run.call_count, 2)
+
+    def test_get_mount_ancestor_fails_closed_when_probe_times_out(self) -> None:
+        with patch.object(
+            mount_utils.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired("mountpoint", 15),
+        ):
+            self.assertIsNone(mount_utils.get_mount_ancestor("/mnt/data"))
 
 
 class TestMountValidation(unittest.TestCase):

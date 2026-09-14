@@ -22,6 +22,7 @@ class TestAutoUpdateNode(unittest.TestCase):
             (0, ''),
             (0, 'null'),
             (0, '[]'),
+            (0, '{"dependencies":{}}\n{"unexpected":{}}'),
             (0, '{"dependencies":[]}'),
             (0, '{"error":{"code":"ELSPROBLEMS"}}'),
             (0, '{"problems":["missing package"]}'),
@@ -55,6 +56,25 @@ class TestAutoUpdateNode(unittest.TestCase):
             (True, None),
         )
         mock_run.assert_called_once()
+
+    @patch("web.service_tools.auto_update_node.run_nvm_command")
+    def test_package_inventory_accepts_nvm_exec_status_line(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            'Running node v20.12.2 (npm v10.5.0)\n{"dependencies":{"pnpm":{"version":"9.1.0"}}}\n',
+            "",
+        )
+
+        self.assertEqual(
+            auto_update_node.reinstall_global_packages("v20.12.2", "v20.12.3"),
+            (True, None),
+        )
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(
+            mock_run.call_args_list[1].args[0],
+            ["nvm", "exec", "v20.12.3", "npm", "install", "-g", "pnpm@9.1.0"],
+        )
 
     def test_select_installed_latest_track_from_versions_newer_than_lts(self):
         self.assertEqual(
@@ -116,7 +136,7 @@ stable -> 22.3 (-> v22.3.0) (default)
         for call_args in mock_run_nvm.call_args_list:
             self.assertTrue(any(arg.startswith("--before=") for arg in call_args.args[0]))
 
-    @patch("web.service_tools.auto_update_node.subprocess.run")
+    @patch("web.service_tools.auto_update_node.run_command")
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
     def test_run_nvm_command_uses_bash_argv(self, _nvm_dir, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(args=["/bin/bash"], returncode=0)
@@ -130,6 +150,20 @@ stable -> 22.3 (-> v22.3.0) (default)
         self.assertIn("USER", kwargs["env"])
         self.assertIn("LOGNAME", kwargs["env"])
         self.assertNotIn("shell", kwargs)
+        self.assertEqual(kwargs["timeout"], auto_update_node._NVM_COMMAND_TIMEOUT_SECONDS)
+
+    @patch("web.service_tools.auto_update_node.run_command")
+    @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")
+    def test_run_nvm_command_converts_timeout_to_failed_result(self, _nvm_dir, mock_run):
+        mock_run.side_effect = auto_update_node.CommandTimeoutError(
+            "nvm install v20.12.3",
+            auto_update_node._NVM_COMMAND_TIMEOUT_SECONDS,
+        )
+
+        result = auto_update_node.run_nvm_command(["nvm", "install", "v20.12.3"])
+
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("timed out", result.stderr)
 
     @patch("web.service_tools.auto_update_node.cleanup_old_versions", return_value=(True, None))
     @patch("web.service_tools.auto_update_node.send_notification_safe")

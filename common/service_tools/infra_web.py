@@ -36,6 +36,7 @@ if SOURCE_ROOT not in sys.path:
 from common.service_tools import godot_web_publish, static_web_publish
 from lib.validation import validate_positive_integer
 from lib.local_http import open_loopback
+from lib.remote_utils import CommandTimeoutError, run as run_command
 
 
 POLICY_FILE = "/etc/infra-tools/internal-web/policy.json"
@@ -57,6 +58,8 @@ _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.*)$")
 _BODY_SIZE_PATTERN = re.compile(r"^([1-9][0-9]{0,9})([kKmMgG]?)$")
 _PROFILES = ("general", "godot", "syncthing")
 _MAX_FORWARD_BODY_BYTES = 1024**3
+_SYSTEM_COMMAND_TIMEOUT_SECONDS = 60
+_PREVIEW_INSTALL_TIMEOUT_SECONDS = 30 * 60
 
 
 @contextmanager
@@ -546,8 +549,29 @@ server {{
     return "\n".join(blocks) + "\n"
 
 
+def _run_bounded(
+    command: list[str],
+    *,
+    capture_output: bool = False,
+    text: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return run_command(
+            command,
+            check=False,
+            capture_output=capture_output,
+            text=text,
+            timeout=_SYSTEM_COMMAND_TIMEOUT_SECONDS,
+        )
+    except CommandTimeoutError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 def _run_checked(command: list[str], label: str) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    try:
+        result = _run_bounded(command, capture_output=True)
+    except RuntimeError as exc:
+        raise RuntimeError(f"{label}: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or label).strip()
         raise RuntimeError(f"{label}: {detail}")
@@ -1443,20 +1467,27 @@ def _install_preview_dependencies(project: str, account: pwd.struct_passwd) -> N
             ]
         )
     )
-    result = subprocess.run(
-        [
-            "runuser",
-            "-u",
-            account.pw_name,
-            "--",
-            "env",
-            f"HOME={account.pw_dir}",
-            f"PATH={runtime_path}",
-            *command,
-        ],
-        cwd=project,
-        check=False,
-    )
+    try:
+        result = run_command(
+            [
+                "runuser",
+                "-u",
+                account.pw_name,
+                "--",
+                "env",
+                f"HOME={account.pw_dir}",
+                f"PATH={runtime_path}",
+                *command,
+            ],
+            cwd=project,
+            check=False,
+            timeout=_PREVIEW_INSTALL_TIMEOUT_SECONDS,
+        )
+    except CommandTimeoutError as exc:
+        raise RuntimeError(
+            "Preview dependency installation exceeded "
+            f"{_PREVIEW_INSTALL_TIMEOUT_SECONDS} seconds"
+        ) from exc
     if result.returncode != 0:
         raise RuntimeError(
             f"Preview dependency installation failed with exit code {result.returncode}"
@@ -1612,17 +1643,22 @@ def _write_preview_service(
                 os.unlink(path)
             except FileNotFoundError:
                 pass
-        subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
+        try:
+            _run_checked(["systemctl", "daemon-reload"], "Could not reload systemd")
+        except (OSError, RuntimeError):
+            pass
         raise
     return unit, launcher
 
 
 def _preview_active(unit: str) -> bool:
-    result = subprocess.run(
-        ["systemctl", "is-active", "--quiet", unit],
-        check=False,
-        capture_output=True,
-    )
+    try:
+        result = _run_bounded(
+            ["systemctl", "is-active", "--quiet", unit],
+            capture_output=True,
+        )
+    except (OSError, RuntimeError):
+        return False
     return result.returncode == 0
 
 
@@ -1633,14 +1669,23 @@ def _remove_preview_service(record: dict[str, object]) -> None:
         PREVIEW_RUNTIME_ROOT,
         f"{record['owner']}-{record['name']}.sh",
     )
-    subprocess.run(["systemctl", "stop", unit], check=False, capture_output=True)
+    _run_bounded(
+        ["systemctl", "stop", unit],
+        capture_output=True,
+    )
     for path, label in ((unit_path, "unit"), (launcher, "launcher")):
         if os.path.lexists(path):
             if os.path.islink(path) or not os.path.isfile(path):
                 raise RuntimeError(f"Refusing unsafe live-preview {label}: {path}")
             os.unlink(path)
-    subprocess.run(["systemctl", "daemon-reload"], check=False, capture_output=True)
-    subprocess.run(["systemctl", "reset-failed", unit], check=False, capture_output=True)
+    _run_bounded(
+        ["systemctl", "daemon-reload"],
+        capture_output=True,
+    )
+    _run_bounded(
+        ["systemctl", "reset-failed", unit],
+        capture_output=True,
+    )
 
 
 def _preview_for_user(
@@ -1861,10 +1906,8 @@ def _preview_logs(name: str, lines: int) -> int:
             raise RuntimeError(f"Live preview does not exist: {name}")
     else:
         record = _preview_for_user(name, previews, account.pw_name)
-    result = subprocess.run(
+    result = _run_bounded(
         ["journalctl", "-u", str(record["unit"]), "-n", str(lines), "--no-pager"],
-        check=False,
-        text=True,
     )
     return result.returncode
 

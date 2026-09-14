@@ -33,11 +33,13 @@ from lib.update_policy import (
     ecosystem_auto_upgrade_enabled,
     npm_freshness_args,
 )
+from lib.remote_utils import CommandTimeoutError, run as run_command
 
 # Initialize centralized logger
 logger = get_service_logger('auto_update_node', 'web', use_syslog=True)
 
 _NODE_VERSION_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
+_NVM_COMMAND_TIMEOUT_SECONDS = 30 * 60
 
 
 def get_nvm_dir() -> str:
@@ -59,19 +61,28 @@ def run_nvm_command(args: list[str]) -> subprocess.CompletedProcess[str]:
         f'{shlex.join(args)}'
     )
 
-    result = subprocess.run(
-        ["/bin/bash", "-lc", full_cmd],
-        capture_output=True,
-        text=True,
-        cwd=home_dir,
-        env={
-            **os.environ,
-            "HOME": home_dir,
-            "USER": pw_entry.pw_name,
-            "LOGNAME": pw_entry.pw_name,
-        },
-    )
-    return result
+    command = ["/bin/bash", "-lc", full_cmd]
+    try:
+        return run_command(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=home_dir,
+            timeout=_NVM_COMMAND_TIMEOUT_SECONDS,
+            env={
+                **os.environ,
+                "HOME": home_dir,
+                "USER": pw_entry.pw_name,
+                "LOGNAME": pw_entry.pw_name,
+            },
+        )
+    except CommandTimeoutError as exc:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            "",
+            str(exc),
+        )
 
 
 def normalize_node_version(value: str) -> str:
@@ -188,10 +199,25 @@ def get_global_package_specs(source_version: str) -> tuple[bool, list[str], Mayb
         details = result.stderr.strip() or f"npm list failed for {source_version}"
         return False, [], details
 
+    # ``nvm exec`` writes a human-readable ``Running node ...`` line before
+    # the command's output.  Decode the first complete JSON value after that
+    # wrapper, while rejecting any non-whitespace output after the inventory.
+    decoder = json.JSONDecoder()
+    json_offset = result.stdout.find("{")
     try:
-        payload = json.loads(result.stdout)
+        if json_offset < 0:
+            raise json.JSONDecodeError("no JSON object found", result.stdout, 0)
+        payload, end = decoder.raw_decode(result.stdout[json_offset:])
+        trailing = result.stdout[json_offset + end :].strip()
+        if trailing:
+            raise json.JSONDecodeError(
+                "unexpected output after package inventory",
+                result.stdout,
+                json_offset + end,
+            )
     except json.JSONDecodeError as exc:
-        return False, [], f"Failed to parse global npm packages for {source_version}: {exc}"
+        details = exc
+        return False, [], f"Failed to parse global npm packages for {source_version}: {details}"
 
     if not isinstance(payload, dict) or payload.get("error") or payload.get("problems"):
         return False, [], f"Invalid global npm package inventory for {source_version}"
