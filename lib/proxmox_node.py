@@ -7,6 +7,7 @@ Designed to be called locally before remote_setup runs against the container.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import re
 import shlex
@@ -291,10 +292,32 @@ def _resolve_template_name(
 
     # Download if not already present
     print(f"  Downloading template: {template_name}")
+    template_ref = f"{template_storage}:vztmpl/{template_name}"
+    template_lock = hashlib.sha256(template_ref.encode("utf-8")).hexdigest()[:24]
+    download_if_missing = (
+        f"pveam list {shlex.quote(template_storage)} "
+        "| awk 'NR > 1 {print $1}' "
+        f"| grep -Fqx -- {shlex.quote(template_ref)} || "
+        f"pveam download {shlex.quote(template_storage)} "
+        f"{shlex.quote(template_name)}"
+    )
+    locked_download = shlex.join(
+        [
+            "flock",
+            "--exclusive",
+            f"/run/lock/infra-tools-template-{template_lock}.lock",
+            "/bin/sh",
+            "-c",
+            download_if_missing,
+        ]
+    )
     result = _ssh_run(
-        node_ip, user, ssh_opts,
-        f"pveam download {shlex.quote(template_storage)} {shlex.quote(template_name)}",
-        dry_run=dry_run
+        node_ip,
+        user,
+        ssh_opts,
+        locked_download,
+        dry_run=dry_run,
+        timeout=1800,
     )
     if result.returncode != 0:
         raise ProvisionError(

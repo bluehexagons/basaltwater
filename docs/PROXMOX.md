@@ -120,10 +120,11 @@ infra-tools reserves both guest identity fields for the full provider workflow.
 Because Proxmox's `nextid` lookup does not reserve the returned VMID, QEMU and
 LXC creation retry bounded VMID collisions. Shared VM image downloads are
 locked per destination on the Proxmox node through download and checksum
-verification, and each VM receives a per-run cloud-init snippet. Provisioning
-from different controllers is not yet protected by the controller-local
-guest-identity locks; coordinate those callers externally to prevent
-simultaneous claims for the same address or hostname.
+verification, LXC template downloads are idempotent under per-template locks,
+and each VM receives a per-run cloud-init snippet. Provisioning from different
+controllers is not yet protected by the controller-local guest-identity locks;
+coordinate those callers externally to prevent simultaneous claims for the
+same address or hostname.
 
 ## Host-safety defaults
 

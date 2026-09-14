@@ -254,6 +254,13 @@ class TestResolveTemplateName(unittest.TestCase):
         mock_run.return_value = pveam_available
         result = _resolve_template_name("debian", "local", "10.0.0.1", "root", [])
         self.assertIn("debian-13-standard", result)
+        download_call = mock_run.call_args_list[2]
+        self.assertIn(
+            "flock --exclusive /run/lock/infra-tools-template-",
+            download_call.args[3],
+        )
+        self.assertIn("grep -Fqx", download_call.args[3])
+        self.assertEqual(download_call.kwargs["timeout"], 1800)
 
     @patch("lib.proxmox_node._ssh_run")
     def test_ubuntu_passthrough(self, mock_run):
