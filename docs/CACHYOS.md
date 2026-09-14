@@ -290,6 +290,21 @@ responses from the local URL. If startup fails, inspect the service journal and
 check whether another application already uses port 3773; select another port
 with `--web-interface-port` if needed.
 
+For a T3 desktop app running on this same workstation, generate a one-time
+pairing link from the managed runtime and paste the complete `Pairing URL` into
+the app's **Settings → Connections → Add environment** screen:
+
+```bash
+( cd "$HOME" && "$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair )
+```
+
+The command prints a QR code, pairing URL, and token. Treat the URL and token as
+credentials and use the link only once. A browser opened directly on this
+workstation can use `http://127.0.0.1:3773` without pairing. The generated URL
+uses loopback, so a phone or another computer cannot reach this profile; remote
+pairing requires a separately managed network or Tailscale exposure, which
+`agent_cachyos` does not configure.
+
 If a setup run from an older checkout reported `has a bad unit file setting`,
 update infra-tools and rerun the same setup command. The managed unit is
 rewritten with systemd-compatible path escaping. You can validate it before
