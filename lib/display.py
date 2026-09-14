@@ -403,9 +403,21 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         (config.install_blender, "Blender"),
         (config.install_kdenlive, "Kdenlive"),
         (config.install_krita, "Krita"),
+        (config.install_inkscape, "Inkscape"),
+        (config.install_scribus, "Scribus"),
+        (config.install_audacity, "Audacity"),
+        (config.install_ardour, "Ardour"),
+        (config.install_lmms, "LMMS"),
+        (config.install_freecad, "FreeCAD"),
+        (config.install_kicad, "KiCad"),
+        (config.install_shotcut, "Shotcut"),
+        (config.install_gimp, "GIMP"),
+        (config.install_remmina, "Remmina"),
     ):
         if enabled:
             print(f"{name}: Yes (native CachyOS package)")
+    if config.install_sysadmin_tools:
+        print("Sysadmin tools: Yes (native CachyOS packages)")
     effective_web_ports = config.effective_web_ports()
     if effective_web_ports:
         exposure = "source-restricted" if access_sources else "global"

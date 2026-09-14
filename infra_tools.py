@@ -804,6 +804,28 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             features.append("Kdenlive")
         if args.get("install_krita"):
             features.append("Krita")
+        if args.get("install_inkscape"):
+            features.append("Inkscape")
+        if args.get("install_scribus"):
+            features.append("Scribus")
+        if args.get("install_audacity"):
+            features.append("Audacity")
+        if args.get("install_ardour"):
+            features.append("Ardour")
+        if args.get("install_lmms"):
+            features.append("LMMS")
+        if args.get("install_freecad"):
+            features.append("FreeCAD")
+        if args.get("install_kicad"):
+            features.append("KiCad")
+        if args.get("install_shotcut"):
+            features.append("Shotcut")
+        if args.get("install_gimp"):
+            features.append("GIMP")
+        if args.get("install_remmina"):
+            features.append("Remmina")
+        if args.get("install_sysadmin_tools"):
+            features.append("Sysadmin tools")
         if args.get("install_gh"):
             features.append("GitHub CLI")
         if args.get("install_codex"):

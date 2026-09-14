@@ -394,6 +394,17 @@ class SetupConfig:
     install_blender: bool = False
     install_kdenlive: bool = False
     install_krita: bool = False
+    install_inkscape: bool = False
+    install_scribus: bool = False
+    install_audacity: bool = False
+    install_ardour: bool = False
+    install_lmms: bool = False
+    install_freecad: bool = False
+    install_kicad: bool = False
+    install_shotcut: bool = False
+    install_gimp: bool = False
+    install_remmina: bool = False
+    install_sysadmin_tools: bool = False
     godot_bundles: Optional[StrList] = None
     install_gh: bool = False
     install_codex: bool = False
@@ -567,11 +578,24 @@ class SetupConfig:
             self.install_blender,
             self.install_kdenlive,
             self.install_krita,
+            self.install_inkscape,
+            self.install_scribus,
+            self.install_audacity,
+            self.install_ardour,
+            self.install_lmms,
+            self.install_freecad,
+            self.install_kicad,
+            self.install_shotcut,
+            self.install_gimp,
+            self.install_remmina,
+            self.install_sysadmin_tools,
         )
         if self.system_type != "agent_cachyos" and any(cachyos_native_software):
             raise ValueError(
                 "--gaming, --sunshine, --moonlight, --obs, --blender, "
-                "--kdenlive, and --krita require the agent_cachyos profile"
+                "--kdenlive, --krita, --inkscape, --scribus, --audacity, "
+                "--ardour, --lmms, --freecad, --kicad, --shotcut, --gimp, "
+                "--remmina, and --sysadmin-tools require the agent_cachyos profile"
             )
 
         if self.enable_syncthing and self.syncthing_admin is None:
@@ -1063,6 +1087,28 @@ class SetupConfig:
             args.append("--kdenlive")
         if self.install_krita:
             args.append("--krita")
+        if self.install_inkscape:
+            args.append("--inkscape")
+        if self.install_scribus:
+            args.append("--scribus")
+        if self.install_audacity:
+            args.append("--audacity")
+        if self.install_ardour:
+            args.append("--ardour")
+        if self.install_lmms:
+            args.append("--lmms")
+        if self.install_freecad:
+            args.append("--freecad")
+        if self.install_kicad:
+            args.append("--kicad")
+        if self.install_shotcut:
+            args.append("--shotcut")
+        if self.install_gimp:
+            args.append("--gimp")
+        if self.install_remmina:
+            args.append("--remmina")
+        if self.install_sysadmin_tools:
+            args.append("--sysadmin-tools")
         for bundle in self.godot_bundles or []:
             args.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1537,6 +1583,28 @@ class SetupConfig:
             cmd_parts.append("--kdenlive")
         if self.install_krita:
             cmd_parts.append("--krita")
+        if self.install_inkscape:
+            cmd_parts.append("--inkscape")
+        if self.install_scribus:
+            cmd_parts.append("--scribus")
+        if self.install_audacity:
+            cmd_parts.append("--audacity")
+        if self.install_ardour:
+            cmd_parts.append("--ardour")
+        if self.install_lmms:
+            cmd_parts.append("--lmms")
+        if self.install_freecad:
+            cmd_parts.append("--freecad")
+        if self.install_kicad:
+            cmd_parts.append("--kicad")
+        if self.install_shotcut:
+            cmd_parts.append("--shotcut")
+        if self.install_gimp:
+            cmd_parts.append("--gimp")
+        if self.install_remmina:
+            cmd_parts.append("--remmina")
+        if self.install_sysadmin_tools:
+            cmd_parts.append("--sysadmin-tools")
         for bundle in self.godot_bundles or []:
             cmd_parts.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1905,6 +1973,17 @@ class SetupConfig:
         data['install_blender'] = bool(self.install_blender)
         data['install_kdenlive'] = bool(self.install_kdenlive)
         data['install_krita'] = bool(self.install_krita)
+        data['install_inkscape'] = bool(self.install_inkscape)
+        data['install_scribus'] = bool(self.install_scribus)
+        data['install_audacity'] = bool(self.install_audacity)
+        data['install_ardour'] = bool(self.install_ardour)
+        data['install_lmms'] = bool(self.install_lmms)
+        data['install_freecad'] = bool(self.install_freecad)
+        data['install_kicad'] = bool(self.install_kicad)
+        data['install_shotcut'] = bool(self.install_shotcut)
+        data['install_gimp'] = bool(self.install_gimp)
+        data['install_remmina'] = bool(self.install_remmina)
+        data['install_sysadmin_tools'] = bool(self.install_sysadmin_tools)
         data['harden_agent'] = bool(self.harden_agent)
         data['harden_user'] = bool(self.harden_user)
         data['enable_syncthing'] = bool(self.enable_syncthing)
@@ -2410,6 +2489,19 @@ class SetupConfig:
             install_blender=getattr(args, 'install_blender', False) is True,
             install_kdenlive=getattr(args, 'install_kdenlive', False) is True,
             install_krita=getattr(args, 'install_krita', False) is True,
+            install_inkscape=getattr(args, 'install_inkscape', False) is True,
+            install_scribus=getattr(args, 'install_scribus', False) is True,
+            install_audacity=getattr(args, 'install_audacity', False) is True,
+            install_ardour=getattr(args, 'install_ardour', False) is True,
+            install_lmms=getattr(args, 'install_lmms', False) is True,
+            install_freecad=getattr(args, 'install_freecad', False) is True,
+            install_kicad=getattr(args, 'install_kicad', False) is True,
+            install_shotcut=getattr(args, 'install_shotcut', False) is True,
+            install_gimp=getattr(args, 'install_gimp', False) is True,
+            install_remmina=getattr(args, 'install_remmina', False) is True,
+            install_sysadmin_tools=(
+                getattr(args, 'install_sysadmin_tools', False) is True
+            ),
             godot_bundles=(
                 getattr(args, 'godot_bundles', None)
                 if isinstance(getattr(args, 'godot_bundles', None), list)

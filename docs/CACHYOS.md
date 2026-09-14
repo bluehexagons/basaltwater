@@ -52,6 +52,14 @@ codex login
 gh auth login
 ```
 
+This profile does not install machine-use automation, managed Playwright, or
+KDE input/screenshot helpers. The optional `--web-interface t3code` service is
+only the localhost coding web interface; the T3 Code desktop app can be used
+as its client without enabling that service. Keep the profile's setup and
+readiness checks when using the desktop app because they provision native
+packages, agent tools, workspaces, and user-owned state that the client does
+not install.
+
 Authenticate before adding private repositories. Your existing Git credential
 helpers and SSH-agent environment are retained. Setup accepts HTTPS repository
 URLs and does not copy credentials from another host.
@@ -70,6 +78,12 @@ patterns:
 | Game and media work | `--gaming --node --godot --av-tools --gl-tools` |
 | Game streaming workstation | `--gaming --sunshine --moonlight` |
 | Creative workstation | `--obs --blender --kdenlive --krita` |
+| Audio workstation | `--audacity --lmms --ardour` |
+| Illustration and publishing | `--gimp --inkscape --scribus` |
+| CAD and electronics | `--freecad --kicad` |
+| Additional video editor | `--shotcut` |
+| Remote desktop client | `--remmina` |
+| Sysadmin workstation | `--sysadmin-tools --remmina` |
 | Additional agent | `--agent-tool opencode` or `--agent-tool claude` |
 
 For example, the complete initial command for a local T3 Code service is:
@@ -109,6 +123,17 @@ installs the launcher and prerequisites; only the subsequent setup is a preview.
 | `--blender` | Install native Blender for 3D creation and rendering |
 | `--kdenlive` | Install native Kdenlive for non-linear video editing |
 | `--krita` | Install native Krita for digital painting and image editing |
+| `--inkscape` | Install native Inkscape for vector illustration |
+| `--scribus` | Install native Scribus for desktop publishing |
+| `--audacity` | Install native Audacity for audio editing and recording |
+| `--ardour` | Install native Ardour for multitrack audio production |
+| `--lmms` | Install native LMMS for music production |
+| `--freecad` | Install native FreeCAD for parametric 3D CAD |
+| `--kicad` | Install native KiCad for schematics and PCB design |
+| `--shotcut` | Install native Shotcut for video editing |
+| `--gimp` | Install native GIMP for image editing |
+| `--remmina` | Install native Remmina with common RDP, VNC, SPICE, and secret plugins |
+| `--sysadmin-tools` | Install native Nmap, tcpdump, DNS tools, virt-manager, and Wireshark Qt |
 | `--repo HTTPS_URL` | Clone a missing repository; repeatable; existing origins must match |
 | `--agent-workspace /absolute/path` | Clone destination, defaulting to `~/repos`; must be writable by you |
 | `--web-interface t3code` | Install the optional localhost user service; implies Node tooling |
@@ -149,11 +174,15 @@ profile leaves firewall policy and Sunshine's application configuration to the
 desktop owner. Complete pairing from Sunshine's local web UI, then use
 Moonlight on the client device.
 
-Other current native CachyOS/Arch desktop packages are good candidates for
-additional opt-in flags as their project files, codecs, plugins, and GPU
-workflows need separate checks. The four creative flags above install only the
-selected applications; they do not install AUR packages, graphics drivers, or
-application-specific plugins.
+The application flags install only the selected native CachyOS/Arch repository
+packages. Remmina also installs the repository's common RDP, VNC, SPICE, and
+secret plugins so its usual protocols are available. The sysadmin bundle adds
+desktop and network diagnostics, but does not enable libvirt, grant packet
+capture permissions, open firewall ports, or change network policy. These flags
+do not install AUR or Flatpak packages, graphics drivers, or application-specific
+configuration. Ardour is available when the configured CachyOS repository
+provides its native CPU-optimized package; if it is unavailable for the
+machine's architecture, pacman reports that dependency error and setup stops.
 
 An existing version-manager installation is retained when its commands are on
 the invoking shell's PATH. Setup checks executable availability and selected

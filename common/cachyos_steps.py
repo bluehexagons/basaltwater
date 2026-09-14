@@ -33,6 +33,30 @@ CACHYOS_T3_SKILL = "infra-tools-cachyos-t3code"
 T3_SERVICE = "infra-tools-cachyos-t3.service"
 _MARKER = "# Managed by infra_tools CachyOS setup"
 
+CACHYOS_DESKTOP_PACKAGES = (
+    ("install_obs", "obs", "obs-studio"),
+    ("install_blender", "blender", "blender"),
+    ("install_kdenlive", "kdenlive", "kdenlive"),
+    ("install_krita", "krita", "krita"),
+    ("install_inkscape", "inkscape", "inkscape"),
+    ("install_scribus", "scribus", "scribus"),
+    ("install_audacity", "audacity", "audacity"),
+    ("install_ardour", "ardour", "ardour"),
+    ("install_lmms", "lmms", "lmms"),
+    ("install_freecad", "freecad", "freecad"),
+    ("install_kicad", "kicad", "kicad"),
+    ("install_shotcut", "shotcut", "shotcut"),
+    ("install_gimp", "gimp", "gimp"),
+    ("install_remmina", "remmina", "remmina"),
+)
+CACHYOS_SYSADMIN_PACKAGES = (
+    ("nmap", "nmap"),
+    ("tcpdump", "tcpdump"),
+    ("dig", "bind"),
+    ("virt-manager", "virt-manager"),
+    ("wireshark", "wireshark-qt"),
+)
+
 
 def _home(config: SetupConfig) -> Path:
     return Path(pwd.getpwnam(config.username).pw_dir)
@@ -149,14 +173,13 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
         packages.append("moonlight-qt")
     if config.install_gaming:
         packages.extend(("cachyos-gaming-meta", "cachyos-gaming-applications"))
-    for enabled, package in (
-        (config.install_obs, "obs-studio"),
-        (config.install_blender, "blender"),
-        (config.install_kdenlive, "kdenlive"),
-        (config.install_krita, "krita"),
-    ):
-        if enabled:
+    for field, _command, package in CACHYOS_DESKTOP_PACKAGES:
+        if getattr(config, field):
             packages.append(package)
+    if config.install_remmina:
+        packages.extend(("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret"))
+    if config.install_sysadmin_tools:
+        packages.extend(package for _command, package in CACHYOS_SYSADMIN_PACKAGES)
     for command, package in commands:
         if not shutil.which(command, path=_tool_path(home)):
             packages.append(package)
@@ -387,16 +410,21 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
             "  CachyOS gaming bundle: native gaming libraries, launchers, and tools requested; "
             "verify the intended GPU and games interactively"
         )
-    for enabled, command, package in (
-        (config.install_obs, "obs", "obs-studio"),
-        (config.install_blender, "blender", "blender"),
-        (config.install_kdenlive, "kdenlive", "kdenlive"),
-        (config.install_krita, "krita", "krita"),
-    ):
+    for field, command, package in CACHYOS_DESKTOP_PACKAGES:
+        enabled = getattr(config, field)
         if enabled:
             if not shutil.which(command, path=_tool_path(home)):
                 raise RuntimeError(f"Requested command missing: {command}")
             print(f"  {command}: native CachyOS package available ({package})")
+    if config.install_sysadmin_tools:
+        for command, package in CACHYOS_SYSADMIN_PACKAGES:
+            if not shutil.which(command, path=_tool_path(home)):
+                raise RuntimeError(f"Requested command missing: {command}")
+            print(f"  {command}: native CachyOS package available ({package})")
+        print(
+            "  Sysadmin tools do not enable libvirt, grant packet-capture access, "
+            "or change network policy"
+        )
     print("  Provider authentication: use each provider's local login; existing credentials retained")
     print("  KDE automation and managed Playwright: not installed")
 

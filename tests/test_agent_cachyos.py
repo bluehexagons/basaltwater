@@ -121,7 +121,9 @@ class CachyOSSetupTests(unittest.TestCase):
     def test_native_graphics_flags_select_cachyos_packages(self):
         config = self.config(
             "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",
-            "--kdenlive", "--krita",
+            "--kdenlive", "--krita", "--inkscape", "--scribus", "--audacity",
+            "--ardour", "--lmms", "--freecad", "--kicad", "--shotcut", "--gimp",
+            "--remmina", "--sysadmin-tools",
         )
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(steps.shutil, "which", return_value=None):
@@ -134,17 +136,28 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertIn("blender", packages)
         self.assertIn("kdenlive", packages)
         self.assertIn("krita", packages)
+        for package in (
+            "inkscape", "scribus", "audacity", "ardour", "lmms", "freecad",
+            "kicad", "shotcut", "gimp", "remmina", "freerdp", "libvncserver",
+            "spice-gtk", "gtk-vnc", "libsecret", "nmap", "tcpdump", "bind",
+            "virt-manager", "wireshark-qt",
+        ):
+            self.assertIn(package, packages)
 
     def test_native_graphics_flags_round_trip_and_reject_other_profiles(self):
         config = self.config(
             "--gaming", "--sunshine", "--moonlight", "--obs", "--blender",
-            "--kdenlive", "--krita",
+            "--kdenlive", "--krita", "--inkscape", "--scribus", "--audacity",
+            "--ardour", "--lmms", "--freecad", "--kicad", "--shotcut", "--gimp",
+            "--remmina", "--sysadmin-tools",
         )
         self.assertIn("--gaming", config.to_remote_args())
         self.assertIn("--sunshine", config.to_setup_command())
         self.assertTrue(config.to_dict()["install_moonlight"])
         self.assertTrue(config.to_dict()["install_obs"])
         self.assertIn("--krita", config.to_remote_args())
+        self.assertIn("--lmms", config.to_setup_command())
+        self.assertTrue(config.to_dict()["install_sysadmin_tools"])
         with self.assertRaisesRegex(ValueError, "require the agent_cachyos profile"):
             SetupConfig(
                 host="example.com",
@@ -152,10 +165,19 @@ class CachyOSSetupTests(unittest.TestCase):
                 system_type="server_lite",
                 install_sunshine=True,
             )
+        with self.assertRaisesRegex(ValueError, "require the agent_cachyos profile"):
+            SetupConfig(
+                host="example.com",
+                username="human",
+                system_type="server_lite",
+                install_lmms=True,
+            )
 
     def test_native_streaming_readiness_checks_commands(self):
         config = self.config(
-            "--sunshine", "--moonlight", "--obs", "--blender", "--kdenlive", "--krita"
+            "--sunshine", "--moonlight", "--obs", "--blender", "--kdenlive", "--krita",
+            "--inkscape", "--scribus", "--audacity", "--ardour", "--lmms", "--freecad",
+            "--kicad", "--shotcut", "--gimp", "--remmina", "--sysadmin-tools",
         )
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(

@@ -356,10 +356,23 @@ list. Neither preview is a completed live setup.
 | `--blender` | CachyOS `agent_cachyos` only: install native Blender |
 | `--kdenlive` | CachyOS `agent_cachyos` only: install native Kdenlive |
 | `--krita` | CachyOS `agent_cachyos` only: install native Krita |
+| `--inkscape` | CachyOS `agent_cachyos` only: install native Inkscape |
+| `--scribus` | CachyOS `agent_cachyos` only: install native Scribus |
+| `--audacity` | CachyOS `agent_cachyos` only: install native Audacity |
+| `--ardour` | CachyOS `agent_cachyos` only: install native Ardour |
+| `--lmms` | CachyOS `agent_cachyos` only: install native LMMS |
+| `--freecad` | CachyOS `agent_cachyos` only: install native FreeCAD |
+| `--kicad` | CachyOS `agent_cachyos` only: install native KiCad |
+| `--shotcut` | CachyOS `agent_cachyos` only: install native Shotcut |
+| `--gimp` | CachyOS `agent_cachyos` only: install native GIMP |
+| `--remmina` | CachyOS `agent_cachyos` only: install native Remmina and common desktop plugins |
+| `--sysadmin-tools` | CachyOS `agent_cachyos` only: install native desktop and network sysadmin tools |
 
-The CachyOS-only gaming flags use the packages in the workstation's configured
-repositories. They do not install graphics drivers, open firewall ports, or
-configure application credentials; see the [CachyOS workstation guide](CACHYOS.md)
+The CachyOS-only gaming and desktop application flags use packages in the
+workstation's configured repositories. They do not install AUR or Flatpak
+packages, graphics drivers, open firewall ports, or configure application
+credentials. The sysadmin bundle also leaves libvirt service access and packet
+capture permissions to the user. See the [CachyOS workstation guide](CACHYOS.md)
 for the post-install Sunshine service and pairing steps.
 
 Selecting a managed runtime also installs its update timer. Godot is fetched

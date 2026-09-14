@@ -15,8 +15,11 @@ manager, account groups, network, firewall, or power policy.
 To add supported tools, rerun `infra-tools setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
-`--kdenlive`, or `--krita`. Preview with `--dry-run`. Existing executables are retained;
-setup is not a tool updater. Authentication uses the provider's local login.
+`--kdenlive`, `--krita`, `--inkscape`, `--scribus`, `--audacity`, `--ardour`,
+`--lmms`, `--freecad`, `--kicad`, `--shotcut`, `--gimp`, `--remmina`, or
+`--sysadmin-tools`. Preview with `--dry-run`. User-managed agent executables are
+updated on rerun, while system-managed executables remain under their package
+manager. Authentication uses the provider's local login.
 
 Packages use pacman, not APT. infra-tools installs missing packages using the
 existing sync database. Leave full OS updates to the user's CachyOS workflow;
@@ -43,6 +46,15 @@ network exposure, the desktop owner can start the user service with
 `systemctl --user --now enable sunshine` and complete pairing in Sunshine's web
 UI.
 
-The creative application flags install only the selected native repository
-packages: `--obs`, `--blender`, `--kdenlive`, and `--krita`. They do not install
-AUR packages, graphics drivers, or application-specific plugins.
+The application flags install only selected native repository packages. The
+Remmina flag includes common native RDP, VNC, SPICE, and secret plugins. The
+sysadmin bundle includes Nmap, tcpdump, DNS tools, virt-manager, and Wireshark
+Qt; it does not enable libvirt, grant packet-capture permissions, or change
+network policy. These options do not install AUR or Flatpak packages, graphics
+drivers, or application-specific configuration.
+
+This profile does not install machine-use automation. T3 Code's optional local
+service is a coding web interface; the T3 Code desktop app can be used as the
+interactive client without enabling that service. Keep the profile's native
+package, agent, workspace, and readiness checks even when using the desktop app;
+they provide setup and repeatability that the client does not provision.

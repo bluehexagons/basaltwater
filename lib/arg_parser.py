@@ -790,6 +790,17 @@ def add_setup_arguments(
         ("--blender", "install_blender", "Install the native CachyOS Blender package"),
         ("--kdenlive", "install_kdenlive", "Install the native CachyOS Kdenlive package"),
         ("--krita", "install_krita", "Install the native CachyOS Krita package"),
+        ("--inkscape", "install_inkscape", "Install the native CachyOS Inkscape package"),
+        ("--scribus", "install_scribus", "Install the native CachyOS Scribus package"),
+        ("--audacity", "install_audacity", "Install the native CachyOS Audacity package"),
+        ("--ardour", "install_ardour", "Install the native CachyOS Ardour package"),
+        ("--lmms", "install_lmms", "Install the native CachyOS LMMS package"),
+        ("--freecad", "install_freecad", "Install the native CachyOS FreeCAD package"),
+        ("--kicad", "install_kicad", "Install the native CachyOS KiCad package"),
+        ("--shotcut", "install_shotcut", "Install the native CachyOS Shotcut package"),
+        ("--gimp", "install_gimp", "Install the native CachyOS GIMP package"),
+        ("--remmina", "install_remmina", "Install native CachyOS Remmina and common desktop plugins"),
+        ("--sysadmin-tools", "install_sysadmin_tools", "Install native CachyOS sysadmin desktop and network tools"),
     ):
         parser.add_argument(
             option,

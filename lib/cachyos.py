@@ -23,6 +23,9 @@ _OPTIONS = {
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",
+    "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
+    "install_lmms", "install_freecad", "install_kicad", "install_shotcut",
+    "install_gimp", "install_remmina", "install_sysadmin_tools",
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port",
 }
