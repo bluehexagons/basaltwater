@@ -405,6 +405,7 @@ class TestOfficialAgentInstallers(unittest.TestCase):
         run_as_user.assert_called_once()
         command = run_as_user.call_args.args[2]
         self.assertIn("agent update", command)
+        self.assertIn("--tools-only-readiness", command)
         self.assertIn("--tool codex", command)
         self.assertIn("--tool claude", command)
         self.assertIn("--tool opencode", command)
@@ -1326,6 +1327,30 @@ class TestAgentUpdate(unittest.TestCase):
             builder.call_args.kwargs['remote_command'],
             'python3 /opt/infra_tools/infra_tools.py agent update '
             '--tool codex --dry-run --json',
+        )
+
+    def test_remote_update_forwards_tools_only_readiness(self):
+        args = argparse.Namespace(
+            agent_command='update',
+            agent_update_host='vm.example',
+            agent_update_username='agent',
+            agent_update_tools=['codex'],
+            ssh_key=None,
+            dry_run=True,
+            json=False,
+            tools_only_readiness=True,
+        )
+        completed = argparse.Namespace(returncode=0)
+        with (
+            patch('lib.agent_cli.build_ssh_command', return_value=['ssh']) as builder,
+            patch('lib.agent_cli.subprocess.run', return_value=completed),
+        ):
+            self.assertEqual(run_agent_command(args), 0)
+
+        self.assertEqual(
+            builder.call_args.kwargs['remote_command'],
+            'python3 /opt/infra_tools/infra_tools.py agent update '
+            '--tool codex --dry-run --tools-only-readiness',
         )
 
 

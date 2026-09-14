@@ -749,6 +749,7 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
             shlex.quote(AGENT_CLI_SOURCE),
             "agent",
             "update",
+            "--tools-only-readiness",
             *(
                 item
                 for tool in selected

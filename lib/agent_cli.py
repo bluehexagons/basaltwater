@@ -236,6 +236,14 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Output machine-readable JSON",
     )
+    update.add_argument(
+        "--tools-only-readiness",
+        action="store_true",
+        help=(
+            "After updating, verify only selected terminal tools; omit the full "
+            "host and T3 readiness audit"
+        ),
+    )
     update.add_argument("-k", "--key", dest="ssh_key", help="SSH private key path")
     auth = commands.add_parser(
         "auth",
@@ -2232,15 +2240,21 @@ def _t3_readiness_expected(home: str) -> bool:
     )
 
 
-def _record_post_update_readiness(tools: StrList) -> JSONDict:
-    """Run and persist the post-update checks appropriate for this agent home."""
+def _record_post_update_readiness(
+    tools: StrList,
+    *,
+    include_capabilities: bool = True,
+) -> JSONDict:
+    """Run and persist the selected post-update checks for this agent home."""
     from lib.agent_readiness import record_agent_readiness
 
     home = os.path.abspath(os.path.expanduser("~"))
     tool_results = inspect_agent_tools(tools, home=home)
-    capability_results = [inspect_host_readiness(home)]
-    if _t3_readiness_expected(home):
-        capability_results.append(inspect_t3code(home))
+    capability_results: list[JSONDict] = []
+    if include_capabilities:
+        capability_results.append(inspect_host_readiness(home))
+        if _t3_readiness_expected(home):
+            capability_results.append(inspect_t3code(home))
     return record_agent_readiness(
         tool_results,
         capability_results,
@@ -2307,9 +2321,22 @@ def _readiness_failure_details(record: JSONDict) -> list[str]:
                 if isinstance(issues, list)
                 else []
             )
+            if safe_issues:
+                details.append(f"{capability}: issues: {', '.join(safe_issues)}")
+                continue
+            errors = capability_record.get("errors")
+            safe_errors = (
+                [error for error in errors if isinstance(error, str)]
+                if isinstance(errors, list)
+                else []
+            )
             details.append(
                 f"{capability}: "
-                + ("issues: " + ", ".join(safe_issues) if safe_issues else "unhealthy")
+                + (
+                    "errors: " + "; ".join(safe_errors)
+                    if safe_errors
+                    else "unhealthy"
+                )
             )
     return details
 
@@ -2381,6 +2408,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
 
     if args.agent_command == "update":
         selected = list(args.agent_update_tools or DEFAULT_UPDATE_TOOLS)
+        tools_only_readiness = bool(getattr(args, "tools_only_readiness", False))
         try:
             target = _remote_agent_target(
                 args,
@@ -2398,6 +2426,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 remote_arguments.append("--dry-run")
             if args.json:
                 remote_arguments.append("--json")
+            if tools_only_readiness:
+                remote_arguments.append("--tools-only-readiness")
             return _run_remote_agent_lifecycle(
                 target,
                 "update",
@@ -2413,7 +2443,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
         readiness_error: Optional[str] = None
         if not args.dry_run:
             try:
-                readiness_record = _record_post_update_readiness(selected)
+                readiness_record = _record_post_update_readiness(
+                    selected,
+                    include_capabilities=not tools_only_readiness,
+                )
             except (OSError, RuntimeError, ValueError) as exc:
                 readiness_error = str(exc)
         if args.json:

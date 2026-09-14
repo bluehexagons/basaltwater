@@ -750,7 +750,11 @@ present, and saves the redacted readiness record described above. An unhealthy
 post-update result or failure to persist it makes the update command exit
 nonzero even when the vendor updater itself succeeded. Inspect the evidence
 with `infra-tools agent doctor --last-record`; update JSON output retains its
-existing per-tool result-array contract.
+existing per-tool result-array contract. The setup-internal invocation uses
+`--tools-only-readiness` so an unrelated pre-existing T3 or host condition does
+not make a successful terminal-agent update fail; run the default command or
+`infra-tools agent doctor --capability host --capability t3code` for the full
+audit.
 
 The optional `HOST USER` form runs that update as the target VM user. Run
 `infra-tools agent update HOST USER --dry-run`, then repeat it without
@@ -765,7 +769,10 @@ are left to their package manager. Use `infra-tools agent update` for an
 agent-only update outside setup or when you want to select tools explicitly.
 Codex-enabled setup reruns also perform one bounded authentication freshness
 check before the updater, giving renewable credentials a chance to recover on
-an infrequently started VM.
+an infrequently started VM. Setup verifies the selected terminal tools after
+the update without making an unrelated pre-existing T3 or host condition block
+that update; use the composite doctor command above when those broader
+conditions need to be audited.
 For example, when an operator is logged in as another account:
 
 ```bash

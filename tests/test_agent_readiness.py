@@ -16,6 +16,7 @@ from unittest.mock import patch
 from lib.agent_cli import (
     DEFAULT_DOCTOR_TOOLS,
     _record_post_update_readiness,
+    _readiness_failure_details,
     add_agent_subparser,
     run_agent_command,
 )
@@ -438,7 +439,7 @@ class TestAgentReadinessCLI(unittest.TestCase):
             redirect_stderr(errors),
         ):
             self.assertEqual(run_agent_command(args), 1)
-        recorder.assert_called_once_with(["codex"])
+        recorder.assert_called_once_with(["codex"], include_capabilities=True)
         self.assertEqual(json.loads(output.getvalue()), updates)
         self.assertIn("post-update readiness is unhealthy", errors.getvalue())
 
@@ -483,6 +484,48 @@ class TestAgentReadinessCLI(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("codex: credentials need attention (refresh_required)", rendered)
         self.assertIn("t3code: failed checks: service_active", rendered)
+
+    def test_update_tools_only_readiness_omits_unrelated_capabilities(self) -> None:
+        args = self._parser().parse_args(
+            ["agent", "update", "--tool", "codex", "--tools-only-readiness"]
+        )
+        updates = [
+            {
+                "tool": "codex",
+                "status": "current",
+                "before_version": "codex-cli 0.154.0",
+                "after_version": "codex-cli 0.154.0",
+                "method": "codex installer",
+                "path": "/home/agent/.local/bin/codex",
+            }
+        ]
+        readiness = {"healthy": True, "tools": [], "capabilities": []}
+        with (
+            patch("lib.agent_cli.update_agent_tools", return_value=updates),
+            patch(
+                "lib.agent_cli._record_post_update_readiness",
+                return_value=readiness,
+            ) as recorder,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(run_agent_command(args), 0)
+
+        recorder.assert_called_once_with(["codex"], include_capabilities=False)
+
+    def test_readiness_failure_details_include_host_errors(self) -> None:
+        details = _readiness_failure_details(
+            {
+                "capabilities": [
+                    {
+                        "capability": "host",
+                        "healthy": False,
+                        "errors": ["maintenance last failed"],
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(details, ["host: errors: maintenance last failed"])
 
 
 if __name__ == "__main__":
