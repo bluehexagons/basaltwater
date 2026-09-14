@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional, Union, cast
 
 from lib.atomic_io import write_json_atomic
+from lib.concurrency import resource_lock
 from lib.types import JSONDict
 from lib.validation import (
     validate_network_cidr,
@@ -151,9 +152,9 @@ def get_network_inventory_path(workspace: Optional[str] = None) -> str:
     return os.path.join(normalize_workspace_dir(workspace), NETWORK_INVENTORY_FILENAME)
 
 
-def load_network_profiles(workspace: Optional[str] = None) -> list[NetworkProfile]:
-    """Load every saved network profile."""
-
+def _load_network_profiles_unlocked(
+    workspace: Optional[str] = None,
+) -> list[NetworkProfile]:
     path = get_network_inventory_path(workspace)
     if not os.path.exists(path):
         return []
@@ -174,12 +175,18 @@ def load_network_profiles(workspace: Optional[str] = None) -> list[NetworkProfil
     ]
 
 
-def save_network_profiles(
+def load_network_profiles(workspace: Optional[str] = None) -> list[NetworkProfile]:
+    """Load every saved network profile."""
+
+    path = get_network_inventory_path(workspace)
+    with resource_lock("network-inventory", path, wait=True):
+        return _load_network_profiles_unlocked(workspace)
+
+
+def _save_network_profiles_unlocked(
     profiles: list[NetworkProfile],
     workspace: Optional[str] = None,
 ) -> str:
-    """Persist network profiles and return the inventory path."""
-
     ensure_workspace_dir(workspace)
     for profile in profiles:
         validate_network_profile(profile)
@@ -187,6 +194,17 @@ def save_network_profiles(
     payload = {"profiles": [profile.to_dict() for profile in profiles]}
     write_json_atomic(path, payload, mode=0o600, sort_keys=True)
     return path
+
+
+def save_network_profiles(
+    profiles: list[NetworkProfile],
+    workspace: Optional[str] = None,
+) -> str:
+    """Persist network profiles and return the inventory path."""
+
+    path = get_network_inventory_path(workspace)
+    with resource_lock("network-inventory", path, wait=True):
+        return _save_network_profiles_unlocked(profiles, workspace)
 
 
 def find_network_profile(
@@ -211,20 +229,22 @@ def upsert_network_profile(
     """Add or replace a network profile."""
 
     validate_network_profile(profile)
-    profiles = load_network_profiles(workspace)
-    name_lc = profile.name.lower()
-    for index, existing in enumerate(profiles):
-        if existing.name.lower() == name_lc:
-            if not replace:
-                raise ValueError(
-                    f"Network profile '{profile.name}' already exists; use --replace"
-                )
-            profiles[index] = profile
-            save_network_profiles(profiles, workspace)
-            return profile
-    profiles.append(profile)
-    save_network_profiles(profiles, workspace)
-    return profile
+    path = get_network_inventory_path(workspace)
+    with resource_lock("network-inventory", path, wait=True):
+        profiles = _load_network_profiles_unlocked(workspace)
+        name_lc = profile.name.lower()
+        for index, existing in enumerate(profiles):
+            if existing.name.lower() == name_lc:
+                if not replace:
+                    raise ValueError(
+                        f"Network profile '{profile.name}' already exists; use --replace"
+                    )
+                profiles[index] = profile
+                _save_network_profiles_unlocked(profiles, workspace)
+                return profile
+        profiles.append(profile)
+        _save_network_profiles_unlocked(profiles, workspace)
+        return profile
 
 
 def save_network_profile(
@@ -234,18 +254,20 @@ def save_network_profile(
     """Persist one profile, replacing any profile with the same name."""
 
     validate_network_profile(profile)
-    profiles = load_network_profiles(workspace)
-    name_lc = profile.name.lower()
-    for index, existing in enumerate(profiles):
-        if existing.name.lower() == name_lc:
-            if existing.to_dict() == profile.to_dict():
-                return existing
-            profiles[index] = profile
-            save_network_profiles(profiles, workspace)
-            return profile
-    profiles.append(profile)
-    save_network_profiles(profiles, workspace)
-    return profile
+    path = get_network_inventory_path(workspace)
+    with resource_lock("network-inventory", path, wait=True):
+        profiles = _load_network_profiles_unlocked(workspace)
+        name_lc = profile.name.lower()
+        for index, existing in enumerate(profiles):
+            if existing.name.lower() == name_lc:
+                if existing.to_dict() == profile.to_dict():
+                    return existing
+                profiles[index] = profile
+                _save_network_profiles_unlocked(profiles, workspace)
+                return profile
+        profiles.append(profile)
+        _save_network_profiles_unlocked(profiles, workspace)
+        return profile
 
 
 def add_network_host(
@@ -258,30 +280,32 @@ def add_network_host(
     """Add or replace a host inside a network profile."""
 
     validate_network_host(host)
-    profiles = load_network_profiles(workspace)
-    profile_lc = profile_name.strip().lower()
-    for profile_index, profile in enumerate(profiles):
-        if profile.name.lower() != profile_lc:
-            continue
-        host_lc = host.name.lower()
-        for host_index, existing in enumerate(profile.hosts):
-            if existing.name.lower() == host_lc or existing.address == host.address:
-                if not replace:
-                    raise ValueError(
-                        f"Host '{host.name}' already exists in profile '{profile.name}'; "
-                        "use --replace"
-                    )
-                profile.hosts[host_index] = host
-                validate_network_profile(profile)
-                profiles[profile_index] = profile
-                save_network_profiles(profiles, workspace)
-                return profile
-        profile.hosts.append(host)
-        validate_network_profile(profile)
-        profiles[profile_index] = profile
-        save_network_profiles(profiles, workspace)
-        return profile
-    raise ValueError(f"No network profile named '{profile_name}'")
+    path = get_network_inventory_path(workspace)
+    with resource_lock("network-inventory", path, wait=True):
+        profiles = _load_network_profiles_unlocked(workspace)
+        profile_lc = profile_name.strip().lower()
+        for profile_index, profile in enumerate(profiles):
+            if profile.name.lower() != profile_lc:
+                continue
+            host_lc = host.name.lower()
+            for host_index, existing in enumerate(profile.hosts):
+                if existing.name.lower() == host_lc or existing.address == host.address:
+                    if not replace:
+                        raise ValueError(
+                            f"Host '{host.name}' already exists in profile "
+                            f"'{profile.name}'; use --replace"
+                        )
+                    profile.hosts[host_index] = host
+                    validate_network_profile(profile)
+                    profiles[profile_index] = profile
+                    _save_network_profiles_unlocked(profiles, workspace)
+                    return profile
+            profile.hosts.append(host)
+            validate_network_profile(profile)
+            profiles[profile_index] = profile
+            _save_network_profiles_unlocked(profiles, workspace)
+            return profile
+        raise ValueError(f"No network profile named '{profile_name}'")
 
 
 def validate_network_profile(profile: NetworkProfile) -> None:

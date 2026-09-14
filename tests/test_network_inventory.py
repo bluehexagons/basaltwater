@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 import tempfile
@@ -17,10 +18,20 @@ from lib.network_inventory import (
     add_network_host,
     load_network_profiles,
     save_network_profile,
-    save_network_profiles,
     upsert_network_profile,
     validate_network_subnet,
 )
+
+
+def _save_network_profile_worker(
+    workspace: str,
+    profile_name: str,
+    start_event,
+) -> None:
+    """Create one profile after all worker processes are ready."""
+
+    start_event.wait()
+    save_network_profile(NetworkProfile(name=profile_name), workspace)
 
 
 class TestNetworkInventory(unittest.TestCase):
@@ -121,13 +132,34 @@ class TestNetworkInventory(unittest.TestCase):
         save_network_profile(profile, self.workspace)
 
         with patch(
-            "lib.network_inventory.save_network_profiles",
-            wraps=save_network_profiles,
+            "lib.network_inventory._save_network_profiles_unlocked",
         ) as mock_save_profiles:
             loaded = save_network_profile(profile, self.workspace)
 
         self.assertEqual(loaded.management_sources, ["192.168.1.0/24"])
         mock_save_profiles.assert_not_called()
+
+    def test_concurrent_profile_updates_do_not_lose_records(self) -> None:
+        context = multiprocessing.get_context("fork")
+        start_event = context.Event()
+        processes = [
+            context.Process(
+                target=_save_network_profile_worker,
+                args=(self.workspace, f"profile-{index}", start_event),
+            )
+            for index in range(6)
+        ]
+        for process in processes:
+            process.start()
+        start_event.set()
+        for process in processes:
+            process.join(timeout=10)
+            self.assertEqual(process.exitcode, 0)
+
+        self.assertEqual(
+            {profile.name for profile in load_network_profiles(self.workspace)},
+            {f"profile-{index}" for index in range(6)},
+        )
 
     def test_subnet_from_dict_defers_vlan_validation(self) -> None:
         subnet = NetworkSubnet.from_dict(

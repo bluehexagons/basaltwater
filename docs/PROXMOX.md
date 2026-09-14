@@ -104,9 +104,10 @@ metadata are not trusted automatically; verify them independently and use
 Independent setup processes on one controller may target different servers at
 the same time. Controller staging directories and setup payload leases are
 unique per run, shared repository caches are locked per repository, and
-workspace credential, Proxmox-host, and SSH host-key updates are serialized so
-one writer cannot discard another writer's changes. History records also carry
-a unique run suffix when multiple operations finish during the same second.
+workspace credential, Proxmox-host, network-inventory, and SSH host-key updates
+are serialized so one writer cannot discard another writer's changes. History
+records also carry a unique run suffix when multiple operations finish during
+the same second.
 
 Only one setup may mutate a particular target at a time. The controller rejects
 an overlapping same-target run, and the target holds
