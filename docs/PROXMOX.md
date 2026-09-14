@@ -115,16 +115,18 @@ remote setup executes. This target lock also protects against a second
 controller using a separate workspace.
 
 Multiple VM or LXC provisions on one Proxmox node can proceed concurrently when
-their requested IPv4 addresses and hostnames differ. On one controller,
-infra-tools reserves both guest identity fields for the full provider workflow.
-Because Proxmox's `nextid` lookup does not reserve the returned VMID, QEMU and
-LXC creation retry bounded VMID collisions. Shared VM image downloads are
-locked per destination on the Proxmox node through download and checksum
-verification, LXC template downloads are idempotent under per-template locks,
-and each VM receives a per-run cloud-init snippet. Provisioning from different
-controllers is not yet protected by the controller-local guest-identity locks;
-coordinate those callers externally to prevent simultaneous claims for the
-same address or hostname.
+their requested IPv4 addresses and hostnames differ. Infra-tools holds
+address- and hostname-specific locks on the Proxmox node for the full provider
+workflow, so separate controllers also reject simultaneous claims for the same
+guest identity. A short node-wide admission lock serializes the final capacity
+check and guest creation or existing-VM resource reconciliation. Image and
+template staging remains outside that admission lock, so independent work can
+still proceed in parallel. Because Proxmox's `nextid` lookup does not reserve
+the returned VMID, QEMU and LXC creation also retry bounded VMID collisions.
+Shared VM image downloads are locked per destination on the Proxmox node
+through download and checksum verification, LXC template downloads are
+idempotent under per-template locks, and each VM receives a per-run cloud-init
+snippet.
 
 ## Host-safety defaults
 

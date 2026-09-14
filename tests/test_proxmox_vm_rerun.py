@@ -811,6 +811,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
 
         mock_run.assert_not_called()
 
+    @patch("lib.proxmox_vm.remote_proxmox_locks")
     @patch("lib.proxmox_vm._reconcile_existing_vm", return_value=True)
     @patch("lib.proxmox_vm.auto_detect_bridge", return_value="vmbr0")
     @patch("lib.proxmox_vm._resolve_public_key_path")
@@ -821,6 +822,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
         mock_public_key,
         _mock_bridge,
         _mock_reconcile,
+        mock_remote_locks,
     ) -> None:
         config = SetupConfig(
             host="10.0.0.50",
@@ -840,6 +842,9 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             provision_vm(config, require_existing_vm=True)
 
         mock_public_key.assert_not_called()
+        self.assertEqual(mock_remote_locks.call_count, 2)
+        self.assertFalse(mock_remote_locks.call_args_list[0].kwargs["wait"])
+        self.assertTrue(mock_remote_locks.call_args_list[1].kwargs["wait"])
 
 
 class TestCachedProvisioningChangeSafety(unittest.TestCase):

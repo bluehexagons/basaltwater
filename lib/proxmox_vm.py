@@ -58,6 +58,7 @@ from lib.proxmox_guest import (
     auto_detect_bridge,
     enroll_provisioned_guest_host_keys,
     guest_provisioning_locks,
+    remote_proxmox_locks,
 )
 from lib.proxmox_memory import (
     DEFAULT_BALLOON_TARGET_PERCENT,
@@ -2030,7 +2031,15 @@ def provision_vm(
         default_prefix="vm",
     )
     with guest_provisioning_locks(node_ip, target_ip, hostname):
-        return _provision_vm_locked(config, **call_options)
+        with remote_proxmox_locks(
+            node_ip,
+            config.hosted_user,
+            _ssh_opts(config.hosted_key),
+            [f"address|{target_ip}", f"hostname|{hostname.lower()}"],
+            wait=False,
+            description=f"guest {hostname} ({target_ip})",
+        ):
+            return _provision_vm_locked(config, **call_options)
 
 
 def _provision_vm_locked(
@@ -2272,46 +2281,43 @@ def _provision_vm_locked(
         )
         storage_specs = cast(NestedStrList, config.container_storage)
 
-    if _reconcile_existing_vm(
+    with remote_proxmox_locks(
         node_ip,
-        target_ip,
-        hostname,
         user,
         ssh_opts,
-        desired_cores=config.container_cores,
-        desired_memory_mib=memory_mb,
-        desired_balloon_min_mib=balloon_min_mb,
-        desired_balloon_shares=balloon_shares,
-        desired_cpu_type=cpu_type,
-        desired_disk_hardware=disk_hardware_settings,
-        desired_storage_layout=verified_storage_layout,
-        desired_bridge=bridge if verify_existing_bridge else None,
-        require_existing=require_existing_vm,
-        require_existing_name=require_existing_name,
-        start_existing=start_existing_vm,
-        allow_managed_data_disks=allow_existing_data_disks,
-        attach_missing_data_disks=attach_missing_data_disks,
-        allow_memory_overcommit=getattr(
-            config,
-            "allow_memory_overcommit",
-            False,
-        ),
+        ["guest-admission"],
+        wait=True,
+        description="guest capacity admission",
     ):
+        existing_vm_reconciled = _reconcile_existing_vm(
+            node_ip,
+            target_ip,
+            hostname,
+            user,
+            ssh_opts,
+            desired_cores=config.container_cores,
+            desired_memory_mib=memory_mb,
+            desired_balloon_min_mib=balloon_min_mb,
+            desired_balloon_shares=balloon_shares,
+            desired_cpu_type=cpu_type,
+            desired_disk_hardware=disk_hardware_settings,
+            desired_storage_layout=verified_storage_layout,
+            desired_bridge=bridge if verify_existing_bridge else None,
+            require_existing=require_existing_vm,
+            require_existing_name=require_existing_name,
+            start_existing=start_existing_vm,
+            allow_managed_data_disks=allow_existing_data_disks,
+            attach_missing_data_disks=attach_missing_data_disks,
+            allow_memory_overcommit=getattr(
+                config,
+                "allow_memory_overcommit",
+                False,
+            ),
+        )
+    if existing_vm_reconciled:
         raise VMAlreadyExists(
             f"VM with IP {target_ip} already exists on {node_ip}"
         )
-
-    memory_floor_safe = _report_memory_capacity(
-        node_ip=node_ip,
-        user=user,
-        ssh_opts=ssh_opts,
-        proposed_minimum_mib=balloon_min_mb,
-        proposed_maximum_mib=memory_mb,
-    )
-    _enforce_memory_floor(
-        memory_floor_safe,
-        getattr(config, "allow_memory_overcommit", False),
-    )
 
     root_pool = resolved_root_pool or _resolve_storage_pool(
         root_pool_arg, node_ip, user, ssh_opts, "images"
@@ -2337,12 +2343,6 @@ def _provision_vm_locked(
     _warn_zfs_swap_storage(
         resolved_data_disks,
         swap_device_disk_names(config),
-        node_ip,
-        user,
-        ssh_opts,
-    )
-    _preflight_data_disk_capacity(
-        resolved_data_disks,
         node_ip,
         user,
         ssh_opts,
@@ -2401,43 +2401,68 @@ def _provision_vm_locked(
     provision_complete = False
 
     try:
-        vmid = _get_next_vmid(node_ip, user, ssh_opts)
-        create_kwargs = {
-            "vmid": vmid,
-            "target_ip": target_ip,
-            "image_remote_path": image_remote_path,
-            "storage_ref": storage_ref,
-            "memory_mb": memory_mb,
-            "balloon_min_mb": balloon_min_mb,
-            "balloon_shares": balloon_shares,
-            "cores": config.container_cores,
-            "root_pool": root_pool,
-            "disk_size_gib": disk_size_gib,
-            "data_disk_specs": resolved_data_disks,
-            "cidr_prefix": cidr_prefix,
-            "bridge": bridge,
-            "gateway": gateway,
-            "nameservers": nameservers,
-            "hostname": hostname,
-            "user_data_path": user_data_path,
-            "user_data_ref": user_data_ref,
-            "graphical_console": _needs_graphical_console(config),
-            "node_ip": node_ip,
-            "user": user,
-            "ssh_opts": ssh_opts,
-            "dry_run": dry_run,
-            "ipv6_cidr": config.static_ipv6,
-            "gateway6": config.network_gateway6,
-            "cpu_type": cpu_type,
-            "disk_discard": disk_discard,
-            "disk_ssd": disk_ssd,
-            "disk_hardware_settings": disk_hardware_settings,
-        }
-        vmid = _create_with_vmid_retry(
-            _create_vm,
-            lambda: _get_next_vmid(node_ip, user, ssh_opts),
-            create_kwargs,
-        )
+        with remote_proxmox_locks(
+            node_ip,
+            user,
+            ssh_opts,
+            ["guest-admission"],
+            wait=True,
+            description="guest capacity admission",
+        ):
+            memory_floor_safe = _report_memory_capacity(
+                node_ip=node_ip,
+                user=user,
+                ssh_opts=ssh_opts,
+                proposed_minimum_mib=balloon_min_mb,
+                proposed_maximum_mib=memory_mb,
+            )
+            _enforce_memory_floor(
+                memory_floor_safe,
+                getattr(config, "allow_memory_overcommit", False),
+            )
+            _preflight_data_disk_capacity(
+                resolved_data_disks,
+                node_ip,
+                user,
+                ssh_opts,
+            )
+            vmid = _get_next_vmid(node_ip, user, ssh_opts)
+            create_kwargs = {
+                "vmid": vmid,
+                "target_ip": target_ip,
+                "image_remote_path": image_remote_path,
+                "storage_ref": storage_ref,
+                "memory_mb": memory_mb,
+                "balloon_min_mb": balloon_min_mb,
+                "balloon_shares": balloon_shares,
+                "cores": config.container_cores,
+                "root_pool": root_pool,
+                "disk_size_gib": disk_size_gib,
+                "data_disk_specs": resolved_data_disks,
+                "cidr_prefix": cidr_prefix,
+                "bridge": bridge,
+                "gateway": gateway,
+                "nameservers": nameservers,
+                "hostname": hostname,
+                "user_data_path": user_data_path,
+                "user_data_ref": user_data_ref,
+                "graphical_console": _needs_graphical_console(config),
+                "node_ip": node_ip,
+                "user": user,
+                "ssh_opts": ssh_opts,
+                "dry_run": dry_run,
+                "ipv6_cidr": config.static_ipv6,
+                "gateway6": config.network_gateway6,
+                "cpu_type": cpu_type,
+                "disk_discard": disk_discard,
+                "disk_ssd": disk_ssd,
+                "disk_hardware_settings": disk_hardware_settings,
+            }
+            vmid = _create_with_vmid_retry(
+                _create_vm,
+                lambda: _get_next_vmid(node_ip, user, ssh_opts),
+                create_kwargs,
+            )
         vm_started = True
         _wait_for_guest_agent(
             vmid,

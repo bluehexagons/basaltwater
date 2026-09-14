@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+import hashlib
 import ipaddress
 import os
 import re
@@ -56,6 +57,95 @@ def guest_provisioning_locks(
             f"Another infra-tools process is already provisioning {hostname} "
             f"({target_ip}) on {node}"
         ) from exc
+
+
+def _proxmox_ssh_command(
+    node_ip: str,
+    user: str,
+    ssh_opts: StrList,
+    command: str,
+) -> list[str]:
+    """Build one multiplexed SSH command for a Proxmox node."""
+    hosted_key = None
+    if "-i" in ssh_opts:
+        key_index = ssh_opts.index("-i") + 1
+        if key_index < len(ssh_opts):
+            hosted_key = ssh_opts[key_index]
+    return [
+        "ssh",
+        *ssh_opts,
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        "ControlPersist=60s",
+        "-o",
+        f"ControlPath={get_ssh_control_path(node_ip, user, hosted_key)}",
+        f"{user}@{node_ip}",
+        command,
+    ]
+
+
+@contextmanager
+def remote_proxmox_locks(
+    node_ip: str,
+    user: str,
+    ssh_opts: StrList,
+    resources: list[str],
+    *,
+    wait: bool,
+    description: str,
+) -> Iterator[None]:
+    """Hold node-side flock leases for the lifetime of an SSH stdin stream."""
+    lock_commands = ["set -eu", "install -d -m 0700 /run/lock/infra-tools"]
+    for index, resource in enumerate(sorted(set(resources))):
+        descriptor = 9 - index
+        if descriptor < 3:
+            raise ValueError("Too many Proxmox locks requested")
+        digest = hashlib.sha256(resource.encode("utf-8")).hexdigest()
+        lock_path = f"/run/lock/infra-tools/provision-{digest}.lock"
+        lock_commands.append(f"exec {descriptor}>{shlex.quote(lock_path)}")
+        flock_options = "--exclusive" if wait else "--exclusive --nonblock"
+        lock_commands.append(
+            f"flock {flock_options} {descriptor} || "
+            f"{{ echo {shlex.quote('infra-tools lock busy: ' + description)} >&2; exit 75; }}"
+        )
+    lock_commands.extend(
+        ["printf 'infra-tools-lock-ready\\n'", "cat >/dev/null"]
+    )
+    remote_command = shlex.join(
+        ["/bin/sh", "-c", "; ".join(lock_commands)]
+    )
+    process = subprocess.Popen(
+        _proxmox_ssh_command(node_ip, user, ssh_opts, remote_command),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert process.stdout is not None
+        ready = process.stdout.readline()
+        if ready != "infra-tools-lock-ready\n":
+            _stdout, stderr = process.communicate()
+            detail = stderr.strip() or f"SSH exited {process.returncode}"
+            raise ProvisionError(
+                f"Could not acquire Proxmox lock for {description} on "
+                f"{node_ip}: {detail}"
+            )
+        yield
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+            process.stdin = None
+        try:
+            process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
 
 
 def _create_with_vmid_retry(
@@ -120,18 +210,7 @@ def _ssh_run(
             args=[cmd], returncode=0, stdout="", stderr=""
         )
 
-    hosted_key = None
-    if "-i" in ssh_opts:
-        key_index = ssh_opts.index("-i") + 1
-        if key_index < len(ssh_opts):
-            hosted_key = ssh_opts[key_index]
-    ssh_cmd = ["ssh"] + ssh_opts + [
-        "-o", "ControlMaster=auto",
-        "-o", "ControlPersist=60s",
-        "-o", f"ControlPath={get_ssh_control_path(node_ip, user, hosted_key)}",
-        f"{user}@{node_ip}",
-        cmd,
-    ]
+    ssh_cmd = _proxmox_ssh_command(node_ip, user, ssh_opts, cmd)
     result = subprocess.run(
         ssh_cmd,
         input=input_data,

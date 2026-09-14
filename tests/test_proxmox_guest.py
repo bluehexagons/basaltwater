@@ -26,6 +26,7 @@ from lib.proxmox_guest import (
     probe_proxmox_cluster,
     probe_proxmox_host,
     refresh_managed_guest_host_keys,
+    remote_proxmox_locks,
     resolve_guest_ssh_key,
     guest_provisioning_locks,
 )
@@ -88,6 +89,74 @@ class TestProvisioningConcurrency(unittest.TestCase):
                 lambda: 101,
                 {"vmid": 100},
             )
+
+    @patch("lib.proxmox_guest._proxmox_ssh_command", return_value=["ssh"])
+    @patch("lib.proxmox_guest.subprocess.Popen")
+    def test_remote_identity_locks_are_held_until_context_exit(
+        self, popen, build_command
+    ) -> None:
+        process = popen.return_value
+        stdin = process.stdin
+        process.stdout.readline.return_value = "infra-tools-lock-ready\n"
+        process.communicate.return_value = ("", "")
+
+        with remote_proxmox_locks(
+            "pve1",
+            "root",
+            [],
+            ["address|10.0.0.50", "hostname|web-1"],
+            wait=False,
+            description="guest web-1",
+        ):
+            stdin.close.assert_not_called()
+
+        stdin.close.assert_called_once_with()
+        remote_command = build_command.call_args.args[3]
+        self.assertEqual(remote_command.count("flock --exclusive --nonblock"), 2)
+        self.assertIn("infra-tools-lock-ready", remote_command)
+        self.assertIn("cat >/dev/null", remote_command)
+
+    @patch("lib.proxmox_guest._proxmox_ssh_command", return_value=["ssh"])
+    @patch("lib.proxmox_guest.subprocess.Popen")
+    def test_remote_identity_lock_conflict_is_reported(self, popen, _build) -> None:
+        process = popen.return_value
+        process.stdout.readline.return_value = ""
+        process.communicate.return_value = ("", "infra-tools lock busy: guest web-1")
+        process.returncode = 75
+
+        with self.assertRaisesRegex(ProvisionError, "lock busy"):
+            with remote_proxmox_locks(
+                "pve1",
+                "root",
+                [],
+                ["address|10.0.0.50"],
+                wait=False,
+                description="guest web-1",
+            ):
+                pass
+
+    @patch("lib.proxmox_guest._proxmox_ssh_command", return_value=["ssh"])
+    @patch("lib.proxmox_guest.subprocess.Popen")
+    def test_remote_admission_lock_waits_for_the_current_creator(
+        self, popen, build_command
+    ) -> None:
+        process = popen.return_value
+        process.stdout.readline.return_value = "infra-tools-lock-ready\n"
+        process.communicate.return_value = ("", "")
+
+        with remote_proxmox_locks(
+            "pve1",
+            "root",
+            [],
+            ["guest-admission"],
+            wait=True,
+            description="guest capacity admission",
+        ):
+            pass
+
+        remote_command = build_command.call_args.args[3]
+        self.assertIn("flock --exclusive 9", remote_command)
+        self.assertNotIn("--nonblock", remote_command)
 
 
 class TestGuestSshKeyResolution(unittest.TestCase):
