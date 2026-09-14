@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 import os
+import pwd
 import shlex
 from typing import Final
 
 from lib.config import SetupConfig
-from lib.remote_utils import get_user_home, is_dry_run, run
+from lib.remote_utils import CommandTimeoutError, get_user_home, is_dry_run, run
 from lib.validation import validate_filesystem_path
 
 from .common_steps import _run_as_login_user
 
 
 _PYTHON: Final[str] = "/usr/bin/python3"
-_SYSTEM_CLEANUP_SCRIPT: Final[str] = (
-    "/opt/infra_tools/common/service_tools/cleanup_maintenance.py"
+_SERVICE_TOOLS_DIR: Final[str] = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "service_tools"
 )
-_USER_CACHE_SCRIPT: Final[str] = (
-    "/opt/infra_tools/common/service_tools/user_cache_maintenance.py"
+_SYSTEM_CLEANUP_SCRIPT: Final[str] = os.path.join(
+    _SERVICE_TOOLS_DIR, "cleanup_maintenance.py"
+)
+_USER_CACHE_SCRIPT: Final[str] = os.path.join(
+    _SERVICE_TOOLS_DIR, "user_cache_maintenance.py"
 )
 _MAINTENANCE_TIMEOUT_SECONDS: Final[int] = 60 * 60
 _MAX_FAILURE_DETAIL: Final[int] = 2000
@@ -34,11 +38,14 @@ def _validated_script(path: str, label: str) -> str:
 
 def _failure_detail(result: object) -> str:
     """Return bounded command output suitable for setup diagnostics."""
-    detail = (
-        getattr(result, "stderr", None)
-        or getattr(result, "stdout", None)
-        or f"exited with code {getattr(result, 'returncode', 'unknown')}"
-    )
+    if isinstance(result, BaseException):
+        detail = str(result)
+    else:
+        detail = (
+            getattr(result, "stderr", None)
+            or getattr(result, "stdout", None)
+            or f"exited with code {getattr(result, 'returncode', 'unknown')}"
+        )
     detail = str(detail).strip()
     if len(detail) <= _MAX_FAILURE_DETAIL:
         return detail
@@ -55,12 +62,19 @@ def _run_system_cleanup() -> bool:
     """Run root-owned cleanup and return whether it completed successfully."""
     script = _validated_script(_SYSTEM_CLEANUP_SCRIPT, "System cleanup script")
     print("  Running system cleanup now (this may take a while)...")
-    result = run(
-        [_PYTHON, script],
-        check=False,
-        capture_output=True,
-        timeout=_MAINTENANCE_TIMEOUT_SECONDS,
-    )
+    try:
+        result = run(
+            [_PYTHON, script],
+            check=False,
+            capture_output=True,
+            timeout=_MAINTENANCE_TIMEOUT_SECONDS,
+        )
+    except (CommandTimeoutError, OSError) as exc:
+        print(
+            "  ⚠ System cleanup failed; the scheduled job will retry: "
+            f"{_failure_detail(exc)}"
+        )
+        return False
     if result.returncode != 0:
         print(
             "  ⚠ System cleanup failed; the scheduled job will retry: "
@@ -80,13 +94,30 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
     user_home = get_user_home(config.username)
     command = shlex.join([_PYTHON, script])
     print("  Running user cache cleanup now (this may take a while)...")
-    result = _run_as_login_user(
-        config.username,
-        user_home,
-        command,
-        check=False,
-        capture_output=True,
-    )
+    target_uid = pwd.getpwnam(config.username).pw_uid
+    try:
+        if os.geteuid() == target_uid:
+            result = run(
+                [_PYTHON, script],
+                check=False,
+                capture_output=True,
+                timeout=_MAINTENANCE_TIMEOUT_SECONDS,
+                cwd=user_home,
+            )
+        else:
+            result = _run_as_login_user(
+                config.username,
+                user_home,
+                command,
+                check=False,
+                capture_output=True,
+            )
+    except (CommandTimeoutError, OSError) as exc:
+        print(
+            "  ⚠ User cache cleanup failed; the scheduled job will retry: "
+            f"{_failure_detail(exc)}"
+        )
+        return False
     if result.returncode != 0:
         print(
             "  ⚠ User cache cleanup failed; the scheduled job will retry: "
@@ -95,6 +126,14 @@ def _run_user_cache_cleanup(config: SetupConfig) -> bool:
         return False
     print("  ✓ User cache cleanup completed")
     return True
+
+
+def run_user_cache_maintenance(config: SetupConfig) -> None:
+    """Run only the target-user cache job for profiles without host timers."""
+    if is_dry_run():
+        print("  [DRY-RUN] Would run user cache maintenance")
+        return
+    _run_user_cache_cleanup(config)
 
 
 def run_setup_maintenance(config: SetupConfig) -> None:

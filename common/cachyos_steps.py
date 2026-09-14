@@ -154,11 +154,28 @@ def install_cachyos_packages(config: SetupConfig) -> None:
 
 def install_cachyos_agents(config: SetupConfig) -> None:
     home = _home(config)
+    from lib.agent_cli import update_agent_tools
+
     for tool in config.selected_agent_tools():
         if tool == "gh":
             continue
-        if shutil.which(tool, path=_tool_path(home)):
-            print(f"  Keeping existing {tool}")
+        executable = shutil.which(tool, path=_tool_path(home))
+        if executable:
+            try:
+                managed = os.path.commonpath(
+                    (os.path.realpath(executable), os.path.realpath(home))
+                ) == os.path.realpath(home)
+            except ValueError:
+                managed = False
+            if not managed:
+                print(f"  Keeping externally managed {tool} ({executable})")
+                continue
+            print(f"  Updating existing {tool} (vendor checks may take a while)")
+            results = update_agent_tools([tool], home=str(home))
+            if any(result.get("status") == "failed" for result in results):
+                raise RuntimeError(
+                    f"{tool} update failed; inspect its private agent update record"
+                )
             continue
         if install_vendor_tool(tool, accept_vendor_channel=True) != 0:
             raise RuntimeError(f"{tool} installer failed")
@@ -225,11 +242,49 @@ def install_cachyos_t3(config: SetupConfig) -> None:
     # Refuse unrelated unit files before installing a runtime.
     if unit.exists() and (_MARKER not in unit.read_text() or unit.is_symlink()):
         raise ValueError(f"Refusing to overwrite unmanaged file: {unit}")
+    if binary.is_symlink():
+        resolved_binary = Path(os.path.realpath(binary))
+        try:
+            managed_binary = os.path.commonpath(
+                (str(resolved_binary), str(prefix.resolve()))
+            ) == str(prefix.resolve())
+        except ValueError:
+            managed_binary = False
+        if not managed_binary or not resolved_binary.is_file():
+            raise ValueError(f"Refusing unsafe T3 runtime executable: {binary}")
+    elif binary.exists() and not binary.is_file():
+        raise ValueError(f"Refusing unsafe T3 runtime executable: {binary}")
     _directory(prefix)
+    previous_version: str | None = None
+    if binary.is_file():
+        previous_check = _user_run(
+            [str(binary), "--version"],
+            home,
+            capture_output=True,
+            check=False,
+        )
+        if previous_check.returncode == 0:
+            previous_output = (
+                previous_check.stdout or previous_check.stderr or ""
+            ).strip()
+            if previous_output:
+                previous_version = previous_output.splitlines()[0]
     if not binary.is_file():
         _user_run(["npm", "install", "--global", "--prefix", str(prefix),
                    "--allow-scripts=node-pty,msgpackr-extract", "t3@latest"], home)
-    _user_run([str(binary), "--version"], home)
+    else:
+        _user_run(
+            ["npm", "install", "--global", "--prefix", str(prefix),
+             "--allow-scripts=node-pty,msgpackr-extract", "t3@latest"],
+            home,
+        )
+    current_check = _user_run(
+        [str(binary), "--version"], home, capture_output=True
+    )
+    current_output = (current_check.stdout or current_check.stderr or "").strip()
+    if not current_output:
+        raise RuntimeError("T3 runtime did not report a version")
+    updated = previous_version is None or current_output.splitlines()[0] != previous_version
     workspace = str(Path(config.agent_workspace) if config.agent_workspace else home / "repos")
     content = (
         f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
@@ -244,7 +299,14 @@ def install_cachyos_t3(config: SetupConfig) -> None:
     changed = _write_managed(unit, content)
     run(["systemctl", "--user", "daemon-reload"])
     run(["systemctl", "--user", "enable", T3_SERVICE])
-    run(["systemctl", "--user", "restart" if changed else "start", T3_SERVICE])
+    run(
+        [
+            "systemctl",
+            "--user",
+            "restart" if changed or updated else "start",
+            T3_SERVICE,
+        ]
+    )
     url = f"http://127.0.0.1:{config.web_interface_port}/"
     # A desktop may export proxy settings. Probe this machine directly.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -297,3 +359,10 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
                 print(f"  {command}: available; media/GPU behavior requires a project test")
     print("  Provider authentication: use each provider's local login; existing credentials retained")
     print("  KDE automation and managed Playwright: not installed")
+
+
+def reconcile_cachyos_user_cache(config: SetupConfig) -> None:
+    """Run target-user cache maintenance during setup on hosts without timers."""
+    from common.setup_maintenance import run_user_cache_maintenance
+
+    run_user_cache_maintenance(config)

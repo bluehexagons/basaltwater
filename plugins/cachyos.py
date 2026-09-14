@@ -36,6 +36,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         prepare_cachyos_workspace,
         install_cachyos_t3,
         report_cachyos_readiness,
+        reconcile_cachyos_user_cache,
     )
     from lib.cachyos import validate_cachyos_config
 
@@ -48,5 +49,6 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     ]
     if config.web_interfaces:
         steps.append(("Installing localhost T3 Code user service", install_cachyos_t3))
+    steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     return steps

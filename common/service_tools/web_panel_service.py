@@ -1597,10 +1597,11 @@ def _render_notification_section(state: WebPanelState) -> str:
 <span class="count">{count} received</span></div>
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
 <details class="notification-help"><summary>Configure an infra-tools sender</summary>
-<p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. Replace the placeholders with the sender account and a reachable panel host.</p>
+<p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. During an initial sender setup, replace the placeholders with its profile, host, account, and a reachable panel host:</p>
 <p>Read the token on this panel host with <code>sudo cat /etc/infra-tools/web-panel/notification-ingest.token</code>.</p>
-<pre><code>infra-tools patch SENDER_HOST SENDER_USER \\
+<pre><code>infra-tools setup agent_vm SENDER_HOST SENDER_USER \\
   --notify webhook 'https://PANEL_HOST{WEB_PANEL_NOTIFICATION_ENDPOINT}#TOKEN_FROM_PANEL_HOST'</code></pre>
+<p>For an existing sender, use <code>infra-tools patch SENDER_HOST SENDER_USER</code> with the same <code>--notify webhook</code> flag.</p>
 <p>The token fragment becomes a bearer header and is not sent in the request path. Keep the full fragment-bearing URL private.</p></details>
 {content}</section>'''
 

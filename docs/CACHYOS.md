@@ -32,8 +32,9 @@ installing Python aliases. Open a new terminal after installation. Other shells
 need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
 The default tools are Git, ripgrep, native build prerequisites, GitHub CLI, and
-Codex. Agent CLIs use their upstream user installers. Existing executable
-installations are retained. No account is created; passwords, group membership,
+Codex. Agent CLIs use their upstream user installers. Existing user-managed
+executables are refreshed on rerun; system-managed executables are retained.
+No account is created; passwords, group membership,
 sudo policy, provider settings, credentials, and Git identity remain yours.
 Run the selected provider's local login when needed. For example:
 
@@ -103,10 +104,12 @@ partial upgrades. See [CachyOS updates](https://wiki.cachyos.org/configuration/p
 and [Arch system maintenance](https://wiki.archlinux.org/title/System_maintenance).
 
 infra-tools installs no OS, language-runtime, agent, or Godot update timers on
-this profile. Upstream tools may have their own update behavior. Update tools
-with their original installer, and update infra-tools with `infra-tools upgrade`
-or by rerunning the download block. Existing repositories are never pulled,
-reset, or recursively chowned by setup.
+this profile. A setup rerun refreshes selected user-managed agent CLIs and the
+managed T3 runtime, then runs a bounded user-cache cleanup for this account;
+system-managed executables remain under the package manager's control. Upstream
+tools may have their own update behavior. Update infra-tools with
+`infra-tools upgrade` or by rerunning the download block. Existing repositories
+are never pulled, reset, or recursively chowned by setup.
 
 Rerun `setup agent_cachyos localhost` with the options you want checked. This
 profile does not save a controller-side host configuration and does not use
@@ -150,8 +153,8 @@ active work before changing its port, workspace, or PATH. To stop it persistentl
 systemctl --user disable --now infra-tools-cachyos-t3.service
 ```
 
-For a deliberate runtime update, finish active threads, stop the service, update
-its dedicated npm prefix as yourself, and restart it:
+For a deliberate runtime update outside setup, finish active threads, stop the
+service, update its dedicated npm prefix as yourself, and restart it:
 
 ```bash
 systemctl --user stop infra-tools-cachyos-t3.service

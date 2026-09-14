@@ -96,7 +96,15 @@ sudo cat /etc/infra-tools/web-panel/notification-ingest.token
 
 Use the endpoint as a normal webhook target from a sender that can reach the
 panel over the local network or another available network, and put the token in
-its URL fragment:
+its URL fragment. Include the flag during an initial sender setup:
+
+```bash
+infra-tools setup agent_vm sender.example agent \
+  --notify webhook \
+  'https://panel.example/api/v1/notifications#TOKEN_FROM_PANEL_HOST'
+```
+
+For an existing sender, use `patch` with the same flag:
 
 ```bash
 infra-tools patch sender.example agent \

@@ -123,6 +123,28 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.install_cachyos_agents(self.config())
         run.assert_not_called()
 
+    def test_user_managed_agents_are_updated(self):
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+             patch.object(
+                 steps.shutil,
+                 "which",
+                 return_value="/home/human/.local/bin/codex",
+             ), \
+             patch(
+                 "lib.agent_cli.update_agent_tools",
+                 return_value=[{"status": "updated"}],
+             ) as update:
+            steps.install_cachyos_agents(self.config())
+        update.assert_called_once_with(["codex"], home="/home/human")
+
+    def test_setup_reconciles_user_cache(self):
+        config = self.config()
+        with patch(
+            "common.setup_maintenance.run_user_cache_maintenance"
+        ) as reconcile:
+            steps.reconcile_cachyos_user_cache(config)
+        reconcile.assert_called_once_with(config)
+
     def test_go_readiness_uses_the_go_version_subcommand(self):
         with patch.object(steps, "_home", return_value=Path("/home/human")), \
              patch.object(steps.shutil, "which", side_effect=lambda name, **kwargs: "/usr/bin/" + name), \
@@ -185,13 +207,13 @@ class CachyOSSetupTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertEqual(personal.read_text(), "keep me\n")
 
-    def test_t3_installs_local_user_unit_and_retains_runtime_on_rerun(self):
+    def test_t3_refreshes_local_runtime_on_rerun(self):
         with tempfile.TemporaryDirectory() as home:
             root = Path(home)
             binary = root / ".local/share/infra-tools/cachyos-t3/bin/t3"
             def command(argv, **kwargs):
                 if "npm" in argv and "install" in argv:
-                    binary.parent.mkdir(parents=True)
+                    binary.parent.mkdir(parents=True, exist_ok=True)
                     binary.write_text("#!/bin/sh\n")
                 version = "v24.10.0\n" if "node" in argv else "0.0.40\n"
                 return subprocess.CompletedProcess(argv, 0, version, "")
@@ -214,7 +236,8 @@ class CachyOSSetupTests(unittest.TestCase):
                 run.reset_mock()
                 steps.install_cachyos_t3(config)
                 self.assertEqual(unit.read_text(), content)
-                self.assertFalse(any("npm" in call.args[0] for call in run.call_args_list))
+                self.assertTrue(any("npm" in call.args[0] for call in run.call_args_list))
+                self.assertTrue(any("start" in call.args[0] for call in run.call_args_list))
                 self.assertFalse(any("restart" in call.args[0] for call in run.call_args_list))
                 self.assertFalse(any("sudo" in call.args[0] for call in run.call_args_list))
 
@@ -250,6 +273,38 @@ class CachyOSSetupTests(unittest.TestCase):
                     steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
             self.assertEqual(unit.read_text(), "# personal service\n")
             self.assertEqual(run.call_count, 1)
+
+    def test_t3_allows_npm_managed_binary_link_inside_prefix(self):
+        with tempfile.TemporaryDirectory() as home:
+            root = Path(home)
+            prefix = root / ".local/share/infra-tools/cachyos-t3"
+            binary = prefix / "bin/t3"
+            target = prefix / "lib/node_modules/t3/dist/bin.mjs"
+            target.parent.mkdir(parents=True)
+            target.write_text("#!/bin/sh\n")
+            binary.parent.mkdir(parents=True)
+            binary.symlink_to("../lib/node_modules/t3/dist/bin.mjs")
+            response = unittest.mock.MagicMock()
+            response.__enter__.return_value.status = 200
+            response.__enter__.return_value.geturl.return_value = "http://127.0.0.1:3773/"
+            with patch.object(steps, "_home", return_value=root), \
+                 patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 0, "v24.10.0\n")), \
+                 patch.object(steps.urllib.request, "build_opener") as opener, \
+                 patch.object(steps.time, "sleep"):
+                opener.return_value.open.return_value = response
+                steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
+
+    def test_t3_rejects_binary_link_outside_prefix(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as outside:
+            root = Path(home)
+            prefix = root / ".local/share/infra-tools/cachyos-t3"
+            binary = prefix / "bin/t3"
+            binary.parent.mkdir(parents=True)
+            binary.symlink_to(Path(outside) / "t3")
+            with patch.object(steps, "_home", return_value=root), \
+                 patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 0, "v24.10.0\n")):
+                with self.assertRaisesRegex(ValueError, "unsafe T3 runtime"):
+                    steps.install_cachyos_t3(self.config("--web-interface", "t3code"))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from common import setup_maintenance
 from lib.config import SetupConfig
+from lib.remote_utils import CommandTimeoutError
 
 
 class TestSetupMaintenance(unittest.TestCase):
@@ -29,6 +30,7 @@ class TestSetupMaintenance(unittest.TestCase):
                 side_effect=lambda path, _label: path,
             ),
             patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
+            patch.object(setup_maintenance.os, "geteuid", return_value=0),
             patch.object(setup_maintenance, "run", return_value=self.success) as run,
             patch.object(
                 setup_maintenance,
@@ -50,6 +52,33 @@ class TestSetupMaintenance(unittest.TestCase):
             f"/usr/bin/python3 {setup_maintenance._USER_CACHE_SCRIPT}",
             check=False,
             capture_output=True,
+        )
+
+    def test_user_job_runs_directly_when_setup_is_the_target_user(self) -> None:
+        with (
+            patch.object(setup_maintenance, "is_dry_run", return_value=False),
+            patch.object(
+                setup_maintenance,
+                "_validated_script",
+                side_effect=lambda path, _label: path,
+            ),
+            patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
+            patch.object(
+                setup_maintenance.pwd,
+                "getpwnam",
+                return_value=SimpleNamespace(pw_uid=1000),
+            ),
+            patch.object(setup_maintenance.os, "geteuid", return_value=1000),
+            patch.object(setup_maintenance, "run", return_value=self.success) as run,
+        ):
+            setup_maintenance.run_user_cache_maintenance(self.config)
+
+        run.assert_called_once_with(
+            ["/usr/bin/python3", setup_maintenance._USER_CACHE_SCRIPT],
+            check=False,
+            capture_output=True,
+            timeout=setup_maintenance._MAINTENANCE_TIMEOUT_SECONDS,
+            cwd="/home/agent",
         )
 
     def test_root_setup_skips_user_job(self) -> None:
@@ -81,6 +110,19 @@ class TestSetupMaintenance(unittest.TestCase):
             patch.object(setup_maintenance, "get_user_home", return_value="/home/agent"),
             patch.object(setup_maintenance, "run", return_value=failed),
             patch.object(setup_maintenance, "_run_as_login_user", return_value=failed),
+        ):
+            setup_maintenance.run_setup_maintenance(self.config)
+
+    def test_cleanup_timeouts_are_reported_without_aborting_setup(self) -> None:
+        timeout = CommandTimeoutError("maintenance", 3600)
+        with (
+            patch.object(setup_maintenance, "is_dry_run", return_value=False),
+            patch.object(
+                setup_maintenance,
+                "_validated_script",
+                side_effect=lambda path, _label: path,
+            ),
+            patch.object(setup_maintenance, "run", side_effect=timeout),
         ):
             setup_maintenance.run_setup_maintenance(self.config)
 
