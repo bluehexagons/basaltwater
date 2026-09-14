@@ -200,8 +200,26 @@ def _validate_timeout(timeout: Optional[float]) -> Optional[float]:
 
 def _terminate_timed_out_process(
     process: subprocess.Popen[str],
+    *,
+    isolated: bool = True,
 ) -> None:
-    """Terminate a timed-out command's group, including surviving children."""
+    """Terminate a timed-out command and, when isolated, its process group."""
+
+    if not isolated:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            process.wait(timeout=_TIMEOUT_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        return
 
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -230,9 +248,19 @@ def run(
     stdout: IO[str] | int | None = None,
     stderr: IO[str] | int | None = None,
     env: dict[str, str] | None = None,
+    interactive: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     if capture_output and (stdout is not None or stderr is not None):
         raise ValueError("stdout/stderr and capture_output cannot be combined")
+    if interactive and (
+        capture_output
+        or input_data is not None
+        or stdout is not None
+        or stderr is not None
+    ):
+        raise ValueError(
+            "Interactive commands must inherit terminal input and output"
+        )
     validated_timeout = _validate_timeout(timeout)
     diagnostic_output = sys.stderr if stdout is not None else sys.stdout
     log_cmd = _redact_command(
@@ -267,14 +295,14 @@ def run(
         stderr=subprocess.PIPE if capture_output else stderr,
         text=text,
         cwd=cwd,
-        start_new_session=True,
+        start_new_session=not interactive,
         **({"env": env} if env is not None else {}),
     )
     try:
         stdout, stderr = process.communicate(input=input_data, timeout=validated_timeout)
     except subprocess.TimeoutExpired as exc:
         assert validated_timeout is not None
-        _terminate_timed_out_process(process)
+        _terminate_timed_out_process(process, isolated=not interactive)
         try:
             stdout, stderr = process.communicate(timeout=_TIMEOUT_TERMINATION_GRACE_SECONDS)
         except subprocess.TimeoutExpired as cleanup_exc:
@@ -296,7 +324,7 @@ def run(
     except KeyboardInterrupt:
         # Isolated groups do not receive the caller's terminal SIGINT.
         # Do not leave setup or deployment children running after cancellation.
-        _terminate_timed_out_process(process)
+        _terminate_timed_out_process(process, isolated=not interactive)
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
                 stream.close()

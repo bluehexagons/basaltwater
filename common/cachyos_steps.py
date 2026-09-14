@@ -113,7 +113,7 @@ def install_missing_packages(packages: list[str]) -> None:
     command = ["pacman", "-S", "--needed", "--noconfirm", "--", *missing]
     if os.geteuid() != 0:
         command.insert(0, "sudo")
-    result = run(command, check=False)
+    result = run(command, check=False, interactive=os.geteuid() != 0)
     if result.returncode:
         raise RuntimeError(
             "Package installation failed. Resolve the pacman error, update CachyOS "

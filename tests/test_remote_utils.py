@@ -130,6 +130,47 @@ class TestRunCommandDispatch(unittest.TestCase):
         )
 
     @patch("lib.remote_utils.subprocess.Popen")
+    def test_interactive_commands_keep_the_calling_terminal(self, mock_popen):
+        process = self._completed_process(mock_popen)
+
+        run(["sudo", "pacman", "-S", "--needed", "git"], interactive=True)
+
+        self.assertFalse(mock_popen.call_args.kwargs["start_new_session"])
+        self.assertIsNone(mock_popen.call_args.kwargs["stdin"])
+        process.communicate.assert_called_once_with(
+            input=None,
+            timeout=float(DEFAULT_COMMAND_TIMEOUT_SECONDS),
+        )
+
+    def test_interactive_commands_reject_captured_or_supplied_input(self):
+        for kwargs in (
+            {"capture_output": True},
+            {"input_data": "password\n"},
+            {"stdout": subprocess.PIPE},
+            {"stderr": subprocess.PIPE},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaisesRegex(ValueError, "inherit terminal"):
+                    run("sudo true", interactive=True, **kwargs)
+
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_interactive_timeout_does_not_signal_the_calling_process_group(
+        self, mock_popen
+    ):
+        process = self._completed_process(mock_popen)
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["sudo"], 2),
+            (None, None),
+        ]
+        process.poll.return_value = 0
+
+        with self.assertRaises(CommandTimeoutError):
+            run("sudo true", interactive=True, timeout=2)
+
+        process.terminate.assert_called_once_with()
+        process.kill.assert_not_called()
+
+    @patch("lib.remote_utils.subprocess.Popen")
     def test_argv_commands_bypass_shell_parsing(self, mock_popen):
         self._completed_process(mock_popen)
 

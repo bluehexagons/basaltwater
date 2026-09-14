@@ -485,7 +485,9 @@ class TestOfficialAgentInstallers(unittest.TestCase):
         ):
             update_managed_agent_tools(config)
 
-        self.assertIn("broader host/T3 readiness needs attention", output.getvalue())
+        self.assertIn(
+            "broader host/T3 readiness reported unhealthy", output.getvalue()
+        )
 
     def test_setup_skips_redundant_update_for_newly_installed_tool(self):
         config = SetupConfig(

@@ -15,7 +15,9 @@ Playwright are deferred.
 First finish the normal CachyOS installation, full-system updates, KDE setup,
 and GPU driver setup. Open a terminal in your normal desktop session. Run the
 following block **as yourself, without sudo**; the installer requests sudo only
-when missing system packages need installation:
+when missing system packages need installation. Keep the terminal attached:
+the password prompt appears when the package step begins, and setup continues
+after you enter your own password:
 
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
@@ -95,7 +97,9 @@ requirement is checked explicitly.
 
 System packages are queried with `pacman -Q`. Missing packages are installed
 using `pacman -S --needed`, without refreshing repository databases or running
-an OS upgrade. Dependency resolution can still install or change dependencies.
+an OS upgrade. If you run setup as your desktop user, the package command keeps
+the terminal attached so `sudo` can prompt for your password at that step.
+Dependency resolution can still install or change dependencies.
 If repositories are stale or dependencies conflict, setup stops; resolve the
 error through CachyOS's normal update workflow and rerun.
 

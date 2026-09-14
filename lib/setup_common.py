@@ -1446,7 +1446,6 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     "flock",
                     "--exclusive",
                     "--nonblock",
-                    "--verbose",
                     "/run/lock/infra-tools-setup.lock",
                     "/bin/sh",
                     "-c",

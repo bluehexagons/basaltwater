@@ -792,8 +792,9 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
         for item in output
     ):
         print(
-            "  ⚠ Managed agent tools are current, but broader host/T3 readiness "
-            "needs attention; run the composite agent doctor check"
+            "  ⚠ Managed agent tools are current; broader host/T3 readiness "
+            "reported unhealthy. Run `infra-tools agent doctor --capability host "
+            "--capability t3code` to inspect it."
         )
     print("  Managed agent tools are current: " + ", ".join(selected))
 

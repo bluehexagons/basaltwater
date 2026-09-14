@@ -104,6 +104,7 @@ class CachyOSSetupTests(unittest.TestCase):
             steps.install_missing_packages(["git", "github-cli", "git"])
         self.assertEqual(run.call_args_list[-1].args[0],
                          ["sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "github-cli"])
+        self.assertTrue(run.call_args_list[-1].kwargs["interactive"])
         self.assertEqual(run.call_count, 3)
 
     def test_package_failure_stops_with_recovery_instructions(self):

@@ -289,10 +289,11 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
         self.assertIn(
-            "flock --exclusive --nonblock --verbose "
+            "flock --exclusive --nonblock "
             "/run/lock/infra-tools-setup.lock",
             remote_command,
         )
+        self.assertNotIn("--verbose /run/lock/infra-tools-setup.lock", remote_command)
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
 
