@@ -22,6 +22,12 @@ private-LAN pairing, and documented T3 Connect setup. The next work should add
 capability contracts and safe integrations around that foundation rather than
 replace it with a second desktop or provisioning system.
 
+The separate [shared Debian and CachyOS capability-contract plan]
+(CROSS_DISTRO_SHARED_CAPABILITIES.md) may consolidate genuinely portable
+local-tool metadata and user-space helpers. It does not change this profile's
+ownership, package, session, or machine-use boundaries; this plan remains the
+authority for CachyOS desktop qualification and feature delivery.
+
 ## Boundaries and non-goals
 
 - Keep the existing human user, KDE Plasma session, GPU/driver setup, network
