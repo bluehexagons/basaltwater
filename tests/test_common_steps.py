@@ -338,19 +338,15 @@ class TestDevelopmentToolPackages(unittest.TestCase):
 
 
 class TestUserCommandEnvironment(unittest.TestCase):
-    @patch("common.common_steps.pwd.getpwnam")
     @patch("common.common_steps.run")
-    def test_login_user_commands_use_target_home_and_system_path(
-        self, mock_run, mock_getpwnam
-    ):
-        mock_getpwnam.return_value = MagicMock(pw_uid=1000)
+    def test_login_user_commands_use_target_home_and_system_path(self, mock_run):
         _run_as_login_user("agent", "/home/agent", "command -v codex")
 
         command = mock_run.call_args.args[0]
         self.assertIn("HOME=/home/agent", command)
-        self.assertIn("XDG_RUNTIME_DIR=/run/user/1000", command)
+        self.assertIn('XDG_RUNTIME_DIR="/run/user/$(id -u)"', command)
         self.assertIn(
-            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", command
+            'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"', command
         )
         self.assertIn("PATH=/home/agent/.local/bin:/home/agent/.opencode/bin", command)
         self.assertIn("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", command)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import pwd
 import shlex
 import shutil
 import stat
@@ -784,10 +783,6 @@ def _run_as_login_user(
     capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run a shell command in the target user's home and systemd session."""
-    try:
-        uid = pwd.getpwnam(username).pw_uid
-    except KeyError as exc:
-        raise RuntimeError(f"Target user does not exist: {username}") from exc
     safe_username = shlex.quote(username)
     safe_home = shlex.quote(user_home)
     safe_path = shlex.quote(
@@ -799,12 +794,14 @@ def _run_as_login_user(
             )
         )
     )
-    shell_script = f"cd {safe_home} && {command}"
+    shell_script = (
+        'export XDG_RUNTIME_DIR="/run/user/$(id -u)" '
+        'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus" && '
+        f"cd {safe_home} && {command}"
+    )
     return run(
         f"runuser -u {safe_username} -- env "
         f"HOME={safe_home} USER={safe_username} LOGNAME={safe_username} "
-        f"XDG_RUNTIME_DIR=/run/user/{uid} "
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus "
         f"PATH={safe_path} "
         f"bash -lc {shlex.quote(shell_script)}",
         check=check,
