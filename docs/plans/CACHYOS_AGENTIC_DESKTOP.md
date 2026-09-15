@@ -67,11 +67,13 @@ profile that owns them.
 
 ### P0 — compatibility and capability contract
 
-Before adding setup mutations, qualify a disposable CachyOS x86_64 KDE
-Wayland machine and record the following. A VM may exercise diagnostic and
-session helpers, but the existing setup profile intentionally rejects VMs;
-full setup acceptance requires disposable bare metal. Do not bypass the
-hardware check or interpret VM results as GPU/hardware qualification.
+The initial native setup, T3 access, and read-only doctor slices are implemented.
+Before releasing further setup mutations or machine-use capabilities, qualify a
+disposable CachyOS x86_64 KDE Wayland machine and record the following. A VM may
+exercise diagnostic and session helpers, but the existing setup profile
+intentionally rejects VMs; full setup acceptance requires disposable bare metal.
+Do not bypass the hardware check or interpret VM results as GPU/hardware
+qualification.
 
 - Plasma, KWin, Wayland, PipeWire, portal backend, AT-SPI, Python GObject, and
   browser package versions.
@@ -139,7 +141,8 @@ failed browser launch identifies the missing dependency or session condition.
 
 ### P1 — read-only desktop and host observability
 
-Add a structured CachyOS doctor that can report, without changing state:
+Extend the structured CachyOS doctor, which already reports the initial
+read-only prerequisites, without changing state:
 
 - session type, active graphical user, display/socket variables, compositor,
   PipeWire, portal backend, AT-SPI bus, and user-systemd health;

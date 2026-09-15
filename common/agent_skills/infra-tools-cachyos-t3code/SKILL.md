@@ -63,6 +63,8 @@ Failed activation restores the previous runtime and unit, but does not reverse
 application database migrations. Incomplete recovery retains private snapshots
 in the runtime root's `.activation` directory; resolve the service error and
 rerun setup to retry recovery. Preserve that directory until recovery completes.
+If the unit or CLI link was changed or removed outside setup, recovery stops and
+leaves the snapshots for manual inspection.
 The current and previous managed releases are retained after successful updates.
 HTTP UI reachability is not proof of a working provider thread; unknown HTTP
 routes can return the frontend HTML. Test a thread and terminal in the client.

@@ -242,8 +242,9 @@ failures restore the previous runtime, unit permissions, and enabled/running
 state. An interrupted activation leaves private recovery snapshots in
 `~/.local/share/infra-tools/cachyos-t3/.activation`; the next setup retries
 recovery before installing. If recovery is incomplete, retain that directory
-and both runtimes while resolving the reported service error. Edits made to the
-unit or CLI link outside setup are preserved for manual inspection.
+and both runtimes while resolving the reported service error. Changes or
+removals made to the unit or CLI link outside setup stop recovery and preserve
+the snapshots for manual inspection.
 
 Rollback covers runtime and service configuration, **not T3 database migrations**.
 Back up application data before updates that may change its schema. Successful

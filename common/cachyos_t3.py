@@ -15,6 +15,7 @@ import tempfile
 import time
 from typing import Iterator
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from common.cachyos_steps import (
@@ -80,13 +81,26 @@ def _check_runtime(prefix: Path, home: Path) -> str:
 
 def _wait_for_ui(url: str) -> None:
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    expected = urllib.parse.urlsplit(url)
+
+    def same_origin(location: str) -> bool:
+        try:
+            observed = urllib.parse.urlsplit(location)
+            return (
+                observed.scheme == expected.scheme
+                and observed.hostname == expected.hostname
+                and observed.port == expected.port
+            )
+        except ValueError:
+            return False
+
     stable = 0
     for _attempt in range(20):
         active = run(["systemctl", "--user", "is-active", "--quiet", T3_SERVICE], check=False)
         if active.returncode == 0:
             try:
                 with opener.open(url, timeout=2) as response:
-                    if response.status == 200 and response.geturl() == url:
+                    if response.status == 200 and same_origin(response.geturl()):
                         stable += 1
                         if stable >= 3:
                             print(f"  T3 HTTP UI reachable: {url}")
@@ -180,12 +194,19 @@ def _recover_activation(prefix: Path, unit: Path) -> None:
     allowed_units = [proposed.read_text()]
     if state["had_unit"]:
         allowed_units.append(previous.read_text())
-    if unit.is_symlink() or (unit.exists() and unit.read_text() not in allowed_units):
+    unit_present = unit.exists() or unit.is_symlink()
+    if state["had_unit"] and not unit_present:
+        raise ValueError("T3 unit was removed outside setup; preserve and inspect .activation before retrying")
+    if unit.is_symlink() or (unit_present and unit.read_text() not in allowed_units):
         raise ValueError("T3 unit changed outside setup; preserve and inspect .activation before retrying")
     binary = prefix / "bin/t3"
     _directory(binary.parent)
-    if (binary.exists() or binary.is_symlink()) and not any(
-        _same_entry(binary, transaction / name) for name in ("previous-t3", "next-t3")
+    binary_present = binary.exists() or binary.is_symlink()
+    if state["had_binary"] and not binary_present:
+        raise ValueError("T3 executable was removed outside setup; inspect .activation before retrying")
+    allowed_binaries = ("previous-t3", "next-t3") if state["had_binary"] else ("next-t3",)
+    if binary_present and not any(
+        _same_entry(binary, transaction / name) for name in allowed_binaries
     ):
         raise ValueError("T3 executable changed outside setup; inspect .activation before retrying")
     stopped = run(["systemctl", "--user", "stop", T3_SERVICE], check=False)

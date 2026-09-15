@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import io
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -240,6 +241,27 @@ class T3InstallTests(unittest.TestCase):
         self.assertIn("human change", self.unit.read_text())
         self.assertTrue(self.binary.resolve().exists())
 
+    def test_recovery_rejects_removed_runtime_or_unit(self):
+        for removed in ("unit", "binary"):
+            with self.subTest(removed=removed):
+                shutil.rmtree(self.prefix, ignore_errors=True)
+                shutil.rmtree(self.home / ".config", ignore_errors=True)
+                self.unit.unlink(missing_ok=True)
+                self.legacy()
+                self.ui.side_effect = RuntimeError("UI fixture failure")
+
+                def fail_and_remove(_url):
+                    if removed == "unit":
+                        self.unit.unlink()
+                    else:
+                        self.binary.unlink()
+                    raise RuntimeError("UI fixture failure")
+
+                self.ui.side_effect = fail_and_remove
+                with self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
+                    t3.install(self.config)
+                self.assertTrue((self.prefix / ".activation/state.json").exists())
+
     def test_unmanaged_recovery_directory_is_preserved(self):
         transaction = self.prefix / ".activation"
         transaction.mkdir(parents=True)
@@ -277,7 +299,8 @@ class T3UITests(unittest.TestCase):
         for status, url in [(200, "http://127.0.0.1:3773/"),
                             (202, "http://127.0.0.1:3773/"),
                             (200, "http://example.com/"),
-                            *[(200, "http://127.0.0.1:3773/")] * 3]:
+                            (200, "http://127.0.0.1:3773/pair"),
+                            *[(200, "http://127.0.0.1:3773/")] * 2]:
             item = MagicMock()
             item.__enter__.return_value.status = status
             item.__enter__.return_value.geturl.return_value = url
