@@ -205,6 +205,56 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
                 },
             )
 
+    def test_successful_setup_recovery_is_reported_as_warning(self):
+        config = SetupConfig(
+            host="localhost",
+            username="agent",
+            system_type="agent_code_vm",
+            machine_type="vm",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker_path = os.path.join(tmpdir, "setup-operation.json")
+            with patch.object(remote_setup, "SETUP_OPERATION_FILE", marker_path), patch.object(
+                remote_setup, "record_setup_activity"
+            ):
+                store = OperationStateStore(marker_path)
+                started = store.begin(
+                    "target_setup",
+                    "agent_code_vm",
+                    "applying",
+                    context={
+                        "machine_type": "vm",
+                        "system_type": "agent_code_vm",
+                        "username": "agent",
+                    },
+                )
+                store.transition(
+                    started.operation_id,
+                    "recovery",
+                    status="recovery_required",
+                    context={
+                        **started.context,
+                        "step": "Installing T3 Code web interface",
+                        "error_type": "RuntimeError",
+                    },
+                )
+                store.close()  # The previous invocation has exited.
+
+                def recover() -> int:
+                    remote_setup._begin_setup_operation(config)
+                    remote_setup._complete_setup_operation()
+                    return 0
+
+                with patch.object(remote_setup, "_run_main", side_effect=recover), patch.object(
+                    remote_setup, "_remove_secret_payloads"
+                ), patch("sys.stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(remote_setup.main(), 0)
+
+        rendered = output.getvalue()
+        self.assertIn("Warnings (1):", rendered)
+        self.assertIn("Resuming interrupted setup operation", rendered)
+        self.assertNotIn("Errors (1):", rendered)
+
     def test_failed_setup_for_different_identity_remains_blocked(self):
         config = SetupConfig(
             host="localhost",

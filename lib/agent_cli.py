@@ -1806,32 +1806,39 @@ def _t3_active_binary(home: str) -> str | None:
     version = state.get("activeVersion")
     if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:
         return None
-    binary = os.path.join(
+    version_root = os.path.join(
         runtime,
         "versions",
         version,
-        "node_modules",
-        "t3",
-        "dist",
-        "bin.mjs",
     )
-    return binary if os.path.isfile(binary) and os.access(binary, os.X_OK) else None
+    return _t3_version_binary(version_root)
+
+
+def _t3_version_binary(version_root: str) -> str | None:
+    """Return T3's executable for a version in either supported layout."""
+
+    for relative_path in (
+        ("t3",),
+        ("node_modules", "t3", "dist", "bin.mjs"),
+    ):
+        binary = os.path.join(version_root, *relative_path)
+        if os.path.isfile(binary) and os.access(binary, os.X_OK):
+            return binary
+    return None
 
 
 def _t3_version_root(binary: str) -> str | None:
-    version_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(binary)))
-    )
-    expected = os.path.join(
-        version_root,
-        "node_modules",
-        "t3",
-        "dist",
-        "bin.mjs",
-    )
-    if os.path.normpath(binary) != os.path.normpath(expected):
-        return None
-    return version_root if os.path.isdir(version_root) else None
+    for parent_count, relative_path in (
+        (1, ("t3",)),
+        (4, ("node_modules", "t3", "dist", "bin.mjs")),
+    ):
+        version_root = binary
+        for _ in range(parent_count):
+            version_root = os.path.dirname(version_root)
+        expected = os.path.join(version_root, *relative_path)
+        if os.path.normpath(binary) == os.path.normpath(expected):
+            return version_root if os.path.isdir(version_root) else None
+    return None
 
 
 def _t3_node_binary(drop_in: str) -> str | None:

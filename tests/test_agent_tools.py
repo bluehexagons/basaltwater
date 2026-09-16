@@ -552,11 +552,9 @@ class TestAgentDoctor(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             runtime = os.path.join(home, '.t3', 'runtime')
             version = '0.0.34'
-            binary_dir = os.path.join(
-                runtime, 'versions', version, 'node_modules', 't3', 'dist'
-            )
+            binary_dir = os.path.join(runtime, 'versions', version)
             os.makedirs(binary_dir)
-            t3_binary = os.path.join(binary_dir, 'bin.mjs')
+            t3_binary = os.path.join(binary_dir, 't3')
             with open(t3_binary, 'w', encoding='utf-8') as file_obj:
                 file_obj.write('#!/bin/sh\necho t3 0.0.1\n')
             os.chmod(t3_binary, 0o755)
@@ -584,6 +582,7 @@ class TestAgentDoctor(unittest.TestCase):
                 result = inspect_t3code(home)
 
         self.assertFalse(result['healthy'])
+        self.assertTrue(result['checks']['runtime'])
         self.assertIn('git_identity', result['checks'])
         self.assertFalse(result['checks']['service_enabled'])
         self.assertNotIn('secret', str(result))

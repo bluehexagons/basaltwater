@@ -1003,6 +1003,75 @@ def _t3_version_key(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in value.split("."))
 
 
+def _validated_t3_runtime(
+    context: UserContext,
+    path: str,
+    version: str,
+) -> os.stat_result | None:
+    """Validate one upstream T3 runtime without following user-owned links."""
+
+    sentinel = os.path.join(path, ".install-complete")
+    native_binary = os.path.join(path, "t3")
+    legacy_manifest = os.path.join(path, "node_modules", "t3", "package.json")
+    legacy_binary = os.path.join(path, "node_modules", "t3", "dist", "bin.mjs")
+    if not all(
+        is_safe_managed_path(context, item, "T3 runtime")
+        for item in (path, sentinel)
+    ):
+        return None
+    try:
+        info = os.lstat(path)
+        sentinel_info = os.lstat(sentinel)
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != context.uid
+            or not stat.S_ISREG(sentinel_info.st_mode)
+            or sentinel_info.st_uid != context.uid
+            or sentinel_info.st_size > 256
+        ):
+            return None
+
+        if os.path.lexists(native_binary):
+            if not is_safe_managed_path(context, native_binary, "T3 runtime"):
+                return None
+            binary_info = os.lstat(native_binary)
+            if (
+                not stat.S_ISREG(binary_info.st_mode)
+                or binary_info.st_uid != context.uid
+                or not os.access(native_binary, os.X_OK)
+            ):
+                return None
+            with open(sentinel, encoding="utf-8") as handle:
+                return info if handle.read().strip() == version else None
+
+        if not all(
+            is_safe_managed_path(context, item, "T3 runtime")
+            for item in (legacy_manifest, legacy_binary)
+        ):
+            return None
+        manifest_info = os.lstat(legacy_manifest)
+        binary_info = os.lstat(legacy_binary)
+        if (
+            not stat.S_ISREG(manifest_info.st_mode)
+            or manifest_info.st_uid != context.uid
+            or manifest_info.st_size > 65536
+            or not stat.S_ISREG(binary_info.st_mode)
+            or binary_info.st_uid != context.uid
+        ):
+            return None
+        with open(legacy_manifest, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("name") != "t3"
+            or manifest.get("version") != version
+        ):
+            return None
+    except (OSError, ValueError):
+        return None
+    return info
+
+
 def cleanup_t3_runtimes(context: UserContext, *, dry_run: bool) -> list[str]:
     """Prune validated old T3 runtimes while retaining rollback and process references."""
     root = os.path.join(context.home, ".t3", "runtime", "versions")
@@ -1024,29 +1093,8 @@ def cleanup_t3_runtimes(context: UserContext, *, dry_run: bool) -> list[str]:
             if not _T3_VERSION_PATTERN.fullmatch(name):
                 continue
             path = os.path.join(root, name)
-            manifest_path = os.path.join(path, "node_modules", "t3", "package.json")
-            binary = os.path.join(path, "node_modules", "t3", "dist", "bin.mjs")
-            sentinel = os.path.join(path, ".install-complete")
-            if not all(is_safe_managed_path(context, item, "T3 runtime") for item in (manifest_path, binary, sentinel)):
-                continue
-            try:
-                info = os.lstat(path)
-                manifest_info = os.lstat(manifest_path)
-                binary_info = os.lstat(binary)
-                sentinel_info = os.lstat(sentinel)
-                if (
-                    not stat.S_ISDIR(info.st_mode) or info.st_uid != context.uid
-                    or not stat.S_ISREG(manifest_info.st_mode) or manifest_info.st_uid != context.uid
-                    or manifest_info.st_size > 65536
-                    or not stat.S_ISREG(binary_info.st_mode) or binary_info.st_uid != context.uid
-                    or not stat.S_ISREG(sentinel_info.st_mode) or sentinel_info.st_uid != context.uid
-                ):
-                    continue
-                with open(manifest_path, encoding="utf-8") as handle:
-                    manifest = json.load(handle)
-                if not isinstance(manifest, dict) or manifest.get("name") != "t3" or manifest.get("version") != name:
-                    continue
-            except (OSError, ValueError):
+            info = _validated_t3_runtime(context, path, name)
+            if info is None:
                 continue
             candidates[name] = info
         if active not in candidates:

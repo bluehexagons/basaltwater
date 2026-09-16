@@ -96,8 +96,8 @@ def _begin_setup_operation(config: SetupConfig) -> None:
         )
         prior_step = existing.context.get("step")
         print(
-            f"  Recovering failed setup operation {existing.operation_id}"
-            + (f" after step {prior_step!r}" if isinstance(prior_step, str) else "")
+            f"  ⚠ Resuming interrupted setup operation {existing.operation_id}"
+            + (f" after incomplete step {prior_step!r}" if isinstance(prior_step, str) else "")
             + "; rerunning the idempotent setup plan"
         )
         record = store.transition(

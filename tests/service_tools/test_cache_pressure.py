@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -169,6 +170,17 @@ class TestT3RuntimeRetention(unittest.TestCase):
     def test_dry_run_preserves_every_version(self):
         self.assertEqual(maintenance.cleanup_t3_runtimes(self.context, dry_run=True), [])
         self.assertEqual(len(self.remaining()), 6)
+
+    def test_current_native_active_runtime_is_validated(self):
+        active = self.versions / "0.0.5"
+        shutil.rmtree(active / "node_modules")
+        binary = active / "t3"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        (active / ".install-complete").write_text("0.0.5")
+
+        self.assertEqual(maintenance.cleanup_t3_runtimes(self.context, dry_run=False), [])
+        self.assertEqual(self.remaining(), ["0.0.4", "0.0.5", "0.0.6"])
 
     def test_pending_unknown_and_changed_state_prevent_removal(self):
         self.write_state(update={"status": "pending", "fromVersion": "0.0.5", "targetVersion": "0.0.6"})
