@@ -20,6 +20,7 @@ overview.
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |
 | Configure alerts, audit visibility, or the panel | [Notifications](NOTIFICATIONS.md) | [Minimal web panel](WEB_PANEL.md), [Authentication hardening](AUTHENTICATION_HARDENING.md) |
 | Configure storage, shares, or backups | [Storage operations](STORAGE_OPERATIONS.md) | [Samba](SAMBA_SHARES.md), [Syncthing](SYNCTHING.md), [Backups](BACKUPS.md) |
+| Research a Debian-based infra-tools operating environment | [InfraOS concept](INFRAOS.md) | [Machine types](MACHINE_TYPES.md), [Deployment safety](DEPLOYMENT_SAFETY.md) |
 
 ## Core setup and operations
 
@@ -92,6 +93,10 @@ automation, T3 Code, skills, and hardening.
 The [`plans/`](plans/) directory contains implementation plans and audit
 records. It is not operator documentation; start with the
 [planning index](plans/README.md) only when researching project work.
+
+The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
+Debian-based operating environment built around infra-tools. It is not a
+supported operating system or an implementation commitment.
 
 Repository contributors should read the
 [contributor and coding-agent guide](agents/contributing/README.md). It
