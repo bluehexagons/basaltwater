@@ -103,6 +103,8 @@ def print_service_access_summary(
     access_details = remote_access_details or {}
 
     lines.append(("SSH", f"ssh {config.username}@{config.host}", "shell access"))
+    if config.privilege_broker:
+        lines.append(("Privilege approvals", config.privilege_broker + "/", "separate approval password"))
 
     if config.web_panel_port is not None:
         from common.web_panel_steps import web_panel_url
@@ -280,6 +282,7 @@ def print_service_access_summary(
         return
 
     web_labels = {
+        "Privilege approvals",
         "Web server",
         "Web panel",
         "Godot web exports",
@@ -485,6 +488,10 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             print("Web panel auth: supplied for this setup")
     elif config.disable_web_panel:
         print("Web panel: remove")
+    if config.privilege_broker:
+        print(f"Privilege approvals: {config.privilege_broker} (independent password; brokered account)")
+    elif config.disable_privilege_broker:
+        print("Privilege approvals: disable")
 
     if config.deploy_specs:
         print(f"Deployments: {len(config.deploy_specs)} repository(ies)")

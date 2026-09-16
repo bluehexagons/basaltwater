@@ -201,6 +201,11 @@ A rerun reloads managed audit rules even when their on-disk file is unchanged.
 
 ## Services and maintenance actions
 
+With `--privilege-broker HTTPS_ORIGIN`, **Services** includes a **Privilege
+approvals** link. That HTTPS page has its own password and a separate service
+identity. The panel cannot approve requests or read approval credentials.
+See [Privilege approvals](PRIVILEGE_APPROVALS.md) for setup and the agent workflow.
+
 The panel renders configured access from saved setup state and discovers live
 `infra-web` forwards and static sites at page load. When the shared gateway is
 installed, its landing page is linked before individual sites are published.

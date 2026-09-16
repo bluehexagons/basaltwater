@@ -34,6 +34,7 @@ PLUGIN = PluginDefinition(
         "install_agent_workflow_skills",
         "install_t3code_web",
         "configure_web_panel",
+        "configure_privilege_broker",
         "reconcile_agent_storage",
         "copy_agent_tooling_payload",
         "configure_codex_security_policy",
@@ -358,6 +359,11 @@ def extend_web_panel_steps(
 ) -> None:
     """Append the optional authenticated web panel."""
 
+    if config.privilege_broker or config.disable_privilege_broker:
+        from common.privilege_broker_steps import configure_privilege_broker
+
+        steps.append(("Configuring privilege approval broker", configure_privilege_broker))
+
     if config.web_panel_port is None and not config.disable_web_panel:
         return
 
@@ -420,6 +426,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
     from common.t3code_steps import install_t3code_web
     from common.web_panel_steps import configure_web_panel
     from common.git_credential_steps import configure_git_https_credentials
+    from common.privilege_broker_steps import configure_privilege_broker
     from common.browser_automation_steps import install_browser_automation
     from common.godot_steps import (
         configure_auto_update_godot,
@@ -445,6 +452,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "install_agent_workflow_skills": install_agent_workflow_skills,
         "install_t3code_web": install_t3code_web,
         "configure_web_panel": configure_web_panel,
+        "configure_privilege_broker": configure_privilege_broker,
         "reconcile_agent_storage": reconcile_agent_storage,
         "copy_agent_tooling_payload": copy_agent_tooling_payload,
         "configure_codex_security_policy": configure_codex_security_policy,

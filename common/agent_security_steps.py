@@ -451,7 +451,7 @@ def configure_agent_user_security(config: SetupConfig) -> None:
         _USER_DENIED_GROUPS
         if config.harden_user
         else _AGENT_DENIED_GROUPS
-        if config.harden_agent
+        if config.harden_agent or config.privilege_broker
         else frozenset()
     )
     current_groups = _account_groups(config.username, account.pw_gid)
@@ -518,6 +518,8 @@ def configure_agent_user_security(config: SetupConfig) -> None:
         else "standard user"
     )
     print(f"  ✓ {posture.capitalize()} account policy configured")
+    if config.privilege_broker:
+        print("  ✓ Brokered account: privileged supplementary groups removed; restart existing user sessions to discard old groups")
 
 
 def _ensure_codex_policy_directory() -> None:

@@ -71,6 +71,9 @@ def validate_policy(value: object) -> dict:
         or parsed.port is None or not 1024 <= parsed.port <= 65535
         or not re.fullmatch(r"https://[A-Za-z0-9.\[\]:-]+", origin)):
         raise ValueError("origin must be a dedicated HTTPS origin with an explicit unprivileged port")
+    hostname = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    if origin != f"https://{hostname}:{parsed.port}":
+        raise ValueError("origin must use a lowercase hostname and canonical port")
     services = value["services"]
     if not isinstance(services, dict) or len(services) > 32:
         raise ValueError("services must be a mapping of up to 32 exact unit names")

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/infra_tools")
@@ -58,6 +59,7 @@ class Broker:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA max_page_count=16384")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS requests (
                 id TEXT PRIMARY KEY, uid INTEGER NOT NULL, created REAL NOT NULL,
@@ -97,7 +99,7 @@ class Broker:
         return result
 
     def request(self, uid: int, operation: str, parameters: dict, reason: str) -> dict:
-        if not isinstance(reason, str) or len(reason) > 1000 or any(ord(c) < 32 for c in reason):
+        if not isinstance(reason, str) or len(reason) > 1000 or any(unicodedata.category(c).startswith("C") for c in reason):
             raise ValueError("Reason must be a single line of at most 1000 characters")
         with self.lock, self.db:
             self._expire()
@@ -178,6 +180,12 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if approval and action == "list" and set(message) == {"action"}:
+            with self.lock, self.db:
+                self._expire()
+                rows = self.db.execute("SELECT id,uid,created,state,plan FROM requests ORDER BY created DESC LIMIT 20").fetchall()
+                return {"requests": [{"id": row["id"], "uid": row["uid"], "created": row["created"],
+                                      "state": row["state"], "operation": json.loads(row["plan"])["operation"]} for row in rows]}
         if action == "status" and set(message) == {"action", "id"}:
             return self.status(message["id"], None if approval else uid)
         if not approval and action == "request" and set(message) == {"action", "operation", "parameters", "reason"}:
@@ -201,8 +209,8 @@ class Handler(socketserver.StreamRequestHandler):
                 raise ValueError("Invalid message size or framing")
             result = self.server.broker.dispatch(json.loads(raw), uid, approval=self.server.approval)
             response = {"ok": True, "result": result}
-        except (OSError, ValueError, PermissionError) as exc:
-            response = {"ok": False, "error": str(exc)}
+        except (OSError, ValueError, PermissionError, RecursionError, sqlite3.Error):
+            response = {"ok": False, "error": "Broker rejected the request or could not persist it; inspect request status before retrying"}
         self.wfile.write((canonical(response) + "\n").encode())
 
 

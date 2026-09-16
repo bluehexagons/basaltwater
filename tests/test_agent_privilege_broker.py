@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import copy
+import io
+import json
 import os
+import struct
 import tempfile
 import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from common.service_tools.privilege_broker import Broker, execute
-from lib.privilege_policy import operation_plan, validate_policy
+from common.service_tools.privilege_broker import Broker, Handler, execute
+from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan, validate_policy
 
 
 def policy() -> dict:
@@ -110,7 +113,8 @@ class BrokerTests(unittest.TestCase):
         self.broker.decide(request["id"], request["digest"], True, "operator")
         def inspect(plan):
             import sqlite3
-            with sqlite3.connect(self.path) as db:
+            from contextlib import closing
+            with closing(sqlite3.connect(self.path)) as db:
                 self.assertEqual(db.execute("SELECT state FROM requests").fetchone()[0], "executing")
             return "succeeded"
         self.broker.runner = inspect
@@ -133,8 +137,11 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(outcomes.count(True), 1)
 
     def test_quota_survives_reopening_database(self):
-        for _ in range(8):
-            self.request()
+        for _ in range(30):
+            request = self.request()
+            self.broker.decide(request["id"], request["digest"], False, "operator")
+        self.broker.db.close()
+        self.broker = Broker(self.path, lambda: self.policy, self.runner)
         with self.assertRaisesRegex(ValueError, "quota"):
             self.request()
 
@@ -165,3 +172,43 @@ class PolicyTests(unittest.TestCase):
             candidate[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_policy(candidate)
+
+
+class TransportTests(unittest.TestCase):
+    def invoke(self, uid, payload, *, approval=False):
+        handler = object.__new__(Handler)
+        handler.request = Mock()
+        handler.request.getsockopt.return_value = struct.pack("3i", 123, uid, 1000)
+        handler.server = Mock(allowed_uid=1000, approval=approval)
+        handler.server.broker.dispatch.return_value = {"state": "pending"}
+        handler.rfile = io.BytesIO(payload)
+        handler.wfile = io.BytesIO()
+        handler.handle()
+        return json.loads(handler.wfile.getvalue()), handler.server.broker.dispatch
+
+    def test_kernel_uid_controls_access_before_dispatch(self):
+        response, dispatch = self.invoke(1001, b'{"action":"status"}\n')
+        self.assertFalse(response["ok"])
+        dispatch.assert_not_called()
+
+    def test_message_cannot_select_approval_interface(self):
+        message = {"action": "request", "operation": "system.reboot", "parameters": {},
+                   "reason": "test", "approval": True, "uid": 0}
+        response, dispatch = self.invoke(1000, (canonical(message) + "\n").encode())
+        self.assertTrue(response["ok"])
+        dispatch.assert_called_once_with(message, 1000, approval=False)
+        # The strict dispatcher independently rejects these extra fields.
+        with tempfile.TemporaryDirectory() as directory:
+            broker = Broker(directory + "/state.db", policy, Mock())
+            try:
+                with self.assertRaises(PermissionError):
+                    broker.dispatch(message, 1000)
+            finally:
+                broker.db.close()
+
+    def test_oversize_unterminated_and_malformed_frames_never_dispatch(self):
+        for payload in (b"x" * (MAX_MESSAGE + 1), b"{}", b"{bad}\n"):
+            with self.subTest(size=len(payload)):
+                response, dispatch = self.invoke(1000, payload)
+                self.assertFalse(response["ok"])
+                dispatch.assert_not_called()

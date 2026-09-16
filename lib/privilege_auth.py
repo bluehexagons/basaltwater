@@ -42,4 +42,23 @@ def authenticate(header: str, record: dict) -> bool:
     if len(password) > 256:
         return False
     actual = hashlib.scrypt(password.encode(), salt=bytes.fromhex(record["salt"]), n=16384, r=8, p=1).hex()
-    return hmac.compare_digest(actual, record["hash"]) and hmac.compare_digest(username, record["username"])
+    return hmac.compare_digest(actual, record["hash"]) and hmac.compare_digest(username.encode(), record["username"].encode())
+
+
+def auth_from_args(args, username: str) -> str | None:
+    """Hash on the controller; only the hash travels in private setup arguments."""
+    import getpass
+    import json
+
+    password = getattr(args, "privilege_broker_password", None)
+    if isinstance(password, str):
+        if password == "":
+            if getattr(args, "dry_run", False):
+                return None
+            password = getpass.getpass("Separate privilege approval password: ")
+        return json.dumps(password_record(username, password))
+    record = getattr(args, "privilege_broker_auth", None)
+    if isinstance(record, str):
+        validate_auth(json.loads(record))
+        return record
+    return None

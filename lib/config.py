@@ -433,6 +433,9 @@ class SetupConfig:
     web_panel_payload: bool = False
     web_panel_notification_ingest: Optional[bool] = None
     disable_web_panel: bool = False
+    privilege_broker: MaybeStr = None
+    privilege_broker_auth: MaybeStr = None
+    disable_privilege_broker: bool = False
     browser_automation: MaybeStr = None
     disable_browser_automation: bool = False
     copy_agent_keys: bool = False
@@ -772,6 +775,9 @@ class SetupConfig:
 
         validate_web_port_settings(self)
         validate_web_panel_settings(self)
+        from lib.privilege_setup import validate_broker_settings
+
+        validate_broker_settings(self)
         self.web_ports = list(dict.fromkeys(self.web_ports or [])) or None
 
     def selected_agent_tools(self) -> StrList:
@@ -798,12 +804,17 @@ class SetupConfig:
             or self.git_access != "none"
             or self.agent_workspace
             or self.install_git_lfs
+            or self.privilege_broker
         )
 
     def effective_web_ports(self) -> list[int]:
         """Return managed TCP web ports for this resolved target."""
 
         ports = list(self.web_ports or [])
+        if self.privilege_broker:
+            from urllib.parse import urlsplit
+
+            ports.extend((urlsplit(self.privilege_broker).port, GODOT_WEB_HTTPS_PORT))
         if self.homebox:
             from lib.homebox_config import parse_homebox_spec
 
@@ -919,6 +930,12 @@ class SetupConfig:
         """Generate command line arguments for remote execution."""
         args: StrList = []
         args.extend(self._homebox_args())
+        if self.disable_privilege_broker:
+            args.append("--no-privilege-broker")
+        elif self.privilege_broker:
+            args.append(f"--privilege-broker {shlex.quote(self.privilege_broker)}")
+            if self.privilege_broker_auth:
+                args.append(f"--privilege-broker-auth {shlex.quote(self.privilege_broker_auth)}")
 
         if self.t3code_ready:
             args.append("--t3code-ready")
@@ -1350,6 +1367,10 @@ class SetupConfig:
         if include_username:
             cmd_parts.append(self.username)
         cmd_parts.extend(self._homebox_args())
+        if self.disable_privilege_broker:
+            cmd_parts.append("--no-privilege-broker")
+        elif self.privilege_broker:
+            cmd_parts.append(f"--privilege-broker {shlex.quote(self.privilege_broker)}")
         
         # SSH key
         if self.ssh_key:
@@ -1945,6 +1966,7 @@ class SetupConfig:
             'device_pairing_payload',
             'web_panel_auth_password',
             'web_panel_payload',
+            'privilege_broker_auth',
             'swap_initialize',
             'disable_syncthing',
         ):
@@ -2120,6 +2142,7 @@ class SetupConfig:
     @classmethod
     def from_args(cls, args: argparse.Namespace, system_type: str) -> 'SetupConfig':
         from lib.system_utils import get_current_username, get_local_timezone
+        from lib.privilege_auth import auth_from_args
 
         system_type_definition = get_system_type_definition(system_type)
         tags = None
@@ -2544,6 +2567,9 @@ class SetupConfig:
                 args, 'web_panel_notification_ingest'
             ),
             disable_web_panel=disable_web_panel,
+            privilege_broker=_optional_str_arg(args, 'privilege_broker'),
+            privilege_broker_auth=auth_from_args(args, username),
+            disable_privilege_broker=_optional_bool_arg(args, 'disable_privilege_broker') is True,
             browser_automation=browser_automation,
             disable_browser_automation=disable_browser_automation,
             copy_agent_keys=bool(
