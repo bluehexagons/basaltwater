@@ -70,6 +70,28 @@ class T3CodeWebTest(unittest.TestCase):
         return binary
 
     @staticmethod
+    def _write_upstream_native_runtime(home: str, version: str = "0.0.42") -> str:
+        """Create the current T3 native executable runtime layout."""
+
+        runtime = os.path.join(home, ".t3", "runtime")
+        binary = os.path.join(runtime, "versions", version, "t3")
+        os.makedirs(os.path.dirname(binary), exist_ok=True)
+        with open(binary, "w", encoding="utf-8") as file_obj:
+            file_obj.write("#!/bin/sh\n")
+        os.chmod(binary, 0o755)
+        with open(
+            os.path.join(runtime, "service-state.json"),
+            "w",
+            encoding="utf-8",
+        ) as file_obj:
+            json.dump({"protocol": 2, "activeVersion": version}, file_obj)
+        service = os.path.join(home, ".config", "systemd", "user", "t3code.service")
+        os.makedirs(os.path.dirname(service), exist_ok=True)
+        with open(service, "w", encoding="utf-8") as file_obj:
+            file_obj.write("# upstream managed\n")
+        return binary
+
+    @staticmethod
     def _write_node_tools(home: str) -> str:
         """Create the minimal target-user Node tool directory used by tests."""
 
@@ -189,6 +211,8 @@ class T3CodeWebTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             binary = self._write_upstream_runtime(home)
             self.assertEqual(_active_t3_binary(home), binary)
+            native_binary = self._write_upstream_native_runtime(home)
+            self.assertEqual(_active_t3_binary(home), native_binary)
             state_file = os.path.join(home, ".t3", "runtime", "service-state.json")
             with open(state_file, "w", encoding="utf-8") as file_obj:
                 json.dump(
@@ -206,7 +230,7 @@ class T3CodeWebTest(unittest.TestCase):
             self._write_upstream_runtime(home, "01.2.3")
             self.assertIsNone(_active_t3_binary(home))
 
-    def test_service_install_uses_upstream_npx_update_and_managed_drop_in(self) -> None:
+    def test_service_install_uses_latest_native_t3_runtime_and_managed_drop_in(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             workspace = os.path.join(home, "repos")
             os.makedirs(workspace)
@@ -216,7 +240,7 @@ class T3CodeWebTest(unittest.TestCase):
 
             def run_as_user(_username, _home, command, **_kwargs):
                 commands.append(command)
-                self._write_upstream_runtime(home)
+                self._write_upstream_native_runtime(home)
                 return completed
 
             with (
@@ -266,9 +290,10 @@ class T3CodeWebTest(unittest.TestCase):
                 update_command.index("npx --yes"),
             )
             self.assertGreater(
-                update_command.rindex("t3 service update"),
+                update_command.rindex("t3 service install"),
                 update_command.index("npx --yes"),
             )
+            self.assertNotIn("t3 service update", update_command)
             self.assertTrue(
                 any(
                     "npm_config_strict_allow_scripts=false" in command
@@ -1000,6 +1025,8 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn('value.get("protocol") == 2', content)
             self.assertIn('NVM_DIR="$HOME/.nvm"', content)
             self.assertIn("versions", content)
+            self.assertIn('binary="$version_root/t3"', content)
+            self.assertIn('binary="$version_root/node_modules/t3/dist/bin.mjs"', content)
             self.assertIn('exec "$binary" "$@"', content)
             self.assertNotIn("npx", content)
 

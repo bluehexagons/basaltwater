@@ -78,7 +78,7 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_ALLOW_SCRIPTS \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
-    t3 service update'
+    t3 service install'
 infra-tools agent doctor --capability t3code --fix
 ```
 

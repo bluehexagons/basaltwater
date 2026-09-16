@@ -95,13 +95,13 @@ _T3_VERSION_RE = re.compile(
 )
 _T3_GH_CONFIG_EXPORT = 'export GH_CONFIG_DIR="$HOME/.config/gh"'
 _T3_NATIVE_PACKAGES = ("node-pty", "msgpackr-extract")
-_T3_UPDATE_INNER_COMMAND = (
+_T3_SERVICE_INSTALL_INNER_COMMAND = (
     "/usr/bin/env "
     "-u npm_config_allow_scripts "
     "-u NPM_CONFIG_ALLOW_SCRIPTS "
     "-u npm_config_dangerously_allow_all_scripts "
     "-u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS "
-    "t3 service update"
+    "t3 service install"
 )
 _T3_READINESS_ATTEMPTS = 20
 _T3_READINESS_STABLE_CHECKS = 3
@@ -272,6 +272,19 @@ def _t3_service_drop_in(home: str) -> str:
     )
 
 
+def _t3_version_binary(version_root: str) -> str | None:
+    """Return T3's executable for a version in either supported layout."""
+
+    for relative_path in (
+        ("t3",),
+        ("node_modules", "t3", "dist", "bin.mjs"),
+    ):
+        binary = os.path.join(version_root, *relative_path)
+        if os.path.isfile(binary) and os.access(binary, os.X_OK):
+            return binary
+    return None
+
+
 def _active_t3_binary(home: str) -> str | None:
     """Resolve the immutable executable selected by T3's service manager."""
 
@@ -288,16 +301,12 @@ def _active_t3_binary(home: str) -> str | None:
     version = state.get("activeVersion")
     if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:
         return None
-    binary = os.path.join(
+    version_root = os.path.join(
         _t3_runtime_path(home),
         "versions",
         version,
-        "node_modules",
-        "t3",
-        "dist",
-        "bin.mjs",
     )
-    return binary if os.path.isfile(binary) and os.access(binary, os.X_OK) else None
+    return _t3_version_binary(version_root)
 
 
 def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
@@ -329,16 +338,13 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
         or target_version == active_version
     ):
         return None
-    binary = os.path.join(
+    version_root = os.path.join(
         _t3_runtime_path(home),
         "versions",
         target_version,
-        "node_modules",
-        "t3",
-        "dist",
-        "bin.mjs",
     )
-    if not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+    binary = _t3_version_binary(version_root)
+    if binary is None:
         return None
     return target_version, binary
 
@@ -346,20 +352,14 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
 def _t3_version_root(binary: str) -> str:
     """Return the immutable version root containing an active T3 executable."""
 
-    version_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(binary)))
-    )
-    validate_filesystem_path(version_root, must_exist=True)
-    expected = os.path.join(
-        version_root,
-        "node_modules",
-        "t3",
-        "dist",
-        "bin.mjs",
-    )
-    if os.path.normpath(binary) != os.path.normpath(expected):
-        raise RuntimeError(f"Invalid T3 Code runtime path: {binary}")
-    return version_root
+    for parent_count in (1, 4):
+        version_root = binary
+        for _ in range(parent_count):
+            version_root = os.path.dirname(version_root)
+        if _t3_version_binary(version_root) == binary:
+            validate_filesystem_path(version_root, must_exist=True)
+            return version_root
+    raise RuntimeError(f"Invalid T3 Code runtime path: {binary}")
 
 
 def _t3_native_runtime_healthy(
@@ -884,7 +884,7 @@ def _install_t3_service(
                     f'export XDG_RUNTIME_DIR=/run/user/{uid} && '
                     f'export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus && '
                     'npx --yes --package=t3@latest -c '
-                    f'{shlex.quote(_T3_UPDATE_INNER_COMMAND)}',
+                    f'{shlex.quote(_T3_SERVICE_INSTALL_INNER_COMMAND)}',
                     check=False,
                     capture_output=True,
                 )
@@ -1038,8 +1038,9 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
         'version=value["activeVersion"]; '
         f"assert re.fullmatch({json.dumps(_T3_VERSION_RE.pattern)}, version); "
         'print(version)\' "$state")\n'
-        f'binary={shlex.quote(os.path.join(runtime, "versions"))}/"$version"'
-        '/node_modules/t3/dist/bin.mjs\n'
+        f'version_root={shlex.quote(os.path.join(runtime, "versions"))}/"$version"\n'
+        'binary="$version_root/t3"\n'
+        'test -x "$binary" || binary="$version_root/node_modules/t3/dist/bin.mjs"\n'
         'test -x "$binary" || { echo "T3 Code runtime is unavailable" >&2; exit 1; }\n'
         'exec "$binary" "$@"\n'
     )
