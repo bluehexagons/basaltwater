@@ -2034,6 +2034,15 @@ class SetupConfig:
     @classmethod
     def from_dict(cls, host: str, system_type: str, data: JSONDict) -> 'SetupConfig':
         data = dict(data)
+        legacy_privilege_broker = data.pop('privilege_broker', None)
+        if legacy_privilege_broker is not None:
+            from lib.privilege_setup import legacy_privilege_broker_port
+
+            legacy_port = legacy_privilege_broker_port(legacy_privilege_broker)
+            configured_port = data.get('privilege_broker_port')
+            if configured_port is not None and configured_port != legacy_port:
+                raise ValueError("Conflicting legacy and managed privilege broker ports")
+            data['privilege_broker_port'] = legacy_port
         retired = {
             "rdp_max_sessions": (None, 1, 10),
             "rdp_kill_disconnected": (None, False),

@@ -70,6 +70,28 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 self.assertEqual(cache_data['script'], 'infra-tools')
                 self.assertEqual(cache_data['command'], 'infra-tools setup')
 
+    def test_load_migrates_legacy_privilege_broker_origin(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir):
+                cache_path = get_cache_path_for_host('vm.example')
+                legacy_args = {
+                    'username': 'agent',
+                    'privilege_broker': 'https://vm.example:9444',
+                }
+                with open(cache_path, 'w', encoding='utf-8') as file_obj:
+                    json.dump({
+                        'host': 'vm.example',
+                        'system_type': 'agent_vm',
+                        'args': legacy_args,
+                    }, file_obj)
+
+                loaded = load_setup_command('vm.example')
+
+                assert loaded is not None
+                self.assertEqual(loaded.privilege_broker_port, 9444)
+                self.assertNotIn('privilege_broker', loaded.to_dict())
+                self.assertEqual(legacy_args['privilege_broker'], 'https://vm.example:9444')
+
     def test_load_nonexistent(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('lib.cache.get_setup_cache_dir', return_value=tmpdir), patch('lib.cache.get_history_dir', return_value=tmpdir):

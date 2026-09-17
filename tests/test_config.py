@@ -169,6 +169,13 @@ class TestSetupConfigFromDict(unittest.TestCase):
         self.assertNotIn('api_subdomain', config.to_dict())
         self.assertNotIn('desktop_interfaces', config.to_dict())
 
+    def test_from_dict_rejects_invalid_legacy_privilege_broker_origin(self):
+        with self.assertRaisesRegex(ValueError, 'Legacy privilege broker origin'):
+            SetupConfig.from_dict(
+                'vm.example', 'agent_vm',
+                {'username': 'agent', 'privilege_broker': 'http://vm.example:9444'},
+            )
+
 
 class TestSetupConfigToRemoteArgs(unittest.TestCase):
     def _make_config(self, **kwargs):

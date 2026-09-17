@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlsplit
 
 from lib.privilege_auth import validate_auth
 from lib.privilege_policy import validate_policy
 
 DEFAULT_PRIVILEGE_BROKER_PORT = 9444
+
+
+def legacy_privilege_broker_port(origin: object) -> int:
+    """Read the port from a valid pre-managed-endpoint cache origin."""
+    if not isinstance(origin, str):
+        raise ValueError("Legacy privilege broker origin must be an HTTPS URL")
+    try:
+        validate_policy({"version": 1, "machine": "0" * 32, "origin": origin,
+                         "requester_uid": 1000, "ttl_seconds": 300, "services": {}, "reboot": "approve"})
+    except ValueError as exc:
+        raise ValueError("Legacy privilege broker origin must be a valid HTTPS URL") from exc
+    return urlsplit(origin).port
 
 
 def privilege_broker_origin(config) -> str:
