@@ -48,7 +48,8 @@ overview.
 | [Git access and authentication](GIT_ACCESS.md) | Git policy, GitHub, self-hosted HTTPS, private CAs, and Git LFS |
 | [Authentication hardening](AUTHENTICATION_HARDENING.md) | Reachability, rate limits, failure bans, and verification for login surfaces |
 | [Notifications](NOTIFICATIONS.md) | Webhook, mailbox, and web-panel delivery; event volume; and alert interpretation |
-| [Minimal web panel](WEB_PANEL.md) | Authenticated service links, audit activity, notification history, ingest tokens, and access troubleshooting |
+| [Minimal web panel](WEB_PANEL.md) | Install, use, and troubleshoot the authenticated machine dashboard |
+| [Web panel reference](WEB_PANEL_REFERENCE.md) | Notification API, data limits, diagnostics, and access boundaries |
 | [Client CA trust](CLIENT_CA_TRUST.md) | Private-CA diagnosis and client enrollment |
 | [Protected device pairing](DEVICE_PAIRING.md) | Basic-Auth enrollment portal, one-time provider links, rotation, and removal |
 
@@ -66,6 +67,7 @@ automation, T3 Code, skills, and hardening.
 | [Agentic coding security](AGENT_SECURITY.md) | Sudo, Codex approval/sandbox policy, hardened modes, and supply-chain boundaries |
 | [Agentic VMs](AGENTIC_VMS.md) | Headless, full-capability, approval-panel, unrestricted, and hardened VM configurations |
 | [Privilege approvals](PRIVILEGE_APPROVALS.md) | Separate HTTPS approval page, supported operations, and administrator allowlists |
+| [Privilege broker reference](PRIVILEGE_BROKER_REFERENCE.md) | Allowlist policy, audit records, and approval-service security boundaries |
 | [Agent browser automation](BROWSER_AUTOMATION.md) | Playwright provisioning, Codex/OpenCode registration, and browser security boundaries |
 | [T3 Code server](T3_CODE.md) | Headless service, deliberate updates, pairing, remote clients, and security boundaries |
 | [Managed agent workflow skills](AGENT_SKILLS.md) | Installed Codex/OpenCode skills, capability routing, reconciliation, and maintenance |

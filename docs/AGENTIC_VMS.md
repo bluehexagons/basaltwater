@@ -165,6 +165,7 @@ retain removed group memberships.
 - [Agent systems](agents/README.md)
 - [Agentic coding security](AGENT_SECURITY.md)
 - [Privilege approvals](PRIVILEGE_APPROVALS.md)
+- [Privilege broker reference](PRIVILEGE_BROKER_REFERENCE.md)
 - [Minimal web panel](WEB_PANEL.md)
 - [Agent authentication](AGENT_AUTHENTICATION.md)
 - [Agent browser automation](BROWSER_AUTOMATION.md)

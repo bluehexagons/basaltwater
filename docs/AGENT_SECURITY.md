@@ -147,6 +147,8 @@ disposable identity or VM when those boundaries matter.
 ## Related documentation
 
 - [Command-line reference](COMMAND_LINE.md)
+- [Agentic VMs](AGENTIC_VMS.md)
+- [Privilege approvals](PRIVILEGE_APPROVALS.md)
 - [SSH authentication](SSH.md)
 - [T3 Code server](T3_CODE.md)
 - [Credentials overview](CREDENTIALS.md)

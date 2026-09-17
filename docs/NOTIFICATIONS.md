@@ -93,7 +93,7 @@ The setup result uses the newly saved target. Repeated delivery attempts with
 the same event ID appear only once.
 
 For enablement, disablement, rotation, retention, and API limits, see
-[Web panel notification ingest](WEB_PANEL.md#notification-ingest-api).
+[Web panel notification ingest](WEB_PANEL_REFERENCE.md#notification-ingest).
 
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
