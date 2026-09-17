@@ -43,6 +43,7 @@ Remove `--dry-run` from the patch example to apply it.
 | Configure CI/CD | [CI/CD webhook system](CICD.md) |
 | Configure shares, sync, parity, or backups | [Storage and data guides](README.md#services-deployments-and-data) |
 | Provision or operate a coding VM | [Agent systems](agents/README.md) |
+| Choose a headless, full-capability, approval-panel, or hardened agent VM | [Agentic VMs](AGENTIC_VMS.md) |
 
 ## Safe operating habits
 

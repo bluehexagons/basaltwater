@@ -4,6 +4,10 @@ This is the operator starting point for infra-tools-managed coding VMs and
 workstations. It groups the guides needed to choose a profile, set a security
 posture, provide credentials, and verify the resulting environment.
 
+For complete setup examples, including a fully capable T3 Code/RDP VM with a
+separate browser-approved privileged-action panel, start with
+[Agentic VMs](../AGENTIC_VMS.md).
+
 It does not replace the repository
 [contributor and coding-agent guide](contributing/README.md). That guide
 applies when changing this repository; this page applies when operating a
@@ -14,6 +18,7 @@ managed machine.
 | I need to… | Start here | Then use |
 | --- | --- | --- |
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
+| Configure a coding VM from an example | [Agentic VMs](../AGENTIC_VMS.md) | [Privilege approvals](../PRIVILEGE_APPROVALS.md) |
 | Add agent tools to an existing CachyOS KDE desktop | [CachyOS local setup](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |
 | Choose default, passwordless-sudo, or hardened operation | [Agentic coding security](../AGENT_SECURITY.md) | [Workstations](../WORKSTATIONS.md) |
 | Choose a credential workflow | [Credentials overview](../CREDENTIALS.md) | [SSH authentication](../SSH.md) |
@@ -59,6 +64,7 @@ protecting active work from scheduled host maintenance; see
 | Concern | Guide |
 | --- | --- |
 | Privilege, sandboxing, prompt injection, and supply chain | [Agentic coding security](../AGENT_SECURITY.md) |
+| Browser-approved privileged actions and allowlists | [Privilege approvals](../PRIVILEGE_APPROVALS.md) |
 | Credential scope, copying, rotation, and lifecycle | [Agent authentication](../AGENT_AUTHENTICATION.md) |
 | Browser access and private-network trust | [Agent browser automation](../BROWSER_AUTOMATION.md) |
 | Host capability differences | [Machine types](../MACHINE_TYPES.md) |

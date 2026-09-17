@@ -161,6 +161,8 @@ For other experiments, start with the prerequisites in the relevant guide:
 - [Proxmox VMs](PROXMOX.md): an existing Proxmox node and storage choices.
 - [Application deployments](DEPLOYMENTS.md): an application repository and its
   hosting requirements.
+- [Agentic VMs](AGENTIC_VMS.md): headless, graphical, approval-panel, and
+  hardened coding VM examples.
 
 ## Reset or move to another machine
 
