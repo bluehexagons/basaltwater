@@ -5,9 +5,10 @@ must not hold reusable sudo access. The agent requests an action; you review it
 on a separate HTTPS page and approve it once. The coding account never receives
 the approval password or a sudo session.
 
-The first version supports VM reboot and exact administrator-registered service
-restarts. It does not run arbitrary commands, install packages, write files, or
-accept command prefixes or wildcards.
+The agent can request an exact command and argument vector for one-time root
+execution. The approval page shows every argument; shell strings, environment
+assignments, stdin, and command prefixes are not accepted. VM reboot and exact
+administrator-registered service restarts remain available as structured actions.
 
 ## Set up the approval page
 
@@ -46,6 +47,10 @@ infra-tools agent privilege request service.restart --unit example.service \
   --reason "Restart the reviewed service" --json
 
 infra-tools agent privilege wait REQUEST_ID --timeout 300 --json
+
+# Request an exact command, without a shell or a leading sudo.
+infra-tools agent privilege request command.run \
+  --reason "Refresh package metadata" --command /usr/bin/apt-get update
 ```
 
 The request returns a `review_url`. Open it on your own device, sign in with

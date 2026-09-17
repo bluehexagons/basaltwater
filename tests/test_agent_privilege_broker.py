@@ -19,7 +19,7 @@ from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan, validat
 def policy() -> dict:
     return {"version": 1, "machine": "a" * 32, "origin": "https://vm.example:9444",
             "requester_uid": 1000, "ttl_seconds": 300,
-            "services": {"demo.service": "approve"}, "reboot": "approve"}
+            "services": {"demo.service": "approve"}, "reboot": "approve", "commands": "approve"}
 
 
 class BrokerTests(unittest.TestCase):
@@ -62,6 +62,16 @@ class BrokerTests(unittest.TestCase):
                                       ("service.restart", {"unit": "other.service"})):
             with self.subTest(operation=operation, parameters=parameters), self.assertRaises((ValueError, PermissionError)):
                 self.broker.request(1000, operation, parameters, "test")
+
+    def test_exact_command_is_reviewable_and_requires_approval(self):
+        request = self.broker.request(1000, "command.run", {"argv": ["/usr/bin/true"]}, "Verify command approval")
+        self.assertEqual(request["plan"]["argv"], ["/usr/bin/true"])
+        self.broker.decide(request["id"], request["digest"], True, "operator")
+        self.broker.execute_next()
+        self.runner.assert_called_once_with(request["plan"])
+        for argv in ([], ["sudo", "id"], ["bad command"], ["/bin/echo", "line\nbreak"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                self.broker.request(1000, "command.run", {"argv": argv}, "test")
 
     def test_review_digest_is_required(self):
         request = self.request()

@@ -219,7 +219,7 @@ def configure_privilege_broker(config) -> None:
         policy["origin"] = privilege_broker_origin(config)
     else:
         policy = {"version": 1, "machine": secrets.token_hex(16), "origin": privilege_broker_origin(config),
-                  "requester_uid": account.pw_uid, "ttl_seconds": 300, "services": {}, "reboot": "approve"}
+                  "requester_uid": account.pw_uid, "ttl_seconds": 300, "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
     for directory in ("/opt/infra_tools/lib", "/opt/infra_tools/common", "/opt/infra_tools/plugins"):

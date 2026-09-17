@@ -53,7 +53,7 @@ def render_request(request: dict, token: str) -> str:
     plan = request["plan"]
     expires = datetime.fromtimestamp(request["expires"], timezone.utc).isoformat()
     fields = [("Machine identity", plan["machine"]), ("Requesting account UID", plan["uid"]),
-              ("Operation", plan["operation"]), ("Parameters", canonical(plan["parameters"])),
+              ("Operation", plan["operation"]), ("Command", canonical(plan["argv"])), ("Parameters", canonical(plan["parameters"])),
               ("Expected effects", plan["effect"]), ("Expires (UTC)", expires),
               ("Status", request["state"])]
     content = '<p><a href="/">All requests</a></p><dl>'

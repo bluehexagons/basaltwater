@@ -21,6 +21,7 @@ DATABASE_PATH = "/var/lib/infra-tools-privilege-broker/requests.sqlite3"
 WEB_USER = "infra-approval"
 MAX_MESSAGE = 16384
 UNIT_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}\.service\Z")
+COMMAND_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
 ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
 
 
@@ -49,9 +50,9 @@ def protected_path(path: str, *, directory: bool = False) -> None:
 
 
 def validate_policy(value: object) -> dict:
-    if not isinstance(value, dict) or set(value) != {
+    if not isinstance(value, dict) or set(value) not in ({
         "version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot"
-    }:
+    }, {"version", "machine", "origin", "requester_uid", "ttl_seconds", "services", "reboot", "commands"}):
         raise ValueError("Invalid broker policy fields")
     if type(value["version"]) is not int or value["version"] != 1:
         raise ValueError("Unsupported broker policy version")
@@ -82,6 +83,12 @@ def validate_policy(value: object) -> dict:
             raise ValueError("Service rules require exact .service names and approve/allow decisions")
     if value["reboot"] not in ("deny", "approve"):
         raise ValueError("Reboot may only be denied or individually approved")
+    # Version-one policy files predate general command approvals. Normalize them
+    # in memory and let the next setup run persist the explicit setting.
+    if "commands" not in value:
+        value["commands"] = "approve"
+    if value["commands"] != "approve":
+        raise ValueError("Commands must require individual approval")
     return value
 
 
@@ -110,6 +117,19 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = policy["reboot"]
         argv = ["/usr/bin/systemctl", "--no-ask-password", "reboot"]
         effect = "Reboot this VM; all sessions and running work will be interrupted."
+    elif operation == "command.run" and set(parameters) == {"argv"}:
+        argv = parameters["argv"]
+        if (not isinstance(argv, list) or not 1 <= len(argv) <= 64
+            or any(not isinstance(argument, str) or not argument or len(argument) > 512
+                   or any(ord(character) < 32 or ord(character) == 127 for character in argument)
+                   for argument in argv)):
+            raise ValueError("Command must be a bounded argument vector without control characters")
+        executable = argv[0]
+        if (executable == "sudo" or (not executable.startswith("/")
+            and not COMMAND_NAME_PATTERN.fullmatch(executable))):
+            raise ValueError("Command executable must be a path or simple program name, without sudo")
+        mode = policy.get("commands", "approve")
+        effect = "Run this exact command once as root; review every argument before approving."
     else:
         raise ValueError("Unknown operation or parameters")
     if mode == "deny":

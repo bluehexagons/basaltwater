@@ -33,8 +33,9 @@ def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("privilege", help="Request a privileged operation for browser approval")
     actions = parser.add_subparsers(dest="privilege_command", required=True)
     request = actions.add_parser("request")
-    request.add_argument("operation", choices=("service.restart", "system.reboot"))
+    request.add_argument("operation", choices=("command.run", "service.restart", "system.reboot"))
     request.add_argument("--unit", help="Exact administrator-registered service name")
+    request.add_argument("--command", nargs=argparse.REMAINDER, help="Exact command and arguments; place after --command")
     request.add_argument("--reason", required=True, help="Explain why the operation is needed")
     request.add_argument("--json", action="store_true")
     for name in ("status", "wait"):
@@ -61,8 +62,12 @@ def run_privilege_command(args: argparse.Namespace) -> int:
         if args.privilege_command == "request":
             if (args.operation == "service.restart") != bool(args.unit):
                 raise ValueError("--unit is required only for service.restart")
+            if (args.operation == "command.run") != bool(args.command):
+                raise ValueError("--command is required only for command.run")
+            if args.operation != "command.run" and args.command:
+                raise ValueError("--command is required only for command.run")
             result = exchange({"action": "request", "operation": args.operation,
-                               "parameters": {"unit": args.unit} if args.unit else {}, "reason": args.reason})
+                               "parameters": ({"unit": args.unit} if args.unit else {"argv": args.command} if args.command else {}), "reason": args.reason})
         else:
             timeout = getattr(args, "timeout", 0)
             if not 0 <= timeout <= 900:
