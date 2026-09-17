@@ -37,7 +37,7 @@ infra-tools setup agent_vm 192.168.1.50 agent \
   --git-access read \
   --repo https://github.com/example/project.git \
   --access-source 192.168.1.0/24 \
-  --privilege-broker https://192.168.1.50:9444 \
+  --privilege-broker \
   --privilege-broker-password
 ```
 
@@ -72,7 +72,7 @@ infra-tools setup agent_code_vm 192.168.1.60 agent \
   --lan-access \
   --web-panel 9443 --ssl \
   --web-panel-password 'replace-with-a-separate-panel-password' \
-  --privilege-broker https://192.168.1.60:9444 \
+  --privilege-broker \
   --privilege-broker-password
 ```
 
@@ -151,7 +151,7 @@ existing compatible agent VM, run:
 
 ```bash
 infra-tools patch 192.168.1.60 agent \
-  --privilege-broker https://192.168.1.60:9444 \
+  --privilege-broker \
   --privilege-broker-password
 ```
 

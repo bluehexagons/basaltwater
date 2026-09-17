@@ -52,7 +52,7 @@ Without TLS, Basic Auth crosses the network as plaintext.
 
 ## Agent VM approvals
 
-An agent VM configured with `--privilege-broker HTTPS_ORIGIN` receives a
+An agent VM configured with `--privilege-broker [PORT]` receives a
 **Privilege approvals** service link. It opens a separate HTTPS page with its
 own password and service identity. The panel cannot approve actions or read the
 approval credential. Use [Privilege approvals](PRIVILEGE_APPROVALS.md) for the

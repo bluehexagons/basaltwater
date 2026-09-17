@@ -15,7 +15,7 @@ Run this from the trusted controller:
 
 ```bash
 infra-tools patch 192.168.1.50 agent \
-  --privilege-broker https://192.168.1.50:9444 \
+  --privilege-broker \
   --privilege-broker-password
 ```
 
@@ -23,10 +23,11 @@ The password flag prompts privately. Pick a 16–256 character password that is
 different from the Linux, Git, T3, and web-panel passwords. Only a salted hash
 is uploaded; saved configuration and reconstructed setup commands omit it.
 
-Choose a lowercase hostname or IP address and an explicit HTTPS port above
-1023, outside the shared gateway's 8443–8999 range. Restrict the VM with
-`--lan-access` or `--access-source`, and enroll the VM CA on the device that
-will approve requests; see [Client CA trust](CLIENT_CA_TRUST.md).
+The approval page uses the managed VM host and HTTPS port 9444. Use
+`--privilege-broker PORT` to choose another port above 1023, outside the shared
+gateway's 8443–8999 range. Restrict the VM with `--lan-access` or
+`--access-source`, and enroll the VM CA on the device that will approve
+requests; see [Client CA trust](CLIENT_CA_TRUST.md).
 
 The broker is available on VM `agent_vm`, `agent_code_vm`, and
 `agent_workstation` setups. It cannot coexist with `--nopasswd`,

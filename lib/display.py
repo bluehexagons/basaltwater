@@ -103,8 +103,10 @@ def print_service_access_summary(
     access_details = remote_access_details or {}
 
     lines.append(("SSH", f"ssh {config.username}@{config.host}", "shell access"))
-    if config.privilege_broker:
-        lines.append(("Privilege approvals", config.privilege_broker + "/", "separate approval password"))
+    if config.privilege_broker_port is not None:
+        from lib.privilege_setup import privilege_broker_origin
+
+        lines.append(("Privilege approvals", privilege_broker_origin(config) + "/", "separate approval password"))
 
     if config.web_panel_port is not None:
         from common.web_panel_steps import web_panel_url
@@ -488,8 +490,10 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
             print("Web panel auth: supplied for this setup")
     elif config.disable_web_panel:
         print("Web panel: remove")
-    if config.privilege_broker:
-        print(f"Privilege approvals: {config.privilege_broker} (independent password; brokered account)")
+    if config.privilege_broker_port is not None:
+        from lib.privilege_setup import privilege_broker_origin
+
+        print(f"Privilege approvals: {privilege_broker_origin(config)} (independent password; brokered account)")
     elif config.disable_privilege_broker:
         print("Privilege approvals: disable")
 

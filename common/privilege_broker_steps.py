@@ -16,7 +16,7 @@ from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.machine_state import can_manage_system_services, is_vm
 from lib.privilege_auth import validate_auth
 from lib.privilege_policy import CONFIG_DIR, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy
-from lib.privilege_setup import validate_broker_settings
+from lib.privilege_setup import privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
 from lib.validators import validate_username
 
@@ -146,7 +146,7 @@ def _https_ready(origin: str, certificate: str) -> bool:
 
 def configure_privilege_broker(config) -> None:
     validate_broker_settings(config)
-    if not config.privilege_broker and not config.disable_privilege_broker:
+    if config.privilege_broker_port is None and not config.disable_privilege_broker:
         return
     if is_dry_run():
         print("  [DRY-RUN] Would reconcile independent HTTPS privilege approvals")
@@ -204,9 +204,9 @@ def configure_privilege_broker(config) -> None:
         policy = load_policy()
         if policy["requester_uid"] != account.pw_uid:
             raise ValueError("Existing broker policy belongs to a different UID; review it as administrator")
-        policy["origin"] = config.privilege_broker
+        policy["origin"] = privilege_broker_origin(config)
     else:
-        policy = {"version": 1, "machine": secrets.token_hex(16), "origin": config.privilege_broker,
+        policy = {"version": 1, "machine": secrets.token_hex(16), "origin": privilege_broker_origin(config),
                   "requester_uid": account.pw_uid, "ttl_seconds": 300, "services": {}, "reboot": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
@@ -220,7 +220,7 @@ def configure_privilege_broker(config) -> None:
                 protected_path(os.path.join(root, name))
     from common.godot_web_steps import configure_internal_web_host, identities_for_config
 
-    origin = urlsplit(config.privilege_broker)
+    origin = urlsplit(privilege_broker_origin(config))
     identities = identities_for_config(origin.hostname, config.system_hostname)
     _url, _ca, cert, key, _changed = configure_internal_web_host(
         identities, [config.username], config.effective_access_sources(),
@@ -243,8 +243,9 @@ def configure_privilege_broker(config) -> None:
         run(["systemctl", "daemon-reload"])
         run(["systemctl", "enable", "--now", BROKER + ".service", WEB + ".service"])
         for _ in range(10):
-            if is_service_active(BROKER) and is_service_active(WEB) and _https_ready(config.privilege_broker, CONFIG_DIR + "/server.crt"):
-                print("  ✓ Privilege approvals: " + config.privilege_broker + "/")
+            approval_origin = privilege_broker_origin(config)
+            if is_service_active(BROKER) and is_service_active(WEB) and _https_ready(approval_origin, CONFIG_DIR + "/server.crt"):
+                print("  ✓ Privilege approvals: " + approval_origin + "/")
                 return
             time.sleep(0.2)
         raise RuntimeError("Privilege approval services did not become active")

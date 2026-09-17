@@ -11,7 +11,7 @@ and its network access as part of the security design.
 | --- | --- | --- | --- |
 | Default | Member of `sudo`; password required | Auto-reviewed requests, workspace write access, no default shell network access | Interactive development and learning |
 | `--nopasswd` | Unrestricted `NOPASSWD:ALL` on a VM | Same Codex policy as default | High-capability coding and manual administration |
-| `--privilege-broker HTTPS_ORIGIN` | No administrator groups or sudoers grants; narrowly registered privileged operations | Same Codex policy as default | [Separate browser approvals](PRIVILEGE_APPROVALS.md) and administrator allowlists |
+| `--privilege-broker [PORT]` | No administrator groups or sudoers grants; narrowly registered privileged operations | Same Codex policy as default | [Separate browser approvals](PRIVILEGE_APPROVALS.md) and administrator allowlists |
 | `--harden-agent` | Removed from administrator, host-control, and root-equivalent supplementary groups | Workspace write access; no approval, web search, credential-path reads, active browser/computer features, plugins, or MCP servers | Interactive evaluation of less-trusted code |
 | `--harden-user` | `--harden-agent` plus locked password, mode-`0700` home, no sensitive system-data or device groups, no SSH forwarding/user rc, and no systemd lingering | Same hardened Codex boundary | Headless CI/CD and more restricted disposable evaluation |
 

@@ -978,12 +978,15 @@ def add_setup_arguments(
         )
     web_panel_group = parser.add_mutually_exclusive_group()
     broker_group = parser.add_mutually_exclusive_group()
-    broker_group.add_argument("--privilege-broker", metavar="HTTPS_ORIGIN",
-                              help="Enable browser-approved privileged operations at a dedicated HTTPS host:port")
+    from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT
+    broker_group.add_argument("--privilege-broker", nargs="?", const=DEFAULT_PRIVILEGE_BROKER_PORT,
+                              type=int, metavar="PORT",
+                              help="Enable browser-approved privileged operations; port defaults to 9444")
     broker_group.add_argument("--no-privilege-broker", dest="disable_privilege_broker", action="store_true",
                               help="Disable privileged requests and remove the approval listener; retain audit history")
     if for_remote:
         parser.add_argument("--privilege-broker-auth", help=argparse.SUPPRESS)
+        parser.add_argument("--privilege-broker-host", help=argparse.SUPPRESS)
     else:
         parser.add_argument("--privilege-broker-password", nargs="?", const="", metavar="PASSWORD",
                             help="Set a separate approval password; omit the value to prompt securely")

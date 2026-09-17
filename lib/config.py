@@ -433,7 +433,8 @@ class SetupConfig:
     web_panel_payload: bool = False
     web_panel_notification_ingest: Optional[bool] = None
     disable_web_panel: bool = False
-    privilege_broker: MaybeStr = None
+    privilege_broker_port: Optional[int] = None
+    privilege_broker_host: MaybeStr = None
     privilege_broker_auth: MaybeStr = None
     disable_privilege_broker: bool = False
     browser_automation: MaybeStr = None
@@ -804,17 +805,15 @@ class SetupConfig:
             or self.git_access != "none"
             or self.agent_workspace
             or self.install_git_lfs
-            or self.privilege_broker
+            or self.privilege_broker_port is not None
         )
 
     def effective_web_ports(self) -> list[int]:
         """Return managed TCP web ports for this resolved target."""
 
         ports = list(self.web_ports or [])
-        if self.privilege_broker:
-            from urllib.parse import urlsplit
-
-            ports.extend((urlsplit(self.privilege_broker).port, GODOT_WEB_HTTPS_PORT))
+        if self.privilege_broker_port is not None:
+            ports.extend((self.privilege_broker_port, GODOT_WEB_HTTPS_PORT))
         if self.homebox:
             from lib.homebox_config import parse_homebox_spec
 
@@ -932,8 +931,9 @@ class SetupConfig:
         args.extend(self._homebox_args())
         if self.disable_privilege_broker:
             args.append("--no-privilege-broker")
-        elif self.privilege_broker:
-            args.append(f"--privilege-broker {shlex.quote(self.privilege_broker)}")
+        elif self.privilege_broker_port is not None:
+            args.append(f"--privilege-broker {self.privilege_broker_port}")
+            args.append(f"--privilege-broker-host {shlex.quote(self.host)}")
             if self.privilege_broker_auth:
                 args.append(f"--privilege-broker-auth {shlex.quote(self.privilege_broker_auth)}")
 
@@ -1369,8 +1369,13 @@ class SetupConfig:
         cmd_parts.extend(self._homebox_args())
         if self.disable_privilege_broker:
             cmd_parts.append("--no-privilege-broker")
-        elif self.privilege_broker:
-            cmd_parts.append(f"--privilege-broker {shlex.quote(self.privilege_broker)}")
+        elif self.privilege_broker_port is not None:
+            from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT
+
+            if self.privilege_broker_port == DEFAULT_PRIVILEGE_BROKER_PORT:
+                cmd_parts.append("--privilege-broker")
+            else:
+                cmd_parts.append(f"--privilege-broker {self.privilege_broker_port}")
         
         # SSH key
         if self.ssh_key:
@@ -1967,6 +1972,7 @@ class SetupConfig:
             'web_panel_auth_password',
             'web_panel_payload',
             'privilege_broker_auth',
+            'privilege_broker_host',
             'swap_initialize',
             'disable_syncthing',
         ):
@@ -2567,7 +2573,8 @@ class SetupConfig:
                 args, 'web_panel_notification_ingest'
             ),
             disable_web_panel=disable_web_panel,
-            privilege_broker=_optional_str_arg(args, 'privilege_broker'),
+            privilege_broker_port=_optional_int_arg(args, 'privilege_broker'),
+            privilege_broker_host=_optional_str_arg(args, 'privilege_broker_host'),
             privilege_broker_auth=auth_from_args(args, username),
             disable_privilege_broker=_optional_bool_arg(args, 'disable_privilege_broker') is True,
             browser_automation=browser_automation,

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr
+import io
 import json
 from pathlib import Path
 import shlex
@@ -18,6 +19,7 @@ from infra_tools import _patch_preserve_keys, create_infra_tools_parser
 from lib.arg_parser import add_setup_arguments
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
+from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT, privilege_broker_origin
 from plugins.common import extend_web_panel_steps
 
 
@@ -25,50 +27,66 @@ class SetupTests(unittest.TestCase):
     def config(self, **kwargs):
         return SetupConfig(host="vm.example", username="agent", system_type="agent_vm", **kwargs)
 
-    def test_password_hash_is_private_transient_and_survives_remote_parsing(self):
+    def test_default_port_is_private_transient_and_survives_remote_parsing(self):
         parser, _, _ = create_infra_tools_parser()
         args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
-                                  "https://vm.example:9444", "--privilege-broker-password", "test-only independent password"])
+                                  "--privilege-broker-password", "test-only independent password"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertNotIn("test-only independent password", repr(config))
         self.assertNotIn("privilege_broker_auth", config.to_dict())
+        self.assertNotIn("privilege_broker_host", config.to_dict())
         self.assertNotIn("--privilege-broker-auth", " ".join(config.to_setup_command()))
+        self.assertEqual(config.privilege_broker_port, DEFAULT_PRIVILEGE_BROKER_PORT)
+        self.assertEqual(privilege_broker_origin(config), "https://vm.example:9444")
+        self.assertIn("--privilege-broker", config.to_setup_command())
         remote = argparse.ArgumentParser()
         add_setup_arguments(remote, for_remote=True)
         args = remote.parse_args(shlex.split(" ".join(config.to_remote_args())))
         args.host = "localhost"
         received = SetupConfig.from_args(args, "agent_vm")
         self.assertEqual(received.privilege_broker_auth, config.privilege_broker_auth)
-        self.assertEqual(received.privilege_broker, config.privilege_broker)
+        self.assertEqual(received.privilege_broker_port, DEFAULT_PRIVILEGE_BROKER_PORT)
+        self.assertEqual(privilege_broker_origin(received), "https://vm.example:9444")
+
+    def test_custom_port_is_accepted_and_url_is_rejected(self):
+        parser, _, _ = create_infra_tools_parser()
+        args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker", "9445"])
+        config = SetupConfig.from_args(args, "agent_vm")
+        self.assertEqual(config.privilege_broker_port, 9445)
+        self.assertEqual(privilege_broker_origin(config), "https://vm.example:9445")
+        self.assertIn("--privilege-broker 9445", config.to_setup_command())
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
+                               "https://vm.example:9444"])
 
     def test_omitted_patch_preserves_and_explicit_disable_removes(self):
         parser, _, _ = create_infra_tools_parser()
-        cached = self.config(privilege_broker="https://vm.example:9444")
-        for flags, expected in (([], cached.privilege_broker), (["--no-privilege-broker"], None)):
+        cached = self.config(privilege_broker_port=9444)
+        for flags, expected in (([], cached.privilege_broker_port), (["--no-privilege-broker"], None)):
             args = parser.parse_args(["patch", "vm.example", "agent", *flags])
             config = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"), preserve_keys=_patch_preserve_keys(args))
-            self.assertEqual(config.privilege_broker, expected)
+            self.assertEqual(config.privilege_broker_port, expected)
 
     def test_password_only_patch_rotates_without_losing_origin(self):
         parser, _, _ = create_infra_tools_parser()
-        cached = self.config(privilege_broker="https://vm.example:9444")
+        cached = self.config(privilege_broker_port=9444)
         args = parser.parse_args(["patch", "vm.example", "agent", "--privilege-broker-password", "test-only changed password"])
         config = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"), preserve_keys=_patch_preserve_keys(args))
-        self.assertEqual(config.privilege_broker, cached.privilege_broker)
+        self.assertEqual(config.privilege_broker_port, cached.privilege_broker_port)
         self.assertEqual(json.loads(config.privilege_broker_auth)["username"], "agent")
 
     def test_rejects_conflicting_postures_and_ports(self):
         for extra in ({"nopasswd": True}, {"harden_agent": True}, {"harden_user": True},
                       {"machine_type": "oci"}, {"web_panel_port": 9444}):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
-                self.config(privilege_broker="https://vm.example:9444", **extra)
+                self.config(privilege_broker_port=9444, **extra)
         with self.assertRaises(ValueError):
-            self.config(privilege_broker="http://vm.example:9444")
+            self.config(privilege_broker_port=1023)
         with self.assertRaises(ValueError):
-            self.config(privilege_broker="https://vm.example:8444")
+            self.config(privilege_broker_port=8444)
 
     def test_port_firewall_panel_link_and_step_order(self):
-        config = self.config(privilege_broker="https://vm.example:9444", web_panel_port=443, enable_ssl=True)
+        config = self.config(privilege_broker_port=9444, web_panel_port=443, enable_ssl=True)
         self.assertIn(9444, config.effective_web_ports())
         services = build_web_panel_manifest(config, ["vm.example"])["services"]
         self.assertIn("https://vm.example:9444/", [service["url"] for service in services])
@@ -92,7 +110,7 @@ class SetupTests(unittest.TestCase):
     @patch("common.privilege_broker_steps.is_dry_run", return_value=True)
     def test_dry_run_does_not_mutate_system(self, _dry, run):
         from common.privilege_broker_steps import configure_privilege_broker
-        configure_privilege_broker(self.config(privilege_broker="https://vm.example:9444"))
+        configure_privilege_broker(self.config(privilege_broker_port=9444))
         run.assert_not_called()
 
 
@@ -112,7 +130,7 @@ class LifecycleTests(unittest.TestCase):
         self.polkit_path = self.root / "broker.rules"
         self.record = password_record("agent", "test-only approval password")
         self.config = SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
-                                  privilege_broker="https://vm.example:9444",
+                                  privilege_broker_port=9444,
                                   privilege_broker_auth=json.dumps(self.record))
         self.run = Mock(return_value=SimpleNamespace(returncode=1))
         self.ready = Mock(return_value=True)

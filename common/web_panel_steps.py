@@ -114,8 +114,10 @@ def build_web_panel_manifest(
 
     host = _preferred_host(config, identities)
     services: list[dict[str, Any]] = []
-    if config.privilege_broker:
-        services.append({"label": "Privilege approvals", "url": config.privilege_broker + "/",
+    if config.privilege_broker_port is not None:
+        from lib.privilege_setup import privilege_broker_origin
+
+        services.append({"label": "Privilege approvals", "url": privilege_broker_origin(config) + "/",
                          "description": "Review agent requests using the separate approval password"})
     access: list[dict[str, str]] = [
         {

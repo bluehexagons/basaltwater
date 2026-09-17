@@ -359,7 +359,7 @@ def extend_web_panel_steps(
 ) -> None:
     """Append the optional authenticated web panel."""
 
-    if config.privilege_broker or config.disable_privilege_broker:
+    if config.privilege_broker_port is not None or config.disable_privilege_broker:
         from common.privilege_broker_steps import configure_privilege_broker
 
         steps.append(("Configuring privilege approval broker", configure_privilege_broker))

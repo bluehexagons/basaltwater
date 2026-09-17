@@ -1025,7 +1025,7 @@ def _execute_patch_config(config: SetupConfig) -> int:
 def _patch_preserve_keys(args: argparse.Namespace) -> set[str]:
     preserve_keys: set[str] = set()
     if getattr(args, "privilege_broker", None) is None and not getattr(args, "disable_privilege_broker", False):
-        preserve_keys.update({"privilege_broker", "disable_privilege_broker"})
+        preserve_keys.update({"privilege_broker_port", "disable_privilege_broker"})
     if getattr(args, "nopasswd", None) is None:
         preserve_keys.add("nopasswd")
     explicit_swap_mode = getattr(args, "swap_mode", None)
@@ -1647,7 +1647,7 @@ def _refresh_existing_managed_guest_host_keys(
 
 
 def _prepare_runtime_config_for_cli(config: SetupConfig) -> SetupConfig:
-    if config.privilege_broker_auth and not config.privilege_broker:
+    if config.privilege_broker_auth and config.privilege_broker_port is None:
         raise ValueError("--privilege-broker-password requires an enabled privilege broker")
     _apply_hosted_proxmox_defaults(config, None)
     runtime_config = prepare_runtime_config(config)
