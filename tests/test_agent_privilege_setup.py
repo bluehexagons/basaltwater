@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from common.privilege_broker_steps import render_units
+from common.privilege_broker_steps import _requester_has_sudo_grants, render_units
 from common.web_panel_steps import build_web_panel_manifest
 from infra_tools import _patch_preserve_keys, create_infra_tools_parser
 from lib.arg_parser import add_setup_arguments
@@ -107,6 +107,27 @@ class SetupTests(unittest.TestCase):
         self.assertIn("ProtectSystem=strict", web)
 
     @patch("common.privilege_broker_steps.run")
+    def test_sudo_denial_output_is_authoritative(self, run):
+        run.return_value = SimpleNamespace(
+            returncode=2,
+            stdout="",
+            stderr="User agent is not allowed to run sudo on agent-2.",
+        )
+
+        self.assertFalse(_requester_has_sudo_grants("agent"))
+
+    @patch("common.privilege_broker_steps.run")
+    def test_sudo_query_failure_is_not_treated_as_a_denial(self, run):
+        run.return_value = SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="sudo: /etc/sudoers is unreadable",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Could not determine"):
+            _requester_has_sudo_grants("agent")
+
+    @patch("common.privilege_broker_steps.run")
     @patch("common.privilege_broker_steps.is_dry_run", return_value=True)
     def test_dry_run_does_not_mutate_system(self, _dry, run):
         from common.privilege_broker_steps import configure_privilege_broker
@@ -132,7 +153,11 @@ class LifecycleTests(unittest.TestCase):
         self.config = SetupConfig(host="vm.example", username="agent", system_type="agent_vm",
                                   privilege_broker_port=9444,
                                   privilege_broker_auth=json.dumps(self.record))
-        self.run = Mock(return_value=SimpleNamespace(returncode=1))
+        self.run = Mock(return_value=SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="User agent is not allowed to run sudo on vm.example.",
+        ))
         self.ready = Mock(return_value=True)
         constants = {"CONFIG_DIR": str(self.directory), "POLICY_PATH": str(self.policy_path),
                      "AUTH_PATH": str(self.auth_path), "POLKIT_PATH": str(self.polkit_path),
@@ -201,9 +226,11 @@ class LifecycleTests(unittest.TestCase):
 
     def test_sudo_grants_and_missing_password_fail_before_install(self):
         self.run.return_value.returncode = 0
+        self.run.return_value.stderr = ""
         with self.assertRaisesRegex(ValueError, "sudoers"):
             self.steps.configure_privilege_broker(self.config)
         self.run.return_value.returncode = 1
+        self.run.return_value.stderr = "User agent is not allowed to run sudo on vm.example."
         self.config.privilege_broker_auth = None
         with self.assertRaisesRegex(ValueError, "First installation"):
             self.steps.configure_privilege_broker(self.config)

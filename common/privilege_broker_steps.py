@@ -6,6 +6,7 @@ import grp
 import json
 import os
 import pwd
+import re
 import secrets
 import socket
 import ssl
@@ -144,6 +145,18 @@ def _https_ready(origin: str, certificate: str) -> bool:
         return False
 
 
+def _requester_has_sudo_grants(username: str) -> bool:
+    """Return whether sudo explicitly reports a requester grant."""
+    sudo = run(["sudo", "-n", "-l", "-U", username], capture_output=True, check=False)
+    output = "\n".join(part for part in (sudo.stdout, sudo.stderr) if part)
+    denial = rf"User\s+{re.escape(username)}\s+is not allowed to run sudo(?:\s|$)"
+    if re.search(denial, output):
+        return False
+    if sudo.returncode == 0:
+        return True
+    raise RuntimeError("Could not determine whether the brokered account has sudoers grants")
+
+
 def configure_privilege_broker(config) -> None:
     validate_broker_settings(config)
     if config.privilege_broker_port is None and not config.disable_privilege_broker:
@@ -178,8 +191,7 @@ def configure_privilege_broker(config) -> None:
     if _AGENT_DENIED_GROUPS & _account_groups(account.pw_name, account.pw_gid):
         raise ValueError("Remove requester privileged groups before installing the broker")
     # Named-user sudoers entries can bypass the group-based posture.
-    sudo = run(["sudo", "-n", "-l", "-U", account.pw_name], capture_output=True, check=False)
-    if sudo.returncode != 1:
+    if _requester_has_sudo_grants(account.pw_name):
         raise ValueError("Brokered account must have no sudoers grants; remove per-user rules through the administrator channel")
     _approval_account()
     for directory in (os.path.dirname(CONFIG_DIR), CONFIG_DIR,
