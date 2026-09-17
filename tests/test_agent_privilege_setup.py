@@ -59,6 +59,14 @@ class SetupTests(unittest.TestCase):
             parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
                                "https://vm.example:9444"])
 
+    def test_command_request_keeps_the_top_level_command(self):
+        parser, _, _ = create_infra_tools_parser()
+        args = parser.parse_args([
+            "agent", "privilege", "request", "command.run", "--reason", "Test", "--command", "/usr/bin/true",
+        ])
+        self.assertEqual(args.command, "agent")
+        self.assertEqual(args.privilege_argv, ["/usr/bin/true"])
+
     def test_omitted_patch_preserves_and_explicit_disable_removes(self):
         parser, _, _ = create_infra_tools_parser()
         cached = self.config(privilege_broker_port=9444)
