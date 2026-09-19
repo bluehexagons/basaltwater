@@ -248,7 +248,7 @@ class ProxmoxShell:
 
     def run(self) -> int:
         """Drive the REPL until the user quits or input ends."""
-        self._output("infra-tools proxmox shell — type 'help' for commands.")
+        self._output("basaltw proxmox shell — type 'help' for commands.")
         while True:
             prompt = self._make_prompt()
             try:

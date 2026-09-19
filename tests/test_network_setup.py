@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from common import network_steps
-from infra_tools import create_infra_tools_parser, run_setup_command
+from basaltwater import create_basaltwater_parser, run_setup_command
 from lib.config import SetupConfig
 from lib.validation import validate_network_setup_settings, validate_system_hostname
 
@@ -55,7 +55,7 @@ def _transition_payload(
 
 class TestNetworkSetupCLI(unittest.TestCase):
     def test_parses_and_serializes_network_and_hostname_options(self):
-        parser, _setup_parser, _patch_parser = create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "setup",
@@ -92,7 +92,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
         self.assertEqual(config.to_dict()["network_interface"], "enp1s0")
 
     def test_parses_and_serializes_live_network_activation(self):
-        parser, _setup_parser, _patch_parser = create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "patch",
@@ -117,7 +117,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
         self.assertFalse(legacy.activate_network)
 
     def test_initial_provisioned_setup_rejects_live_handoff(self):
-        parser, _setup_parser, _patch_parser = create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "setup",
@@ -130,13 +130,13 @@ class TestNetworkSetupCLI(unittest.TestCase):
             ]
         )
 
-        with patch("infra_tools._prepare_runtime_config_for_cli") as mock_prepare:
+        with patch("basaltwater._prepare_runtime_config_for_cli") as mock_prepare:
             self.assertEqual(run_setup_command(args), 1)
 
         mock_prepare.assert_not_called()
 
     def test_provisioned_setup_rejects_duplicate_ipv4_option(self):
-        parser, _setup_parser, _patch_parser = create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "setup",
@@ -150,7 +150,7 @@ class TestNetworkSetupCLI(unittest.TestCase):
             ]
         )
 
-        with patch("infra_tools._prepare_runtime_config_for_cli") as mock_prepare:
+        with patch("basaltwater._prepare_runtime_config_for_cli") as mock_prepare:
             self.assertEqual(run_setup_command(args), 1)
 
         mock_prepare.assert_not_called()
@@ -273,7 +273,7 @@ class TestNetworkConfigRendering(unittest.TestCase):
             interfaces_dir = os.path.join(network_dir, "interfaces.d")
             os.makedirs(interfaces_dir)
             main_path = os.path.join(network_dir, "interfaces")
-            managed_path = os.path.join(interfaces_dir, "infra_tools_static")
+            managed_path = os.path.join(interfaces_dir, "basaltwater_static")
             original = (
                 "auto lo\niface lo inet loopback\n\n"
                 "auto eth0\niface eth0 inet dhcp\n    metric 10\n\n"
@@ -298,7 +298,7 @@ class TestNetworkConfigRendering(unittest.TestCase):
 
             with open(main_path, "r", encoding="utf-8") as file_obj:
                 self.assertNotIn("iface eth0 inet dhcp", file_obj.read())
-            with open(f"{main_path}.infra-tools.bak", "r", encoding="utf-8") as file_obj:
+            with open(f"{main_path}.basaltwater.bak", "r", encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), original)
             with open(managed_path, "r", encoding="utf-8") as file_obj:
                 managed = file_obj.read()

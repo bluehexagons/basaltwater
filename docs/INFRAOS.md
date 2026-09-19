@@ -7,13 +7,13 @@
 ## Purpose
 
 InfraOS is a proposed Debian-based operating-system product built on the
-principles and feature set of infra-tools. Its purpose is to make a machine's
+principles and feature set of basaltwater. Its purpose is to make a machine's
 role, configuration, security posture, operations, and recovery path explicit
 and repeatable from first boot through its supported life.
 
 It is not initially a new Linux distribution with independently maintained
 packages. It is a curated Debian derivative: signed images and packages plus an
-infra-tools-powered configuration and operations layer. Debian remains the
+basaltwater-powered configuration and operations layer. Debian remains the
 supplier of the kernel, base packages, security fixes, and package ecosystem.
 
 This distinction is deliberate. The valuable part of Basaltwater is

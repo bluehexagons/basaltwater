@@ -47,15 +47,15 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
 
             expected = {
                 *T3_AGENT_SKILL_NAMES,
-                "infra-tools-t3-preview-testing",
+                "basaltwater-t3-preview-testing",
             }
             self.assertEqual(
                 expected,
                 {
                     *BASE_AGENT_SKILL_NAMES,
-                    "infra-tools-t3code",
-                    "infra-tools-t3-preview-testing",
-                    "infra-tools-web-gateway",
+                    "basaltwater-t3code",
+                    "basaltwater-t3-preview-testing",
+                    "basaltwater-web-gateway",
                 },
             )
             for skill_name in expected:
@@ -63,7 +63,7 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
                 with open(path, encoding="utf-8") as file_obj:
                     content = file_obj.read()
                 self.assertIn(f"name: {skill_name}", content)
-                self.assertIn("managed-by: infra_tools", content)
+                self.assertIn("managed-by: basaltwater", content)
 
     def test_t3_with_playwright_installs_only_the_combined_browser_skill(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -87,14 +87,14 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
                 os.path.isfile(
                     os.path.join(
                         skills_root,
-                        "infra-tools-browser-testing",
+                        "basaltwater-browser-testing",
                         "SKILL.md",
                     )
                 )
             )
             for absent in (
-                "infra-tools-playwright-testing",
-                "infra-tools-t3-preview-testing",
+                "basaltwater-playwright-testing",
+                "basaltwater-t3-preview-testing",
             ):
                 self.assertFalse(
                     os.path.exists(os.path.join(skills_root, absent, "SKILL.md"))
@@ -114,7 +114,7 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
                 directory = os.path.join(home, ".agents", "skills", skill_name)
                 os.makedirs(directory)
                 with open(os.path.join(directory, "SKILL.md"), "w", encoding="utf-8") as file_obj:
-                    file_obj.write("metadata:\n  managed-by: infra_tools\n")
+                    file_obj.write("metadata:\n  managed-by: basaltwater\n")
                 os.chmod(os.path.join(directory, "SKILL.md"), 0o644)
 
             self.assertFalse(_t3_agent_skills_ready(home))
@@ -122,7 +122,7 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
                 home,
                 ".agents",
                 "skills",
-                "infra-tools-t3-preview-testing",
+                "basaltwater-t3-preview-testing",
             )
             os.makedirs(browser_directory)
             with open(
@@ -130,19 +130,19 @@ class ManagedT3AgentSkillTests(unittest.TestCase):
                 "w",
                 encoding="utf-8",
             ) as file_obj:
-                file_obj.write("metadata:\n  managed-by: infra_tools\n")
+                file_obj.write("metadata:\n  managed-by: basaltwater\n")
             os.chmod(os.path.join(browser_directory, "SKILL.md"), 0o644)
             self.assertTrue(_t3_agent_skills_ready(home))
             stale_directory = os.path.join(
                 home,
                 ".agents",
                 "skills",
-                "infra-tools-playwright-testing",
+                "basaltwater-playwright-testing",
             )
             os.makedirs(stale_directory)
             stale_skill = os.path.join(stale_directory, "SKILL.md")
             with open(stale_skill, "w", encoding="utf-8") as file_obj:
-                file_obj.write("metadata:\n  managed-by: infra_tools\n")
+                file_obj.write("metadata:\n  managed-by: basaltwater\n")
             os.chmod(stale_skill, 0o644)
             self.assertFalse(_t3_agent_skills_ready(home))
             os.unlink(stale_skill)

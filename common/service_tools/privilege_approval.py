@@ -19,7 +19,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 if __name__ == "__main__" and not __package__:
-    sys.path.insert(0, "/opt/infra_tools")
+    sys.path.insert(0, "/opt/basaltwater")
 
 from lib.privilege_auth import authenticate, validate_auth
 from lib.privilege_client import exchange
@@ -39,7 +39,7 @@ li{margin:1rem 0}.muted{color:#4d6070}footer{margin-top:2rem;font-size:.85rem}
 def page(content: str) -> str:
     return ('<!doctype html><html lang="en"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Privilege approvals · infra-tools</title><style>' + STYLE + '</style>'
+            '<title>Privilege approvals · basaltwater</title><style>' + STYLE + '</style>'
             '<main><h1>Privilege approvals</h1>' + content +
             '<footer>Approve from your own device. Keep this password out of the agent VM’s browser and chat.</footer></main></html>')
 
@@ -71,7 +71,7 @@ def render_request(request: dict, token: str) -> str:
 
 
 class ApprovalHandler(BaseHTTPRequestHandler):
-    server_version = "infra-tools-approval"
+    server_version = "basaltwater-approval"
     sys_version = ""
 
     def log_message(self, format, *args):
@@ -96,7 +96,7 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.send_header("Connection", "close")
         if challenge:
-            self.send_header("WWW-Authenticate", 'Basic realm="infra-tools privilege approvals", charset="UTF-8"')
+            self.send_header("WWW-Authenticate", 'Basic realm="basaltwater privilege approvals", charset="UTF-8"')
         if location:
             self.send_header("Location", location)
         self.end_headers()

@@ -12,7 +12,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib import cachyos_doctor as doctor
 from lib.local_cli import run_local_command
 
@@ -191,7 +191,7 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("TOKEN", serialized)
 
     def test_cli_json_is_parseable_and_needs_no_root_or_setup(self):
-        parser, _, _ = infra_tools.create_infra_tools_parser()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["local", "cachyos-doctor", "--json"])
         with patch("sys.stdout", new_callable=io.StringIO) as output, \
                 patch("lib.local_cli._run_step") as mutate:
@@ -200,20 +200,20 @@ class DoctorTests(unittest.TestCase):
         mutate.assert_not_called()
 
     def test_main_doctor_bypasses_distribution_prompt_and_emits_only_json(self):
-        with patch("sys.argv", ["infra-tools", "local", "cachyos-doctor", "--json"]), \
+        with patch("sys.argv", ["basaltwater", "local", "cachyos-doctor", "--json"]), \
                 patch("sys.stdout", new_callable=io.StringIO) as output, \
-                patch.object(infra_tools, "confirm_unsupported_environment") as confirm, \
+                patch.object(basaltwater, "confirm_unsupported_environment") as confirm, \
                 patch("lib.local_cli._run_step") as mutate:
-            self.assertEqual(infra_tools.main(), 0)
+            self.assertEqual(basaltwater.main(), 0)
         self.assertEqual(json.loads(output.getvalue())["schema_version"], 1)
         confirm.assert_not_called()
         mutate.assert_not_called()
 
     def test_main_mutating_local_command_keeps_distribution_guard(self):
-        with patch("sys.argv", ["infra-tools", "local", "update"]), \
-                patch.object(infra_tools, "confirm_unsupported_environment", return_value=False) as confirm, \
-                patch.object(infra_tools, "run_local_command") as dispatch:
-            self.assertEqual(infra_tools.main(), 1)
+        with patch("sys.argv", ["basaltwater", "local", "update"]), \
+                patch.object(basaltwater, "confirm_unsupported_environment", return_value=False) as confirm, \
+                patch.object(basaltwater, "run_local_command") as dispatch:
+            self.assertEqual(basaltwater.main(), 1)
         confirm.assert_called_once_with("local maintenance")
         dispatch.assert_not_called()
 

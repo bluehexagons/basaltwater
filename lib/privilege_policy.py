@@ -13,12 +13,12 @@ from urllib.parse import urlsplit
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
-CONFIG_DIR = "/etc/infra-tools/privilege-broker"
+CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
-REQUEST_SOCKET = "/run/infra-tools-privilege-broker/request.sock"
-APPROVAL_SOCKET = "/run/infra-tools-privilege-broker/approval.sock"
-DATABASE_PATH = "/var/lib/infra-tools-privilege-broker/requests.sqlite3"
-WEB_USER = "infra-approval"
+REQUEST_SOCKET = "/run/basaltwater-privilege-broker/request.sock"
+APPROVAL_SOCKET = "/run/basaltwater-privilege-broker/approval.sock"
+DATABASE_PATH = "/var/lib/basaltwater-privilege-broker/requests.sqlite3"
+WEB_USER = "basaltwater-approval"
 MAX_MESSAGE = 16384
 UNIT_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}\.service\Z")
 COMMAND_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")

@@ -16,7 +16,7 @@ from common.swap_steps import (
     _replace_fstab,
     _zram_configuration,
 )
-import infra_tools
+import basaltwater
 from lib.config import SetupConfig
 from lib.proxmox_vm import _disk_hardware_value, _warn_zfs_swap_storage
 from lib.swap_config import swap_devices, swap_files, swap_zram
@@ -112,19 +112,19 @@ class TestSwapConfiguration(unittest.TestCase):
         self.assertNotIn("swap_initialize", config.to_dict())
 
     def test_swappiness_only_patch_preserves_saved_areas(self):
-        preserved = infra_tools._patch_preserve_keys(Namespace(swappiness=100))
+        preserved = basaltwater._patch_preserve_keys(Namespace(swappiness=100))
 
         self.assertIn("swap_devices", preserved)
         self.assertNotIn("swappiness", preserved)
 
     def test_disabling_zswap_does_not_preserve_pool_limit(self):
-        preserved = infra_tools._patch_preserve_keys(Namespace(zswap=False))
+        preserved = basaltwater._patch_preserve_keys(Namespace(zswap=False))
 
         self.assertNotIn("zswap", preserved)
         self.assertNotIn("zswap_max_pool_percent", preserved)
 
     def test_none_mode_clears_all_managed_swap_policy(self):
-        preserved = infra_tools._patch_preserve_keys(Namespace(swap_mode="none"))
+        preserved = basaltwater._patch_preserve_keys(Namespace(swap_mode="none"))
 
         for field in (
             "swap_files",
@@ -138,7 +138,7 @@ class TestSwapConfiguration(unittest.TestCase):
             self.assertNotIn(field, preserved)
 
     def test_explicit_auto_mode_does_not_preserve_stale_resume_device(self):
-        preserved = infra_tools._patch_preserve_keys(Namespace(swap_mode="auto"))
+        preserved = basaltwater._patch_preserve_keys(Namespace(swap_mode="auto"))
 
         self.assertNotIn("swap_resume", preserved)
 

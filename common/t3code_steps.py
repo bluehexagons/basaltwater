@@ -36,51 +36,51 @@ from lib.validators import validate_username
 
 
 T3_SERVICE_NAME = "t3code"
-LEGACY_T3_SERVICE_NAME = "infra-tools-t3code"
+LEGACY_T3_SERVICE_NAME = "basaltwater-t3code"
 LEGACY_T3_SERVICE_FILE = f"/etc/systemd/system/{LEGACY_T3_SERVICE_NAME}.service"
-T3_CONNECT_RESTART_PATH_UNIT = "infra-tools-t3code-connect.path"
-T3_CONNECT_RESTART_SERVICE_UNIT = "infra-tools-t3code-connect.service"
+T3_CONNECT_RESTART_PATH_UNIT = "basaltwater-t3code-connect.path"
+T3_CONNECT_RESTART_SERVICE_UNIT = "basaltwater-t3code-connect.service"
 T3_CONNECT_RESTART_PATH_FILE = (
     f"/etc/systemd/system/{T3_CONNECT_RESTART_PATH_UNIT}"
 )
 T3_CONNECT_RESTART_SERVICE_FILE = (
     f"/etc/systemd/system/{T3_CONNECT_RESTART_SERVICE_UNIT}"
 )
-T3_UFW_RULE_COMMENT_PREFIX = "infra_tools T3 Code"
-DEVICE_PAIRING_SERVICE_NAME = "infra-tools-device-pairing"
+T3_UFW_RULE_COMMENT_PREFIX = "basaltwater T3 Code"
+DEVICE_PAIRING_SERVICE_NAME = "basaltwater-device-pairing"
 DEVICE_PAIRING_SERVICE_FILE = (
     f"/etc/systemd/system/{DEVICE_PAIRING_SERVICE_NAME}.service"
 )
-DEVICE_PAIRING_CONFIG_DIR = "/etc/infra-tools/device-pairing"
+DEVICE_PAIRING_CONFIG_DIR = "/etc/basaltwater/device-pairing"
 DEVICE_PAIRING_AUTH_FILE = f"{DEVICE_PAIRING_CONFIG_DIR}/htpasswd"
 DEVICE_PAIRING_PROVIDERS_FILE = f"{DEVICE_PAIRING_CONFIG_DIR}/providers.json"
-DEVICE_PAIRING_PAYLOAD_FILE = "/opt/infra_tools/device_pairing_payload/htpasswd"
-DEVICE_PAIRING_SOCKET = "/run/infra-tools-device-pairing/http.sock"
+DEVICE_PAIRING_PAYLOAD_FILE = "/opt/basaltwater/device_pairing_payload/htpasswd"
+DEVICE_PAIRING_SOCKET = "/run/basaltwater-device-pairing/http.sock"
 DEVICE_PAIRING_SCRIPT = (
-    "/opt/infra_tools/common/service_tools/device_pairing_service.py"
+    "/opt/basaltwater/common/service_tools/device_pairing_service.py"
 )
 T3_ADMIN_PAIR_SCRIPT = (
-    "/opt/infra_tools/common/service_tools/t3code_admin_pair.py"
+    "/opt/basaltwater/common/service_tools/t3code_admin_pair.py"
 )
 T3_AGENT_SKILLS_ROOT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "agent_skills"
 )
 T3_CAPABILITY_AGENT_SKILL_NAMES = (
-    "infra-tools-t3code",
-    "infra-tools-web-gateway",
+    "basaltwater-t3code",
+    "basaltwater-web-gateway",
 )
 T3_BROWSER_AGENT_SKILL_NAMES = (
-    "infra-tools-browser-testing",
-    "infra-tools-t3-preview-testing",
+    "basaltwater-browser-testing",
+    "basaltwater-t3-preview-testing",
 )
 T3_AGENT_SKILL_NAMES = (
     *BASE_AGENT_SKILL_NAMES,
     *T3_CAPABILITY_AGENT_SKILL_NAMES,
 )
-DEVICE_PAIRING_NGINX_SITE = "/etc/nginx/sites-available/infra-tools-device-pairing"
-DEVICE_PAIRING_NGINX_LINK = "/etc/nginx/sites-enabled/infra-tools-device-pairing"
+DEVICE_PAIRING_NGINX_SITE = "/etc/nginx/sites-available/basaltwater-device-pairing"
+DEVICE_PAIRING_NGINX_LINK = "/etc/nginx/sites-enabled/basaltwater-device-pairing"
 DEVICE_PAIRING_AUTH_FAILURE_LOG = (
-    "/var/log/nginx/infra-tools-device-pairing-auth-failures.log"
+    "/var/log/nginx/basaltwater-device-pairing-auth-failures.log"
 )
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.*)$")
 _T3_RUNTIME_RELATIVE_PATH = (".t3", "runtime")
@@ -268,7 +268,7 @@ def _t3_service_drop_in(home: str) -> str:
         "systemd",
         "user",
         "t3code.service.d",
-        "infra-tools.conf",
+        "basaltwater.conf",
     )
 
 
@@ -456,7 +456,7 @@ def _temporary_t3_npm_config(home: str) -> Iterator[str]:
         raise RuntimeError(f"Refusing unsafe T3 home directory: {home}")
     owner = os.stat(home, follow_symlinks=False)
     descriptor, path = tempfile.mkstemp(
-        prefix=".infra-tools-t3-npmrc-",
+        prefix=".basaltwater-t3-npmrc-",
         dir=home,
     )
     try:
@@ -485,7 +485,7 @@ def _temporary_t3_loginctl_shim(home: str, username: str) -> Iterator[str]:
         raise RuntimeError("T3 Code service setup requires loginctl")
     validate_filesystem_path(real_loginctl, must_exist=True)
     directory = tempfile.mkdtemp(
-        prefix=".infra-tools-t3-loginctl-",
+        prefix=".basaltwater-t3-loginctl-",
         dir=home,
     )
     shim = os.path.join(directory, "loginctl")
@@ -614,8 +614,8 @@ def _remove_legacy_shell_path(home: str, uid: int, gid: int) -> bool:
     with open(bashrc, encoding="utf-8") as file_obj:
         existing = file_obj.read()
     marker = (
-        "# infra-tools T3 Code runtime\n"
-        'export PATH="$HOME/.local/share/infra-tools/t3code/'
+        "# basaltwater T3 Code runtime\n"
+        'export PATH="$HOME/.local/share/basaltwater/t3code/'
         'node_modules/.bin:$PATH"\n'
     )
     if marker not in existing:
@@ -657,7 +657,7 @@ def _install_t3_npm_shim(
         raise RuntimeError("T3 Code service updates require npm")
     validate_filesystem_path(real_npm, must_exist=True)
     current = home
-    for component in (".local", "share", "infra-tools", "t3-npm", "bin"):
+    for component in (".local", "share", "basaltwater", "t3-npm", "bin"):
         current = os.path.join(current, component)
         if os.path.lexists(current):
             if os.path.islink(current) or not os.path.isdir(current):
@@ -766,7 +766,7 @@ def _configure_t3_service_drop_in(
             "/bin",
         )
     )
-    content = f"""# Managed by infra_tools
+    content = f"""# Managed by basaltwater
 [Service]
 WorkingDirectory={workspace}
 Environment=T3CODE_HOST={host}
@@ -970,10 +970,10 @@ def _install_t3_service(
             capture_output=True,
         )
     _remove_legacy_shell_path(home, uid, gid)
-    legacy_wrapper = os.path.join(home, ".local", "bin", "infra-tools-t3code-web")
+    legacy_wrapper = os.path.join(home, ".local", "bin", "basaltwater-t3code-web")
     if os.path.isfile(legacy_wrapper) and not os.path.islink(legacy_wrapper):
         with open(legacy_wrapper, encoding="utf-8") as file_obj:
-            if ".local/share/infra-tools/t3code" in file_obj.read():
+            if ".local/share/basaltwater/t3code" in file_obj.read():
                 os.remove(legacy_wrapper)
 
     if update_failed and native_repaired:
@@ -1292,7 +1292,7 @@ def _configure_device_pairing(
                     "--server-url",
                     server_url,
                     "--label",
-                    "infra-tools device enrollment",
+                    "basaltwater device enrollment",
                     "--json",
                 ],
                 "base_url_flag": "--base-url",
@@ -1325,7 +1325,7 @@ def _configure_device_pairing(
                     ],
                     "restart_request": os.path.join(
                         t3_state_dir,
-                        "infra-tools-connect-restart",
+                        "basaltwater-connect-restart",
                     ),
                 },
             }
@@ -1340,7 +1340,7 @@ def _configure_device_pairing(
     os.chown(DEVICE_PAIRING_PROVIDERS_FILE, 0, web_account.pw_gid)
 
     service_content = f"""[Unit]
-Description=infra-tools protected device-pairing broker
+Description=basaltwater protected device-pairing broker
 After=network-online.target nginx.service
 Wants=network-online.target
 
@@ -1348,7 +1348,7 @@ Wants=network-online.target
 Type=simple
 User={config.username}
 Group=www-data
-RuntimeDirectory=infra-tools-device-pairing
+RuntimeDirectory=basaltwater-device-pairing
 RuntimeDirectoryMode=0750
 UMask=0007
 Environment=HOME={home}
@@ -1389,31 +1389,31 @@ WantedBy=multi-user.target
         if active.returncode != 0:
             run(f"systemctl start {DEVICE_PAIRING_SERVICE_NAME}.service")
 
-    nginx_content = f"""# Managed by infra_tools device pairing
-limit_req_zone $binary_remote_addr zone=infra_tools_device_pairing_auth:10m rate=5r/m;
+    nginx_content = f"""# Managed by basaltwater device pairing
+limit_req_zone $binary_remote_addr zone=basaltwater_device_pairing_auth:10m rate=5r/m;
 
-map $status $infra_tools_device_pairing_auth_failure {{
+map $status $basaltwater_device_pairing_auth_failure {{
     default 0;
     401 1;
 }}
 
-map $realip_remote_addr $infra_tools_device_pairing_gateway_request {{
+map $realip_remote_addr $basaltwater_device_pairing_gateway_request {{
     default 0;
     127.0.0.1 1;
     ::1 1;
 }}
 
-map "$infra_tools_device_pairing_gateway_request:$http_x_forwarded_proto" $infra_tools_device_pairing_public_proto {{
+map "$basaltwater_device_pairing_gateway_request:$http_x_forwarded_proto" $basaltwater_device_pairing_public_proto {{
     default $scheme;
     "1:https" https;
 }}
 
-map "$infra_tools_device_pairing_gateway_request:$http_x_forwarded_host" $infra_tools_device_pairing_public_host {{
+map "$basaltwater_device_pairing_gateway_request:$http_x_forwarded_host" $basaltwater_device_pairing_public_host {{
     default $host;
-    ~^1:(?<infra_tools_device_pairing_forwarded_host>.+)$ $infra_tools_device_pairing_forwarded_host;
+    ~^1:(?<basaltwater_device_pairing_forwarded_host>.+)$ $basaltwater_device_pairing_forwarded_host;
 }}
 
-log_format infra_tools_device_pairing_auth '$remote_addr [$time_local] infra-tools-auth-failure';
+log_format basaltwater_device_pairing_auth '$remote_addr [$time_local] basaltwater-auth-failure';
 
 server {{
     listen {_nginx_listen_address(host, config.device_pairing_port)};
@@ -1422,21 +1422,21 @@ server {{
     set_real_ip_from ::1;
     real_ip_header X-Forwarded-For;
     real_ip_recursive on;
-    access_log {DEVICE_PAIRING_AUTH_FAILURE_LOG} infra_tools_device_pairing_auth
-        if=$infra_tools_device_pairing_auth_failure;
+    access_log {DEVICE_PAIRING_AUTH_FAILURE_LOG} basaltwater_device_pairing_auth
+        if=$basaltwater_device_pairing_auth_failure;
 
     auth_basic "Device pairing";
     auth_basic_user_file {DEVICE_PAIRING_AUTH_FILE};
     client_max_body_size 4k;
 
     location / {{
-        limit_req zone=infra_tools_device_pairing_auth burst=5 nodelay;
+        limit_req zone=basaltwater_device_pairing_auth burst=5 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:{DEVICE_PAIRING_SOCKET}:/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Host $infra_tools_device_pairing_public_host;
-        proxy_set_header X-Forwarded-Proto $infra_tools_device_pairing_public_proto;
+        proxy_set_header X-Forwarded-Host $basaltwater_device_pairing_public_host;
+        proxy_set_header X-Forwarded-Proto $basaltwater_device_pairing_public_proto;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_connect_timeout 5s;
         proxy_read_timeout 35s;
@@ -1535,7 +1535,7 @@ def _configure_connect_restart_units(
         os.path.islink(state_dir) or not os.path.isdir(state_dir)
     ):
         raise RuntimeError(f"Refusing unsafe T3 Connect state directory: {state_dir}")
-    request_path = os.path.join(state_dir, "infra-tools-connect-restart")
+    request_path = os.path.join(state_dir, "basaltwater-connect-restart")
     path_content = f"""[Unit]
 Description=Watch for T3 Connect service reconciliation requests
 
@@ -1600,7 +1600,7 @@ def _remove_connect_restart_units(state_dir: str | None = None) -> None:
             os.remove(unit_path)
             changed = True
     if state_dir is not None:
-        request_path = os.path.join(state_dir, "infra-tools-connect-restart")
+        request_path = os.path.join(state_dir, "basaltwater-connect-restart")
         if os.path.lexists(request_path):
             if os.path.islink(request_path) or not os.path.isfile(request_path):
                 raise RuntimeError(
@@ -1619,7 +1619,7 @@ def _configure_t3_https(
     """Publish T3 web and pairing pages through the shared internal HTTPS gateway."""
 
     if os.geteuid() != 0 or not os.path.isfile(
-        "/opt/infra_tools/common/service_tools/infra_web.py"
+        "/opt/basaltwater/common/service_tools/basaltwater_web.py"
     ):
         # Target setup is root-owned; keeping this a no-op makes dry unit tests
         # and installations without the managed gateway side-effect free.
@@ -1634,7 +1634,7 @@ def _configure_t3_https(
         configure_static_site=True,
         install_utility=True,
     )
-    utility = "/usr/local/bin/infra-web"
+    utility = "/usr/local/bin/basaltwater-web"
     endpoints: dict[str, tuple[str, int]] = {}
     routes = [("t3code", port, "50m")]
     if pairing_port is not None:
@@ -1716,7 +1716,7 @@ def _set_pairing_t3_https_port(https_port: int) -> None:
 
 
 def _remove_t3_https(config: SetupConfig) -> None:
-    utility = "/usr/local/bin/infra-web"
+    utility = "/usr/local/bin/basaltwater-web"
     for name in ("t3code-pairing", "t3code"):
         run(
             "SUDO_USER="
@@ -1761,7 +1761,7 @@ def install_t3code_web(config: SetupConfig) -> None:
     )
     pair_wrapper = os.path.join(home, ".local", "bin", "t3code-pair")
     t3_cli_wrapper = os.path.join(
-        home, ".local", "bin", "infra-tools-t3code-pairing-provider"
+        home, ".local", "bin", "basaltwater-t3code-pairing-provider"
     )
     if os.path.islink(T3_ADMIN_PAIR_SCRIPT) or not os.path.isfile(T3_ADMIN_PAIR_SCRIPT):
         raise RuntimeError(f"T3 administrative pairing helper is missing: {T3_ADMIN_PAIR_SCRIPT}")

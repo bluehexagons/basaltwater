@@ -40,15 +40,15 @@ from lib.swap_config import (
 from lib.vm_storage import data_disks
 
 
-SWAP_STATE_FILE = "/opt/infra_tools/state/swap.json"
+SWAP_STATE_FILE = "/opt/basaltwater/state/swap.json"
 FSTAB_PATH = "/etc/fstab"
-SYSCTL_PATH = "/etc/sysctl.d/90-infra-tools-swap.conf"
-ZRAM_PATH = "/etc/systemd/zram-generator.conf.d/90-infra-tools.conf"
-ZSWAP_SERVICE_PATH = "/etc/systemd/system/infra-tools-zswap.service"
-RESUME_PATH = "/etc/initramfs-tools/conf.d/99-infra-tools-resume"
+SYSCTL_PATH = "/etc/sysctl.d/90-basaltwater-swap.conf"
+ZRAM_PATH = "/etc/systemd/zram-generator.conf.d/90-basaltwater.conf"
+ZSWAP_SERVICE_PATH = "/etc/systemd/system/basaltwater-zswap.service"
+RESUME_PATH = "/etc/initramfs-tools/conf.d/99-basaltwater-resume"
 SWAP_SCHEMA_VERSION = 1
-FSTAB_BEGIN = "# BEGIN infra-tools managed swap"
-FSTAB_END = "# END infra-tools managed swap"
+FSTAB_BEGIN = "# BEGIN basaltwater managed swap"
+FSTAB_END = "# END basaltwater managed swap"
 _STATE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 _STATE_SIZE_PATTERN = re.compile(r"^[1-9][0-9]*[KMGT]$", re.IGNORECASE)
 _STATE_UUID_PATTERN = re.compile(r"^[A-Za-z0-9-]{8,64}$")
@@ -286,7 +286,7 @@ def _replace_fstab(entries: list[str]) -> None:
     start = current.find(FSTAB_BEGIN)
     end = current.find(FSTAB_END)
     if (start == -1) != (end == -1) or (start != -1 and end < start):
-        raise RuntimeError("/etc/fstab contains an incomplete infra-tools swap block")
+        raise RuntimeError("/etc/fstab contains an incomplete basaltwater swap block")
     if start != -1:
         end += len(FSTAB_END)
         while end < len(current) and current[end] == "\n":
@@ -341,13 +341,13 @@ def _warn_swap_file_filesystem(path: str) -> None:
     filesystem = (result.stdout or "").strip().lower()
     if filesystem == "zfs":
         print(
-            f"  ⚠ Swap file {path} is on ZFS; infra-tools has not qualified "
+            f"  ⚠ Swap file {path} is on ZFS; basaltwater has not qualified "
             "ZFS swap-file behavior. Prefer a dedicated block device."
         )
     elif filesystem == "btrfs":
         raise RuntimeError(
             f"Swap file {path} is on Btrfs, which requires filesystem-specific "
-            "creation rules not managed by infra-tools"
+            "creation rules not managed by basaltwater"
         )
 
 
@@ -379,7 +379,7 @@ def _stage_swap_file(area: SwapFile, parent: str, size_mib: int) -> str:
 
     descriptor, staged_path = tempfile.mkstemp(
         dir=parent,
-        prefix=f".{os.path.basename(area.path)}.infra-tools-",
+        prefix=f".{os.path.basename(area.path)}.basaltwater-",
     )
     os.close(descriptor)
     try:
@@ -539,7 +539,7 @@ def _ensure_swap_device(
     if path.startswith(("/dev/zvol/", "/dev/zd")):
         print(
             f"  ⚠ Swap device {path} appears to be ZFS-backed. Direct ZFS swap "
-            "has not been qualified by infra-tools; monitor pool memory pressure."
+            "has not been qualified by basaltwater; monitor pool memory pressure."
         )
     if record.get("children") or _has_mountpoint(record):
         raise RuntimeError(f"Refusing to use partitioned or mounted swap device {path}")
@@ -815,14 +815,14 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
         if enabled:
             raise RuntimeError("This kernel does not expose zswap controls")
         if os.path.exists(ZSWAP_SERVICE_PATH):
-            run("systemctl disable --now infra-tools-zswap.service", check=False)
+            run("systemctl disable --now basaltwater-zswap.service", check=False)
             remove_file_durable(ZSWAP_SERVICE_PATH)
             run("systemctl daemon-reload")
         return
     state = "Y" if enabled else "N"
     commands = [
         "[Unit]",
-        "Description=Apply infra-tools zswap policy",
+        "Description=Apply basaltwater zswap policy",
         "After=systemd-modules-load.service",
         "",
         "[Service]",
@@ -845,7 +845,7 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
     if changed:
         write_text_atomic(ZSWAP_SERVICE_PATH, content, mode=0o644)
         run("systemctl daemon-reload")
-    run("systemctl enable infra-tools-zswap.service")
+    run("systemctl enable basaltwater-zswap.service")
     live_state = Path("/sys/module/zswap/parameters/enabled").read_text(
         encoding="utf-8"
     ).strip().upper()
@@ -859,9 +859,9 @@ def _configure_zswap(enabled: bool | None, pool_percent: int | None) -> None:
     if changed or live_state != state or (
         pool_percent is not None and live_pool != str(pool_percent)
     ):
-        run("systemctl restart infra-tools-zswap.service")
+        run("systemctl restart basaltwater-zswap.service")
     else:
-        run("systemctl start infra-tools-zswap.service")
+        run("systemctl start basaltwater-zswap.service")
 
 
 def _remove_managed_zswap() -> None:
@@ -869,7 +869,7 @@ def _remove_managed_zswap() -> None:
         return
     if os.path.exists("/sys/module/zswap/parameters/enabled"):
         run("sh -c 'printf N > /sys/module/zswap/parameters/enabled'")
-    run("systemctl disable --now infra-tools-zswap.service", check=False)
+    run("systemctl disable --now basaltwater-zswap.service", check=False)
     remove_file_durable(ZSWAP_SERVICE_PATH)
     run("systemctl daemon-reload")
 
@@ -950,7 +950,7 @@ def _automatic_swap_file() -> SwapFile | None:
 
 
 def configure_swap(config: SetupConfig) -> None:
-    """Reconcile only swap areas explicitly owned by infra-tools."""
+    """Reconcile only swap areas explicitly owned by basaltwater."""
 
     explicit = has_explicit_swap_areas(config)
     if is_dry_run() or config.dry_run:
@@ -995,7 +995,7 @@ def configure_swap(config: SetupConfig) -> None:
         _configure_swappiness(None, remove=True)
         _remove_managed_zswap()
         remove_file_durable(SWAP_STATE_FILE)
-        print("  ✓ Removed infra-tools-managed swap areas")
+        print("  ✓ Removed basaltwater-managed swap areas")
         return
 
     desired_files = swap_files(config)
@@ -1041,7 +1041,7 @@ def configure_swap(config: SetupConfig) -> None:
                 _configure_resume(None, [])
             return
         if not old_areas and os.path.exists("/swapfile"):
-            print("  ✓ Existing /swapfile is not owned by infra-tools; leaving it unchanged")
+            print("  ✓ Existing /swapfile is not owned by basaltwater; leaving it unchanged")
             _configure_swappiness(config.swappiness)
             _configure_zswap(config.zswap, config.zswap_max_pool_percent)
             if config.swap_resume == "":

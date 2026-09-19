@@ -6,7 +6,7 @@ from argparse import Namespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-import infra_tools
+import basaltwater
 from lib.config import SetupConfig
 from lib.proxmox_vm import (
     ProvisionError,
@@ -864,7 +864,7 @@ class TestCachedProvisioningChangeSafety(unittest.TestCase):
             container_memory="4G",
         )
 
-        changes = infra_tools._unsupported_cached_provisioning_changes(
+        changes = basaltwater._unsupported_cached_provisioning_changes(
             current,
             cached,
             Namespace(container_memory="8G"),
@@ -890,7 +890,7 @@ class TestCachedProvisioningChangeSafety(unittest.TestCase):
             machine_type="vm",
         )
 
-        changes = infra_tools._unsupported_cached_provisioning_changes(
+        changes = basaltwater._unsupported_cached_provisioning_changes(
             current,
             cached,
             Namespace(
@@ -919,7 +919,7 @@ class TestCachedProvisioningChangeSafety(unittest.TestCase):
             container_storage=[["root", "local-lvm", "32G"]],
         )
 
-        changes = infra_tools._unsupported_cached_provisioning_changes(
+        changes = basaltwater._unsupported_cached_provisioning_changes(
             current,
             cached,
             Namespace(container_storage=[["root", "fast-lvm", "64G"]]),

@@ -122,7 +122,7 @@ if os.path.lexists(destination) and (
 ):
     raise RuntimeError('refusing unsafe credential destination')
 
-descriptor, temporary = tempfile.mkstemp(dir=parent, prefix='.infra-tools-auth-')
+descriptor, temporary = tempfile.mkstemp(dir=parent, prefix='.basaltwater-auth-')
 try:
     os.fchmod(descriptor, 0o600)
     with os.fdopen(descriptor, 'wb') as output:
@@ -193,7 +193,7 @@ except OSError:
 
 if tool == 'codex' and credential['present']:
     try:
-        sys.path.insert(0, '/opt/infra_tools')
+        sys.path.insert(0, '/opt/basaltwater')
         from lib.agent_credentials import inspect_codex_auth_file
         credential['details'] = inspect_codex_auth_file(credential_path)
     except (ImportError, OSError, ValueError):

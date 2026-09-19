@@ -70,11 +70,13 @@ class TestChannelManager(unittest.TestCase):
         os.makedirs(self.seed)
         _git(self.seed, "init", "--initial-branch=main")
         _git(self.seed, "config", "user.email", "tests@example.invalid")
-        _git(self.seed, "config", "user.name", "infra_tools tests")
+        _git(self.seed, "config", "user.name", "basaltwater tests")
         with open(os.path.join(self.seed, ".gitignore"), "w", encoding="utf-8") as file_obj:
-            file_obj.write(".infra_tools/\n")
+            file_obj.write(".basaltwater/\n")
         with open(os.path.join(self.seed, "version.txt"), "w", encoding="utf-8") as file_obj:
             file_obj.write("1.0\n")
+        with open(os.path.join(self.seed, "basaltwater.py"), "w", encoding="utf-8") as file_obj:
+            file_obj.write("# Basaltwater source fixture\n")
         _git(self.seed, "add", ".")
         _git(self.seed, "commit", "-m", "initial")
         _git(self.seed, "tag", "v1.0.0")
@@ -108,6 +110,16 @@ class TestChannelManager(unittest.TestCase):
 
         branch = switch_channel(self.repo, "branch-feature/example")
         self.assertEqual(branch["commit"], self.feature_commit)
+
+    def test_pre_rename_source_is_refused_without_changing_head(self) -> None:
+        previous = _git(self.repo, "rev-parse", "HEAD")
+        _git(self.seed, "rm", "basaltwater.py")
+        _git(self.seed, "commit", "-m", "fixture without new entry")
+        _git(self.seed, "tag", "v0.2.0")
+        _git(self.seed, "push", "origin", "--tags")
+        with self.assertRaisesRegex(ChannelError, "predates Basaltwater"):
+            switch_channel(self.repo, "v0.2.0")
+        self.assertEqual(_git(self.repo, "rev-parse", "HEAD"), previous)
 
     def test_dev_upgrade_follows_main(self) -> None:
         switch_channel(self.repo, "dev")

@@ -96,7 +96,7 @@ class TestPushNginxConfig(unittest.TestCase):
         remote_path = run.call_args_list[0].args[0][2]
         self.assertRegex(
             remote_path,
-            r"infra-tools-nginx-example_com-[a-f0-9]{32}\.json$",
+            r"basaltwater-nginx-example_com-[a-f0-9]{32}\.json$",
         )
         self.assertIn("install-site example_com", run.call_args_list[1].args[0][-1])
         operation_id = remote_path.removesuffix(".json").rsplit("-", 1)[1]

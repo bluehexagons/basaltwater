@@ -6,8 +6,9 @@ Public release operations and live VM qualification remain. See
 [cutover contracts](BASALTWATER_CONTRACTS.md) and
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.
-The implementation introduces `basaltwater` packaging and `basaltw` while
-retaining persisted contracts and the v2 transition command. The [roadmap](ROADMAP.md)
+The implementation renames the Python entry point and internal resources,
+with an explicit one-time migration from recent installations and no runtime
+compatibility aliases after cutover. The [roadmap](ROADMAP.md)
 continues to own delivery priority.
 
 ## Naming decisions
@@ -15,7 +16,7 @@ continues to own delivery priority.
 | Context | Name | Convention |
 | --- | --- | --- |
 | Public display name | Basaltwater | Use in document titles, release announcements, and ordinary product references. |
-| Technical identity | `basaltwater` | Distribution name; the existing `bluehexagons/infra_tools` repository remains the source host. Registry observations and remaining clearance are recorded in the [contract inventory](BASALTWATER_CONTRACTS.md). |
+| Technical identity | `basaltwater` | Distribution name; the existing `bluehexagons/infra_tools` repository remains the source host. Publication clearance remains on the [release checklist](../BASALTWATER_RELEASE.md). |
 | Primary command | `basaltw` | Use consistently in installation instructions, examples, completion, and generated commands. |
 | Maintainer identity | bluehexagons | Retain attribution without requiring company knowledge to understand or use the project. |
 | Transitional description | Basaltwater, formerly infra-tools | Use where it helps existing users recognize the rename; retire after a defined transition period. |
@@ -139,141 +140,35 @@ resolving a concrete collision if these checks uncover one.
 
 ## Technical rename scope
 
-The v2 package metadata declares distribution `basaltwater`, retained module
-`infra_tools`, and primary script `basaltw = infra_tools:main`. The transition
-script `infra-tools = infra_tools:main` supports existing automation through
-v2.x. Module layout and persisted identifiers are retained deliberately; see
-the inventory for producers, consumers, verification and retirement criteria.
+The approved implementation is a full rename, superseding the earlier proposal
+to preserve module paths, service names and skill IDs through v2.x. The source
+entry is `basaltwater.py`, the package is `basaltwater`, and the CLI is `basaltw`.
+Runtime paths, owned configuration, environment settings, service/account names,
+managed skills and deployment manifests use the Basaltwater namespace.
 
-Create an old-to-new inventory before editing runtime code. Include spelling
-variants `infra-tools`, `infra_tools`, and `INFRA_TOOLS`, and classify each
-occurrence as public branding, executable contract, persisted contract,
-external reference, or historical evidence.
+The only compatibility feature is an explicit one-time migration from recent
+infra-tools installations. It is isolated from ordinary runtime code and does
+not create old-name aliases. Historical release support, old environment-variable
+fallbacks and mixed old/new operation after successful cutover are excluded.
 
-| Surface | Required review |
-| --- | --- |
-| Packaging and commands | Distribution/module names, console scripts, direct Python invocation, imports, completion, help text, build artifacts, and uninstall behavior. |
-| Installation and updates | `install.sh`, source/archive URLs, channels, environment variables, managed-install markers, staged source, and upgrade/rollback logic. |
-| Saved state and recovery | Local and target configuration, ownership records, credentials, backups, transaction journals, inventory, and reconstruction/recall paths. |
-| Managed system resources | Services, timers, sudoers rules, hooks, runtime files, locks, temporary paths, logs, and service discovery. |
-| External and machine-readable contracts | JSON fields, schemas, API/readiness routes, webhook consumers, monitoring rules, authentication scopes, and generated configuration consumed outside this repository. |
-| Agent integrations | Bundled skill names and content, installation/reconciliation, readiness checks, tool registration, and generated agent instructions. |
-| Documentation and hosting | README, operator/contributor guides, examples, links, badges, repository metadata, CI, releases, and any published site. |
-| Tests and fixtures | Assertions, temporary filesystem layouts, mocked commands, packaging checks, and supported migration scenarios. |
+See [contracts](BASALTWATER_CONTRACTS.md) for the surface mapping and the
+[migration guide](../BASALTWATER_MIGRATION.md) for user/system passes, conflict
+handling, interrupted-cutover recovery and external automation changes.
 
-Concrete existing examples include `.infra_tools/managed-install` and
-`INFRA_TOOLS_*` in `install.sh`, `/opt/infra_tools/infra_tools.py` in
-`lib/recall.py`, `/var/lib/infra_tools/user-renames` in `lib/user_rename.py`,
-and `infra-tools-locks-*` in `lib/concurrency.py`. These are inventory starting
-points, not a complete list or permission to replace strings blindly.
+## Acceptance and release boundary
 
-Preserve third-party project names and external historical references.
-For contracts such as `infra.json`, make an explicit retain-or-migrate
-decision based on user impact; a branding change does not require changing
-every generic use of the word infra.
+- Source, package metadata, launchers, internal callers, help and completion
+  consistently use the new entry point and command.
+- Recent-install migration preserves private data, refuses ambiguous conflicts,
+  reconciles managed skills/configuration and coordinates service cutover.
+- A failed or interrupted migration has a private recovery journal; successful
+  cutover does not retain support for operating the old release.
+- Focused migration tests use temporary directories and mocked service/account
+  operations. The default suite and isolated fresh-wheel checks pass.
+- Active operator documentation, plans and generated visual assets match the
+  final implementation; historical records keep their original context.
+- Disposable live-host qualification, publication and the owner's later GitHub
+  rename remain separate items on the [release checklist](../BASALTWATER_RELEASE.md).
 
-For each inventory entry, record its producer and consumers, proposed name
-or explicit retention decision, migration action, verification, and any
-transition end. Default to retaining existing serialized keys and manifest
-formats unless a change has a concrete benefit and a versioned migration.
-Do not combine the rename with unrelated schema or package-layout redesign.
-
-Resource names can participate in security and ownership checks: review
-systemd sandbox paths, sudoers command paths, firewall ownership comments,
-log parsers, and readiness probes together with their targets. For example,
-`web/cicd_steps.py` embeds working directories, environment files, and
-`ReadWritePaths`, while `web/homebox_steps.py` generates a branded readiness
-route. Updating only visible labels or filenames would leave stale consumers.
-
-## Release and migration contracts
-
-The delivery sequence below describes development order. Package, installer,
-caller, and required state/resource migration changes must reach a coherent
-release boundary before users receive the new entry point. If intermediate
-commits are exposed through an update channel, each must remain usable.
-
-A new distribution name is not automatically discovered by an upgrade of the
-old distribution. Define how existing Git-managed installations and Python
-package installations reach the new release, including users pinned to a
-release or following an update channel. Document the exact upgrade command
-and how ownership of installed files transfers. Test old-package uninstall
-ordering so it cannot remove files or launchers belonging to the new install.
-
-Specify precedence for old/new environment variables and configuration
-locations, including what happens when both are set. Preserve explicit user
-paths. An ordinary help, status, or inspection command must not move state
-as a side effect of recognizing the old name.
-
-Make migration repeatable and recoverable after interruption. Record
-completion only after verifying the destination, preserve permissions and
-ownership, and define treatment of symlinks and user-modified managed files.
-Keep recovery data until verification succeeds. If new state cannot be read
-by an older release, rollback must restore the matching state snapshot or
-report the unsupported downgrade before making changes.
-
-## Delivery sequence
-
-1. **Inventory and cutover design.** Finish the naming/availability checks,
-   produce the contract mapping, and choose the release boundary. Specify
-   which identifiers change immediately and which require a later migration.
-2. **Package and CLI.** Implement the selected distribution/module layout,
-   `basaltw` launcher, completion, help, and generated invocation changes in a
-   coherent slice. Update all callers and remove unused code.
-3. **Installation and state migration.** Cover fresh installs and upgrades
-   from the previous supported release. Preserve ownership, permissions,
-   credentials, inventory, and recovery data. Specify precedence and conflict
-   handling if both old and new state locations exist. Define interrupted
-   migration recovery and rollback before changing persistent paths.
-4. **Managed resources and integrations.** Reconcile services, timers, agent
-   skills, and related resources. Avoid duplicate scheduled work and ensure
-   old/new processes cannot bypass mutual exclusion through renamed locks.
-   Support the documented interval where controller and targets differ in
-   version, or require an explicit coordinated upgrade.
-5. **Public identity and release.** Update active documentation, examples,
-   assets, repository/package metadata, and installation URLs together.
-   Publish migration instructions and the temporary “formerly infra-tools”
-   wording. Verify redirects and raw/download URLs individually.
-6. **Transition completion.** Remove temporary migration mechanisms at the
-   documented boundary and review residual old-name references. Preserve
-   historical evidence and intentionally retained data contracts.
-
-Follow repository rules against retaining unused code for compatibility.
-Any necessary transition mechanism must have a concrete supported upgrade
-use, tests, an owner, and removal criteria. Do not silently remove the old
-launcher while generated automation still invokes it.
-
-## Acceptance criteria
-
-- Fresh installation exposes `basaltw`; package metadata, help, completion,
-  and operator examples agree on the selected naming.
-- Upgrade and rollback scenarios preserve managed state and credentials;
-  conflicting old/new state produces an explicit resolution path.
-- Existing scheduled work, remote reconstruction, and managed agent
-  integrations work across the documented transition boundary without
-  duplicate jobs or independent lock namespaces.
-- Focused tests exercise meaningful migration and caller behavior using
-  mocked system operations and temporary directories. Packaging and installer
-  smoke checks cover both a fresh install and a previous-release upgrade.
-- Verification covers root/system and non-root/user installs, custom install
-  paths, Git-managed and Python-package installs, and the supported Debian
-  and CachyOS workflows. Exercise a migration rerun, interruption recovery,
-  conflicting state, old/new environment settings, and rollback. Use
-  disposable environments for installation and service lifecycle checks.
-- Existing users can discover and execute the documented upgrade; old-package
-  removal does not damage the new installation. Inspection commands do not
-  perform hidden migration, and retained machine-readable contracts remain
-  compatible with their consumers.
-- Active documentation and owned links are current. Remaining old-name
-  occurrences are reviewed and explained, rather than requiring zero matches.
-- Visual specimens establish consistent light/dark colors, readable contrast,
-  a small/monochrome mark, and a reusable family style.
-- The release notes identify the command/package changes, operator actions,
-  supported version combinations, rollback procedure, and transition end.
-
-The package/CLI, migration instructions, active documentation, bundled skill
-content, shared panel identity, and editable/generated visual assets are
-delivered in this checkout. Existing integration identifiers remain stable.
-External repository changes, optional domain registration, package publication,
-live VM qualification and eventual alias retirement are release operations;
-see the [release checklist](../BASALTWATER_RELEASE.md). No external publication
-or live-host upgrade is claimed here.
+The visual identity and family guidance above remain delivered. No repository
+rename, live host mutation or package publication is claimed by this PR.

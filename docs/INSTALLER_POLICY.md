@@ -29,11 +29,11 @@ prevents execution. The digest identifies downloaded bytes; it is **not** an
 independently pinned expected digest or verification of transitive payloads.
 
 The latest installer record per tool is private (mode 0600) under
-`/var/lib/infra_tools/installer-provenance` for root, or
-`~/.local/state/infra-tools/installers` for an ordinary user. Shared installer
+`/var/lib/basaltwater/installer-provenance` for root, or
+`~/.local/state/basaltwater/installers` for an ordinary user. Shared installer
 runs also record success, failure, or interruption. uv setup and Codex updates
 retain the download record; agent update outcomes, channel policy and version
-checks live separately in `~/.local/state/infra_tools/agent-tools.json`.
+checks live separately in `~/.local/state/basaltwater/agent-tools.json`.
 Downloaded scripts are temporary and removed on normal completion or failure.
 Native updater provenance records the command and version outcome; it cannot
 attest to the vendor updater's internal downloads.

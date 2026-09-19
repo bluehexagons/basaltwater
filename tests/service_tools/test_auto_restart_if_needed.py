@@ -90,7 +90,7 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
                 home,
                 ".local",
                 "share",
-                "infra_tools",
+                "basaltwater",
                 "worktrees",
                 "project",
             )

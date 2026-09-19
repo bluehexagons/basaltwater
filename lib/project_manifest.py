@@ -1,12 +1,12 @@
-"""Repo-side project manifest (``infra.json``) loader and validation.
+"""Repo-side project manifest (``basaltwater.json``) loader and validation.
 
-A repository MAY ship an ``infra.json`` at its root describing how it should be
+A repository MAY ship an ``basaltwater.json`` at its root describing how it should be
 built and served. When present, the ``--deploy`` / ``DeploymentOrchestrator``
 path uses it as the source of truth, overriding ``detect_project_type()``. When
 absent, behavior is unchanged (fully backward compatible).
 
 This module provides repo-side manifest parsing, dataclasses, and strict
-validation for ``infra.json`` deploys.
+validation for ``basaltwater.json`` deploys.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from lib.validation import (
 )
 from lib.validators import validate_host
 
-MANIFEST_FILENAME = "infra.json"
+MANIFEST_FILENAME = "basaltwater.json"
 SUPPORTED_VERSION = 1
 MIN_PORT = 1024
 MAX_PORT = 65535
@@ -50,7 +50,7 @@ TEMPLATE_VARS = frozenset({
     "binary",        # resolved absolute binary path
     "working_dir",   # resolved working directory
     "env_file",      # resolved EnvironmentFile path
-    "shared_dir",    # infra_tools-managed persistent dir for this component
+    "shared_dir",    # basaltwater-managed persistent dir for this component
     "data_dir",      # writable data dir under shared_dir (e.g. for SQLite)
 })
 
@@ -138,7 +138,7 @@ class Component:
 
 @dataclass
 class Manifest:
-    """A parsed, validated ``infra.json``."""
+    """A parsed, validated ``basaltwater.json``."""
 
     version: int
     components: list[Component]
@@ -168,11 +168,11 @@ def load_manifest(repo_path: str) -> Optional[Manifest]:
 def infer_manifest(repo_path: str) -> Optional[Manifest]:
     """Infer a minimal service manifest from a conventional Go repository.
 
-    Repositories with an explicit ``infra.json`` still take precedence. The
+    Repositories with an explicit ``basaltwater.json`` still take precedence. The
     convention deliberately stays narrow: a Go module with either
     ``cmd/server/main.go`` or a root ``main.go`` gets a buildable service on
     an automatically assigned loopback port. Projects with non-standard entry
-    points can provide an explicit manifest without changing infra_tools.
+    points can provide an explicit manifest without changing basaltwater.
     """
     if not os.path.isfile(os.path.join(repo_path, "go.mod")):
         return None
@@ -200,11 +200,11 @@ def infer_manifest(repo_path: str) -> Optional[Manifest]:
             "type": "service",
             "domain": "{{domain}}",
             "build": (
-                "mkdir -p .infra_tools/bin && "
+                "mkdir -p .basaltwater/bin && "
                 f"go build -trimpath -ldflags='-s -w' "
-                f"-o .infra_tools/bin/app {entrypoint}"
+                f"-o .basaltwater/bin/app {entrypoint}"
             ),
-            "binary": ".infra_tools/bin/app",
+            "binary": ".basaltwater/bin/app",
             "port": "auto",
             "runtime_env": {
                 "HOST": "127.0.0.1",

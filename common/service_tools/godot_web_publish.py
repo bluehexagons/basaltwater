@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export one Godot project into the infra_tools HTTPS publishing root."""
+"""Export one Godot project into the basaltwater HTTPS publishing root."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ from lib.remote_utils import run
 from lib.validation import validate_positive_integer
 
 
-GAMES_ROOT = "/srv/infra-tools/web/games"
-BASE_URL_FILE = "/etc/infra-tools/internal-web/base-url"
-METADATA_FILE = ".infra-tools.json"
+GAMES_ROOT = "/srv/basaltwater/web/games"
+BASE_URL_FILE = "/etc/basaltwater/internal-web/base-url"
+METADATA_FILE = ".basaltwater.json"
 CATALOG_FILE = "index.html"
 _GAME_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 _PROJECT_NAME_PATTERN = re.compile(
@@ -372,7 +372,7 @@ def _publish(args: argparse.Namespace) -> tuple[str, str, dict[str, object]]:
     if os.stat(user_root).st_uid != account.pw_uid:
         raise RuntimeError(f"publishing directory is not owned by {account.pw_name}")
 
-    lock_path = os.path.join(user_root, f".infra-tools-{game}.lock")
+    lock_path = os.path.join(user_root, f".basaltwater-{game}.lock")
     descriptor = os.open(
         lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600,
     )

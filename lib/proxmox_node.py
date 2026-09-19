@@ -306,7 +306,7 @@ def _resolve_template_name(
         [
             "flock",
             "--exclusive",
-            f"/run/lock/infra-tools-template-{template_lock}.lock",
+            f"/run/lock/basaltwater-template-{template_lock}.lock",
             "/bin/sh",
             "-c",
             download_if_missing,
@@ -347,7 +347,7 @@ def _upload_pubkey_to_host(
     --ssh-public-keys`. Returns None on dry runs.
     """
     if dry_run:
-        return "/tmp/infra_tools_pubkey.dryrun"
+        return "/tmp/basaltwater_pubkey.dryrun"
 
     try:
         with open(pub_path, "r", encoding="utf-8") as fh:
@@ -358,7 +358,7 @@ def _upload_pubkey_to_host(
     # mktemp on the host, then write the contents through ssh stdin.
     mk = _ssh_run(
         node_ip, user, ssh_opts,
-        "mktemp /tmp/infra_tools_pubkey.XXXXXX",
+        "mktemp /tmp/basaltwater_pubkey.XXXXXX",
         dry_run=False,
     )
     if mk.returncode != 0 or not mk.stdout.strip():

@@ -145,7 +145,7 @@ commands as your regular user in a new terminal.
 | Godot game development | `--godot` | `godot --version` | [Godot](GODOT.md) |
 | Audio and image tools | `--av-tools` | `ffmpeg -version` | [Development flags](COMMAND_LINE.md#development-flags) |
 | A coding agent | `--agent-tool codex` | `codex --version` | [Agent authentication](AGENT_AUTHENTICATION.md) for login before model use |
-| Godot web exports and an HTTPS gateway | `--godot-bundle web` | `infra-web list` | [Publish a plain HTML page](INTERNAL_WEB.md#try-a-plain-html-page) |
+| Godot web exports and an HTTPS gateway | `--godot-bundle web` | `basaltwater-web list` | [Publish a plain HTML page](INTERNAL_WEB.md#try-a-plain-html-page) |
 
 The web bundle also installs Godot and its export templates. Publishing through
 the gateway makes content reachable according to the VM's access policy; read

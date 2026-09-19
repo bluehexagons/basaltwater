@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect and remove obsolete local infra-tools configuration state."""
+"""Inspect and remove obsolete local basaltwater configuration state."""
 
 from __future__ import annotations
 

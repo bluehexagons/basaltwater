@@ -9,7 +9,7 @@ expensive-test category so it never runs in the default suite.
 To run it manually::
 
     # VM-first path (recommended)
-    INFRA_TOOLS_RUN_LIVE_PROXMOX=1 \
+    BASALTWATER_RUN_LIVE_PROXMOX=1 \
     PROXMOX_TEST_HOST=10.0.0.10 \
     PROXMOX_TEST_GUEST_TYPE=vm \
     PROXMOX_TEST_USER=root \
@@ -22,7 +22,7 @@ To run it manually::
     PROXMOX_TEST_IMAGE=local:import/debian-13-genericcloud-amd64.qcow2
 
     # LXC compatibility path
-    INFRA_TOOLS_RUN_LIVE_PROXMOX=1 \
+    BASALTWATER_RUN_LIVE_PROXMOX=1 \
     PROXMOX_TEST_HOST=10.0.0.10 \
     PROXMOX_TEST_GUEST_TYPE=lxc \
     PROXMOX_TEST_TEMPLATE=local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst \
@@ -91,9 +91,9 @@ def _guest_type_from_env() -> str:
 def _default_hostname(guest_type: str) -> str:
     if guest_type == "vm":
         guest_ip = (_env("PROXMOX_TEST_IP") or "vm").replace(".", "-")
-        return f"infra-tools-live-vm-{guest_ip}"
+        return f"basaltwater-live-vm-{guest_ip}"
     vmid = _env("PROXMOX_TEST_VMID", "9999") or "9999"
-    return f"infra-tools-live-lxc-{vmid}"
+    return f"basaltwater-live-lxc-{vmid}"
 
 
 def _required_env_missing() -> list[str]:
@@ -191,7 +191,7 @@ class TestProxmoxLiveLifecycle(unittest.TestCase):
         cls.hostname = _env(
             "PROXMOX_TEST_HOSTNAME", _default_hostname(cls.guest_type)
         ) or _default_hostname(cls.guest_type)
-        cls.password = _env("PROXMOX_TEST_PASSWORD", "infra-tools-live") or "infra-tools-live"
+        cls.password = _env("PROXMOX_TEST_PASSWORD", "basaltwater-live") or "basaltwater-live"
         cls.active_vmid: int | None = None
 
         if cls.guest_type == "vm":

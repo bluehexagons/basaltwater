@@ -21,8 +21,8 @@ from lib.validation import validate_filesystem_path
 
 
 BUILD_USER = "cicd-build"
-BUILD_HOME = "/var/lib/infra_tools/cicd/build"
-SNAPSHOT_PARENT = "/var/lib/infra_tools/cicd"
+BUILD_HOME = "/var/lib/basaltwater/cicd/build"
+SNAPSHOT_PARENT = "/var/lib/basaltwater/cicd"
 MAX_SNAPSHOT_BYTES = 1024 * 1024 * 1024
 MAX_SNAPSHOT_FILES = 100_000
 MAX_HEADER_BYTES = 16 * 1024

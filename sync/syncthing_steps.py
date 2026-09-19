@@ -23,8 +23,8 @@ from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, is_package_installed, run
 
 
-SYNCTHING_HOME = "/var/lib/infra-tools/syncthing"
-SYNCTHING_SERVICE_NAME = "infra-syncthing"
+SYNCTHING_HOME = "/var/lib/basaltwater/syncthing"
+SYNCTHING_SERVICE_NAME = "basaltwater-syncthing"
 SYNCTHING_SERVICE_FILE = f"/etc/systemd/system/{SYNCTHING_SERVICE_NAME}.service"
 SYNCTHING_GUI_ADDRESS = "127.0.0.1:8384"
 SYNCTHING_API_URL = f"http://{SYNCTHING_GUI_ADDRESS}/rest/config"
@@ -272,7 +272,7 @@ def _put_config(desired: dict[str, Any]) -> None:
 
 def _configure_syncthing_https(config: SetupConfig) -> str | None:
     if os.geteuid() != 0 or not os.path.isfile(
-        "/opt/infra_tools/common/service_tools/infra_web.py"
+        "/opt/basaltwater/common/service_tools/basaltwater_web.py"
     ):
         return None
     from common.godot_web_steps import configure_internal_web_host, identities_for_config
@@ -286,7 +286,7 @@ def _configure_syncthing_https(config: SetupConfig) -> str | None:
     )
     result = run(
         "SUDO_USER=" + shlex.quote(config.username)
-        + " /usr/local/bin/infra-web forward add syncthing"
+        + " /usr/local/bin/basaltwater-web forward add syncthing"
         + " --listen auto --to 127.0.0.1:8384 --profile syncthing --wait 30 --json",
         check=False,
         capture_output=True,
@@ -313,11 +313,11 @@ def _configure_syncthing_https(config: SetupConfig) -> str | None:
 
 
 def _remove_syncthing_https(config: SetupConfig) -> None:
-    if not os.path.isfile("/usr/local/bin/infra-web"):
+    if not os.path.isfile("/usr/local/bin/basaltwater-web"):
         return
     result = run(
         "SUDO_USER=" + shlex.quote(config.username)
-        + " /usr/local/bin/infra-web forward remove syncthing --json",
+        + " /usr/local/bin/basaltwater-web forward remove syncthing --json",
         check=False,
         capture_output=True,
     )

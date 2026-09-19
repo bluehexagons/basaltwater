@@ -135,9 +135,9 @@ def build_proxmox_control_plane_lockdown_plan(
         )
 
     address_sets = [
-        FirewallAddressSet("infra-management", list(profile.management_sources)),
-        FirewallAddressSet("infra-control-plane", list(profile.control_plane)),
-        FirewallAddressSet("infra-guests", list(profile.guest_networks)),
+        FirewallAddressSet("basaltwater-management", list(profile.management_sources)),
+        FirewallAddressSet("basaltwater-control-plane", list(profile.control_plane)),
+        FirewallAddressSet("basaltwater-guests", list(profile.guest_networks)),
     ]
     if errors:
         # Keep rules empty whenever prerequisite safety checks fail so callers
@@ -147,32 +147,32 @@ def build_proxmox_control_plane_lockdown_plan(
         rules = [
             FirewallRulePlan(
                 action="ACCEPT",
-                source="+infra-management",
-                destination="+infra-control-plane",
+                source="+basaltwater-management",
+                destination="+basaltwater-control-plane",
                 protocol="tcp",
                 ports=list(PROXMOX_MANAGEMENT_TCP_PORTS),
                 description="Allow management sources to reach SSH and Proxmox API",
             ),
             FirewallRulePlan(
                 action="ACCEPT",
-                source="+infra-control-plane",
-                destination="+infra-control-plane",
+                source="+basaltwater-control-plane",
+                destination="+basaltwater-control-plane",
                 protocol="tcp",
                 ports=list(PROXMOX_CLUSTER_TCP_PORTS),
                 description="Allow Proxmox console and migration traffic between nodes",
             ),
             FirewallRulePlan(
                 action="ACCEPT",
-                source="+infra-control-plane",
-                destination="+infra-control-plane",
+                source="+basaltwater-control-plane",
+                destination="+basaltwater-control-plane",
                 protocol="udp",
                 ports=list(PROXMOX_CLUSTER_UDP_PORTS),
                 description="Allow Proxmox cluster messaging between nodes",
             ),
             FirewallRulePlan(
                 action="DROP",
-                source="+infra-guests",
-                destination="+infra-control-plane",
+                source="+basaltwater-guests",
+                destination="+basaltwater-control-plane",
                 description="Block guests from reaching Proxmox control-plane addresses",
             ),
         ]
@@ -224,9 +224,9 @@ def render_proxmox_firewall_plan(plan: ProxmoxFirewallPlan) -> ProxmoxRenderedPl
             errors=list(plan.errors),
         )
 
-    management_entries = _entries_for(plan, "infra-management")
-    control_entries = _entries_for(plan, "infra-control-plane")
-    guest_entries = _entries_for(plan, "infra-guests")
+    management_entries = _entries_for(plan, "basaltwater-management")
+    control_entries = _entries_for(plan, "basaltwater-control-plane")
+    guest_entries = _entries_for(plan, "basaltwater-guests")
     artifacts = [
         ProxmoxRenderedArtifact(
             path="/etc/pve/firewall/cluster.fw",
@@ -297,23 +297,23 @@ def _render_cluster_fw(
     guest_entries: list[str],
 ) -> str:
     lines: list[str] = []
-    lines.extend(_render_ipset("infra-management", management_entries))
+    lines.extend(_render_ipset("basaltwater-management", management_entries))
     lines.append("")
-    lines.extend(_render_ipset("infra-control-plane", control_entries))
+    lines.extend(_render_ipset("basaltwater-control-plane", control_entries))
     lines.append("")
-    lines.extend(_render_ipset("infra-guests", guest_entries))
+    lines.extend(_render_ipset("basaltwater-guests", guest_entries))
     lines.append("")
     lines.extend(
         [
-            "[group infra-cluster-management]",
-            "IN SSH(ACCEPT) -source +infra-management",
-            "IN ACCEPT -p tcp -dport 8006 -source +infra-management",
-            "IN ACCEPT -p tcp -dport 5900:5999 -source +infra-control-plane",
-            "IN ACCEPT -p tcp -dport 60000:60050 -source +infra-control-plane",
-            "IN ACCEPT -p udp -dport 5405:5412 -source +infra-control-plane",
+            "[group basaltwater-cluster-management]",
+            "IN SSH(ACCEPT) -source +basaltwater-management",
+            "IN ACCEPT -p tcp -dport 8006 -source +basaltwater-management",
+            "IN ACCEPT -p tcp -dport 5900:5999 -source +basaltwater-control-plane",
+            "IN ACCEPT -p tcp -dport 60000:60050 -source +basaltwater-control-plane",
+            "IN ACCEPT -p udp -dport 5405:5412 -source +basaltwater-control-plane",
             "",
-            "[group infra-deny-control-plane]",
-            "OUT DROP -dest +infra-control-plane",
+            "[group basaltwater-deny-control-plane]",
+            "OUT DROP -dest +basaltwater-control-plane",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -335,7 +335,7 @@ def _render_host_fw() -> str:
             "enable: 1",
             "",
             "[RULES]",
-            "GROUP infra-cluster-management",
+            "GROUP basaltwater-cluster-management",
             "",
         ]
     )
@@ -348,7 +348,7 @@ def _render_guest_fw() -> str:
             "enable: 1",
             "",
             "[RULES]",
-            "GROUP infra-deny-control-plane",
+            "GROUP basaltwater-deny-control-plane",
             "",
             "# Add guest-specific ipfilter-net* IP sets when enabling IP filter.",
             "",

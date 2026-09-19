@@ -100,7 +100,7 @@ Comment=Screen Locker (disabled for RDP)
 Hidden=true
 """)
     
-    # 2. Remove older infra_tools workaround that disabled xfsettingsd entirely.
+    # 2. Remove older basaltwater workaround that disabled xfsettingsd entirely.
     # xfsettingsd is needed for normal XFCE settings; stale display profiles are
     # the part that conflicts with xorgxrdp's RANDR-driven resize events.
     xfsettingsd_desktop = f"{autostart_dir}/xfsettingsd.desktop"
@@ -129,7 +129,7 @@ Hidden=true
 """
     update_channel(power_manager_config, power_manager_xml)
     
-    # 6. Remove stale fixed display profile from previous infra_tools runs.
+    # 6. Remove stale fixed display profile from previous basaltwater runs.
     # A saved resolution/output profile can override xorgxrdp RANDR resize events.
     displays_config = f"{xfce_config_dir}/displays.xml"
     remove_legacy_override(displays_config, LEGACY_DISPLAYS)

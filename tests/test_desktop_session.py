@@ -483,8 +483,8 @@ class DesktopMigrationTests(unittest.TestCase):
             self.assertIn("dbus-run-session", wrapper.read_text())
             self.assertIn("export XDG_CURRENT_DESKTOP=i3\n", wrapper.read_text())
             self.assertNotIn("XDG_MENU_PREFIX=xfce-", wrapper.read_text())
-            self.assertIn(["gpasswd", "-M", "agent", "infra-desktop"], [call.args[0] for call in run.call_args_list])
-            self.assertEqual(skills.call_args.args, ("agent", ["codex"], ("infra-tools-desktop",)))
+            self.assertIn(["gpasswd", "-M", "agent", "basaltwater-desktop"], [call.args[0] for call in run.call_args_list])
+            self.assertEqual(skills.call_args.args, ("agent", ["codex"], ("basaltwater-desktop",)))
 
     @patch("desktop.session_steps.assert_desktop_idle")
     @patch("desktop.session_steps.is_dry_run", return_value=False)
@@ -496,7 +496,7 @@ class DesktopMigrationTests(unittest.TestCase):
             with patch("desktop.session_steps.DISPLAY_MANAGER_ALIAS", alias):
                 prepare_shared_desktop(SetupConfig(host="vm", username="agent", system_type="agent_vm"))
             self.assertEqual(alias.readlink(), Path("/dev/null"))
-            self.assertFalse(alias.with_suffix(".service.infra-tools-backup").exists())
+            self.assertFalse(alias.with_suffix(".service.basaltwater-backup").exists())
             self.assertEqual(run.call_args.args[0][:3], ["systemctl", "mask", "--now"])
 
     @patch("desktop.session_steps.run")
@@ -796,7 +796,7 @@ class DesktopPrivateRuntimeTests(unittest.TestCase):
             with patch.object(runtime, "Path", return_value=parent):
                 with self.assertRaisesRegex(RuntimeError, "private logind"):
                     runtime.runtime_directory()
-            self.assertFalse((parent / "infra-tools-desktop").exists())
+            self.assertFalse((parent / "basaltwater-desktop").exists())
 
     def test_runtime_directory_is_private_and_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -809,7 +809,7 @@ class DesktopPrivateRuntimeTests(unittest.TestCase):
     def test_runtime_directory_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
-            (parent / "infra-tools-desktop").symlink_to(parent, target_is_directory=True)
+            (parent / "basaltwater-desktop").symlink_to(parent, target_is_directory=True)
             with patch.object(runtime, "Path", return_value=parent):
                 with self.assertRaisesRegex(RuntimeError, "Unsafe"):
                     runtime.runtime_directory()

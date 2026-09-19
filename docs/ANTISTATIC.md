@@ -77,7 +77,7 @@ root-only environment file. Nginx limits `/admin` traffic to ten requests per
 minute per client with a small burst. It conditionally records only failed
 Basic Auth attempts, without the Authorization header; five failures within
 ten minutes trigger a one-hour Fail2ban source ban. Check the active jail with
-`sudo fail2ban-client status infra-tools-antistatic`.
+`sudo fail2ban-client status basaltwater-antistatic`.
 
 ## antistatic-db
 

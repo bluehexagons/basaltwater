@@ -11,7 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import common.common_steps as common_steps
-import infra_tools
+import basaltwater
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from argparse import Namespace
@@ -28,22 +28,22 @@ class TestWorkspaceCli(unittest.TestCase):
         args = parser.parse_args(["localhost", "--control-plane"])
         self.assertTrue(args.control_plane)
 
-    def test_infra_tools_parser_accepts_credentials_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_credentials_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["credentials", "--workspace", "/tmp/workspace", "list"])
         self.assertEqual(args.command, "credentials")
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.credentials_command, "list")
 
-    def test_infra_tools_parser_accepts_list_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_list_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["list", "--workspace", "/tmp/workspace", "prod"])
         self.assertEqual(args.command, "list")
         self.assertEqual(args.workspace, "/tmp/workspace")
         self.assertEqual(args.pattern, "prod")
 
     def test_setup_parser_accepts_deploy_latest_pairs(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
             "setup",
             "server_web",
@@ -82,7 +82,7 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.deploy_specs, [["clicker.example.com", "https://github.com/user/clicker.git"]])
 
     def test_setup_parser_still_accepts_repeated_deploy_flags(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
             "setup",
             "server_web",
@@ -101,55 +101,55 @@ class TestWorkspaceCli(unittest.TestCase):
             ["food.example.com", "https://github.com/user/food.git"],
         ])
 
-    def test_infra_tools_parser_accepts_recall_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_recall_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["recall", "example.com", "admin", "--key", "~/.ssh/id_ed25519"])
         self.assertEqual(args.command, "recall")
         self.assertEqual(args.host, "example.com")
         self.assertEqual(args.username, "admin")
         self.assertEqual(args.ssh_key, "~/.ssh/id_ed25519")
 
-    def test_infra_tools_parser_accepts_reconstruct_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_reconstruct_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["reconstruct", "--compact"])
         self.assertEqual(args.command, "reconstruct")
         self.assertTrue(args.compact)
 
-    def test_infra_tools_parser_accepts_completions_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_completions_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["completions", "--shell", "zsh", "--global"])
         self.assertEqual(args.command, "completions")
         self.assertEqual(args.shell, "zsh")
         self.assertTrue(args.global_install)
 
-    def test_infra_tools_parser_accepts_python_tools_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_python_tools_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["python-tools", "--shell", "fish"])
         self.assertEqual(args.command, "python-tools")
         self.assertEqual(args.shell, "fish")
 
-    def test_infra_tools_parser_accepts_bootstrap_command(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_bootstrap_command(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["bootstrap", "--user", "admin", "--shell", "zsh", "--skip-system-packages"])
         self.assertEqual(args.command, "bootstrap")
         self.assertEqual(args.bootstrap_user, "admin")
         self.assertEqual(args.shell, "zsh")
         self.assertTrue(args.skip_system_packages)
 
-    def test_infra_tools_parser_accepts_channel_selectors(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_parser_accepts_channel_selectors(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["channel", "branch-feature/example"])
         self.assertEqual(args.command, "channel")
         self.assertEqual(args.channel_name, "branch-feature/example")
 
-    def test_infra_tools_upgrade_without_hosts_is_tool_upgrade(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_upgrade_without_hosts_is_tool_upgrade(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["upgrade"])
         self.assertEqual(args.command, "upgrade")
         self.assertEqual(args.hosts, [])
 
-    def test_infra_tools_setup_parser_accepts_antistatic_flags(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_setup_parser_accepts_antistatic_flags(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
             "setup",
             "server_web",
@@ -166,8 +166,8 @@ class TestWorkspaceCli(unittest.TestCase):
         self.assertEqual(args.antistatic_admin, "operator")
         self.assertEqual(args.antistatic_db, "db.example.com:9091")
 
-    def test_infra_tools_setup_parser_accepts_gogs_flag(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+    def test_basaltwater_setup_parser_accepts_gogs_flag(self):
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
             "setup",
             "server_web",
@@ -186,14 +186,14 @@ class TestWorkspaceCli(unittest.TestCase):
             system_type="server_lite",
         )
 
-        command = infra_tools.reconstruct_command(config)
+        command = basaltwater.reconstruct_command(config)
 
         self.assertIn("basaltw setup server_lite", command)
         self.assertNotIn("setup_server_lite.py", command)
 
     @patch("builtins.print")
-    @patch("infra_tools.set_workspace_credential", side_effect=ValueError("Credential username must not contain ':'"))
-    def test_infra_tools_credentials_set_rejects_invalid_username(
+    @patch("basaltwater.set_workspace_credential", side_effect=ValueError("Credential username must not contain ':'"))
+    def test_basaltwater_credentials_set_rejects_invalid_username(
         self,
         _mock_set_credential,
         mock_print,
@@ -210,18 +210,18 @@ class TestWorkspaceCli(unittest.TestCase):
         parser.parse_args.return_value = args
 
         with patch(
-            "infra_tools.create_infra_tools_parser",
+            "basaltwater.create_basaltwater_parser",
             return_value=(parser, setup_parser, patch_parser),
         ):
-            result = infra_tools.main()
+            result = basaltwater.main()
 
         self.assertEqual(result, 1)
         mock_print.assert_called_with("Error: Credential username must not contain ':'")
 
     @patch("builtins.print")
-    @patch("infra_tools.getpass.getpass", return_value="secret")
-    @patch("infra_tools.set_workspace_credential")
-    def test_infra_tools_credentials_set_prompts_when_password_is_omitted(
+    @patch("basaltwater.getpass.getpass", return_value="secret")
+    @patch("basaltwater.set_workspace_credential")
+    def test_basaltwater_credentials_set_prompts_when_password_is_omitted(
         self,
         mock_set_credential,
         mock_getpass,
@@ -237,10 +237,10 @@ class TestWorkspaceCli(unittest.TestCase):
         parser.parse_args.return_value = args
 
         with patch(
-            "infra_tools.create_infra_tools_parser",
+            "basaltwater.create_basaltwater_parser",
             return_value=(parser, unittest.mock.MagicMock(), unittest.mock.MagicMock()),
         ):
-            result = infra_tools.main()
+            result = basaltwater.main()
 
         self.assertEqual(result, 0)
         mock_getpass.assert_called_once_with("Password for operator: ")
@@ -257,12 +257,12 @@ class TestWorkspaceCli(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "requires --ssl or --cloudflare"):
-            infra_tools._prepare_runtime_config_for_cli(config)
+            basaltwater._prepare_runtime_config_for_cli(config)
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_workspace_dir", side_effect=ValueError("bad workspace"))
-    @patch("infra_tools.set_workspace_dir")
-    def test_infra_tools_main_rejects_invalid_workspace(
+    @patch("basaltwater.validate_workspace_dir", side_effect=ValueError("bad workspace"))
+    @patch("basaltwater.set_workspace_dir")
+    def test_basaltwater_main_rejects_invalid_workspace(
         self,
         mock_set_workspace,
         _mock_validate_workspace,
@@ -276,20 +276,20 @@ class TestWorkspaceCli(unittest.TestCase):
         parser.parse_args.return_value = args
 
         with patch(
-            "infra_tools.create_infra_tools_parser",
+            "basaltwater.create_basaltwater_parser",
             return_value=(parser, setup_parser, patch_parser),
         ):
-            result = infra_tools.main()
+            result = basaltwater.main()
 
         self.assertEqual(result, 1)
         mock_set_workspace.assert_not_called()
         mock_print.assert_called_with("Error: bad workspace")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_notify_specs(
         self,
         _mock_validate_host,
@@ -307,19 +307,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid webhook URL")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_deploy_target(
         self,
         _mock_validate_host,
@@ -337,19 +337,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid deploy target host: bad target")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_deploy_spec(
         self,
         _mock_validate_host,
@@ -367,19 +367,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid deploy domain: bad domain")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_proxmox_node(
         self,
         _mock_validate_host,
@@ -399,19 +399,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid Proxmox node host: bad host")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_samba_share_spec(
         self,
         _mock_validate_host,
@@ -429,19 +429,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid Samba share name (cannot contain /, \\, or spaces): bad/share")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_ssl_email(
         self,
         _mock_validate_host,
@@ -459,19 +459,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid SSL email address: bad-email")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_apt_package(
         self,
         _mock_validate_host,
@@ -489,19 +489,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid --apt-install name: python3; rm -rf /")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_timezone(
         self,
         _mock_validate_host,
@@ -519,16 +519,16 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid timezone: Mars/Olympus")
 
     def test_run_patch_command_preserves_cached_lxc_machine_when_omitted(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["patch", "example.com", "testuser"])
         cached = SetupConfig(
             host="example.com",
@@ -538,20 +538,20 @@ class TestWorkspaceCli(unittest.TestCase):
             hosted_bridge="sdn-public",
         )
 
-        with patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
-             patch("infra_tools._execute_patch_config", return_value=0) as mock_execute:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
+             patch("basaltwater._execute_patch_config", return_value=0) as mock_execute:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 0)
         patched_config = mock_execute.call_args.args[0]
         self.assertEqual(patched_config.machine_type, "unprivileged")
         self.assertEqual(patched_config.hosted_bridge, "sdn-public")
-        self.assertIn("vm_balloon_min", infra_tools._patch_preserve_keys(args))
+        self.assertIn("vm_balloon_min", basaltwater._patch_preserve_keys(args))
 
     def test_run_patch_command_allows_explicit_machine_override(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["patch", "example.com", "testuser", "--machine", "vm"])
         cached = SetupConfig(
             host="example.com",
@@ -560,22 +560,22 @@ class TestWorkspaceCli(unittest.TestCase):
             machine_type="unprivileged",
         )
 
-        with patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
-             patch("infra_tools._execute_patch_config", return_value=0) as mock_execute:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
+             patch("basaltwater._execute_patch_config", return_value=0) as mock_execute:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 0)
         patched_config = mock_execute.call_args.args[0]
         self.assertEqual(patched_config.machine_type, "vm")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_notify_specs(
         self,
         _mock_validate_host,
@@ -596,20 +596,20 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid mailbox address")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_sync_spec(
         self,
         _mock_validate_host,
@@ -627,19 +627,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Source path must be absolute: relative")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_scrub_spec(
         self,
         _mock_validate_host,
@@ -657,19 +657,19 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Redundancy percentage must be between 1 and 100: 0%")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_setup_command_rejects_invalid_smb_mount_spec(
         self,
         _mock_validate_host,
@@ -687,20 +687,20 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = config
         args = Namespace(host="example.com", username="testuser", system_type="server_lite")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=config), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_setup_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=config), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid SMB mount host: bad host")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_deploy_target(
         self,
         _mock_validate_host,
@@ -721,21 +721,21 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid deploy target host: bad target")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_deploy_spec(
         self,
         _mock_validate_host,
@@ -756,21 +756,21 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid deploy domain: bad domain")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_sync_spec(
         self,
         _mock_validate_host,
@@ -791,21 +791,21 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Source path must be absolute: relative")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_scrub_spec(
         self,
         _mock_validate_host,
@@ -826,21 +826,21 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Redundancy percentage must be between 1 and 100: 0%")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_smb_mount_spec(
         self,
         _mock_validate_host,
@@ -861,21 +861,21 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()
         mock_print.assert_called_with("Error: Invalid SMB mount host: bad host")
 
     @patch("builtins.print")
-    @patch("infra_tools.validate_samba_share_credentials")
-    @patch("infra_tools.prepare_runtime_config")
-    @patch("infra_tools.load_setup_command")
-    @patch("infra_tools.validate_username", return_value=True)
-    @patch("infra_tools.validate_host", return_value=True)
+    @patch("basaltwater.validate_samba_share_credentials")
+    @patch("basaltwater.prepare_runtime_config")
+    @patch("basaltwater.load_setup_command")
+    @patch("basaltwater.validate_username", return_value=True)
+    @patch("basaltwater.validate_host", return_value=True)
     def test_run_patch_command_rejects_invalid_proxmox_node(
         self,
         _mock_validate_host,
@@ -898,10 +898,10 @@ class TestWorkspaceCli(unittest.TestCase):
         mock_prepare_runtime_config.return_value = merged
         args = Namespace(host="example.com", username="testuser")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=merged), \
-             patch("infra_tools.merge_setup_configs", return_value=merged), \
-             patch("infra_tools.run_remote_setup") as mock_run_remote:
-            result = infra_tools.run_patch_command(args)
+        with patch("basaltwater.SetupConfig.from_args", return_value=merged), \
+             patch("basaltwater.merge_setup_configs", return_value=merged), \
+             patch("basaltwater.run_remote_setup") as mock_run_remote:
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_run_remote.assert_not_called()

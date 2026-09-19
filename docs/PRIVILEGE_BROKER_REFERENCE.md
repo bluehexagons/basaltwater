@@ -6,7 +6,7 @@ who administer the VM, not agents requesting an action.
 
 ## Policy and allowlists
 
-Root owns `/etc/infra-tools/privilege-broker/policy.json`. A new policy has an
+Root owns `/etc/basaltwater/privilege-broker/policy.json`. A new policy has an
 empty `services` mapping and `"reboot": "approve"`. It accepts only these
 rules:
 
@@ -39,7 +39,7 @@ Never allowlist the broker or approval service themselves.
 
 The coding account has no sudoers grants, privileged supplementary groups, or
 polkit authorization. The root broker accepts requests only from that account's
-kernel-authenticated Unix-socket identity. The locked `infra-approval` service
+kernel-authenticated Unix-socket identity. The locked `basaltwater-approval` service
 identity alone can use the separate decision socket. The approval page uses its
 own HTTPS origin and Basic Auth record, has no cookies, and does not share the
 web-panel credential.
@@ -57,7 +57,7 @@ minute. Keep access source-restricted: flooding can affect availability.
 ## Audit, limits, and recovery
 
 The root-only database is
-`/var/lib/infra-tools-privilege-broker/requests.sqlite3`. Its `requests` and
+`/var/lib/basaltwater-privilege-broker/requests.sqlite3`. Its `requests` and
 `events` tables record decisions and outcomes. It is protected from the coding
 account, but not tamper-proof against root. Execution claims are committed
 before effects. Pending requests expire on restart; an in-progress action is
@@ -67,8 +67,8 @@ There can be eight outstanding requests and 30 requests per UID per hour. The
 database capacity is bounded and fails closed. Archive it as root with the
 services stopped if storage fills.
 
-The managed units are `infra-tools-privilege-broker.service` (root) and
-`infra-tools-privilege-approval.service` (locked `infra-approval` account).
+The managed units are `basaltwater-privilege-broker.service` (root) and
+`basaltwater-privilege-approval.service` (locked `basaltwater-approval` account).
 The web service receives its credentials through systemd `LoadCredential`.
 Root SSH remains the setup and recovery path. The first version has no
 passkeys, multi-user roles, push notifications, or browser password recovery.

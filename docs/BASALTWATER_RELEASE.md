@@ -1,67 +1,49 @@
 # Basaltwater v2.0 release notes and qualification
 
-The distribution is now `basaltwater` and the primary command is `basaltw`.
-Bootstrap and package installation retain `infra-tools` through v2.x. The rename
-preserves command verbs, import modules, saved state, credentials, resource
-names and API routes; unrelated v2 changes retain their own restrictions.
-The web panel, documentation and bundled agent guidance use
-the new identity. See [migration and rollback](BASALTWATER_MIGRATION.md) before
-upgrading; differently named Python distributions require an explicit uninstall
-of the old package before installation of the new one.
+Basaltwater is a complete repository and runtime rename. The distribution is
+`basaltwater`, the Python entry point is `basaltwater.py`, and the command is
+`basaltw`. Internal callers, install/staging paths, state directories, services,
+accounts, locks, skills, generated configuration, and deployment manifests use
+the new namespace. The gateway command is `basaltwater-web`.
 
-Repository implementation is complete. Publishing is a separate release step:
-the existing `bluehexagons/infra_tools` GitHub repository remains the selected
-source host, and no new domain is required. Keeping those URLs avoids depending
-on unverified redirects. The optional future repository rename must verify raw
-installer, archive, release and updater URLs individually before changing links.
+Recent infra-tools installations have an explicit [one-time migration](BASALTWATER_MIGRATION.md).
+There are no persistent old-name aliases, environment fallbacks, or historical
+release support after cutover. The existing `bluehexagons/infra_tools` GitHub
+location remains authoritative until the owner renames the repository.
 
-## Evidence delivered
+## Repository verification
 
-- Fresh wheel build/install and both launchers work outside the source tree.
-- A real pre-rename development wheel upgrades and rolls back in an isolated
-  virtual environment, with old/new ownership transferred in the correct order.
-- Installer tests cover root/user paths, Debian/CachyOS selection, explicit
-  custom paths, reruns, failures, recovery, and old/new environment precedence.
-- New-name collisions preserve existing commands; older tagged source can
-  select its underscore launcher without restoring that alias in v2.
-- State and credential content/permissions survive inspection and tested source
-  migrations. Existing locks, services, timers and ownership records retain one
-  namespace. Current skill text updates through existing reconciliation.
-- Web-panel tests, skill validation, theme contrast tests and VM-local browser
-  checks cover the changed user-facing surfaces. See [identity guide](BRANDING.md)
-  and [contract inventory](plans/BASALTWATER_CONTRACTS.md).
-- `make check` detects missing/stale generated brand assets without modifying
-  the checkout. Documentation review verified the branch's relative file links
-  and refreshed the roadmap and root contributor instructions.
+- The default suite exercises the renamed callers, setup plans, service
+  configuration, authentication, agent integrations and state handling.
+- Migration fixtures cover read-only preview, private data preservation,
+  disjoint-directory merging, collision/symlink rejection, skill replacement,
+  service cutover, and recovery after a failed service start.
+- Installer tests cover new root/user installations, Debian/CachyOS selection,
+  custom destinations, source activation failure and interruption recovery.
+- The fresh wheel is built, installed and exercised outside the source tree.
+  Packaging rejects retired entry modules and skill IDs.
+- `make check` validates CLI docs, metadata, generated brand assets and tests.
+  Visual identity and contrast checks remain described in [BRANDING.md](BRANDING.md).
 
 ## Before publishing v2.0.0
 
-The maintainer owns these release checks. Do not interpret mocked system calls
-or static panel specimens as a live upgrade certification.
+The maintainer owns these release checks. Mocked service operations and static
+panel specimens do not certify live provisioning or migration.
 
-- [ ] Use disposable Debian root/controller and non-root/agent VMs, plus a
-  CachyOS desktop, to install from the selected release commit. Record the
-  exact OS and source versions. No disposable target was supplied and no container
-  engine was available in the workspace, so live provisioning is unverified.
-- [ ] On each supported upgrade baseline, back up private state outside the
-  checkout, record checksums and modes without exposing contents, upgrade using
-  the migration guide, rerun, and compare state. Verify both commands, completion,
-  managed service health and agent guidance. For older `v0.2.0` source, use the
-  current installer; its CLI lacks `channel` and `upgrade`.
-- [ ] Exercise an interrupted installer and documented source-backup rollback
-  in those disposable systems. Verify services and scheduled jobs still have
-  exactly one owner and no duplicate instances. Never perform this on production.
-- [ ] Verify old/new controller and target combinations used operationally.
-  Retained rename contracts support coexistence; unrelated v2 changes may require
-  clean workstation builds as described in [workstations](WORKSTATIONS.md).
-- [ ] Confirm control of the PyPI namespace and finish relevant naming/trademark
-  checks before public publication. Recorded HTTP lookups are observations,
-  not reservations or clearance. No domain purchase is needed for this release.
-- [ ] Tag the qualified commit `v2.0.0`, publish reviewed artifacts and these
-  notes, and verify the existing installer/raw/archive/download links. Confirm
-  `stable` resolves to the intended release after tagging.
+- [ ] Qualify clean installation and migration from the recent pre-rename
+  development baseline on disposable Debian controller/server/agent VMs and a
+  CachyOS desktop. Record the exact source and OS versions.
+- [ ] Compare private data checksums and modes, validate application access,
+  service/timer health, agent configuration and completion after both system
+  and user passes. Confirm that old units, launchers and data paths are gone.
+- [ ] Interrupt a migration on disposable systems and exercise journal-based
+  recovery. Verify no duplicate scheduled jobs and no concurrently active
+  old/new lock namespaces. Do not perform this qualification on production.
+- [ ] Confirm namespace ownership and naming clearance before public publication.
+- [ ] Tag the qualified commit `v2.0.0`, publish artifacts and these notes, and
+  verify installer/raw/archive/download URLs and `stable` channel selection.
+- [ ] When the repository is renamed later, update its URLs together and verify
+  every source-download and updater path; do not assume redirects suffice.
 
-The `infra-tools` alias cannot be removed before v3.0. Before retirement, audit
-installed automation and skill content, publish removal instructions and verify
-that no supported integration still needs it. Persistent identifiers and Python
-imports have no automatic removal date.
+No live host migration, package publication, repository rename or domain purchase
+was performed during repository development.

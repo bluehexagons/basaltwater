@@ -1,151 +1,117 @@
-# Basaltwater v2 rename: upgrade and rollback
+# One-time migration to Basaltwater
 
-Basaltwater, formerly infra-tools, uses distribution name `basaltwater` and
-command `basaltw`. The rename itself does not change command verbs or options;
-unrelated v2 changes retain their own documented restrictions. `infra-tools`
-remains an installed transition command through v2.x; both launchers report
-`basaltw 2.0.0` from `--version`. No `basalt`, `bw`, `b6`, or `infra_tools`
-executable is added.
+Basaltwater is a full rename: distribution `basaltwater`, entry module
+`basaltwater.py`, command `basaltw`, and Basaltwater paths, services, skills,
+environment variables, and generated configuration. Normal operation has no
+old-name aliases or fallback paths. The GitHub repository stays at
+`bluehexagons/infra_tools` until its owner performs the hosting rename.
 
-## Git-managed installations
+## Supported starting point
 
-For an existing development-channel installation with the `infra-tools`
-command and channel support, run as the installation owner:
+The one-time `migrate` command targets recent infra-tools development installs
+with `lib/installation_info.py` source provenance support and their current
+workspace/state layouts. Historical releases such as `v0.2.0` and mixed-version
+operation after migration are unsupported. Use a separate checkout of the
+selected Basaltwater commit to perform the cutover; do not overwrite the old
+installation with a Git pull first.
+
+Stop controller operations and agent sessions before applying. Close and remove
+managed linked Git worktrees through the old workspace tool first, preserving
+branches and uncommitted work; migration refuses to relocate linked worktrees
+because their Git metadata embeds absolute paths. Back up private data outside
+both installation directories. Preview lists paths and actions, never credential
+contents. It does not change files or start/stop services.
+
+## Controller and user data
+
+Run from the new checkout as the account that owns the old installation:
 
 ```sh
-infra-tools channel  # Record the current commit before upgrading.
-infra-tools upgrade
-infra-tools bootstrap --skip-system-packages
+python3 basaltwater.py migrate
+python3 basaltwater.py migrate --apply
+python3 basaltwater.py bootstrap --skip-system-packages
 basaltw --version
-basaltw channel
+basaltw list --json
 ```
 
-The first command updates source; the second installs the new user launcher
-and completion. To refresh the system launcher too, use
-`sudo infra-tools bootstrap --user "$USER"` instead of the second command.
-Bootstrap can install or update its normal prerequisites. CachyOS users must
-run bootstrap as their desktop user, without sudo.
+The user pass moves the old `.config`, `.cache`, `.local/share`, `.local/state`
+and `Pictures` product directories into the Basaltwater namespace. It preserves
+credential bytes, ownership and modes, updates path-bearing saved JSON fields,
+replaces managed workflow skills with the current catalog, updates managed
+launchers and shell/agent configuration, and renames affected user units.
+Old paths and launchers are removed rather than retained as aliases.
 
-Before v2.0.0 is tagged, `stable` still selects an older release. A pinned user
-can select `infra-tools channel dev` before bootstrap to try the renamed
-development source. After publication, select `infra-tools channel v2.0.0`.
-Record the current commit from `infra-tools channel` before selecting a new
-channel so that rollback can return to that exact source.
+For a recent source installation at a custom location, supply
+`--installation /absolute/path/to/old-source` on preview and apply. Its new
+directory is the sibling `basaltwater`; an existing destination is refused.
+User source paths must be inside the current account's home. Explicit workspace
+paths outside the default product directories remain operator-owned: copy them
+deliberately and configure `BASALTWATER_WORKSPACE` or `--workspace` afterward.
 
-Older tagged source such as `v0.2.0` installs `infra_tools` and has no
-`channel` or `upgrade` command. Record its commit with `git -C /path/to/source
-rev-parse HEAD`, then use the current installer with `--channel dev`, the
-same `--install-dir`, and `--migrate-existing-install` to adopt an unmarked
-source tree. Keep the installer's backup for rollback. Do not run the
-channel-based commands above against those older versions. Selecting an old
-tag with the current installer uses the launcher declared by that source,
-including `infra_tools`; the renamed release itself does not install it.
+## Existing servers
 
-Alternatively, rerun the [installer](INSTALLATION.md) with the same
-`--install-dir`, user and shell, and a channel containing this change. Default
-source directories remain `/opt/infra_tools` for root installs and
-`~/.local/share/infra_tools` for user installs. Always pass an existing custom
-path explicitly. There is no automatic discovery or relocation of a second
-installation at a new branded path. Only run one installer per destination.
-
-Bootstrap refuses an existing `basaltw` symlink or unrecognized executable
-before replacing either launcher. Resolve that name collision explicitly and
-rerun; remove package-managed launchers with their owning package manager
-before switching to a Git/bootstrap installation. Existing Basaltwater
-bootstrap and managed-agent wrappers can be refreshed in place.
-
-An unmarked legacy source tree needs `--migrate-existing-install`. Dirty Git
-worktrees are refused. The installer preserves `state/` and `.infra_tools/`,
-keeps a private adjacent source backup, and restores the previous source if
-activation/bootstrap fails or receives HUP, INT or TERM. Rerunning after a
-successful install is supported. After SIGKILL or power loss, inspect the
-printed/adjacent `.backup.*`, `.new.*` and `.failed.*` trees and restore the
-old backup to the original path before rerunning. Do not delete recovery data
-until the active source and launchers have been verified.
-
-For a Git rollback, select `basaltw channel commit-PREVIOUS_COMMIT` using the
-recorded full commit. The two wrappers invoke the retained `infra_tools.py`
-path, so they still work against the old source. To undo an installer source
-activation, preserve the failed/current tree and restore the adjacent backup
-to the original path. Neither operation reverses system packages installed by
-bootstrap. If you applied unrelated setup changes after upgrading, use their
-own documented recovery procedures before downgrading.
-
-Remote targets receive the controller source on the next normal setup/patch.
-Agent setup installs both launchers. Existing unmanaged executable launchers
-are retained, and symlinked destinations are refused. Check `command -v
-basaltw` and `basaltw --version` if an existing user command shadows the managed
-one. No service/timer, sudoers, lock, readiness route or skill ID changes in
-this cutover, so existing scheduled work and older agent guidance continue to
-use their established contracts.
-
-## Python-package installations
-
-Download/build the new wheel before removing the old package. In the same
-isolated Python environment that owns the old installation:
+Copy the selected Basaltwater source checkout to a separate temporary directory
+on each target. Run the following there as root, then run the user pass above
+as each configured agent/desktop account. System migration must precede user
+migration when user launchers point to `/opt/infra_tools`.
 
 ```sh
-python -m pip uninstall infra_tools
-python -m pip install /absolute/path/to/basaltwater-2.0.0-py3-none-any.whl
-basaltw --version
-infra-tools --version
+sudo python3 basaltwater.py migrate --system
+sudo python3 basaltwater.py migrate --system --apply
+sudo python3 basaltwater.py bootstrap --user USERNAME
+basaltw agent doctor --json
 ```
 
-Do not co-install the distributions and then uninstall `infra_tools`: their
-runtime modules and transition launcher overlap, and pip would remove files
-belonging to the new install. Ordinary `pip install --upgrade infra_tools`
-does not discover a differently named distribution. For pipx/uv tool installs,
-use that tool's uninstall followed by install from the new wheel; do not mix
-package managers in one environment.
+The system pass moves persistent product directories, stages a fresh
+Basaltwater runtime, preserves deployed repository sources and machine state,
+and updates owned systemd, Nginx, sudoers, security and gateway configuration.
+Affected units stop before paths change. Enabled and active states are recorded;
+only the corresponding new units are enabled or started. Service-account and
+desktop-group renames retain numeric ownership. Locks must be idle. Certificates
+and private keys retain their bytes and trust identity; existing certificate
+subjects are not reissued merely to change branding.
 
-Keep the previous wheel for rollback. Uninstall `basaltwater` first, then
-reinstall that previous `infra_tools` wheel. The new `basaltw` console script
-is removed by uninstall; use the previous wheel's command (`infra-tools`, or
-`infra_tools` for older builds) after package rollback. If a new
-install fails, reinstall the saved old wheel before resuming automation.
-Workspace state and credentials remain outside package ownership and are
-not removed by either uninstall.
+The resulting runtime is a source snapshot with provenance. For future updates,
+use a Basaltwater controller to rerun setup, or use the installer to establish
+a managed Git installation. Installer and setup activation refuse an unmigrated
+recent installation instead of silently creating a parallel runtime.
 
-Release artifact checks support:
+After both passes, verify services, timers, agent diagnostics, saved setups,
+private file modes and application access before resuming automation. Update
+external scripts to `basaltw`, `BASALTWATER_*`, `basaltwater-web`, and the new
+paths. Deployment repositories now use `basaltwater.json`; rename their
+`infra.json` manifests before the next deployment. External repositories and
+arbitrary user scripts are not modified by migration.
+
+## Conflicts and interrupted cutover
+
+Disjoint legacy directories can merge. Duplicate files, conflicting canonical
+destinations, unsafe symlinks, unknown managed skills and conflicting service
+accounts are refused. Nothing is selected by timestamp or silently overwritten.
+
+The apply operation records private recovery intent under
+`/var/lib/basaltwater-migration` for system work and
+`~/.local/state/basaltwater-migration` for user work. These directories can contain
+configuration backups; keep them private. If cutover is interrupted, preserve
+the journal and run from the separate Basaltwater checkout:
 
 ```sh
-python3 scripts/check_wheel_artifact.py --previous-wheel /path/to/old.whl
+python3 basaltwater.py migrate --recover
+# Or, for the interrupted system pass:
+sudo python3 basaltwater.py migrate --system --recover
 ```
 
-This builds the current wheel and checks fresh installation by default. When
-supplied a working pre-rename development wheel exposing `infra-tools`, it
-exercises uninstall-before-install and package rollback outside the source tree
-in a temporary virtual environment. The recorded wheel qualification uses that
-development baseline, not the older `v0.2.0` tag.
+Recovery reverses the interrupted filesystem changes and restores recorded old
+unit state. Archive the recovered journal directory before retrying. A completed
+migration cannot use this recovery command to downgrade; supporting old releases
+after successful cutover is outside the contract. A successful rerun with no
+legacy resources reports that there is nothing to migrate.
 
-## Environment and state
+## Package installation
 
-Installer settings accept `BASALTWATER_REPOSITORY_URL`, `BASALTWATER_CHANNEL`
-and `BASALTWATER_REF`. Each new spelling overrides its `INFRA_TOOLS_*`
-equivalent when set. Either channel setting takes precedence over refs;
-explicit `--channel`/`--ref` options take precedence over the environment.
-An explicitly empty new channel or repository URL fails validation; an empty
-new ref suppresses the old ref. With no selection, a reinstall reuses its
-saved channel, and a fresh install uses `dev`. For compatibility,
-an explicitly empty `INFRA_TOOLS_CHANNEL` still selects `dev` and overrides
-ref settings, matching the previous installer.
-
-Other runtime `INFRA_TOOLS_*` settings, `~/.config/infra_tools`,
-`/opt/infra_tools/state`, ownership markers, locks, JSON keys, `infra.json`,
-credentials and recovery records are deliberately retained. There is no
-`BASALTWATER_WORKSPACE` setting or implicit new state path. Use the existing
-`--workspace` option for an explicit location. Help, status and inspection do
-not copy or move state. See the [contract inventory](plans/BASALTWATER_CONTRACTS.md).
-
-## Hosting and transition completion
-
-GitHub source/download links still use `bluehexagons/infra_tools`. This PR does
-not rename the hosted repository, publish to PyPI, register a domain or claim
-trademark clearance. Current guides and bundled skills use `basaltw`.
-Previously installed workflow skills using `infra-tools` continue through
-the supported transition command until setup refreshes them. Skill IDs stay
-unchanged to preserve reconciliation and readiness checks.
-
-The maintainer may retire that command no earlier than v3.0, after migrating
-generated automation and agent guidance and publishing removal instructions.
-Persistent identifiers are not scheduled for automatic renaming.
+Use a separate virtual environment for the new wheel while migrating. Remove
+the old `infra_tools` distribution before installing `basaltwater` into the same
+environment: the distributions share runtime packages. Do not install both and
+then uninstall the old one, which could remove new files. Fresh-wheel validation
+is `python3 scripts/check_wheel_artifact.py`; historical wheel rollback is not
+supported. See the [release qualification checklist](BASALTWATER_RELEASE.md).

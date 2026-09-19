@@ -1,7 +1,7 @@
 # Internal HTTPS sites and live previews
 
-`infra-web` publishes static builds and explicit loopback development servers
-through the HTTPS gateway managed by infra_tools. The gateway reuses the VM's
+`basaltwater-web` publishes static builds and explicit loopback development servers
+through the HTTPS gateway managed by basaltwater. The gateway reuses the VM's
 certificate and saved access-source policy; do not bind development servers to
 `0.0.0.0`, edit Nginx, or add UFW rules manually.
 
@@ -11,22 +11,22 @@ T3 Code installations also place the managed web-gateway skill in compatible
 terminal agents, so the publishing workflow is discoverable without enabling
 the Godot bundle.
 
-Run `infra-web` commands on that configured VM as the account that owns the
-site, not on a separate controller. Check `command -v infra-web` first. If it
+Run `basaltwater-web` commands on that configured VM as the account that owns the
+site, not on a separate controller. Check `command -v basaltwater-web` first. If it
 is missing, provision a gateway-capable feature before continuing; the
 [beginner walkthrough](GETTING_STARTED.md#5-try-another-feature) shows one path.
 
 ## Try a plain HTML page
 
 Once the gateway is installed, this example needs no JavaScript project or
-package manager. First run `infra-web site list` and choose an unused site
+package manager. First run `basaltwater-web site list` and choose an unused site
 name. The example uses `hello`; change it throughout if that name exists,
 because publishing the same name replaces that site's snapshot.
 
 Create a fresh directory in your home and a small page:
 
 ```bash
-demo_dir="$(mktemp -d "$HOME/infra-web-demo.XXXXXX")"
+demo_dir="$(mktemp -d "$HOME/basaltwater-web-demo.XXXXXX")"
 printf 'Source directory: %s\n' "$demo_dir"
 mkdir "$demo_dir/public"
 cat > "$demo_dir/public/index.html" <<'HTML'
@@ -38,9 +38,9 @@ cat > "$demo_dir/public/index.html" <<'HTML'
 <p>This page is served by the managed HTTPS gateway.</p>
 </html>
 HTML
-infra-web publish site hello --project "$demo_dir" --no-build --output public
-infra-web site doctor hello
-infra-web site url hello
+basaltwater-web publish site hello --project "$demo_dir" --no-build --output public
+basaltwater-web site doctor hello
+basaltwater-web site url hello
 ```
 
 `demo_dir` holds the new directory's path for this terminal session. Publication
@@ -56,7 +56,7 @@ and repeat the publication command in the same terminal. To remove just the
 hosted demo:
 
 ```bash
-infra-web site remove hello --yes
+basaltwater-web site remove hello --yes
 ```
 
 This keeps your source directory. The examples below are alternatives for
@@ -68,7 +68,7 @@ For a Vite or similar JavaScript project with a `build` script:
 
 ```bash
 cd ~/repos/my-site
-infra-web publish site
+basaltwater-web publish site
 ```
 
 The publisher derives the site name from `package.json`, installs dependencies
@@ -83,7 +83,7 @@ https://HOST:8443/sites/USERNAME/my-site/
 
 The active site is a copied snapshot, not a symlink to the checkout or build
 directory. A later edit, commit, or standalone build leaves the hosted copy
-unchanged until `infra-web publish site` runs again. This allows failed builds
+unchanged until `basaltwater-web publish site` runs again. This allows failed builds
 to leave the last publication intact, but it also means a healthy existing
 route may be stale relative to the repository.
 
@@ -94,11 +94,11 @@ paths such as `/assets/app.js` resolve outside the publication.
 Specify the name, project, or output when detection is not sufficient:
 
 ```bash
-infra-web publish site docs --project ~/repos/product --output web/dist
-infra-web publish site docs --project ~/repos/product --no-build --output dist
-infra-web publish site docs --no-install
-infra-web publish site docs --json
-infra-web publish site docs --open
+basaltwater-web publish site docs --project ~/repos/product --output web/dist
+basaltwater-web publish site docs --project ~/repos/product --no-build --output dist
+basaltwater-web publish site docs --no-install
+basaltwater-web publish site docs --json
+basaltwater-web publish site docs --open
 ```
 
 `--no-build` requires an existing output directory. `--no-install` skips the
@@ -123,10 +123,10 @@ successful build and are outside this deadline.
 Inspect and remove publications as the owning user:
 
 ```bash
-infra-web site list
-infra-web site url docs
-infra-web site doctor docs
-infra-web site remove docs --yes
+basaltwater-web site list
+basaltwater-web site url docs
+basaltwater-web site doctor docs
+basaltwater-web site remove docs --yes
 ```
 
 Publishing and removal of the same site share a lock, so removal waits for an
@@ -141,7 +141,7 @@ freshness matters:
 
 ```bash
 set -o pipefail
-published_url="$(infra-web site url docs)"
+published_url="$(basaltwater-web site url docs)"
 curl --fail --silent --show-error "${published_url}assets/app.js" | sha256sum
 sha256sum dist/assets/app.js
 ```
@@ -161,7 +161,7 @@ required:
 
 ```bash
 cd ~/repos/my-vite-project
-sudo infra-web preview start my-project --project .
+sudo basaltwater-web preview start my-project --project .
 ```
 
 For Vite projects, Basaltwater detects the `dev` or `preview` package script,
@@ -179,10 +179,10 @@ Override automatic Vite detection with an explicit argv command after `--`.
 Use `{host}` and `{port}` placeholders without shell interpolation:
 
 ```bash
-sudo infra-web preview start my-project --project . -- \
+sudo basaltwater-web preview start my-project --project . -- \
   ./serve-preview --host '{host}' --port '{port}'
 
-sudo infra-web preview start my-game --project . --profile godot -- \
+sudo basaltwater-web preview start my-game --project . --profile godot -- \
   ./preview-server --listen '{host}:{port}'
 ```
 
@@ -194,12 +194,12 @@ godot` adds cross-origin isolation headers for threaded Godot previews.
 Useful lifecycle commands are:
 
 ```bash
-infra-web preview list
-infra-web preview url my-project
-infra-web preview logs my-project
-infra-web doctor my-project
-sudo infra-web preview stop my-project
-sudo infra-web preview prune --yes
+basaltwater-web preview list
+basaltwater-web preview url my-project
+basaltwater-web preview logs my-project
+basaltwater-web doctor my-project
+sudo basaltwater-web preview stop my-project
+sudo basaltwater-web preview prune --yes
 ```
 
 Use `--replace` to deliberately replace an existing same-named preview. A
@@ -213,26 +213,26 @@ Keep `forward` as the low-level path when another service manager already owns
 the upstream process:
 
 ```bash
-sudo infra-web forward add api-preview \
+sudo basaltwater-web forward add api-preview \
   --to 127.0.0.1:3000 \
   --wait 30 \
   --health /health
 
-infra-web forward list
-infra-web forward url api-preview
-infra-web doctor api-preview
-sudo infra-web forward remove api-preview
+basaltwater-web forward list
+basaltwater-web forward url api-preview
+basaltwater-web doctor api-preview
+sudo basaltwater-web forward remove api-preview
 ```
 
 The forward list reports whether each upstream TCP port is ready. Use
-`sudo infra-web forward prune --yes` only for unmanaged dead forwards; managed
+`sudo basaltwater-web forward prune --yes` only for unmanaged dead forwards; managed
 preview services should be cleaned up through `preview prune`.
 
 Nginx retains its 1 MiB request-body default unless the upstream service has a
 larger documented limit. Set a bounded per-route limit when needed:
 
 ```bash
-sudo infra-web forward add upload-api \
+sudo basaltwater-web forward add upload-api \
   --to 127.0.0.1:3000 \
   --max-body-size 50m
 ```
@@ -251,7 +251,7 @@ VM-local checks and managed Playwright already use the VM trust store. The
 command prints the file, download URL, and SHA-256 fingerprint:
 
 ```bash
-infra-web ca
+basaltwater-web ca
 ```
 
 Verify the printed fingerprint before installing the public CA. See
@@ -267,7 +267,7 @@ fail the check.
 ## Security and state
 
 Forward and preview mutations share a root-owned nonblocking lock at
-`/etc/infra-tools/internal-web/mutation.lock`. A competing command fails before
+`/etc/basaltwater/internal-web/mutation.lock`. A competing command fails before
 reading or changing state; retry after the active command finishes. Ownership
 lasts through rollback and state writes and is released on process exit. Do not
 delete the stable lock file to bypass a running command.
@@ -282,5 +282,5 @@ delete the stable lock file to bypass a running command.
 - Preview units use systemd process, memory, privilege, device, kernel, and
   address-family limits.
 
-Use `infra-web forward reconcile` after repairing managed state, and
-`infra-web doctor NAME` to validate a reachable forwarded endpoint.
+Use `basaltwater-web forward reconcile` after repairing managed state, and
+`basaltwater-web doctor NAME` to validate a reachable forwarded endpoint.

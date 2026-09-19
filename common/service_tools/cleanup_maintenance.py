@@ -39,7 +39,7 @@ from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
 logger = get_service_logger('cleanup_maintenance', 'common', use_syslog=True)
-STATE_FILE = "/var/lib/infra_tools/cleanup_maintenance_state.json"
+STATE_FILE = "/var/lib/basaltwater/cleanup_maintenance_state.json"
 _INFRA_TMP_RE = re.compile(rf"^(?:{'|'.join(INFRA_TMP_PATTERNS)})$")
 _CRASH_REPORT_RE = re.compile(rf"^(?:{'|'.join(CRASH_REPORT_PATTERNS)})$")
 _REMOTE_FILESYSTEM_TYPES = {
@@ -308,11 +308,11 @@ def cleanup_stale_crash_reports(
     return failures
 
 
-def cleanup_stale_infra_tmp_artifacts(
+def cleanup_stale_basaltwater_tmp_artifacts(
     tmp_dir: str = "/tmp",
     max_age_days: int = STALE_INFRA_TMP_MAX_AGE_DAYS,
 ) -> list[str]:
-    """Remove stale infra_tools temp files/directories left by interrupted runs."""
+    """Remove stale basaltwater temp files/directories left by interrupted runs."""
     validate_filesystem_path(tmp_dir, must_exist=False)
     max_age_days = validate_positive_integer(str(max_age_days), "max age days")
     failures: list[str] = []
@@ -324,7 +324,7 @@ def cleanup_stale_infra_tmp_artifacts(
         details = str(exc)
         log_event(
             logger,
-            "Failed to list infra_tools temp artifacts",
+            "Failed to list basaltwater temp artifacts",
             level=WARNING,
             tmp_dir=tmp_dir,
             error=details,
@@ -350,7 +350,7 @@ def cleanup_stale_infra_tmp_artifacts(
             details = str(exc)
             log_event(
                 logger,
-                "Failed to remove infra_tools temp artifact",
+                "Failed to remove basaltwater temp artifact",
                 level=WARNING,
                 path=path,
                 error=details,
@@ -360,7 +360,7 @@ def cleanup_stale_infra_tmp_artifacts(
     if removed:
         log_event(
             logger,
-            "Removed stale infra_tools temp artifacts",
+            "Removed stale basaltwater temp artifacts",
             tmp_dir=tmp_dir,
             max_age_days=max_age_days,
             removed_count=len(removed),
@@ -640,7 +640,7 @@ def main() -> int:
 
     for tmp_dir in INFRA_TMP_DIRS:
         log_tmp_usage(tmp_dir)
-        failures.extend(cleanup_stale_infra_tmp_artifacts(tmp_dir=tmp_dir))
+        failures.extend(cleanup_stale_basaltwater_tmp_artifacts(tmp_dir=tmp_dir))
     for crash_dir in CRASH_REPORT_DIRS:
         failures.extend(cleanup_stale_crash_reports(crash_dir=crash_dir))
     trim_failure = cleanup_filesystem_free_space()

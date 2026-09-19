@@ -18,9 +18,9 @@ desktop session and run this as yourself (without `sudo`):
 
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
-  --output "$HOME/.infra_tools-install.sh" \
+  --output "$HOME/.basaltwater-install.sh" \
   https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
-sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
+sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
   --node --python --git-lfs
 ```
 
@@ -118,9 +118,9 @@ service:
 
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
-  --output "$HOME/.infra_tools-install.sh" \
+  --output "$HOME/.basaltwater-install.sh" \
   https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
-sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
+sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
   --agent-tool gh --agent-tool codex --web-interface t3code \
   --web-interface-port 3773
 ```
@@ -129,12 +129,12 @@ For an already installed launcher, the equivalent setup is:
 
 ```bash
 basaltw setup agent_cachyos localhost --web-interface t3code
-systemctl --user status infra-tools-cachyos-t3.service
+systemctl --user status basaltwater-cachyos-t3.service
 ```
 
-The runtime is under `~/.local/share/infra-tools/cachyos-t3/releases`, and the
-unit is `~/.config/systemd/user/infra-tools-cachyos-t3.service`. The stable
-`~/.local/share/infra-tools/cachyos-t3/bin/t3` link selects the current release
+The runtime is under `~/.local/share/basaltwater/cachyos-t3/releases`, and the
+unit is `~/.config/systemd/user/basaltwater-cachyos-t3.service`. The stable
+`~/.local/share/basaltwater/cachyos-t3/bin/t3` link selects the current release
 for pairing and Connect commands. Setup validates the CLI, a disposable native
 PTY shell, the generated unit, and HTTP UI reachability. Provider login and a
 real coding thread still need verification. HTTP 200 alone is not backend
@@ -152,9 +152,9 @@ a second upstream `t3code.service`, while Basaltwater already owns this unit.
 Run:
 
 ```bash
-"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.t3"
-systemctl --user restart infra-tools-cachyos-t3.service
-"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.t3"
+systemctl --user restart basaltwater-cachyos-t3.service
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.t3"
 ```
 
 Follow the browser sign-in flow printed by `connect link`. Then sign in to the
@@ -178,7 +178,7 @@ the installed T3 release documents support for combining the two binds.
 Generate a fresh native T3 pairing link with the managed runtime:
 
 ```bash
-"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
 ```
 
 The command prints a QR code, a `Pairing URL`, and a token. Treat the URL and
@@ -194,8 +194,8 @@ replace the example below and rerun setup:
 ```bash
 basaltw setup agent_cachyos localhost --web-interface t3code \
   --web-interface-host 192.168.1.50 --web-interface-port 3773
-systemctl --user status infra-tools-cachyos-t3.service
-"$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
+systemctl --user status basaltwater-cachyos-t3.service
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
 ```
 
 Open the generated URL on the other device, or paste it into its T3 desktop
@@ -209,7 +209,7 @@ If a previous checkout produced `has a bad unit file setting`, update
 Basaltwater and rerun setup. Validate the generated unit with:
 
 ```bash
-systemd-analyze verify "$HOME/.config/systemd/user/infra-tools-cachyos-t3.service"
+systemd-analyze verify "$HOME/.config/systemd/user/basaltwater-cachyos-t3.service"
 ```
 
 The service follows the user session; lingering is not enabled. An existing
@@ -218,10 +218,10 @@ that unit with its original installer before selecting this service. To stop thi
 service persistently:
 
 ```bash
-systemctl --user disable --now infra-tools-cachyos-t3.service
+systemctl --user disable --now basaltwater-cachyos-t3.service
 ```
 
-Use `journalctl --user -u infra-tools-cachyos-t3.service` for startup errors.
+Use `journalctl --user -u basaltwater-cachyos-t3.service` for startup errors.
 The generic VM T3 pairing and update commands do not manage this unit. For a
 deliberate runtime update, finish active work and rerun setup as yourself:
 
@@ -240,7 +240,7 @@ the managed root; it bypasses staging and can replace the stable CLI link.
 Installation/validation failures leave the old service untouched. Activation
 failures restore the previous runtime, unit permissions, and enabled/running
 state. An interrupted activation leaves private recovery snapshots in
-`~/.local/share/infra-tools/cachyos-t3/.activation`; the next setup retries
+`~/.local/share/basaltwater/cachyos-t3/.activation`; the next setup retries
 recovery before installing. If recovery is incomplete, retain that directory
 and both runtimes while resolving the reported service error. Changes or
 removals made to the unit or CLI link outside setup stop recovery and preserve

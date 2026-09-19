@@ -19,7 +19,7 @@ from lib.validation import validate_filesystem_path
 
 def artifact_path() -> str:
     """Allocate a private, persistent capture location outside the repository."""
-    directory = Path.home() / "Pictures" / "infra-tools"
+    directory = Path.home() / "Pictures" / "basaltwater"
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     info = directory.lstat()
     if directory.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:

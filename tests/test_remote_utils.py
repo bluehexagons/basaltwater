@@ -96,7 +96,7 @@ class TestRunCommandDispatch(unittest.TestCase):
         self._completed_process(mock_popen)
         output = StringIO()
         errors = StringIO()
-        with patch.dict(os.environ, {"INFRA_TOOLS_VERBOSE": "1"}), redirect_stdout(output), patch("lib.remote_utils.sys.stderr", errors):
+        with patch.dict(os.environ, {"BASALTWATER_VERBOSE": "1"}), redirect_stdout(output), patch("lib.remote_utils.sys.stderr", errors):
             run(["build"], stdout=errors, timeout=7)
         self.assertEqual(output.getvalue(), "")
         self.assertIn("Running:", errors.getvalue())
@@ -394,7 +394,7 @@ class TestRunCommandDispatch(unittest.TestCase):
         self._completed_process(mock_popen)
         output = StringIO()
 
-        with patch.dict(os.environ, {"INFRA_TOOLS_VERBOSE": "0"}, clear=False), \
+        with patch.dict(os.environ, {"BASALTWATER_VERBOSE": "0"}, clear=False), \
              redirect_stdout(output):
             run("echo hello")
 
@@ -402,7 +402,7 @@ class TestRunCommandDispatch(unittest.TestCase):
 
         output.seek(0)
         output.truncate()
-        with patch.dict(os.environ, {"INFRA_TOOLS_VERBOSE": "1"}, clear=False), \
+        with patch.dict(os.environ, {"BASALTWATER_VERBOSE": "1"}, clear=False), \
              redirect_stdout(output):
             run("echo hello")
 

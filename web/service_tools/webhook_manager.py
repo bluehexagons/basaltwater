@@ -31,8 +31,8 @@ try:
 except ImportError:
     argcomplete = None
 
-CONFIG_FILE = "/etc/infra_tools/cicd/webhook_config.json"
-SECRET_FILE = "/etc/infra_tools/cicd/webhook_secret"
+CONFIG_FILE = "/etc/basaltwater/cicd/webhook_config.json"
+SECRET_FILE = "/etc/basaltwater/cicd/webhook_secret"
 
 
 def load_config() -> dict:

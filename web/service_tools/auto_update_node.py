@@ -6,7 +6,7 @@ This script updates Node.js via nvm on the LTS track by default. Global npm
 package upgrades are opt-in by policy. If a non-LTS/latest Node.js track is
 already installed, it is kept current as an explicit user opt-in.
 
-Logs to: /var/log/infra_tools/web/auto_update_node.log
+Logs to: /var/log/basaltwater/web/auto_update_node.log
 """
 
 from __future__ import annotations

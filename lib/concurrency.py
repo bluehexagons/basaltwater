@@ -18,11 +18,11 @@ class ResourceBusyError(RuntimeError):
 
 
 def _lock_root() -> str:
-    path = os.path.join(tempfile.gettempdir(), f"infra-tools-locks-{os.getuid()}")
+    path = os.path.join(tempfile.gettempdir(), f"basaltwater-locks-{os.getuid()}")
     os.makedirs(path, mode=0o700, exist_ok=True)
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise RuntimeError(f"Unsafe infra-tools lock directory: {path}")
+        raise RuntimeError(f"Unsafe basaltwater lock directory: {path}")
     return path
 
 
@@ -57,13 +57,13 @@ def resource_lock(
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
-            raise RuntimeError(f"Unsafe infra-tools lock file: {path}")
+            raise RuntimeError(f"Unsafe basaltwater lock file: {path}")
         operation = fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)
         try:
             fcntl.flock(descriptor, operation)
         except BlockingIOError as exc:
             raise ResourceBusyError(
-                f"Another infra-tools process is already operating on {resource}"
+                f"Another basaltwater process is already operating on {resource}"
             ) from exc
         yield
     finally:

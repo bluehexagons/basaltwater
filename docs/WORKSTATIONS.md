@@ -13,10 +13,10 @@ profile with `--control-plane` and select the agent tools you need (GitHub CLI
 and Codex CLI in this example):
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --local-setup agent_workstation \
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
   --control-plane --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.infra_tools-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 This keeps the graphical workstation setup while adding the SSH, rsync,
@@ -265,9 +265,9 @@ the same time, so its launcher does not fall back to the optional
 created, so XFCE's Preferred Applications dialog and `exo-open --launch
 WebBrowser` resolve the selected browser rather than falling back to an
 unregistered command. These files are managed defaults: workstation setup
-recreates them rather than merging older infra-tools state. The `v2.0.0` setup
+recreates them rather than merging older basaltwater state. The `v2.0.0` setup
 is intended for clean workstation builds; rebuild a workstation created by an
-older infra-tools release instead of attempting an in-place migration.
+older basaltwater release instead of attempting an in-place migration.
 
 On VM and hardware targets, AppArmor is enabled and its distro service reloads
 the installed policy without blanket-enforcing package profiles. This preserves
@@ -275,7 +275,7 @@ each profile's declared `enforce`, `complain`, or `unconfined` mode. LibreWolf's
 own browser sandbox remains responsible for browser confinement. Setup replaces
 the package profile with its managed unconfined compatibility profile and
 reloads it. The `v2.0.0` setup is intended for clean workstation builds rather
-than in-place migration of older infra-tools state.
+than in-place migration of older basaltwater state.
 
 Debian 13's AppArmor policy also supplies the `unprivileged_userns` transition
 used by otherwise-unconfined applications that create a user namespace. Setup
@@ -290,7 +290,7 @@ error instead of leaving browser automation silently broken.
 ## Flatpak and containers
 
 Flatpak requires a desktop-capable host and is unreliable in unprivileged
-containers. On a container target, infra_tools warns and falls back to apt for
+containers. On a container target, basaltwater warns and falls back to apt for
 browsers; other Flatpak bundles may also fall back to apt when Flatpak cannot
 be installed. Prefer `--machine vm` when a reproducible Flatpak desktop is
 required.

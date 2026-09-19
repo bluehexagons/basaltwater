@@ -20,7 +20,7 @@ class T3InstallTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        self.prefix = self.home / ".local/share/infra-tools/cachyos-t3"
+        self.prefix = self.home / ".local/share/basaltwater/cachyos-t3"
         self.binary = self.prefix / "bin/t3"
         self.unit = self.home / ".config/systemd/user" / t3.T3_SERVICE
         self.config = SetupConfig(host="localhost", username="human", system_type="agent_cachyos",

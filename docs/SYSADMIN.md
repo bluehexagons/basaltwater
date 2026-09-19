@@ -448,5 +448,5 @@ administrative identity and the new username; home-selection options and
 `--dry-run` cannot be changed during a resume.
 
 The target must already have the current Basaltwater target files installed so
-the migration helper is available under `/opt/infra_tools/lib/`. Run the
+the migration helper is available under `/opt/basaltwater/lib/`. Run the
 normal target upgrade first if preflight reports that the helper is missing.

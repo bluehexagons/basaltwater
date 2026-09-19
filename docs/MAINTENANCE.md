@@ -51,7 +51,7 @@ VMs where their tools were not selected.
 
 ## Update Policy
 
-Kernel-capable setups install `/etc/kernel/postinst.d/infra-tools-reboot-required`.
+Kernel-capable setups install `/etc/kernel/postinst.d/basaltwater-reboot-required`.
 The standalone hook records `/run/reboot-required` and the package name in
 `/run/reboot-required.pkgs` when a different kernel is configured. It does not
 depend on unattended-upgrades and preserves existing package hooks and markers.
@@ -191,13 +191,13 @@ For manual terminal-agent upgrades, use the managed update command above;
 its vendor mechanism and account boundaries are described in the
 [CLI reference](COMMAND_LINE.md#agent-host-flags).
 
-Set `INFRA_TOOLS_ECOSYSTEM_AUTO_UPGRADE=1` in the relevant service environment
+Set `BASALTWATER_ECOSYSTEM_AUTO_UPGRADE=1` in the relevant service environment
 to allow global npm packages and uv-managed tools to advance. The default
 is `0`.
 
 Dependency-resolving npm and uv commands, and GitHub release selection, prefer
 artifacts at least seven days old. Change the policy with
-`INFRA_TOOLS_DEPENDENCY_MIN_AGE_DAYS`; use `0` to disable the freshness delay.
+`BASALTWATER_DEPENDENCY_MIN_AGE_DAYS`; use `0` to disable the freshness delay.
 The deployment flag `--deploy-latest DOMAIN_OR_PATH GIT_URL` explicitly bypasses
 the deployment freshness policy for that repository.
 
@@ -221,7 +221,7 @@ Dry-run setup only shows the planned step and does not execute cleanup.
 `cleanup-maintenance` removes disposable APT caches, rotates journals before
 enforcing both the `100M` size ceiling and a 30-day age ceiling, invokes the
 system logrotate policy, removes recognized crash-report files older than 30
-days, and removes only exact infra_tools-owned temporary artifact names older
+days, and removes only exact basaltwater-owned temporary artifact names older
 than seven days in `/tmp` and `/var/tmp`.
 
 The cleanup job also runs noninteractive `apt-get autoremove --purge` wherever
@@ -252,7 +252,7 @@ The weekly timer handles later runs. Preview the manual selections it would
 release without changing anything:
 
 ```bash
-cd /opt/infra_tools
+cd /opt/basaltwater
 sudo /usr/bin/python3 -m lib.kernel_cleanup
 ```
 
@@ -329,7 +329,7 @@ files with:
 
 ```bash
 sudo -u USER /usr/bin/python3 \
-  /opt/infra_tools/common/service_tools/user_cache_maintenance.py --dry-run
+  /opt/basaltwater/common/service_tools/user_cache_maintenance.py --dry-run
 ```
 
 Replace `USER` with the setup account. Omit `--dry-run` to run cleanup now.
@@ -349,7 +349,7 @@ avoid blocking maintenance on unavailable remote storage.
 
 Storage synchronization and scrub jobs write scheduling state atomically and
 use current-user-owned, mode-`0700` lock directories under
-`/run/lock/infra_tools`; lock files are regular mode-`0600` files and retain a
+`/run/lock/basaltwater`; lock files are regular mode-`0600` files and retain a
 persistent inode to prevent overlapping runs. Invalid specifications or
 unavailable mounts fail visibly so the next scheduled run can retry them.
 

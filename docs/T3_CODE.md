@@ -94,7 +94,7 @@ The service unit is:
 Its Basaltwater settings are:
 
 ```text
-~/.config/systemd/user/t3code.service.d/infra-tools.conf
+~/.config/systemd/user/t3code.service.d/basaltwater.conf
 ```
 
 User lingering is enabled so the service starts at boot without an interactive
@@ -161,7 +161,7 @@ set `T3_RELEASE` to the exact version required by the connected client. Use
 ```bash
 # As the target user, using T3 Code's documented updater:
 T3_RELEASE=CLIENT_VERSION
-T3_NPM_SHIM="$HOME/.local/share/infra-tools/t3-npm/bin"
+T3_NPM_SHIM="$HOME/.local/share/basaltwater/t3-npm/bin"
 env -u npm_config_dangerously_allow_all_scripts \
   -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
   -u npm_config_allow_scripts \
@@ -234,7 +234,7 @@ active-runtime repair is available after setup:
 basaltw agent doctor --capability t3code --fix
 ```
 
-As of 2026-09-01, infra-tools service and collaborative-preview checks pass with
+As of 2026-09-01, basaltwater service and collaborative-preview checks pass with
 T3 Code v0.0.37, including preview open, snapshot, semantic input, scrolling,
 viewport and appearance emulation, and client-side recording. Keyboard helpers
 dispatch after semantic pointer focus; programmatic typing can set DOM focus
@@ -248,8 +248,8 @@ while leaving the pairing route at its deliberately small limit. See the upstrea
 [update documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md),
 and [v0.0.36 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.36).
 
-Older infra-tools installations used a root-owned
-`infra-tools-t3code.service` and a separate npm runtime. A subsequent setup
+Older basaltwater installations used a root-owned
+`basaltwater-t3code.service` and a separate npm runtime. A subsequent setup
 stops that service, starts and validates the upstream user service, and only
 then disables and removes the old unit and clears its retained failed state.
 The old service is restarted if the migration fails.

@@ -559,7 +559,7 @@ class TestProxmoxCliNotifications(_CliFixture):
         self.assertEqual(rc, 0)
         self.assertEqual(mock_run.call_count, 3)
         self.assertIn(
-            "/cluster/notifications/targets/infra-tools-webhook/test",
+            "/cluster/notifications/targets/basaltwater-webhook/test",
             mock_run.call_args_list[-1].args[3],
         )
 

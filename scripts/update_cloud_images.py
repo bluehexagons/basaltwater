@@ -55,7 +55,7 @@ class _DirIndexParser(HTMLParser):
 
 
 def _http_get(url: str, *, timeout: int = 30) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "infra_tools-cloud-images/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "basaltwater-cloud-images/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 

@@ -27,7 +27,7 @@ not fully trusted. Antistatic admin cannot be enabled in hostless direct mode.
 
 Nginx writes dedicated authentication-failure logs for the T3 pairing portal,
 Gogs, and Antistatic. Conditional logging records only the client IP,
-timestamp, and the fixed `infra-tools-auth-failure` marker after a failed
+timestamp, and the fixed `basaltwater-auth-failure` marker after a failed
 credential check. It does not record usernames, request bodies, Authorization
 headers, passwords, or pairing URLs. Fail2ban consumes those logs with this
 policy:
@@ -49,9 +49,9 @@ real credentials:
 ```bash
 sudo nginx -t
 sudo fail2ban-client status
-sudo fail2ban-client status infra-tools-device-pairing
-sudo fail2ban-client status infra-tools-gogs
-sudo fail2ban-client status infra-tools-antistatic
+sudo fail2ban-client status basaltwater-device-pairing
+sudo fail2ban-client status basaltwater-gogs
+sudo fail2ban-client status basaltwater-antistatic
 sudo ufw status numbered
 ```
 

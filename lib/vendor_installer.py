@@ -49,7 +49,7 @@ def installer_command(tool: str) -> str:
 
 def _state_directory() -> Path:
     home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
-    root = Path("/var/lib/infra_tools/installer-provenance") if os.geteuid() == 0 else home / ".local/state/infra-tools/installers"
+    root = Path("/var/lib/basaltwater/installer-provenance") if os.geteuid() == 0 else home / ".local/state/basaltwater/installers"
     validate_filesystem_path(str(root), must_exist=False)
     for path in reversed((root, *root.parents)):
         if path.is_symlink():

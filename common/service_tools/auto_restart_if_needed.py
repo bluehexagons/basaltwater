@@ -28,7 +28,7 @@ from lib.validation import validate_filesystem_path
 
 logger = get_service_logger('auto_restart_if_needed', 'common', use_syslog=True)
 
-STATE_FILE = "/var/lib/infra_tools/auto_restart_state.json"
+STATE_FILE = "/var/lib/basaltwater/auto_restart_state.json"
 MIN_UPTIME_SECONDS = 30 * 60
 _AGENT_PROCESS_NAMES = frozenset(("claude", "codex", "opencode"))
 _BUILD_PROCESS_NAMES = frozenset(
@@ -148,7 +148,7 @@ def get_active_agent_workloads(
         account.pw_dir,
         ".local",
         "share",
-        "infra_tools",
+        "basaltwater",
         "worktrees",
     )
     try:

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 import remote_setup
 from common import cachyos_steps as steps
 from lib.cachyos import cachyos_config_from_args, preflight_cachyos
@@ -21,7 +21,7 @@ from lib.system_types import get_steps_for_system_type
 
 class CachyOSSetupTests(unittest.TestCase):
     def config(self, *options):
-        parser, _, _ = infra_tools.create_infra_tools_parser()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
         return cachyos_config_from_args(parser.parse_args(
             ["setup", "agent_cachyos", "localhost", "human", *options]))
 
@@ -45,11 +45,11 @@ class CachyOSSetupTests(unittest.TestCase):
             ["--agent-auth", "active"], ["--t3code-ready"],
             ["--web-interface", "t3code", "--web-interface-host", "0.0.0.0"],
         ]
-        parser, _, _ = infra_tools.create_infra_tools_parser()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
         for options in cases:
             with self.subTest(options=options), patch("remote_setup.run_cachyos_setup") as execute:
                 args = parser.parse_args(["setup", "agent_cachyos", "localhost", "human", *options])
-                self.assertEqual(infra_tools.run_setup_command(args), 1)
+                self.assertEqual(basaltwater.run_setup_command(args), 1)
                 execute.assert_not_called()
 
     def test_t3_lan_bind_accepts_private_ipv4_and_rejects_public(self):
@@ -57,7 +57,7 @@ class CachyOSSetupTests(unittest.TestCase):
             "--web-interface", "t3code", "--web-interface-host", "192.168.1.50",
         )
         self.assertEqual(config.web_interface_host, "192.168.1.50")
-        parser, _, _ = infra_tools.create_infra_tools_parser()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
         for host in ("8.8.8.8", "0.0.0.0", "2001:db8::10"):
             with self.subTest(host=host):
                 with self.assertRaisesRegex(ValueError, "private IPv4"):
@@ -67,7 +67,7 @@ class CachyOSSetupTests(unittest.TestCase):
                     ]))
 
     def test_rejects_remote_target(self):
-        parser, _, _ = infra_tools.create_infra_tools_parser()
+        parser, _, _ = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["setup", "agent_cachyos", "example.com", "human"])
         with self.assertRaisesRegex(ValueError, "local setup only"):
             cachyos_config_from_args(args)
@@ -369,15 +369,15 @@ class CachyOSSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             account = SimpleNamespace(pw_dir=home, pw_uid=os.getuid(), pw_gid=os.getgid())
             skill_root = Path(home) / ".agents/skills"
-            for name, content in (("infra-tools-desktop", "managed-by: infra_tools\n"),
-                                  ("infra-tools-vm-triage", "personal content\n")):
+            for name, content in (("basaltwater-desktop", "managed-by: basaltwater\n"),
+                                  ("basaltwater-vm-triage", "personal content\n")):
                 (skill_root / name).mkdir(parents=True)
                 (skill_root / name / "SKILL.md").write_text(content)
             with patch("common.agent_steps.pwd.getpwnam", return_value=account), \
                  patch("common.agent_steps.os.chown"):
                 steps.install_cachyos_skills(self.config())
-            self.assertFalse((skill_root / "infra-tools-desktop/SKILL.md").exists())
-            self.assertEqual((skill_root / "infra-tools-vm-triage/SKILL.md").read_text(), "personal content\n")
+            self.assertFalse((skill_root / "basaltwater-desktop/SKILL.md").exists())
+            self.assertEqual((skill_root / "basaltwater-vm-triage/SKILL.md").read_text(), "personal content\n")
             for name in steps.CACHYOS_SKILLS:
                 self.assertTrue((skill_root / name / "SKILL.md").is_file())
             self.assertFalse((skill_root / steps.CACHYOS_T3_SKILL).exists())

@@ -291,7 +291,7 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export a sanitized auditd snapshot for the infra-tools web panel"
+        description="Export a sanitized auditd snapshot for the basaltwater web panel"
     )
     parser.add_argument("--output", default=WEB_PANEL_AUDIT_SNAPSHOT)
     return parser

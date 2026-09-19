@@ -19,8 +19,8 @@ from lib.proxmox_network_transition import (
 from lib.ssh_utils import build_ssh_command, chain_remote_commands, ssh_batch_mode
 
 
-REMOTE_INSTALL_DIR = "/opt/infra_tools"
-PENDING_TRANSITION_PATH = "/run/infra-tools-network-transition.json"
+REMOTE_INSTALL_DIR = "/opt/basaltwater"
+PENDING_TRANSITION_PATH = "/run/basaltwater-network-transition.json"
 VERIFY_ATTEMPTS = 12
 VERIFY_INTERVAL_SECONDS = 2.0
 

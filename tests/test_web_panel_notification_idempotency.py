@@ -165,7 +165,7 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
             )
             with (
                 patch(
-                    "common.service_tools.web_panel_service.discover_infra_web_services",
+                    "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                     return_value=[],
                 ),
                 patch(

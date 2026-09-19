@@ -66,7 +66,7 @@ class TestGetRotatingLogger(unittest.TestCase):
 
     def test_fallback_on_bad_path(self):
         # /proc is not writable, so the logger should fallback to stderr
-        with redirect_stderr(StringIO()), patch.dict(os.environ, {"INFRA_TOOLS_TEST": "1"}):
+        with redirect_stderr(StringIO()), patch.dict(os.environ, {"BASALTWATER_TEST": "1"}):
             logger = get_rotating_logger('test_logger_fallback', '/proc/nonexistent/test.log')
         self.assertIsInstance(logger, logging.Logger)
         # Should have a fallback handler
@@ -74,7 +74,7 @@ class TestGetRotatingLogger(unittest.TestCase):
 
     def test_fallback_does_not_write_to_console_in_test_mode(self):
         output = StringIO()
-        with patch.dict(os.environ, {"INFRA_TOOLS_TEST": "1"}), redirect_stderr(output):
+        with patch.dict(os.environ, {"BASALTWATER_TEST": "1"}), redirect_stderr(output):
             logger = get_rotating_logger(
                 'test_logger_quiet_fallback', '/proc/nonexistent/test.log'
             )
@@ -83,7 +83,7 @@ class TestGetRotatingLogger(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
 
     def test_non_root_does_not_touch_var_log(self):
-        log_file = '/var/log/infra_tools/test/non_root.log'
+        log_file = '/var/log/basaltwater/test/non_root.log'
         with patch('lib.logging_utils.os.geteuid', return_value=1000):
             logger = get_rotating_logger('test_logger_non_root_var_log', log_file)
         self.assertIsInstance(logger, logging.Logger)
@@ -94,7 +94,7 @@ class TestGetRotatingLogger(unittest.TestCase):
 class TestGetServiceLogger(unittest.TestCase):
     def test_test_mode_does_not_configure_syslog(self):
         with (
-            patch.dict(os.environ, {"INFRA_TOOLS_TEST": "1"}),
+            patch.dict(os.environ, {"BASALTWATER_TEST": "1"}),
             patch("lib.logging_utils.SysLogHandler") as syslog_handler,
         ):
             get_service_logger(
@@ -109,7 +109,7 @@ class TestGetServiceLogger(unittest.TestCase):
         with (
             patch.dict(
                 os.environ,
-                {"JOURNAL_STREAM": "8:9", "INFRA_TOOLS_TEST": "0"},
+                {"JOURNAL_STREAM": "8:9", "BASALTWATER_TEST": "0"},
             ),
             patch("lib.logging_utils.SysLogHandler") as syslog_handler,
         ):

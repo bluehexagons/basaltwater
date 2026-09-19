@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import ANY, patch
 
-import infra_tools
+import basaltwater
 from lib.cicd_cli import (
     _APP_KEY_INSTALL_SCRIPT,
     _BUILD_TARGET_INSTALL_SCRIPT,
@@ -41,7 +41,7 @@ def _app_config() -> SetupConfig:
 
 class TestCicdParser(unittest.TestCase):
     def test_parser_accepts_connection_options(self):
-        parser, _setup, _patch = infra_tools.create_infra_tools_parser()
+        parser, _setup, _patch = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -66,7 +66,7 @@ class TestCicdParser(unittest.TestCase):
         self.assertEqual(args.base_dir, "/srv/apps")
 
     def test_parser_accepts_status_json(self):
-        parser, _setup, _patch = infra_tools.create_infra_tools_parser()
+        parser, _setup, _patch = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["cicd", "status", "build", "--json"])
         self.assertEqual(args.cicd_command, "status")
         self.assertTrue(args.json)

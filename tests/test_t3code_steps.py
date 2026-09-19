@@ -173,12 +173,12 @@ class T3CodeWebTest(unittest.TestCase):
             if command == "ufw status numbered":
                 rules = (
                     "[ 1] 3773/tcp ALLOW IN 192.168.0.0/24 "
-                    "# infra_tools T3 Code 3773/tcp source 192.168.0.0/24\n"
+                    "# basaltwater T3 Code 3773/tcp source 192.168.0.0/24\n"
                 )
                 if state["allow_seen"]:
                     rules += (
                         "[ 2] 3773/tcp ALLOW IN 10.0.0.0/24 "
-                        "# infra_tools T3 Code 3773/tcp source 10.0.0.0/24\n"
+                        "# basaltwater T3 Code 3773/tcp source 10.0.0.0/24\n"
                     )
                 return SimpleNamespace(returncode=0, stdout=rules)
             if command.startswith("ufw allow from"):
@@ -279,9 +279,9 @@ class T3CodeWebTest(unittest.TestCase):
                 command for command in commands if "--package=t3@latest" in command
             )
             self.assertIn("npx --yes --package=t3@latest -c", update_command)
-            self.assertIn(".infra-tools-t3-loginctl-", update_command)
+            self.assertIn(".basaltwater-t3-loginctl-", update_command)
             self.assertIn(
-                f"{home}/.local/share/infra-tools/t3-npm/bin",
+                f"{home}/.local/share/basaltwater/t3-npm/bin",
                 update_command,
             )
             self.assertIn('export PATH=', update_command)
@@ -318,7 +318,7 @@ class T3CodeWebTest(unittest.TestCase):
                 "systemd",
                 "user",
                 "t3code.service.d",
-                "infra-tools.conf",
+                "basaltwater.conf",
             )
             with open(drop_in, encoding="utf-8") as file_obj:
                 content = file_obj.read()
@@ -329,7 +329,7 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn("Environment=CXX=g++", content)
             self.assertIn("Environment=npm_config_strict_allow_scripts=false", content)
             self.assertIn(
-                f"Environment=PATH={home}/.local/share/infra-tools/t3-npm/bin:",
+                f"Environment=PATH={home}/.local/share/basaltwater/t3-npm/bin:",
                 content,
             )
             self.assertIn(
@@ -709,9 +709,9 @@ class T3CodeWebTest(unittest.TestCase):
             os.makedirs(workspace)
             node_bin = self._write_node_tools(home)
             self._write_upstream_runtime(home)
-            legacy_service = os.path.join(home, "infra-tools-t3code.service")
+            legacy_service = os.path.join(home, "basaltwater-t3code.service")
             with open(legacy_service, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# legacy infra-tools unit\n")
+                file_obj.write("# legacy basaltwater unit\n")
             completed = SimpleNamespace(returncode=0, stdout="", stderr="")
             with (
                 patch("common.t3code_steps.install_package", return_value=True),
@@ -745,15 +745,15 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertFalse(os.path.exists(legacy_service))
             commands = [call.args[0] for call in run_command.call_args_list]
             self.assertIn(
-                ["systemctl", "stop", "infra-tools-t3code.service"],
+                ["systemctl", "stop", "basaltwater-t3code.service"],
                 commands,
             )
             self.assertIn(
-                ["systemctl", "disable", "infra-tools-t3code.service"],
+                ["systemctl", "disable", "basaltwater-t3code.service"],
                 commands,
             )
             self.assertIn(
-                ["systemctl", "reset-failed", "infra-tools-t3code.service"],
+                ["systemctl", "reset-failed", "basaltwater-t3code.service"],
                 commands,
             )
 
@@ -763,9 +763,9 @@ class T3CodeWebTest(unittest.TestCase):
             os.makedirs(workspace)
             node_bin = self._write_node_tools(home)
             self._write_upstream_runtime(home)
-            legacy_service = os.path.join(home, "infra-tools-t3code.service")
+            legacy_service = os.path.join(home, "basaltwater-t3code.service")
             with open(legacy_service, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# legacy infra-tools unit\n")
+                file_obj.write("# legacy basaltwater unit\n")
             completed = SimpleNamespace(returncode=0, stdout="", stderr="")
             with (
                 patch("common.t3code_steps.install_package", return_value=True),
@@ -801,7 +801,7 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(legacy_service))
             commands = [call.args[0] for call in run_command.call_args_list]
             self.assertIn(
-                ["systemctl", "start", "infra-tools-t3code.service"],
+                ["systemctl", "start", "basaltwater-t3code.service"],
                 commands,
             )
 
@@ -1076,7 +1076,7 @@ class T3CodeWebTest(unittest.TestCase):
                 home,
                 ".local",
                 "bin",
-                "infra-tools-t3code-pairing-provider",
+                "basaltwater-t3code-pairing-provider",
             )
             pair_wrapper = os.path.join(home, ".local", "bin", "t3code-pair")
             self.assertTrue(os.path.isfile(wrapper))

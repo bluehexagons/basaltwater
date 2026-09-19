@@ -10,15 +10,15 @@ import subprocess
 from lib.atomic_io import write_text_atomic
 from lib.validation import validate_filesystem_path
 
-KERNEL_HOOK = "/etc/kernel/postinst.d/infra-tools-reboot-required"
+KERNEL_HOOK = "/etc/kernel/postinst.d/basaltwater-reboot-required"
 _KERNEL_RELEASE = re.compile(
     r"([0-9]+(?:[.+~-][0-9a-z]+)*?)-([a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)*)"
 )
 
 # Keep this hook independent of /opt, Python imports, and unattended-upgrades:
-# package configuration must also work while infra-tools is being replaced.
+# package configuration must also work while basaltwater is being replaced.
 KERNEL_HOOK_CONTENT = """#!/bin/sh
-# Managed by infra-tools. Kernel package post-install hook.
+# Managed by basaltwater. Kernel package post-install hook.
 set -eu
 case "${1:-}" in
     ''|*[!a-zA-Z0-9.+_-]*) exit 0 ;;

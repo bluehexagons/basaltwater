@@ -38,7 +38,7 @@ class TestSshEnrollment(unittest.TestCase):
         self.assertFalse(
             is_host_key_enrolled(
                 "example.com",
-                known_hosts_path="/tmp/infra-tools-missing-known-hosts",
+                known_hosts_path="/tmp/basaltwater-missing-known-hosts",
             )
         )
 

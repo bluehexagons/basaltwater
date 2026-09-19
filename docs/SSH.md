@@ -94,7 +94,7 @@ preparation and the streamed setup upload. The coding account is never asked
 for an interactive sudo password, and setup does not depend on that account's
 current sudo policy. A standard VM user joins `sudo` without receiving a
 temporary passwordless bootstrap rule. Pass `--nopasswd` to install and
-validate `/etc/sudoers.d/infra-tools-USERNAME`, owned by `root:root` with mode
+validate `/etc/sudoers.d/basaltwater-USERNAME`, owned by `root:root` with mode
 `0440`, when unrestricted non-interactive sudo is desired. The stable root
 transport lets a later rerun add or remove that rule safely.
 Patch commands preserve the saved choice when the flag is omitted. Pass

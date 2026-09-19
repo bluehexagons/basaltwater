@@ -146,7 +146,7 @@ They write persistent configuration and deliberately do not restart the
 active interface, so an SSH session is not cut off. The command reports the
 backend it selected. Reboot, or deliberately restart the interface after
 reviewing the generated configuration, to activate the change. On ifupdown
-systems, the previous configuration receives an `.infra-tools.bak` backup.
+systems, the previous configuration receives an `.basaltwater.bak` backup.
 
 Do not apply a static address over an SSH-only connection unless you have an
 out-of-band console or another recovery path. Use `--dry-run` to validate the

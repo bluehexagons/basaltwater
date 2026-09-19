@@ -1,4 +1,4 @@
-"""Manage the Git worktree used by an installed infra-tools launcher."""
+"""Manage the Git worktree used by an installed basaltwater launcher."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from lib.types import JSONDict
 from lib.validation import validate_channel, validate_filesystem_path
 
 
-CHANNEL_STATE_DIR = ".infra_tools"
+CHANNEL_STATE_DIR = ".basaltwater"
 CHANNEL_STATE_FILENAME = "channel.json"
 _VERSION_TAG_PATTERN = re.compile(
     r"^v(?P<major>0|[1-9][0-9]*)\.(?P<minor>0|[1-9][0-9]*)\."
@@ -41,7 +41,7 @@ class ChannelTarget:
 def managed_repository_path(script_path: str | None = None) -> str:
     """Return the Git worktree containing the active Python entry script."""
 
-    candidate = os.path.dirname(os.path.abspath(script_path or os.path.join(os.path.dirname(__file__), "..", "infra_tools.py")))
+    candidate = os.path.dirname(os.path.abspath(script_path or os.path.join(os.path.dirname(__file__), "..", "basaltwater.py")))
     validate_filesystem_path(candidate, must_exist=True)
     result = _run_git(candidate, ["rev-parse", "--show-toplevel"])
     if result.returncode != 0:
@@ -254,6 +254,9 @@ def _commit_exists(repo_path: str, commit: str) -> bool:
 
 
 def _checkout(repo_path: str, ref: str) -> None:
+    entry = _run_git(repo_path, ["cat-file", "-e", f"{ref}:basaltwater.py"])
+    if entry.returncode != 0:
+        raise ChannelError("Selected source predates Basaltwater; historical releases are unsupported")
     result = _run_git(repo_path, ["checkout", "--detach", ref])
     if result.returncode != 0:
         raise _git_failure("checkout", result)

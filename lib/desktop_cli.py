@@ -19,7 +19,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
         commands.add_parser(name).add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
     screenshot = commands.add_parser("screenshot")
-    screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/infra-tools artifact storage")
+    screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
     screenshot.add_argument("--json", action="store_true")
     target = screenshot.add_mutually_exclusive_group()
     target.add_argument("--window", help="Capture a window ID from 'desktop windows'")

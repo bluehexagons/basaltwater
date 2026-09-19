@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Top-level interactive REPL for infra_tools.
+"""Top-level interactive REPL for basaltwater.
 
 Provides a small command loop that wraps the saved-configuration helpers
 (``list``/``info``/``cmd``/``deploy``/``rm``), the recall/reconstruct
@@ -24,9 +24,9 @@ except ImportError:
     _readline = None  # type: ignore[assignment]
     _READLINE_AVAILABLE = False
 
-_HISTORY_FILE = Path.home() / ".local" / "share" / "infra_tools" / "shell_history"
+_HISTORY_FILE = Path.home() / ".local" / "share" / "basaltwater" / "shell_history"
 _HISTORY_MAX_LINES = 1000
-_INIT_FILE = Path.home() / ".infra_toolsrc"
+_INIT_FILE = Path.home() / ".basaltwaterrc"
 
 InputFn = Callable[[str], str]
 OutputFn = Callable[[str], None]
@@ -60,7 +60,7 @@ class ShellState:
 
 
 class InteractiveShell:
-    """Small REPL wrapping the main infra_tools management surface."""
+    """Small REPL wrapping the main basaltwater management surface."""
 
     def __init__(
         self,
@@ -84,7 +84,7 @@ class InteractiveShell:
         """Drive the REPL until the user quits or input ends."""
         self._load_readline_history()
         self._run_init_file()
-        self._output("infra-tools shell — type 'help' for commands.")
+        self._output("basaltw shell — type 'help' for commands.")
         try:
             return self._run_loop()
         finally:
@@ -130,8 +130,8 @@ class InteractiveShell:
     def _make_prompt(self) -> str:
         if self.state.workspace:
             label = Path(self.state.workspace).name or self.state.workspace
-            return f"infra-tools[{label}]> "
-        return "infra-tools> "
+            return f"basaltwater[{label}]> "
+        return "basaltwater> "
 
     def _run_init_file(self, init_file: Optional[Path] = None) -> None:
         path = init_file if init_file is not None else _INIT_FILE
@@ -363,21 +363,21 @@ class InteractiveShell:
         self._output(f"Workspace set to {args[0]}")
 
     def _cmd_list(self, args: list[str]) -> None:
-        from infra_tools import list_configurations
+        from basaltwater import list_configurations
         json_output = "--json" in args
         rest = [a for a in args if a != "--json"]
         pattern = rest[0] if rest else None
         list_configurations(pattern, json_output=json_output)
 
     def _cmd_info(self, args: list[str]) -> None:
-        from infra_tools import show_info
+        from basaltwater import show_info
         compact = "--compact" in args
         rest = [a for a in args if a != "--compact"]
         pattern = rest[0] if rest else None
         show_info(pattern, compact=compact)
 
     def _cmd_command(self, args: list[str]) -> None:
-        from infra_tools import show_command
+        from basaltwater import show_command
         pattern = args[0] if args else None
         show_command(pattern)
 
@@ -602,7 +602,7 @@ class InteractiveShell:
         self._output("  " + " ".join(config.to_setup_command()))
 
         if self._prompt_yes_no("Deploy now?", default=False):
-            from infra_tools import deploy_configurations
+            from basaltwater import deploy_configurations
             deploy_configurations(config.host, force=True)
 
     def _cmd_rename(self, args: list[str]) -> None:
@@ -676,7 +676,7 @@ class InteractiveShell:
         )
 
     def _cmd_deploy(self, args: list[str]) -> None:
-        from infra_tools import parse_deploy_command_args, run_deploy_command
+        from basaltwater import parse_deploy_command_args, run_deploy_command
 
         run_deploy_command(parse_deploy_command_args(args))
 
@@ -684,7 +684,7 @@ class InteractiveShell:
         rest, yes = self._split_yes_flag(args)
         if len(rest) != 1:
             raise ValueError("Usage: rm <pattern> [--yes]")
-        from infra_tools import remove_configurations
+        from basaltwater import remove_configurations
         remove_configurations(rest[0], yes)
 
     def _cmd_recall(self, args: list[str]) -> None:

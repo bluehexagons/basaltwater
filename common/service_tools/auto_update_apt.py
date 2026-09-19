@@ -10,7 +10,7 @@ traditional unattended-upgrades approach by:
 - Automatically handling all configured repositories
 - Supporting dependency additions while refusing automated package removals
 
-Logs to: /var/log/infra_tools/security/auto_update_apt.log
+Logs to: /var/log/basaltwater/security/auto_update_apt.log
 """
 
 from __future__ import annotations

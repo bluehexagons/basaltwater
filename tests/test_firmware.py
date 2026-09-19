@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.firmware import (
     FWUPD_DEPENDENCY,
     FirmwareAuditReport,
@@ -41,7 +41,7 @@ def _completed(
 
 class TestFirmwareParser(unittest.TestCase):
     def setUp(self) -> None:
-        self.parser, _setup, _patch = infra_tools.create_infra_tools_parser()
+        self.parser, _setup, _patch = basaltwater.create_basaltwater_parser()
 
     def test_parses_audit_options(self) -> None:
         args = self.parser.parse_args(

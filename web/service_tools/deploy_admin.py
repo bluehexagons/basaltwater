@@ -20,7 +20,7 @@ from collections.abc import Iterator
 # leave sys.path alone so repository tests cannot load a stale /opt checkout.
 if not __package__:
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    source_root = '/opt/infra_tools' if script_dir == '/usr/local/sbin' else os.path.dirname(os.path.dirname(script_dir))
+    source_root = '/opt/basaltwater' if script_dir == '/usr/local/sbin' else os.path.dirname(os.path.dirname(script_dir))
     sys.path.insert(0, source_root)
 
 from lib.cicd_deploy_policy import validate_nginx_deployment, validate_nginx_path
@@ -31,10 +31,10 @@ NGINX_AVAILABLE_DIR = "/etc/nginx/sites-available"
 NGINX_ENABLED_DIR = "/etc/nginx/sites-enabled"
 NGINX_BINARY = "/usr/sbin/nginx"
 SYSTEMCTL_BINARY = "/bin/systemctl"
-STAGED_CONFIG_PREFIX = "/tmp/infra-tools-nginx-"
-NGINX_LOCK_PATH = "/run/lock/infra-tools/deploy-nginx.lock"
+STAGED_CONFIG_PREFIX = "/tmp/basaltwater-nginx-"
+NGINX_LOCK_PATH = "/run/lock/basaltwater/deploy-nginx.lock"
 MAX_NGINX_CONFIG_BYTES = 1024 * 1024
-DEPLOY_POLICY_FILE = '/etc/infra_tools/cicd/deploy_policy.json'
+DEPLOY_POLICY_FILE = '/etc/basaltwater/cicd/deploy_policy.json'
 
 _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,253}$")
 _SERVICE_NAME_PATTERN = re.compile(r"^node-[a-z0-9][a-z0-9_.-]{0,126}$")

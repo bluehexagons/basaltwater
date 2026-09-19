@@ -64,7 +64,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
         print(f"  [DRY-RUN] Would replace units: {', '.join(units)}")
         return
 
-    store = OperationStateStore(os.path.join(unit_dir, ".infra-tools-unit-operation.json"))
+    store = OperationStateStore(os.path.join(unit_dir, ".basaltwater-unit-operation.json"))
     backup_dir = ""
     retain = False
     try:
@@ -74,7 +74,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
         try:
             snapshots = {name: _snapshot(os.path.join(unit_dir, name)) for name in units}
             states = {name: _state(name) for name in activate}
-            backup_dir = tempfile.mkdtemp(prefix=".infra-tools-units-", dir=unit_dir)
+            backup_dir = tempfile.mkdtemp(prefix=".basaltwater-units-", dir=unit_dir)
             write_json_atomic(os.path.join(backup_dir, "previous.json"), {"units": snapshots, "states": states})
             store.transition(record.operation_id, "validating", context={"units": list(units), "backup_dir": backup_dir})
             candidates = []

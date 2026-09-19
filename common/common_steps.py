@@ -56,11 +56,11 @@ _USER_COMMAND_SYSTEM_PATH = (
 _USER_TOOL_SHELL_ENV_RELATIVE_PATH = (
     ".local",
     "share",
-    "infra-tools",
+    "basaltwater",
     "shell-env.sh",
 )
-_USER_TOOL_SHELL_MARKER = "# infra-tools user tool environment"
-_USER_TOOL_SHELL_ENV = '''# Managed by infra-tools for interactive and agent shells.
+_USER_TOOL_SHELL_MARKER = "# basaltwater user tool environment"
+_USER_TOOL_SHELL_ENV = '''# Managed by basaltwater for interactive and agent shells.
 case ":$PATH:" in
     *":$HOME/.opencode/bin:"*) ;;
     *) PATH="$HOME/.opencode/bin:$PATH" ;;
@@ -76,7 +76,7 @@ if [ -s "$NVM_DIR/nvm.sh" ] && ! command -v nvm >/dev/null 2>&1; then
     . "$NVM_DIR/nvm.sh"
 fi
 '''
-PACKAGE_UPDATE_MARKER = "/var/lib/infra_tools/state/package-update-complete"
+PACKAGE_UPDATE_MARKER = "/var/lib/basaltwater/state/package-update-complete"
 VM_SETUP_SUDOERS_DIR = "/etc/sudoers.d"
 CLI_TOOL_PACKAGES = (
     "bc",
@@ -227,7 +227,7 @@ def update_and_upgrade_packages(config: SetupConfig) -> None:
         marker_parent = os.path.dirname(PACKAGE_UPDATE_MARKER)
         os.makedirs(marker_parent, mode=0o755, exist_ok=True)
         with open(PACKAGE_UPDATE_MARKER, "w", encoding="utf-8") as marker:
-            marker.write("infra-tools package reconciliation complete\n")
+            marker.write("basaltwater package reconciliation complete\n")
         os.chmod(PACKAGE_UPDATE_MARKER, 0o644)
     except OSError as exc:
         raise RuntimeError(f"Could not record package reconciliation state: {exc}") from exc
@@ -354,7 +354,7 @@ def _ensure_vm_setup_user_sudoers(config: SetupConfig) -> None:
     """Reconcile the VM setup user's optional passwordless sudo rule.
 
     ``--nopasswd`` requests the capable compatibility behavior. Keeping the
-    rule under an infra-tools-owned filename lets root-driven setup reruns add,
+    rule under an basaltwater-owned filename lets root-driven setup reruns add,
     repair, or remove it without changing other policy.
     """
     if config.username == "root":
@@ -363,7 +363,7 @@ def _ensure_vm_setup_user_sudoers(config: SetupConfig) -> None:
         raise ValueError(f"Invalid setup username: {config.username}")
     sudoers_path = os.path.join(
         VM_SETUP_SUDOERS_DIR,
-        f"infra-tools-{config.username}",
+        f"basaltwater-{config.username}",
     )
     sudoers_content = f"{config.username} ALL=(ALL) NOPASSWD:ALL\n"
 
@@ -411,7 +411,7 @@ def _ensure_vm_setup_user_sudoers(config: SetupConfig) -> None:
     os.makedirs(VM_SETUP_SUDOERS_DIR, mode=0o755, exist_ok=True)
     descriptor, temporary_path = tempfile.mkstemp(
         dir=VM_SETUP_SUDOERS_DIR,
-        prefix=f".infra-tools-{config.username}-",
+        prefix=f".basaltwater-{config.username}-",
         text=True,
     )
     descriptor_open = True
@@ -875,7 +875,7 @@ def _ensure_shell_startup_block(path: str, *, prepend: bool) -> bool:
 
     block = (
         f"{_USER_TOOL_SHELL_MARKER}\n"
-        'export BASH_ENV="$HOME/.local/share/infra-tools/shell-env.sh"\n'
+        'export BASH_ENV="$HOME/.local/share/basaltwater/shell-env.sh"\n'
         '[ -r "$BASH_ENV" ] && . "$BASH_ENV"\n'
     )
     if prepend:
@@ -947,7 +947,7 @@ def install_go(config: SetupConfig) -> None:
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(f"{_APT_GET} install -y -qq curl wget")
-    requested_version = os.environ.get("INFRA_TOOLS_GO_VERSION") or None
+    requested_version = os.environ.get("BASALTWATER_GO_VERSION") or None
     go_binary = "/usr/local/go/bin/go"
     if not os.path.exists(go_binary):
         found_go = shutil.which("go")
@@ -1002,7 +1002,7 @@ def install_go(config: SetupConfig) -> None:
             print("  ⚠ Existing Go binary could not report a version; reinstalling")
     
     download_url = f"https://go.dev/dl/{go_archive}"
-    with tempfile.TemporaryDirectory(prefix="infra-tools-go-release-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-go-release-") as temporary_dir:
         archive_path = os.path.join(temporary_dir, go_archive)
         run(
             f"wget -q --https-only {shlex.quote(download_url)} "
@@ -1226,7 +1226,7 @@ def install_or_update_uv(
         return True
 
     if not os.path.exists(uv_path):
-        fd, installer_path = tempfile.mkstemp(prefix="infra_tools_uv_install_", suffix=".sh")
+        fd, installer_path = tempfile.mkstemp(prefix="basaltwater_uv_install_", suffix=".sh")
         os.close(fd)
         safe_installer = shlex.quote(installer_path)
 
@@ -1356,7 +1356,7 @@ def configure_auto_update_uv(config: SetupConfig) -> None:
         service_name="auto-update-uv",
         service_desc="Auto-update uv package manager",
         timer_desc="Auto-update uv weekly",
-        script_path="/opt/infra_tools/common/service_tools/auto_update_uv.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_update_uv.py",
         schedule="Sun *-*-* 05:00:00",
         check_path=uv_path,
         check_name="uv",
@@ -1372,7 +1372,7 @@ def configure_auto_update_gogs(config: SetupConfig) -> None:
         service_name="auto-update-gogs",
         service_desc="Auto-update Gogs service",
         timer_desc="Auto-update Gogs weekly",
-        script_path="/opt/infra_tools/common/service_tools/auto_update_gogs.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_update_gogs.py",
         schedule="Sun *-*-* 05:30:00",
         check_path="/usr/local/bin/gogs",
         check_name="Gogs",
@@ -1387,7 +1387,7 @@ def configure_auto_update_homebox(config: SetupConfig) -> None:
         service_name="auto-update-homebox",
         service_desc="Auto-update HomeBox inventory service",
         timer_desc="Auto-update HomeBox weekly",
-        script_path="/opt/infra_tools/common/service_tools/auto_update_homebox.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_update_homebox.py",
         schedule="Sun *-*-* 06:00:00",
         check_path="/opt/homebox/current/homebox",
         check_name="HomeBox",

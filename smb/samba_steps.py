@@ -14,9 +14,9 @@ from lib.validation import validate_samba_share_specs
 
 
 SMB_CONF_PATH = "/etc/samba/smb.conf"
-MANAGED_SHARES_BEGIN = "# BEGIN infra_tools managed Samba shares"
-MANAGED_SHARES_END = "# END infra_tools managed Samba shares"
-SAMBA_FIREWALL_COMMENT_PREFIX = "infra_tools Samba 445/tcp source"
+MANAGED_SHARES_BEGIN = "# BEGIN basaltwater managed Samba shares"
+MANAGED_SHARES_END = "# END basaltwater managed Samba shares"
+SAMBA_FIREWALL_COMMENT_PREFIX = "basaltwater Samba 445/tcp source"
 SAMBA_FAIL2BAN_JAIL_PATH = "/etc/fail2ban/jail.d/samba-auth.local"
 SAMBA_FAIL2BAN_FILTER_PATH = "/etc/fail2ban/filter.d/samba-auth.conf"
 SAMBA_REMOVED_GLOBAL_SETTINGS = ("null passwords",)
@@ -344,7 +344,7 @@ def _prepare_samba_share(
 
 
 def _managed_share_group(section: str) -> Optional[str]:
-    """Return the managed group for an infra_tools-generated share section."""
+    """Return the managed group for an basaltwater-generated share section."""
 
     header_match = re.match(r"(?m)^[ \t]*\[([^\]\r\n]+)\]", section)
     if not header_match:
@@ -367,7 +367,7 @@ def _managed_share_group(section: str) -> Optional[str]:
 
 
 def _remove_managed_share_sections(content: str) -> tuple[str, set[str]]:
-    """Remove current and legacy infra_tools-managed share sections."""
+    """Remove current and legacy basaltwater-managed share sections."""
 
     managed_groups: set[str] = set()
     block_pattern = re.compile(

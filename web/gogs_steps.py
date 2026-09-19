@@ -39,17 +39,17 @@ GOGS_RELEASES_DIR = f"{GOGS_INSTALL_ROOT}/releases"
 GOGS_CURRENT_DIR = f"{GOGS_INSTALL_ROOT}/current"
 GOGS_EXECUTABLE = f"{GOGS_CURRENT_DIR}/gogs"
 GOGS_BINARY_LINK = "/usr/local/bin/gogs"
-GOGS_STATE_FILE = "/opt/infra_tools/state/gogs.json"
-GOGS_SECRET_KEY_FILE = "/opt/infra_tools/state/gogs_secret_key"
-GOGS_ADMIN_CREDENTIALS_FILE = "/opt/infra_tools/state/gogs_admin_credentials.json"
+GOGS_STATE_FILE = "/opt/basaltwater/state/gogs.json"
+GOGS_SECRET_KEY_FILE = "/opt/basaltwater/state/gogs_secret_key"
+GOGS_ADMIN_CREDENTIALS_FILE = "/opt/basaltwater/state/gogs_admin_credentials.json"
 GOGS_GITHUB_REPO = "gogs/gogs"
 GOGS_SSH_DROPIN_DIR = "/etc/ssh/sshd_config.d"
 GOGS_SSH_DROPIN_FILE = f"{GOGS_SSH_DROPIN_DIR}/99-gogs-git-user.conf"
 DEFAULT_GOGS_PUBLIC_PORT = 3000
 DEFAULT_GOGS_PROXY_BACKEND_PORT = 13000
 DEFAULT_GOGS_DATA_PATH = "/var/lib/gogs"
-GOGS_AUTH_FAILURE_LOG = "/var/log/nginx/infra-tools-gogs-auth-failures.log"
-_GOGS_RULE_COMMENT_PREFIX = "infra_tools Gogs"
+GOGS_AUTH_FAILURE_LOG = "/var/log/nginx/basaltwater-gogs-auth-failures.log"
+_GOGS_RULE_COMMENT_PREFIX = "basaltwater Gogs"
 _LEGACY_GOGS_DIRECT_COMMENT = "gogs direct HTTP"
 _LEGACY_GOGS_WEB_COMMENT = "gogs web"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
@@ -237,7 +237,7 @@ def install_or_update_gogs_release() -> tuple[str, bool, str]:
         )
 
     run(f"mkdir -p {shlex.quote(GOGS_RELEASES_DIR)}")
-    with tempfile.TemporaryDirectory(prefix="infra-tools-gogs-release-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-gogs-release-") as temporary_dir:
         archive_path = os.path.join(temporary_dir, "gogs.tar.gz")
         extract_dir = os.path.join(temporary_dir, "extract")
         run(
@@ -493,11 +493,11 @@ def generate_gogs_nginx_config(
     """Return an nginx site config that proxies to Gogs."""
     cert_file, key_file = get_ssl_cert_path(server_name)
     zone_suffix = hashlib.sha256(server_name.encode("utf-8")).hexdigest()[:12]
-    login_zone = f"infra_tools_gogs_login_{zone_suffix}"
-    login_failure = f"infra_tools_gogs_login_failure_{zone_suffix}"
-    basic_failure = f"infra_tools_gogs_basic_failure_{zone_suffix}"
-    auth_failure = f"infra_tools_gogs_auth_failure_{zone_suffix}"
-    log_format = f"infra_tools_gogs_auth_{zone_suffix}"
+    login_zone = f"basaltwater_gogs_login_{zone_suffix}"
+    login_failure = f"basaltwater_gogs_login_failure_{zone_suffix}"
+    basic_failure = f"basaltwater_gogs_basic_failure_{zone_suffix}"
+    auth_failure = f"basaltwater_gogs_auth_failure_{zone_suffix}"
+    log_format = f"basaltwater_gogs_auth_{zone_suffix}"
     if cloudflare_origin:
         http_server = f"""server {{
     listen 80;
@@ -625,7 +625,7 @@ map "${login_failure}:${basic_failure}" ${auth_failure} {{
     ~1 1;
 }}
 
-log_format {log_format} '{client_ip} [$time_local] infra-tools-auth-failure';
+log_format {log_format} '{client_ip} [$time_local] basaltwater-auth-failure';
 
 {http_server}{tls_server}
 """
@@ -736,7 +736,7 @@ def _configure_git_ssh_access() -> None:
     os.makedirs(GOGS_SSH_DROPIN_DIR, exist_ok=True)
     with open(GOGS_SSH_DROPIN_FILE, "w", encoding="utf-8") as file_obj:
         file_obj.write(
-            f"""# Managed by infra_tools for Gogs Git-over-SSH
+            f"""# Managed by basaltwater for Gogs Git-over-SSH
 Match User {GOGS_GIT_USER}
     PasswordAuthentication no
     KbdInteractiveAuthentication no

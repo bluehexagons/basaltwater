@@ -17,8 +17,8 @@ from desktop.browser_steps import is_flatpak_app_installed
 FLATPAK_REMOTE = "flathub"
 MICROSOFT_KEY_URL = "https://packages.microsoft.com/keys/microsoft.asc"
 MICROSOFT_KEY_FINGERPRINT = "BC528686B50D79E339D3721CEB3E94ADBE1229CF"
-VSCODE_KEYRING = "/usr/share/keyrings/infra-tools-microsoft.gpg"
-VSCODE_SOURCES = "/etc/apt/sources.list.d/infra-tools-vscode.sources"
+VSCODE_KEYRING = "/usr/share/keyrings/basaltwater-microsoft.gpg"
+VSCODE_SOURCES = "/etc/apt/sources.list.d/basaltwater-vscode.sources"
 VSCODE_SOURCE_CONTENT = f"""Types: deb
 URIs: https://packages.microsoft.com/repos/code
 Suites: stable
@@ -127,7 +127,7 @@ def _install_vscode() -> None:
     if dependencies.returncode != 0:
         raise RuntimeError("Visual Studio Code repository dependencies failed")
 
-    with tempfile.TemporaryDirectory(prefix="infra-tools-vscode-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-vscode-") as temporary_dir:
         key_path = os.path.join(temporary_dir, "microsoft.asc")
         dearmored_path = os.path.join(temporary_dir, "microsoft.gpg")
         download = run(

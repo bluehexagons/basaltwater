@@ -119,7 +119,7 @@ def _validate_syncthing_root(storage_root: object) -> None:
         raise ValueError(
             "--syncthing-root must be /data or below /data, /mnt, /srv, or /var/lib"
         )
-    state_root = "/var/lib/infra-tools/syncthing"
+    state_root = "/var/lib/basaltwater/syncthing"
     if (
         storage_root == state_root
         or storage_root.startswith(f"{state_root}{os.sep}")
@@ -164,7 +164,7 @@ def validate_syncthing_settings(config: Any) -> None:
 
 
 def validate_channel(channel: str) -> str:
-    """Validate and return an infra_tools release channel selector."""
+    """Validate and return an basaltwater release channel selector."""
 
     if not isinstance(channel, str) or not channel:
         raise ValueError("Channel must be a non-empty string")

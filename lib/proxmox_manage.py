@@ -146,8 +146,8 @@ def _validate_guest_option(name: str) -> None:
         )
 
 
-DEFAULT_NOTIFICATION_ENDPOINT = "infra-tools-webhook"
-DEFAULT_NOTIFICATION_MATCHER = "infra-tools-system"
+DEFAULT_NOTIFICATION_ENDPOINT = "basaltwater-webhook"
+DEFAULT_NOTIFICATION_MATCHER = "basaltwater-system"
 DEFAULT_NOTIFICATION_SEVERITIES = ["info", "notice", "warning", "error", "unknown"]
 _NOTIFICATION_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
 
@@ -960,7 +960,7 @@ def install_webhook_notifications(
     """Configure Proxmox's native webhook notifier for system notifications.
 
     This uses Proxmox VE's notification API through ``pvesh``. It creates or
-    updates a webhook endpoint with a JSON body compatible with infra_tools'
+    updates a webhook endpoint with a JSON body compatible with basaltwater'
     notification payload shape, then creates or updates a matcher that routes
     matching severities to that endpoint. No local hook script is installed.
     """
@@ -1062,7 +1062,7 @@ def _build_webhook_notification_commands(
         "--method", "post",
         "--header", _pve_property("Content-Type", "application/json"),
         "--body", _base64(_webhook_body_template()),
-        "--comment", "infra_tools Proxmox system notifications",
+        "--comment", "basaltwater Proxmox system notifications",
     ])
     endpoint_set = shlex.join([
         "pvesh", "set", endpoint_path,
@@ -1070,12 +1070,12 @@ def _build_webhook_notification_commands(
         "--method", "post",
         "--header", _pve_property("Content-Type", "application/json"),
         "--body", _base64(_webhook_body_template()),
-        "--comment", "infra_tools Proxmox system notifications",
+        "--comment", "basaltwater Proxmox system notifications",
     ])
 
     matcher_args = [
         "--target", config.endpoint_name,
-        "--comment", "Route Proxmox system notifications to infra_tools",
+        "--comment", "Route Proxmox system notifications to basaltwater",
     ]
     for severity in config.severities:
         matcher_args.extend(["--match-severity", severity])
@@ -1103,7 +1103,7 @@ def _upsert_pvesh_command(path: str, set_cmd: str, create_cmd: str) -> str:
 
 
 def _webhook_body_template() -> str:
-    """Return Proxmox Handlebars JSON body for infra_tools-style webhooks."""
+    """Return Proxmox Handlebars JSON body for basaltwater-style webhooks."""
     return """{
   "subject": "Proxmox: {{ escape title }}",
   "job": "proxmox",

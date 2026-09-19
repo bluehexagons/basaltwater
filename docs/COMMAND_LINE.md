@@ -30,8 +30,14 @@ Related pages:
 
 ## Commands
 
+`migrate` previews a one-time cutover from recent infra-tools data and servers.
+`--apply` changes this user’s data; add `--system` for host resources.
+`--recover` reverses an interrupted cutover. See the
+[migration guide](BASALTWATER_MIGRATION.md) before applying.
+
 ```text
 basaltw --version
+basaltw migrate [--system] [--installation /path/to/old-source] [--apply | --recover]
 basaltw setup <system_type> <host> [username] [options]
 basaltw patch <host> [username] [options]
 basaltw shares <host> [username] [options]
@@ -271,7 +277,7 @@ saved setup moves to the new IPv4 address (or IPv6 when no IPv4 was requested).
 The one-shot activation flag is not retained in the saved setup.
 The old address remains live only until reboot; it is absent from the new
 persistent configuration. Existing ifupdown files changed for the selected
-interface receive a one-time `.infra-tools.bak` copy.
+interface receive a one-time `.basaltwater.bak` copy.
 
 ```bash
 basaltw setup server_lite 192.168.1.50 admin \
@@ -486,9 +492,9 @@ For the local machine, the installer can select the control-plane profile and
 run it immediately:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --local-setup control_plane
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 To convert a Debian desktop to one shared XFCE/XRDP session, first log out
@@ -496,10 +502,10 @@ graphical sessions and run from SSH or a text console. Console graphical login
 is disabled. Select the agent tools needed (GitHub CLI and Codex here):
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --local-setup workstation_dev \
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup workstation_dev \
   --control-plane --agent-tool gh --agent-tool codex --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.infra_tools-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 | Flag | Description |
@@ -582,12 +588,12 @@ make the engine available in SSH, desktop, T3 Code, and coding-agent shells.
 Repeat `--godot-bundle` to give that same target account web-export and
 publishing commands without changing its agent configuration.
 
-Any setup with agent features installs managed `~/.local/bin/basaltw` and
-`~/.local/bin/infra-tools` launchers for the target user. On a remote setup they
+Any setup with agent features installs a managed `~/.local/bin/basaltw`
+launcher for the target user. On a remote setup it
 use the source
-deployed under `/opt/infra_tools`, so diagnostics and deliberate agent updates
+deployed under `/opt/basaltwater`, so diagnostics and deliberate agent updates
 work directly from an SSH, desktop, or T3 Code terminal without a separate
-Basaltwater installation on the VM. An existing executable with either name is
+Basaltwater installation on the VM. An existing executable with that name is
 retained; setup never overwrites an unmanaged user launcher.
 
 When Codex or OpenCode is selected, setup also installs the shared base
@@ -722,12 +728,12 @@ option is mutually exclusive with a narrowed `--capability` selection and works
 with the remote `HOST USER` form.
 Supplying `HOST USER` runs the same doctor through managed SSH from the control
 system and preserves its text or JSON output and exit status. The target must
-have been configured by Basaltwater so `/opt/infra_tools` is present. Add
+have been configured by Basaltwater so `/opt/basaltwater` is present. Add
 `--key PATH` when the VM uses a non-default SSH identity.
 
 Add `--record` after a deliberate update or reboot to replace the private
 readiness record at
-`~/.local/state/infra_tools/agent-readiness.json`. A bare `doctor --record`
+`~/.local/state/basaltwater/agent-readiness.json`. A bare `doctor --record`
 checks the default terminal tools and adds host readiness plus T3 Code when a
 managed T3 installation is present; explicit `--tool` and `--capability`
 selections retain their normal narrowing behavior. The mode-`0600` record
@@ -743,7 +749,7 @@ form. Doctor JSON output retains its existing result-array shape when
 
 `agent workspace` provides local task isolation for concurrent agents. `create`
 places a dedicated `agent/TASK` branch below
-`~/.local/share/infra_tools/worktrees`, leaving the primary checkout's files
+`~/.local/share/basaltwater/worktrees`, leaving the primary checkout's files
 untouched. `list` and `status` report branch, commit, and dirty state without
 printing changed file names. The default base is the primary checkout's `HEAD`;
 creation does not fetch remote refs or copy uncommitted changes. To start from
@@ -789,7 +795,7 @@ Before changing a tool it checks `--version` and `--help`, retains the previous
 executable, writes an atomic `in_progress` record, and repeats both checks after
 the vendor updater exits. A changed or unusable executable is rolled back when
 the update fails. Non-secret results are stored with mode `0600` in
-`~/.local/state/infra_tools/agent-tools.json`; one prior executable per tool is
+`~/.local/state/basaltwater/agent-tools.json`; one prior executable per tool is
 retained in the adjacent `agent-backups` directory. Codex installer bytes are
 downloaded before execution with a size limit and their observed SHA-256 is
 recorded, but upstream does not publish a pinned digest through this installer
@@ -848,7 +854,7 @@ Credential rotation does not rebuild the VM or overwrite repositories:
 basaltw agent auth set 10.0.0.10 agent --tool gh --file /run/secrets/gh-hosts.yml
 basaltw agent auth set 10.0.0.10 agent --tool codex --active
 basaltw agent auth status 10.0.0.10 agent --json
-python3 infra_tools.py agent auth pull 10.0.0.10 agent
+python3 basaltwater.py agent auth pull 10.0.0.10 agent
 ```
 
 `auth set` accepts an active-user source, a controller-local file, or
@@ -1044,7 +1050,7 @@ unless blank and named by `--swap-initialize`; existing filesystems,
 partitions, mounts, or unrelated signatures stop setup. Removing a swap
 declaration never wipes its block-device signature.
 
-Basaltwater records owned areas in `/opt/infra_tools/state/swap.json` and
+Basaltwater records owned areas in `/opt/basaltwater/state/swap.json` and
 edits only a marked block in `/etc/fstab`. Existing unmanaged swap is
 preserved. Managed fstab entries use `nofail`, and ownership is journaled
 before creating files or zram so interrupted setup can be retried safely.
@@ -1066,10 +1072,10 @@ have not yet been qualified by this project.
 | `--ssl-email EMAIL` | Email for SSL registration |
 | `--cloudflare` | Configure Cloudflare Tunnel; close direct HTTP/HTTPS only after the tunnel is verified active |
 
-Repos can also ship `infra.json` manifests for multi-component deploys; see
+Repos can also ship `basaltwater.json` manifests for multi-component deploys; see
 [Deployments and manifests](./DEPLOYMENTS.md) for the schema and examples.
 Ruby/Rails repositories are rejected before remote setup begins. Use a pinned
-legacy infra-tools release to maintain an existing Rails deployment; current
+legacy basaltwater release to maintain an existing Rails deployment; current
 setup does not remove its old systemd unit or same-domain generated Nginx site
 when that whole domain is omitted from the current deployment set.
 
@@ -1500,8 +1506,8 @@ update dry run still performs the read-only preflight audits.
 ### Interactive Shell
 
 `basaltw shell` opens a REPL for saved configurations. The shell loads
-`~/.infra_toolsrc` on startup and persists history at
-`~/.local/share/infra_tools/shell_history`.
+`~/.basaltwaterrc` on startup and persists history at
+`~/.local/share/basaltwater/shell_history`.
 
 Useful shell commands:
 

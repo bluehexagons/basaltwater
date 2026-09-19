@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test runner for infra_tools.
+"""Test runner for basaltwater.
 
 By default, expensive tests (live Proxmox round-trips, network downloads, etc.)
 are skipped. Opt in with ``--expensive CATEGORY`` (repeatable) or
@@ -61,6 +61,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_workspace_cli.py",
     ),
     "core": (
+        "tests/test_rename_migration.py",
         "tests/test_arg_parser_hosted.py",
         "tests/test_atomic_io.py",
         "tests/test_cache.py",
@@ -186,7 +187,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_cloudflare*.py",
         "tests/test_gogs*.py",
         "tests/test_homebox.py",
-        "tests/test_infra_web.py",
+        "tests/test_basaltwater_web.py",
         "tests/test_manifest_deploy.py",
         "tests/test_nginx_config.py",
         "tests/test_ssl_steps.py",
@@ -260,7 +261,7 @@ TEST_SUITES: dict[str, list[str]] = {
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the infra_tools test suite.",
+        description="Run the basaltwater test suite.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -275,7 +276,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true",
-        help="Verbose test output (does not suppress infra_tools console logs).",
+        help="Verbose test output (does not suppress basaltwater console logs).",
     )
     parser.add_argument(
         "--show-output",
@@ -560,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         return _check_prereqs(_requested_prereq_categories(args.expensive))
 
     if not args.verbose:
-        os.environ.setdefault("INFRA_TOOLS_TEST", "1")
+        os.environ.setdefault("BASALTWATER_TEST", "1")
 
     os.chdir(_REPO_ROOT)
 

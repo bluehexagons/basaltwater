@@ -39,7 +39,7 @@ Omit the password from `credentials set` to use a hidden prompt. The default
 store is private to the active workspace:
 
 ```text
-~/.config/infra_tools/credentials.json
+~/.config/basaltwater/credentials.json
 ```
 
 Use the global `--workspace PATH` option to select another workspace. The

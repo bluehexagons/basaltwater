@@ -11,7 +11,7 @@ Security features:
 - Rate limiting via nginx
 - Dedicated webhook user with limited permissions
 
-Logs to: /var/log/infra_tools/web/webhook_receiver.log
+Logs to: /var/log/basaltwater/web/webhook_receiver.log
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from web.service_tools.cicd_security import (
 logger = get_service_logger('webhook_receiver', 'web', use_syslog=True)
 
 # Configuration paths
-CONFIG_DIR = "/etc/infra_tools/cicd"
+CONFIG_DIR = "/etc/basaltwater/cicd"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "webhook_config.json")
-STATE_DIR = "/var/lib/infra_tools/cicd"
+STATE_DIR = "/var/lib/basaltwater/cicd"
 JOBS_DIR = os.path.join(STATE_DIR, "jobs")
 DELIVERIES_FILE = os.path.join(STATE_DIR, 'deliveries.sqlite3')
 

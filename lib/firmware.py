@@ -141,7 +141,7 @@ def _privileged_command(command: Sequence[str]) -> list[str]:
     if sudo_path:
         return [sudo_path, *command]
     raise PermissionError(
-        "this operation requires root privileges; rerun infra-tools with sudo"
+        "this operation requires root privileges; rerun basaltwater with sudo"
     )
 
 
@@ -476,7 +476,7 @@ def apply_firmware_updates(
     device_id: Optional[str] = None,
     assume_yes: bool = False,
 ) -> subprocess.CompletedProcess[str]:
-    """Apply all or one fwupd update without rebooting through infra-tools."""
+    """Apply all or one fwupd update without rebooting through basaltwater."""
 
     command = [FWUPD_DEPENDENCY.command, "update"]
     if device_id is not None:

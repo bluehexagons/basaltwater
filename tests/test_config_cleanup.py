@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.config import SetupConfig
 from lib.config_cleanup import run_cleanup
 from lib.proxmox_hosts import get_proxmox_hosts_path
@@ -23,7 +23,7 @@ class TestConfigCleanup(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
 
     def test_parser_accepts_target_host_and_options(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(
             ["cleanup", "192.168.0.41", "--dry-run", "--yes"]
         )

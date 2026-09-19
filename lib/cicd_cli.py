@@ -24,10 +24,10 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_host, validate_username
 
 
-CICD_HOME = "/var/lib/infra_tools/cicd"
+CICD_HOME = "/var/lib/basaltwater/cicd"
 DEPLOY_KEY = f"{CICD_HOME}/.ssh/deploy_key"
 DEPLOY_PUBLIC_KEY = f"{DEPLOY_KEY}.pub"
-DEPLOY_TARGETS_FILE = "/etc/infra_tools/cicd/deploy_targets.json"
+DEPLOY_TARGETS_FILE = "/etc/basaltwater/cicd/deploy_targets.json"
 DEPLOY_KNOWN_HOSTS = f"{CICD_HOME}/known_hosts"
 _TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _FINGERPRINT_PATTERN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
@@ -61,7 +61,7 @@ if deploy_user != "deploy":
     raise SystemExit("invalid deploy user")
 if not base_dir.startswith("/") or os.path.normpath(base_dir) != base_dir or base_dir == "/":
     raise SystemExit("invalid deploy base directory")
-if not os.path.isfile("/usr/local/sbin/infra-tools-deploy-admin"):
+if not os.path.isfile("/usr/local/sbin/basaltwater-deploy-admin"):
     raise SystemExit("deploy admin helper is missing; rerun app-server setup")
 account = pwd.getpwnam(deploy_user)
 if account.pw_uid == 0 or account.pw_dir != "/home/deploy":
@@ -143,9 +143,9 @@ if payload["deploy_user"] != "deploy":
     raise SystemExit("invalid deploy target user")
 
 webhook = pwd.getpwnam("webhook")
-home = "/var/lib/infra_tools/cicd"
+home = "/var/lib/basaltwater/cicd"
 known_hosts = os.path.join(home, "known_hosts")
-targets_file = "/etc/infra_tools/cicd/deploy_targets.json"
+targets_file = "/etc/basaltwater/cicd/deploy_targets.json"
 os.makedirs(home, mode=0o750, exist_ok=True)
 os.makedirs(os.path.dirname(targets_file), mode=0o755, exist_ok=True)
 
@@ -204,7 +204,7 @@ targets[target_name] = {
     "user": payload["deploy_user"],
     "ssh_port": port,
     "base_dir": base_dir,
-    "ssh_key": "/var/lib/infra_tools/cicd/.ssh/deploy_key",
+    "ssh_key": "/var/lib/basaltwater/cicd/.ssh/deploy_key",
 }
 atomic_write(
     targets_file,
@@ -547,7 +547,7 @@ def connect_build_to_app(
 
     if not is_host_key_enrolled(build.host):
         raise RuntimeError(
-            f"Build server host key is not enrolled; run: infra-tools ssh-key enroll {build.host}"
+            f"Build server host key is not enrolled; run: basaltw ssh-key enroll {build.host}"
         )
     known_host_lines = _ensure_app_trust(app.host, port, fingerprint)
     public_key = _fetch_build_public_key(build)
@@ -578,7 +578,7 @@ def run_cicd_command(args: argparse.Namespace) -> int:
                 fingerprint=args.fingerprint,
             )
             print(f"Connected build server {args.build} to deploy target {target}")
-            print(f"  Test again: infra-tools cicd test {args.build} {target}")
+            print(f"  Test again: basaltw cicd test {args.build} {target}")
             return 0
         if args.cicd_command == "status":
             build = _load_role(args.build, build_server=True)

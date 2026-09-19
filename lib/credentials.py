@@ -263,16 +263,16 @@ def _resolve_share_credentials(config: SetupConfig, credential_map: dict[str, st
             if username == config.antistatic_admin:
                 raise ValueError(
                     f"Missing credential for Antistatic admin: {username}. "
-                    "Run infra-tools credentials set USERNAME to enter it securely"
+                    "Run basaltw credentials set USERNAME to enter it securely"
                 )
             if username == config.syncthing_admin:
                 raise ValueError(
                     f"Missing credential for Syncthing admin: {username}. "
-                    "Run infra-tools credentials set USERNAME to enter it securely"
+                    "Run basaltw credentials set USERNAME to enter it securely"
                 )
             raise ValueError(
                 f"Missing credential for share user: {username}. "
-                "Run infra-tools credentials set USERNAME or use --credential USERNAME PASSWORD"
+                "Run basaltw credentials set USERNAME or use --credential USERNAME PASSWORD"
             )
         if username not in seen_usernames:
             seen_usernames.add(username)
@@ -299,7 +299,7 @@ def _resolve_share_credentials(config: SetupConfig, credential_map: dict[str, st
         if password is None:
             raise ValueError(
                 f"Missing credential for Git user {normalized_username} at "
-                f"{normalized_origin}. Run infra-tools credentials set USERNAME "
+                f"{normalized_origin}. Run basaltw credentials set USERNAME "
                 "or use --credential USERNAME PASSWORD"
             )
         if normalized_username not in seen_usernames:
@@ -324,7 +324,7 @@ def _read_git_ca_bundle_from_ssh(
     if os.path.islink(known_hosts_path) or not os.path.isfile(known_hosts_path):
         raise ValueError(
             f"SSH host key for Git CA source {ssh_source.host} is not enrolled. "
-            f"Run infra-tools ssh-key enroll {ssh_source.host}"
+            f"Run basaltw ssh-key enroll {ssh_source.host}"
         )
     read_command = [
         "head",
@@ -435,7 +435,7 @@ def _resolve_named_smb_mounts(
             if password is None:
                 raise ValueError(
                     f"Missing credential for SMB mount user: {username}. "
-                    "Run infra-tools credentials set USERNAME or use --credential USERNAME PASSWORD"
+                    "Run basaltw credentials set USERNAME or use --credential USERNAME PASSWORD"
                 )
             resolved_spec[2] = f"{username}:{password}"
         resolved_mounts.append(resolved_spec)

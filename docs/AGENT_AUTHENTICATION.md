@@ -13,7 +13,7 @@ non-secret configuration, and browser website sessions are separate concerns.
 | Claude Code | `~/.claude/.credentials.json` |
 | OpenCode | `~/.local/share/opencode/auth.json` |
 
-These are the standard Linux paths used by infra-tools. Supply an explicit
+These are the standard Linux paths used by basaltwater. Supply an explicit
 file when a vendor setting relocates its credential.
 
 Selecting an agent tool does not create authentication. Select tools with
@@ -91,8 +91,8 @@ CachyOS control system needs Python 3 and OpenSSH, but does not need a
 Basaltwater installation or local agent programs.
 
 ```bash
-python3 infra_tools.py ssh-key enroll 192.168.0.41
-python3 infra_tools.py agent auth pull 192.168.0.41 agent-1
+python3 basaltwater.py ssh-key enroll 192.168.0.41
+python3 basaltwater.py agent auth pull 192.168.0.41 agent-1
 ```
 
 | Option | Purpose |

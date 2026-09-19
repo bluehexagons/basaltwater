@@ -329,7 +329,7 @@ def install_binary_release(
         return tag_name
 
     print(f"  Downloading {binary_name} ({tag_name})...")
-    with tempfile.TemporaryDirectory(prefix="infra-tools-release-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-release-") as temporary_dir:
         tmp_path = os.path.join(temporary_dir, binary_name)
         download_result = run(
             "curl -fL --proto '=https' --proto-redir '=https' "

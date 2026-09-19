@@ -27,10 +27,10 @@ SYSTEM_UNITS = {
     "xrdp.service": "Remote desktop",
     "fail2ban.service": "Login protection",
     "auditd.service": "System audit",
-    "infra-tools-web-panel.service": "Web panel",
+    "basaltwater-web-panel.service": "Web panel",
 }
 JOB_SERVICES = {
-    "infra-tools-web-panel-audit.service": "Audit snapshot exporter",
+    "basaltwater-web-panel-audit.service": "Audit snapshot exporter",
     "auto-update-apt.service": "Package updates",
     "auto-update-uv.service": "uv updates",
     "auto-update-node.service": "Node.js updates",

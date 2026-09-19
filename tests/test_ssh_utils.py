@@ -48,7 +48,7 @@ class TestSshUtils(unittest.TestCase):
 
         self.assertNotEqual(first, second)
         self.assertTrue(first.endswith(".sock"))
-        self.assertIn("infra-tools-ssh-", first)
+        self.assertIn("basaltwater-ssh-", first)
 
     def test_shell_join_quotes_spaces(self):
         self.assertEqual(shell_join(["cat", "/tmp/file name.txt"]), "cat '/tmp/file name.txt'")
@@ -57,12 +57,12 @@ class TestSshUtils(unittest.TestCase):
         command = chain_remote_commands(
             [
                 ["mkdir", "-p", "/tmp/infra tools"],
-                ["python3", "/opt/infra_tools/remote_setup.py", "--name", "web node"],
+                ["python3", "/opt/basaltwater/remote_setup.py", "--name", "web node"],
             ]
         )
         self.assertEqual(
             command,
-            "mkdir -p '/tmp/infra tools' && python3 /opt/infra_tools/remote_setup.py --name 'web node'",
+            "mkdir -p '/tmp/infra tools' && python3 /opt/basaltwater/remote_setup.py --name 'web node'",
         )
 
     @patch("lib.ssh_utils.ensure_workspace_dir")
@@ -107,12 +107,12 @@ class TestSshUtils(unittest.TestCase):
             "example.com",
             "root",
             "/tmp/key",
-            control_path="/tmp/infra-tools.sock",
+            control_path="/tmp/basaltwater.sock",
         )
 
         self.assertIn("ControlMaster=auto", command)
         self.assertIn("ControlPersist=60s", command)
-        self.assertIn("ControlPath=/tmp/infra-tools.sock", command)
+        self.assertIn("ControlPath=/tmp/basaltwater.sock", command)
 
     def test_build_ssh_command_accepts_explicit_known_hosts_path(self):
         command = build_ssh_command(
@@ -141,7 +141,7 @@ class TestSshUtils(unittest.TestCase):
                     "192.0.2.40",
                     "agent",
                     "/tmp/key",
-                    control_path="/tmp/infra-tools.sock",
+                    control_path="/tmp/basaltwater.sock",
                 )
             )
 

@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from infra_tools import _patch_preserve_keys
+from basaltwater import _patch_preserve_keys
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig

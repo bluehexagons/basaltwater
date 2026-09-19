@@ -30,11 +30,11 @@ class TestProxmoxFirewallPlan(unittest.TestCase):
 
         self.assertTrue(plan.safe_to_apply)
         self.assertEqual(plan.errors, [])
-        self.assertEqual(plan.address_sets[0].name, "infra-management")
+        self.assertEqual(plan.address_sets[0].name, "basaltwater-management")
         self.assertEqual(plan.address_sets[0].entries, ["192.168.1.0/24"])
         self.assertEqual(plan.rules[-1].action, "DROP")
-        self.assertEqual(plan.rules[-1].source, "+infra-guests")
-        self.assertEqual(plan.rules[-1].destination, "+infra-control-plane")
+        self.assertEqual(plan.rules[-1].source, "+basaltwater-guests")
+        self.assertEqual(plan.rules[-1].destination, "+basaltwater-control-plane")
 
     def test_missing_management_source_is_error(self) -> None:
         profile = NetworkProfile(
@@ -73,7 +73,7 @@ class TestProxmoxFirewallPlan(unittest.TestCase):
         rendered = format_proxmox_firewall_plan(plan)
 
         self.assertIn("Proxmox firewall plan: homelab", rendered)
-        self.assertIn("infra-management", rendered)
+        self.assertIn("basaltwater-management", rendered)
         self.assertIn("DROP", rendered)
 
     def test_renders_proxmox_artifacts(self) -> None:
@@ -89,10 +89,10 @@ class TestProxmoxFirewallPlan(unittest.TestCase):
 
         self.assertTrue(rendered.safe_to_apply)
         self.assertEqual(rendered.artifacts[0].path, "/etc/pve/firewall/cluster.fw")
-        self.assertIn("[IPSET infra-management]", rendered.artifacts[0].content)
-        self.assertIn("[group infra-deny-control-plane]", rendered.artifacts[0].content)
-        self.assertIn("GROUP infra-cluster-management", rendered.artifacts[1].content)
-        self.assertIn("GROUP infra-deny-control-plane", rendered.artifacts[2].content)
+        self.assertIn("[IPSET basaltwater-management]", rendered.artifacts[0].content)
+        self.assertIn("[group basaltwater-deny-control-plane]", rendered.artifacts[0].content)
+        self.assertIn("GROUP basaltwater-cluster-management", rendered.artifacts[1].content)
+        self.assertIn("GROUP basaltwater-deny-control-plane", rendered.artifacts[2].content)
 
     def test_unsafe_plan_does_not_render_artifacts(self) -> None:
         profile = NetworkProfile(

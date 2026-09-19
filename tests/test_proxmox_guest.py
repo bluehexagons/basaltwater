@@ -97,7 +97,7 @@ class TestProvisioningConcurrency(unittest.TestCase):
     ) -> None:
         process = popen.return_value
         stdin = process.stdin
-        process.stdout.readline.return_value = "infra-tools-lock-ready\n"
+        process.stdout.readline.return_value = "basaltwater-lock-ready\n"
         process.communicate.return_value = ("", "")
 
         with remote_proxmox_locks(
@@ -113,7 +113,7 @@ class TestProvisioningConcurrency(unittest.TestCase):
         stdin.close.assert_called_once_with()
         remote_command = build_command.call_args.args[3]
         self.assertEqual(remote_command.count("flock --exclusive --nonblock"), 2)
-        self.assertIn("infra-tools-lock-ready", remote_command)
+        self.assertIn("basaltwater-lock-ready", remote_command)
         self.assertIn("cat >/dev/null", remote_command)
 
     @patch("lib.proxmox_guest._proxmox_ssh_command", return_value=["ssh"])
@@ -121,7 +121,7 @@ class TestProvisioningConcurrency(unittest.TestCase):
     def test_remote_identity_lock_conflict_is_reported(self, popen, _build) -> None:
         process = popen.return_value
         process.stdout.readline.return_value = ""
-        process.communicate.return_value = ("", "infra-tools lock busy: guest web-1")
+        process.communicate.return_value = ("", "basaltwater lock busy: guest web-1")
         process.returncode = 75
 
         with self.assertRaisesRegex(ProvisionError, "lock busy"):
@@ -141,7 +141,7 @@ class TestProvisioningConcurrency(unittest.TestCase):
         self, popen, build_command
     ) -> None:
         process = popen.return_value
-        process.stdout.readline.return_value = "infra-tools-lock-ready\n"
+        process.stdout.readline.return_value = "basaltwater-lock-ready\n"
         process.communicate.return_value = ("", "")
 
         with remote_proxmox_locks(

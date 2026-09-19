@@ -21,16 +21,16 @@ from lib.privilege_setup import privilege_broker_origin, validate_broker_setting
 from lib.remote_utils import is_dry_run, is_service_active, run
 from lib.validators import validate_username
 
-MARKER = "# Managed by infra-tools privilege broker"
-BROKER = "infra-tools-privilege-broker"
-WEB = "infra-tools-privilege-approval"
+MARKER = "# Managed by basaltwater privilege broker"
+BROKER = "basaltwater-privilege-broker"
+WEB = "basaltwater-privilege-approval"
 AUTH_PATH = CONFIG_DIR + "/auth.json"
-POLKIT_PATH = "/etc/polkit-1/rules.d/00-infra-tools-privilege-broker.rules"
+POLKIT_PATH = "/etc/polkit-1/rules.d/00-basaltwater-privilege-broker.rules"
 UNIT_ROOT = "/etc/systemd/system"
 
 
 def _marker(path: str) -> str:
-    return "// Managed by infra-tools privilege broker" if path == POLKIT_PATH else MARKER
+    return "// Managed by basaltwater privilege broker" if path == POLKIT_PATH else MARKER
 
 
 def _managed_write(path: str, content: str) -> None:
@@ -85,7 +85,7 @@ RestartSec=5
     return {
         BROKER: f"""{MARKER}
 [Unit]
-Description=infra-tools agent privilege broker
+Description=basaltwater agent privilege broker
 After=network.target
 [Service]
 User=root
@@ -93,7 +93,7 @@ RuntimeDirectory={BROKER}
 RuntimeDirectoryMode=0755
 StateDirectory={BROKER}
 StateDirectoryMode=0700
-ExecStart=/usr/bin/python3 -I /opt/infra_tools/common/service_tools/privilege_broker.py
+ExecStart=/usr/bin/python3 -I /opt/basaltwater/common/service_tools/privilege_broker.py
 RestrictAddressFamilies=AF_UNIX
 {common}
 [Install]
@@ -101,7 +101,7 @@ WantedBy=multi-user.target
 """,
         WEB: f"""{MARKER}
 [Unit]
-Description=infra-tools independent privilege approval page
+Description=basaltwater independent privilege approval page
 Requires={BROKER}.service
 After={BROKER}.service network.target
 [Service]
@@ -110,7 +110,7 @@ Group={WEB_USER}
 LoadCredential=auth:{AUTH_PATH}
 LoadCredential=cert:{CONFIG_DIR}/server.crt
 LoadCredential=key:{CONFIG_DIR}/server.key
-ExecStart=/usr/bin/python3 -I /opt/infra_tools/common/service_tools/privilege_approval.py
+ExecStart=/usr/bin/python3 -I /opt/basaltwater/common/service_tools/privilege_approval.py
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 {common}
@@ -222,7 +222,7 @@ def configure_privilege_broker(config) -> None:
                   "requester_uid": account.pw_uid, "ttl_seconds": 300, "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
-    for directory in ("/opt/infra_tools/lib", "/opt/infra_tools/common", "/opt/infra_tools/plugins"):
+    for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins"):
         protected_path(directory, directory=True)
         for root, directories, files in os.walk(directory):
             protected_path(root, directory=True)

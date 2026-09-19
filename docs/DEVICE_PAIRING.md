@@ -153,7 +153,7 @@ are rejected.
 The target copy is root-owned, group-readable by `www-data`, and stored at:
 
 ```text
-/etc/infra-tools/device-pairing/htpasswd
+/etc/basaltwater/device-pairing/htpasswd
 ```
 
 The uploaded source payload is removed after setup succeeds or fails. The
@@ -233,25 +233,25 @@ T3 endpoint, and required to return a link for the expected T3 origin.
 
 ```text
 ~/.config/systemd/user/t3code.service
-~/.config/systemd/user/t3code.service.d/infra-tools.conf
-infra-tools-device-pairing.service
-infra-tools-t3code-connect.path
-infra-tools-t3code-connect.service
-/etc/nginx/sites-available/infra-tools-device-pairing
-/etc/infra-tools/internal-web/policy.json
-/etc/infra-tools/internal-web/forwards.json
-/etc/infra-tools/device-pairing/providers.json
-/etc/infra-tools/device-pairing/htpasswd
-/run/infra-tools-device-pairing/http.sock
+~/.config/systemd/user/t3code.service.d/basaltwater.conf
+basaltwater-device-pairing.service
+basaltwater-t3code-connect.path
+basaltwater-t3code-connect.service
+/etc/nginx/sites-available/basaltwater-device-pairing
+/etc/basaltwater/internal-web/policy.json
+/etc/basaltwater/internal-web/forwards.json
+/etc/basaltwater/device-pairing/providers.json
+/etc/basaltwater/device-pairing/htpasswd
+/run/basaltwater-device-pairing/http.sock
 ```
 
 Check the local components without revealing pairing credentials:
 
 ```bash
 systemctl --user status t3code.service
-sudo systemctl status infra-tools-device-pairing.service
+sudo systemctl status basaltwater-device-pairing.service
 sudo nginx -t
-sudo fail2ban-client status infra-tools-device-pairing
+sudo fail2ban-client status basaltwater-device-pairing
 sudo ss -lntp | grep -E ':(3773|3774)\b'
 curl -I http://BIND_ADDRESS:3774/
 ```

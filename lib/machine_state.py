@@ -18,7 +18,7 @@ from lib.plugin_registry import get_system_type_names
 from lib.validators import validate_username
 
 
-STATE_DIR = "/opt/infra_tools/state"
+STATE_DIR = "/opt/basaltwater/state"
 
 # Required keys for each state file
 _MACHINE_STATE_REQUIRED_KEYS = ("machine_type", "system_type", "username")
@@ -30,12 +30,12 @@ SETUP_CONFIG_FILE = os.path.join(STATE_DIR, "setup.json")
 # intentionally root-only.  Keep the small notification subset in a separate
 # root-owned file so those jobs can read it without gaining access to secrets
 # from the rest of setup.json.
-NOTIFICATION_CONFIG_FILE = "/etc/infra-tools/notifications.json"
+NOTIFICATION_CONFIG_FILE = "/etc/basaltwater/notifications.json"
 
 _LXC_VIRTUALIZATIONS = {"lxc", "lxc-libvirt", "openvz", "systemd-nspawn"}
 _OCI_VIRTUALIZATIONS = {"docker", "podman", "rkt", "oci"}
 _ACTIVE_MACHINE_TYPE: ContextVar[Optional[str]] = ContextVar(
-    "infra_tools_active_machine_type",
+    "basaltwater_active_machine_type",
     default=None,
 )
 

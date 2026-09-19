@@ -21,7 +21,7 @@ from lib.remote_utils import run
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
-PAYLOAD_ROOT = "/run/infra-tools-setup"
+PAYLOAD_ROOT = "/run/basaltwater-setup"
 PAYLOAD_NAMES = ("agent_payload", "device_pairing_payload", "web_panel_payload", ".remote_setup_args.json")
 MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 

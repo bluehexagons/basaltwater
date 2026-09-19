@@ -7,9 +7,9 @@
 
 Infrastructure management, from one machine to your whole network.
 
-Formerly infra-tools. The command is now `basaltw`; existing `infra-tools`
-automation remains supported through v2.x. See the
-[upgrade and rollback guide](docs/BASALTWATER_MIGRATION.md).
+The command is `basaltw` and the Python entry point is `basaltwater.py`.
+Recent infra-tools installations have a [one-time migration](docs/BASALTWATER_MIGRATION.md);
+after cutover, only the Basaltwater namespace is supported.
 
 The [identity guide](docs/BRANDING.md) includes editable assets and visual specimens.
 
@@ -31,9 +31,9 @@ and checks that show whether each step worked.
 Install the launcher on the machine that will manage your hosts:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sh "$HOME/.infra_tools-install.sh"
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sh "$HOME/.basaltwater-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 Run each line in order and continue only if the previous command succeeds.
@@ -130,7 +130,7 @@ try features and keep a small VM usable.
 | Workstations | XFCE, i3, LXQt, RDP, browsers, and desktop tooling | [Workstations](docs/WORKSTATIONS.md), [XRDP](docs/XRDP.md), [CLI reference](docs/COMMAND_LINE.md) |
 | CachyOS coding | Local agent tooling for an existing KDE workstation; optional local/LAN T3 and T3 Connect | [CachyOS](docs/CACHYOS.md) |
 | Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/SAMBA_SHARES.md), [Managed Syncthing](docs/SYNCTHING.md), [Storage operations](docs/STORAGE_OPERATIONS.md) |
-| Deployments | Single-service deployments and `infra.json` multi-component manifests | [Deployments](docs/DEPLOYMENTS.md), [Deployment safety](docs/DEPLOYMENT_SAFETY.md), [CI/CD](docs/CICD.md) |
+| Deployments | Single-service deployments and `basaltwater.json` multi-component manifests | [Deployments](docs/DEPLOYMENTS.md), [Deployment safety](docs/DEPLOYMENT_SAFETY.md), [CI/CD](docs/CICD.md) |
 | Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/PROXMOX.md) |
 | Networking | Static addressing, internal HTTPS site/preview hosting, inventory, and read-only Proxmox firewall planning | [Internal web](docs/INTERNAL_WEB.md), [Networking](docs/NETWORKING.md) |
 | Sysadmin | SSH, transfers, health, services, logs, upgrades, and reachability | [Sysadmin shortcuts](docs/SYSADMIN.md) |

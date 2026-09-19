@@ -13,16 +13,16 @@ from lib.setup_common import copy_project_files, create_tar_from_dir
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command as _build_ssh_command, shell_join
 
-REMOTE_INFRA_TOOLS_PATH = "/opt/infra_tools/infra_tools.py"
+REMOTE_BASALTWATER_PATH = "/opt/basaltwater/basaltwater.py"
 REMOTE_RECONSTRUCT_SCRIPT = '''set -eu
 umask 077
-recall_stage=$(mktemp -d /tmp/infra-tools-recall.XXXXXXXX)
+recall_stage=$(mktemp -d /tmp/basaltwater-recall.XXXXXXXX)
 trap 'rm -rf -- "$recall_stage"' EXIT
 trap 'exit 1' HUP INT TERM
 base64 -d > "$recall_stage/source.tgz"
 mkdir "$recall_stage/source"
 tar xzf "$recall_stage/source.tgz" -C "$recall_stage/source"
-python3 "$recall_stage/source/infra_tools.py" reconstruct --compact
+python3 "$recall_stage/source/basaltwater.py" reconstruct --compact
 '''
 
 
@@ -33,7 +33,7 @@ def build_ssh_command(host: str, username: str, ssh_key: Optional[str] = None) -
 
 def retrieve_stored_config(host: str, username: str, ssh_key: Optional[str] = None) -> Optional[SetupConfig]:
     """Retrieve the stored configuration from the remote host."""
-    remote_config_path = "/opt/infra_tools/state/setup.json"
+    remote_config_path = "/opt/basaltwater/state/setup.json"
     try:
         result = run(
             build_ssh_command(host, username, ssh_key) + [shell_join(["cat", remote_config_path])],
@@ -65,17 +65,17 @@ def reconstruct_remote_config(
     """Run the remote reconstruction command and return the inferred config."""
     try:
         check_result = run(
-            build_ssh_command(host, username, ssh_key) + [shell_join(["test", "-f", REMOTE_INFRA_TOOLS_PATH])],
+            build_ssh_command(host, username, ssh_key) + [shell_join(["test", "-f", REMOTE_BASALTWATER_PATH])],
             capture_output=True,
             timeout=10,
             check=False,
         )
         if check_result.returncode not in (0, 1):
-            print('Cannot inspect remote infra-tools installation; reconstruction aborted', file=sys.stderr)
+            print('Cannot inspect remote basaltwater installation; reconstruction aborted', file=sys.stderr)
             return None
         if check_result.returncode == 1:
             print("Note: remote tool missing; reconstructing from a temporary source directory...", file=sys.stderr)
-            build_dir = tempfile.mkdtemp(prefix="infra_recall_")
+            build_dir = tempfile.mkdtemp(prefix="basaltwater_recall_")
             try:
                 copy_project_files(build_dir)
                 tar_data = create_tar_from_dir(build_dir)
@@ -95,7 +95,7 @@ def reconstruct_remote_config(
         else:
             result = run(
                 build_ssh_command(host, username, ssh_key)
-                + [shell_join(['timeout', '--kill-after=5s', '60s', "python3", REMOTE_INFRA_TOOLS_PATH, "reconstruct", "--compact"])],
+                + [shell_join(['timeout', '--kill-after=5s', '60s', "python3", REMOTE_BASALTWATER_PATH, "reconstruct", "--compact"])],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -122,7 +122,7 @@ def reconstruct_remote_config(
             return config, extras
 
         if result.returncode in (124, 137):
-            print('Remote reconstruction timed out or was killed; inspect /tmp/infra-tools-recall.* for leftover temporary source', file=sys.stderr)
+            print('Remote reconstruction timed out or was killed; inspect /tmp/basaltwater-recall.* for leftover temporary source', file=sys.stderr)
         else:
             print(f"Error running reconstruct command: {result.stderr}", file=sys.stderr)
     except (CommandTimeoutError, OSError, ValueError) as exc:

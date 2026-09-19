@@ -17,9 +17,9 @@ from web.service_tools.cicd_config import load_config_file, save_config_file
 
 
 CICD_USER = "webhook"
-CICD_HOME = "/var/lib/infra_tools/cicd"
-SECRET_FILE = "/etc/infra_tools/cicd/webhook_secret"
-ENV_FILE = "/etc/infra_tools/cicd/webhook.env"
+CICD_HOME = "/var/lib/basaltwater/cicd"
+SECRET_FILE = "/etc/basaltwater/cicd/webhook_secret"
+ENV_FILE = "/etc/basaltwater/cicd/webhook.env"
 
 
 def _read_webhook_secret(path: str) -> str:
@@ -39,9 +39,9 @@ def _read_webhook_secret(path: str) -> str:
 def _check_service_config() -> None:
     """Check schema and readability under the receiver's actual identity."""
     run(['runuser', '-u', CICD_USER, '--', '/usr/bin/python3', '-c',
-         "import sys; sys.path.insert(0, '/opt/infra_tools'); "
+         "import sys; sys.path.insert(0, '/opt/basaltwater'); "
          "from web.service_tools.cicd_config import load_config_file; "
-         "load_config_file('/etc/infra_tools/cicd/webhook_config.json')"])
+         "load_config_file('/etc/basaltwater/cicd/webhook_config.json')"])
 
 
 def secure_cicd_directories(directories: list[str]) -> None:
@@ -132,7 +132,7 @@ def create_cicd_directories(config: SetupConfig) -> None:
         f"{CICD_HOME}/logs",
     ]
 
-    os.makedirs("/etc/infra_tools/cicd", mode=0o755, exist_ok=True)
+    os.makedirs("/etc/basaltwater/cicd", mode=0o755, exist_ok=True)
     for directory in state_directories:
         os.makedirs(directory, mode=0o750, exist_ok=True)
 
@@ -179,7 +179,7 @@ def _create_env_file(env_file: str, secret: str) -> None:
 
 def create_default_webhook_config(config: SetupConfig) -> None:
     """Create default webhook configuration file."""
-    config_file = "/etc/infra_tools/cicd/webhook_config.json"
+    config_file = "/etc/basaltwater/cicd/webhook_config.json"
     
     if os.path.exists(config_file):
         save_config_file(config_file, load_config_file(config_file))
@@ -223,11 +223,11 @@ After=network.target
 Type=simple
 User=webhook
 Group=webhook
-WorkingDirectory=/opt/infra_tools/web/service_tools
-Environment=HOME=/var/lib/infra_tools/cicd
-Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd
-EnvironmentFile=/etc/infra_tools/cicd/webhook.env
-ExecStart=/usr/bin/python3 /opt/infra_tools/web/service_tools/webhook_receiver.py
+WorkingDirectory=/opt/basaltwater/web/service_tools
+Environment=HOME=/var/lib/basaltwater/cicd
+Environment=BASALTWATER_WORKSPACE=/var/lib/basaltwater/cicd
+EnvironmentFile=/etc/basaltwater/cicd/webhook.env
+ExecStart=/usr/bin/python3 /opt/basaltwater/web/service_tools/webhook_receiver.py
 Restart=always
 RestartSec=10
 
@@ -254,7 +254,7 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @mount
 # SQLite also needs to create its rollback journal beside the delivery ledger.
-ReadWritePaths=/var/lib/infra_tools/cicd
+ReadWritePaths=/var/lib/basaltwater/cicd
 CapabilityBoundingSet=
 AmbientCapabilities=
 UMask=0077
@@ -295,10 +295,10 @@ After=network.target
 Type=oneshot
 User=root
 Group=root
-WorkingDirectory=/opt/infra_tools/web/service_tools
-Environment=HOME=/var/lib/infra_tools/cicd
-Environment=INFRA_TOOLS_WORKSPACE=/var/lib/infra_tools/cicd
-ExecStart=/usr/bin/python3 -I /opt/infra_tools/web/service_tools/cicd_executor.py
+WorkingDirectory=/opt/basaltwater/web/service_tools
+Environment=HOME=/var/lib/basaltwater/cicd
+Environment=BASALTWATER_WORKSPACE=/var/lib/basaltwater/cicd
+ExecStart=/usr/bin/python3 -I /opt/basaltwater/web/service_tools/cicd_executor.py
 # Each job owns a four-hour budget; this process may drain several jobs.
 TimeoutStartSec=infinity
 
@@ -323,7 +323,7 @@ RestrictSUIDSGID=true
 LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 SystemCallArchitectures=native
-ReadWritePaths=/var/lib/infra_tools/cicd /var/log/infra_tools
+ReadWritePaths=/var/lib/basaltwater/cicd /var/log/basaltwater
 CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_DAC_OVERRIDE CAP_KILL
 AmbientCapabilities=
 UMask=0027
@@ -342,8 +342,8 @@ Description=Watch CI/CD jobs directory for new jobs
 After=network.target
 
 [Path]
-DirectoryNotEmpty=/var/lib/infra_tools/cicd/jobs
-PathChanged=/var/lib/infra_tools/cicd/jobs
+DirectoryNotEmpty=/var/lib/basaltwater/cicd/jobs
+PathChanged=/var/lib/basaltwater/cicd/jobs
 Unit=cicd-executor.service
 
 [Install]
@@ -458,7 +458,7 @@ def update_cloudflare_tunnel_for_webhook(config: SetupConfig) -> None:
 def install_webhook_manager_helper(config: SetupConfig) -> None:
     """Create symlink for webhook manager helper script."""
     helper_script = "/usr/local/bin/webhook-manager"
-    source_script = "/opt/infra_tools/web/service_tools/webhook_manager.py"
+    source_script = "/opt/basaltwater/web/service_tools/webhook_manager.py"
     
     if os.path.exists(helper_script):
         print("  ✓ Webhook manager helper already available")

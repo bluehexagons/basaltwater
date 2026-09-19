@@ -58,7 +58,7 @@ class TestUnitTransaction(unittest.TestCase):
         self.replace()
         self.assertEqual(self.path.read_text(), "new unit")
         self.assertNotIn(["systemctl", "stop", "demo.timer"], self.commands)
-        self.assertFalse((self.root / ".infra-tools-unit-operation.json").exists())
+        self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
 
     def test_command_failures_restore_content_mode_and_state(self):
         for failure in (["systemd-analyze", "verify"], ["systemctl", "daemon-reload"], ["systemctl", "enable"], ["systemctl", "restart"]):
@@ -91,7 +91,7 @@ class TestUnitTransaction(unittest.TestCase):
         with patch.object(units, "_command", side_effect=lambda *args: (_ for _ in ()).throw(OSError()) if args[:2] == ("systemctl", "daemon-reload") else self.run_command(list(args)).stdout):
             with self.assertRaisesRegex(RuntimeError, "needs recovery"):
                 self.replace()
-        marker = json.loads((self.root / ".infra-tools-unit-operation.json").read_text())
+        marker = json.loads((self.root / ".basaltwater-unit-operation.json").read_text())
         backup = Path(marker["context"]["backup_dir"]) / "previous.json"
         self.assertEqual(json.loads(backup.read_text())["units"]["demo.timer"]["content"], "old unit")
         with self.assertRaisesRegex(ValueError, "Unfinished"):

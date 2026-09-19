@@ -81,7 +81,7 @@ class TestAgentMaintenance(unittest.TestCase):
             os.mkdir(outside)
             state_parent = os.path.join(home, ".local", "state")
             os.makedirs(state_parent)
-            os.symlink(outside, os.path.join(state_parent, "infra_tools"))
+            os.symlink(outside, os.path.join(state_parent, "basaltwater"))
 
             with self.assertRaisesRegex(RuntimeError, "symbolic link"):
                 hold_agent_maintenance(1, home=home, now=1_000)

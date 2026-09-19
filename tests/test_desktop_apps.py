@@ -300,12 +300,12 @@ class TestBrowserSteps(unittest.TestCase):
         download_command = next(
             command for command in commands if command.startswith("wget --https-only -qO ")
         )
-        self.assertIn("/infra-tools-helium-", download_command)
+        self.assertIn("/basaltwater-helium-", download_command)
         self.assertNotIn("-qO /tmp/helium.deb", download_command)
         self.assertTrue(
             any(
                 command.startswith("apt-get install -y -qq ")
-                and "/infra-tools-helium-" in command
+                and "/basaltwater-helium-" in command
                 for command in commands
             )
         )

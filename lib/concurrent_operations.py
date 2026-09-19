@@ -19,7 +19,7 @@ from lib.types import BYTES_PER_MB, BYTES_PER_KB
 from lib.validation import validate_filesystem_path
 
 
-DEFAULT_OPERATION_LOCK_DIR = "/run/lock/infra_tools/operations"
+DEFAULT_OPERATION_LOCK_DIR = "/run/lock/basaltwater/operations"
 
 
 class OperationType(Enum):

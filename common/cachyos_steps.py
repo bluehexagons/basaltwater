@@ -24,10 +24,10 @@ from lib.validation import validate_filesystem_path, validate_package_name
 from lib.vendor_installer import install as install_vendor_tool
 
 
-CACHYOS_SKILLS = ("infra-tools-cachyos-workstation", "infra-tools-cachyos-workspace")
-CACHYOS_T3_SKILL = "infra-tools-cachyos-t3code"
-T3_SERVICE = "infra-tools-cachyos-t3.service"
-_MARKER = "# Managed by infra_tools CachyOS setup"
+CACHYOS_SKILLS = ("basaltwater-cachyos-workstation", "basaltwater-cachyos-workspace")
+CACHYOS_T3_SKILL = "basaltwater-cachyos-t3code"
+T3_SERVICE = "basaltwater-cachyos-t3.service"
+_MARKER = "# Managed by basaltwater CachyOS setup"
 
 CACHYOS_DESKTOP_PACKAGES = (
     ("install_obs", "obs", "obs-studio"),
@@ -114,13 +114,13 @@ def configure_cachyos_shell(home: str, shell: str) -> None:
     root = Path(home)
     _directory(root / ".local/bin")
     if shell == "fish":
-        _write_managed(root / ".config/fish/conf.d/infra-tools-cachyos.fish",
+        _write_managed(root / ".config/fish/conf.d/basaltwater-cachyos.fish",
                        f'{_MARKER}\nfish_add_path --path "$HOME/.local/bin" "$HOME/.opencode/bin"\n')
         return
     if shell not in {"bash", "zsh"}:
         print(f"Add {root / '.local/bin'} and {root / '.opencode/bin'} to your {shell} PATH")
         return
-    fragment = root / ".config/infra-tools/cachyos-path.sh"
+    fragment = root / ".config/basaltwater/cachyos-path.sh"
     _write_managed(fragment, f'{_MARKER}\nexport PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"\n')
     rc = root / (".bashrc" if shell == "bash" else ".zshrc")
     if rc.is_symlink() or (rc.exists() and not rc.is_file()):
@@ -155,7 +155,7 @@ def install_missing_packages(packages: list[str]) -> None:
             "check DNS and access to the configured mirror (for example, with "
             "`resolvectl query archlinux.cachyos.org`). Resolve the pacman error, "
             "update CachyOS through its normal full-system update workflow if needed, "
-            "then rerun setup. infra-tools does not change DNS, refresh repositories, "
+            "then rerun setup. basaltwater does not change DNS, refresh repositories, "
             "or upgrade the OS."
         )
 
@@ -303,8 +303,8 @@ def install_cachyos_skills(config: SetupConfig) -> None:
         config.username, config.selected_agent_tools(), names,
         reconcile_skill_names=(
             *BASE_AGENT_SKILL_NAMES, *BROWSER_AGENT_SKILL_NAMES, CACHYOS_T3_SKILL,
-            "infra-tools-desktop", "infra-tools-t3code", "infra-tools-web-gateway",
-            "infra-tools-godot-web",
+            "basaltwater-desktop", "basaltwater-t3code", "basaltwater-web-gateway",
+            "basaltwater-godot-web",
         ),
     )
 

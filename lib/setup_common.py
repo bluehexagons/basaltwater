@@ -83,9 +83,9 @@ REMOTE_SCRIPT_PATH = os.path.join(SCRIPT_DIR, "..", "remote_setup.py")
 LIB_DIR = SCRIPT_DIR
 CONFIG_DIR = os.path.join(SCRIPT_DIR, "..", "config")
 SERVICE_TOOLS_DIR = os.path.join(SCRIPT_DIR, "..", "service_tools")
-REMOTE_INSTALL_DIR = "/opt/infra_tools"
-PERSISTENT_STATE_DIR = "/var/lib/infra_tools"
-GIT_CACHE_DIR = os.path.expanduser("~/.cache/infra_tools/git_repos")
+REMOTE_INSTALL_DIR = "/opt/basaltwater"
+PERSISTENT_STATE_DIR = "/var/lib/basaltwater"
+GIT_CACHE_DIR = os.path.expanduser("~/.cache/basaltwater/git_repos")
 REMOTE_ARGS_FILENAME = ".remote_setup_args.json"
 AGENT_PAYLOAD_DIRNAME = "agent_payload"
 DEVICE_PAIRING_PAYLOAD_DIRNAME = "device_pairing_payload"
@@ -216,7 +216,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
     
     clone_path = os.path.join(temp_dir, repo_name)
 
-    # A deployment dry run still needs real source files to validate infra.json
+    # A deployment dry run still needs real source files to validate basaltwater.json
     # and project support. Clone only into the disposable setup staging tree;
     # do not update or populate the persistent cache.
     if dry_run:
@@ -283,7 +283,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
 def copy_project_files(dest_dir: str) -> None:
     project_root = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
     items_to_copy = [
-        "infra_tools.py",
+        "basaltwater.py",
         "remote_setup.py",
         "lib",
         "plugins",
@@ -329,7 +329,7 @@ def _migrate_local_runtime_state() -> None:
     legacy_state_dir = _runtime_state_path()
     if os.path.islink(PERSISTENT_STATE_DIR):
         raise RuntimeError(
-            f"Refusing symlinked infra_tools state directory: {PERSISTENT_STATE_DIR}"
+            f"Refusing symlinked basaltwater state directory: {PERSISTENT_STATE_DIR}"
         )
     os.makedirs(PERSISTENT_STATE_DIR, mode=0o700, exist_ok=True)
 
@@ -340,14 +340,14 @@ def _migrate_local_runtime_state() -> None:
                 PERSISTENT_STATE_DIR
             ):
                 raise RuntimeError(
-                    f"Refusing unexpected infra_tools state link: {legacy_state_dir}"
+                    f"Refusing unexpected basaltwater state link: {legacy_state_dir}"
                 )
         elif os.path.isdir(legacy_state_dir):
             _copy_existing_path(legacy_state_dir, PERSISTENT_STATE_DIR)
             migrated_legacy_state = True
         else:
             raise RuntimeError(
-                f"infra_tools state path is not a directory: {legacy_state_dir}"
+                f"basaltwater state path is not a directory: {legacy_state_dir}"
             )
     if migrated_legacy_state:
         operation_marker = os.path.join(
@@ -385,6 +385,8 @@ def _remote_state_migration_command() -> list[str]:
     legacy_state_dir = _runtime_state_path()
     script = (
         "set -eu; "
+        f"if [ -e {shlex.quote(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), 'infra_tools'))} ]; then "
+        "echo 'Run the Basaltwater one-time system migration on this target before setup' >&2; exit 1; fi; "
         f"if [ -L {shlex.quote(PERSISTENT_STATE_DIR)} ]; then exit 1; fi; "
         f"install -d -m 0700 {shlex.quote(PERSISTENT_STATE_DIR)}; "
         f"if [ -L {shlex.quote(legacy_state_dir)} ]; then "
@@ -407,6 +409,8 @@ def _remote_state_migration_command() -> list[str]:
 
 def _activate_local_runtime(build_dir: str) -> None:
     """Stage local setup payloads without destroying a managed Git worktree."""
+    if os.path.lexists(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools")):
+        raise RuntimeError("Run basaltw migrate --system --apply before replacing a recent infra-tools installation")
     _migrate_local_runtime_state()
     if not _is_managed_local_install(REMOTE_INSTALL_DIR):
         if os.path.exists(REMOTE_INSTALL_DIR):
@@ -460,12 +464,12 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
         if is_ruby_project(clone_path):
             raise RuntimeError(
                 f"Ruby/Rails repository {git_url} is unsupported by this "
-                "infra-tools version; use its pinned legacy release"
+                "basaltwater version; use its pinned legacy release"
             )
         manifest = load_manifest(clone_path)
         if manifest is not None:
             print(
-                f"  ✓ Validated infra.json ({len(manifest.components)} component(s))"
+                f"  ✓ Validated basaltwater.json ({len(manifest.components)} component(s))"
             )
         if commit_hash and not config.dry_run:
             repo_name = os.path.basename(clone_path)
@@ -1298,7 +1302,7 @@ def run_remote_setup(config: SetupConfig) -> int:
 
 def _run_remote_setup_locked(config: SetupConfig) -> int:
     setup_timeout = validate_positive_integer(
-        os.environ.get("INFRA_TOOLS_SETUP_TIMEOUT", "14400"), "Setup timeout",
+        os.environ.get("BASALTWATER_SETUP_TIMEOUT", "14400"), "Setup timeout",
     )
     _LAST_REMOTE_ACCESS_DETAILS.clear()
     is_local = config.host in {"localhost", "127.0.0.1", "::1"}
@@ -1323,7 +1327,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
         ):
             return 1
 
-    build_dir = tempfile.mkdtemp(prefix="infra_setup_build_")
+    build_dir = tempfile.mkdtemp(prefix="basaltwater_setup_build_")
     try:
         copy_project_files(build_dir)
         
@@ -1446,7 +1450,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     "flock",
                     "--exclusive",
                     "--nonblock",
-                    "/run/lock/infra-tools-setup.lock",
+                    "/run/lock/basaltwater-setup.lock",
                     "/bin/sh",
                     "-c",
                     remote_shell_cmd,

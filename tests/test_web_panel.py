@@ -45,7 +45,7 @@ from common.service_tools.web_panel_service import (
     _safe_url,
     collect_system_overview,
     discover_certificate_trust,
-    discover_infra_web_services,
+    discover_basaltwater_web_services,
     main as web_panel_main,
     render_page,
 )
@@ -429,17 +429,17 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
     def test_root_setup_creates_a_locked_dedicated_service_account(self) -> None:
         account = SimpleNamespace(
-            pw_name="infra-web-panel",
+            pw_name="basaltwater-web-panel",
             pw_uid=990,
             pw_gid=990,
             pw_dir="/nonexistent",
             pw_shell="/usr/sbin/nologin",
         )
-        group = SimpleNamespace(gr_name="infra-web-panel", gr_mem=[])
+        group = SimpleNamespace(gr_name="basaltwater-web-panel", gr_mem=[])
         with (
             patch(
                 "common.web_panel_steps.pwd.getpwnam",
-                side_effect=[KeyError("infra-web-panel"), account],
+                side_effect=[KeyError("basaltwater-web-panel"), account],
             ),
             patch(
                 "common.web_panel_steps.pwd.getpwall",
@@ -466,20 +466,20 @@ class WebPanelLifecycleTest(unittest.TestCase):
                 "--no-create-home",
                 "--shell",
                 "/usr/sbin/nologin",
-                "infra-web-panel",
+                "basaltwater-web-panel",
             ],
             check=True,
         )
 
     def test_root_setup_rejects_a_shared_service_group(self) -> None:
         account = SimpleNamespace(
-            pw_name="infra-web-panel",
+            pw_name="basaltwater-web-panel",
             pw_uid=990,
             pw_gid=990,
             pw_dir="/nonexistent",
             pw_shell="/usr/sbin/nologin",
         )
-        group = SimpleNamespace(gr_name="infra-web-panel", gr_mem=["other"])
+        group = SimpleNamespace(gr_name="basaltwater-web-panel", gr_mem=["other"])
         with (
             patch(
                 "common.web_panel_steps.pwd.getpwnam",
@@ -535,7 +535,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             site = os.path.join(temporary, "site")
             link = os.path.join(temporary, "enabled")
-            old_content = "# Managed by infra_tools web panel\nold\n"
+            old_content = "# Managed by basaltwater web panel\nold\n"
             with open(site, "w", encoding="utf-8") as file_obj:
                 file_obj.write(old_content)
             os.symlink(site, link)
@@ -558,7 +558,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "reload failed"):
                     _write_nginx_site(
-                        "# Managed by infra_tools web panel\nnew\n"
+                        "# Managed by basaltwater web panel\nnew\n"
                     )
 
             with open(site, encoding="utf-8") as file_obj:
@@ -571,7 +571,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
 
             def run_command(command: str, **_kwargs: object) -> SimpleNamespace:
-                if command == "systemctl restart infra-tools-web-panel.service":
+                if command == "systemctl restart basaltwater-web-panel.service":
                     raise RuntimeError("service failed")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -672,7 +672,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
             with open(service_file, encoding="utf-8") as file_obj:
                 content = file_obj.read()
-            self.assertIn("User=infra-web-panel", content)
+            self.assertIn("User=basaltwater-web-panel", content)
             self.assertNotIn("User=nobody", content)
 
     def test_disabling_ingest_removes_token_after_service_and_route(self) -> None:
@@ -747,9 +747,9 @@ class WebPanelLifecycleTest(unittest.TestCase):
                     "common.web_panel_steps",
                     WEB_PANEL_AUDIT_SERVICE_FILE=service_file,
                     WEB_PANEL_AUDIT_TIMER_FILE=timer_file,
-                    WEB_PANEL_AUDIT_DIR="/var/lib/infra_tools/web-panel/audit",
+                    WEB_PANEL_AUDIT_DIR="/var/lib/basaltwater/web-panel/audit",
                     WEB_PANEL_AUDIT_SNAPSHOT=(
-                        "/var/lib/infra_tools/web-panel/audit/events.json"
+                        "/var/lib/basaltwater/web-panel/audit/events.json"
                     ),
                 ),
                 patch(
@@ -769,7 +769,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             self.assertIn("Group=1002", service)
             self.assertIn("ProtectSystem=strict", service)
             self.assertIn(
-                "ReadWritePaths=/var/lib/infra_tools/web-panel/audit",
+                "ReadWritePaths=/var/lib/basaltwater/web-panel/audit",
                 service,
             )
             self.assertIn("RestrictAddressFamilies=AF_UNIX AF_NETLINK", service)
@@ -781,7 +781,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             timer_file = os.path.join(temporary, "audit.timer")
 
             def run_command(command: str, **_kwargs: object) -> SimpleNamespace:
-                if command == "systemctl start infra-tools-web-panel-audit.service":
+                if command == "systemctl start basaltwater-web-panel-audit.service":
                     raise RuntimeError("snapshot failed")
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
@@ -801,11 +801,11 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
             commands = [call.args[0] for call in mock_run.call_args_list]
             self.assertIn(
-                "systemctl disable --now infra-tools-web-panel-audit.timer",
+                "systemctl disable --now basaltwater-web-panel-audit.timer",
                 commands,
             )
             self.assertIn(
-                "systemctl stop infra-tools-web-panel-audit.service",
+                "systemctl stop basaltwater-web-panel-audit.service",
                 commands,
             )
             self.assertFalse(os.path.exists(service_file))
@@ -895,7 +895,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             site = os.path.join(temporary, "site")
             link = os.path.join(temporary, "link")
             with open(site, "w", encoding="utf-8") as file_obj:
-                file_obj.write("# Managed by infra_tools web panel\n")
+                file_obj.write("# Managed by basaltwater web panel\n")
             os.symlink(site, link)
 
             with (
@@ -945,7 +945,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             timer_file = os.path.join(temporary, "audit.timer")
             for path in (service_file, timer_file):
                 with open(path, "w", encoding="utf-8") as file_obj:
-                    file_obj.write("# Managed by infra_tools web panel\n")
+                    file_obj.write("# Managed by basaltwater web panel\n")
 
             with (
                 patch.multiple(
@@ -979,10 +979,10 @@ class WebPanelLifecycleTest(unittest.TestCase):
             commands = [call.args[0] for call in mock_run.call_args_list]
             self.assertLess(
                 commands.index(
-                    "systemctl disable --now infra-tools-web-panel-audit.timer"
+                    "systemctl disable --now basaltwater-web-panel-audit.timer"
                 ),
                 commands.index(
-                    "systemctl stop infra-tools-web-panel-audit.service"
+                    "systemctl stop basaltwater-web-panel-audit.service"
                 ),
             )
             self.assertFalse(os.path.exists(service_file))
@@ -1107,7 +1107,7 @@ class WebPanelRenderingTest(unittest.TestCase):
         )
         with (
             patch(
-                "common.service_tools.web_panel_service.discover_infra_web_services",
+                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
             patch(
@@ -1127,23 +1127,23 @@ class WebPanelRenderingTest(unittest.TestCase):
         rendered = render_web_panel_nginx(
             ["agent-vm.local", "192.0.2.30"],
             443,
-            cert_path="/etc/infra-web/tls/internal.crt",
-            key_path="/etc/infra-web/tls/internal.key",
+            cert_path="/etc/basaltwater-web/tls/internal.crt",
+            key_path="/etc/basaltwater-web/tls/internal.key",
         )
 
         self.assertIn("listen 443 ssl", rendered)
         self.assertIn("auth_basic_user_file", rendered)
         self.assertIn("rate=120r/m", rendered)
-        self.assertIn("limit_req zone=infra_tools_web_panel_auth", rendered)
-        self.assertIn("proxy_pass http://unix:/run/infra-tools-web-panel/http.sock:/", rendered)
-        self.assertIn("ssl_certificate /etc/infra-web/tls/internal.crt", rendered)
+        self.assertIn("limit_req zone=basaltwater_web_panel_auth", rendered)
+        self.assertIn("proxy_pass http://unix:/run/basaltwater-web-panel/http.sock:/", rendered)
+        self.assertIn("ssl_certificate /etc/basaltwater-web/tls/internal.crt", rendered)
 
     def test_nginx_ingest_route_bypasses_basic_auth_but_has_its_own_limits(self) -> None:
         rendered = render_web_panel_nginx(
             ["agent-vm.local"],
             443,
-            cert_path="/etc/infra-web/tls/internal.crt",
-            key_path="/etc/infra-web/tls/internal.key",
+            cert_path="/etc/basaltwater-web/tls/internal.crt",
+            key_path="/etc/basaltwater-web/tls/internal.key",
             notification_ingest=True,
         )
 
@@ -1530,7 +1530,7 @@ class WebPanelEventTest(unittest.TestCase):
             )
             with (
                 patch(
-                    "common.service_tools.web_panel_service.discover_infra_web_services",
+                    "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                     return_value=[],
                 ),
                 patch.object(state, "system_overview", return_value=[]),
@@ -1578,7 +1578,7 @@ class WebPanelEventTest(unittest.TestCase):
         }
         with (
             patch(
-                "common.service_tools.web_panel_service.discover_infra_web_services",
+                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
             patch(
@@ -1603,7 +1603,7 @@ class WebPanelEventTest(unittest.TestCase):
         state.action_started_at = time.monotonic() - 125
         with (
             patch(
-                "common.service_tools.web_panel_service.discover_infra_web_services",
+                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
             patch(
@@ -1630,7 +1630,7 @@ class WebPanelEventTest(unittest.TestCase):
             }
         )
         with patch(
-            "common.service_tools.web_panel_service.discover_infra_web_services",
+            "common.service_tools.web_panel_service.discover_basaltwater_web_services",
             return_value=[],
         ):
             rendered = render_page(state)
@@ -1653,7 +1653,7 @@ class WebPanelEventTest(unittest.TestCase):
                 file_obj.write("https://agent-vm.local:8443\n")
 
             service = _internal_web_landing_service(
-                "/usr/local/bin/infra-web",
+                "/usr/local/bin/basaltwater-web",
                 url_file=url_file,
             )
 
@@ -1675,7 +1675,7 @@ class WebPanelEventTest(unittest.TestCase):
         with (
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/usr/local/bin/infra-web",
+                return_value="/usr/local/bin/basaltwater-web",
             ),
             patch(
                 "common.service_tools.web_panel_service._internal_web_landing_service",
@@ -1686,7 +1686,7 @@ class WebPanelEventTest(unittest.TestCase):
                 return_value={},
             ),
         ):
-            services = discover_infra_web_services()
+            services = discover_basaltwater_web_services()
 
         self.assertEqual(services, [landing])
 
@@ -1694,13 +1694,13 @@ class WebPanelEventTest(unittest.TestCase):
         with (
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/usr/local/bin/infra-web",
+                return_value="/usr/local/bin/basaltwater-web",
             ),
             patch(
                 "common.service_tools.web_panel_service._run_json",
                 return_value={
                     "publicly_trusted": False,
-                    "url": "https://agent-vm.local:8443/infra-tools-ca.crt",
+                    "url": "https://agent-vm.local:8443/basaltwater-ca.crt",
                     "sha256": "A" * 64,
                 },
             ),
@@ -1711,7 +1711,7 @@ class WebPanelEventTest(unittest.TestCase):
             trust,
             {
                 "publicly_trusted": False,
-                "url": "https://agent-vm.local:8443/infra-tools-ca.crt",
+                "url": "https://agent-vm.local:8443/basaltwater-ca.crt",
                 "sha256": "a" * 64,
             },
         )
@@ -1720,7 +1720,7 @@ class WebPanelEventTest(unittest.TestCase):
         with (
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/usr/local/bin/infra-web",
+                return_value="/usr/local/bin/basaltwater-web",
             ),
             patch(
                 "common.service_tools.web_panel_service._run_json",
@@ -1739,7 +1739,7 @@ class WebPanelEventTest(unittest.TestCase):
         with (
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/usr/local/bin/infra-web",
+                return_value="/usr/local/bin/basaltwater-web",
             ),
             patch(
                 "common.service_tools.web_panel_service._run_json",
@@ -1754,12 +1754,12 @@ class WebPanelEventTest(unittest.TestCase):
         state = WebPanelState(self._t3_manifest())
         trust = {
             "publicly_trusted": False,
-            "url": "https://agent-vm.local:8443/infra-tools-ca.crt",
+            "url": "https://agent-vm.local:8443/basaltwater-ca.crt",
             "sha256": "a" * 64,
         }
         with (
             patch(
-                "common.service_tools.web_panel_service.discover_infra_web_services",
+                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
             patch(
@@ -1792,14 +1792,14 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("/etc/ca-certificates/trust-source/anchors", rendered)
         self.assertIn("/etc/pki/ca-trust/source/anchors", rendered)
         self.assertIn("security add-trusted-cert", rendered)
-        self.assertIn("/srv/infra-tools/web/infra-tools-ca.crt", rendered)
+        self.assertIn("/srv/basaltwater/web/basaltwater-ca.crt", rendered)
         self.assertIn("certutil.exe -user -addstore", rendered)
         self.assertIn("Manual / GUI installation", rendered)
         self.assertIn("iPhone / iPad", rendered)
 
     def test_certificate_install_scripts_are_valid_shell(self) -> None:
         fingerprint = "a" * 64
-        download_url = "https://agent-vm.local:8443/infra-tools-ca.crt"
+        download_url = "https://agent-vm.local:8443/basaltwater-ca.crt"
         scripts = (
             _linux_trust_script(
                 fingerprint,
@@ -1843,7 +1843,7 @@ class WebPanelEventTest(unittest.TestCase):
         ]
         with (
             patch(
-                "common.service_tools.web_panel_service.discover_infra_web_services",
+                "common.service_tools.web_panel_service.discover_basaltwater_web_services",
                 return_value=[],
             ),
             patch.object(state, "system_overview", return_value=overview),
@@ -1912,7 +1912,7 @@ class WebPanelEventTest(unittest.TestCase):
         def linger_shim(home: str, username: str):
             self.assertEqual(home, "/home/agent")
             self.assertEqual(username, "agent")
-            yield "/home/agent/.infra-tools-t3-loginctl-test"
+            yield "/home/agent/.basaltwater-t3-loginctl-test"
 
         with (
             patch(
@@ -1921,7 +1921,7 @@ class WebPanelEventTest(unittest.TestCase):
             ),
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/infra-tools",
+                return_value="/home/agent/.local/bin/basaltwater",
             ) as mock_which,
             patch(
                 "common.service_tools.web_panel_service.subprocess.run",
@@ -1937,24 +1937,24 @@ class WebPanelEventTest(unittest.TestCase):
         update_environment = mock_run.call_args_list[0].kwargs["env"]
         self.assertTrue(
             update_environment["PATH"].startswith(
-                "/home/agent/.infra-tools-t3-loginctl-test:"
+                "/home/agent/.basaltwater-t3-loginctl-test:"
             )
         )
         self.assertEqual(
-            update_environment["INFRA_TOOLS_T3_LOGINCTL_SHIM"],
-            "/home/agent/.infra-tools-t3-loginctl-test",
+            update_environment["BASALTWATER_T3_LOGINCTL_SHIM"],
+            "/home/agent/.basaltwater-t3-loginctl-test",
         )
         self.assertIn(
-            "$INFRA_TOOLS_T3_LOGINCTL_SHIM:",
+            "$BASALTWATER_T3_LOGINCTL_SHIM:",
             mock_run.call_args_list[0].args[0][2],
         )
         launcher_path = mock_run.call_args_list[1].kwargs["env"]["PATH"]
         self.assertTrue(launcher_path.startswith("/home/agent/.local/bin:"))
         self.assertNotIn(
-            "INFRA_TOOLS_T3_LOGINCTL_SHIM",
+            "BASALTWATER_T3_LOGINCTL_SHIM",
             mock_run.call_args_list[1].kwargs["env"],
         )
-        mock_which.assert_called_once_with("infra-tools", path=launcher_path)
+        mock_which.assert_called_once_with("basaltw", path=launcher_path)
         self.assertIn("--json", mock_run.call_args_list[1].args[0])
         self.assertEqual(state.action_status, "complete")
         self.assertIn("Not required by this setup", state.action_output)
@@ -1980,11 +1980,11 @@ class WebPanelEventTest(unittest.TestCase):
             ),
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/infra-tools",
+                return_value="/home/agent/.local/bin/basaltwater",
             ),
             patch(
                 "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/infra-tools-t3-loginctl-test"),
+                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
             ),
         ):
             state._run_t3_update()
@@ -2007,11 +2007,11 @@ class WebPanelEventTest(unittest.TestCase):
             ),
             patch(
                 "common.service_tools.web_panel_service.shutil.which",
-                return_value="/home/agent/.local/bin/infra-tools",
+                return_value="/home/agent/.local/bin/basaltwater",
             ),
             patch(
                 "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/infra-tools-t3-loginctl-test"),
+                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
             ),
         ):
             state._run_t3_update()
@@ -2033,7 +2033,7 @@ class WebPanelEventTest(unittest.TestCase):
             ),
             patch(
                 "common.service_tools.web_panel_service._temporary_t3_loginctl_shim",
-                return_value=nullcontext("/tmp/infra-tools-t3-loginctl-test"),
+                return_value=nullcontext("/tmp/basaltwater-t3-loginctl-test"),
             ),
         ):
             state._run_t3_update()

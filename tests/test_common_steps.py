@@ -372,7 +372,7 @@ class TestVMSudoers(unittest.TestCase):
             with patch("common.common_steps.VM_SETUP_SUDOERS_DIR", temporary):
                 _ensure_vm_setup_user_sudoers(config)
 
-            sudoers_path = os.path.join(temporary, "infra-tools-agent")
+            sudoers_path = os.path.join(temporary, "basaltwater-agent")
             self.assertEqual(
                 os.stat(sudoers_path).st_mode & 0o777,
                 0o440,
@@ -398,7 +398,7 @@ class TestVMSudoers(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temporary:
-            sudoers_path = os.path.join(temporary, "infra-tools-agent")
+            sudoers_path = os.path.join(temporary, "basaltwater-agent")
             with open(sudoers_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write("agent ALL=(ALL) NOPASSWD:ALL\n")
             os.chmod(sudoers_path, 0o644)
@@ -431,7 +431,7 @@ class TestVMSudoers(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temporary:
-            sudoers_path = os.path.join(temporary, "infra-tools-agent")
+            sudoers_path = os.path.join(temporary, "basaltwater-agent")
             with open(sudoers_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write("agent ALL=(ALL) NOPASSWD:ALL\n")
             with patch("common.common_steps.VM_SETUP_SUDOERS_DIR", temporary):
@@ -447,7 +447,7 @@ class TestVMSudoers(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as temporary:
-            sudoers_path = os.path.join(temporary, "infra-tools-agent")
+            sudoers_path = os.path.join(temporary, "basaltwater-agent")
             with open(sudoers_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write("agent ALL=(ALL) NOPASSWD:/usr/bin/apt\n")
             with patch("common.common_steps.VM_SETUP_SUDOERS_DIR", temporary):

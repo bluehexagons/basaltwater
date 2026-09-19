@@ -135,12 +135,12 @@ class ProxmoxHost:
         if data.get("schema_version") != PROXMOX_HOST_SCHEMA_VERSION:
             raise ValueError(
                 "Unsupported Proxmox host record schema; remove and re-register "
-                "this development record with 'infra-tools proxmox add'"
+                "this development record with 'basaltw proxmox add'"
             )
         if data.get("provider") != PROXMOX_PROVIDER:
             raise ValueError(
                 "Proxmox host record must declare provider='proxmox'; remove and "
-                "re-register this development record with 'infra-tools proxmox add'"
+                "re-register this development record with 'basaltw proxmox add'"
             )
         if "name" not in data or "address" not in data:
             raise ValueError("Proxmox host record missing 'name' or 'address'")

@@ -331,7 +331,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             ca_path = os.path.join(
                 self.home,
                 ".config",
-                "infra-tools",
+                "basaltwater",
                 "git",
                 "ca",
                 git_ca_filename(ORIGIN),
@@ -346,7 +346,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             stale_ca_dir = os.path.join(
                 self.home,
                 ".config",
-                "infra-tools",
+                "basaltwater",
                 "git",
                 "ca",
             )
@@ -377,7 +377,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             ):
                 configure_git_https_credentials(config)
 
-            managed = os.path.join(self.home, ".config", "infra-tools", "git")
+            managed = os.path.join(self.home, ".config", "basaltwater", "git")
             credential_path = os.path.join(managed, "credentials")
             include_path = os.path.join(managed, "config")
             with open(credential_path, encoding="utf-8") as file_obj:
@@ -396,7 +396,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
 
     def test_clear_removes_only_managed_directory(self) -> None:
         with tempfile.TemporaryDirectory() as self.home:
-            managed = os.path.join(self.home, ".config", "infra-tools", "git")
+            managed = os.path.join(self.home, ".config", "basaltwater", "git")
             os.makedirs(managed)
             with open(os.path.join(managed, "credentials"), "w", encoding="utf-8") as file_obj:
                 file_obj.write("secret")

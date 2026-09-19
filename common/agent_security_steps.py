@@ -25,10 +25,10 @@ from lib.validators import validate_username
 CODEX_SYSTEM_CONFIG_DIR = "/etc/codex"
 CODEX_SYSTEM_CONFIG_NAME = "config.toml"
 CODEX_REQUIREMENTS_NAME = "requirements.toml"
-AGENT_USER_SECURITY_STATE_DIR = "/var/lib/infra_tools/agent-user-security"
+AGENT_USER_SECURITY_STATE_DIR = "/var/lib/basaltwater/agent-user-security"
 SYSTEMD_LINGER_DIR = "/var/lib/systemd/linger"
-_MANAGED_MARKER = "# Managed by infra-tools coding-agent security policy."
-_HARDENED_CODEX_PROFILE = "infra_tools_hardened_workspace"
+_MANAGED_MARKER = "# Managed by basaltwater coding-agent security policy."
+_HARDENED_CODEX_PROFILE = "basaltwater_hardened_workspace"
 _USER_SECURITY_STATE_VERSION = 1
 _AGENT_DENIED_GROUPS = frozenset(
     {
@@ -563,7 +563,7 @@ def _validate_managed_codex_policy_target(path: str) -> None:
 
 
 def _is_managed_codex_policy(path: str) -> bool:
-    """Return whether an existing regular policy file belongs to infra-tools."""
+    """Return whether an existing regular policy file belongs to basaltwater."""
 
     if not os.path.lexists(path):
         return False
@@ -579,7 +579,7 @@ def _is_managed_codex_policy(path: str) -> bool:
 
 
 def _write_managed_codex_policy(path: str, content: str) -> None:
-    """Atomically replace only an absent or infra-tools-owned policy file."""
+    """Atomically replace only an absent or basaltwater-owned policy file."""
 
     tomllib.loads(content)
     _validate_managed_codex_policy_target(path)

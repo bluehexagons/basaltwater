@@ -45,14 +45,14 @@ from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 
 ROOT = Path("/opt/homebox")
 CONFIG = Path("/etc/homebox")
-STATE = Path("/opt/infra_tools/state/homebox.json")
+STATE = Path("/opt/basaltwater/state/homebox.json")
 UNIT = Path("/etc/systemd/system/homebox.service")
-SITE = Path("/etc/nginx/sites-available/infra-tools-homebox")
-LINK = Path("/etc/nginx/sites-enabled/infra-tools-homebox")
+SITE = Path("/etc/nginx/sites-available/basaltwater-homebox")
+LINK = Path("/etc/nginx/sites-enabled/basaltwater-homebox")
 BACKUPS = Path("/var/lib/homebox-backups")
-LOCK = Path("/run/lock/infra-tools-homebox.lock")
-UPDATE_STATE = Path("/opt/infra_tools/state/homebox_update.json")
-MARKER = "# Managed by infra-tools HomeBox"
+LOCK = Path("/run/lock/basaltwater-homebox.lock")
+UPDATE_STATE = Path("/opt/basaltwater/state/homebox_update.json")
+MARKER = "# Managed by basaltwater HomeBox"
 STATUS_PATH = "/api/v1/status"
 SERVICE = "homebox.service"
 REPO = "sysadminsmedia/homebox"
@@ -111,7 +111,7 @@ def _active() -> bool:
 def _stop_service() -> None:
     if UNIT.exists() or _active():
         _command("systemctl", "stop", SERVICE)
-    bootstrap = "infra-tools-homebox-bootstrap.service"
+    bootstrap = "basaltwater-homebox-bootstrap.service"
     if run(["systemctl", "is-active", "--quiet", bootstrap], check=False, capture_output=True).returncode == 0:
         _command("systemctl", "stop", bootstrap)
 
@@ -209,7 +209,7 @@ def release_path(value: dict) -> Path:
 def _request_json(url: str, payload: dict | None = None, *, local: bool = False) -> Any:
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, headers={
-        "User-Agent": "infra-tools-homebox", "Content-Type": "application/json",
+        "User-Agent": "basaltwater-homebox", "Content-Type": "application/json",
     })
     if local:
         response_context = open_loopback(request, timeout=15)
@@ -447,7 +447,7 @@ server {{
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     client_max_body_size 10m;
-    location = /infra-tools-homebox-readiness {{
+    location = /basaltwater-homebox-readiness {{
         allow 127.0.0.1;
         allow ::1;
         deny all;
@@ -572,7 +572,7 @@ def _bootstrap(value: dict) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-    name = "infra-tools-homebox-bootstrap"
+    name = "basaltwater-homebox-bootstrap"
     bootstrap_env = CONFIG / "bootstrap.env"
     content = render_environment(value, _secrets()).replace(
         'HBOX_OPTIONS_ALLOW_REGISTRATION="false"', 'HBOX_OPTIONS_ALLOW_REGISTRATION="true"'
@@ -806,7 +806,7 @@ def _frontend_ready(value: dict, *, maintenance: bool = False) -> None:
         return
     result = run(["curl", "--fail", "--silent", "--show-error", "--noproxy", "*", "--max-time", "15",
                   "--resolve", f"{value['domain']}:{value['public_port']}:127.0.0.1",
-                  public_url(value).rstrip("/") + ("/infra-tools-homebox-readiness" if maintenance else STATUS_PATH)],
+                  public_url(value).rstrip("/") + ("/basaltwater-homebox-readiness" if maintenance else STATUS_PATH)],
                  check=True, capture_output=True)
     status = json.loads(result.stdout)
     if status.get("health") is not True or status.get("allowRegistration") is not False:

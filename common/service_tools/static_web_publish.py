@@ -23,9 +23,9 @@ from lib.remote_utils import CommandTimeoutError, run
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
-SITES_ROOT = "/srv/infra-tools/web/sites"
-BASE_URL_FILE = "/etc/infra-tools/internal-web/base-url"
-METADATA_FILE = ".infra-tools.json"
+SITES_ROOT = "/srv/basaltwater/web/sites"
+BASE_URL_FILE = "/etc/basaltwater/internal-web/base-url"
+METADATA_FILE = ".basaltwater.json"
 CATALOG_FILE = "index.html"
 _SITE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
 _OUTPUT_CANDIDATES = ("dist", "build", "out", "public")
@@ -336,7 +336,7 @@ def _write_metadata(path: str, value: dict[str, object]) -> None:
 @contextmanager
 def _site_lock(user_root: str, site: str) -> Iterator[None]:
     """Serialize publication and removal without following unsafe lock files."""
-    lock_path = os.path.join(user_root, f".infra-tools-{site}.lock")
+    lock_path = os.path.join(user_root, f".basaltwater-{site}.lock")
     descriptor = os.open(
         lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600,
     )

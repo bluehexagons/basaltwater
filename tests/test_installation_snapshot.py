@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib.channel_manager import (
     ChannelError,
     get_channel_info,
@@ -42,26 +42,26 @@ def _git(root: str, *arguments: str) -> str:
 
 
 class TestInstallationSnapshot(unittest.TestCase):
-    def test_both_commands_read_existing_workspace_without_moving_state(self) -> None:
+    def test_command_reads_workspace_without_moving_state(self) -> None:
         from lib.orchestrator_bootstrap import install_launcher
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            workspace = root / ".config" / "infra_tools"
+            workspace = root / ".config" / "basaltwater"
             (workspace / "setups").mkdir(parents=True)
             saved = workspace / "setups" / "server.json"
             saved.write_text(json.dumps({
                 "host": "server", "system_type": "server_lite",
-                "args": {"username": "agent"}, "command": "infra-tools setup server_lite server",
+                "args": {"username": "agent"}, "command": "basaltw setup server_lite server",
             }), encoding="utf-8")
             credentials = workspace / "credentials.json"
             credentials.write_text('{"fixture": "private"}', encoding="utf-8")
             credentials.chmod(0o600)
             before = {p: (p.read_bytes(), p.stat().st_mode) for p in (saved, credentials)}
             bin_dir = root / "bin"
-            install_launcher(infra_tools.__file__, target_dir=str(bin_dir))
-            environment = {**os.environ, "HOME": temp_dir, "INFRA_TOOLS_WORKSPACE": str(workspace)}
-            for name in ("infra-tools", "basaltw"):
+            install_launcher(basaltwater.__file__, target_dir=str(bin_dir))
+            environment = {**os.environ, "HOME": temp_dir, "BASALTWATER_WORKSPACE": str(workspace)}
+            for name in ("basaltw",):
                 for arguments in (["--help"], ["list", "--json"], ["cmd"]):
                     result = subprocess.run(
                         [str(bin_dir / name), *arguments], env=environment,
@@ -81,16 +81,16 @@ class TestInstallationSnapshot(unittest.TestCase):
             "w",
             encoding="utf-8",
         ) as file_obj:
-            file_obj.write('[project]\nname = "infra_tools"\nversion = "2.0.0"\n')
+            file_obj.write('[project]\nname = "basaltwater"\nversion = "2.0.0"\n')
         with open(
-            os.path.join(source, "infra_tools.py"),
+            os.path.join(source, "basaltwater.py"),
             "w",
             encoding="utf-8",
         ) as file_obj:
             file_obj.write("# test source\n")
         _git(source, "init", "--initial-branch=main")
         _git(source, "config", "user.email", "tests@example.invalid")
-        _git(source, "config", "user.name", "infra-tools tests")
+        _git(source, "config", "user.name", "basaltwater tests")
         _git(source, "add", ".")
         _git(source, "commit", "-m", "source")
         return source
@@ -117,7 +117,7 @@ class TestInstallationSnapshot(unittest.TestCase):
             self.assertEqual(installation_version(destination), "2.0.0")
 
             with open(
-                os.path.join(source, "infra_tools.py"),
+                os.path.join(source, "basaltwater.py"),
                 "a",
                 encoding="utf-8",
             ) as file_obj:
@@ -142,7 +142,7 @@ class TestInstallationSnapshot(unittest.TestCase):
             source = self._source_repository(temp_dir)
             destination = os.path.join(temp_dir, "destination")
             os.mkdir(destination)
-            script = os.path.join(destination, "infra_tools.py")
+            script = os.path.join(destination, "basaltwater.py")
             with open(script, "w", encoding="utf-8") as file_obj:
                 file_obj.write("# deployed launcher\n")
             write_setup_snapshot_metadata(source, destination)
@@ -161,10 +161,10 @@ class TestInstallationSnapshot(unittest.TestCase):
                 upgrade_channel(destination)
 
             with patch(
-                "infra_tools._managed_repository",
+                "basaltwater._managed_repository",
                 return_value=destination,
             ), patch("builtins.print") as mock_print:
-                result = infra_tools.run_channel_command(
+                result = basaltwater.run_channel_command(
                     Namespace(channel_name=None),
                 )
 
@@ -177,7 +177,7 @@ class TestInstallationSnapshot(unittest.TestCase):
 
     def test_invalid_snapshot_metadata_is_not_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            script = os.path.join(temp_dir, "infra_tools.py")
+            script = os.path.join(temp_dir, "basaltwater.py")
             with open(script, "w", encoding="utf-8") as file_obj:
                 file_obj.write("# deployed launcher\n")
             with open(
@@ -194,7 +194,7 @@ class TestInstallationSnapshot(unittest.TestCase):
         output = io.StringIO()
 
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
-            parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+            parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
             parser.parse_args(["--version"])
 
         self.assertEqual(raised.exception.code, 0)

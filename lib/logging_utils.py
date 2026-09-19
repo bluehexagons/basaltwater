@@ -1,6 +1,6 @@
-"""Centralized logging system for infra tools services.
+"""Centralized logging system for Basaltwater services.
 
-This module provides a unified logging infrastructure for all infra_tools services
+This module provides a unified logging infrastructure for all basaltwater services
 and systems. All errors and warnings are logged in a standardized format that can be
 easily monitored by external monitoring systems.
 
@@ -8,10 +8,10 @@ Key Features:
 - Rotating file handlers with configurable size and backup count
 - Configurable log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - Structured logging format with timestamps and severity levels
-- Centralized log directory (/var/log/infra_tools/)
+- Centralized log directory (/var/log/basaltwater/)
 - Automatic fallback to stderr if file logging fails
 - Service-specific loggers with consistent configuration
-- Test mode: Set INFRA_TOOLS_TEST=1 to disable console and syslog output
+- Test mode: Set BASALTWATER_TEST=1 to disable console and syslog output
 """
 
 from __future__ import annotations
@@ -37,12 +37,12 @@ from lib.types import BYTES_PER_MB
 DEFAULT_LOG_MAX_BYTES = 5 * BYTES_PER_MB  # 5 MB
 DEFAULT_LOG_BACKUP_COUNT = 5
 DEFAULT_LOG_LEVEL = INFO
-DEFAULT_LOG_DIR = "/var/log/infra_tools"
+DEFAULT_LOG_DIR = "/var/log/basaltwater"
 
 # Evaluate test mode when handlers are configured rather than only when this
 # module is imported. This keeps test runners quiet if they set the environment
 # after importing application modules.
-TEST_MODE_ENV_VAR = "INFRA_TOOLS_TEST"
+TEST_MODE_ENV_VAR = "BASALTWATER_TEST"
 
 # Standard log format for all services
 # Format: timestamp - severity - service - message
@@ -126,7 +126,7 @@ def _can_write_log_path(log_path: Path) -> bool:
 
 
 def get_standard_formatter() -> Formatter:
-    """Get the standard formatter for all infra_tools logs.
+    """Get the standard formatter for all basaltwater logs.
     
     Returns:
         Configured Formatter instance
@@ -198,7 +198,7 @@ def get_service_logger(
 ) -> Logger:
     """Get a logger configured for a specific service.
     
-    This is the recommended way to get a logger for infra_tools services.
+    This is the recommended way to get a logger for basaltwater services.
     It automatically sets up the logger with:
     - Standard formatting
     - Rotating file handler

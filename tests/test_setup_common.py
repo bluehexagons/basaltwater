@@ -290,10 +290,10 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
         self.assertIn(
             "flock --exclusive --nonblock "
-            "/run/lock/infra-tools-setup.lock",
+            "/run/lock/basaltwater-setup.lock",
             remote_command,
         )
-        self.assertNotIn("--verbose /run/lock/infra-tools-setup.lock", remote_command)
+        self.assertNotIn("--verbose /run/lock/basaltwater-setup.lock", remote_command)
         self.assertNotIn("supersecret", remote_command)
         self.assertTrue(remote_command.startswith("timeout --signal=TERM --kill-after=10s 14400 "))
 
@@ -333,33 +333,33 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
 
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
-        self.assertIn("install -d -m 0700 /var/lib/infra_tools", remote_command)
+        self.assertIn("install -d -m 0700 /var/lib/basaltwater", remote_command)
         self.assertIn(
-            "cp -a /opt/infra_tools/state/. /var/lib/infra_tools/",
+            "cp -a /opt/basaltwater/state/. /var/lib/basaltwater/",
             remote_command,
         )
         self.assertIn(
             "setup-operation.pre-persistence.json",
             remote_command,
         )
-        self.assertIn("rm -rf /opt/infra_tools && mkdir -p /opt/infra_tools", remote_command)
+        self.assertIn("rm -rf /opt/basaltwater && mkdir -p /opt/basaltwater", remote_command)
         self.assertLess(
-            remote_command.index("cp -a /opt/infra_tools/state/."),
-            remote_command.index("rm -rf /opt/infra_tools"),
+            remote_command.index("cp -a /opt/basaltwater/state/."),
+            remote_command.index("rm -rf /opt/basaltwater"),
         )
         self.assertLess(remote_command.index("rm -rf"), remote_command.index("tar xzf -"))
         self.assertIn(
-            "ln -s /var/lib/infra_tools /opt/infra_tools/state",
+            "ln -s /var/lib/basaltwater /opt/basaltwater/state",
             remote_command,
         )
         self.assertLess(
             remote_command.index("tar xzf -"),
-            remote_command.index("ln -s /var/lib/infra_tools"),
+            remote_command.index("ln -s /var/lib/basaltwater"),
         )
-        self.assertIn("chmod 0755 /opt/infra_tools", remote_command)
+        self.assertIn("chmod 0755 /opt/basaltwater", remote_command)
         self.assertLess(
             remote_command.index("tar xzf -"),
-            remote_command.index("chmod 0755 /opt/infra_tools"),
+            remote_command.index("chmod 0755 /opt/basaltwater"),
         )
 
     def test_remote_setup_finishes_verified_network_transition_after_ssh_exits(self):
@@ -401,8 +401,8 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             not sys.stdin.isatty(),
         )
         remote_command = mock_build.call_args.kwargs["remote_command"]
-        self.assertIn("rm -rf /opt/infra_tools", remote_command)
-        self.assertIn("tar xzf - -C /opt/infra_tools", remote_command)
+        self.assertIn("rm -rf /opt/basaltwater", remote_command)
+        self.assertIn("tar xzf - -C /opt/basaltwater", remote_command)
         self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
@@ -423,7 +423,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(mock_build.call_args.args[1], "root")
         remote_command = mock_build.call_args.kwargs["remote_command"]
-        self.assertIn("rm -rf /opt/infra_tools", remote_command)
+        self.assertIn("rm -rf /opt/basaltwater", remote_command)
         self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
@@ -456,7 +456,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
 
         config = _make_config(host="localhost")
         with tempfile.TemporaryDirectory() as temp_dir:
-            install_dir = os.path.join(temp_dir, "infra_tools")
+            install_dir = os.path.join(temp_dir, "basaltwater")
             state_dir = os.path.join(temp_dir, "state")
             with patch.object(setup_common, "REMOTE_INSTALL_DIR", install_dir), \
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", state_dir), \
@@ -474,7 +474,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         from lib import setup_common
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            managed_dir = os.path.join(temp_dir, "infra_tools")
+            managed_dir = os.path.join(temp_dir, "basaltwater")
             state_dir = os.path.join(temp_dir, "state")
             os.makedirs(os.path.join(managed_dir, ".git"))
             with open(os.path.join(managed_dir, "keep-me"), "w", encoding="utf-8") as file_obj:
@@ -502,7 +502,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         from lib import setup_common
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            install_dir = os.path.join(temp_dir, "infra_tools")
+            install_dir = os.path.join(temp_dir, "basaltwater")
             legacy_state_dir = os.path.join(install_dir, "state")
             persistent_state_dir = os.path.join(temp_dir, "persistent-state")
             build_dir = os.path.join(temp_dir, "build")
@@ -563,7 +563,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         from lib import setup_common
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            install_dir = os.path.join(temp_dir, "infra_tools")
+            install_dir = os.path.join(temp_dir, "basaltwater")
             persistent_state_dir = os.path.join(temp_dir, "persistent-state")
             build_dir = os.path.join(temp_dir, "build")
             os.makedirs(install_dir)

@@ -688,7 +688,7 @@ class PairingState:
 
 
 class PairingRequestHandler(BaseHTTPRequestHandler):
-    server_version = "infra-tools-device-pairing"
+    server_version = "basaltwater-device-pairing"
     sys_version = ""
 
     @property
@@ -712,7 +712,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
 <title>{html.escape(title)}</title>
 <style>{_PAGE_STYLE}</style>
 </head><body><main><header class="page-header">
-<p class="eyebrow">infra-tools</p><h1>{html.escape(title)}</h1>
+<p class="eyebrow">basaltwater</p><h1>{html.escape(title)}</h1>
 </header>{body}</main></body></html>"""
         encoded = page.encode("utf-8")
         self.send_response(status)
@@ -729,7 +729,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         )
         if nonce is not None:
             secure = (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
-            cookie = f"infra_tools_pairing_nonce={nonce}; Path=/; HttpOnly; SameSite=Strict"
+            cookie = f"basaltwater_pairing_nonce={nonce}; Path=/; HttpOnly; SameSite=Strict"
             if secure:
                 cookie += "; Secure"
             self.send_header("Set-Cookie", cookie)
@@ -742,7 +742,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
             cookie.load(self.headers.get("Cookie") or "")
         except CookieError:
             return ""
-        morsel = cookie.get("infra_tools_pairing_nonce")
+        morsel = cookie.get("basaltwater_pairing_nonce")
         return morsel.value if morsel is not None else ""
 
     def _page_nonce(self) -> str:
@@ -886,7 +886,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
             '<div class="card-heading"><p class="eyebrow">Relay access</p>'
             f'<h2 id="{heading_id}">{provider_label} Connect</h2>'
             '<p class="muted">Authorize this machine with T3 Connect. T3 installs its '
-            'pinned relay client when requested, and infra-tools keeps the tunnel '
+            'pinned relay client when requested, and basaltwater keeps the tunnel '
             'managed across restarts.</p></div>'
             f"{progress_block}{status_block}{error_block}{output_block}"
             + action
@@ -1120,7 +1120,7 @@ class ThreadingUnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamSe
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="infra-tools device-pairing broker")
+    parser = argparse.ArgumentParser(description="basaltwater device-pairing broker")
     parser.add_argument("--config", required=True)
     parser.add_argument("--socket", required=True)
     args = parser.parse_args()

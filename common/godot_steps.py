@@ -37,8 +37,8 @@ GODOT_CURRENT_DIR = f"{GODOT_INSTALL_ROOT}/current"
 GODOT_BINARY_LINK = "/usr/local/bin/godot"
 GODOT4_BINARY_LINK = "/usr/local/bin/godot4"
 GODOT_DESKTOP_FILE = "/usr/local/share/applications/org.godotengine.Godot.desktop"
-GODOT_STATE_FILE = "/opt/infra_tools/state/godot.json"
-GODOT_BUNDLE_STATE_FILE = "/opt/infra_tools/state/godot-bundles.json"
+GODOT_STATE_FILE = "/opt/basaltwater/state/godot.json"
+GODOT_BUNDLE_STATE_FILE = "/opt/basaltwater/state/godot-bundles.json"
 GODOT_EXPORT_TEMPLATE_ROOT = f"{GODOT_INSTALL_ROOT}/export_templates"
 GODOT_EXPORT_TEMPLATE_RELEASES_DIR = f"{GODOT_EXPORT_TEMPLATE_ROOT}/releases"
 
@@ -47,7 +47,7 @@ BUTLER_INSTALL_ROOT = "/opt/butler"
 BUTLER_RELEASES_DIR = f"{BUTLER_INSTALL_ROOT}/releases"
 BUTLER_CURRENT_DIR = f"{BUTLER_INSTALL_ROOT}/current"
 BUTLER_BINARY_LINK = "/usr/local/bin/butler"
-BUTLER_STATE_FILE = "/opt/infra_tools/state/butler.json"
+BUTLER_STATE_FILE = "/opt/basaltwater/state/butler.json"
 
 STEAMCMD_BOOTSTRAP_URL = (
     "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz"
@@ -880,7 +880,7 @@ def install_or_update_butler_release() -> tuple[str, bool, str]:
         print(f"  ✓ Butler already up to date ({tag_name})")
         return tag_name, False, expected_sha256
 
-    with tempfile.TemporaryDirectory(prefix="infra-tools-butler-release-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-butler-release-") as temp_dir:
         archive_path = os.path.join(temp_dir, "butler.zip")
         run(
             "curl -fL --proto '=https' --proto-redir '=https' "
@@ -961,7 +961,7 @@ def install_or_update_steamcmd(username: str) -> bool:
         user_home,
         ".local",
         "share",
-        "infra_tools",
+        "basaltwater",
         "steamcmd",
     )
     launcher_dir = os.path.join(user_home, ".local", "bin")
@@ -970,7 +970,7 @@ def install_or_update_steamcmd(username: str) -> bool:
     changed = not os.path.isfile(steamcmd_script)
     if changed:
         with tempfile.TemporaryDirectory(
-            prefix="infra-tools-steamcmd-bootstrap-"
+            prefix="basaltwater-steamcmd-bootstrap-"
         ) as temporary_dir:
             archive_path = os.path.join(temporary_dir, "steamcmd_linux.tar.gz")
             staging_dir = os.path.join(temporary_dir, "staging")
@@ -1099,7 +1099,7 @@ def install_or_update_godot_release() -> tuple[str, bool, str]:
         )
 
     os.makedirs(GODOT_RELEASES_DIR, mode=0o755, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="infra-tools-godot-release-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-godot-release-") as temporary_dir:
         archive_path = os.path.join(temporary_dir, "godot.zip")
         run(
             "curl -fL --proto '=https' --proto-redir '=https' "
@@ -1328,7 +1328,7 @@ def configure_auto_update_godot(config: SetupConfig) -> None:
         service_name="auto-update-godot",
         service_desc="Auto-update Godot Engine",
         timer_desc="Auto-update Godot Engine weekly",
-        script_path="/opt/infra_tools/common/service_tools/auto_update_godot.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_update_godot.py",
         schedule="Sun *-*-* 06:30:00",
         check_path=GODOT_BINARY_LINK,
         check_name="Godot",

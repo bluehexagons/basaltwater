@@ -16,7 +16,7 @@ The flow is:
    receive VirtIO-GPU for noVNC; server guests retain the serial console.
 5. ``qm disk import`` (or ``--import-from``) the qcow2 into the root storage,
    attach as ``scsi0``, set boot order, attach a cloud-init drive.
-6. Cloud-init: user/SSH key/IP from infra_tools, then resize to the requested
+6. Cloud-init: user/SSH key/IP from basaltwater, then resize to the requested
    size and ``qm start``.
 7. Wait for SSH on the target IP.
 """
@@ -133,7 +133,7 @@ def _disk_hardware_value(
     backup: bool,
     serial: Optional[str] = None,
 ) -> str:
-    """Apply infra_tools-managed hardware hints to a Proxmox disk value."""
+    """Apply basaltwater-managed hardware hints to a Proxmox disk value."""
 
     source_parts = volume.split(",")
     parts = source_parts[:1]
@@ -1477,7 +1477,7 @@ def _warn_zfs_swap_storage(
                 f"  ⚠ Swap disk '{disk.name}' uses ZFS pool '{disk.pool}'. This "
                 "is guest block I/O, not host zvol swap, but heavy swapping can "
                 "still increase ZFS I/O and memory pressure; this layout is not "
-                "yet qualified by infra-tools."
+                "yet qualified by basaltwater."
             )
 
 
@@ -1560,7 +1560,7 @@ def _download_image_to_host(
         [
             "flock",
             "--exclusive",
-            f"/run/lock/infra-tools-image-{image_lock}.lock",
+            f"/run/lock/basaltwater-image-{image_lock}.lock",
             "/bin/sh",
             "-c",
             " && ".join(commands),
@@ -1592,7 +1592,7 @@ def _render_user_data(
 
     Optionally creates ``username`` and installs the SSH key. An explicit
     ``nopasswd`` request also installs the managed sudo rule. The rest of
-    infra_tools' setup runs over key-only root SSH, so standard users do not
+    basaltwater' setup runs over key-only root SSH, so standard users do not
     need a temporary passwordless bootstrap rule.
     """
     if not validate_username(username):
@@ -1617,14 +1617,14 @@ def _render_user_data(
         "packages:",
         "  - qemu-guest-agent",
         "write_files:",
-        "  - path: /etc/modules-load.d/infra-tools-virtio-balloon.conf",
+        "  - path: /etc/modules-load.d/basaltwater-virtio-balloon.conf",
         "    permissions: '0644'",
         "    content: |",
         "      virtio_balloon",
     ]
     if nopasswd and create_setup_user and username and username != "root":
         lines.extend([
-            "  - path: /etc/sudoers.d/infra-tools-" + username,
+            "  - path: /etc/sudoers.d/basaltwater-" + username,
             "    owner: root:root",
             "    permissions: '0440'",
             "    content: |",
@@ -1669,10 +1669,10 @@ def _upload_user_data(
     dry_run: bool,
 ) -> Optional[str]:
     """Write the rendered user-data to a snippet on the node and return its path."""
-    filename = f"infra_tools-{hostname}-{secrets.token_hex(8)}.yaml"
+    filename = f"basaltwater-{hostname}-{secrets.token_hex(8)}.yaml"
     snippet_ref = f"{storage_pool}:snippets/{filename}"
     if dry_run:
-        return "/var/lib/vz/snippets/infra_tools-userdata.dryrun.yaml"
+        return "/var/lib/vz/snippets/basaltwater-userdata.dryrun.yaml"
 
     rendered = user_data.replace("__HOSTNAME__", hostname)
     path_result = _ssh_run(

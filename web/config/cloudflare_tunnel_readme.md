@@ -1,6 +1,6 @@
 # Cloudflare Tunnel setup
 
-When a host is configured with `--cloudflare`, infra_tools installs
+When a host is configured with `--cloudflare`, basaltwater installs
 `setup-cloudflare-tunnel` and prepares the Nginx origin for Cloudflare Tunnel.
 
 ## Automated setup
@@ -29,7 +29,7 @@ an Nginx site to refresh ingress rules.
 
    ```bash
    cloudflared tunnel login
-   cloudflared tunnel create infra-tools
+   cloudflared tunnel create basaltwater
    ```
 
 3. Replace `<tunnel-id>` below with the ID returned by `cloudflared tunnel create`.

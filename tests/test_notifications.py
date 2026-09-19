@@ -358,7 +358,7 @@ class TestNotificationSender(unittest.TestCase):
         self.assertEqual(payload['operator']['suggested_actions'], [])
         self.assertEqual(payload['operator']['details'], '')
         self.assertEqual(
-            request.get_header('X-infra-tools-event-id'),
+            request.get_header('X-basaltwater-event-id'),
             payload['event']['id'],
         )
 
@@ -469,7 +469,7 @@ class TestNotificationSender(unittest.TestCase):
         self.assertEqual(mock_open.call_count, 2)
         mock_sleep.assert_called_once_with(2.0)
         event_ids = [
-            call.args[0].get_header('X-infra-tools-event-id')
+            call.args[0].get_header('X-basaltwater-event-id')
             for call in mock_open.call_args_list
         ]
         self.assertEqual(event_ids, [notification.event_id, notification.event_id])

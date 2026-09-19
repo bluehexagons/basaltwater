@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -204,7 +204,7 @@ class SyncthingConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "components may contain"):
             self._config(syncthing_root="/srv/team files")
         with self.assertRaisesRegex(ValueError, "must not overlap"):
-            self._config(syncthing_root="/var/lib/infra-tools")
+            self._config(syncthing_root="/var/lib/basaltwater")
 
     def test_root_and_oci_targets_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-root"):
@@ -212,7 +212,7 @@ class SyncthingConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "OCI"):
             self._config(machine_type="oci")
 
-    @patch("infra_tools.get_all_configs")
+    @patch("basaltwater.get_all_configs")
     def test_info_displays_syncthing_feature(self, get_all_configs) -> None:
         get_all_configs.return_value = [
             {
@@ -227,7 +227,7 @@ class SyncthingConfigTest(unittest.TestCase):
 
         output = io.StringIO()
         with redirect_stdout(output):
-            result = infra_tools.show_info()
+            result = basaltwater.show_info()
 
         self.assertEqual(result, 0)
         self.assertIn("Features: Syncthing", output.getvalue())

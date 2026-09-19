@@ -63,8 +63,8 @@ registration is disabled.
 | `/opt/homebox/current` | Selected release link |
 | `/etc/homebox/homebox.env` | Root-only managed environment |
 | `/etc/homebox/secrets.json` | Root-only initial password and persistent API-key pepper |
-| `/opt/infra_tools/state/homebox.json` | Validated release, endpoint, and storage state |
-| `/opt/infra_tools/state/homebox_update.json` | Last automatic update result, with no credentials |
+| `/opt/basaltwater/state/homebox.json` | Validated release, endpoint, and storage state |
+| `/opt/basaltwater/state/homebox_update.json` | Last automatic update result, with no credentials |
 | `/var/lib/homebox` or selected data path | `homebox.db`, SQLite sidecars, and attachments |
 | `/var/lib/homebox-backups` | Private manual backups and automatic recovery archives |
 

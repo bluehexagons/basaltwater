@@ -223,7 +223,7 @@ def collect_cachyos_doctor() -> dict[str, object]:
             ("session.systemd", "default.target"),
             ("session.pipewire", "pipewire.service"),
             ("session.wireplumber", "wireplumber.service"),
-            ("service.t3code", "infra-tools-cachyos-t3.service"),
+            ("service.t3code", "basaltwater-cachyos-t3.service"),
         ):
             status, output = ("missing", "")
             if bus_ready:

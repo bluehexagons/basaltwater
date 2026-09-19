@@ -58,7 +58,7 @@ def export_assets(assets: Path) -> None:
             '<picture><source media="(prefers-color-scheme:dark)" srcset="wordmark-dark.svg">'
             '<img src="wordmark-light.svg" width="264" height="48" alt="Basaltwater wordmark"></picture>'
             '<p class="lede">Infrastructure management, from one machine to your whole network.</p>'
-            '<p>Formerly infra-tools. The primary command is <code>basaltw</code>.</p>'
+            '<p>The primary command is <code>basaltw</code>.</p>'
             '<section><h2>Install. Describe. Manage.</h2><p>Configure Linux hosts, services and agent workspaces '
             'with repeatable setup and explicit recovery.</p><pre><code>basaltw --help\nbasaltw agent doctor --json</code></pre></section>',
         ),
@@ -76,7 +76,7 @@ def export_assets(assets: Path) -> None:
         "access": [{"label": "SSH", "value": "ssh operator@workshop.example.test", "description": "Verified host identity"}],
     })
     with (
-        patch.object(panel, "discover_infra_web_services", return_value=[]),
+        patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
         patch.object(state, "system_overview", return_value=[{"label": "Host", "value": "Ready", "description": "Example data", "status": "active"}]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),

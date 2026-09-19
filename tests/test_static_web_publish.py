@@ -65,7 +65,7 @@ class TestStaticWebPublish(unittest.TestCase):
             self.assertEqual(result["url"], "https://sites.example:8443/sites/agent/demo/")
             with open(os.path.join(old_site, "index.html"), encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "new site")
-            self.assertTrue(os.path.isfile(os.path.join(old_site, ".infra-tools.json")))
+            self.assertTrue(os.path.isfile(os.path.join(old_site, ".basaltwater.json")))
             with open(os.path.join(user_root, "index.html"), encoding="utf-8") as file_obj:
                 self.assertIn("demo-site", file_obj.read())
 
@@ -205,7 +205,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 self.assertEqual(operation, static_web_publish.fcntl.LOCK_EX)
                 self.assertEqual(
                     os.fstat(descriptor).st_ino,
-                    (root / ".infra-tools-demo.lock").stat().st_ino,
+                    (root / ".basaltwater-demo.lock").stat().st_ino,
                 )
                 # Model a publisher completing while removal waits for its lock.
                 site.mkdir()
@@ -227,7 +227,7 @@ class TestStaticWebPublish(unittest.TestCase):
                 outside = root / "outside"
                 outside.write_text("preserve", encoding="utf-8")
                 outside.chmod(0o644)
-                lock_path = root / ".infra-tools-demo.lock"
+                lock_path = root / ".basaltwater-demo.lock"
                 if kind == "symlink":
                     lock_path.symlink_to(outside)
                 elif kind == "hardlink":

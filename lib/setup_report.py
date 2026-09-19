@@ -11,7 +11,7 @@ from typing import Iterator, TextIO
 
 
 _ACTIVE_REPORT: contextvars.ContextVar["SetupReport | None"] = contextvars.ContextVar(
-    "infra_tools_setup_report",
+    "basaltwater_setup_report",
     default=None,
 )
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")

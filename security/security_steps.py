@@ -25,26 +25,26 @@ from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_network_ip_or_cidr
 from lib.validators import validate_username
 
-_LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52infra-tools-unattended-upgrades"
-_LEGACY_MANAGED_ORIGINS_FILE = "/etc/infra_tools/unattended_upgrades_origins.list"
+_LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades"
+_LEGACY_MANAGED_ORIGINS_FILE = "/etc/basaltwater/unattended_upgrades_origins.list"
 _JOURNAL_CONF_DIR = "/etc/systemd/journald.conf.d"
-_JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/infra-tools.conf"
+_JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
-_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-infra-tools-hardening.conf"
+_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
 _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
 _FAIL2BAN_XRDP_FILTER = "/etc/fail2ban/filter.d/xrdp.conf"
-_AUDIT_RULES_FILE = "/etc/audit/rules.d/99-infra-tools.rules"
+_AUDIT_RULES_FILE = "/etc/audit/rules.d/99-basaltwater.rules"
 _FAILLOCK_CONF = "/etc/security/faillock.conf"
-_PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-infra-tools"
+_PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-basaltwater"
 _ISSUE_BANNER = "Authorized access only. All activity is monitored and logged.\n"
-_SECURITY_MONITOR_SCRIPT = "/opt/infra_tools/security/service_tools/security_monitor.py"
-_SSH_RULE_COMMENT_PREFIX = "infra_tools SSH"
-_RDP_RULE_COMMENT_PREFIX = "infra_tools RDP"
-_WEB_RULE_COMMENT_PREFIX = "infra_tools web TCP"
-_MDNS_RULE_COMMENT_PREFIX = "infra_tools mDNS UDP"
-_PROXMOX_MANAGEMENT_COMMENT_PREFIX = "infra_tools access source"
+_SECURITY_MONITOR_SCRIPT = "/opt/basaltwater/security/service_tools/security_monitor.py"
+_SSH_RULE_COMMENT_PREFIX = "basaltwater SSH"
+_RDP_RULE_COMMENT_PREFIX = "basaltwater RDP"
+_WEB_RULE_COMMENT_PREFIX = "basaltwater web TCP"
+_MDNS_RULE_COMMENT_PREFIX = "basaltwater mDNS UDP"
+_PROXMOX_MANAGEMENT_COMMENT_PREFIX = "basaltwater access source"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
 _APPARMOR_USERNS_PROFILE = "/etc/apparmor.d/unprivileged_userns"
 _APPARMOR_USERNS_RESTRICTION = (
@@ -247,7 +247,7 @@ def _configure_ssh_firewall(config: SetupConfig) -> None:
 
 
 def _configure_managed_web_ports(config: SetupConfig) -> list[int]:
-    """Reconcile infra_tools-managed TCP web ports."""
+    """Reconcile basaltwater-managed TCP web ports."""
 
     ports = config.effective_web_ports()
     sources = [
@@ -456,7 +456,7 @@ def harden_ssh(config: SetupConfig) -> None:
     settings between files. The drop-in is read first by sshd, so its values
     win over later occurrences in the main config.
     """
-    hardening_content = """# Managed by infra_tools - SSH hardening drop-in.
+    hardening_content = """# Managed by basaltwater - SSH hardening drop-in.
 # Drop-ins under /etc/ssh/sshd_config.d/*.conf are read before the main
 # sshd_config; the first-match-wins rule means these directives override
 # anything later in /etc/ssh/sshd_config.
@@ -574,7 +574,7 @@ net.ipv4.conf.default.rp_filter=0
 net.ipv4.conf.all.rp_filter=0
 """
 
-    kernel_hardening = f"""# Managed by infra_tools - kernel security hardening.
+    kernel_hardening = f"""# Managed by basaltwater - kernel security hardening.
 # Network security
 {rp_filter_hardening}net.ipv4.tcp_syncookies=1
 net.ipv4.conf.all.accept_redirects=0
@@ -708,7 +708,7 @@ def configure_auditd(config: SetupConfig) -> None:
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run("apt-get install -y -qq auditd audispd-plugins")
 
-    audit_rules = """# Managed by infra_tools - audit rules.
+    audit_rules = """# Managed by basaltwater - audit rules.
 # Identity and authentication files
 -a always,exit -F arch=b64 -F path=/etc/passwd -F perm=wa -k identity
 -a always,exit -F arch=b32 -F path=/etc/passwd -F perm=wa -k identity
@@ -795,13 +795,13 @@ def configure_pam_lockout(config: SetupConfig) -> None:
         print("  ✓ Skipping PAM lockout (not applicable to containers)")
         return
 
-    faillock_conf = """# Managed by infra_tools - account lockout settings.
+    faillock_conf = """# Managed by basaltwater - account lockout settings.
 deny = 5
 fail_interval = 900
 unlock_time = 600
 """
 
-    pam_profile = """Name: infra-tools account lockout (pam_faillock)
+    pam_profile = """Name: basaltwater account lockout (pam_faillock)
 Default: yes
 Priority: 0
 Auth-Type: Primary
@@ -831,7 +831,7 @@ Account:
         f.write(faillock_conf)
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    result = run("pam-auth-update --enable faillock-infra-tools", check=False)
+    result = run("pam-auth-update --enable faillock-basaltwater", check=False)
     if result.returncode != 0:
         print("  ⚠ PAM auth update failed; lockout config written but may not be active")
         return
@@ -844,7 +844,7 @@ def configure_security_monitor(config: SetupConfig) -> None:
 
     Monitors fail2ban ban events, auditd key events (identity, sudoers, SSH
     config, kernel modules, privileged execs), and SSH auth failures, then
-    sends notifications via the configured infra_tools targets.
+    sends notifications via the configured basaltwater targets.
     """
     if not (is_vm() or is_hardware()):
         print("  ✓ Skipping security monitor (not applicable to containers)")
@@ -892,7 +892,7 @@ def configure_auto_updates(config: SetupConfig) -> None:
         service_name="auto-update-apt",
         service_desc="Auto-update APT packages",
         timer_desc="Auto-update APT packages daily",
-        script_path="/opt/infra_tools/common/service_tools/auto_update_apt.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_update_apt.py",
         schedule="*-*-* 06:00:00",
         check_name="APT packages",
         purpose="auto-update",
@@ -1092,7 +1092,7 @@ def configure_auto_restart(config: SetupConfig) -> None:
         service_name="auto-restart-if-needed",
         service_desc="Auto-restart system if needed",
         timer_desc="Auto-restart system if needed (daily at 2 AM)",
-        script_path="/opt/infra_tools/common/service_tools/auto_restart_if_needed.py",
+        script_path="/opt/basaltwater/common/service_tools/auto_restart_if_needed.py",
         schedule="*-*-* 02:00:00",
         on_boot_sec="30min",
         check_name="Automatic restart",
@@ -1128,7 +1128,7 @@ RuntimeMaxUse={JOURNAL_MAX_USE}
         service_name="cleanup-maintenance",
         service_desc="Cleanup temporary files and package caches",
         timer_desc="Cleanup temporary files and package caches (weekly)",
-        script_path="/opt/infra_tools/common/service_tools/cleanup_maintenance.py",
+        script_path="/opt/basaltwater/common/service_tools/cleanup_maintenance.py",
         schedule="Sun *-*-* 03:30:00",
         check_name="Cleanup maintenance",
         randomized_delay="30min",
@@ -1147,7 +1147,7 @@ RuntimeMaxUse={JOURNAL_MAX_USE}
         service_name="user-cache-maintenance",
         service_desc="Prune configured user developer-tool caches",
         timer_desc="Prune configured user developer-tool caches (daily)",
-        script_path="/opt/infra_tools/common/service_tools/user_cache_maintenance.py",
+        script_path="/opt/basaltwater/common/service_tools/user_cache_maintenance.py",
         schedule="*-*-* 07:00:00",
         check_name="User cache maintenance",
         user=config.username,

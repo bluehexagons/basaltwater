@@ -17,14 +17,14 @@ from lib.remote_utils import install_package, is_dry_run, run
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
-STARTWM = "/etc/xrdp/infra-tools-startwm.sh"
+STARTWM = "/etc/xrdp/basaltwater-startwm.sh"
 DISPLAY_MANAGERS = ("gdm3", "gdm", "lightdm", "sddm", "lxdm", "xdm")
 DISPLAY_MANAGER_ALIAS = Path("/etc/systemd/system/display-manager.service")
 SESMAN_VENDOR_UNIT = Path("/usr/lib/systemd/system/xrdp-sesman.service")
 SESMAN_UNIT = Path("/etc/systemd/system/xrdp-sesman.service")
-SESMAN_MARKER = "# Managed by infra-tools shared desktop setup\n"
-HANDOFF_LAUNCHER = "/usr/local/bin/infra-tools-desktop-control"
-HANDOFF_ENTRY = "/usr/share/applications/infra-tools-desktop-control.desktop"
+SESMAN_MARKER = "# Managed by basaltwater shared desktop setup\n"
+HANDOFF_LAUNCHER = "/usr/local/bin/basaltwater-desktop-control"
+HANDOFF_ENTRY = "/usr/share/applications/basaltwater-desktop-control.desktop"
 
 
 def configure_session_service() -> None:
@@ -144,7 +144,7 @@ def prepare_shared_desktop(config: SetupConfig) -> None:
     if alias.exists() and not masked and alias.resolve().stem not in DISPLAY_MANAGERS:
         raise RuntimeError("Unrecognized console display manager; migrate its configuration before shared desktop setup")
     # Preserve the former alias for explicit administrator rollback.
-    backup = alias.with_suffix(".service.infra-tools-backup")
+    backup = alias.with_suffix(".service.basaltwater-backup")
     if alias.is_symlink() and not masked and not backup.is_symlink() and not backup.exists():
         backup.symlink_to(alias.readlink())
     if alias.is_symlink() and not masked:
@@ -184,8 +184,8 @@ def install_session_runtime(config: SetupConfig) -> None:
         if not backup.exists():
             write_text_atomic(str(backup), previous, mode=0o600)
     write_text_atomic(str(CONFIG_PATH), content, mode=0o644)
-    run(["groupadd", "-f", "infra-desktop"])
-    run(["gpasswd", "-M", config.username, "infra-desktop"])
+    run(["groupadd", "-f", "basaltwater-desktop"])
+    run(["gpasswd", "-M", config.username, "basaltwater-desktop"])
     desktop_names = {"xfce": "XFCE", "i3": "i3", "cinnamon": "X-Cinnamon", "lxqt": "LXQt"}
     desktop_environment = (
         f"export XDG_CURRENT_DESKTOP={shlex.quote(desktop_names[config.desktop])}\n"
@@ -195,7 +195,7 @@ def install_session_runtime(config: SetupConfig) -> None:
     if config.desktop == "xfce":
         desktop_environment += "export XDG_MENU_PREFIX=xfce-\n"
     script = (
-        "#!/bin/sh\n# Managed by infra_tools shared desktop setup\n"
+        "#!/bin/sh\n# Managed by basaltwater shared desktop setup\n"
         "umask 077\nexport XRDP_SESSION=1\n"
         'export PATH="$HOME/.local/bin:$PATH"\n'
         'export XDG_SESSION_TYPE=x11\n'
@@ -216,4 +216,4 @@ def install_session_runtime(config: SetupConfig) -> None:
     from common.agent_steps import install_agent_cli_launcher, install_managed_agent_skills
 
     install_agent_cli_launcher(config)
-    install_managed_agent_skills(config.username, config.selected_agent_tools(), ("infra-tools-desktop",))
+    install_managed_agent_skills(config.username, config.selected_agent_tools(), ("basaltwater-desktop",))

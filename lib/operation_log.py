@@ -332,7 +332,7 @@ class OperationLoggerManager:
 _logger_manager = None
 
 
-def get_operation_logger_manager(base_log_dir: str = "/var/log/infra_tools/operations") -> OperationLoggerManager:
+def get_operation_logger_manager(base_log_dir: str = "/var/log/basaltwater/operations") -> OperationLoggerManager:
     """Get or create the global operation logger manager.
     
     Args:

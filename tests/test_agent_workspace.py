@@ -208,7 +208,7 @@ class AgentSupportTests(unittest.TestCase):
                         },
                         "registrations": {},
                         "workflow_skills": [
-                            "infra-tools-t3-preview-testing",
+                            "basaltwater-t3-preview-testing",
                             "/secret/browser-skill",
                         ],
                         "workflow_skill_ready": False,
@@ -255,7 +255,7 @@ class AgentSupportTests(unittest.TestCase):
             self.assertFalse(bundle["privacy"]["installation_branch_included"])
             self.assertEqual(bundle["host"]["maintenance_hold"]["status"], "active")
             self.assertEqual(
-                bundle["infra_tools"],
+                bundle["basaltwater"],
                 {
                     "version": "2.0.0",
                     "commit": "a" * 40,
@@ -280,7 +280,7 @@ class AgentSupportTests(unittest.TestCase):
             )
             self.assertEqual(
                 bundle["browser"]["workflow_skills"],
-                ["infra-tools-t3-preview-testing"],
+                ["basaltwater-t3-preview-testing"],
             )
             self.assertFalse(bundle["browser"]["workflow_skill_ready"])
             self.assertEqual(

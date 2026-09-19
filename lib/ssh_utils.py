@@ -79,7 +79,7 @@ def get_ssh_control_path(
     identity = "\0".join((host, username, ssh_key or ""))
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     control_dir = os.path.join(
-        tempfile.gettempdir(), f"infra-tools-ssh-{os.getuid()}"
+        tempfile.gettempdir(), f"basaltwater-ssh-{os.getuid()}"
     )
     os.makedirs(control_dir, mode=0o700, exist_ok=True)
     try:

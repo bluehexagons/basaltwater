@@ -101,7 +101,7 @@ class TestCodexSecurityPolicy(unittest.TestCase):
         self.assertEqual(config["approval_policy"], "never")
         self.assertFalse(config["allow_login_shell"])
         profile_name = config["default_permissions"]
-        self.assertEqual(profile_name, "infra_tools_hardened_workspace")
+        self.assertEqual(profile_name, "basaltwater_hardened_workspace")
         self.assertFalse(
             config["shell_environment_policy"]["ignore_default_excludes"]
         )
@@ -133,7 +133,7 @@ class TestCodexSecurityPolicy(unittest.TestCase):
         self.assertFalse(requirements["features"]["browser_use"])
         self.assertEqual(requirements["mcp_servers"], {})
 
-    def test_rerun_can_switch_an_infra_tools_owned_policy(self):
+    def test_rerun_can_switch_an_basaltwater_owned_policy(self):
         with tempfile.TemporaryDirectory() as temporary:
             policy_dir = os.path.join(temporary, "codex")
             self._configure(policy_dir)
@@ -270,7 +270,7 @@ class TestCodexSecurityPolicy(unittest.TestCase):
             config_path = os.path.join(policy_dir, "config.toml")
             with open(config_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write(
-                    "# Managed by infra-tools coding-agent security policy.\n"
+                    "# Managed by basaltwater coding-agent security policy.\n"
                 )
             os.chmod(config_path, 0o666)
 

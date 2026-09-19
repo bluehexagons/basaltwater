@@ -1,4 +1,4 @@
-"""Tests for lib/project_manifest.py: infra.json parsing and validation."""
+"""Tests for lib/project_manifest.py: basaltwater.json parsing and validation."""
 
 from __future__ import annotations
 
@@ -392,7 +392,7 @@ class TestLoadManifest(unittest.TestCase):
         assert manifest is not None
         component = manifest.components[0]
         self.assertEqual(component.name, "app")
-        self.assertEqual(component.binary, ".infra_tools/bin/app")
+        self.assertEqual(component.binary, ".basaltwater/bin/app")
         self.assertIn("./cmd/server", component.build[0])
         self.assertIsNone(component.port)
         self.assertEqual(component.runtime_env["HOST"], "127.0.0.1")
@@ -405,11 +405,11 @@ class TestLoadManifest(unittest.TestCase):
             self.assertIsNone(infer_manifest(repo))
 
     def test_bluehexagons_example(self):
-        """The shipped bluehexagons infra.json must validate, if present."""
+        """The shipped bluehexagons basaltwater.json must validate, if present."""
         repo = os.path.join(os.path.dirname(__file__), "..", "..", "bluehexagons")
         manifest_path = os.path.join(repo, MANIFEST_FILENAME)
         if not os.path.exists(manifest_path):
-            self.skipTest("bluehexagons repo not checked out alongside infra_tools")
+            self.skipTest("bluehexagons repo not checked out alongside basaltwater")
         manifest = load_manifest(repo)
         assert manifest is not None
         names = {c.name for c in manifest.components}

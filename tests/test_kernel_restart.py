@@ -19,7 +19,7 @@ from security.security_steps import configure_auto_restart
 class KernelRestartTests(unittest.TestCase):
     def test_hook_is_executable_and_preserves_other_hooks_on_rerun(self):
         with tempfile.TemporaryDirectory() as directory:
-            hook = Path(directory) / "infra-tools-reboot-required"
+            hook = Path(directory) / "basaltwater-reboot-required"
             other = Path(directory) / "unattended-upgrades"
             other.write_text("existing hook")
             with patch.object(kernel_restart, "KERNEL_HOOK", str(hook)):
@@ -118,7 +118,7 @@ class KernelRestartTests(unittest.TestCase):
     @patch("security.security_steps.is_dry_run", return_value=False)
     def test_setup_installs_hook_and_reports_pending_kernel(self, _dry, _kernel, probe, timer):
         with tempfile.TemporaryDirectory() as directory:
-            hook = Path(directory) / "infra-tools-reboot-required"
+            hook = Path(directory) / "basaltwater-reboot-required"
             with patch.object(kernel_restart, "KERNEL_HOOK", str(hook)), patch("builtins.print") as output:
                 config = SetupConfig(username="root", host="ts1", system_type="server_proxmox")
                 configure_auto_restart(config)

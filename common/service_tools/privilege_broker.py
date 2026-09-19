@@ -20,7 +20,7 @@ import time
 import unicodedata
 
 if __name__ == "__main__" and not __package__:
-    sys.path.insert(0, "/opt/infra_tools")
+    sys.path.insert(0, "/opt/basaltwater")
 
 from lib.privilege_policy import (
     APPROVAL_SOCKET, DATABASE_PATH, ID_PATTERN, MAX_MESSAGE,

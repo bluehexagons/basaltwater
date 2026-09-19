@@ -11,8 +11,8 @@ Categories
 Each expensive test belongs to a *category* so that contributors can opt in to
 just the slice they need. The default categories are documented in
 :data:`KNOWN_CATEGORIES`. Custom categories are also accepted - the test is
-gated on ``INFRA_TOOLS_RUN_<CATEGORY>=1`` (case-insensitive) or the global
-``INFRA_TOOLS_RUN_EXPENSIVE=1`` flag.
+gated on ``BASALTWATER_RUN_<CATEGORY>=1`` (case-insensitive) or the global
+``BASALTWATER_RUN_EXPENSIVE=1`` flag.
 
 Usage::
 
@@ -25,10 +25,10 @@ Usage::
 To run::
 
     # Just one category:
-    INFRA_TOOLS_RUN_LIVE_PROXMOX=1 python3 -m unittest discover -s tests
+    BASALTWATER_RUN_LIVE_PROXMOX=1 python3 -m unittest discover -s tests
 
     # Everything expensive:
-    INFRA_TOOLS_RUN_EXPENSIVE=1 python3 -m unittest discover -s tests
+    BASALTWATER_RUN_EXPENSIVE=1 python3 -m unittest discover -s tests
 
     # Or via the test runner:
     ./run_tests.py --expensive live_proxmox
@@ -41,8 +41,8 @@ import os
 import unittest
 
 
-EXPENSIVE_ENV_VAR = "INFRA_TOOLS_RUN_EXPENSIVE"
-CATEGORY_ENV_PREFIX = "INFRA_TOOLS_RUN_"
+EXPENSIVE_ENV_VAR = "BASALTWATER_RUN_EXPENSIVE"
+CATEGORY_ENV_PREFIX = "BASALTWATER_RUN_"
 
 # Categories used in this repo. Custom categories work too, but listing the
 # common ones here keeps `run_tests.py --list-categories` and documentation in
@@ -76,8 +76,8 @@ def category_enabled(category: str) -> bool:
     """Return True if the given expensive-test category should run.
 
     A category is enabled when either:
-      * ``INFRA_TOOLS_RUN_EXPENSIVE`` is truthy (runs everything), or
-      * ``INFRA_TOOLS_RUN_<CATEGORY>`` is truthy.
+      * ``BASALTWATER_RUN_EXPENSIVE`` is truthy (runs everything), or
+      * ``BASALTWATER_RUN_<CATEGORY>`` is truthy.
     """
     if expensive_tests_enabled():
         return True
@@ -89,7 +89,7 @@ def expensive(category: str = "general", reason: str | None = None):
 
     Args:
         category: Logical group this test belongs to (see ``KNOWN_CATEGORIES``).
-            Custom names are accepted; they map to ``INFRA_TOOLS_RUN_<NAME>``.
+            Custom names are accepted; they map to ``BASALTWATER_RUN_<NAME>``.
         reason: Optional human description; appears in the skip message.
     """
     env = category_env_var(category)

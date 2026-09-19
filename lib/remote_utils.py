@@ -20,7 +20,7 @@ from lib.validation import validate_package_name
 _dry_run = False
 
 
-VERBOSE_ENV_VAR = "INFRA_TOOLS_VERBOSE"
+VERBOSE_ENV_VAR = "BASALTWATER_VERBOSE"
 
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 60 * 60

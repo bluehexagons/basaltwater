@@ -20,7 +20,7 @@ from lib.git_credentials import (
 from lib.remote_utils import is_dry_run
 
 
-_MANAGED_RELATIVE_DIR = os.path.join(".config", "infra-tools", "git")
+_MANAGED_RELATIVE_DIR = os.path.join(".config", "basaltwater", "git")
 _MANAGED_INCLUDE_NAME = "config"
 _MANAGED_CREDENTIAL_NAME = "credentials"
 
@@ -142,7 +142,7 @@ def _managed_git_config(
     ca_paths: dict[str, str],
     credential_path: str,
 ) -> str:
-    lines = ["# Managed by infra-tools; do not edit"]
+    lines = ["# Managed by basaltwater; do not edit"]
     usernames = {origin: username for origin, username in credential_specs}
     for origin in sorted(set(usernames) | set(ca_paths)):
         if origin in usernames:

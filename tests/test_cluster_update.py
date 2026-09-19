@@ -51,7 +51,7 @@ class TestClusterUpdate(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.workspace = temp.name
-        env = patch.dict(os.environ, {"INFRA_TOOLS_WORKSPACE": temp.name})
+        env = patch.dict(os.environ, {"BASALTWATER_WORKSPACE": temp.name})
         env.start()
         self.addCleanup(env.stop)
         policy = patch("lib.cluster_update._rolling_policy")
@@ -77,7 +77,7 @@ class TestClusterUpdate(unittest.TestCase):
             ValueError("Missing workspace credential 'fileshare'"),
         ]
 
-        with patch("infra_tools._execute_patch_config") as mock_execute:
+        with patch("basaltwater._execute_patch_config") as mock_execute:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 rc = run_cluster_update(["pve1", "pve2"], reboot_timeout=120)
@@ -115,7 +115,7 @@ class TestClusterUpdate(unittest.TestCase):
             _maintenance_report(),
         ]
 
-        with patch("infra_tools._execute_patch_config", side_effect=[0, 0]) as mock_execute:
+        with patch("basaltwater._execute_patch_config", side_effect=[0, 0]) as mock_execute:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 rc = run_cluster_update(["pve1", "pve2"], reboot_timeout=180)
@@ -148,7 +148,7 @@ class TestClusterUpdate(unittest.TestCase):
         mock_load_setup.side_effect = lambda target: configs.get(target)
         mock_prepare.side_effect = [configs["pve1"], configs["pve2"], configs["pve3"]]
 
-        with patch("infra_tools._execute_patch_config", side_effect=[0, 1]) as mock_execute:
+        with patch("basaltwater._execute_patch_config", side_effect=[0, 1]) as mock_execute:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 rc = run_cluster_update(["pve1", "pve2", "pve3"])
@@ -170,7 +170,7 @@ class TestClusterUpdate(unittest.TestCase):
         mock_prepare.return_value = config
         mock_maintenance.return_value = _maintenance_report(errors=["Cluster is not quorate"])
 
-        with patch("infra_tools._execute_patch_config") as mock_execute:
+        with patch("basaltwater._execute_patch_config") as mock_execute:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 rc = run_cluster_update(["pve1"])
@@ -207,7 +207,7 @@ class TestClusterUpdate(unittest.TestCase):
         )
         mock_maintenance.side_effect = [running, _maintenance_report(), reboot_blocked]
 
-        with patch("infra_tools._execute_patch_config", return_value=0) as mock_execute:
+        with patch("basaltwater._execute_patch_config", return_value=0) as mock_execute:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 rc = run_cluster_update(["pve1", "pve2"])
@@ -223,9 +223,9 @@ class TestClusterUpdate(unittest.TestCase):
     def test_resume_skips_completed_nodes_and_preserves_final_results(self, load, _prepare, _report):
         configs = {"pve1": _config("10.0.0.10"), "pve2": _config("10.0.0.11")}
         load.side_effect = configs.get
-        with patch("infra_tools._execute_patch_config", side_effect=[0, 1]) as execute:
+        with patch("basaltwater._execute_patch_config", side_effect=[0, 1]) as execute:
             self.assertEqual(run_cluster_update(list(configs)), 1)
-        with patch("infra_tools._execute_patch_config", return_value=0) as execute:
+        with patch("basaltwater._execute_patch_config", return_value=0) as execute:
             with self.assertRaisesRegex(ValueError, "Unfinished"):
                 run_cluster_update(list(configs))
             execute.assert_not_called()
@@ -240,9 +240,9 @@ class TestClusterUpdate(unittest.TestCase):
     @patch("lib.cluster_update.prepare_validated_runtime_config")
     @patch("lib.cluster_update.load_setup_command", return_value=_config("10.0.0.10"))
     def test_interrupted_mutation_blocks_automatic_replay(self, _load, _prepare, _report):
-        with patch("infra_tools._execute_patch_config", side_effect=KeyboardInterrupt):
+        with patch("basaltwater._execute_patch_config", side_effect=KeyboardInterrupt):
             self.assertEqual(run_cluster_update(["pve1"]), 1)
-        with patch("infra_tools._execute_patch_config") as execute:
+        with patch("basaltwater._execute_patch_config") as execute:
             with self.assertRaisesRegex(ValueError, "manual recovery"):
                 run_cluster_update(["pve1"], resume=True)
             execute.assert_not_called()

@@ -44,7 +44,7 @@ def run_smoke_check(generation: str) -> dict[str, Any]:
         mutate("element", operation="invoke", ref=row["ref"], action_name="click")
 
     try:
-        directory = Path(tempfile.mkdtemp(prefix="infra-desktop-smoke-"))
+        directory = Path(tempfile.mkdtemp(prefix="basaltwater-desktop-smoke-"))
         report["directory"] = str(directory)
         document = directory / "check.txt"
         validate_filesystem_path(str(document))

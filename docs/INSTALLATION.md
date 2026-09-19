@@ -33,7 +33,7 @@ installed, replace the download command with:
 
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
-  -o "$HOME/.infra_tools-install.sh" \
+  -o "$HOME/.basaltwater-install.sh" \
   https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
 ```
 
@@ -60,18 +60,18 @@ account.
 Use this when you want to choose the first setup later:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sh "$HOME/.infra_tools-install.sh"
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sh "$HOME/.basaltwater-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 The installer uses `sudo` for packages when needed. To install the source in
-`/opt/infra_tools` and expose a system launcher instead, use:
+`/opt/basaltwater` and expose a system launcher instead, use:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER"
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 ### Set up a minimal Debian control plane
@@ -80,9 +80,9 @@ This installs common administrator and Linux tools and configures the local
 machine to manage other VMs and containers:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --local-setup control_plane
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 Coding agents are optional; append `--agent-tool codex`, for example, only
@@ -92,10 +92,10 @@ guest-agent package and starts and enables its systemd service during
 self-setup:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --qemu-guest-agent \
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --qemu-guest-agent \
   --local-setup control_plane
-rm -f "$HOME/.infra_tools-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 For an already installed orchestration host, run the equivalent command:
@@ -116,10 +116,10 @@ See [XRDP migration and recovery](XRDP.md#migration-and-recovery) before convert
 a machine that currently relies on local graphical login.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sudo sh "$HOME/.infra_tools-install.sh" --user "$USER" --local-setup agent_workstation \
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
   --control-plane --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.infra_tools-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 This expects `$USER` to be an existing non-root account with an unlocked
@@ -157,7 +157,7 @@ The [credentials overview](CREDENTIALS.md) routes workspace passwords,
 to their focused workflows.
 
 Node and agent-tool setup installs a managed Bash environment under
-`~/.local/share/infra-tools/shell-env.sh`. The active Bash login file and
+`~/.local/share/basaltwater/shell-env.sh`. The active Bash login file and
 `.bashrc` load it, and they export `BASH_ENV` so nested non-interactive Bash
 commands load it as well. This keeps the managed T3 runtime, `~/.local/bin`,
 `~/.opencode/bin`, and an installed NVM default Node version available to
@@ -187,15 +187,11 @@ basaltw channel
 basaltw --help
 ```
 
-The primary command is `basaltw`; `infra-tools` is installed for existing
-automation through v2.x. See [rename migration](BASALTWATER_MIGRATION.md) before
-upgrading an existing installation. The legacy `infra_tools` command is no
-longer supported.
-Rerunning bootstrap removes a regular-file or symlink launcher named
-`infra_tools` from the configured system or user launcher directory before
-installing the new command. Self-setup also removes generated shell completion
-registrations and files for `infra_tools` and `infra_tools.py` while installing
-the `basaltw` completion for the configured shell.
+The command is `basaltw`, backed by `basaltwater.py`. No old executable or
+module alias is installed. Existing recent infra-tools installations require
+an explicit [one-time migration](BASALTWATER_MIGRATION.md); afterward the new
+paths and command names are the only supported interfaces. Bootstrap installs
+completion for `basaltw` in the configured shell.
 
 If the command is not found in a user installation, add its directory for the
 current shell and start a new login shell later:
@@ -254,7 +250,7 @@ A normal sudo password on the target is not a substitute for root SSH access;
 Basaltwater does not collect or forward sudo passwords.
 
 Ruby/Rails setup and deployment support has been removed. Keep a pinned older
-infra-tools installation for a legacy Rails host; `v2.0.0` refuses Ruby
+basaltwater installation for a legacy Rails host; `v2.0.0` refuses Ruby
 repositories rather than attempting an in-place migration.
 
 For agentic coding targets, use the [headless terminal example](WORKSTATIONS.md#headless-agentic-coding-host)
@@ -300,10 +296,10 @@ remotes.
 
 `--install-dir` must name a dedicated application directory. The installer
 refuses symlinks, mount points, home directories, broad system paths, and
-unmanaged existing directories. A legacy infra-tools tree with `infra_tools.py`,
-`remote_setup.py`, and `lib/` requires `--migrate-existing-install` on its first
-reinstall. Successful installs record `.infra_tools/managed-install` for later
-reinstalls; migration still refuses dirty Git worktrees.
+unmanaged existing directories. Successful installs record
+`.basaltwater/managed-install` for later reinstalls. Recent infra-tools
+installations require the [one-time cutover](BASALTWATER_MIGRATION.md) first;
+the installer refuses to create a parallel namespace beside an old installation.
 
 Activation failures and HUP/INT/TERM interruptions restore the previous source
 tree. The installer keeps staged or failed source alongside it for inspection
@@ -315,8 +311,8 @@ bootstrap. Run only one installer for a given destination at a time.
 
 These channel commands manage the controller installation. A remote `setup`
 or `patch` run sends a complete snapshot of the controller's current source to
-the target and replaces the target's `/opt/infra_tools` runtime with it while
-preserving `/opt/infra_tools/state`. The snapshot includes its project version,
+the target and replaces the target's `/opt/basaltwater` runtime with it while
+preserving `/opt/basaltwater/state`. The snapshot includes its project version,
 source commit, branch, and whether the controller checkout was dirty, so
 `basaltw channel` on the target reports exactly what that setup run
 deployed. A target snapshot is not a Git worktree: switch or upgrade the
@@ -358,7 +354,7 @@ If a minimal or offline Debian installation has only installation media
 configured, Basaltwater creates a managed source file and runs `apt-get
 update` before installing packages. Existing `non-free-firmware` components
 are preserved. Existing source files are backed up, and an unmanaged
-`infra_tools-debian.sources` file is not overwritten. Existing current Debian
+`basaltwater-debian.sources` file is not overwritten. Existing current Debian
 base and security entries are reused; the managed file is limited to any
 missing suite, and a redundant managed file from an older installer run is
 removed.
@@ -395,11 +391,11 @@ See [Shell completion](SHELL_COMPLETION.md) for system-wide and Fish setup.
 
 ## Workspace and credentials
 
-Saved host state defaults to `~/.config/infra_tools`. Use another workspace
+Saved host state defaults to `~/.config/basaltwater`. Use another workspace
 when separating projects or test environments:
 
 ```bash
-basaltw --workspace /srv/infra-tools-workspace list
+basaltw --workspace /srv/basaltwater-workspace list
 ```
 
 The `credentials` commands manage the workspace password store used by

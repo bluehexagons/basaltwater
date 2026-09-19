@@ -18,8 +18,8 @@ def ensure_deploy_user(username: str) -> None:
     result = run(["id", username], check=False)
     if result.returncode != 0:
         print(f"  Creating deployment owner: {username}")
-        home_dir = f"/var/lib/infra_tools/{username}"
-        run(["mkdir", "-p", "/var/lib/infra_tools"])
+        home_dir = f"/var/lib/basaltwater/{username}"
+        run(["mkdir", "-p", "/var/lib/basaltwater"])
         run(
             [
                 "useradd",
@@ -41,7 +41,7 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
                       keep_source: bool = False, **_ : Any) -> list[dict[str, Any]]:
     """Deploy a repository, returning one nginx descriptor per served component.
 
-    A repo with an ``infra.json`` manifest yields one descriptor per component
+    A repo with an ``basaltwater.json`` manifest yields one descriptor per component
     (e.g. a static site plus a reverse-proxied API). Without a manifest the
     legacy single-project detection path runs and yields one descriptor.
     """
@@ -50,7 +50,7 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
 
     if is_ruby_project(source_path):
         raise RuntimeError(
-            "Ruby/Rails deployments are no longer supported by this infra-tools "
+            "Ruby/Rails deployments are no longer supported by this basaltwater "
             "version; use a pinned older release for this repository"
         )
 
@@ -75,7 +75,7 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
             print("  Detected conventional Go application; using built-in manifest defaults")
     if manifest is not None:
         if not inferred_manifest:
-            print(f"  Detected infra.json manifest with {len(manifest.components)} component(s)")
+            print(f"  Detected basaltwater.json manifest with {len(manifest.components)} component(s)")
         return orchestrator.deploy_manifest(
             manifest=manifest,
             source_path=source_path,

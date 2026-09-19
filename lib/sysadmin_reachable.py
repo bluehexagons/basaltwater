@@ -73,7 +73,7 @@ def run_reachable(
     else:
         target_hosts = _list_saved_hosts()
         if not target_hosts:
-            print("No saved hosts found. Use 'infra-tools list' to see saved configurations.")
+            print("No saved hosts found. Use 'basaltw list' to see saved configurations.")
             return 0
         if pattern:
             target_hosts = [h for h in target_hosts if fnmatch.fnmatch(h, pattern)]

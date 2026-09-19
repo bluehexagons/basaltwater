@@ -19,8 +19,8 @@ from lib.state_read import StateReadError, read_state_object
 from lib.cicd_deadline import run_command
 
 
-DEPLOY_ADMIN_HELPER = "/usr/local/sbin/infra-tools-deploy-admin"
-DEPLOY_TARGETS_FILE = "/etc/infra_tools/cicd/deploy_targets.json"
+DEPLOY_ADMIN_HELPER = "/usr/local/sbin/basaltwater-deploy-admin"
+DEPLOY_TARGETS_FILE = "/etc/basaltwater/cicd/deploy_targets.json"
 
 
 def _validate_config_name(domain: str) -> str:
@@ -68,7 +68,7 @@ def get_deploy_target(target_host: str) -> Optional[JSONDict]:
 
 def _build_ssh_cmd(target: JSONDict, remote_cmd: str) -> list[str]:
     """Build SSH command for a target."""
-    ssh_key = target.get('ssh_key', '/var/lib/infra_tools/cicd/.ssh/deploy_key')
+    ssh_key = target.get('ssh_key', '/var/lib/basaltwater/cicd/.ssh/deploy_key')
     ssh_port = target.get('ssh_port', 22)
     user = target.get('user', 'deploy')
     host = target['host']
@@ -119,7 +119,7 @@ def push_artifact(
         print(f"  ✗ {exc}")
         return False
 
-    ssh_key = target.get('ssh_key', '/var/lib/infra_tools/cicd/.ssh/deploy_key')
+    ssh_key = target.get('ssh_key', '/var/lib/basaltwater/cicd/.ssh/deploy_key')
     ssh_port = target.get('ssh_port', 22)
     user = target.get('user', 'deploy')
     host = target['host']
@@ -179,14 +179,14 @@ def push_nginx_config(deployment: JSONDict, target_host: str, domain: str) -> bo
         temp_path = f.name
     
     try:
-        ssh_key = target.get('ssh_key', '/var/lib/infra_tools/cicd/.ssh/deploy_key')
+        ssh_key = target.get('ssh_key', '/var/lib/basaltwater/cicd/.ssh/deploy_key')
         ssh_port = target.get('ssh_port', 22)
         user = target.get('user', 'deploy')
         host = target['host']
         
         operation_id = secrets.token_hex(16)
         remote_temp_path = (
-            f"/tmp/infra-tools-nginx-{config_name}-{operation_id}.json"
+            f"/tmp/basaltwater-nginx-{config_name}-{operation_id}.json"
         )
         scp_cmd = build_scp_command(
             host,

@@ -24,10 +24,10 @@ from lib.xrdp_certificate import (
     inspect_xrdp_certificate_pair,
 )
 
-_XRDP_XORG_LAUNCHER = "/usr/local/libexec/infra-tools-xrdp-Xorg"
+_XRDP_XORG_LAUNCHER = "/usr/local/libexec/basaltwater-xrdp-Xorg"
 _XRDP_APPARMOR_LOCAL = "/etc/apparmor.d/local/Xorg"
-_XRDP_SID_SOURCES = "/etc/apt/sources.list.d/infra-tools-sid.sources"
-_XRDP_SID_PREFERENCES = "/etc/apt/preferences.d/infra-tools-sid.pref"
+_XRDP_SID_SOURCES = "/etc/apt/sources.list.d/basaltwater-sid.sources"
+_XRDP_SID_PREFERENCES = "/etc/apt/preferences.d/basaltwater-sid.pref"
 _XRDP_SID_FORBIDDEN_UPGRADES = (
     "libc6",
     "systemd",
@@ -138,7 +138,7 @@ ReconnectScript=/bin/true
 [Security]
 AllowRootLogin=false
 MaxLoginRetry=3
-TerminalServerUsers=infra-desktop
+TerminalServerUsers=basaltwater-desktop
 AlwaysGroupCheck=true
 AllowAlternateShell=false
 SessionSockdirGroup=xrdp
@@ -352,7 +352,7 @@ def _remove_legacy_xrdp_socket_environment() -> None:
     """Remove the obsolete static socket-path overrides from older setups."""
     removed = False
     for service in ("xrdp", "xrdp-sesman"):
-        dropin_path = f"/etc/systemd/system/{service}.service.d/infra-tools.conf"
+        dropin_path = f"/etc/systemd/system/{service}.service.d/basaltwater.conf"
         if os.path.exists(dropin_path):
             try:
                 os.remove(dropin_path)
@@ -374,7 +374,7 @@ def _configure_xrdp_apparmor_socket_access(render_node: str | None = None) -> No
     os.makedirs(os.path.dirname(_XRDP_APPARMOR_LOCAL), exist_ok=True)
     with open(_XRDP_APPARMOR_LOCAL, "w", encoding="utf-8") as rules:
         rules.write(
-            "# infra-tools: xorgxrdp per-user transport sockets\n"
+            "# basaltwater: xorgxrdp per-user transport sockets\n"
             "owner /run/xrdp/sockdir/** rw,\n"
             "# xorgxrdp uses POSIX shared memory for RDP frame capture\n"
             "owner /dev/shm/ rw,\n"

@@ -23,7 +23,7 @@ class WheelArtifactTest(unittest.TestCase):
 
     def test_rejects_generated_python_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
-            wheel = Path(temporary_dir) / "infra_tools.whl"
+            wheel = Path(temporary_dir) / "basaltwater.whl"
             self._write_wheel(
                 wheel,
                 "lib/__pycache__/config.cpython-313.pyc",
@@ -53,7 +53,7 @@ class WheelArtifactTest(unittest.TestCase):
                 self.assertEqual(Path(str(kwargs["cwd"])), observed_source)
                 output_dir = Path(command[command.index("--outdir") + 1])
                 output_dir.mkdir(parents=True)
-                self._write_wheel(output_dir / "infra_tools.whl")
+                self._write_wheel(output_dir / "basaltwater.whl")
 
             with (
                 patch.object(check_wheel_artifact, "ROOT", root),
@@ -61,7 +61,7 @@ class WheelArtifactTest(unittest.TestCase):
             ):
                 wheel = check_wheel_artifact._build_wheel(work / "dist")
 
-            self.assertEqual(wheel.name, "infra_tools.whl")
+            self.assertEqual(wheel.name, "basaltwater.whl")
             if observed_source is None:
                 self.fail("Build command did not receive the temporary source path")
             self.assertTrue((observed_source / "common" / "module.py").is_file())

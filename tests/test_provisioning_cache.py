@@ -6,7 +6,7 @@ from argparse import Namespace
 import unittest
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib.config import SetupConfig
 
 
@@ -47,7 +47,7 @@ def _args(**overrides: object) -> Namespace:
 
 class TestCachedProvisioningMetadata(unittest.TestCase):
     def test_setup_parser_accepts_additive_mounted_disk_without_root(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "setup",
@@ -80,7 +80,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
     def test_setup_parser_accepts_force_provider_verification(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -99,13 +99,13 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
     def test_force_provider_verification_requires_provisioning_host(self) -> None:
         args = _args(verify_provider=True)
 
-        with patch("infra_tools.prompt_for_missing_passwords"), \
+        with patch("basaltwater.prompt_for_missing_passwords"), \
              patch(
-                 "infra_tools.SetupConfig.from_args",
+                 "basaltwater.SetupConfig.from_args",
                  return_value=_config(hosted_node=None),
              ), \
              patch("builtins.print") as mock_print:
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_print.assert_called_once_with(
@@ -115,13 +115,13 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
     def test_setup_reports_configuration_errors_without_a_traceback(self) -> None:
         args = _args()
 
-        with patch("infra_tools.prompt_for_missing_passwords"), \
+        with patch("basaltwater.prompt_for_missing_passwords"), \
              patch(
-                 "infra_tools.SetupConfig.from_args",
+                 "basaltwater.SetupConfig.from_args",
                  side_effect=ValueError("invalid setup selection"),
              ), \
              patch("builtins.print") as mock_print:
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_print.assert_called_once_with("Error: invalid setup selection")
@@ -130,15 +130,15 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         args = _args()
         cached = _config()
 
-        with patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools.SetupConfig.from_args",
+                 "basaltwater.SetupConfig.from_args",
                  side_effect=ValueError("invalid patch selection"),
              ), \
              patch("builtins.print") as mock_print:
-            result = infra_tools.run_patch_command(args)
+            result = basaltwater.run_patch_command(args)
 
         self.assertEqual(result, 1)
         mock_print.assert_called_once_with("Error: invalid patch selection")
@@ -163,8 +163,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             ssh_key="/keys/agent",
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(current, _args())
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(current, _args())
 
         self.assertTrue(reused)
         self.assertEqual(current.hosted_node, "10.0.0.10")
@@ -205,8 +205,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached) as mock_load:
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached) as mock_load:
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(container_memory="8G"),
             )
@@ -220,21 +220,21 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         self.assertEqual(current.network_gateway4, "10.0.0.1")
 
         self.assertTrue(
-            infra_tools._provisioning_changes_requested(
+            basaltwater._provisioning_changes_requested(
                 _config(container_cores=2),
                 _config(container_cores=1),
                 _args(container_cores=2),
             )
         )
         self.assertTrue(
-            infra_tools._provisioning_changes_requested(
+            basaltwater._provisioning_changes_requested(
                 _config(storage_mounts=[["data", "/srv/new"]]),
                 _config(storage_mounts=[["data", "/srv/old"]]),
                 _args(storage_mounts=[["data", "/srv/new"]]),
             )
         )
         self.assertTrue(
-            infra_tools._provisioning_changes_requested(
+            basaltwater._provisioning_changes_requested(
                 _config(container_base="ubuntu"),
                 _config(container_base="debian"),
                 _args(container_base="ubuntu"),
@@ -266,12 +266,12 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             hosted_bridge="vmbr1",
         )
 
-        provider_rebind = infra_tools._provider_rebind_requested(
+        provider_rebind = basaltwater._provider_rebind_requested(
             current,
             cached,
             args,
         )
-        reused = infra_tools._reuse_cached_provisioning_metadata(
+        reused = basaltwater._reuse_cached_provisioning_metadata(
             current,
             args,
             cached,
@@ -301,7 +301,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        infra_tools._reuse_cached_provisioning_metadata(
+        basaltwater._reuse_cached_provisioning_metadata(
             current,
             _args(hosted_user="operator", hosted_key="/keys/new"),
             cached,
@@ -322,7 +322,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        infra_tools._reuse_cached_provisioning_metadata(
+        basaltwater._reuse_cached_provisioning_metadata(
             current,
             _args(),
             cached,
@@ -357,7 +357,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 updated,
                 cached,
                 args,
@@ -368,7 +368,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         updated.hosted_bridge = cached.hosted_bridge
         args.hosted_bridge = None
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 updated,
                 cached,
                 args,
@@ -379,7 +379,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         updated.container_storage = [["root", "fast-zfs", "64G"]]
         args.container_storage = updated.container_storage
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 updated,
                 cached,
                 args,
@@ -402,13 +402,13 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
         with (
-            patch("infra_tools.prompt_for_missing_passwords"),
-            patch("infra_tools.SetupConfig.from_args", return_value=current),
-            patch("infra_tools.load_setup_command", return_value=cached),
-            patch("infra_tools.save_setup_command") as mock_save,
+            patch("basaltwater.prompt_for_missing_passwords"),
+            patch("basaltwater.SetupConfig.from_args", return_value=current),
+            patch("basaltwater.load_setup_command", return_value=cached),
+            patch("basaltwater.save_setup_command") as mock_save,
             patch("builtins.print") as mock_print,
         ):
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_save.assert_not_called()
@@ -441,7 +441,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             vm_disk_settings=current.vm_disk_settings,
         )
 
-        additions = infra_tools._merge_additive_vm_storage(
+        additions = basaltwater._merge_additive_vm_storage(
             current,
             cached,
             args,
@@ -471,7 +471,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 current,
                 cached,
                 args,
@@ -503,7 +503,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=current.storage_mounts,
         )
 
-        additions = infra_tools._merge_additive_vm_storage(
+        additions = basaltwater._merge_additive_vm_storage(
             current,
             cached,
             args,
@@ -513,7 +513,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         self.assertEqual(current.container_storage, cached.container_storage)
         self.assertEqual(current.storage_mounts, cached.storage_mounts)
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 current,
                 cached,
                 args,
@@ -541,7 +541,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=args.storage_mounts,
         )
 
-        additions = infra_tools._merge_additive_vm_storage(
+        additions = basaltwater._merge_additive_vm_storage(
             current,
             cached,
             args,
@@ -571,7 +571,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=current.storage_mounts,
         )
 
-        additions = infra_tools._merge_additive_vm_storage(
+        additions = basaltwater._merge_additive_vm_storage(
             current,
             cached,
             args,
@@ -579,7 +579,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
 
         self.assertIsNone(additions)
         self.assertEqual(
-            infra_tools._unsupported_cached_provisioning_changes(
+            basaltwater._unsupported_cached_provisioning_changes(
                 current,
                 cached,
                 args,
@@ -602,7 +602,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
         self.assertIsNone(
-            infra_tools._merge_additive_vm_storage(current, cached, args)
+            basaltwater._merge_additive_vm_storage(current, cached, args)
         )
 
     def test_reuses_metadata_when_explicit_guest_shape_matches(self) -> None:
@@ -626,8 +626,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             container_base="debian",
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(current, args)
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(current, args)
 
         self.assertTrue(reused)
         self.assertEqual(current.hosted_node, "10.0.0.10")
@@ -642,8 +642,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(container_cores=3, verify_provider=True),
             )
@@ -668,7 +668,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
                     **explicit_args,
                 )
 
-                reused = infra_tools._reuse_cached_provisioning_metadata(
+                reused = basaltwater._reuse_cached_provisioning_metadata(
                     current,
                     _args(**explicit_args),
                     cached,
@@ -678,8 +678,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
                 self.assertEqual(current.hosted_node, "10.0.0.10")
 
     def test_missing_local_metadata_requires_proxmox(self) -> None:
-        with patch("infra_tools.load_setup_command", return_value=None):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=None):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 _config(),
                 _args(),
             )
@@ -695,8 +695,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(friendly_name="agent-min-2"),
             )
@@ -714,8 +714,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(friendly_name="agent-min-2"),
             )
@@ -732,8 +732,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(friendly_name="new-label"),
             )
@@ -751,8 +751,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(system_hostname="new-host"),
             )
@@ -769,8 +769,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 current,
                 _args(),
             )
@@ -782,8 +782,8 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
     def test_legacy_cache_without_network_defaults_requires_refresh(self) -> None:
         cached = _config(static_ipv4="10.0.0.50/24")
 
-        with patch("infra_tools.load_setup_command", return_value=cached):
-            reused = infra_tools._reuse_cached_provisioning_metadata(
+        with patch("basaltwater.load_setup_command", return_value=cached):
+            reused = basaltwater._reuse_cached_provisioning_metadata(
                 _config(),
                 _args(),
             )
@@ -799,10 +799,10 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
         with patch(
-            "infra_tools.load_setup_command",
+            "basaltwater.load_setup_command",
             return_value=cached,
         ) as mock_load:
-            reused = infra_tools._reuse_cached_provisioning_metadata(current, _args())
+            reused = basaltwater._reuse_cached_provisioning_metadata(current, _args())
 
         self.assertTrue(reused)
         mock_load.assert_called_once_with("10.0.0.50")
@@ -815,7 +815,7 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
         self.assertTrue(
-            infra_tools._is_cached_provisioned_guest_identity(
+            basaltwater._is_cached_provisioned_guest_identity(
                 _config(
                     host="10.0.0.50/24",
                     hosted_node="10.0.0.10",
@@ -825,19 +825,19 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             )
         )
         self.assertFalse(
-            infra_tools._is_cached_provisioned_guest_identity(
+            basaltwater._is_cached_provisioned_guest_identity(
                 _config(host="10.0.0.51", hosted_node="10.0.0.10"),
                 cached,
             )
         )
         self.assertTrue(
-            infra_tools._is_cached_provisioned_guest_identity(
+            basaltwater._is_cached_provisioned_guest_identity(
                 _config(host="10.0.0.50", hosted_node="10.0.0.11"),
                 cached,
             )
         )
         self.assertFalse(
-            infra_tools._is_cached_provisioned_guest_identity(
+            basaltwater._is_cached_provisioned_guest_identity(
                 _config(
                     host="10.0.0.50",
                     hosted_node="10.0.0.10",
@@ -848,13 +848,13 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
     @patch("lib.proxmox_vm.provision_vm")
-    @patch("infra_tools.register_proxmox_setup_host")
-    @patch("infra_tools.save_setup_command")
-    @patch("infra_tools.store_cli_credentials")
-    @patch("infra_tools.print_setup_summary")
-    @patch("infra_tools.run_remote_setup", return_value=0)
-    @patch("infra_tools.validate_host", return_value=True)
-    @patch("infra_tools.validate_username", return_value=True)
+    @patch("basaltwater.register_proxmox_setup_host")
+    @patch("basaltwater.save_setup_command")
+    @patch("basaltwater.store_cli_credentials")
+    @patch("basaltwater.print_setup_summary")
+    @patch("basaltwater.run_remote_setup", return_value=0)
+    @patch("basaltwater.validate_host", return_value=True)
+    @patch("basaltwater.validate_username", return_value=True)
     def test_setup_refreshes_cached_guest_host_key_without_shape_changes(
         self,
         _mock_username,
@@ -885,17 +885,17 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             system_hostname="agent-host",
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ) as mock_prepare, \
              patch(
-                 "infra_tools.refresh_managed_guest_host_keys",
+                 "basaltwater.refresh_managed_guest_host_keys",
              ) as mock_refresh:
-            with patch("infra_tools.ensure_guest_ipv4_route") as mock_route:
-                result = infra_tools.run_setup_command(args)
+            with patch("basaltwater.ensure_guest_ipv4_route") as mock_route:
+                result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         mock_provision.assert_not_called()
@@ -916,13 +916,13 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
 
     @patch("lib.proxmox_vm.provision_vm")
-    @patch("infra_tools.register_proxmox_setup_host")
-    @patch("infra_tools.save_setup_command")
-    @patch("infra_tools.store_cli_credentials")
-    @patch("infra_tools.print_setup_summary")
-    @patch("infra_tools.run_remote_setup", return_value=0)
-    @patch("infra_tools.validate_host", return_value=True)
-    @patch("infra_tools.validate_username", return_value=True)
+    @patch("basaltwater.register_proxmox_setup_host")
+    @patch("basaltwater.save_setup_command")
+    @patch("basaltwater.store_cli_credentials")
+    @patch("basaltwater.print_setup_summary")
+    @patch("basaltwater.run_remote_setup", return_value=0)
+    @patch("basaltwater.validate_host", return_value=True)
+    @patch("basaltwater.validate_username", return_value=True)
     def test_nopasswd_still_uses_root_to_prepare_guest_network(
         self,
         _mock_username,
@@ -951,15 +951,15 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.refresh_managed_guest_host_keys"), \
-             patch("infra_tools.ensure_guest_ipv4_route") as mock_route:
-            result = infra_tools.run_setup_command(
+             patch("basaltwater.refresh_managed_guest_host_keys"), \
+             patch("basaltwater.ensure_guest_ipv4_route") as mock_route:
+            result = basaltwater.run_setup_command(
                 _args(friendly_name="agent-min-1", system_hostname="agent-host")
             )
 
@@ -984,34 +984,34 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.prompt_for_missing_passwords"), \
-             patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.prompt_for_missing_passwords"), \
+             patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
              patch(
-                 "infra_tools.refresh_managed_guest_host_keys",
-                 side_effect=infra_tools.ProvisionError("scan failed"),
+                 "basaltwater.refresh_managed_guest_host_keys",
+                 side_effect=basaltwater.ProvisionError("scan failed"),
              ), \
-             patch("infra_tools.run_remote_setup") as mock_remote:
-            result = infra_tools.run_setup_command(_args())
+             patch("basaltwater.run_remote_setup") as mock_remote:
+            result = basaltwater.run_setup_command(_args())
 
         self.assertEqual(result, 1)
         mock_remote.assert_not_called()
 
     @patch("lib.proxmox_vm.provision_vm")
-    @patch("infra_tools.register_proxmox_setup_host")
-    @patch("infra_tools.save_setup_command")
-    @patch("infra_tools.store_cli_credentials")
-    @patch("infra_tools.print_setup_summary")
-    @patch("infra_tools.run_remote_setup", return_value=0)
-    @patch("infra_tools.validate_host", return_value=True)
-    @patch("infra_tools.validate_username", return_value=True)
+    @patch("basaltwater.register_proxmox_setup_host")
+    @patch("basaltwater.save_setup_command")
+    @patch("basaltwater.store_cli_credentials")
+    @patch("basaltwater.print_setup_summary")
+    @patch("basaltwater.run_remote_setup", return_value=0)
+    @patch("basaltwater.validate_host", return_value=True)
+    @patch("basaltwater.validate_username", return_value=True)
     def test_home_storage_uses_root_for_initial_network_repair(
         self,
         _mock_username,
@@ -1036,14 +1036,14 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=None), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=None), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.ensure_guest_ipv4_route") as mock_route:
-            result = infra_tools.run_setup_command(_args())
+             patch("basaltwater.ensure_guest_ipv4_route") as mock_route:
+            result = basaltwater.run_setup_command(_args())
 
         self.assertEqual(result, 0)
         mock_route.assert_called_once_with(
@@ -1089,28 +1089,28 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
         args = _args(container_memory="8G")
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command"), \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command"), \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
                  side_effect=VMAlreadyExists(),
              ) as mock_provision, \
              patch(
-                 "infra_tools.refresh_managed_guest_host_keys",
+                 "basaltwater.refresh_managed_guest_host_keys",
              ) as mock_refresh:
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         mock_provision.assert_called_once_with(
@@ -1154,26 +1154,26 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
         )
         args = _args(container_storage=current.container_storage)
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command") as mock_save, \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command") as mock_save, \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
                  side_effect=VMAlreadyExists(),
              ) as mock_provision, \
-             patch("infra_tools.refresh_managed_guest_host_keys"):
-            result = infra_tools.run_setup_command(args)
+             patch("basaltwater.refresh_managed_guest_host_keys"):
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         mock_provision.assert_called_once_with(
@@ -1218,26 +1218,26 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=current.storage_mounts,
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command") as mock_save, \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command") as mock_save, \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
                  side_effect=VMAlreadyExists(),
              ) as mock_provision, \
-             patch("infra_tools.refresh_managed_guest_host_keys"):
-            result = infra_tools.run_setup_command(args)
+             patch("basaltwater.refresh_managed_guest_host_keys"):
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         self.assertEqual(
@@ -1282,26 +1282,26 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=current.storage_mounts,
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command") as mock_save, \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=1), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command") as mock_save, \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=1), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
                  side_effect=VMAlreadyExists(),
              ), \
-             patch("infra_tools.refresh_managed_guest_host_keys"):
-            result = infra_tools.run_setup_command(args)
+             patch("basaltwater.refresh_managed_guest_host_keys"):
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_save.assert_not_called()
@@ -1329,24 +1329,24 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             storage_mounts=current.storage_mounts,
         )
 
-        with patch("infra_tools.prompt_for_missing_passwords"), \
-             patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.prompt_for_missing_passwords"), \
+             patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command"), \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
-             patch("infra_tools.refresh_managed_guest_host_keys"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command"), \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
+             patch("basaltwater.refresh_managed_guest_host_keys"), \
              patch("lib.proxmox_vm.provision_vm") as mock_provision:
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         mock_provision.assert_not_called()
@@ -1395,20 +1395,20 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             container_storage=current.container_storage,
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command") as mock_save, \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command") as mock_save, \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.verify_vm_rebind_source_stopped",
              ) as mock_source, \
@@ -1417,9 +1417,9 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
                  side_effect=VMAlreadyExists(),
              ) as mock_provision, \
              patch(
-                 "infra_tools.refresh_managed_guest_host_keys",
+                 "basaltwater.refresh_managed_guest_host_keys",
              ) as mock_refresh:
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 0)
         mock_source.assert_called_once_with(cached, dry_run=False)
@@ -1465,22 +1465,22 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             container_storage=current.container_storage,
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=cached), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=cached), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.save_setup_command") as mock_save, \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.save_setup_command") as mock_save, \
              patch(
                  "lib.proxmox_vm.verify_vm_rebind_source_stopped",
-                 side_effect=infra_tools.ProvisionError("source is running"),
+                 side_effect=basaltwater.ProvisionError("source is running"),
              ), \
              patch("builtins.print"):
-            result = infra_tools.run_setup_command(args)
+            result = basaltwater.run_setup_command(args)
 
         self.assertEqual(result, 1)
         mock_save.assert_not_called()
@@ -1497,28 +1497,28 @@ class TestCachedProvisioningMetadata(unittest.TestCase):
             network_dns=["1.1.1.1"],
         )
 
-        with patch("infra_tools.SetupConfig.from_args", return_value=current), \
-             patch("infra_tools.load_setup_command", return_value=None), \
+        with patch("basaltwater.SetupConfig.from_args", return_value=current), \
+             patch("basaltwater.load_setup_command", return_value=None), \
              patch(
-                 "infra_tools._prepare_runtime_config_for_cli",
+                 "basaltwater._prepare_runtime_config_for_cli",
                  side_effect=lambda config: config,
              ), \
-             patch("infra_tools.validate_host", return_value=True), \
-             patch("infra_tools.validate_username", return_value=True), \
-             patch("infra_tools.print_setup_summary"), \
-             patch("infra_tools.store_cli_credentials"), \
-             patch("infra_tools.save_setup_command"), \
-             patch("infra_tools.register_proxmox_setup_host"), \
-             patch("infra_tools.run_remote_setup", return_value=0), \
-             patch("infra_tools.ensure_guest_ipv4_route"), \
+             patch("basaltwater.validate_host", return_value=True), \
+             patch("basaltwater.validate_username", return_value=True), \
+             patch("basaltwater.print_setup_summary"), \
+             patch("basaltwater.store_cli_credentials"), \
+             patch("basaltwater.save_setup_command"), \
+             patch("basaltwater.register_proxmox_setup_host"), \
+             patch("basaltwater.run_remote_setup", return_value=0), \
+             patch("basaltwater.ensure_guest_ipv4_route"), \
              patch(
                  "lib.proxmox_vm.provision_vm",
                  side_effect=VMAlreadyExists(),
              ), \
              patch(
-                 "infra_tools.refresh_managed_guest_host_keys",
+                 "basaltwater.refresh_managed_guest_host_keys",
              ) as mock_refresh:
-            result = infra_tools.run_setup_command(_args())
+            result = basaltwater.run_setup_command(_args())
 
         self.assertEqual(result, 0)
         mock_refresh.assert_not_called()

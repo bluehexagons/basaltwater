@@ -1,4 +1,4 @@
-"""Bounded, validated event storage for the infra-tools web panel."""
+"""Bounded, validated event storage for the basaltwater web panel."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ from lib.types import JSON, JSONDict
 from lib.validation import validate_filesystem_path
 
 
-WEB_PANEL_DATA_DIR = "/var/lib/infra_tools/web-panel"
+WEB_PANEL_DATA_DIR = "/var/lib/basaltwater/web-panel"
 WEB_PANEL_AUDIT_DIR = f"{WEB_PANEL_DATA_DIR}/audit"
 WEB_PANEL_AUDIT_SNAPSHOT = f"{WEB_PANEL_AUDIT_DIR}/events.json"
 WEB_PANEL_NOTIFICATION_DIR = f"{WEB_PANEL_DATA_DIR}/notifications"
 WEB_PANEL_NOTIFICATION_LOG = f"{WEB_PANEL_NOTIFICATION_DIR}/events.jsonl"
-WEB_PANEL_INGEST_TOKEN = "/etc/infra-tools/web-panel/notification-ingest.token"
+WEB_PANEL_INGEST_TOKEN = "/etc/basaltwater/web-panel/notification-ingest.token"
 WEB_PANEL_NOTIFICATION_ENDPOINT = "/api/v1/notifications"
 
 _MAX_FILE_BYTES = 5 * 1024 * 1024

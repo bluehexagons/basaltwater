@@ -19,8 +19,8 @@ OFFICIAL_DEBIAN_MIRROR = "https://deb.debian.org/debian"
 OFFICIAL_DEBIAN_SECURITY_MIRROR = "https://security.debian.org/debian-security"
 DEBIAN_ARCHIVE_KEYRING = "/usr/share/keyrings/debian-archive-keyring.gpg"
 DEBIAN_ARCHIVE_KEYRING_PGP = "/usr/share/keyrings/debian-archive-keyring.pgp"
-MANAGED_SOURCE_FILENAME = "infra_tools-debian.sources"
-MANAGED_SOURCE_MARKER = "# Managed by infra_tools"
+MANAGED_SOURCE_FILENAME = "basaltwater-debian.sources"
+MANAGED_SOURCE_MARKER = "# Managed by basaltwater"
 XRDP_SID_SOURCE = """Types: deb
 URIs: https://deb.debian.org/debian
 Suites: sid
@@ -337,8 +337,8 @@ def _disable_stale_official_sources(apt_dir: str, codename: str) -> list[str]:
         # Desktop setup deliberately uses this exact, low-priority source.
         # Do not exempt arbitrary Sid entries, or a matching filename without
         # its pin. Also repair files commented by our older generic cleanup.
-        pin_path = os.path.join(apt_dir, "preferences.d", "infra-tools-sid.pref")
-        if path == os.path.join(apt_dir, "sources.list.d", "infra-tools-sid.sources"):
+        pin_path = os.path.join(apt_dir, "preferences.d", "basaltwater-sid.pref")
+        if path == os.path.join(apt_dir, "sources.list.d", "basaltwater-sid.sources"):
             try:
                 with open(pin_path, encoding="utf-8") as pin_file:
                     pinned = pin_file.read() == XRDP_SID_PREFERENCE
@@ -369,7 +369,7 @@ def _disable_stale_official_sources(apt_dir: str, codename: str) -> list[str]:
             for line in content.splitlines(keepends=True):
                 entry = _parse_one_line_source(line, path)
                 if entry is not None and _is_stale_official_entry(entry, codename):
-                    output.append(f"# Disabled by infra_tools: {line}")
+                    output.append(f"# Disabled by basaltwater: {line}")
                     changed = True
                 else:
                     output.append(line)
@@ -383,7 +383,7 @@ def _disable_stale_official_sources(apt_dir: str, codename: str) -> list[str]:
 
 
 def _backup_file(path: str) -> None:
-    backup_path = f"{path}.infra_tools.bak"
+    backup_path = f"{path}.basaltwater.bak"
     if not os.path.exists(backup_path):
         shutil.copy2(path, backup_path)
 
@@ -391,7 +391,7 @@ def _backup_file(path: str) -> None:
 def _write_text_atomically(path: str, content: str) -> None:
     directory = os.path.dirname(path)
     file_descriptor, temporary_path = tempfile.mkstemp(
-        prefix=".infra_tools_apt_",
+        prefix=".basaltwater_apt_",
         dir=directory,
         text=True,
     )
@@ -407,7 +407,7 @@ def _write_text_atomically(path: str, content: str) -> None:
 
 def _comment_lines(lines: list[str]) -> list[str]:
     return [
-        line if line.lstrip().startswith("#") else f"# Disabled by infra_tools: {line}"
+        line if line.lstrip().startswith("#") else f"# Disabled by basaltwater: {line}"
         for line in lines
     ]
 
@@ -445,7 +445,7 @@ def _disable_cdrom_sources(apt_dir: str) -> list[str]:
             output = []
             for line in content.splitlines(keepends=True):
                 if _line_contains_active_cdrom(line):
-                    output.append(f"# Disabled by infra_tools: {line}")
+                    output.append(f"# Disabled by basaltwater: {line}")
                     changed = True
                 else:
                     output.append(line)
@@ -478,7 +478,7 @@ def _ensure_managed_sources(
         raise RuntimeError("Debian archive keyring is unavailable")
     component_text = " ".join(components)
     stanzas = [
-        f"{MANAGED_SOURCE_MARKER}. Do not edit; rerun infra_tools after a Debian release change."
+        f"{MANAGED_SOURCE_MARKER}. Do not edit; rerun basaltw after a Debian release change."
     ]
     if include_base:
         stanzas.append(
@@ -503,7 +503,7 @@ Signed-By: {keyring}"""
             existing = file_obj.read()
         if MANAGED_SOURCE_MARKER not in existing:
             raise RuntimeError(
-                f"APT source file already exists and is not managed by infra_tools: {path}"
+                f"APT source file already exists and is not managed by basaltwater: {path}"
             )
         if existing == content:
             return False
@@ -606,7 +606,7 @@ def ensure_debian_package_sources(
     if stale_paths:
         print("  ✓ Disabled stale official Debian APT sources")
     if removed_redundant_managed_source:
-        print("  ✓ Removed redundant infra_tools Debian APT source")
+        print("  ✓ Removed redundant basaltwater Debian APT source")
     if added_managed_sources:
         print(f"  ✓ Added official Debian {codename} APT sources")
     else:

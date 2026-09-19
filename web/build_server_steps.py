@@ -16,13 +16,13 @@ from web.cicd_steps import create_isolated_build_directories, secure_cicd_direct
 
 
 CICD_USER = "webhook"
-CICD_HOME = "/var/lib/infra_tools/cicd"
+CICD_HOME = "/var/lib/basaltwater/cicd"
 
 
 def generate_deploy_ssh_key(config: SetupConfig) -> None:
     """Generate SSH key for deploying to app servers."""
     del config
-    ssh_dir = "/var/lib/infra_tools/cicd/.ssh"
+    ssh_dir = "/var/lib/basaltwater/cicd/.ssh"
     key_file = f"{ssh_dir}/deploy_key"
     public_key_file = f"{key_file}.pub"
 
@@ -74,7 +74,7 @@ def configure_deploy_targets(config: SetupConfig) -> None:
         print("  ℹ No deploy targets specified")
         return
     
-    targets_file = "/etc/infra_tools/cicd/deploy_targets.json"
+    targets_file = "/etc/basaltwater/cicd/deploy_targets.json"
     os.makedirs(os.path.dirname(targets_file), exist_ok=True)
     
     existing_targets = {}
@@ -91,7 +91,7 @@ def configure_deploy_targets(config: SetupConfig) -> None:
             "user": "deploy",
             "ssh_port": 22,
             "base_dir": "/var/www",
-            "ssh_key": "/var/lib/infra_tools/cicd/.ssh/deploy_key",
+            "ssh_key": "/var/lib/basaltwater/cicd/.ssh/deploy_key",
         }
     
     write_json_atomic(targets_file, existing_targets, mode=0o644)
@@ -107,7 +107,7 @@ def configure_deploy_known_hosts(config: SetupConfig) -> None:
         print("  ℹ No deploy targets to add to known_hosts")
         return
     
-    workspace_dir = "/var/lib/infra_tools/cicd"
+    workspace_dir = "/var/lib/basaltwater/cicd"
     known_hosts = get_known_hosts_path(workspace_dir)
     
     os.makedirs(os.path.dirname(known_hosts), mode=0o700, exist_ok=True)
@@ -125,8 +125,8 @@ def configure_deploy_known_hosts(config: SetupConfig) -> None:
         raise RuntimeError(
             "Deploy target host keys are not enrolled: "
             f"{targets}. Verify each fingerprint and run "
-            "'sudo -n /usr/bin/python3 /opt/infra_tools/infra_tools.py "
-            "--workspace /var/lib/infra_tools/cicd "
+            "'sudo -n /usr/bin/python3 /opt/basaltwater/basaltwater.py "
+            "--workspace /var/lib/basaltwater/cicd "
             "ssh-key enroll HOST' before enabling CI/CD deployment."
         )
     

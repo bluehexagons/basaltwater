@@ -114,7 +114,7 @@ class TestInstallGo(unittest.TestCase):
         self.assertTrue(any("https://go.dev/dl/go1.22.3" in command for command in commands))
         download_command = next(command for command in commands if command.startswith("wget -q "))
         self.assertIn("--https-only", download_command)
-        self.assertIn("/infra-tools-go-release-", download_command)
+        self.assertIn("/basaltwater-go-release-", download_command)
         self.assertNotIn("-O /tmp/go1.22.3", download_command)
 
     def test_reinstalls_with_native_arm64_archive(self):

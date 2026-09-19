@@ -29,7 +29,7 @@ class TestNodeSetup(unittest.TestCase):
             service_name="auto-update-node",
             service_desc="Auto-update Node.js via nvm",
             timer_desc="Auto-update Node.js weekly",
-            script_path="/opt/infra_tools/web/service_tools/auto_update_node.py",
+            script_path="/opt/basaltwater/web/service_tools/auto_update_node.py",
             schedule="Sun *-*-* 03:00:00",
             check_path="/srv/users/user/.nvm/nvm.sh",
             check_name="Node.js",

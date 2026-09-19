@@ -8,7 +8,7 @@ day-to-day operation.
 
 The receiver is opt-in, HTTPS-only, and available at
 `/api/v1/notifications`. It accepts `POST` requests authenticated by a generated
-bearer token stored at `/etc/infra-tools/web-panel/notification-ingest.token`.
+bearer token stored at `/etc/basaltwater/web-panel/notification-ingest.token`.
 The panel keeps the latest 100 accepted events.
 
 | Result | Response |
@@ -81,13 +81,13 @@ and readiness checks. There is no general package update button; use setup with
 ## Access controls and scope
 
 The panel uses Basic Auth, request throttling, an
-`infra-tools-web-panel` fail2ban jail, a Unix-socket-only application listener,
+`basaltwater-web-panel` fail2ban jail, a Unix-socket-only application listener,
 CSRF tokens for state-changing forms, no-store responses, and separate service
 group access for the socket, bearer token, audit snapshot, and notification
 history. It supports server and workstation profiles, but not `server_proxmox`.
 It normally runs as the setup user. A root-managed setup instead uses the
-locked `infra-web-panel` service account.
+locked `basaltwater-web-panel` service account.
 
-The panel renders saved configured access and discovers live `infra-web`
+The panel renders saved configured access and discovers live `basaltwater-web`
 forwards and static sites. HomeBox status is a loopback readiness probe only;
 it does not prove DNS, TLS, browser reachability, or inventory administration.

@@ -6,7 +6,7 @@ the remote setup process makes a best-effort guess from the target runtime.
 
 ## Officially Supported Configurations
 
-infra_tools officially supports Debian in these configurations:
+basaltwater officially supports Debian in these configurations:
 
 - **Bare metal**: a physical Debian host, detected as `hardware`.
 - **Virtual machine**: a Debian VM on Proxmox or a hosted VPS such as
@@ -160,10 +160,10 @@ default.
 
 ## State Persistence
 
-Machine type is saved through `/opt/infra_tools/state/machine.json` only after
+Machine type is saved through `/opt/basaltwater/state/machine.json` only after
 every requested setup mutation succeeds. The runtime path is a compatibility
-link to durable root-owned storage under `/var/lib/infra_tools`, so refreshing
-the uploaded infra_tools source does not discard release metadata, bundle
+link to durable root-owned storage under `/var/lib/basaltwater`, so refreshing
+the uploaded basaltwater source does not discard release metadata, bundle
 registrations, or maintenance state. Legacy state is migrated automatically.
 An unfinished marker from the old non-persistent layout is retained once as
 `setup-operation.pre-persistence.json` for diagnosis without blocking the
@@ -171,7 +171,7 @@ explicit migration rerun; subsequent operation markers remain durable and
 retain their normal recovery guard.
 The recalled setup is finalized at the same time in `setup.json`.
 
-A real setup first creates `/opt/infra_tools/state/setup-operation.json`. It
+A real setup first creates `/opt/basaltwater/state/setup-operation.json`. It
 records the current step and blocks another setup if execution is interrupted.
 Ordinary failures mark it `recovery_required`. Rerunning the same system type,
 machine type, and setup user resumes that operation and safely reapplies the

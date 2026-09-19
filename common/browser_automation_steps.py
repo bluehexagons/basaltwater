@@ -25,7 +25,7 @@ from .common_steps import _run_as_login_user
 
 
 PLAYWRIGHT_MCP_VERSION = "0.0.79"
-PLAYWRIGHT_MCP_SERVER_NAME = "infra-tools-playwright"
+PLAYWRIGHT_MCP_SERVER_NAME = "basaltwater-playwright"
 PLAYWRIGHT_MCP_INTEGRITY = (
     "sha512-VpqD4a3vFyGQMY9sh3UJiO6wjcurggkljKfAyCHL0QWGY5m6Ehr3MNsAAHPDHO//"
     "n13g0PCjpHatAOiulrqdZQ=="
@@ -40,7 +40,7 @@ PLAYWRIGHT_CORE_INTEGRITY = (
     "qOw32i2wFlRP7U5mcOpMZg=="
 )
 
-PLAYWRIGHT_ROOT = "/opt/infra-tools-playwright"
+PLAYWRIGHT_ROOT = "/opt/basaltwater-playwright"
 PLAYWRIGHT_MCP_CLI = os.path.join(
     PLAYWRIGHT_ROOT,
     "node_modules",
@@ -60,8 +60,8 @@ PLAYWRIGHT_MODULE = os.path.join(
     "playwright",
 )
 PLAYWRIGHT_SMOKE_SCRIPT = os.path.join(PLAYWRIGHT_ROOT, "browser-smoke.js")
-PLAYWRIGHT_MCP_WRAPPER = "/usr/local/bin/infra-tools-playwright-mcp"
-PLAYWRIGHT_DOCTOR_WRAPPER = "/usr/local/bin/infra-tools-playwright-doctor"
+PLAYWRIGHT_MCP_WRAPPER = "/usr/local/bin/basaltwater-playwright-mcp"
+PLAYWRIGHT_DOCTOR_WRAPPER = "/usr/local/bin/basaltwater-playwright-doctor"
 SYSTEM_NODE = "/usr/bin/node"
 SYSTEM_TIMEOUT = "/usr/bin/timeout"
 PLAYWRIGHT_SMOKE_ACTION_TIMEOUT_MS = 120_000
@@ -69,7 +69,7 @@ PLAYWRIGHT_SMOKE_PROCESS_TIMEOUT_SECONDS = 180
 PLAYWRIGHT_MCP_OUTPUT_MAX_BYTES = 256 * 1024 * 1024
 PLAYWRIGHT_MCP_SETTLE_TIMEOUT_MS = 1_000
 PLAYWRIGHT_DEPS_MARKER = (
-    f"/var/lib/infra_tools/state/playwright-deps-{PLAYWRIGHT_VERSION}"
+    f"/var/lib/basaltwater/state/playwright-deps-{PLAYWRIGHT_VERSION}"
 )
 
 _BROWSER_EXECUTABLE_SCRIPT = (
@@ -91,7 +91,7 @@ _MCP_WRAPPER_CONTENT = (
     '  echo "Managed Playwright Chromium is not executable: $browser_path" >&2\n'
     "  exit 1\n"
     "fi\n"
-    'output_dir="$HOME/.local/state/infra_tools/playwright-mcp"\n'
+    'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"\n'
     'mkdir -p "$output_dir"\n'
     'chmod 0700 "$output_dir"\n'
     f"exec {SYSTEM_NODE} {PLAYWRIGHT_MCP_CLI} --headless --isolated \\\n"
@@ -404,13 +404,13 @@ def _install_browser(config: SetupConfig) -> bool:
         run(f"{SYSTEM_NODE} {shlex.quote(PLAYWRIGHT_CLI)} install-deps chromium")
         os.makedirs(os.path.dirname(PLAYWRIGHT_DEPS_MARKER), mode=0o755, exist_ok=True)
         with open(PLAYWRIGHT_DEPS_MARKER, "w", encoding="utf-8") as marker:
-            marker.write("infra-tools Playwright OS dependencies installed\n")
+            marker.write("basaltwater Playwright OS dependencies installed\n")
         os.chmod(PLAYWRIGHT_DEPS_MARKER, 0o644)
     else:
         print("  ✓ Playwright OS dependencies already installed; skipping apt transaction")
 
     browser_marker = (
-        f"$HOME/.cache/ms-playwright/.infra-tools-chromium-"
+        f"$HOME/.cache/ms-playwright/.basaltwater-chromium-"
         f"{PLAYWRIGHT_VERSION}.installed"
     )
     browser_ready = not config.refresh_packages and _run_as_login_user(

@@ -308,7 +308,7 @@ class TestGenerateAntistaticNginxConfig(unittest.TestCase):
         self.assertIn("location ^~ /admin/", config)
         self.assertIn("limit_req_status 429;", config)
         self.assertIn("$http_authorization:$status:$uri", config)
-        self.assertIn("infra-tools-auth-failure", config)
+        self.assertIn("basaltwater-auth-failure", config)
 
     def test_listens_on_80_and_443(self):
         config = self._make_config()
@@ -433,7 +433,7 @@ class TestConfigureAntistaticNginx(unittest.TestCase):
         self.assertIn("return 301 https://$host$request_uri;", final_content)
         configure_ban.assert_called_once_with(
             "antistatic",
-            "/var/log/nginx/infra-tools-antistatic-auth-failures.log",
+            "/var/log/nginx/basaltwater-antistatic-auth-failures.log",
         )
 
     @patch("lib.nginx_config.generate_self_signed_cert")
@@ -620,7 +620,7 @@ class TestAntistaticReleaseDownloads(unittest.TestCase):
         with patch(
             "lib.release_management.run",
             return_value=MagicMock(returncode=0, stdout=json.dumps(release_payload)),
-        ), patch.dict(os.environ, {"INFRA_TOOLS_DEPENDENCY_MIN_AGE_DAYS": "7"}):
+        ), patch.dict(os.environ, {"BASALTWATER_DEPENDENCY_MIN_AGE_DAYS": "7"}):
             tag_name, download_url = _fetch_latest_antistatic_release("amd64")
 
         self.assertEqual(tag_name, "v1.2.4")

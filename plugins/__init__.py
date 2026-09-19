@@ -1,1 +1,1 @@
-"""Built-in plugin definitions for infra_tools."""
+"""Built-in plugin definitions for basaltwater."""

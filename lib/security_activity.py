@@ -23,7 +23,7 @@ def _timestamp() -> str:
 
 
 def record_setup_activity(record: OperationRecord, status: str) -> None:
-    """Record the bounds of an infra-tools setup that may change audited files."""
+    """Record the bounds of an basaltwater setup that may change audited files."""
     if status not in {"in_progress", "succeeded", "failed"}:
         raise ValueError(f"Unsupported setup activity status: {status}")
     timestamp = _timestamp()

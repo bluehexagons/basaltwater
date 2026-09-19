@@ -1,4 +1,4 @@
-"""Operator commands for infra-tools-managed Gogs services."""
+"""Operator commands for basaltwater-managed Gogs services."""
 
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ def _remote_health_script(min_free_bytes: int, min_free_inodes: int) -> str:
     return f'''
 import configparser, glob, json, os, re, subprocess, time, urllib.parse
 
-STATE = "/opt/infra_tools/state/gogs.json"
-UPDATE_STATE = "/opt/infra_tools/state/gogs_update.json"
+STATE = "/opt/basaltwater/state/gogs.json"
+UPDATE_STATE = "/opt/basaltwater/state/gogs_update.json"
 MIN_FREE_BYTES = {min_free_bytes}
 MIN_FREE_INODES = {min_free_inodes}
 MAX_UPDATE_AGE_SECONDS = {DEFAULT_MAX_UPDATE_AGE_SECONDS}

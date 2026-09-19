@@ -33,7 +33,7 @@ class TestRetrieveStoredConfig(unittest.TestCase):
         self.assertEqual(config.username, "remote")
         self.assertEqual(config.tags, ["web", "prod"])
         self.assertEqual(run.call_args.kwargs["timeout"], 30)
-        self.assertIn("cat /opt/infra_tools/state/setup.json", run.call_args.args[0][-1])
+        self.assertIn("cat /opt/basaltwater/state/setup.json", run.call_args.args[0][-1])
 
     def test_retrieve_returns_none_for_empty_or_invalid_remote_data(self) -> None:
         for result in (completed(stdout=""), completed(stdout="not json"), completed(stdout='[]')):
@@ -71,7 +71,7 @@ class TestReconstructRemoteConfig(unittest.TestCase):
         self.assertTrue(config.install_go)
         self.assertEqual(extras, {"samba_shares": ["public"], "deploy": [["example.com", "https://example.com/repo.git"]]})
         self.assertEqual(run.call_count, 2)
-        self.assertIn("test -f /opt/infra_tools/infra_tools.py", run.call_args_list[0].args[0][-1])
+        self.assertIn("test -f /opt/basaltwater/basaltwater.py", run.call_args_list[0].args[0][-1])
         self.assertIn("reconstruct --compact", run.call_args_list[1].args[0][-1])
 
     def test_reconstruct_uses_temporary_remote_source_when_tool_is_missing(self) -> None:
@@ -89,7 +89,7 @@ class TestReconstructRemoteConfig(unittest.TestCase):
         self.assertEqual(invocation.kwargs['input_data'], base64.b64encode(b'tar data').decode())
         self.assertEqual(invocation.kwargs['timeout'], 120)
         self.assertIn('timeout --kill-after=5s 60s', invocation.args[0][-1])
-        self.assertNotIn('/opt/infra_tools', invocation.args[0][-1])
+        self.assertNotIn('/opt/basaltwater', invocation.args[0][-1])
         self.assertFalse(os.path.exists(os.path.join(temp_root, "build")))
 
     def test_reconstruct_cleans_local_source_after_remote_failure_or_timeout(self) -> None:
@@ -111,7 +111,7 @@ class TestReconstructRemoteConfig(unittest.TestCase):
                 archive = io.BytesIO()
                 if content is not None:
                     with tarfile.open(fileobj=archive, mode='w:gz') as tar:
-                        entry = tarfile.TarInfo('infra_tools.py')
+                        entry = tarfile.TarInfo('basaltwater.py')
                         entry.size = len(content)
                         tar.addfile(entry, io.BytesIO(content))
                 script = ('mktemp() { command mktemp -d "$RECALL_TEST_ROOT/stage.XXXXXXXX"; }\n'

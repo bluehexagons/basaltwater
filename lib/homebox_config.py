@@ -123,7 +123,7 @@ def validate_homebox_settings(config: SetupConfig) -> None:
         raise ValueError("HomeBox HTTPS port conflicts with another managed service")
     for source in desired["sources"]:
         validate_network_ip_or_cidr(source, "HomeBox access source")
-    others = ["/var/lib/infra-tools", "/var/lib/homebox-backups", "/var/lib/gogs"]
+    others = ["/var/lib/basaltwater", "/var/lib/homebox-backups", "/var/lib/gogs"]
     if config.gogs and len(config.gogs) == 2:
         others.append(config.gogs[1])
     others.extend(share[2] for share in config.samba_shares or [] if len(share) >= 3)

@@ -15,10 +15,9 @@ issue-to-implementation evidence.
 
 The rename's repository implementation is complete in
 [PR #101](https://github.com/bluehexagons/infra_tools/pull/101): distribution
-`basaltwater`, command `basaltw`, a supported v2 `infra-tools` transition
-launcher, migration documentation, refreshed agent guidance, and visual assets.
-Persistent paths, import modules, service identities and skill IDs remain
-stable. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
+`basaltwater`, entry point `basaltwater.py`, command `basaltw`, renamed runtime
+resources and skills, one-time migration from recent installations, and visual
+assets. Successful cutover leaves no old-name runtime aliases. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
 the [release checklist](../BASALTWATER_RELEASE.md) owns disposable-host
 qualification and external publication. Implementation complete does not mean
 merged, tagged, published or live-host qualified. These release checks do not

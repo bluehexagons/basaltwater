@@ -19,13 +19,11 @@ completion = ["argcomplete>=3.0.0"]
 dev = ["coverage>=7.0"]
 
 [project.scripts]
-basaltw = "infra_tools:main"
-# Supported through v2.x for existing automation; see docs/BASALTWATER_MIGRATION.md.
-infra-tools = "infra_tools:main"
+basaltw = "basaltwater:main"
 webhook_manager = "web.service_tools.webhook_manager:main"
 
 [tool.setuptools]
-py-modules = ["infra_tools", "remote_setup"]
+py-modules = ["basaltwater", "remote_setup"]
 
 [tool.setuptools.packages.find]
 where = ["."]

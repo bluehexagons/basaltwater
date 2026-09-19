@@ -181,16 +181,16 @@ class TestTransitionIdentity(unittest.TestCase):
 
 
 class TestSavedHostMigration(unittest.TestCase):
-    @patch("infra_tools.remove_replaced_setup_cache")
-    @patch("infra_tools.save_setup_command")
-    @patch("infra_tools.store_cli_credentials")
+    @patch("basaltwater.remove_replaced_setup_cache")
+    @patch("basaltwater.save_setup_command")
+    @patch("basaltwater.store_cli_credentials")
     def test_successful_patch_saves_only_the_verified_new_host(
         self,
         _mock_credentials,
         mock_save,
         mock_remove,
     ) -> None:
-        from infra_tools import _execute_patch_config
+        from basaltwater import _execute_patch_config
 
         config = _config()
         runtime_config = _config()
@@ -201,16 +201,16 @@ class TestSavedHostMigration(unittest.TestCase):
             return 0
 
         with patch(
-            "infra_tools._prepare_runtime_config_for_cli",
+            "basaltwater._prepare_runtime_config_for_cli",
             return_value=runtime_config,
         ), patch(
-            "infra_tools.run_remote_setup",
+            "basaltwater.run_remote_setup",
             side_effect=finish_runtime,
         ), patch(
-            "infra_tools.get_last_remote_access_details",
+            "basaltwater.get_last_remote_access_details",
             return_value=access_details,
         ), patch(
-            "infra_tools.print_service_access_summary",
+            "basaltwater.print_service_access_summary",
         ) as print_access:
             result = _execute_patch_config(config)
 

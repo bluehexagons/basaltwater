@@ -1,4 +1,4 @@
-"""Centralized notification system for infra_tools.
+"""Centralized notification system for basaltwater.
 
 Supports webhook and email notifications for important events.
 """
@@ -230,8 +230,8 @@ class NotificationSender:
         data = json.dumps(notification.to_dict()).encode('utf-8')
         headers = {
             'Content-Type': 'application/json',
-            'User-Agent': 'infra_tools-notification/1.0',
-            'X-Infra-Tools-Event-ID': notification.event_id,
+            'User-Agent': 'basaltwater-notification/1.0',
+            'X-Basaltwater-Event-ID': notification.event_id,
         }
         if bearer_token is not None:
             headers['Authorization'] = f'Bearer {bearer_token}'
@@ -344,7 +344,7 @@ class NotificationSender:
         body_parts.extend([
             "",
             "---",
-            "This is an automated notification from infra_tools.",
+            "This is an automated notification from basaltwater.",
             "Check system logs for detailed information.",
             "",
         ])

@@ -1,4 +1,4 @@
-"""Non-secret provenance for installed infra-tools source snapshots."""
+"""Non-secret provenance for installed basaltwater source snapshots."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
 
-INSTALLATION_METADATA_FILENAME = ".infra-tools-installation.json"
+INSTALLATION_METADATA_FILENAME = ".basaltwater-installation.json"
 INSTALLATION_METADATA_SCHEMA = 1
 SETUP_SNAPSHOT_TYPE = "setup-snapshot"
 _COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")

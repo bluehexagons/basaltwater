@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""CLI surface for ``infra-tools proxmox`` subcommands.
+"""CLI surface for ``basaltw proxmox`` subcommands.
 
-Splits parser construction and command dispatch out of ``infra_tools.py`` so
+Splits parser construction and command dispatch out of ``basaltwater.py`` so
 the management surface can grow independently of the setup/patch flow.
 """
 
@@ -600,7 +600,7 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         help="Configure native Proxmox notification targets",
         description=(
             "Configure Proxmox's native notification system to send system "
-            "notifications to an infra_tools-compatible webhook endpoint."
+            "notifications to an basaltwater-compatible webhook endpoint."
         ),
     )
     notification_sub = notifications.add_subparsers(
@@ -695,7 +695,7 @@ def _resolve_host(target: str, workspace: Optional[str]) -> ProxmoxHost:
     if not host:
         raise ValueError(
             f"No registered Proxmox host matching '{target}'. "
-            f"Use 'infra-tools proxmox add' first."
+            f"Use 'basaltw proxmox add' first."
         )
     return host
 
@@ -1132,7 +1132,7 @@ def _cmd_audit(args: argparse.Namespace, workspace: Optional[str]) -> int:
 
 
 def _cmd_plan_missing(args: argparse.Namespace, workspace: Optional[str]) -> int:
-    print("Usage: infra-tools proxmox plan {place,rebalance} [...]")
+    print("Usage: basaltw proxmox plan {place,rebalance} [...]")
     return 1
 
 

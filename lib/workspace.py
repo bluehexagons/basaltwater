@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 
 
-WORKSPACE_ENV_VAR = "INFRA_TOOLS_WORKSPACE"
-DEFAULT_WORKSPACE_DIR = "~/.config/infra_tools"
+
+WORKSPACE_ENV_VAR = "BASALTWATER_WORKSPACE"
+DEFAULT_WORKSPACE_DIR = "~/.config/basaltwater"
 
 
 def normalize_workspace_dir(path: str | None = None) -> str:

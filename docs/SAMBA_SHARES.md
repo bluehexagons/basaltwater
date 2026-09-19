@@ -216,7 +216,7 @@ identified by configured scrub jobs are hidden from SMB clients with `veto
 files`.
 
 Unprivileged and OCI containers defer firewall enforcement to their host and
-do not retain the infra_tools-managed Samba fail2ban jail.
+do not retain the basaltwater-managed Samba fail2ban jail.
 
 ## Git and Git LFS storage
 

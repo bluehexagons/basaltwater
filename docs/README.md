@@ -85,7 +85,7 @@ automation, T3 Code, skills, and hardening.
 
 | Guide | Use it for |
 | --- | --- |
-| [Deployments and manifests](DEPLOYMENTS.md) | `--deploy`, `infra.json`, static sites, services, and runtime behavior |
+| [Deployments and manifests](DEPLOYMENTS.md) | `--deploy`, `basaltwater.json`, static sites, services, and runtime behavior |
 | [Deployment safety](DEPLOYMENT_SAFETY.md) | Persistent state, backups, rollback, and deployment boundaries |
 | [Internal HTTPS sites and previews](INTERNAL_WEB.md) | Static-site publishing, supervised live previews, managed forwards, TLS trust, and cleanup |
 | [CI/CD webhook system](CICD.md) | Webhook jobs, build/app servers, and executor behavior |
@@ -107,7 +107,7 @@ records. It is not operator documentation; start with the
 [planning index](plans/README.md) only when researching project work.
 
 The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
-Debian-based operating environment built around infra-tools. It is not a
+Debian-based operating environment built around basaltwater. It is not a
 supported operating system or an implementation commitment.
 
 Repository contributors should read the

@@ -22,38 +22,38 @@ from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 from lib.validators import validate_host, validate_username
 
 
-GODOT_WEB_ROOT = "/srv/infra-tools/web"
+GODOT_WEB_ROOT = "/srv/basaltwater/web"
 GODOT_WEB_GAMES_ROOT = f"{GODOT_WEB_ROOT}/games"
 INTERNAL_WEB_SITES_ROOT = f"{GODOT_WEB_ROOT}/sites"
-GODOT_WEB_CA_DOWNLOAD = f"{GODOT_WEB_ROOT}/infra-tools-ca.crt"
-GODOT_WEB_PKI_DIR = "/var/lib/infra_tools/internal-web-pki"
+GODOT_WEB_CA_DOWNLOAD = f"{GODOT_WEB_ROOT}/basaltwater-ca.crt"
+GODOT_WEB_PKI_DIR = "/var/lib/basaltwater/internal-web-pki"
 GODOT_WEB_CA_CERT = f"{GODOT_WEB_PKI_DIR}/ca.crt"
 GODOT_WEB_CA_KEY = f"{GODOT_WEB_PKI_DIR}/ca.key"
 GODOT_WEB_CERT = f"{GODOT_WEB_PKI_DIR}/server.crt"
 GODOT_WEB_KEY = f"{GODOT_WEB_PKI_DIR}/server.key"
 GODOT_WEB_TRUST_CERT = (
-    "/usr/local/share/ca-certificates/infra-tools-internal-web-ca.crt"
+    "/usr/local/share/ca-certificates/basaltwater-internal-web-ca.crt"
 )
-GODOT_WEB_NGINX_SITE = "/etc/nginx/sites-available/infra-tools-godot-web"
-GODOT_WEB_NGINX_LINK = "/etc/nginx/sites-enabled/infra-tools-godot-web"
-GODOT_WEB_URL_FILE = "/etc/infra-tools/internal-web/base-url"
-GODOT_WEB_PUBLISHER = "/opt/infra_tools/common/service_tools/godot_web_publish.py"
+GODOT_WEB_NGINX_SITE = "/etc/nginx/sites-available/basaltwater-godot-web"
+GODOT_WEB_NGINX_LINK = "/etc/nginx/sites-enabled/basaltwater-godot-web"
+GODOT_WEB_URL_FILE = "/etc/basaltwater/internal-web/base-url"
+GODOT_WEB_PUBLISHER = "/opt/basaltwater/common/service_tools/godot_web_publish.py"
 GODOT_WEB_PUBLISHER_LINK = "/usr/local/bin/godot-web-publish"
-GODOT_WEB_UTILITY = "/opt/infra_tools/common/service_tools/infra_web.py"
-GODOT_WEB_UTILITY_LINK = "/usr/local/bin/infra-web"
-GODOT_WEB_POLICY_FILE = "/etc/infra-tools/internal-web/policy.json"
+GODOT_WEB_UTILITY = "/opt/basaltwater/common/service_tools/basaltwater_web.py"
+GODOT_WEB_UTILITY_LINK = "/usr/local/bin/basaltwater-web"
+GODOT_WEB_POLICY_FILE = "/etc/basaltwater/internal-web/policy.json"
 GODOT_WEB_FORWARD_PORT_MIN = 8444
 GODOT_WEB_FORWARD_PORT_MAX = 8999
-GODOT_AGENT_SKILLS_ROOT = "/opt/infra_tools/common/agent_skills"
+GODOT_AGENT_SKILLS_ROOT = "/opt/basaltwater/common/agent_skills"
 GODOT_AGENT_SKILLS = (
     *BASE_AGENT_SKILL_NAMES,
-    "infra-tools-godot-web",
-    "infra-tools-web-gateway",
+    "basaltwater-godot-web",
+    "basaltwater-web-gateway",
 )
 
-_NGINX_MARKER = "# Managed by infra_tools Godot web hosting"
-_LOCAL_CA_COMMON_NAME = "infra_tools VM-local Web CA"
-_CHROMIUM_CA_NICKNAME = "infra_tools internal web CA"
+_NGINX_MARKER = "# Managed by basaltwater Godot web hosting"
+_LOCAL_CA_COMMON_NAME = "basaltwater VM-local Web CA"
+_CHROMIUM_CA_NICKNAME = "basaltwater internal web CA"
 _CHROMIUM_NSS_DB_RELATIVE = (".local", "share", "pki", "nssdb")
 _CHROMIUM_NSS_LEGACY_DB_RELATIVE = (".pki", "nssdb")
 _CERTIFICATE_RENEWAL_SECONDS = 30 * 24 * 60 * 60
@@ -272,7 +272,7 @@ def _ensure_local_server_certificate(identities: list[str]) -> bool:
         )
         run(
             "openssl req -new -newkey rsa:3072 -sha256 -nodes "
-            "-subj '/CN=infra_tools internal web' "
+            "-subj '/CN=basaltwater internal web' "
             f"-keyout {shlex.quote(key_path)} -out {shlex.quote(request_path)}",
             check=True,
         )
@@ -470,7 +470,7 @@ server {{
     ssl_certificate {cert_path};
     ssl_certificate_key {key_path};
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:infra_tools_internal_web:10m;
+    ssl_session_cache shared:basaltwater_internal_web:10m;
     ssl_session_timeout 1d;
 
     root {GODOT_WEB_ROOT};
@@ -502,9 +502,9 @@ server {{
         add_header Cache-Control "no-cache" always;
     }}
 
-    location = /infra-tools-ca.crt {{
+    location = /basaltwater-ca.crt {{
         default_type application/x-x509-ca-cert;
-        try_files /infra-tools-ca.crt =404;
+        try_files /basaltwater-ca.crt =404;
     }}
 
     location ~ /\\. {{
@@ -520,7 +520,7 @@ def _landing_page(base_url: str, local_ca: bool, users: Sequence[str]) -> str:
     trust_note = (
         '<p>This VM uses its own certificate authority. It is already trusted by '
         'software on the VM. For another computer, install '
-        '<a href="/infra-tools-ca.crt">the VM CA certificate</a> once.</p>'
+        '<a href="/basaltwater-ca.crt">the VM CA certificate</a> once.</p>'
         if local_ca
         else "<p>This endpoint is using an existing publicly trusted certificate.</p>"
     )
@@ -534,14 +534,14 @@ def _landing_page(base_url: str, local_ca: bool, users: Sequence[str]) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>infra_tools internal web host</title>
+<title>basaltwater internal web host</title>
 <style>body{{font:16px system-ui,sans-serif;max-width:48rem;margin:3rem auto;padding:0 1rem;line-height:1.5}}code{{background:#eef1f4;padding:.15rem .3rem;border-radius:.2rem}}</style>
 </head><body><main><h1>Internal web host</h1>
 <p>Static sites are available under <a href="/sites/">/sites/</a>.</p>
 <p>Godot exports are available under <a href="/games/">/games/</a>.</p>
 {catalogs}
-<p>Publish a static project with <code>infra-web publish site</code>.</p>
-<p>Publish the current project with <code>infra-web publish godot</code>.</p>
+<p>Publish a static project with <code>basaltwater-web publish site</code>.</p>
+<p>Publish the current project with <code>basaltwater-web publish godot</code>.</p>
 {trust_note}
 <p>Base URL: <code>{html.escape(base_url)}</code></p>
 </main></body></html>
@@ -550,7 +550,7 @@ def _landing_page(base_url: str, local_ca: bool, users: Sequence[str]) -> str:
 
 def _internal_landing_page(base_url: str, local_ca: bool) -> str:
     trust_note = (
-        '<p>Install the <a href="/infra-tools-ca.crt">VM CA certificate</a> '
+        '<p>Install the <a href="/basaltwater-ca.crt">VM CA certificate</a> '
         "on LAN clients before opening internal HTTPS services.</p>"
         if local_ca
         else "<p>This endpoint uses a publicly trusted certificate.</p>"
@@ -558,10 +558,10 @@ def _internal_landing_page(base_url: str, local_ca: bool) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>infra_tools internal web host</title>
-</head><body><main><h1>infra_tools internal web host</h1>
+<title>basaltwater internal web host</title>
+</head><body><main><h1>basaltwater internal web host</h1>
 <p>Static sites are available under <a href="/sites/">/sites/</a>.</p>
-<p>Publish the current project with <code>infra-web publish site</code>.</p>
+<p>Publish the current project with <code>basaltwater-web publish site</code>.</p>
 {trust_note}<p>Base URL: <code>{html.escape(base_url)}</code></p>
 </main></body></html>
 """
@@ -678,15 +678,15 @@ def _install_publisher_links() -> bool:
     return _install_managed_link(
         GODOT_WEB_UTILITY,
         GODOT_WEB_UTILITY_LINK,
-        "infra-web utility",
+        "basaltwater-web utility",
     ) or changed
 
 
-def _install_infra_web_link() -> bool:
+def _install_basaltwater_web_link() -> bool:
     return _install_managed_link(
         GODOT_WEB_UTILITY,
         GODOT_WEB_UTILITY_LINK,
-        "infra-web utility",
+        "basaltwater-web utility",
     )
 
 
@@ -798,7 +798,7 @@ def configure_godot_web_host(
     existing_users, existing_sources = _existing_internal_web_policy_values()
     normalized_users = list(dict.fromkeys([*existing_users, *users]))
     normalized_sources = list(dict.fromkeys([*existing_sources, *access_sources]))
-    # The policy reconciliation below invokes infra-web, so install its
+    # The policy reconciliation below invokes basaltwater-web, so install its
     # managed launcher before reconciling the first policy on a fresh host.
     changed = _install_publisher_links()
     base_url, local_ca, cert_path, key_path, certificate_changed = configure_internal_web_host(
@@ -845,7 +845,7 @@ def configure_godot_web_host(
     if local_ca:
         print(
             "  ✓ VM-local CA installed on the VM; remote clients can enroll "
-            f"{base_url}/infra-tools-ca.crt (SHA-256 {fingerprint.hexdigest()})"
+            f"{base_url}/basaltwater-ca.crt (SHA-256 {fingerprint.hexdigest()})"
         )
     return changed
 
@@ -876,7 +876,7 @@ def configure_internal_web_host(
     base_url = _base_url(normalized_identities)
     _write_if_changed(GODOT_WEB_URL_FILE, base_url + "\n", 0o644)
     if install_utility:
-        _install_infra_web_link()
+        _install_basaltwater_web_link()
     if configure_static_site:
         _configure_user_roots(normalized_users)
         index_path = os.path.join(GODOT_WEB_ROOT, "index.html")

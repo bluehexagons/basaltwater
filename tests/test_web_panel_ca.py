@@ -37,7 +37,7 @@ class TestCertificateDownloadTrust(unittest.TestCase):
 
     def test_all_platforms_retain_tls_verification_and_explain_independent_trust(self):
         rendered = _render_certificate_trust({
-            "url": "https://example.invalid/infra-tools-ca.crt", "sha256": "a" * 64,
+            "url": "https://example.invalid/basaltwater-ca.crt", "sha256": "a" * 64,
         })
         for bypass in ("--insecure", "--no-check-certificate", "SkipCertificateCheck", "ServerCertificateValidationCallback"):
             self.assertNotIn(bypass, rendered)

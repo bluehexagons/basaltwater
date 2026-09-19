@@ -51,7 +51,7 @@ basaltw setup server_lite fileserver admin \
 ```
 
 Basaltwater creates the root for the setup user and confines the systemd
-service to that root. Setup verifies an infra-tools-declared VM data mount
+service to that root. Setup verifies an basaltwater-declared VM data mount
 before writing to it, and the generated service also uses `RequiresMountsFor=`
 for declared or separately managed mounts. This prevents a missing disk from
 redirecting setup or synchronization writes into the root filesystem.
@@ -151,12 +151,12 @@ membership or folder change, use the GUI only; no setup rerun is needed.
 ## Service operations and removal
 
 ```bash
-sudo systemctl status infra-syncthing.service
-sudo journalctl -u infra-syncthing.service -n 200 --no-pager
+sudo systemctl status basaltwater-syncthing.service
+sudo journalctl -u basaltwater-syncthing.service -n 200 --no-pager
 ```
 
 The device certificate and database live in
-`/var/lib/infra-tools/syncthing`. Preserve that directory to retain the server
+`/var/lib/basaltwater/syncthing`. Preserve that directory to retain the server
 device ID. The Debian package remains authoritative, and Syncthing's
 self-updater is disabled.
 
@@ -167,7 +167,7 @@ basaltw patch fileserver --no-syncthing
 ```
 
 Re-enabling the endpoint retains the configured storage root, device ID, and
-GUI-managed sharing state. Delete `/var/lib/infra-tools/syncthing` or the
+GUI-managed sharing state. Delete `/var/lib/basaltwater/syncthing` or the
 configured storage root only as a separate, deliberate cleanup after verifying
 the data is no longer needed.
 

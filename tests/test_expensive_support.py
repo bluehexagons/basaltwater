@@ -42,34 +42,34 @@ class TestCategoryGating(unittest.TestCase):
 
     def test_category_env_var(self) -> None:
         self.assertEqual(category_env_var("live_proxmox"),
-                         "INFRA_TOOLS_RUN_LIVE_PROXMOX")
+                         "BASALTWATER_RUN_LIVE_PROXMOX")
         self.assertEqual(category_env_var("Slow"),
-                         "INFRA_TOOLS_RUN_SLOW")
+                         "BASALTWATER_RUN_SLOW")
 
     def test_category_disabled_by_default(self) -> None:
         with _env_unset(EXPENSIVE_ENV_VAR), \
-             _env_unset("INFRA_TOOLS_RUN_LIVE_PROXMOX"):
+             _env_unset("BASALTWATER_RUN_LIVE_PROXMOX"):
             self.assertFalse(category_enabled("live_proxmox"))
 
     def test_category_specific_flag_enables_just_that_category(self) -> None:
         with _env_unset(EXPENSIVE_ENV_VAR), \
-             _env_set("INFRA_TOOLS_RUN_LIVE_PROXMOX", "1"), \
-             _env_unset("INFRA_TOOLS_RUN_SLOW"):
+             _env_set("BASALTWATER_RUN_LIVE_PROXMOX", "1"), \
+             _env_unset("BASALTWATER_RUN_SLOW"):
             self.assertTrue(category_enabled("live_proxmox"))
             self.assertFalse(category_enabled("slow"))
 
     def test_global_flag_enables_all_categories(self) -> None:
         with _env_set(EXPENSIVE_ENV_VAR, "1"), \
-             _env_unset("INFRA_TOOLS_RUN_LIVE_PROXMOX"), \
-             _env_unset("INFRA_TOOLS_RUN_SLOW"), \
-             _env_unset("INFRA_TOOLS_RUN_NEWCATEGORY"):
+             _env_unset("BASALTWATER_RUN_LIVE_PROXMOX"), \
+             _env_unset("BASALTWATER_RUN_SLOW"), \
+             _env_unset("BASALTWATER_RUN_NEWCATEGORY"):
             self.assertTrue(category_enabled("live_proxmox"))
             self.assertTrue(category_enabled("slow"))
             self.assertTrue(category_enabled("newcategory"))
 
     def test_expensive_decorator_skips_when_disabled(self) -> None:
         with _env_unset(EXPENSIVE_ENV_VAR), \
-             _env_unset("INFRA_TOOLS_RUN_DEMO"):
+             _env_unset("BASALTWATER_RUN_DEMO"):
 
             @expensive("demo", "demo reason")
             class _Inner(unittest.TestCase):
@@ -82,11 +82,11 @@ class TestCategoryGating(unittest.TestCase):
             self.assertEqual(len(result.skipped), 1)
             self.assertEqual(len(result.failures), 0)
             _, reason = result.skipped[0]
-            self.assertIn("INFRA_TOOLS_RUN_DEMO=1", reason)
+            self.assertIn("BASALTWATER_RUN_DEMO=1", reason)
 
     def test_expensive_decorator_runs_when_category_enabled(self) -> None:
         with _env_unset(EXPENSIVE_ENV_VAR), \
-             _env_set("INFRA_TOOLS_RUN_DEMO", "1"):
+             _env_set("BASALTWATER_RUN_DEMO", "1"):
 
             ran = []
 

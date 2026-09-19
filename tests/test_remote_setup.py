@@ -454,7 +454,7 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
 class TestRepositorySourcePath(unittest.TestCase):
     def test_default_mode_uses_uploaded_repository_without_remote_clone(self):
         git_url = "git@github.com:owner/private-repo.git"
-        repo_path = "/opt/infra_tools/deployments/private-repo"
+        repo_path = "/opt/basaltwater/deployments/private-repo"
 
         def exists(path: str) -> bool:
             return path == repo_path
@@ -466,7 +466,7 @@ class TestRepositorySourcePath(unittest.TestCase):
 
     def test_full_mode_uses_uploaded_repository_commit(self):
         git_url = "https://github.com/owner/app.git"
-        repo_path = "/opt/infra_tools/deployments/app"
+        repo_path = "/opt/basaltwater/deployments/app"
         commit_path = f"{repo_path}.commit"
 
         def exists(path: str) -> bool:
@@ -522,7 +522,7 @@ class TestBuildRuntimeDetection(unittest.TestCase):
              patch.object(remote_setup.os.path, "isfile", return_value=True), \
              patch("builtins.open", mock_open(read_data="module example.com/app\n\ngo 1.25.0\n")):
             remote_setup.enable_detected_build_runtimes(config)
-            self.assertEqual(os.environ["INFRA_TOOLS_GO_VERSION"], "1.25.0")
+            self.assertEqual(os.environ["BASALTWATER_GO_VERSION"], "1.25.0")
 
         self.assertTrue(config.install_go)
 

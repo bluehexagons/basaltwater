@@ -1,4 +1,4 @@
-"""Tests for the top-level infra_tools interactive shell."""
+"""Tests for the top-level basaltwater interactive shell."""
 
 from __future__ import annotations
 
@@ -56,62 +56,62 @@ class TestInteractiveShellDispatch(unittest.TestCase):
         self.assertEqual(shell.run(), 0)
         self.assertTrue(any("Available commands" in line for line in output))
 
-    @patch("infra_tools.list_configurations")
+    @patch("basaltwater.list_configurations")
     def test_list_invokes_list_configurations(self, mock_list):
         shell, _ = _make_shell(["list prod", "exit"])
         shell.run()
         mock_list.assert_called_once_with("prod", json_output=False)
 
-    @patch("infra_tools.list_configurations")
+    @patch("basaltwater.list_configurations")
     def test_list_without_pattern_passes_none(self, mock_list):
         shell, _ = _make_shell(["ls", "exit"])
         shell.run()
         mock_list.assert_called_once_with(None, json_output=False)
 
-    @patch("infra_tools.list_configurations")
+    @patch("basaltwater.list_configurations")
     def test_list_json_flag_passes_true(self, mock_list):
         shell, _ = _make_shell(["list --json", "exit"])
         shell.run()
         mock_list.assert_called_once_with(None, json_output=True)
 
-    @patch("infra_tools.show_info")
+    @patch("basaltwater.show_info")
     def test_info_invokes_show_info(self, mock_show):
         shell, _ = _make_shell(["info web", "exit"])
         shell.run()
         mock_show.assert_called_once_with("web", compact=False)
 
-    @patch("infra_tools.show_info")
+    @patch("basaltwater.show_info")
     def test_info_compact_flag(self, mock_show):
         shell, _ = _make_shell(["info --compact", "exit"])
         shell.run()
         mock_show.assert_called_once_with(None, compact=True)
 
-    @patch("infra_tools.show_command")
+    @patch("basaltwater.show_command")
     def test_cmd_invokes_show_command(self, mock_show):
         shell, _ = _make_shell(["cmd web", "exit"])
         shell.run()
         mock_show.assert_called_once_with("web")
 
-    @patch("infra_tools.deploy_configurations")
+    @patch("basaltwater.deploy_configurations")
     def test_deploy_requires_pattern(self, mock_deploy):
         shell, output = _make_shell(["deploy", "exit"])
         shell.run()
         mock_deploy.assert_not_called()
         self.assertTrue(any("Usage: deploy" in line for line in output))
 
-    @patch("infra_tools.deploy_configurations")
+    @patch("basaltwater.deploy_configurations")
     def test_deploy_passes_yes_flag(self, mock_deploy):
         shell, _ = _make_shell(["deploy prod --yes", "exit"])
         shell.run()
         mock_deploy.assert_called_once_with("prod", True, False)
 
-    @patch("infra_tools.deploy_configurations")
+    @patch("basaltwater.deploy_configurations")
     def test_deploy_passes_latest_flag(self, mock_deploy):
         shell, _ = _make_shell(["deploy prod --yes --deploy-latest", "exit"])
         shell.run()
         mock_deploy.assert_called_once_with("prod", True, True)
 
-    @patch("infra_tools.remove_configurations")
+    @patch("basaltwater.remove_configurations")
     def test_remove_passes_short_yes_flag(self, mock_remove):
         shell, _ = _make_shell(["rm web -y", "exit"])
         shell.run()
@@ -331,7 +331,7 @@ class TestWorkspacePrompt(unittest.TestCase):
             input_func=lambda _p: (_ for _ in ()).throw(EOFError()),
             output_func=lambda _: None,
         )
-        self.assertEqual(shell._make_prompt(), "infra-tools> ")
+        self.assertEqual(shell._make_prompt(), "basaltwater> ")
 
     def test_workspace_prompt_shows_basename(self) -> None:
         shell = InteractiveShell(
@@ -345,7 +345,7 @@ class TestWorkspacePrompt(unittest.TestCase):
     def test_workspace_prompt_after_set(self) -> None:
         shell, _ = _make_shell([])
         shell.state.workspace = "/workspaces/prod"
-        self.assertEqual(shell._make_prompt(), "infra-tools[prod]> ")
+        self.assertEqual(shell._make_prompt(), "basaltwater[prod]> ")
 
 
 class TestRenameCommand(unittest.TestCase):

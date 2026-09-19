@@ -155,8 +155,8 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
                 "method": "initialize",
                 "params": {
                     "clientInfo": {
-                        "name": "infra-tools-auth-maintenance",
-                        "title": "infra-tools Codex authentication maintenance",
+                        "name": "basaltwater-auth-maintenance",
+                        "title": "basaltwater Codex authentication maintenance",
                         "version": "1",
                     }
                 },

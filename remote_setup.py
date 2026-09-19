@@ -51,9 +51,9 @@ from typing import Optional
 from lib.types import Deployments, StepFunc
 
 
-REMOTE_AGENT_PAYLOAD_DIR = "/opt/infra_tools/agent_payload"
-REMOTE_DEVICE_PAIRING_PAYLOAD_DIR = "/opt/infra_tools/device_pairing_payload"
-REMOTE_WEB_PANEL_PAYLOAD_DIR = "/opt/infra_tools/web_panel_payload"
+REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
+REMOTE_DEVICE_PAIRING_PAYLOAD_DIR = "/opt/basaltwater/device_pairing_payload"
+REMOTE_WEB_PANEL_PAYLOAD_DIR = "/opt/basaltwater/web_panel_payload"
 SETUP_OPERATION_FILE = os.path.join(STATE_DIR, "setup-operation.json")
 _active_setup_operation: Optional[tuple[OperationStateStore, OperationRecord]] = None
 
@@ -232,7 +232,7 @@ def get_repository_source_path(
     """
     Get the uploaded source path for a repository.
 
-    Repositories are cloned by the local launcher and uploaded with infra_tools,
+    Repositories are cloned by the local launcher and uploaded with basaltwater,
     so private repositories only require local access. The remote never fetches
     from Git directly; deployment modes control rebuild behavior, not source
     acquisition.
@@ -241,7 +241,7 @@ def get_repository_source_path(
     continuing would make Nginx reconciliation remove otherwise-live routes.
     """
     repo_name = extract_repo_name(git_url)
-    cache_path = f'/opt/infra_tools/deployments/{repo_name}'
+    cache_path = f'/opt/basaltwater/deployments/{repo_name}'
 
     if not os.path.exists(cache_path):
         raise RuntimeError(
@@ -278,7 +278,7 @@ def enable_detected_build_runtimes(config: SetupConfig) -> None:
     required_versions: list[tuple[int, int, int]] = []
     for _deploy_spec, git_url in config.deploy_specs:
         repo_name = extract_repo_name(git_url)
-        repo_path = os.path.join("/opt/infra_tools/deployments", repo_name)
+        repo_path = os.path.join("/opt/basaltwater/deployments", repo_name)
         project_files = _find_project_runtime_files(repo_path)
         if project_files["node"] and not config.install_node:
             config.install_node = True
@@ -305,7 +305,7 @@ def enable_detected_build_runtimes(config: SetupConfig) -> None:
 
     if required_versions:
         version = max(required_versions)
-        os.environ["INFRA_TOOLS_GO_VERSION"] = ".".join(str(part) for part in version)
+        os.environ["BASALTWATER_GO_VERSION"] = ".".join(str(part) for part in version)
 
 
 def _find_project_runtime_files(repo_path: str) -> dict[str, list[str]]:
@@ -325,7 +325,7 @@ def _find_project_runtime_files(repo_path: str) -> dict[str, list[str]]:
             ]
         return found
 
-    ignored = {".git", ".infra_tools", ".venv", "node_modules", "vendor"}
+    ignored = {".git", ".basaltwater", ".venv", "node_modules", "vendor"}
     for current_dir, directories, filenames in os.walk(repo_path):
         directories[:] = [name for name in directories if name not in ignored]
         names = set(filenames)
@@ -427,7 +427,7 @@ def _run_main() -> int:
         raise ValueError("CachyOS supports only the local agent_cachyos setup profile")
 
     if args.deploy_latest:
-        os.environ["INFRA_TOOLS_DEPENDENCY_MIN_AGE_DAYS"] = "0"
+        os.environ["BASALTWATER_DEPENDENCY_MIN_AGE_DAYS"] = "0"
 
     if args.dry_run:
         print("=" * 60)

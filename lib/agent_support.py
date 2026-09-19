@@ -1,4 +1,4 @@
-"""Redacted local support snapshots for infra-tools agent VMs."""
+"""Redacted local support snapshots for basaltwater agent VMs."""
 
 from __future__ import annotations
 
@@ -27,9 +27,9 @@ _BROWSER_LAUNCHER_FEATURES = (
 )
 _BROWSER_WORKFLOW_SKILLS = frozenset(
     (
-        "infra-tools-browser-testing",
-        "infra-tools-playwright-testing",
-        "infra-tools-t3-preview-testing",
+        "basaltwater-browser-testing",
+        "basaltwater-playwright-testing",
+        "basaltwater-t3-preview-testing",
     )
 )
 _BROWSER_ISSUES = frozenset(
@@ -206,7 +206,7 @@ def build_agent_support_bundle(
     return {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "infra_tools": {
+        "basaltwater": {
             "version": installation["version"],
             "commit": installation.get("commit"),
             "dirty": installation.get("dirty"),

@@ -162,7 +162,7 @@ class TestImageStorage(unittest.TestCase):
             mock_run.call_args_list[0].args[3],
         )
         download_command = mock_run.call_args_list[2].args[3]
-        self.assertIn("flock --exclusive /run/lock/infra-tools-image-", download_command)
+        self.assertIn("flock --exclusive /run/lock/basaltwater-image-", download_command)
         self.assertIn("debian.img.part", download_command)
         self.assertEqual(mock_run.call_args_list[2].kwargs["timeout"], 1800)
 
@@ -195,7 +195,7 @@ class TestImageStorage(unittest.TestCase):
         )
 
         command = mock_run.call_args_list[2].args[3]
-        self.assertIn("flock --exclusive /run/lock/infra-tools-image-", command)
+        self.assertIn("flock --exclusive /run/lock/basaltwater-image-", command)
         self.assertIn("sha512sum -c -", command)
         self.assertEqual(mock_run.call_count, 3)
 
@@ -265,7 +265,7 @@ class TestRenderUserData(unittest.TestCase):
         self.assertIn("packages:", out)
         self.assertIn("qemu-guest-agent", out)
         self.assertIn("virtio_balloon", out)
-        self.assertIn("infra-tools-virtio-balloon.conf", out)
+        self.assertIn("basaltwater-virtio-balloon.conf", out)
         self.assertIn("systemctl enable --now qemu-guest-agent", out)
 
     def test_creates_non_root_user(self):
@@ -273,7 +273,7 @@ class TestRenderUserData(unittest.TestCase):
         self.assertIn("- name: alice", out)
         self.assertIn("groups: sudo", out)
         self.assertNotIn("NOPASSWD:ALL", out)
-        self.assertNotIn("/etc/sudoers.d/infra-tools-alice", out)
+        self.assertNotIn("/etc/sudoers.d/basaltwater-alice", out)
         # SSH key is added under both root and alice.
         self.assertEqual(out.count("ssh-ed25519 KEY"), 2)
 
@@ -285,7 +285,7 @@ class TestRenderUserData(unittest.TestCase):
         )
 
         self.assertIn("NOPASSWD:ALL", out)
-        self.assertIn("/etc/sudoers.d/infra-tools-alice", out)
+        self.assertIn("/etc/sudoers.d/basaltwater-alice", out)
         self.assertIn("owner: root:root", out)
         self.assertIn("permissions: '0440'", out)
         self.assertEqual(out.count("ssh-ed25519 KEY"), 2)
@@ -298,7 +298,7 @@ class TestRenderUserData(unittest.TestCase):
         )
 
         self.assertNotIn("- name: alice", out)
-        self.assertNotIn("infra-tools-alice", out)
+        self.assertNotIn("basaltwater-alice", out)
         self.assertEqual(out.count("ssh-ed25519 KEY"), 1)
 
     def test_no_pubkey(self):
@@ -331,7 +331,7 @@ class TestUserDataUpload(unittest.TestCase):
         mock_run.side_effect = [
             MagicMock(
                 returncode=0,
-                stdout="/var/lib/vz/snippets/infra-tools-vm.yaml\n",
+                stdout="/var/lib/vz/snippets/basaltwater-vm.yaml\n",
                 stderr="",
             ),
             MagicMock(returncode=0, stdout="", stderr=""),
@@ -349,9 +349,9 @@ class TestUserDataUpload(unittest.TestCase):
                 dry_run=False,
             )
 
-        self.assertEqual(path, "/var/lib/vz/snippets/infra-tools-vm.yaml")
+        self.assertEqual(path, "/var/lib/vz/snippets/basaltwater-vm.yaml")
         self.assertIn(
-            "pvesm path local:snippets/infra_tools-vm-01-run123.yaml",
+            "pvesm path local:snippets/basaltwater-vm-01-run123.yaml",
             mock_run.call_args_list[0].args[3],
         )
         upload_call = mock_run.call_args_list[2]
@@ -417,7 +417,7 @@ class TestVMHardwareProfile(unittest.TestCase):
             nameservers=["10.0.0.1"],
             hostname="agent-vm",
             user_data_path=None,
-            user_data_ref="nfs-store:snippets/infra_tools-agent-vm.yaml",
+            user_data_ref="nfs-store:snippets/basaltwater-agent-vm.yaml",
             graphical_console=True,
             node_ip="10.0.0.10",
             user="root",
@@ -432,7 +432,7 @@ class TestVMHardwareProfile(unittest.TestCase):
         self.assertIn("--agent enabled=1,freeze-fs=1", commands[0])
         self.assertIn("--rng0 source=/dev/urandom", commands[0])
         self.assertIn(
-            "--cicustom user=nfs-store:snippets/infra_tools-agent-vm.yaml",
+            "--cicustom user=nfs-store:snippets/basaltwater-agent-vm.yaml",
             commands[0],
         )
         self.assertIn("--scsihw virtio-scsi-single", commands[0])

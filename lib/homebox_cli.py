@@ -58,13 +58,13 @@ def run_homebox_command(args: argparse.Namespace) -> int:
         if username != "root":
             command = ["sudo", "-n", *command]
         ssh = build_ssh_command(args.host, username, key, batch_mode=ssh_batch_mode(),
-                                remote_command="cd /opt/infra_tools && " + shlex.join(command))
+                                remote_command="cd /opt/basaltwater && " + shlex.join(command))
         result = subprocess.run(ssh, capture_output=True, text=True, check=False,
                                 timeout=90 if action == "health" else 3600)
         try:
             value = json.loads(result.stdout)
         except ValueError as exc:
-            raise RuntimeError("HomeBox returned no valid result; check SSH access and installed infra-tools version") from exc
+            raise RuntimeError("HomeBox returned no valid result; check SSH access and installed basaltwater version") from exc
         if not isinstance(value, dict):
             raise RuntimeError("Invalid HomeBox result")
         if args.json:

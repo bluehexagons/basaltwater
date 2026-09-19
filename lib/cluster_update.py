@@ -151,7 +151,7 @@ def _reboot_and_wait(config: SetupConfig, timeout: int) -> None:
     deadline = time.monotonic() + timeout
     reboot_command = (
         "nohup sh -lc "
-        "'sleep 1 && shutdown -r now \"infra_tools rolling update\"' "
+        "'sleep 1 && shutdown -r now \"basaltwater rolling update\"' "
         ">/dev/null 2>&1 </dev/null &"
     )
     if _ssh_result(config, reboot_command, connect_timeout=15, timeout=min(30, timeout)).returncode != 0:
@@ -225,7 +225,7 @@ def run_cluster_update(
     if len({config.host for _, config, _ in prepared}) != len(targets):
         raise ValueError("Rolling-update targets must resolve to distinct hosts")
 
-    from infra_tools import _execute_patch_config
+    from basaltwater import _execute_patch_config
 
     if dry_run:
         return 0 if all(_execute_patch_config(config) == 0 for _, config, _ in prepared) else 1

@@ -93,7 +93,7 @@ basaltw ssh-key enroll 192.168.0.51
 Never bypass a trust failure with `http.sslVerify=false`.
 
 The target receives a URL-scoped Git include and a mode-`0600` credential-store
-file below `~/.config/infra-tools/git/`. The scoped helper leaves GitHub's `gh`
+file below `~/.config/basaltwater/git/`. The scoped helper leaves GitHub's `gh`
 helper intact. Standard HTTPS and Git LFS use the same origin credential.
 
 Updating the workspace password and rerunning setup rotates the managed

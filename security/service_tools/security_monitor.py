@@ -3,7 +3,7 @@
 Security Event Monitor
 
 Checks security logs for notable events and sends notifications via the
-configured infra_tools notification targets. Runs every 15 minutes.
+configured basaltwater notification targets. Runs every 15 minutes.
 
 Event sources (where installed):
   - fail2ban: ban/unban events from /var/log/fail2ban.log
@@ -22,7 +22,7 @@ Routine privileged-exec audit hits are retained for context when another event
 is reported, but do not create a notification by themselves. Collection
 failures notify once when they begin and again when the source recovers.
 
-Logs to: /var/log/infra_tools/security/security_monitor.log
+Logs to: /var/log/basaltwater/security/security_monitor.log
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
-_STATE_FILE = '/opt/infra_tools/state/security_monitor_state.json'
+_STATE_FILE = '/opt/basaltwater/state/security_monitor_state.json'
 _FAIL2BAN_LOG = '/var/log/fail2ban.log'
 _SSH_FAILURE_THRESHOLD = 5
 _SSH_WARNING_THRESHOLD = 25
@@ -942,7 +942,7 @@ def main() -> int:
     if audit_exclusion:
         log_event(
             logger,
-            "Excluding auditd events from a managed infra-tools setup window",
+            "Excluding auditd events from a managed basaltwater setup window",
             audit_window_start=audit_exclusion[0].isoformat(),
             audit_window_end=audit_exclusion[1].isoformat(),
         )

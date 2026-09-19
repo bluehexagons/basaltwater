@@ -29,7 +29,7 @@ from web.gogs_steps import (
 
 
 logger = get_service_logger('auto_update_gogs', 'common', use_syslog=True)
-GOGS_UPDATE_STATE_FILE = "/opt/infra_tools/state/gogs_update.json"
+GOGS_UPDATE_STATE_FILE = "/opt/basaltwater/state/gogs_update.json"
 
 
 def _run_command(command: list[str]) -> subprocess.CompletedProcess[str]:

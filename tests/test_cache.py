@@ -67,8 +67,8 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 cache_path = get_cache_path_for_host('testhost')
                 with open(cache_path, encoding='utf-8') as f:
                     cache_data = json.load(f)
-                self.assertEqual(cache_data['script'], 'infra-tools')
-                self.assertEqual(cache_data['command'], 'infra-tools setup')
+                self.assertEqual(cache_data['script'], 'basaltw')
+                self.assertEqual(cache_data['command'], 'basaltw setup')
 
     def test_load_migrates_legacy_privilege_broker_origin(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -229,8 +229,8 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 self.assertEqual(history_data['tags'], ['prod'])
                 self.assertIs(history_data['success'], True)
                 self.assertEqual(history_data['duration_seconds'], 45.0)
-                self.assertEqual(history_data['script'], 'infra-tools')
-                self.assertEqual(history_data['command'], 'infra-tools patch')
+                self.assertEqual(history_data['script'], 'basaltw')
+                self.assertEqual(history_data['command'], 'basaltw patch')
                 self.assertNotIn('share_credentials', history_data['args'])
 
     def test_initial_cache_write_does_not_create_history_entry(self):

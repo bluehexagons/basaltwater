@@ -1,4 +1,4 @@
-"""Tests for infra.json manifest deployment wiring (phase 2).
+"""Tests for basaltwater.json manifest deployment wiring (phase 2).
 
 Covers the systemd unit generator, component -> nginx descriptor mapping, the
 DeploymentOrchestrator.deploy_manifest flow (with run/service/health mocked),
@@ -207,13 +207,13 @@ class TestServiceContext(unittest.TestCase):
         # Dedicated user and managed dirs.
         self.assertEqual(ctx['web_user'], "app-shop-api")
         self.assertEqual(ctx['web_group'], "app-shop-api")
-        self.assertEqual(ctx['shared_dir'], "/var/www/.infra_tools_shared/shop/api")
-        self.assertEqual(ctx['data_dir'], "/var/www/.infra_tools_shared/shop/api/data")
+        self.assertEqual(ctx['shared_dir'], "/var/www/.basaltwater_shared/shop/api")
+        self.assertEqual(ctx['data_dir'], "/var/www/.basaltwater_shared/shop/api/data")
 
     def test_shared_dir_can_be_referenced(self):
         comp = _service_component(env_file="{{shared_dir}}/.env")
         ctx = self.orch._service_context(comp, "/var/www/shop")
-        self.assertEqual(ctx['env_file'], "/var/www/.infra_tools_shared/shop/api/.env")
+        self.assertEqual(ctx['env_file'], "/var/www/.basaltwater_shared/shop/api/.env")
 
     def test_deploy_domain_available_to_service_templates(self):
         comp = _service_component(domain="{{domain}}", env_file="{{base_dir}}/{{domain}}/.env")
@@ -552,7 +552,7 @@ class TestDeployManifest(unittest.TestCase):
                  "port": 8090, "health": "/health"},
             ],
         }
-        with open(os.path.join(self.source, "infra.json"), "w") as f:
+        with open(os.path.join(self.source, "basaltwater.json"), "w") as f:
             json.dump(manifest, f)
         os.makedirs(os.path.join(self.source, "dist"))
         with open(os.path.join(self.source, "dist", "index.html"), "w") as f:
@@ -561,7 +561,7 @@ class TestDeployManifest(unittest.TestCase):
         with open(os.path.join(self.source, "server", "app"), "w") as f:
             f.write("#!/bin/sh\n")
         os.chmod(os.path.join(self.source, "server", "app"), 0o755)
-        with open(os.path.join(self.source, "infra.json")) as f:
+        with open(os.path.join(self.source, "basaltwater.json")) as f:
             self.manifest: Manifest = parse_manifest(json.load(f))
 
     def tearDown(self):
@@ -572,7 +572,7 @@ class TestDeployManifest(unittest.TestCase):
     def _operation_marker_path(self) -> str:
         return os.path.join(
             self.base_dir,
-            ".infra_tools_shared",
+            ".basaltwater_shared",
             "example_com",
             "manifest-operation.json",
         )
@@ -646,20 +646,20 @@ class TestDeployManifest(unittest.TestCase):
         self.assertEqual(kwargs['env_file'], "/opt/app/.env")
         self.assertEqual(
             kwargs['writable_paths'],
-            [os.path.join(self.base_dir, ".infra_tools_shared", "example_com", "api", "data")],
+            [os.path.join(self.base_dir, ".basaltwater_shared", "example_com", "api", "data")],
         )
         self.assertEqual(
             kwargs['runtime_env'],
-            {"APP_DATA": os.path.join(self.base_dir, ".infra_tools_shared", "example_com", "api", "data", "app.sqlite3")},
+            {"APP_DATA": os.path.join(self.base_dir, ".basaltwater_shared", "example_com", "api", "data", "app.sqlite3")},
         )
         mock_health.assert_called_once()
 
         # The managed, service-owned data dir was created outside the release.
-        data_dir = os.path.join(self.base_dir, ".infra_tools_shared", "example_com", "api", "data")
+        data_dir = os.path.join(self.base_dir, ".basaltwater_shared", "example_com", "api", "data")
         self.assertTrue(os.path.isdir(data_dir))
         ownership_commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertTrue(any("chown root:root" in command for command in ownership_commands))
-        self.assertFalse(any("chown -R" in command and ".infra_tools_shared" in command
+        self.assertFalse(any("chown -R" in command and ".basaltwater_shared" in command
                              for command in ownership_commands))
         # A dedicated service user was ensured (id lookup attempted).
         self.assertTrue(any("id app-example_com-api" in c.args[0] for c in mock_run.call_args_list))
@@ -671,7 +671,7 @@ class TestDeployManifest(unittest.TestCase):
 
         # Metadata persisted, and the deployed tree is in place.
         mock_meta.assert_called_once()
-        self.assertTrue(os.path.exists(os.path.join(dest, "infra.json")))
+        self.assertTrue(os.path.exists(os.path.join(dest, "basaltwater.json")))
         self.assertFalse(os.path.exists(self._operation_marker_path()))
 
     @patch.object(DeploymentOrchestrator, '_poll_health')

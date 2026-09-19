@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import pwd
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib import orchestrator_bootstrap
-import infra_tools
+import basaltwater
 
 
 def setUpModule():
@@ -42,10 +41,6 @@ class TestResolveBootstrapUser(unittest.TestCase):
 
 
 class TestInstallSystemPackages(unittest.TestCase):
-    def setUp(self):
-        available = patch("lib.orchestrator_bootstrap.shutil.which", return_value="/usr/bin/apt-get")
-        available.start()
-        self.addCleanup(available.stop)
 
     @patch("lib.orchestrator_bootstrap.ensure_debian_package_sources")
     @patch("lib.orchestrator_bootstrap._run_apt_command")
@@ -118,20 +113,16 @@ class TestInstallSystemPackages(unittest.TestCase):
 
 
 class TestRunOrchestratorBootstrap(unittest.TestCase):
-    def setUp(self):
-        cleanup = patch("lib.orchestrator_bootstrap.retire_legacy_tmpfiles_conf", return_value=False)
-        cleanup.start()
-        self.addCleanup(cleanup.stop)
 
-    @patch("infra_tools.confirm_unsupported_environment", return_value=False)
-    @patch("infra_tools.run_orchestrator_bootstrap")
+    @patch("basaltwater.confirm_unsupported_environment", return_value=False)
+    @patch("basaltwater.run_orchestrator_bootstrap")
     def test_bootstrap_refuses_unsupported_host_without_confirmation(
         self,
         mock_bootstrap,
         mock_confirm,
     ):
         with patch.object(sys, "argv", ["basaltw", "bootstrap"]):
-            result = infra_tools.main()
+            result = basaltwater.main()
 
         self.assertEqual(result, 1)
         mock_confirm.assert_called_once_with("local bootstrap")
@@ -141,7 +132,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         with patch("lib.orchestrator_bootstrap.resolve_bootstrap_user", return_value=("admin", "/home/admin")), \
              patch("lib.orchestrator_bootstrap.install_system_packages") as mock_install:
             result = orchestrator_bootstrap.run_orchestrator_bootstrap(
-                script_path="infra_tools.py",
+                script_path="basaltwater.py",
                 shell="bash",
                 requested_user="admin",
                 skip_system_packages=True,
@@ -152,7 +143,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         mock_install.assert_not_called()
 
     def test_self_setup_parser_accepts_qemu_guest_agent_flag(self):
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["self-setup", "--qemu-guest-agent"])
         self.assertEqual(args.command, "self-setup")
         self.assertTrue(args.qemu_guest_agent)
@@ -173,7 +164,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         _mock_install_launcher,
     ):
         result = orchestrator_bootstrap.run_orchestrator_bootstrap(
-            script_path="infra_tools.py",
+            script_path="basaltwater.py",
             shell="bash",
             requested_user="admin",
         )
@@ -196,7 +187,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
     ):
         mock_run.return_value = unittest.mock.MagicMock(returncode=0)
         result = orchestrator_bootstrap.run_orchestrator_bootstrap(
-            script_path="infra_tools.py",
+            script_path="basaltwater.py",
             shell="bash",
             requested_user="admin",
         )
@@ -209,18 +200,16 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
 
     @patch("lib.orchestrator_bootstrap.resolve_bootstrap_user", return_value=("admin", "/home/admin"))
     @patch("lib.orchestrator_bootstrap.get_current_username", return_value="admin")
-    @patch("lib.orchestrator_bootstrap.retire_legacy_launcher", return_value=True)
     @patch("lib.orchestrator_bootstrap.subprocess.run")
     def test_can_skip_system_packages_for_current_user(
         self,
         mock_run,
-        mock_retire_legacy_launcher,
         _mock_current_username,
         _mock_resolve_user,
     ):
         mock_run.return_value = unittest.mock.MagicMock(returncode=0)
         result = orchestrator_bootstrap.run_orchestrator_bootstrap(
-            script_path="infra_tools.py",
+            script_path="basaltwater.py",
             shell="zsh",
             requested_user="admin",
             skip_system_packages=True,
@@ -230,14 +219,13 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         self.assertIn("python-tools", command)
         self.assertEqual(command[-4:-2], ["--shell", "zsh"])
         self.assertEqual(command[-2], "--script-path")
-        mock_retire_legacy_launcher.assert_called_once_with("/usr/local/bin")
 
 
 class TestInstallLauncher(unittest.TestCase):
     def test_primary_collision_preserves_all_existing_launchers(self):
         for kind in ("file", "binary", "symlink", "directory"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
-                source = os.path.join(tmp, "infra_tools.py")
+                source = os.path.join(tmp, "basaltwater.py")
                 with open(source, "w") as handle:
                     handle.write("print('fixture')\n")
                 target = os.path.join(tmp, "bin")
@@ -265,56 +253,11 @@ class TestInstallLauncher(unittest.TestCase):
                     with open(os.path.join(target, name)) as handle:
                         self.assertEqual(handle.read(), "original")
 
-    def test_both_launchers_survive_source_rollback_and_rerun(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = os.path.join(tmp, "infra_tools.py")
-            target = os.path.join(tmp, "bin")
-            for version in ("previous", "renamed", "previous"):
-                with open(source, "w", encoding="utf-8") as handle:
-                    handle.write(f"print({version!r})\n")
-                orchestrator_bootstrap.install_launcher(source, target_dir=target)
-                for name in ("basaltw", "infra-tools"):
-                    result = subprocess.run(
-                        [os.path.join(target, name)], capture_output=True,
-                        text=True, check=True, timeout=10,
-                    )
-                    self.assertEqual(result.stdout.strip(), version)
-            self.assertEqual(set(os.listdir(target)), {"basaltw", "infra-tools"})
 
-    def test_agent_launcher_upgrade_retains_user_command_and_adds_basaltw(self):
-        from common import agent_steps
-        from lib.config import SetupConfig
-
-        with tempfile.TemporaryDirectory() as tmp:
-            target = os.path.join(tmp, ".local", "bin")
-            os.makedirs(target)
-            old = os.path.join(target, "infra-tools")
-            with open(old, "w", encoding="utf-8") as handle:
-                handle.write("#!/bin/sh\nexit 17\n")
-            os.chmod(old, 0o755)
-            config = SetupConfig(host="example.com", username="agent", system_type="agent_vm")
-            with patch.object(agent_steps, "_user_home", return_value=tmp), \
-                 patch.object(agent_steps, "_chown_path"), \
-                 patch.object(agent_steps, "_ensure_agent_shell_path"), \
-                 patch.object(agent_steps, "is_dry_run", return_value=False):
-                agent_steps.install_agent_cli_launcher(config)
-                agent_steps.install_agent_cli_launcher(config)
-            self.assertEqual(subprocess.run([old], check=False).returncode, 17)
-            with open(os.path.join(target, "basaltw"), encoding="utf-8") as handle:
-                invocation = shlex.split(handle.read().splitlines()[-1])
-            self.assertEqual(invocation[:2], ["exec", "/usr/bin/python3"])
-            self.assertEqual(invocation[2:], [agent_steps.AGENT_CLI_SOURCE, "$@"])
-            # The CI container supplies Python via setup-python, not the
-            # /usr/bin/python3 installed on managed agent hosts.
-            result = subprocess.run(
-                [sys.executable, invocation[2], "--version"],
-                capture_output=True, text=True, check=True, timeout=10,
-            )
-            self.assertEqual(result.stdout, "basaltw 2.0.0\n")
 
     def test_install_launcher_writes_executable_wrapper(self):
         with tempfile.TemporaryDirectory() as tmp:
-            project_script = os.path.join(tmp, "infra_tools.py")
+            project_script = os.path.join(tmp, "basaltwater.py")
             with open(project_script, "w", encoding="utf-8") as handle:
                 handle.write("# fake script\n")
             target_dir = os.path.join(tmp, "bin")
@@ -329,29 +272,12 @@ class TestInstallLauncher(unittest.TestCase):
             self.assertIn(project_script, content)
             self.assertIn("exec python3", content)
 
-    def test_install_launcher_removes_legacy_launcher(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project_script = os.path.join(tmp, "infra_tools.py")
-            with open(project_script, "w", encoding="utf-8") as handle:
-                handle.write("# fake script\n")
-            target_dir = os.path.join(tmp, "bin")
-            os.makedirs(target_dir)
-            legacy_launcher = os.path.join(target_dir, "infra_tools")
-            with open(legacy_launcher, "w", encoding="utf-8") as handle:
-                handle.write("#!/bin/sh\nexit 1\n")
-
-            launcher = orchestrator_bootstrap.install_launcher(
-                project_script, target_dir=target_dir
-            )
-
-            self.assertEqual(launcher, os.path.join(target_dir, "basaltw"))
-            self.assertFalse(os.path.lexists(legacy_launcher))
 
     def test_install_launcher_safely_quotes_project_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             project_dir = os.path.join(tmp, "project with 'quote")
             os.makedirs(project_dir)
-            project_script = os.path.join(project_dir, "infra_tools.py")
+            project_script = os.path.join(project_dir, "basaltwater.py")
             with open(project_script, "w", encoding="utf-8") as handle:
                 handle.write("import sys\nprint(sys.argv[1])\n")
             launcher = orchestrator_bootstrap.install_launcher(
@@ -373,47 +299,6 @@ class TestInstallLauncher(unittest.TestCase):
                 orchestrator_bootstrap.install_launcher(
                     os.path.join(tmp, "nope.py"), target_dir=tmp
                 )
-
-
-class TestRetireLegacyTmpfilesConf(unittest.TestCase):
-    @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)
-    def test_removes_existing_conf_file(self, _mock_geteuid):
-        with tempfile.TemporaryDirectory() as tmp:
-            conf_path = os.path.join(tmp, "infra_tools.conf")
-            with open(conf_path, "w", encoding="utf-8") as file_obj:
-                file_obj.write("legacy")
-            self.assertTrue(orchestrator_bootstrap.retire_legacy_tmpfiles_conf(conf_path))
-            self.assertFalse(os.path.exists(conf_path))
-
-    def test_missing_conf_is_already_retired(self):
-        self.assertFalse(
-            orchestrator_bootstrap.retire_legacy_tmpfiles_conf("/missing/infra_tools.conf")
-        )
-
-    @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=1000)
-    def test_retire_raises_without_root(self, _mock_geteuid):
-        with tempfile.NamedTemporaryFile() as file_obj:
-            with self.assertRaises(PermissionError):
-                orchestrator_bootstrap.retire_legacy_tmpfiles_conf(file_obj.name)
-
-    @patch("lib.orchestrator_bootstrap.retire_legacy_tmpfiles_conf", return_value=True)
-    @patch("lib.orchestrator_bootstrap.install_launcher", return_value="/usr/local/bin/basaltw")
-    @patch("lib.orchestrator_bootstrap.subprocess.run")
-    @patch("lib.orchestrator_bootstrap.install_system_packages", return_value=0)
-    @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)
-    def test_bootstrap_retires_tmpfiles_conf(
-        self, _mock_geteuid, _mock_packages, mock_run, _mock_launcher, mock_tmpfiles
-    ):
-        mock_run.side_effect = [
-            unittest.mock.MagicMock(returncode=0, stdout="", stderr=""),
-            unittest.mock.MagicMock(returncode=0, stdout="", stderr=""),
-            unittest.mock.MagicMock(returncode=0, stdout="", stderr=""),
-        ]
-        with patch("lib.orchestrator_bootstrap.resolve_bootstrap_user", return_value=("admin", "/home/admin")):
-            with patch("lib.orchestrator_bootstrap.get_current_username", return_value="admin"):
-                result = orchestrator_bootstrap.run_orchestrator_bootstrap("infra_tools.py", "bash", None)
-        self.assertEqual(result, 0)
-        mock_tmpfiles.assert_called_once()
 
 
 if __name__ == "__main__":

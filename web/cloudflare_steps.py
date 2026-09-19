@@ -148,7 +148,7 @@ def configure_nginx_for_cloudflare(config: SetupConfig) -> None:
 def install_cloudflared_service_helper(config: SetupConfig) -> None:
     """Create symlink for Cloudflare tunnel setup script."""
     helper_script = "/usr/local/bin/setup-cloudflare-tunnel"
-    source_script = "/opt/infra_tools/web/service_tools/setup_cloudflare_tunnel.py"
+    source_script = "/opt/basaltwater/web/service_tools/setup_cloudflare_tunnel.py"
     
     if os.path.exists(helper_script):
         print("  ✓ Cloudflare tunnel setup script already available")
@@ -167,7 +167,7 @@ def install_cloudflared_service_helper(config: SetupConfig) -> None:
 def run_cloudflare_tunnel_setup(config: SetupConfig) -> bool:
     """Update and verify an existing tunnel; return False when none exists."""
     del config
-    helper_script = "/opt/infra_tools/web/service_tools/setup_cloudflare_tunnel.py"
+    helper_script = "/opt/basaltwater/web/service_tools/setup_cloudflare_tunnel.py"
     
     if not os.path.exists(helper_script):
         raise RuntimeError(f"Cloudflare setup script not found: {helper_script}")

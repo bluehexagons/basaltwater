@@ -311,7 +311,7 @@ class TestOfficialAgentInstallers(unittest.TestCase):
 
     def test_agent_vm_gets_managed_user_launcher(self):
         with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, 'infra_tools.py')
+            source = os.path.join(directory, 'basaltwater.py')
             home = os.path.join(directory, 'home')
             os.makedirs(home)
             with open(source, 'w', encoding='utf-8') as file_obj:
@@ -325,10 +325,10 @@ class TestOfficialAgentInstallers(unittest.TestCase):
             ):
                 install_agent_cli_launcher(self.config)
 
-            launcher = os.path.join(home, '.local', 'bin', 'infra-tools')
+            launcher = os.path.join(home, '.local', 'bin', 'basaltw')
             with open(launcher, encoding='utf-8') as file_obj:
                 content = file_obj.read()
-            self.assertIn('# Managed by infra_tools agent setup', content)
+            self.assertIn('# Managed by basaltwater agent setup', content)
             self.assertIn(f'exec /usr/bin/python3 {source} "$@"', content)
             self.assertEqual(os.stat(launcher).st_mode & 0o777, 0o755)
             self.assertEqual(
@@ -520,13 +520,13 @@ class TestOfficialAgentInstallers(unittest.TestCase):
 
     def test_agent_vm_launcher_refuses_symlink_destination(self):
         with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, 'infra_tools.py')
+            source = os.path.join(directory, 'basaltwater.py')
             home = os.path.join(directory, 'home')
             bin_dir = os.path.join(home, '.local', 'bin')
             os.makedirs(bin_dir)
             with open(source, 'w', encoding='utf-8') as file_obj:
                 file_obj.write('# target source\n')
-            os.symlink('/bin/true', os.path.join(bin_dir, 'infra-tools'))
+            os.symlink('/bin/true', os.path.join(bin_dir, 'basaltw'))
 
             with (
                 patch('common.agent_steps.AGENT_CLI_SOURCE', source),
@@ -568,7 +568,7 @@ class TestAgentDoctor(unittest.TestCase):
                 home,
                 '.local',
                 'bin',
-                'infra-tools-t3code-pairing-provider',
+                'basaltwater-t3code-pairing-provider',
             )
             os.makedirs(os.path.dirname(wrapper))
             with open(wrapper, 'w', encoding='utf-8') as file_obj:
@@ -685,7 +685,7 @@ class TestAgentDoctor(unittest.TestCase):
                 'systemd',
                 'user',
                 't3code.service.d',
-                'infra-tools.conf',
+                'basaltwater.conf',
             )
             os.makedirs(os.path.dirname(drop_in))
             with open(drop_in, 'w', encoding='utf-8') as file_obj:
@@ -901,7 +901,7 @@ class TestAgentDoctor(unittest.TestCase):
 
         self.assertEqual(
             builder.call_args.kwargs['remote_command'],
-            'python3 /opt/infra_tools/infra_tools.py agent doctor '
+            'python3 /opt/basaltwater/basaltwater.py agent doctor '
             '--tool codex --capability browser --json',
         )
 
@@ -1132,7 +1132,7 @@ class TestAgentUpdate(unittest.TestCase):
                 home,
                 '.local',
                 'state',
-                'infra_tools',
+                'basaltwater',
                 'agent-tools.json',
             )))
 
@@ -1158,7 +1158,7 @@ class TestAgentUpdate(unittest.TestCase):
                 home,
                 '.local',
                 'state',
-                'infra_tools',
+                'basaltwater',
                 'agent-tools.json',
             )
             with open(state_path, encoding='utf-8') as file_obj:
@@ -1183,7 +1183,7 @@ class TestAgentUpdate(unittest.TestCase):
                 home,
                 '.local',
                 'state',
-                'infra_tools',
+                'basaltwater',
                 'agent-tools.json',
             )
             with open(state_path, encoding='utf-8') as file_obj:
@@ -1229,7 +1229,7 @@ class TestAgentUpdate(unittest.TestCase):
     def test_corrupt_state_stops_before_mutating_tools(self):
         with tempfile.TemporaryDirectory() as home:
             bin_dir = os.path.join(home, '.local', 'bin')
-            state_dir = os.path.join(home, '.local', 'state', 'infra_tools')
+            state_dir = os.path.join(home, '.local', 'state', 'basaltwater')
             os.makedirs(bin_dir)
             os.makedirs(state_dir)
             self._write_tool(os.path.join(bin_dir, 'codex'), 'codex 1.0.0')
@@ -1358,7 +1358,7 @@ class TestAgentUpdate(unittest.TestCase):
 
         self.assertEqual(
             builder.call_args.kwargs['remote_command'],
-            'python3 /opt/infra_tools/infra_tools.py agent update '
+            'python3 /opt/basaltwater/basaltwater.py agent update '
             '--tool codex --dry-run --json',
         )
 
@@ -1382,7 +1382,7 @@ class TestAgentUpdate(unittest.TestCase):
 
         self.assertEqual(
             builder.call_args.kwargs['remote_command'],
-            'python3 /opt/infra_tools/infra_tools.py agent update '
+            'python3 /opt/basaltwater/basaltwater.py agent update '
             '--tool codex --dry-run --tools-only-readiness',
         )
 

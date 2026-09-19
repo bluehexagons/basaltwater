@@ -37,7 +37,7 @@ In the repository's GitHub settings, add a webhook with:
 | --- | --- |
 | Payload URL | `https://webhook.example.com/webhook` |
 | Content type | `application/json` |
-| Secret | Contents of `/etc/infra_tools/cicd/webhook_secret` |
+| Secret | Contents of `/etc/basaltwater/cicd/webhook_secret` |
 | SSL verification | Enabled |
 | Events | Push, or the events required by the repository |
 | Active | Enabled |

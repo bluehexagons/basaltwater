@@ -11,13 +11,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.github_maintenance import _release_tags_to_delete, discover_github_repos, run_maintenance_command
 
 
 class TestMaintenanceCli(unittest.TestCase):
     def test_parser_accepts_github_audit(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["maintenance", "github", "audit", "--json"])
         self.assertEqual(args.command, "maintenance")
         self.assertEqual(args.maintenance_command, "github")
@@ -25,7 +25,7 @@ class TestMaintenanceCli(unittest.TestCase):
         self.assertTrue(args.json)
 
     def test_parser_accepts_github_prune(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args([
             "maintenance",
             "github",
@@ -46,7 +46,7 @@ class TestMaintenanceCli(unittest.TestCase):
         self.assertEqual(_release_tags_to_delete(releases, 2), ["v1.0.0"])
 
     def test_run_maintenance_command_requires_subcommand(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["maintenance"])
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

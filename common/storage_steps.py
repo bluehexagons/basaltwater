@@ -22,8 +22,8 @@ from lib.vm_storage import (
 )
 
 
-STORAGE_STATE_FILE = "/opt/infra_tools/state/vm-storage.json"
-STORAGE_MARKER = ".infra-tools-storage.json"
+STORAGE_STATE_FILE = "/opt/basaltwater/state/vm-storage.json"
+STORAGE_MARKER = ".basaltwater-storage.json"
 STORAGE_SCHEMA_VERSION = 2
 
 
@@ -466,7 +466,7 @@ def _prepare_mount(
     unit_path = os.path.join("/etc/systemd/system", unit)
     unit_text = (
         "[Unit]\n"
-        f"Description=infra-tools VM data mount {mount.name}\n"
+        f"Description=basaltwater VM data mount {mount.name}\n"
         "Before=local-fs.target\n\n"
         "[Mount]\n"
         f"What=/dev/disk/by-uuid/{filesystem_uuid}\n"

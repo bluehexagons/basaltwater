@@ -34,7 +34,7 @@ class TestDeploymentPreflight(unittest.TestCase):
             deploy_specs=[["example.com", "https://example.com/app.git"]],
         )
         with tempfile.TemporaryDirectory() as repo_dir, tempfile.TemporaryDirectory() as target_dir:
-            with open(os.path.join(repo_dir, "infra.json"), "w", encoding="utf-8") as handle:
+            with open(os.path.join(repo_dir, "basaltwater.json"), "w", encoding="utf-8") as handle:
                 handle.write('{"version": 1, "components": []}\n')
             mock_clone.return_value = (repo_dir, "abc123")
 
@@ -89,7 +89,7 @@ class TestDeploymentPreflight(unittest.TestCase):
 
             self.assertFalse(result)
             with open(log_file, encoding="utf-8") as handle:
-                self.assertIn("pinned legacy infra-tools release", handle.read())
+                self.assertIn("pinned legacy basaltwater release", handle.read())
 
 
 class TestSshKeyUpgrade(unittest.TestCase):

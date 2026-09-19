@@ -1,4 +1,4 @@
-"""infra_tools - Automated setup scripts for remote Linux systems."""
+"""basaltwater - Automated setup scripts for remote Linux systems."""
 
 from __future__ import annotations
 

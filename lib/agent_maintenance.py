@@ -23,7 +23,7 @@ _CLOCK_SKEW_SECONDS = 5 * 60
 _HOLD_STATE_RELATIVE = os.path.join(
     ".local",
     "state",
-    "infra_tools",
+    "basaltwater",
     "agent-maintenance-hold.json",
 )
 

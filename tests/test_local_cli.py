@@ -11,13 +11,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.local_cli import run_local_command
 
 
 class TestLocalCommandParser(unittest.TestCase):
     def setUp(self) -> None:
-        self.parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        self.parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
     def test_parses_static_ip_and_dns_options(self):
         args = self.parser.parse_args(

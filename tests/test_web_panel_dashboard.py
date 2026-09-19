@@ -54,7 +54,7 @@ class DashboardTest(unittest.TestCase):
         })
         events = [{"meaning": f"Event <{i}>", "severity": "warning"} for i in range(8)]
         with (
-            patch.object(panel, "discover_infra_web_services", return_value=[]),
+            patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
             patch.object(panel, "discover_certificate_trust", return_value=None),
             patch.object(state, "system_overview", return_value=[]),
             patch.object(state, "audit_snapshot", return_value={"events": events, "status": "ok"}),
@@ -77,7 +77,7 @@ class DashboardTest(unittest.TestCase):
             "system_type": "server_dev", "features": {}, "services": [], "access": [],
         })
         with (
-            patch.object(panel, "discover_infra_web_services", return_value=[]),
+            patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
             patch.object(panel, "discover_certificate_trust", return_value=None),
             patch.object(state, "service_health") as service_health,
         ):

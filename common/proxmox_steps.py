@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 _PROXMOX_MEMORY_SYSCTL_FILE = (
-    "/etc/sysctl.d/99-zz-infra-tools-proxmox-memory.conf"
+    "/etc/sysctl.d/99-zz-basaltwater-proxmox-memory.conf"
 )
 _PROXMOX_SWAPPINESS = 10
 _APPLY_SWAPPINESS_COMMAND = (
@@ -34,7 +34,7 @@ def configure_proxmox_host_memory_safety(config: SetupConfig) -> None:
     """Audit host swap topology and apply Proxmox's low swappiness policy."""
     del config
     sysctl_content = (
-        "# Managed by infra-tools for Proxmox hosts.\n"
+        "# Managed by basaltwater for Proxmox hosts.\n"
         f"vm.swappiness = {_PROXMOX_SWAPPINESS}\n"
     )
 

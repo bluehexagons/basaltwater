@@ -522,8 +522,8 @@ class TestWebhookNotifications(unittest.TestCase):
     def test_builds_native_pvesh_endpoint_and_matcher_commands(self) -> None:
         commands = _build_webhook_notification_commands(
             ProxmoxWebhookNotificationConfig(
-                endpoint_name="infra-tools-webhook",
-                matcher_name="infra-tools-system",
+                endpoint_name="basaltwater-webhook",
+                matcher_name="basaltwater-system",
                 url="https://notify.example/hook",
                 severities=["warning", "error"],
             )
@@ -537,7 +537,7 @@ class TestWebhookNotifications(unittest.TestCase):
         body = base64.b64decode(encoded_body).decode("utf-8")
         self.assertIn('"job": "proxmox"', body)
         self.assertIn("/cluster/notifications/matchers", commands[1])
-        self.assertIn("--target infra-tools-webhook", commands[1])
+        self.assertIn("--target basaltwater-webhook", commands[1])
         self.assertIn("--match-severity warning", commands[1])
         self.assertIn("--match-severity error", commands[1])
 

@@ -20,7 +20,7 @@ _BASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@{}^~:+-]{0,255}$")
 _DEFAULT_WORKTREE_RELATIVE = os.path.join(
     ".local",
     "share",
-    "infra_tools",
+    "basaltwater",
     "worktrees",
 )
 
@@ -234,7 +234,7 @@ def remove_agent_worktree(
     home: Optional[str] = None,
     dry_run: bool = False,
 ) -> JSONDict:
-    """Remove a clean, merged, infra-tools-managed agent worktree and branch."""
+    """Remove a clean, merged, basaltwater-managed agent worktree and branch."""
     user_home = os.path.abspath(home or _effective_home())
     managed_root = _managed_root(user_home, root, create=False)
     worktree = _repository_root(path)

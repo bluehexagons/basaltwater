@@ -47,25 +47,25 @@ DEFAULT_UPDATE_TOOLS = AGENT_UPDATE_TOOLS
 _AGENT_STATE_RELATIVE = os.path.join(
     ".local",
     "state",
-    "infra_tools",
+    "basaltwater",
     "agent-tools.json",
 )
 _CODEX_INSTALLER_URL = POLICIES["codex"][0]
 _UPDATE_TIMEOUT_SECONDS = 600
-_BROWSER_MCP_WRAPPER = "/usr/local/bin/infra-tools-playwright-mcp"
-_BROWSER_DOCTOR_WRAPPER = "/usr/local/bin/infra-tools-playwright-doctor"
+_BROWSER_MCP_WRAPPER = "/usr/local/bin/basaltwater-playwright-mcp"
+_BROWSER_DOCTOR_WRAPPER = "/usr/local/bin/basaltwater-playwright-doctor"
 _BROWSER_MCP_CLI = (
-    "/opt/infra-tools-playwright/node_modules/@playwright/mcp/cli.js"
+    "/opt/basaltwater-playwright/node_modules/@playwright/mcp/cli.js"
 )
 _BROWSER_OUTPUT_MAX_BYTES = 256 * BYTES_PER_MB
-_BROWSER_MCP_SERVER_NAME = "infra-tools-playwright"
+_BROWSER_MCP_SERVER_NAME = "basaltwater-playwright"
 _BROWSER_DOCTOR_TIMEOUT_SECONDS = 210
 _REMOTE_DOCTOR_TIMEOUT_SECONDS = _BROWSER_DOCTOR_TIMEOUT_SECONDS + 90
 _MAX_AGENT_SKILL_BYTES = 256 * 1024
 _PLAYWRIGHT_BROWSER_AGENT_SKILL_NAMES = frozenset(
     (
-        "infra-tools-browser-testing",
-        "infra-tools-playwright-testing",
+        "basaltwater-browser-testing",
+        "basaltwater-playwright-testing",
     )
 )
 _T3_SERVICE_NAME = "t3code.service"
@@ -83,7 +83,7 @@ _T3_VERSION_RE = re.compile(
 )
 _T3_DEFAULT_PORT = 3773
 _T3_NATIVE_PACKAGES = ("node-pty", "msgpackr-extract")
-_REMOTE_INFRA_TOOLS_PATH = "/opt/infra_tools/infra_tools.py"
+_REMOTE_BASALTWATER_PATH = "/opt/basaltwater/basaltwater.py"
 _AGENT_HOST_MAINTENANCE_UNITS = (
     "security-monitor",
     "auto-update-apt",
@@ -637,7 +637,7 @@ def _backup_executable(tool: str, path: str, home: str) -> str:
         home,
         ".local",
         "state",
-        "infra_tools",
+        "basaltwater",
         "agent-backups",
     )
     validate_filesystem_path(backup_dir, must_exist=False)
@@ -667,7 +667,7 @@ def _restore_executable(path: str, backup_path: str) -> bool:
     try:
         descriptor, temporary_path = tempfile.mkstemp(
             dir=parent,
-            prefix=".infra-tools-rollback-",
+            prefix=".basaltwater-rollback-",
         )
         os.close(descriptor)
         os.unlink(temporary_path)
@@ -953,7 +953,7 @@ def _browser_launcher_features(path: Optional[str] = None) -> JSONDict:
             and '--executable-path "$browser_path"' in content
         ),
         "private_evidence": (
-            'output_dir="$HOME/.local/state/infra_tools/playwright-mcp"' in content
+            'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"' in content
             and '--output-dir "$output_dir"' in content
             and "umask 077" in content
         ),
@@ -1019,7 +1019,7 @@ def _browser_process_has_managed_defaults(
         and managed_executable
         and "vision" in capabilities
         and _browser_argument_value(arguments, "--output-dir")
-        == os.path.join(home, ".local", "state", "infra_tools", "playwright-mcp")
+        == os.path.join(home, ".local", "state", "basaltwater", "playwright-mcp")
         and _browser_argument_value(arguments, "--timeout-settle") == "1000"
         and _browser_argument_value(arguments, "--output-max-size")
         == str(_BROWSER_OUTPUT_MAX_BYTES)
@@ -1065,7 +1065,7 @@ def _browser_running_processes(
 
 
 def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
-    """Return whether one safe skill entrypoint has the infra-tools marker."""
+    """Return whether one safe skill entrypoint has the basaltwater marker."""
 
     descriptor = -1
     try:
@@ -1089,7 +1089,7 @@ def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
             content = file_obj.read(_MAX_AGENT_SKILL_BYTES + 1)
         return (
             len(content) <= _MAX_AGENT_SKILL_BYTES
-            and b"managed-by: infra_tools" in content
+            and b"managed-by: basaltwater" in content
         )
     except OSError:
         return False
@@ -1102,7 +1102,7 @@ def _browser_workflow_skills(
     home: str,
     owner_uid: int | None = None,
 ) -> tuple[str, ...]:
-    """Return installed infra-tools-managed browser workflow variants."""
+    """Return installed basaltwater-managed browser workflow variants."""
 
     from common.agent_steps import BROWSER_AGENT_SKILL_NAMES
 
@@ -1929,7 +1929,7 @@ def _repair_t3_native_runtime(
 def _temporary_t3_npm_config() -> Iterator[str]:
     """Yield a private npm 12 allowlist without changing the user's npmrc."""
 
-    descriptor, path = tempfile.mkstemp(prefix=".infra-tools-t3-npmrc-")
+    descriptor, path = tempfile.mkstemp(prefix=".basaltwater-t3-npmrc-")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as file_obj:
             file_obj.write(f"allow-scripts={','.join(_T3_NATIVE_PACKAGES)}\n")
@@ -2008,7 +2008,7 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         user_home,
         ".local",
         "bin",
-        "infra-tools-t3code-pairing-provider",
+        "basaltwater-t3code-pairing-provider",
     )
     drop_in = os.path.join(
         user_home,
@@ -2016,7 +2016,7 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         "systemd",
         "user",
         "t3code.service.d",
-        "infra-tools.conf",
+        "basaltwater.conf",
     )
     pair_wrapper = os.path.join(user_home, ".local", "bin", "t3code-pair")
     environment = _t3_environment(user_home)
@@ -2236,7 +2236,7 @@ def _run_remote_agent_lifecycle(
     remote_command = shell_join(
         [
             "python3",
-            _REMOTE_INFRA_TOOLS_PATH,
+            _REMOTE_BASALTWATER_PATH,
             "agent",
             subcommand,
             *remote_arguments,

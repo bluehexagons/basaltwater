@@ -281,11 +281,11 @@ class SyncthingCompositionTest(unittest.TestCase):
         unlink.assert_called_once()
         commands = [call.args[0] for call in run_command.call_args_list]
         self.assertIn(
-            ["systemctl", "disable", "--now", "infra-syncthing.service"],
+            ["systemctl", "disable", "--now", "basaltwater-syncthing.service"],
             commands,
         )
         self.assertIn(
-            ["systemctl", "is-active", "--quiet", "infra-syncthing.service"],
+            ["systemctl", "is-active", "--quiet", "basaltwater-syncthing.service"],
             commands,
         )
 
@@ -389,7 +389,7 @@ class SyncthingCompositionTest(unittest.TestCase):
         put_config.assert_not_called()
         commands = [call.args[0] for call in run_command.call_args_list]
         self.assertIn(
-            ["systemctl", "disable", "--now", "infra-syncthing.service"],
+            ["systemctl", "disable", "--now", "basaltwater-syncthing.service"],
             commands,
         )
 

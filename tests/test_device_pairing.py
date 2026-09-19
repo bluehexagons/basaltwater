@@ -371,7 +371,7 @@ class PairingBrokerTest(unittest.TestCase):
         nonce = state.new_nonce()
         headers = Message()
         headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
         handler.path = "/connect/t3code"
@@ -412,7 +412,7 @@ class PairingBrokerTest(unittest.TestCase):
         nonce = state.new_nonce()
         headers = Message()
         headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
         handler.path = "/connect/t3code"
@@ -462,7 +462,7 @@ class PairingBrokerTest(unittest.TestCase):
         nonce = state.new_nonce()
         headers = Message()
         headers["X-Forwarded-Proto"] = "https"
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
         handler.path = "/"
@@ -638,7 +638,7 @@ class PairingBrokerTest(unittest.TestCase):
         headers = Message()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         headers["Content-Length"] = str(len(body))
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         headers["X-Forwarded-Host"] = "agent-vm"
         headers["X-Forwarded-Proto"] = "http"
         headers["X-Real-IP"] = "192.168.0.12"
@@ -674,7 +674,7 @@ class PairingBrokerTest(unittest.TestCase):
         headers = Message()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         headers["Content-Length"] = str(len(body))
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
         handler.path = "/pair/t3code"
@@ -699,7 +699,7 @@ class PairingBrokerTest(unittest.TestCase):
         headers = Message()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
         headers["Content-Length"] = str(len(body))
-        headers["Cookie"] = f"infra_tools_pairing_nonce={nonce}"
+        headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         headers["X-Real-IP"] = "192.168.0.12"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
@@ -791,8 +791,8 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 "DEVICE_PAIRING_SERVICE_FILE": os.path.join(temporary, "pairing.service"),
                 "DEVICE_PAIRING_NGINX_SITE": nginx_available,
                 "DEVICE_PAIRING_NGINX_LINK": nginx_enabled,
-                "DEVICE_PAIRING_SOCKET": "/run/infra-tools-device-pairing/http.sock",
-                "DEVICE_PAIRING_SCRIPT": "/opt/infra_tools/common/service_tools/device_pairing_service.py",
+                "DEVICE_PAIRING_SOCKET": "/run/basaltwater-device-pairing/http.sock",
+                "DEVICE_PAIRING_SCRIPT": "/opt/basaltwater/common/service_tools/device_pairing_service.py",
             }
 
             def run_command(_command: str, **_kwargs: object) -> SimpleNamespace:
@@ -811,7 +811,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 _configure_device_pairing(
                     config,
                     temporary,
-                    "/home/agent/.local/bin/infra-tools-t3code-pairing-provider",
+                    "/home/agent/.local/bin/basaltwater-t3code-pairing-provider",
                     "0.0.0.0",
                     3773,
                 )
@@ -826,36 +826,36 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
             self.assertIn('auth_basic "Device pairing"', nginx)
             self.assertIn("rate=5r/m", nginx)
             self.assertIn(
-                "limit_req zone=infra_tools_device_pairing_auth burst=5 nodelay",
+                "limit_req zone=basaltwater_device_pairing_auth burst=5 nodelay",
                 nginx,
             )
-            self.assertIn("infra-tools-auth-failure", nginx)
+            self.assertIn("basaltwater-auth-failure", nginx)
             self.assertIn("listen 0.0.0.0:3774", nginx)
             self.assertIn(
                 "proxy_pass http://unix:"
-                "/run/infra-tools-device-pairing/http.sock:/",
+                "/run/basaltwater-device-pairing/http.sock:/",
                 nginx,
             )
             self.assertIn(
                 "map $realip_remote_addr "
-                "$infra_tools_device_pairing_gateway_request",
+                "$basaltwater_device_pairing_gateway_request",
                 nginx,
             )
             self.assertIn('"1:https" https;', nginx)
             self.assertIn(
-                "~^1:(?<infra_tools_device_pairing_forwarded_host>.+)$",
+                "~^1:(?<basaltwater_device_pairing_forwarded_host>.+)$",
                 nginx,
             )
             self.assertIn("set_real_ip_from 127.0.0.1", nginx)
             self.assertIn("real_ip_header X-Forwarded-For", nginx)
             self.assertIn(
                 "proxy_set_header X-Forwarded-Host "
-                "$infra_tools_device_pairing_public_host",
+                "$basaltwater_device_pairing_public_host",
                 nginx,
             )
             self.assertIn(
                 "proxy_set_header X-Forwarded-Proto "
-                "$infra_tools_device_pairing_public_proto",
+                "$basaltwater_device_pairing_public_proto",
                 nginx,
             )
             with open(
@@ -879,12 +879,12 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 service = file_obj.read()
             self.assertIn("Environment=T3CODE_PORT=3773", service)
             self.assertIn("Wants=network-online.target", service)
-            self.assertNotIn("infra-tools-t3code.service", service)
-            self.assertNotIn("Requires=infra-tools-t3code.service", service)
+            self.assertNotIn("basaltwater-t3code.service", service)
+            self.assertNotIn("Requires=basaltwater-t3code.service", service)
             self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", service)
             configure_ban.assert_called_once_with(
                 "device-pairing",
-                "/var/log/nginx/infra-tools-device-pairing-auth-failures.log",
+                "/var/log/nginx/basaltwater-device-pairing-auth-failures.log",
             )
 
     def test_https_pairing_uses_the_primary_t3_forward_port(self) -> None:

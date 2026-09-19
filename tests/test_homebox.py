@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from infra_tools import create_infra_tools_parser, _patch_preserve_keys
+from basaltwater import create_basaltwater_parser, _patch_preserve_keys
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -74,7 +74,7 @@ class HomeBoxConfigTests(unittest.TestCase):
         validate_homebox_settings(config(homebox=["a.test"], enable_ssl=True, gogs=["git.test:3000"]))
 
     def test_cli_remote_cache_and_patch_roundtrip(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(["setup", "server_lite", "inventory.example.com", "operator", "--homebox",
                                   "items.example.com:9443", "/srv/items", "--homebox-port", "7746", "--ssl",
                                   "--homebox-admin", "owner@example.com", "--homebox-version", "v0.26.2"])
@@ -133,7 +133,7 @@ class HomeBoxConfigTests(unittest.TestCase):
             service_name="auto-update-homebox",
             service_desc="Auto-update HomeBox inventory service",
             timer_desc="Auto-update HomeBox weekly",
-            script_path="/opt/infra_tools/common/service_tools/auto_update_homebox.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_update_homebox.py",
             schedule="Sun *-*-* 06:00:00",
             check_path="/opt/homebox/current/homebox",
             check_name="HomeBox",
@@ -517,7 +517,7 @@ class HomeBoxFilesTests(HomeBoxFixture, unittest.TestCase):
                 patch.object(h, "_request_json", side_effect=[None, {"token": "private-token"}]):
             h._bootstrap(self.value)
         self.assertFalse((h.CONFIG / "bootstrap.env").exists())
-        self.assertEqual(calls[-1], ("systemctl", "stop", "infra-tools-homebox-bootstrap.service"))
+        self.assertEqual(calls[-1], ("systemctl", "stop", "basaltwater-homebox-bootstrap.service"))
         self.assertNotIn(self.secret["password"], str(calls))
 
 

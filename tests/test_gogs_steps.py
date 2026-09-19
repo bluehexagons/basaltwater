@@ -128,7 +128,7 @@ class TestFetchPreferredGogsRelease(unittest.TestCase):
         ]
         mock_run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
 
-        with patch.dict(os.environ, {"INFRA_TOOLS_DEPENDENCY_MIN_AGE_DAYS": "7"}):
+        with patch.dict(os.environ, {"BASALTWATER_DEPENDENCY_MIN_AGE_DAYS": "7"}):
             tag_name, download_url, digest = gogs_steps.fetch_preferred_gogs_release("amd64")
 
         self.assertEqual(tag_name, "v1.9.0")
@@ -280,7 +280,7 @@ class TestInstallGogsRelease(unittest.TestCase):
             for call in calls
             if call.args[0].startswith("curl -fL ")
         )
-        self.assertIn("/infra-tools-gogs-release-", download_command)
+        self.assertIn("/basaltwater-gogs-release-", download_command)
         self.assertNotIn("-o /tmp/gogs_", download_command)
         self.assertIn("--proto-redir '=https'", download_command)
         checksum_index = next(
@@ -557,9 +557,9 @@ class TestGenerateGogsConfig(unittest.TestCase):
         self.assertIn("user/login", content)
         self.assertIn("limit_req_status 429;", content)
         self.assertIn("$http_authorization:$status", content)
-        self.assertIn("infra-tools-auth-failure", content)
+        self.assertIn("basaltwater-auth-failure", content)
         self.assertIn(
-            "log_format infra_tools_gogs_auth_",
+            "log_format basaltwater_gogs_auth_",
             content,
         )
         self.assertNotIn("$http_authorization [$time_local]", content)
@@ -717,7 +717,7 @@ class TestGogsHostlessFirewall(unittest.TestCase):
             stdout=(
                 "[ 1] 3000/tcp ALLOW IN Anywhere # gogs direct HTTP\n"
                 "[ 2] 4000/tcp ALLOW IN 192.168.0.0/24 "
-                "# infra_tools Gogs 4000/tcp source 192.168.0.0/24\n"
+                "# basaltwater Gogs 4000/tcp source 192.168.0.0/24\n"
             ),
             stderr="",
         )
@@ -726,9 +726,9 @@ class TestGogsHostlessFirewall(unittest.TestCase):
             stdout=(
                 "[ 1] 3000/tcp ALLOW IN Anywhere # gogs direct HTTP\n"
                 "[ 2] 4000/tcp ALLOW IN 192.168.0.0/24 "
-                "# infra_tools Gogs 4000/tcp source 192.168.0.0/24\n"
+                "# basaltwater Gogs 4000/tcp source 192.168.0.0/24\n"
                 "[ 3] 3000/tcp ALLOW IN 192.168.0.0/24 "
-                "# infra_tools Gogs 3000/tcp source 192.168.0.0/24\n"
+                "# basaltwater Gogs 3000/tcp source 192.168.0.0/24\n"
             ),
             stderr="",
         )
@@ -755,7 +755,7 @@ class TestGogsHostlessFirewall(unittest.TestCase):
             returncode=0,
             stdout=(
                 "[ 1] 3000/tcp ALLOW IN 192.168.0.0/24 "
-                "# infra_tools Gogs 3000/tcp source 192.168.0.0/24\n"
+                "# basaltwater Gogs 3000/tcp source 192.168.0.0/24\n"
                 "[ 2] 443/tcp ALLOW IN Anywhere # gogs web\n"
             ),
             stderr="",
@@ -1097,7 +1097,7 @@ class TestConfigureAutoUpdateGogs(unittest.TestCase):
             service_name="auto-update-gogs",
             service_desc="Auto-update Gogs service",
             timer_desc="Auto-update Gogs weekly",
-            script_path="/opt/infra_tools/common/service_tools/auto_update_gogs.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_update_gogs.py",
             schedule="Sun *-*-* 05:30:00",
             check_path="/usr/local/bin/gogs",
             check_name="Gogs",

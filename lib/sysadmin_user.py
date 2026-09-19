@@ -27,8 +27,8 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_host, validate_username
 
 
-TARGET_HELPER = "/opt/infra_tools/lib/user_rename.py"
-REMOTE_ROOT = "/var/lib/infra_tools/user-renames"
+TARGET_HELPER = "/opt/basaltwater/lib/user_rename.py"
+REMOTE_ROOT = "/var/lib/basaltwater/user-renames"
 POLL_INTERVAL_SECONDS = 2.0
 POLL_TIMEOUT_SECONDS = 300.0
 
@@ -111,7 +111,7 @@ def _remote_status_path(operation_id: str) -> str:
 
 
 def _remote_unit_path(operation_id: str) -> str:
-    return f"/etc/systemd/system/infra-tools-user-rename-{operation_id}.service"
+    return f"/etc/systemd/system/basaltwater-user-rename-{operation_id}.service"
 
 
 def _discard_remote_operation(
@@ -144,14 +144,14 @@ def _stage_manifest(
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
-        prefix="infra-tools-user-rename-",
+        prefix="basaltwater-user-rename-",
         suffix=".json",
         delete=False,
     ) as file_obj:
         json.dump(manifest, file_obj, sort_keys=True)
         file_obj.write("\n")
         local_path = file_obj.name
-    remote_tmp = f"/tmp/infra-tools-user-rename-{operation_id}.json"
+    remote_tmp = f"/tmp/basaltwater-user-rename-{operation_id}.json"
     try:
         scp_result = subprocess.run(
             build_scp_command(
@@ -211,14 +211,14 @@ def _stage_unit(
     operation_id: str,
 ) -> None:
     manifest_path = _remote_manifest_path(operation_id)
-    unit_name = f"infra-tools-user-rename-{operation_id}.service"
+    unit_name = f"basaltwater-user-rename-{operation_id}.service"
     unit_content = (
         "[Unit]\n"
-        "Description=infra-tools managed target user rename\n"
+        "Description=basaltwater managed target user rename\n"
         "After=local-fs.target\n\n"
         "[Service]\n"
         "Type=oneshot\n"
-        "ExecStart=/usr/bin/python3 /opt/infra_tools/lib/user_rename.py "
+        "ExecStart=/usr/bin/python3 /opt/basaltwater/lib/user_rename.py "
         f"--manifest {manifest_path} --run\n"
         "TimeoutStartSec=infinity\n"
         "StandardOutput=journal\n"
@@ -227,13 +227,13 @@ def _stage_unit(
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
-        prefix="infra-tools-user-rename-",
+        prefix="basaltwater-user-rename-",
         suffix=".service",
         delete=False,
     ) as file_obj:
         file_obj.write(unit_content)
         local_path = file_obj.name
-    remote_tmp = f"/tmp/infra-tools-user-rename-{operation_id}.service"
+    remote_tmp = f"/tmp/basaltwater-user-rename-{operation_id}.service"
     try:
         scp_result = subprocess.run(
             build_scp_command(
@@ -372,7 +372,7 @@ def _start_resume_unit(
     ssh_key: Optional[str],
     operation_id: str,
 ) -> None:
-    unit_name = f"infra-tools-user-rename-{operation_id}.service"
+    unit_name = f"basaltwater-user-rename-{operation_id}.service"
     result = _run_ssh(
         host,
         username,

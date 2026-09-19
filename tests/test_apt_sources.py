@@ -23,13 +23,13 @@ class TestAptSources(unittest.TestCase):
     def test_preserves_pinned_desktop_source_and_repairs_prior_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "sources.list.d/infra-tools-sid.sources"
-            pin = root / "preferences.d/infra-tools-sid.pref"
+            source = root / "sources.list.d/basaltwater-sid.sources"
+            pin = root / "preferences.d/basaltwater-sid.pref"
             source.parent.mkdir()
             pin.parent.mkdir()
             pin.write_text(XRDP_SID_PREFERENCE)
             for content in (XRDP_SID_SOURCE, "".join(
-                    "# Disabled by infra_tools: " + line
+                    "# Disabled by basaltwater: " + line
                     for line in XRDP_SID_SOURCE.splitlines(keepends=True)) + "\n"):
                 source.write_text(content)
                 _disable_stale_official_sources(directory, "trixie")
@@ -40,8 +40,8 @@ class TestAptSources(unittest.TestCase):
     def test_desktop_filename_does_not_exempt_unpinned_or_altered_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "sources.list.d/infra-tools-sid.sources"
-            pin = root / "preferences.d/infra-tools-sid.pref"
+            source = root / "sources.list.d/basaltwater-sid.sources"
+            pin = root / "preferences.d/basaltwater-sid.pref"
             source.parent.mkdir()
             pin.parent.mkdir()
             for preference, content in (
@@ -92,10 +92,10 @@ class TestAptSources(unittest.TestCase):
             self.assertTrue(status.has_official_security)
             self.assertFalse(status.cdrom_sources)
             with open(os.path.join(apt_dir, "sources.list"), encoding="utf-8") as file_obj:
-                self.assertTrue(file_obj.read().startswith("# Disabled by infra_tools:"))
+                self.assertTrue(file_obj.read().startswith("# Disabled by basaltwater:"))
             managed_path = os.path.join(apt_dir, "sources.list.d", MANAGED_SOURCE_FILENAME)
             self.assertTrue(os.path.isfile(managed_path))
-            self.assertTrue(os.path.isfile(os.path.join(apt_dir, "sources.list.infra_tools.bak")))
+            self.assertTrue(os.path.isfile(os.path.join(apt_dir, "sources.list.basaltwater.bak")))
             self.assertEqual(len(parse_apt_sources(apt_dir)), 3)
         finally:
             shutil.rmtree(root)
@@ -133,7 +133,7 @@ class TestAptSources(unittest.TestCase):
             self.assertTrue(status.has_official_security)
             self.assertFalse(status.cdrom_sources)
             with open(sources_path, encoding="utf-8") as file_obj:
-                self.assertIn("# Disabled by infra_tools: URIs: cdrom:[Debian]/", file_obj.read())
+                self.assertIn("# Disabled by basaltwater: URIs: cdrom:[Debian]/", file_obj.read())
             self.assertFalse(os.path.exists(os.path.join(apt_dir, "sources.list.d", MANAGED_SOURCE_FILENAME)))
         finally:
             shutil.rmtree(root)
@@ -170,8 +170,8 @@ class TestAptSources(unittest.TestCase):
             )
             with open(os.path.join(apt_dir, "sources.list"), encoding="utf-8") as file_obj:
                 content = file_obj.read()
-            self.assertIn("# Disabled by infra_tools: deb https://deb.debian.org/debian bookworm", content)
-            self.assertTrue(os.path.isfile(os.path.join(apt_dir, "sources.list.infra_tools.bak")))
+            self.assertIn("# Disabled by basaltwater: deb https://deb.debian.org/debian bookworm", content)
+            self.assertTrue(os.path.isfile(os.path.join(apt_dir, "sources.list.basaltwater.bak")))
             managed_path = os.path.join(apt_dir, "sources.list.d", MANAGED_SOURCE_FILENAME)
             with open(managed_path, encoding="utf-8") as file_obj:
                 managed_content = file_obj.read()
@@ -214,7 +214,7 @@ class TestAptSources(unittest.TestCase):
             self.assertFalse(status.cdrom_sources)
             with open(sources_path, encoding="utf-8") as file_obj:
                 content = file_obj.read()
-            self.assertIn("# Disabled by infra_tools:  cdrom:[Debian]/", content)
+            self.assertIn("# Disabled by basaltwater:  cdrom:[Debian]/", content)
         finally:
             shutil.rmtree(root)
 
@@ -235,7 +235,7 @@ class TestAptSources(unittest.TestCase):
             managed_path = os.path.join(apt_dir, "sources.list.d", MANAGED_SOURCE_FILENAME)
             with open(managed_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write(
-                    "# Managed by infra_tools. Do not edit\n"
+                    "# Managed by basaltwater. Do not edit\n"
                     "Types: deb\nURIs: https://deb.debian.org/debian\n"
                     "Suites: trixie\nComponents: main\n"
                 )
@@ -252,7 +252,7 @@ class TestAptSources(unittest.TestCase):
 
             self.assertIsNotNone(status)
             self.assertFalse(os.path.exists(managed_path))
-            self.assertTrue(os.path.isfile(f"{managed_path}.infra_tools.bak"))
+            self.assertTrue(os.path.isfile(f"{managed_path}.basaltwater.bak"))
         finally:
             shutil.rmtree(root)
 

@@ -28,7 +28,7 @@ from desktop import accessibility
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
-CONFIG_PATH = Path("/etc/infra-tools/desktop.json")
+CONFIG_PATH = Path("/etc/basaltwater/desktop.json")
 SESSION_COMMANDS = {
     "xfce": ["xfce4-session"],
     "i3": ["i3"],
@@ -65,7 +65,7 @@ def runtime_directory() -> Path:
     info = parent.lstat()
     if parent.is_symlink() or not parent.is_dir() or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("A private logind runtime directory is required")
-    path = parent / "infra-tools-desktop"
+    path = parent / "basaltwater-desktop"
     path.mkdir(mode=0o700, exist_ok=True)
     info = path.lstat()
     if path.is_symlink() or not path.is_dir() or info.st_uid != os.getuid() or info.st_mode & 0o077:
@@ -154,7 +154,7 @@ def start() -> dict[str, Any]:
                 return current
             time.sleep(0.2)
         reason = "Desktop startup request failed" if startup_failed else "Desktop did not become ready"
-        raise RuntimeError(f"{reason}; run 'infra-tools desktop status' and inspect xrdp-sesman and the per-session Xorg log")
+        raise RuntimeError(f"{reason}; run 'basaltwater desktop status' and inspect xrdp-sesman and the per-session Xorg log")
 
 
 def run_tool(argv: list[str], *, timeout: float = 8) -> str:

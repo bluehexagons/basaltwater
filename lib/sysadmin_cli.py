@@ -16,10 +16,10 @@ def _add_mount_parser(sub: argparse._SubParsersAction) -> None:
         help="Mount a remote directory via sshfs",
         description=(
             "Mount a remote directory using sshfs. If the host has a saved "
-            "infra-tools config, username/key are inherited automatically."
+            "basaltwater config, username/key are inherited automatically."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  infra-tools mount myserver:/var/log /mnt/myserver-logs",
+        epilog="Example:\n  basaltw mount myserver:/var/log /mnt/myserver-logs",
     )
     p.add_argument("remote", metavar="host:path", help="Remote host and path (e.g. myhost:/srv/data)")
     p.add_argument("local_path", metavar="local_path", help="Local mountpoint (created if absent)")
@@ -36,7 +36,7 @@ def _add_umount_parser(sub: argparse._SubParsersAction) -> None:
         help="Unmount an sshfs mount",
         description="Unmount an sshfs mount by local path or by host name.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Examples:\n  infra-tools umount /mnt/myserver-logs\n  infra-tools umount myhost",
+        epilog="Examples:\n  basaltw umount /mnt/myserver-logs\n  basaltw umount myhost",
     )
     p.add_argument(
         "target",
@@ -58,7 +58,7 @@ def _add_health_parser(sub: argparse._SubParsersAction) -> None:
             "units, recent journal errors, pending apt upgrades, and reboot status."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  infra-tools health myserver",
+        epilog="Example:\n  basaltw health myserver",
     )
     p.add_argument("host", help="Remote host (IP or hostname)")
     p.add_argument("--username", "-u", help="SSH username (overrides saved config)")
@@ -76,13 +76,13 @@ def _add_ssh_parser(sub: argparse._SubParsersAction) -> None:
         help="Open an SSH session using saved config",
         description=(
             "Open an interactive SSH session (or run a remote command) using the "
-            "username, key, and port from the saved infra-tools config for the host."
+            "username, key, and port from the saved basaltwater config for the host."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools ssh myserver\n"
-            "  infra-tools ssh myserver -- journalctl -f"
+            "  basaltw ssh myserver\n"
+            "  basaltw ssh myserver -- journalctl -f"
         ),
     )
     p.add_argument("host", help="Remote host (IP or hostname)")
@@ -108,8 +108,8 @@ def _add_push_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools push ./dist myserver:/var/www/app\n"
-            "  infra-tools push ./data myserver:/backup/data --delete --dry-run"
+            "  basaltw push ./dist myserver:/var/www/app\n"
+            "  basaltw push ./data myserver:/backup/data --delete --dry-run"
         ),
     )
     p.add_argument("local_path", help="Local source path")
@@ -132,8 +132,8 @@ def _add_pull_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools pull myserver:/var/log ./logs\n"
-            "  infra-tools pull myserver:/srv/data"
+            "  basaltw pull myserver:/var/log ./logs\n"
+            "  basaltw pull myserver:/srv/data"
         ),
     )
     p.add_argument("remote", metavar="host:path", help="Remote source (e.g. myhost:/var/log)")
@@ -165,7 +165,7 @@ def _add_key_parser(sub: argparse._SubParsersAction) -> None:
             "host, creating the file with correct permissions if needed. Idempotent."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  infra-tools key push myserver",
+        epilog="Example:\n  basaltw key push myserver",
     )
     push_p.add_argument("host", help="Remote host (IP or hostname)")
     push_p.add_argument("--username", "-u", help="SSH username (overrides saved config)")
@@ -193,7 +193,7 @@ def _add_ssh_key_parser(sub: argparse._SubParsersAction) -> None:
     enroll = key_sub.add_parser(
         "enroll",
         help="Enroll a host key after verification",
-        epilog="Example:\n  infra-tools ssh-key enroll myserver",
+        epilog="Example:\n  basaltw ssh-key enroll myserver",
     )
     enroll.add_argument("host", help="Remote host (IP or hostname)")
     enroll.add_argument("--port", "-p", type=int, default=22, help="SSH port")
@@ -221,8 +221,8 @@ def _add_df_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools df myserver\n"
-            "  infra-tools df web1 web2 db1 --username admin"
+            "  basaltw df myserver\n"
+            "  basaltw df web1 web2 db1 --username admin"
         ),
     )
     p.add_argument("hosts", nargs="+", help="Remote hosts (IP or hostname)")
@@ -242,8 +242,8 @@ def _add_fan_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools fan web1 web2 -- uptime\n"
-            "  infra-tools fan web1 web2 db1 -- systemctl restart myapp"
+            "  basaltw fan web1 web2 -- uptime\n"
+            "  basaltw fan web1 web2 db1 -- systemctl restart myapp"
         ),
     )
     p.add_argument("hosts", nargs="+", help="Remote hosts (IP or hostname)")
@@ -269,9 +269,9 @@ def _add_svc_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools svc myserver nginx\n"
-            "  infra-tools svc myserver nginx restart\n"
-            "  infra-tools svc myserver myapp.service stop"
+            "  basaltw svc myserver nginx\n"
+            "  basaltw svc myserver nginx restart\n"
+            "  basaltw svc myserver myapp.service stop"
         ),
     )
     p.add_argument("host", help="Remote host (IP or hostname)")
@@ -296,9 +296,9 @@ def _add_logs_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools logs myserver nginx\n"
-            "  infra-tools logs myserver myapp -f\n"
-            "  infra-tools logs myserver nginx -n 100"
+            "  basaltw logs myserver nginx\n"
+            "  basaltw logs myserver myapp -f\n"
+            "  basaltw logs myserver nginx -n 100"
         ),
     )
     p.add_argument("host", help="Remote host (IP or hostname)")
@@ -313,20 +313,20 @@ def _add_logs_parser(sub: argparse._SubParsersAction) -> None:
 def _add_upgrade_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "upgrade",
-        help="Upgrade infra-tools, or run apt upgrade on remote hosts",
+        help="Upgrade basaltwater, or run apt upgrade on remote hosts",
         description=(
-            "With no hosts, upgrade the installed infra-tools source on its selected "
+            "With no hosts, upgrade the installed basaltwater source on its selected "
             "channel. With one or more hosts, run apt-get update && apt-get upgrade "
             "on each host in parallel, then report which hosts need a reboot."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "  infra-tools upgrade\n"
+            "  basaltw upgrade\n"
             "\n"
             "Examples:\n"
-            "  infra-tools upgrade myserver\n"
-            "  infra-tools upgrade web1 web2 db1\n"
-            "  infra-tools upgrade web1 --check"
+            "  basaltw upgrade myserver\n"
+            "  basaltw upgrade web1 web2 db1\n"
+            "  basaltw upgrade web1 --check"
         ),
     )
     p.add_argument("hosts", nargs="*", help="Remote hosts (IP or hostname)")
@@ -347,9 +347,9 @@ def _add_reachable_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools reachable\n"
-            "  infra-tools reachable '*.example.com'\n"
-            "  infra-tools reachable web1 web2 db1"
+            "  basaltw reachable\n"
+            "  basaltw reachable '*.example.com'\n"
+            "  basaltw reachable web1 web2 db1"
         ),
     )
     p.add_argument(
@@ -373,7 +373,7 @@ def _add_user_parser(sub: argparse._SubParsersAction) -> None:
         description=(
             "Run administrator operations for the target account. Renaming "
             "a user logs out the target account, moves its conventional home, "
-            "reconciles infra-tools-managed configuration, and updates the "
+            "reconciles basaltwater-managed configuration, and updates the "
             "saved controller configuration after verification."
         ),
     )
@@ -388,10 +388,10 @@ def _add_user_parser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  infra-tools user rename myserver newadmin --yes\n"
-            "  infra-tools user rename myserver newadmin --admin-user root\n"
-            "  infra-tools user rename myserver newadmin --dry-run\n"
-            "  infra-tools user rename myserver newadmin --resume OPERATION_ID"
+            "  basaltw user rename myserver newadmin --yes\n"
+            "  basaltw user rename myserver newadmin --admin-user root\n"
+            "  basaltw user rename myserver newadmin --dry-run\n"
+            "  basaltw user rename myserver newadmin --resume OPERATION_ID"
         ),
     )
     rename.add_argument("host", help="Remote host with a saved setup")

@@ -207,6 +207,6 @@ __marimo__/
 .codex
 
 # Local state written by the managed installation channel controller.
-.infra_tools/
+.basaltwater/
 state/
 artifacts/

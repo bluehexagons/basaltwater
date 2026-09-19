@@ -7,7 +7,7 @@ SSH. The collection helper iterates the host registry and calls
 :func:`lib.proxmox_summary.get_node_summary`, skipping hosts that fail to
 respond.
 
-Used by ``infra-tools proxmox plan place`` (find a home for a new guest)
+Used by ``basaltw proxmox plan place`` (find a home for a new guest)
 and ``proxmox plan rebalance`` (flag overloaded nodes and suggest where
 their guests could move).
 """

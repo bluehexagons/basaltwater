@@ -2,8 +2,8 @@
 
 Basaltwater is infrastructure management, from one machine to your whole
 network. Use **Basaltwater** in prose, `basaltwater` for the distribution,
-and `basaltw` for commands. “Formerly infra-tools” remains in the README and
-migration guide through v2.x. Keep bluehexagons maintainer attribution.
+and `basaltw` for commands. Use the old project name only when explaining
+the one-time migration or historical evidence. Keep bluehexagons maintainer attribution.
 
 ## Assets and construction
 

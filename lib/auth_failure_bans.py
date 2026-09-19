@@ -10,7 +10,7 @@ from lib.remote_utils import install_package, run
 from lib.validation import validate_filesystem_path
 
 
-FAIL2BAN_FILTER_PATH = "/etc/fail2ban/filter.d/infra-tools-nginx-auth.conf"
+FAIL2BAN_FILTER_PATH = "/etc/fail2ban/filter.d/basaltwater-nginx-auth.conf"
 FAIL2BAN_JAIL_DIR = "/etc/fail2ban/jail.d"
 _JAIL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -32,21 +32,21 @@ def configure_nginx_auth_failure_ban(jail_name: str, log_path: str) -> None:
 
     write_text_atomic(
         FAIL2BAN_FILTER_PATH,
-        r"""# Managed by infra_tools
+        r"""# Managed by basaltwater
 [Definition]
 datepattern = {NONE}
-failregex = ^<HOST> \[[^]]+\] infra-tools-auth-failure$
+failregex = ^<HOST> \[[^]]+\] basaltwater-auth-failure$
 ignoreregex =
 """,
         mode=0o644,
     )
-    jail_path = os.path.join(FAIL2BAN_JAIL_DIR, f"infra-tools-{jail_name}.local")
+    jail_path = os.path.join(FAIL2BAN_JAIL_DIR, f"basaltwater-{jail_name}.local")
     write_text_atomic(
         jail_path,
-        f"""# Managed by infra_tools
-[infra-tools-{jail_name}]
+        f"""# Managed by basaltwater
+[basaltwater-{jail_name}]
 enabled = true
-filter = infra-tools-nginx-auth
+filter = basaltwater-nginx-auth
 logpath = {log_path}
 maxretry = 5
 findtime = 10m
@@ -70,7 +70,7 @@ def remove_nginx_auth_failure_ban(jail_name: str) -> None:
 
     if not _JAIL_NAME_RE.fullmatch(jail_name):
         raise ValueError(f"Invalid authentication jail name: {jail_name}")
-    jail_path = os.path.join(FAIL2BAN_JAIL_DIR, f"infra-tools-{jail_name}.local")
+    jail_path = os.path.join(FAIL2BAN_JAIL_DIR, f"basaltwater-{jail_name}.local")
     try:
         os.remove(jail_path)
     except FileNotFoundError:

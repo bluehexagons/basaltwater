@@ -1,4 +1,4 @@
-"""Install the optional authenticated infra-tools web panel."""
+"""Install the optional authenticated basaltwater web panel."""
 
 from __future__ import annotations
 
@@ -33,31 +33,31 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
-WEB_PANEL_SERVICE_NAME = "infra-tools-web-panel"
+WEB_PANEL_SERVICE_NAME = "basaltwater-web-panel"
 WEB_PANEL_SERVICE_FILE = f"/etc/systemd/system/{WEB_PANEL_SERVICE_NAME}.service"
-WEB_PANEL_AUDIT_SERVICE_NAME = "infra-tools-web-panel-audit"
+WEB_PANEL_AUDIT_SERVICE_NAME = "basaltwater-web-panel-audit"
 WEB_PANEL_AUDIT_SERVICE_FILE = (
     f"/etc/systemd/system/{WEB_PANEL_AUDIT_SERVICE_NAME}.service"
 )
 WEB_PANEL_AUDIT_TIMER_FILE = (
     f"/etc/systemd/system/{WEB_PANEL_AUDIT_SERVICE_NAME}.timer"
 )
-WEB_PANEL_CONFIG_DIR = "/etc/infra-tools/web-panel"
+WEB_PANEL_CONFIG_DIR = "/etc/basaltwater/web-panel"
 WEB_PANEL_MANIFEST = f"{WEB_PANEL_CONFIG_DIR}/config.json"
 WEB_PANEL_AUTH_FILE = f"{WEB_PANEL_CONFIG_DIR}/htpasswd"
-WEB_PANEL_PAYLOAD_FILE = "/opt/infra_tools/web_panel_payload/htpasswd"
-WEB_PANEL_SOCKET = "/run/infra-tools-web-panel/http.sock"
-WEB_PANEL_SCRIPT = "/opt/infra_tools/common/service_tools/web_panel_service.py"
+WEB_PANEL_PAYLOAD_FILE = "/opt/basaltwater/web_panel_payload/htpasswd"
+WEB_PANEL_SOCKET = "/run/basaltwater-web-panel/http.sock"
+WEB_PANEL_SCRIPT = "/opt/basaltwater/common/service_tools/web_panel_service.py"
 WEB_PANEL_AUDIT_SCRIPT = (
-    "/opt/infra_tools/common/service_tools/web_panel_audit_export.py"
+    "/opt/basaltwater/common/service_tools/web_panel_audit_export.py"
 )
-WEB_PANEL_NGINX_SITE = "/etc/nginx/sites-available/infra-tools-web-panel"
-WEB_PANEL_NGINX_LINK = "/etc/nginx/sites-enabled/infra-tools-web-panel"
-WEB_PANEL_AUTH_FAILURE_LOG = "/var/log/nginx/infra-tools-web-panel-auth-failures.log"
-_NGINX_MARKER = "# Managed by infra_tools web panel"
-_SERVICE_MARKER = "# Managed by infra_tools web panel"
+WEB_PANEL_NGINX_SITE = "/etc/nginx/sites-available/basaltwater-web-panel"
+WEB_PANEL_NGINX_LINK = "/etc/nginx/sites-enabled/basaltwater-web-panel"
+WEB_PANEL_AUTH_FAILURE_LOG = "/var/log/nginx/basaltwater-web-panel-auth-failures.log"
+_NGINX_MARKER = "# Managed by basaltwater web panel"
+_SERVICE_MARKER = "# Managed by basaltwater web panel"
 _INGEST_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
-_WEB_PANEL_SYSTEM_USER = "infra-web-panel"
+_WEB_PANEL_SYSTEM_USER = "basaltwater-web-panel"
 
 
 def _url_host(host: str) -> str:
@@ -251,13 +251,13 @@ def render_web_panel_nginx(
     ssl_certificate {cert_path};
     ssl_certificate_key {key_path};
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_cache shared:infra_tools_web_panel:10m;
+    ssl_session_cache shared:basaltwater_web_panel:10m;
     ssl_session_timeout 1d;
 """
     server_names = " ".join(_url_host(identity) for identity in identities)
     ingest_zone = (
         "limit_req_zone $binary_remote_addr "
-        "zone=infra_tools_web_panel_ingest:10m rate=30r/m;\n"
+        "zone=basaltwater_web_panel_ingest:10m rate=30r/m;\n"
         if notification_ingest
         else ""
     )
@@ -267,7 +267,7 @@ def render_web_panel_nginx(
     location = {WEB_PANEL_NOTIFICATION_ENDPOINT} {{
         auth_basic off;
         limit_except POST {{ deny all; }}
-        limit_req zone=infra_tools_web_panel_ingest burst=10 nodelay;
+        limit_req zone=basaltwater_web_panel_ingest burst=10 nodelay;
         limit_req_status 429;
         client_max_body_size 64k;
         proxy_pass http://unix:{WEB_PANEL_SOCKET}:{WEB_PANEL_NOTIFICATION_ENDPOINT};
@@ -281,30 +281,30 @@ def render_web_panel_nginx(
     }}
 """
     return f"""{_NGINX_MARKER}
-limit_req_zone $binary_remote_addr zone=infra_tools_web_panel_auth:10m rate=120r/m;
+limit_req_zone $binary_remote_addr zone=basaltwater_web_panel_auth:10m rate=120r/m;
 {ingest_zone}
 
-map $status $infra_tools_web_panel_auth_failure {{
+map $status $basaltwater_web_panel_auth_failure {{
     default 0;
     401 1;
 }}
 
-log_format infra_tools_web_panel_auth '$remote_addr [$time_local] infra-tools-auth-failure';
+log_format basaltwater_web_panel_auth '$remote_addr [$time_local] basaltwater-auth-failure';
 
 server {{
     listen {port}{listen_options};
     listen [::]:{port}{listen_options};
     server_name {server_names};
 {tls}
-    access_log {WEB_PANEL_AUTH_FAILURE_LOG} infra_tools_web_panel_auth
-        if=$infra_tools_web_panel_auth_failure;
-    auth_basic "infra-tools web panel";
+    access_log {WEB_PANEL_AUTH_FAILURE_LOG} basaltwater_web_panel_auth
+        if=$basaltwater_web_panel_auth_failure;
+    auth_basic "basaltwater web panel";
     auth_basic_user_file {WEB_PANEL_AUTH_FILE};
     client_max_body_size 16k;
 {ingest_location}
 
     location / {{
-        limit_req zone=infra_tools_web_panel_auth burst=5 nodelay;
+        limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:{WEB_PANEL_SOCKET}:/;
         proxy_http_version 1.1;
@@ -642,7 +642,7 @@ def _systemd_quote(value: str) -> str:
 
 def _is_managed_service(content: str) -> bool:
     return _SERVICE_MARKER in content or (
-        "Description=infra-tools web panel" in content
+        "Description=basaltwater web panel" in content
         and f"ExecStart=/usr/bin/python3 {WEB_PANEL_SCRIPT} " in content
     )
 
@@ -676,7 +676,7 @@ def _configure_service(config: SetupConfig, home: str) -> bool:
     web_account = pwd.getpwnam("www-data")
     content = f"""{_SERVICE_MARKER}
 [Unit]
-Description=infra-tools web panel
+Description=basaltwater web panel
 After=network-online.target nginx.service
 Wants=network-online.target
 
@@ -685,7 +685,7 @@ Type=simple
 User={service_user}
 Group={service_account.pw_gid}
 SupplementaryGroups=www-data
-RuntimeDirectory=infra-tools-web-panel
+RuntimeDirectory=basaltwater-web-panel
 RuntimeDirectoryMode=0711
 UMask=0007
 Environment={_systemd_quote('HOME=' + service_home)}
@@ -764,7 +764,7 @@ def _configure_audit_exporter(service_gid: int) -> bool:
 
     service_content = f"""{_SERVICE_MARKER}
 [Unit]
-Description=infra-tools web panel audit snapshot
+Description=basaltwater web panel audit snapshot
 After=auditd.service
 
 [Service]
@@ -790,7 +790,7 @@ StandardError=journal
 """
     timer_content = f"""{_SERVICE_MARKER}
 [Unit]
-Description=Refresh the infra-tools web panel audit snapshot
+Description=Refresh the basaltwater web panel audit snapshot
 
 [Timer]
 OnBootSec=2min

@@ -10,13 +10,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.network_inventory import find_network_profile
 
 
 class TestNetworkCli(unittest.TestCase):
     def test_parser_accepts_network_init(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -43,7 +43,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertEqual(args.profile, "homelab")
 
     def test_parser_accepts_import_proxmox(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -68,7 +68,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.no_control_plane)
 
     def test_parser_accepts_import_proxmox_guests(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -91,7 +91,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertEqual(args.hosts, ["pve1"])
 
     def test_parser_accepts_plan_proxmox(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -110,7 +110,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.json)
 
     def test_parser_accepts_plan_proxmox_rendered(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         args = parser.parse_args(
             [
@@ -129,7 +129,7 @@ class TestNetworkCli(unittest.TestCase):
         self.assertTrue(args.proxmox)
 
     def test_help_epilog_aligns_network_command(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
 
         self.assertIn(
             "network [subcommand]        Manage generic network inventory profiles",
@@ -142,7 +142,7 @@ class TestNetworkCli(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "infra_tools.py",
+                    "basaltwater.py",
                     "network",
                     "--workspace",
                     workspace,
@@ -154,13 +154,13 @@ class TestNetworkCli(unittest.TestCase):
                     "10.20.0.0/24",
                 ],
             ):
-                self.assertEqual(infra_tools.main(), 0)
+                self.assertEqual(basaltwater.main(), 0)
 
             with patch.object(
                 sys,
                 "argv",
                 [
-                    "infra_tools.py",
+                    "basaltwater.py",
                     "network",
                     "--workspace",
                     workspace,
@@ -174,7 +174,7 @@ class TestNetworkCli(unittest.TestCase):
                     "control-plane",
                 ],
             ):
-                self.assertEqual(infra_tools.main(), 0)
+                self.assertEqual(basaltwater.main(), 0)
 
             profile = find_network_profile("homelab", workspace)
             self.assertIsNotNone(profile)
@@ -188,7 +188,7 @@ class TestNetworkCli(unittest.TestCase):
                 sys,
                 "argv",
                 [
-                    "infra_tools.py",
+                    "basaltwater.py",
                     "network",
                     "--workspace",
                     workspace,
@@ -198,13 +198,13 @@ class TestNetworkCli(unittest.TestCase):
                     "10.0.0.10",
                 ],
             ):
-                self.assertEqual(infra_tools.main(), 0)
+                self.assertEqual(basaltwater.main(), 0)
 
             with patch.object(
                 sys,
                 "argv",
                 [
-                    "infra_tools.py",
+                    "basaltwater.py",
                     "network",
                     "--workspace",
                     workspace,
@@ -212,7 +212,7 @@ class TestNetworkCli(unittest.TestCase):
                     "homelab",
                 ],
             ):
-                self.assertEqual(infra_tools.main(), 1)
+                self.assertEqual(basaltwater.main(), 1)
 
 
 if __name__ == "__main__":

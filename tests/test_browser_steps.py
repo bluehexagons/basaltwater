@@ -63,13 +63,13 @@ class TestBrowserSteps(unittest.TestCase):
             commands[1],
         )
         self.assertNotIn("v1.8.0", " ".join(commands))
-        self.assertIn("/infra-tools-browsh-", commands[1])
+        self.assertIn("/basaltwater-browsh-", commands[1])
         self.assertNotIn("-qO /tmp/browsh.deb", commands[1])
         self.assertIn("--https-only", commands[1])
         self.assertTrue(
             any(
                 command.startswith("apt-get install -y -qq ")
-                and "/infra-tools-browsh-" in command
+                and "/basaltwater-browsh-" in command
                 for command in commands
             )
         )

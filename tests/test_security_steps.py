@@ -144,7 +144,7 @@ class TestHardenSSH(unittest.TestCase):
         mock_write.assert_called_once()
         self.assertEqual(
             mock_write.call_args.args[0],
-            "/etc/ssh/sshd_config.d/99-infra-tools-hardening.conf",
+            "/etc/ssh/sshd_config.d/99-basaltwater-hardening.conf",
         )
         self.assertEqual(mock_write.call_args.kwargs, {"mode": 0o600})
         written = mock_write.call_args.args[1]
@@ -223,7 +223,7 @@ class TestHardenSSH(unittest.TestCase):
         self.assertIn("/usr/sbin/sshd -t", run_commands)
         self.assertFalse(any(cmd.startswith("systemctl reload sshd") for cmd in run_commands))
         mock_remove.assert_called_once_with(
-            "/etc/ssh/sshd_config.d/99-infra-tools-hardening.conf"
+            "/etc/ssh/sshd_config.d/99-basaltwater-hardening.conf"
         )
 
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
@@ -430,7 +430,7 @@ class TestConfigureFirewall(unittest.TestCase):
         run_commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertIn("ufw limit ssh", run_commands)
         self.assertIn(
-            "ufw limit 3389/tcp comment 'infra_tools RDP global'",
+            "ufw limit 3389/tcp comment 'basaltwater RDP global'",
             run_commands,
         )
         self.assertNotIn("ufw allow 3389/tcp", run_commands)
@@ -457,13 +457,13 @@ class TestConfigureFirewall(unittest.TestCase):
         commands = [args[0] for args, _ in mock_run.call_args_list]
         first_source_rule = commands.index(
             "ufw limit from 10.0.0.0/24 to any port 3389 proto tcp "
-            "comment 'infra_tools RDP source 10.0.0.0/24'"
+            "comment 'basaltwater RDP source 10.0.0.0/24'"
         )
         delete_global_rule = commands.index("ufw delete limit 3389/tcp")
         self.assertLess(first_source_rule, delete_global_rule)
         self.assertIn(
             "ufw limit from 2001:db8::10 to any port 3389 proto tcp "
-            "comment 'infra_tools RDP source 2001:db8::10'",
+            "comment 'basaltwater RDP source 2001:db8::10'",
             commands,
         )
 
@@ -472,9 +472,9 @@ class TestConfigureFirewall(unittest.TestCase):
     def test_removes_only_stale_tagged_rdp_rules(self, mock_run, _ic):
         status_output = """Status: active
 [ 1] 22/tcp LIMIT IN Anywhere
-[ 2] 3389/tcp LIMIT IN 10.0.0.0/24 # infra_tools RDP source 10.0.0.0/24
+[ 2] 3389/tcp LIMIT IN 10.0.0.0/24 # basaltwater RDP source 10.0.0.0/24
 [ 3] 3389/tcp LIMIT IN 192.168.0.0/16 # operator rule
-[ 4] 3389/tcp LIMIT IN 172.16.0.0/12 # infra_tools RDP source 172.16.0.0/12
+[ 4] 3389/tcp LIMIT IN 172.16.0.0/12 # basaltwater RDP source 172.16.0.0/12
 """
 
         def run_side_effect(command, **_kwargs):
@@ -539,7 +539,7 @@ class TestConfigureAutoUpdates(unittest.TestCase):
             service_name="auto-update-apt",
             service_desc="Auto-update APT packages",
             timer_desc="Auto-update APT packages daily",
-            script_path="/opt/infra_tools/common/service_tools/auto_update_apt.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_update_apt.py",
             schedule="*-*-* 06:00:00",
             check_name="APT packages",
             purpose="auto-update",
@@ -553,8 +553,8 @@ class TestConfigureAutoUpdates(unittest.TestCase):
         removed_paths = []
         with patch("security.security_steps.os.remove", side_effect=lambda p: removed_paths.append(p)):
             configure_auto_updates(SetupConfig(username="u", host="h", system_type="server_lite"))
-        self.assertIn("/etc/apt/apt.conf.d/52infra-tools-unattended-upgrades", removed_paths)
-        self.assertIn("/etc/infra_tools/unattended_upgrades_origins.list", removed_paths)
+        self.assertIn("/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades", removed_paths)
+        self.assertIn("/etc/basaltwater/unattended_upgrades_origins.list", removed_paths)
 
     @patch("security.security_steps.configure_maintenance_timer")
     @patch("security.security_steps.run")
@@ -611,7 +611,7 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
             service_name="security-monitor",
             service_desc="Security event monitor",
             timer_desc="Security event monitor (every 15 minutes)",
-            script_path="/opt/infra_tools/security/service_tools/security_monitor.py",
+            script_path="/opt/basaltwater/security/service_tools/security_monitor.py",
             schedule="*:0/15",
             check_name="Security event monitor",
             randomized_delay="2min",
@@ -628,7 +628,7 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
             service_name="auto-restart-if-needed",
             service_desc="Auto-restart system if needed",
             timer_desc="Auto-restart system if needed (daily at 2 AM)",
-            script_path="/opt/infra_tools/common/service_tools/auto_restart_if_needed.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_restart_if_needed.py",
             schedule="*-*-* 02:00:00",
             on_boot_sec="30min",
             check_name="Automatic restart",
@@ -657,7 +657,7 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
         configure_cleanup_maintenance(SetupConfig(username="u", host="h", system_type="server_lite"))
 
         mock_makedirs.assert_called_once_with("/etc/systemd/journald.conf.d", exist_ok=True)
-        mock_file.assert_called_once_with("/etc/systemd/journald.conf.d/infra-tools.conf", "w")
+        mock_file.assert_called_once_with("/etc/systemd/journald.conf.d/basaltwater.conf", "w")
         written_text = "".join(call.args[0] for call in mock_file().write.call_args_list)
         self.assertIn(f"SystemMaxUse={JOURNAL_MAX_USE}", written_text)
         self.assertIn(f"RuntimeMaxUse={JOURNAL_MAX_USE}", written_text)
@@ -667,7 +667,7 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
             service_name="cleanup-maintenance",
             service_desc="Cleanup temporary files and package caches",
             timer_desc="Cleanup temporary files and package caches (weekly)",
-            script_path="/opt/infra_tools/common/service_tools/cleanup_maintenance.py",
+            script_path="/opt/basaltwater/common/service_tools/cleanup_maintenance.py",
             schedule="Sun *-*-* 03:30:00",
             check_name="Cleanup maintenance",
             randomized_delay="30min",
@@ -679,7 +679,7 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
             service_name="user-cache-maintenance",
             service_desc="Prune configured user developer-tool caches",
             timer_desc="Prune configured user developer-tool caches (daily)",
-            script_path="/opt/infra_tools/common/service_tools/user_cache_maintenance.py",
+            script_path="/opt/basaltwater/common/service_tools/user_cache_maintenance.py",
             schedule="*-*-* 07:00:00",
             check_name="User cache maintenance",
             user="u",

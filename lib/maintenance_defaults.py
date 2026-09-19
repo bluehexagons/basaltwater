@@ -45,16 +45,16 @@ STALE_NPX_CACHE_MAX_AGE_DAYS = 30
 T3_ROTATED_LOG_MAX_BYTES = BYTES_PER_GB // 4
 T3_ROTATED_LOG_MAX_AGE_DAYS = 14
 
-# Remove infra_tools-owned temp artifacts after a week. These are normally
+# Remove basaltwater-owned temp artifacts after a week. These are normally
 # cleaned up by finally blocks, but interrupted setup/deploy/provision runs can
 # leave them behind.
 #
 STALE_INFRA_TMP_MAX_AGE_DAYS = 7
 INFRA_TMP_PATTERNS = (
-    r"infra_setup_build_[A-Za-z0-9_-]+",
-    r"infra_recall_[A-Za-z0-9_-]+",
-    r"infra_deploy_[A-Za-z0-9_-]+",
-    r"infra_tools_pubkey\.[A-Za-z0-9]+",
+    r"basaltwater_setup_build_[A-Za-z0-9_-]+",
+    r"basaltwater_recall_[A-Za-z0-9_-]+",
+    r"basaltwater_deploy_[A-Za-z0-9_-]+",
+    r"basaltwater_pubkey\.[A-Za-z0-9]+",
     r"antistatic-(?:server|db)-linux-(?:amd64|arm64)\.v[A-Za-z0-9._-]+",
     # Clean up temp directories left by interrupted deployments from releases
     # that still managed Bundler. This does not install or update Ruby.

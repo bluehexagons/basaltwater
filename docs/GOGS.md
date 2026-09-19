@@ -89,7 +89,7 @@ The setup command may instead include `--credential gitadmin PASSWORD`, but
 that exposes the value to shell history and potentially the process list. If
 there is no matching credential, setup generates a 24-character random
 password. In either case, setup records the initial value in the root-only file
-`/opt/infra_tools/state/gogs_admin_credentials.json`. A rerun preserves an
+`/opt/basaltwater/state/gogs_admin_credentials.json`. A rerun preserves an
 existing administrator account and does not rotate its password. Use a unique,
 high-entropy value and enable MFA for administrator accounts.
 
@@ -140,7 +140,7 @@ bytes, free inodes, and repository/LFS/attachment/log usage. Useful checks are:
 
 ```bash
 sudo systemctl status gogs
-sudo fail2ban-client status infra-tools-gogs
+sudo fail2ban-client status basaltwater-gogs
 sudo journalctl -u gogs -n 100 --no-pager
 sudo /usr/local/bin/gogs --version
 basaltw gogs health git.example.com
@@ -166,7 +166,7 @@ authorized keys and hooks, restarts Gogs, and updates the saved state only after
 success. If a post-update command, restart, or state write fails, the previous
 release symlink is restored and a failure notification is emitted when
 notifications are configured. Every completed check records a root-owned
-result in `/opt/infra_tools/state/gogs_update.json`; health fails when the last
+result in `/opt/basaltwater/state/gogs_update.json`; health fails when the last
 result failed or the record (falling back to initial setup state before the
 first timer run) is older than nine days.
 

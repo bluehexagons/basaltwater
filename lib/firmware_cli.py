@@ -34,7 +34,7 @@ def add_firmware_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Audit and deliberately update local device firmware",
         description=(
             "Inventory local firmware through fwupd and apply only explicitly "
-            "requested updates. infra-tools never reboots the host automatically."
+            "requested updates. basaltwater never reboots the host automatically."
         ),
     )
     commands = parser.add_subparsers(

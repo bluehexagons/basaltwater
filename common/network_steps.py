@@ -27,14 +27,14 @@ from lib.validation import (
 )
 
 
-NETWORKD_CONFIG_PATH = "/etc/systemd/network/00-infra-tools-static.network"
+NETWORKD_CONFIG_PATH = "/etc/systemd/network/00-basaltwater-static.network"
 IFUPDOWN_MAIN_CONFIG_PATH = "/etc/network/interfaces"
 IFUPDOWN_CONFIG_DIR = "/etc/network/interfaces.d"
-IFUPDOWN_CONFIG_PATH = "/etc/network/interfaces.d/infra_tools_static"
+IFUPDOWN_CONFIG_PATH = "/etc/network/interfaces.d/basaltwater_static"
 CLOUD_INIT_CONFIG_DIR = "/etc/cloud/cloud.cfg.d"
-CLOUD_INIT_NETWORK_CONFIG_PATH = "/etc/cloud/cloud.cfg.d/99-infra-tools-network.cfg"
-CLOUD_INIT_HOSTNAME_CONFIG_PATH = "/etc/cloud/cloud.cfg.d/99-infra-tools-hostname.cfg"
-NETWORK_TRANSITION_PATH = "/run/infra-tools-network-transition.json"
+CLOUD_INIT_NETWORK_CONFIG_PATH = "/etc/cloud/cloud.cfg.d/99-basaltwater-network.cfg"
+CLOUD_INIT_HOSTNAME_CONFIG_PATH = "/etc/cloud/cloud.cfg.d/99-basaltwater-hostname.cfg"
+NETWORK_TRANSITION_PATH = "/run/basaltwater-network-transition.json"
 NETWORK_TRANSITION_VERSION = 2
 MDNS_PACKAGES = ("avahi-daemon", "libnss-mdns")
 MDNS_SERVICE = "avahi-daemon"
@@ -86,7 +86,7 @@ def configure_system_hostname(config: SetupConfig) -> None:
     if os.path.isdir(CLOUD_INIT_CONFIG_DIR):
         write_text_atomic(
             CLOUD_INIT_HOSTNAME_CONFIG_PATH,
-            "# Managed by infra_tools\npreserve_hostname: true\n",
+            "# Managed by basaltwater\npreserve_hostname: true\n",
             mode=0o644,
         )
     print(f"  ✓ System hostname set to {hostname}")
@@ -265,7 +265,7 @@ def _configure_networkmanager(
 
 def _render_networkd_config(config: SetupConfig, interface: str) -> str:
     lines = [
-        "# Managed by infra_tools. Changes will be overwritten.",
+        "# Managed by basaltwater. Changes will be overwritten.",
         "[Match]",
         f"Name={interface}",
         "",
@@ -314,7 +314,7 @@ def _write_with_backup(path: str, content: str) -> None:
     current_mode = 0o644
     if os.path.exists(path):
         current_mode = stat.S_IMODE(os.stat(path).st_mode)
-        backup_path = f"{path}.infra-tools.bak"
+        backup_path = f"{path}.basaltwater.bak"
         if not os.path.exists(backup_path):
             shutil.copy2(path, backup_path)
     write_text_atomic(path, content, mode=current_mode)
@@ -327,7 +327,7 @@ def _remove_existing_ifupdown_stanzas(interface: str) -> None:
     for path in paths:
         if (
             os.path.abspath(path) == managed_path
-            or path.endswith(".infra-tools.bak")
+            or path.endswith(".basaltwater.bak")
             or not os.path.isfile(path)
         ):
             continue
@@ -361,7 +361,7 @@ def _ensure_ifupdown_include() -> None:
 
 def _render_ifupdown_config(config: SetupConfig, interface: str) -> str:
     lines = [
-        "# Managed by infra_tools. Changes will be overwritten.",
+        "# Managed by basaltwater. Changes will be overwritten.",
         f"auto {interface}",
     ]
     if config.static_ipv4:
@@ -409,7 +409,7 @@ def _disable_cloud_init_networking() -> None:
         return
     write_text_atomic(
         CLOUD_INIT_NETWORK_CONFIG_PATH,
-        "# Managed by infra_tools\nnetwork: {config: disabled}\n",
+        "# Managed by basaltwater\nnetwork: {config: disabled}\n",
         mode=0o644,
     )
 
@@ -527,9 +527,9 @@ def _ifupdown_snapshot_paths() -> list[str]:
     for path in glob.glob(os.path.join(IFUPDOWN_CONFIG_DIR, "*")):
         if os.path.isfile(path) or os.path.islink(path):
             paths.add(path)
-        if not path.endswith(".infra-tools.bak"):
-            paths.add(f"{path}.infra-tools.bak")
-    paths.add(f"{IFUPDOWN_MAIN_CONFIG_PATH}.infra-tools.bak")
+        if not path.endswith(".basaltwater.bak"):
+            paths.add(f"{path}.basaltwater.bak")
+    paths.add(f"{IFUPDOWN_MAIN_CONFIG_PATH}.basaltwater.bak")
     return sorted(paths)
 
 
@@ -582,7 +582,7 @@ def _allowed_rollback_file(path: str, backend: str) -> bool:
         return False
     if path in common_paths | {
         IFUPDOWN_MAIN_CONFIG_PATH,
-        f"{IFUPDOWN_MAIN_CONFIG_PATH}.infra-tools.bak",
+        f"{IFUPDOWN_MAIN_CONFIG_PATH}.basaltwater.bak",
         IFUPDOWN_CONFIG_PATH,
     }:
         return True

@@ -57,7 +57,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-dir", required=True)
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--label", default="infra-tools remote environment")
+    parser.add_argument("--label", default="basaltwater remote environment")
     parser.add_argument("--json", action="store_true")
     return parser
 
@@ -138,9 +138,9 @@ def _issue_temporary_session(t3_binary: str, base_dir: str) -> tuple[str, str]:
             "--ttl",
             _TEMPORARY_SESSION_TTL,
             "--label",
-            "infra-tools pairing bootstrap",
+            "basaltwater pairing bootstrap",
             "--subject",
-            "infra-tools-pairing-bootstrap",
+            "basaltwater-pairing-bootstrap",
             "--json",
         ],
         "Temporary T3 administrative session issuance",
@@ -219,7 +219,7 @@ def _request_pairing_link(
         headers={
             "Authorization": f"Bearer {bearer_token}",
             "Content-Type": "application/json",
-            "User-Agent": "infra-tools-t3code-pairing/1",
+            "User-Agent": "basaltwater-t3code-pairing/1",
         },
         method="POST",
     )

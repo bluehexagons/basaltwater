@@ -76,7 +76,7 @@ class TestGodotWebHost(unittest.TestCase):
             sites_root = os.path.join(web_root, "sites")
             url_file = os.path.join(temporary_dir, "config", "base-url")
             ca_cert = os.path.join(temporary_dir, "ca.crt")
-            ca_download = os.path.join(web_root, "infra-tools-ca.crt")
+            ca_download = os.path.join(web_root, "basaltwater-ca.crt")
             with open(ca_cert, "w", encoding="utf-8") as cert_file:
                 cert_file.write("test CA\n")
 
@@ -123,8 +123,8 @@ class TestGodotWebHost(unittest.TestCase):
             self.assertTrue(os.path.isdir(os.path.join(sites_root, "agent")))
             with open(os.path.join(web_root, "index.html"), encoding="utf-8") as page:
                 content = page.read()
-                self.assertIn("infra-web publish godot", content)
-                self.assertIn("infra-web publish site", content)
+                self.assertIn("basaltwater-web publish godot", content)
+                self.assertIn("basaltwater-web publish site", content)
                 self.assertIn("agent sites", content)
                 self.assertIn(">games</a>", content)
             with open(url_file, encoding="utf-8") as base_url:
@@ -138,7 +138,7 @@ class TestGodotWebHost(unittest.TestCase):
     def test_web_policy_exposes_the_user_readable_ca_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             policy_file = os.path.join(temporary_dir, "policy.json")
-            ca_download = "/srv/infra-tools/web/infra-tools-ca.crt"
+            ca_download = "/srv/basaltwater/web/basaltwater-ca.crt"
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_POLICY_FILE", policy_file),
                 patch.object(
@@ -257,8 +257,8 @@ class TestGodotWebHost(unittest.TestCase):
                 set(godot_web_steps.GODOT_AGENT_SKILLS),
                 {
                     *BASE_AGENT_SKILL_NAMES,
-                    "infra-tools-godot-web",
-                    "infra-tools-web-gateway",
+                    "basaltwater-godot-web",
+                    "basaltwater-web-gateway",
                 },
             )
             for skill_name in godot_web_steps.GODOT_AGENT_SKILLS:
@@ -271,7 +271,7 @@ class TestGodotWebHost(unittest.TestCase):
                 )
                 self.assertTrue(os.path.isfile(skill_path))
                 with open(skill_path, encoding="utf-8") as file_obj:
-                    self.assertIn("managed-by: infra_tools", file_obj.read())
+                    self.assertIn("managed-by: basaltwater", file_obj.read())
 
     def test_does_not_install_agent_skills_without_supported_agent(self) -> None:
         with patch("common.agent_steps.pwd.getpwnam") as getpwnam:
@@ -386,7 +386,7 @@ class TestGodotWebPublisher(unittest.TestCase):
             self.assertEqual(os.stat(os.path.dirname(published_file)).st_mode & 0o777, 0o755)
             self.assertEqual(os.stat(published_file).st_mode & 0o777, 0o644)
             self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", "demo.wasm.gz")))
-            self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", ".infra-tools.json")))
+            self.assertTrue(os.path.isfile(os.path.join(user_root, "demo", ".basaltwater.json")))
             self.assertTrue(os.path.isfile(os.path.join(user_root, "index.html")))
             command = run_export.call_args.args[0]
             self.assertEqual(command[:2], ["godot", "--headless"])

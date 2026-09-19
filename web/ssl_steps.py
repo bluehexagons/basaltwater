@@ -14,7 +14,7 @@ from lib.remote_utils import run, install_package
 
 
 CERTBOT_NGINX_DEPLOY_HOOK = (
-    "/etc/letsencrypt/renewal-hooks/deploy/50-infra-tools-reload-nginx"
+    "/etc/letsencrypt/renewal-hooks/deploy/50-basaltwater-reload-nginx"
 )
 
 

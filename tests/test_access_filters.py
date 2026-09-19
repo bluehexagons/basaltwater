@@ -328,23 +328,23 @@ class TestGenericUfwFiltering(unittest.TestCase):
         commands = [call.args[0] for call in mock_run.call_args_list]
         ssh_rule = (
             "ufw allow from 192.168.1.0/24 to any port 22 proto tcp "
-            "comment 'infra_tools SSH trusted source 192.168.1.0/24'"
+            "comment 'basaltwater SSH trusted source 192.168.1.0/24'"
         )
         self.assertIn(ssh_rule, commands)
         self.assertLess(commands.index(ssh_rule), commands.index("ufw delete limit ssh"))
         self.assertIn(
             "ufw limit from 192.168.1.0/24 to any port 3389 proto tcp "
-            "comment 'infra_tools RDP source 192.168.1.0/24'",
+            "comment 'basaltwater RDP source 192.168.1.0/24'",
             commands,
         )
         self.assertIn(
             "ufw limit from 198.51.100.0/24 to any port 3389 proto tcp "
-            "comment 'infra_tools RDP source 198.51.100.0/24'",
+            "comment 'basaltwater RDP source 198.51.100.0/24'",
             commands,
         )
         web_rule = (
             "ufw allow from 192.168.1.0/24 to any port 8080 proto tcp "
-            "comment 'infra_tools web TCP 8080 source 192.168.1.0/24'"
+            "comment 'basaltwater web TCP 8080 source 192.168.1.0/24'"
         )
         self.assertIn(web_rule, commands)
         self.assertLess(commands.index(web_rule), commands.index("ufw delete allow 8080/tcp"))
@@ -357,9 +357,9 @@ class TestGenericUfwFiltering(unittest.TestCase):
         _container,
     ) -> None:
         status = """Status: active
-[ 1] 22/tcp LIMIT IN 192.168.1.0/24 # infra_tools SSH source 192.168.1.0/24
+[ 1] 22/tcp LIMIT IN 192.168.1.0/24 # basaltwater SSH source 192.168.1.0/24
 [ 2] 22/tcp ALLOW IN 198.51.100.10 # operator rule
-[ 3] 22/tcp ALLOW IN 192.168.1.0/24 # infra_tools SSH trusted source 192.168.1.0/24
+[ 3] 22/tcp ALLOW IN 192.168.1.0/24 # basaltwater SSH trusted source 192.168.1.0/24
 """
 
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
@@ -383,7 +383,7 @@ class TestGenericUfwFiltering(unittest.TestCase):
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertIn(
             "ufw allow from 192.168.1.0/24 to any port 22 proto tcp "
-            "comment 'infra_tools SSH trusted source 192.168.1.0/24'",
+            "comment 'basaltwater SSH trusted source 192.168.1.0/24'",
             commands,
         )
         self.assertIn("ufw --force delete 1", commands)
@@ -394,7 +394,7 @@ class TestGenericUfwFiltering(unittest.TestCase):
     def test_generic_source_restricts_samba_and_removes_stale_rules(self, mock_run) -> None:
         status = (
             "[ 2] 445/tcp ALLOW IN 10.0.0.0/8 "
-            "# infra_tools Samba 445/tcp source 10.0.0.0/8\n"
+            "# basaltwater Samba 445/tcp source 10.0.0.0/8\n"
         )
 
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
@@ -417,7 +417,7 @@ class TestGenericUfwFiltering(unittest.TestCase):
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertIn(
             "ufw allow from 192.168.1.0/24 to any port 445 proto tcp "
-            "comment 'infra_tools Samba 445/tcp source 192.168.1.0/24'",
+            "comment 'basaltwater Samba 445/tcp source 192.168.1.0/24'",
             commands,
         )
         self.assertIn("ufw delete allow 445/tcp", commands)
@@ -440,7 +440,7 @@ class TestGenericUfwFiltering(unittest.TestCase):
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertIn(
             "ufw allow from 192.168.20.0/24 to any port 445 proto tcp "
-            "comment 'infra_tools Samba 445/tcp source 192.168.20.0/24'",
+            "comment 'basaltwater Samba 445/tcp source 192.168.20.0/24'",
             commands,
         )
         self.assertEqual(config.effective_access_sources(), [])
@@ -474,7 +474,7 @@ class TestProxmoxManagementFilter(unittest.TestCase):
             {"cidr": "10.0.0.0/8", "comment": "operator entry"},
             {
                 "cidr": "172.16.0.0/12",
-                "comment": "infra_tools access source 172.16.0.0/12",
+                "comment": "basaltwater access source 172.16.0.0/12",
             },
         ]
 
@@ -520,7 +520,7 @@ class TestProxmoxManagementFilter(unittest.TestCase):
         existing = [
             {
                 "cidr": "192.168.1.0/24",
-                "comment": "infra_tools access source 192.168.1.0/24",
+                "comment": "basaltwater access source 192.168.1.0/24",
             }
         ]
         mock_run.side_effect = lambda command, **_kwargs: SimpleNamespace(

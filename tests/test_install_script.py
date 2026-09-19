@@ -19,9 +19,9 @@ INSTALL_SCRIPT = os.path.join(PROJECT_ROOT, "install.sh")
 
 class TestInstallScript(unittest.TestCase):
     def _mark_managed(self, install_dir: str) -> None:
-        os.makedirs(os.path.join(install_dir, '.infra_tools'), exist_ok=True)
-        with open(os.path.join(install_dir, '.infra_tools', 'managed-install'), 'w') as stream:
-            stream.write('infra-tools-v1\n')
+        os.makedirs(os.path.join(install_dir, '.basaltwater'), exist_ok=True)
+        with open(os.path.join(install_dir, '.basaltwater', 'managed-install'), 'w') as stream:
+            stream.write('basaltwater-v1\n')
 
     def test_interruptions_restore_old_install_at_rename_boundaries(self):
         for boundary in ('before-backup', 'after-backup', 'after-activation'):
@@ -87,20 +87,6 @@ class TestInstallScript(unittest.TestCase):
                     self.assertIn('refusing install directory', result.stderr)
             self.assertTrue(os.path.isdir(unmanaged))
 
-    def test_legacy_migration_requires_explicit_option(self):
-        with tempfile.TemporaryDirectory() as directory:
-            _, _, environment = self._create_fixture(directory)
-            install_dir = os.path.join(directory, 'installed')
-            os.makedirs(os.path.join(install_dir, 'lib'))
-            for name in ('infra_tools.py', 'remote_setup.py'):
-                with open(os.path.join(install_dir, name), 'w') as stream:
-                    stream.write('# legacy source\n')
-            command = ['sh', INSTALL_SCRIPT, '--install-dir', install_dir]
-            refused = subprocess.run(command, env=environment, text=True, capture_output=True, timeout=20)
-            self.assertNotEqual(refused.returncode, 0)
-            migrated = subprocess.run(command + ['--migrate-existing-install'], env=environment, text=True, capture_output=True, timeout=20)
-            self.assertEqual(migrated.returncode, 0, migrated.stderr)
-            self.assertTrue(os.path.isfile(os.path.join(install_dir, '.infra_tools', 'managed-install')))
 
     def test_help_uses_explicit_agent_tool_options(self):
         result = subprocess.run(
@@ -119,14 +105,14 @@ class TestInstallScript(unittest.TestCase):
         directory: str,
     ) -> tuple[str, str, dict[str, str]]:
         fake_home = os.path.join(directory, "home")
-        source_root = os.path.join(directory, "source", "infra_tools-test")
+        source_root = os.path.join(directory, "source", "basaltwater-test")
         fake_bin = os.path.join(directory, "bin")
         log_path = os.path.join(directory, "calls.jsonl")
         os.makedirs(fake_home)
         os.makedirs(source_root)
         os.makedirs(fake_bin)
 
-        fake_cli = os.path.join(source_root, "infra_tools.py")
+        fake_cli = os.path.join(source_root, "basaltwater.py")
         with open(fake_cli, "w", encoding="utf-8") as file_obj:
             file_obj.write(textwrap.dedent(
                 """\
@@ -135,14 +121,14 @@ class TestInstallScript(unittest.TestCase):
                 import os
                 import sys
 
-                with open(os.environ["INFRA_TOOLS_TEST_LOG"], "a", encoding="utf-8") as log:
+                with open(os.environ["BASALTWATER_TEST_LOG"], "a", encoding="utf-8") as log:
                     log.write(json.dumps(sys.argv[1:]) + "\\n")
                 if len(sys.argv) > 1 and sys.argv[1] == "bootstrap":
-                    if os.environ.get("INFRA_TOOLS_TEST_BOOTSTRAP_FAIL") == "1":
+                    if os.environ.get("BASALTWATER_TEST_BOOTSTRAP_FAIL") == "1":
                         raise SystemExit(7)
                     launcher_dir = os.path.join(os.environ["HOME"], ".local", "bin")
                     os.makedirs(launcher_dir, exist_ok=True)
-                    launcher = os.path.join(launcher_dir, "infra-tools")
+                    launcher = os.path.join(launcher_dir, "basaltw")
                     with open(launcher, "w", encoding="utf-8") as output:
                         output.write("#!/bin/sh\\nexit 0\\n")
                     os.chmod(launcher, 0o755)
@@ -151,14 +137,14 @@ class TestInstallScript(unittest.TestCase):
 
         git_environment = os.environ.copy()
         git_environment.update({
-            "GIT_AUTHOR_NAME": "infra_tools tests",
+            "GIT_AUTHOR_NAME": "basaltwater tests",
             "GIT_AUTHOR_EMAIL": "tests@example.invalid",
-            "GIT_COMMITTER_NAME": "infra_tools tests",
+            "GIT_COMMITTER_NAME": "basaltwater tests",
             "GIT_COMMITTER_EMAIL": "tests@example.invalid",
         })
         for git_args in [
             ["git", "init", "--initial-branch=main", source_root],
-            ["git", "-C", source_root, "add", "infra_tools.py"],
+            ["git", "-C", source_root, "add", "basaltwater.py"],
             ["git", "-C", source_root, "commit", "-m", "fixture"],
             ["git", "-C", source_root, "tag", "v1.0.0"],
         ]:
@@ -183,7 +169,7 @@ class TestInstallScript(unittest.TestCase):
         with open(id_path, "w", encoding="utf-8") as file_obj:
             file_obj.write(
                 "#!/bin/sh\n"
-                'if [ "${INFRA_TOOLS_TEST_ROOT:-0}" = "1" ]; then\n'
+                'if [ "${BASALTWATER_TEST_ROOT:-0}" = "1" ]; then\n'
                 '    case "$1" in\n'
                 '        -un) printf "root\\n" ;;\n'
                 '        -u) printf "0\\n" ;;\n'
@@ -191,7 +177,7 @@ class TestInstallScript(unittest.TestCase):
                 '    esac\n'
                 '    exit 0\n'
                 "fi\n"
-                'if [ "${INFRA_TOOLS_TEST_NON_ROOT:-0}" = "1" ]; then\n'
+                'if [ "${BASALTWATER_TEST_NON_ROOT:-0}" = "1" ]; then\n'
                 '    case "$1" in\n'
                 '        -un) printf "testuser\\n" ;;\n'
                 '        -u) printf "1000\\n" ;;\n'
@@ -207,8 +193,8 @@ class TestInstallScript(unittest.TestCase):
         with open(sudo_path, "w", encoding="utf-8") as file_obj:
             file_obj.write(
                 "#!/bin/sh\n"
-                'if [ -n "${INFRA_TOOLS_TEST_SUDO_LOG:-}" ]; then\n'
-                '    printf "%s\\n" "$*" >> "$INFRA_TOOLS_TEST_SUDO_LOG"\n'
+                'if [ -n "${BASALTWATER_TEST_SUDO_LOG:-}" ]; then\n'
+                '    printf "%s\\n" "$*" >> "$BASALTWATER_TEST_SUDO_LOG"\n'
                 "fi\n"
                 'exec "$@"\n'
             )
@@ -219,7 +205,7 @@ class TestInstallScript(unittest.TestCase):
             file_obj.write(
                 "#!/bin/sh\n"
                 'if [ "$#" -eq 3 ] && [ "$1" = "-n" ] && [ "$2" = "s/^ID=//p" ] && [ "$3" = "/etc/os-release" ]; then\n'
-                '    printf "%s\\n" "${INFRA_TOOLS_TEST_OS_ID:-debian}"\n'
+                '    printf "%s\\n" "${BASALTWATER_TEST_OS_ID:-debian}"\n'
                 "    exit 0\n"
                 "fi\n"
                 'exec /usr/bin/sed "$@"\n'
@@ -239,7 +225,7 @@ class TestInstallScript(unittest.TestCase):
         environment = os.environ.copy()
         for name in (
             "BASALTWATER_CHANNEL", "BASALTWATER_REF", "BASALTWATER_REPOSITORY_URL",
-            "INFRA_TOOLS_CHANNEL", "INFRA_TOOLS_REF", "INFRA_TOOLS_REPOSITORY_URL",
+            "BASALTWATER_CHANNEL", "BASALTWATER_REF", "BASALTWATER_REPOSITORY_URL",
         ):
             environment.pop(name, None)
         environment["PATH"] = os.pathsep.join((
@@ -247,8 +233,8 @@ class TestInstallScript(unittest.TestCase):
             command_bin,
             environment.get("PATH", ""),
         ))
-        environment["INFRA_TOOLS_REPOSITORY_URL"] = source_root
-        environment["INFRA_TOOLS_TEST_LOG"] = log_path
+        environment["BASALTWATER_REPOSITORY_URL"] = source_root
+        environment["BASALTWATER_TEST_LOG"] = log_path
         return fake_home, log_path, environment
 
     def test_installs_and_forwards_optional_setup_arguments(self):
@@ -275,12 +261,12 @@ class TestInstallScript(unittest.TestCase):
                 env=environment,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(os.path.isfile(os.path.join(install_dir, "infra_tools.py")))
+            self.assertTrue(os.path.isfile(os.path.join(install_dir, "basaltwater.py")))
             self.assertTrue(os.path.isdir(os.path.join(install_dir, ".git")))
-            with open(os.path.join(install_dir, ".infra_tools", "channel.json"), encoding="utf-8") as file_obj:
+            with open(os.path.join(install_dir, ".basaltwater", "channel.json"), encoding="utf-8") as file_obj:
                 self.assertEqual(json.load(file_obj)["channel"], "dev")
             self.assertTrue(os.access(
-                os.path.join(fake_home, ".local", "bin", "infra-tools"),
+                os.path.join(fake_home, ".local", "bin", "basaltw"),
                 os.X_OK,
             ))
             with open(log_path, encoding="utf-8") as file_obj:
@@ -291,37 +277,13 @@ class TestInstallScript(unittest.TestCase):
                 ["setup", "server_dev", "10.0.0.50", "agent", "--dry-run"],
             )
 
-    def test_rename_environment_precedence(self):
-        cases = (
-            ({"INFRA_TOOLS_CHANNEL": ""}, [], "dev"),
-            ({"INFRA_TOOLS_CHANNEL": "", "BASALTWATER_REF": "missing"}, [], "dev"),
-            ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_CHANNEL": "dev"}, [], "dev"),
-            ({"INFRA_TOOLS_REF": "missing", "BASALTWATER_REF": "main"}, [], "dev"),
-            ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_REF": "missing"}, [], "stable"),
-            ({"BASALTWATER_CHANNEL": "missing"}, ["--channel", "stable"], "stable"),
-            ({"INFRA_TOOLS_REF": "missing", "BASALTWATER_REF": ""}, [], "dev"),
-        )
-        for settings, options, expected in cases:
-            with self.subTest(settings=settings), tempfile.TemporaryDirectory() as directory:
-                _, _, environment = self._create_fixture(directory)
-                environment.update(settings)
-                environment["BASALTWATER_REPOSITORY_URL"] = environment["INFRA_TOOLS_REPOSITORY_URL"]
-                environment["INFRA_TOOLS_REPOSITORY_URL"] = "/missing/old-source"
-                install_dir = os.path.join(directory, "installed")
-                result = subprocess.run(
-                    ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, *options],
-                    env=environment, text=True, capture_output=True, timeout=20,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                with open(os.path.join(install_dir, ".infra_tools", "channel.json")) as stream:
-                    self.assertEqual(json.load(stream)["channel"], expected)
 
     def test_empty_new_installer_settings_do_not_fall_back(self):
         for name in ("CHANNEL", "REPOSITORY_URL"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
                 _, _, environment = self._create_fixture(directory)
                 environment[f"BASALTWATER_{name}"] = ""
-                environment.setdefault(f"INFRA_TOOLS_{name}", "dev")
+                environment.setdefault(f"BASALTWATER_{name}", "dev")
                 install_dir = os.path.join(directory, "installed")
                 result = subprocess.run(
                     ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
@@ -330,74 +292,12 @@ class TestInstallScript(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(os.path.exists(install_dir))
 
-    def test_older_tagged_source_uses_its_underscore_launcher(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home, _, environment = self._create_fixture(directory)
-            source = environment["INFRA_TOOLS_REPOSITORY_URL"]
-            cli = os.path.join(source, "infra_tools.py")
-            with open(cli, encoding="utf-8") as stream:
-                content = stream.read()
-            with open(cli, "w", encoding="utf-8") as stream:
-                stream.write(content.replace('"infra-tools"', '"infra_tools"'))
-            with open(os.path.join(source, "pyproject.toml"), "w") as stream:
-                stream.write('[project.scripts]\ninfra_tools = "infra_tools:main"\n')
-            for args in (
-                ["add", "."],
-                ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "older launcher"],
-                ["tag", "v1.1.0"],
-            ):
-                subprocess.run(["git", "-C", source, *args], check=True, capture_output=True)
-            result = subprocess.run(
-                ["sh", INSTALL_SCRIPT, "--install-dir", os.path.join(directory, "installed"), "--channel", "stable"],
-                env=environment, text=True, capture_output=True, timeout=20,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn(f"Command: {home}/.local/bin/infra_tools", result.stdout)
 
-    def test_old_release_upgrade_rerun_and_rollback_preserve_private_state(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home, _, environment = self._create_fixture(directory)
-            source = environment["INFRA_TOOLS_REPOSITORY_URL"]
-            # v1.0.0 exposes only infra-tools. The next commit declares and
-            # installs basaltw, so the installer must inspect selected source.
-            cli = os.path.join(source, "infra_tools.py")
-            with open(cli, encoding="utf-8") as stream:
-                content = stream.read()
-            with open(cli, "w", encoding="utf-8") as stream:
-                stream.write(content.replace('"infra-tools"', '"basaltw"'))
-            with open(os.path.join(source, "pyproject.toml"), "w") as stream:
-                stream.write('[project.scripts]\nbasaltw = "infra_tools:main"\n')
-            for args in (["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "rename"]):
-                subprocess.run(["git", "-C", source, *args], check=True, capture_output=True)
-            install_dir = os.path.join(directory, "custom installation")
-            secret = os.path.join(install_dir, "state", "credentials.json")
-            for channel in ("stable", "dev", "dev", "stable"):
-                result = subprocess.run(
-                    ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, "--channel", channel],
-                    env=environment, text=True, capture_output=True, timeout=20,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                command = "basaltw" if channel == "dev" else "infra-tools"
-                self.assertIn(f"Command: {home}/.local/bin/{command}", result.stdout)
-                if not os.path.exists(secret):
-                    os.makedirs(os.path.dirname(secret))
-                    with open(secret, "w") as stream:
-                        stream.write('{"fixture": "private-state"}')
-                    os.chmod(secret, 0o600)
-                    # The real repository ignores persistent state.
-                    with open(os.path.join(install_dir, ".git", "info", "exclude"), "a") as stream:
-                        stream.write("\nstate/\n.infra_tools/\n")
-                with open(secret) as stream:
-                    self.assertEqual(stream.read(), '{"fixture": "private-state"}')
-                self.assertEqual(os.stat(secret).st_mode & 0o777, 0o600)
-                # Each checkout has a fresh .git directory after reinstall.
-                with open(os.path.join(install_dir, ".git", "info", "exclude"), "a") as stream:
-                    stream.write("\nstate/\n.infra_tools/\n")
 
     def test_root_install_uses_target_home_for_launcher(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, _log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_ROOT"] = "1"
+            environment["BASALTWATER_TEST_ROOT"] = "1"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
@@ -409,15 +309,15 @@ class TestInstallScript(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(os.access(
-                os.path.join(fake_home, ".local", "bin", "infra-tools"),
+                os.path.join(fake_home, ".local", "bin", "basaltw"),
                 os.X_OK,
             ))
 
     def test_unsupported_host_prompts_and_skips_system_package_installation(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_ROOT"] = "1"
-            environment["INFRA_TOOLS_TEST_OS_ID"] = "fedora"
+            environment["BASALTWATER_TEST_ROOT"] = "1"
+            environment["BASALTWATER_TEST_OS_ID"] = "fedora"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -442,8 +342,8 @@ class TestInstallScript(unittest.TestCase):
     def test_unsupported_host_fails_when_controller_commands_are_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, _log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_ROOT"] = "1"
-            environment["INFRA_TOOLS_TEST_OS_ID"] = "fedora"
+            environment["BASALTWATER_TEST_ROOT"] = "1"
+            environment["BASALTWATER_TEST_OS_ID"] = "fedora"
             minimal_bin = os.path.join(directory, "minimal-bin")
             os.makedirs(minimal_bin)
             for command_name in ("sh", "head", "awk", "basename"):
@@ -467,11 +367,11 @@ class TestInstallScript(unittest.TestCase):
     def test_cachyos_local_setup_keeps_the_human_user_without_elevation(self):
         with tempfile.TemporaryDirectory() as directory:
             _home, log_path, environment = self._create_fixture(directory)
-            environment.update(INFRA_TOOLS_TEST_NON_ROOT="1", INFRA_TOOLS_TEST_OS_ID="cachyos")
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
             environment.pop("SSH_CONNECTION", None)
             environment.pop("SSH_TTY", None)
             sudo_log = os.path.join(directory, "sudo.log")
-            environment["INFRA_TOOLS_TEST_SUDO_LOG"] = sudo_log
+            environment["BASALTWATER_TEST_SUDO_LOG"] = sudo_log
             result = subprocess.run(
                 ["sh", INSTALL_SCRIPT, "--install-dir", os.path.join(directory, "installed"),
                  "--local-setup", "agent_cachyos", "--node"],
@@ -487,7 +387,7 @@ class TestInstallScript(unittest.TestCase):
     def test_cachyos_rejects_other_local_profiles_before_installation(self):
         with tempfile.TemporaryDirectory() as directory:
             _home, log_path, environment = self._create_fixture(directory)
-            environment.update(INFRA_TOOLS_TEST_NON_ROOT="1", INFRA_TOOLS_TEST_OS_ID="cachyos")
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
             environment.pop("SSH_CONNECTION", None)
             environment.pop("SSH_TTY", None)
             result = subprocess.run(
@@ -502,7 +402,7 @@ class TestInstallScript(unittest.TestCase):
     def test_qemu_guest_agent_flag_is_forwarded_to_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_ROOT"] = "1"
+            environment["BASALTWATER_TEST_ROOT"] = "1"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -526,9 +426,9 @@ class TestInstallScript(unittest.TestCase):
     def test_local_setup_elevates_and_defaults_to_install_user(self):
         with tempfile.TemporaryDirectory() as directory:
             fake_home, log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_NON_ROOT"] = "1"
+            environment["BASALTWATER_TEST_NON_ROOT"] = "1"
             sudo_log_path = os.path.join(directory, "sudo.log")
-            environment["INFRA_TOOLS_TEST_SUDO_LOG"] = sudo_log_path
+            environment["BASALTWATER_TEST_SUDO_LOG"] = sudo_log_path
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -556,10 +456,10 @@ class TestInstallScript(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue(os.path.isfile(os.path.join(install_dir, "infra_tools.py")))
+            self.assertTrue(os.path.isfile(os.path.join(install_dir, "basaltwater.py")))
             self.assertTrue(os.path.isdir(os.path.join(install_dir, ".git")))
             self.assertTrue(os.access(
-                os.path.join(fake_home, ".local", "bin", "infra-tools"),
+                os.path.join(fake_home, ".local", "bin", "basaltw"),
                 os.X_OK,
             ))
             with open(log_path, encoding="utf-8") as file_obj:
@@ -588,7 +488,7 @@ class TestInstallScript(unittest.TestCase):
     def test_local_setup_option_supplies_localhost_and_user(self):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_NON_ROOT"] = "1"
+            environment["BASALTWATER_TEST_NON_ROOT"] = "1"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -631,7 +531,7 @@ class TestInstallScript(unittest.TestCase):
     def test_local_desktop_setup_forwards_control_plane_and_desktop_options(self):
         with tempfile.TemporaryDirectory() as directory:
             _fake_home, log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_NON_ROOT"] = "1"
+            environment["BASALTWATER_TEST_NON_ROOT"] = "1"
             install_dir = os.path.join(directory, "installed")
             result = subprocess.run(
                 [
@@ -732,7 +632,7 @@ class TestInstallScript(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            with open(os.path.join(install_dir, ".infra_tools", "channel.json"), encoding="utf-8") as file_obj:
+            with open(os.path.join(install_dir, ".basaltwater", "channel.json"), encoding="utf-8") as file_obj:
                 self.assertEqual(json.load(file_obj)["channel"], "stable")
             self.assertEqual(
                 subprocess.run(
@@ -747,7 +647,7 @@ class TestInstallScript(unittest.TestCase):
     def test_bootstrap_failure_restores_previous_source(self):
         with tempfile.TemporaryDirectory() as directory:
             _home, _log_path, environment = self._create_fixture(directory)
-            environment["INFRA_TOOLS_TEST_BOOTSTRAP_FAIL"] = "1"
+            environment["BASALTWATER_TEST_BOOTSTRAP_FAIL"] = "1"
             install_dir = os.path.join(directory, "installed")
             os.makedirs(install_dir)
             self._mark_managed(install_dir)
@@ -784,8 +684,8 @@ class TestInstallScript(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--setup", help_result.stdout)
         self.assertIn("--qemu-guest-agent", help_result.stdout)
-        self.assertIn('--timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh"', help_result.stdout)
-        self.assertIn('-O "$HOME/.infra_tools-install.sh"', help_result.stdout)
+        self.assertIn('--timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh"', help_result.stdout)
+        self.assertIn('-O "$HOME/.basaltwater-install.sh"', help_result.stdout)
         self.assertNotIn("|", help_result.stdout)
         self.assertNotIn("sudo sh -s", help_result.stdout)
         self.assertNotIn("wget -qO-", help_result.stdout)

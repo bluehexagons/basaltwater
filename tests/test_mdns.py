@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from common import network_steps
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
@@ -25,7 +25,7 @@ def _config(**overrides: object) -> SetupConfig:
 
 class TestMdnsConfig(unittest.TestCase):
     def test_setup_flag_round_trips_and_reconstructs(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "setup",
@@ -54,15 +54,15 @@ class TestMdnsConfig(unittest.TestCase):
         self.assertTrue(reloaded.enable_mdns)
 
     def test_patch_preserves_mdns_without_an_explicit_flag(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         omitted = parser.parse_args(["patch", "fileserver", "admin"])
         enabled = parser.parse_args(["patch", "fileserver", "admin", "--mdns"])
         disabled = parser.parse_args(["patch", "fileserver", "admin", "--no-mdns"])
 
         self.assertIsNone(omitted.enable_mdns)
-        self.assertIn("enable_mdns", infra_tools._patch_preserve_keys(omitted))
-        self.assertNotIn("enable_mdns", infra_tools._patch_preserve_keys(enabled))
-        self.assertNotIn("clear_mdns", infra_tools._patch_preserve_keys(disabled))
+        self.assertIn("enable_mdns", basaltwater._patch_preserve_keys(omitted))
+        self.assertNotIn("enable_mdns", basaltwater._patch_preserve_keys(enabled))
+        self.assertNotIn("clear_mdns", basaltwater._patch_preserve_keys(disabled))
 
         disabled_config = SetupConfig.from_args(disabled, "server_lite")
         self.assertFalse(disabled_config.enable_mdns)
@@ -124,13 +124,13 @@ class TestMdnsSetup(unittest.TestCase):
             security_steps._configure_mdns_firewall(config)
 
         run.assert_called_once_with(
-            "ufw allow 5353/udp comment 'infra_tools mDNS UDP'",
+            "ufw allow 5353/udp comment 'basaltwater mDNS UDP'",
             check=False,
             capture_output=True,
         )
         remove.assert_called_once_with(
-            "infra_tools mDNS UDP",
-            {"infra_tools mDNS UDP"},
+            "basaltwater mDNS UDP",
+            {"basaltwater mDNS UDP"},
         )
 
 

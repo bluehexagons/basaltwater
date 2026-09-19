@@ -91,7 +91,7 @@ class TestPythonFlag(unittest.TestCase):
             service_name="auto-update-uv",
             service_desc="Auto-update uv package manager",
             timer_desc="Auto-update uv weekly",
-            script_path="/opt/infra_tools/common/service_tools/auto_update_uv.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_update_uv.py",
             schedule="Sun *-*-* 05:00:00",
             check_path="/home/user/.local/bin/uv",
             check_name="uv",
@@ -133,7 +133,7 @@ class TestSetupAdminPython(unittest.TestCase):
         )
         result = python_setup.run_local_python_setup(
             "bash",
-            script_path="/tmp/infra_tools.py",
+            script_path="/tmp/basaltwater.py",
         )
         self.assertEqual(result, 1)
         mock_completion.assert_not_called()

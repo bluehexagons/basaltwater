@@ -119,7 +119,7 @@ def _wait_for_ui(url: str) -> None:
 def _prune_releases(releases: Path, keep: set[Path]) -> None:
     """Retain the current and previous runtime; never adopt unmarked directories."""
     for entry in releases.iterdir():
-        marker = entry / ".infra-tools-release"
+        marker = entry / ".basaltwater-release"
         if entry in keep or entry.is_symlink() or not entry.is_dir():
             continue
         try:
@@ -141,7 +141,7 @@ def install(config: SetupConfig) -> None:
             or (major == 24 and minor >= 10) or major > 24):
         raise RuntimeError("T3 requires Node 22.16+, 23.11+, or 24.10+; update your Node runtime and rerun")
 
-    prefix = home / ".local/share/infra-tools/cachyos-t3"
+    prefix = home / ".local/share/basaltwater/cachyos-t3"
     unit = home / ".config/systemd/user" / T3_SERVICE
     upstream = unit.with_name("t3code.service")
     if upstream.exists() or upstream.is_symlink():
@@ -289,7 +289,7 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
         _user_run(["npm", "install", "--global", "--prefix", str(candidate),
                    "--allow-scripts=node-pty,msgpackr-extract", "t3@latest"], home)
         version = _check_runtime(candidate, home)
-        (candidate / ".infra-tools-release").write_text(_MARKER)
+        (candidate / ".basaltwater-release").write_text(_MARKER)
         release = releases / f"{version}-{candidate.name.removeprefix('candidate-')}"
         candidate.rename(release)
         candidate = release

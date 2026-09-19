@@ -118,7 +118,7 @@ def generate_managed_service(name: str, exec_start: str, working_dir: str,
     This makes no assumptions about the
     runtime: the component supplies its own ExecStart (a binary path or full
     command) and reads its configuration (including which port to bind) from
-    ``env_file`` or ``runtime_env``. infra_tools only needs the port for the
+    ``env_file`` or ``runtime_env``. basaltwater only needs the port for the
     nginx upstream.
     """
     validate_no_control_characters(name, "systemd service name")
@@ -135,7 +135,7 @@ def generate_managed_service(name: str, exec_start: str, working_dir: str,
 
     lines = [
         "[Unit]",
-        f"Description={description or f'infra_tools managed service: {name}'}",
+        f"Description={description or f'basaltwater managed service: {name}'}",
         "After=network.target",
         "",
         "[Service]",

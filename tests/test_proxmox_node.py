@@ -256,7 +256,7 @@ class TestResolveTemplateName(unittest.TestCase):
         self.assertIn("debian-13-standard", result)
         download_call = mock_run.call_args_list[2]
         self.assertIn(
-            "flock --exclusive /run/lock/infra-tools-template-",
+            "flock --exclusive /run/lock/basaltwater-template-",
             download_call.args[3],
         )
         self.assertIn("grep -Fqx", download_call.args[3])
@@ -511,7 +511,7 @@ class TestPublicKeyUpload(unittest.TestCase):
         mock_run.side_effect = [
             MagicMock(
                 returncode=0,
-                stdout="/tmp/infra_tools_pubkey.abc\n",
+                stdout="/tmp/basaltwater_pubkey.abc\n",
                 stderr="",
             ),
             MagicMock(returncode=0, stdout="", stderr=""),
@@ -528,7 +528,7 @@ class TestPublicKeyUpload(unittest.TestCase):
                 dry_run=False,
             )
 
-        self.assertEqual(path, "/tmp/infra_tools_pubkey.abc")
+        self.assertEqual(path, "/tmp/basaltwater_pubkey.abc")
         self.assertEqual(
             mock_run.call_args_list[1].kwargs["input_data"],
             "ssh-ed25519 AAAA test\n",
@@ -575,14 +575,14 @@ class TestCreateContainerInjectsPubkey(unittest.TestCase):
             node_ip="10.0.0.10",
             user="root",
             ssh_opts=[],
-            ssh_pubkey_remote_path="/tmp/infra_tools_pubkey.abc",
+            ssh_pubkey_remote_path="/tmp/basaltwater_pubkey.abc",
             ipv6_cidr="2001:db8::51/64",
             gateway6="2001:db8::1",
         )
         pct_cmd = mock_run.call_args_list[0].args[3]
         self.assertIn("--memory 1536", pct_cmd)
         self.assertIn("--ssh-public-keys", pct_cmd)
-        self.assertIn("/tmp/infra_tools_pubkey.abc", pct_cmd)
+        self.assertIn("/tmp/basaltwater_pubkey.abc", pct_cmd)
         self.assertIn("ip6=2001:db8::51/64", pct_cmd)
         self.assertIn("gw6=2001:db8::1", pct_cmd)
         self.assertIn("--start 1", pct_cmd)

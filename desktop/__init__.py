@@ -1,1 +1,1 @@
-"""Desktop module for infra_tools."""
+"""Desktop module for basaltwater."""

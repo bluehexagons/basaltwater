@@ -6,7 +6,7 @@ Processes CI/CD jobs triggered by the webhook receiver.
 Clones repositories, runs build/test/deploy scripts, and reports status.
 Supports both local deployment and remote deployment to app servers.
 
-Logs to: /var/log/infra_tools/web/cicd_executor.log
+Logs to: /var/log/basaltwater/web/cicd_executor.log
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from web.service_tools.cicd_security import (
 
 logger = get_service_logger('cicd_executor', 'web', use_syslog=True)
 
-CONFIG_DIR = "/etc/infra_tools/cicd"
+CONFIG_DIR = "/etc/basaltwater/cicd"
 CONFIG_FILE = os.path.join(CONFIG_DIR, "webhook_config.json")
-STATE_DIR = "/var/lib/infra_tools/cicd"
+STATE_DIR = "/var/lib/basaltwater/cicd"
 JOBS_DIR = os.path.join(STATE_DIR, "jobs")
 WORKSPACES_DIR = os.path.join(BUILD_HOME, "workspaces")
 LOGS_DIR = os.path.join(STATE_DIR, "logs")
@@ -477,7 +477,7 @@ def perform_remote_deployment(
             deploy_target=deploy_target,
         )
         with open(log_file, 'a') as log:
-            log.write("\n✗ Ruby/Rails deployment requires a pinned legacy infra-tools release\n")
+            log.write("\n✗ Ruby/Rails deployment requires a pinned legacy basaltwater release\n")
         return False
 
     project_type = detect_project_type(workspace)

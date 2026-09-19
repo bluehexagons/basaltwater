@@ -115,7 +115,7 @@ class TestAgentReadinessState(unittest.TestCase):
                         },
                         "registrations": {"codex": True},
                         "workflow_skills": [
-                            "infra-tools-playwright-testing",
+                            "basaltwater-playwright-testing",
                             "/secret/browser-skill",
                         ],
                         "workflow_skill_ready": True,
@@ -161,7 +161,7 @@ class TestAgentReadinessState(unittest.TestCase):
         )
         self.assertEqual(
             browser["workflow_skills"],
-            ["infra-tools-playwright-testing"],
+            ["basaltwater-playwright-testing"],
         )
         self.assertTrue(browser["workflow_skill_ready"])
         self.assertEqual(browser["issues"], [])
@@ -270,7 +270,7 @@ class TestAgentReadinessState(unittest.TestCase):
                 home,
                 ".local",
                 "state",
-                "infra_tools",
+                "basaltwater",
                 "agent-readiness.json",
             )
             current = load_agent_readiness_record(
@@ -297,7 +297,7 @@ class TestAgentReadinessState(unittest.TestCase):
             target = os.path.join(home, "target")
             with open(target, "w", encoding="utf-8") as file_obj:
                 file_obj.write("{}")
-            state_dir = os.path.join(home, ".local", "state", "infra_tools")
+            state_dir = os.path.join(home, ".local", "state", "basaltwater")
             os.makedirs(state_dir)
             os.symlink(target, os.path.join(state_dir, "agent-readiness.json"))
 

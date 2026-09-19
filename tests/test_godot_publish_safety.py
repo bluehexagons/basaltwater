@@ -27,7 +27,7 @@ class TestGodotExportValidation(unittest.TestCase):
                 outside = root / "outside"
                 outside.write_text("preserve")
                 outside.chmod(0o644)
-                lock = user_root / ".infra-tools-test.lock"
+                lock = user_root / ".basaltwater-test.lock"
                 if kind == "symlink":
                     lock.symlink_to(outside)
                 elif kind == "hardlink":

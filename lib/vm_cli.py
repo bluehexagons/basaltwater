@@ -284,7 +284,7 @@ def _resolve_host(target: str, workspace: Optional[str]) -> ProxmoxHost:
     if host is None:
         raise ValueError(
             f"No registered provider host matching '{target}'. "
-            "Use 'infra-tools proxmox add' first."
+            "Use 'basaltw proxmox add' first."
         )
     return host
 
@@ -324,7 +324,7 @@ def _saved_setup_for_target(
     if not matches:
         raise ValueError(
             f"No saved VM setup matching '{target}'. "
-            "Use 'infra-tools list' to see local setup names."
+            "Use 'basaltw list' to see local setup names."
         )
     if len(matches) > 1:
         hosts = ", ".join(sorted(config.host for config in matches))
@@ -914,7 +914,7 @@ def run_vm_command(args: argparse.Namespace) -> int:
 
     handler = getattr(args, "_handler", None)
     if handler is None:
-        print("Use 'infra-tools vm --help' for available commands.")
+        print("Use 'basaltw vm --help' for available commands.")
         return 0
     workspace = getattr(args, "workspace", None)
     try:

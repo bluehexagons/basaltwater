@@ -116,7 +116,7 @@ def add_network_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
     add_host.add_argument(
         "--ref",
         dest="profile_ref",
-        help="Optional reference to another infra_tools record",
+        help="Optional reference to another basaltwater record",
     )
     add_host.add_argument(
         "--replace",

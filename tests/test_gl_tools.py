@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -79,7 +79,7 @@ class TestGLToolsConfig(unittest.TestCase):
         self.assertTrue(merge_setup_configs(cached, omitted).install_gl_tools)
         self.assertFalse(merge_setup_configs(cached, disabled).install_gl_tools)
 
-    @patch("infra_tools.get_all_configs")
+    @patch("basaltwater.get_all_configs")
     def test_info_displays_gl_tools_feature(self, mock_get_configs) -> None:
         mock_get_configs.return_value = [
             {
@@ -91,7 +91,7 @@ class TestGLToolsConfig(unittest.TestCase):
 
         output = io.StringIO()
         with redirect_stdout(output):
-            result = infra_tools.show_info()
+            result = basaltwater.show_info()
 
         self.assertEqual(result, 0)
         self.assertIn("Features: OpenGL tools", output.getvalue())

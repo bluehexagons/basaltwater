@@ -57,7 +57,7 @@ class TestUserRenameHelpers(unittest.TestCase):
 
     def test_syncthing_service_is_a_managed_unit(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            managed = os.path.join(tmpdir, "infra-syncthing.service")
+            managed = os.path.join(tmpdir, "basaltwater-syncthing.service")
             with open(managed, "w", encoding="utf-8") as file_obj:
                 file_obj.write("User=olduser\n")
             with patch.object(user_rename, "SYSTEMD_DIR", tmpdir):
@@ -118,7 +118,7 @@ class TestUserRenameHelpers(unittest.TestCase):
             drop_in_dir = os.path.join(service_dir, "t3code.service.d")
             os.makedirs(drop_in_dir)
             service = os.path.join(service_dir, "t3code.service")
-            drop_in = os.path.join(drop_in_dir, "infra-tools.conf")
+            drop_in = os.path.join(drop_in_dir, "basaltwater.conf")
             with open(service, "w", encoding="utf-8") as file_obj:
                 file_obj.write(f"ExecStart={old_home}/.t3/runtime/service-launcher.mjs\n")
             with open(drop_in, "w", encoding="utf-8") as file_obj:

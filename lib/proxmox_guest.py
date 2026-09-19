@@ -54,7 +54,7 @@ def guest_provisioning_locks(
             yield
     except ResourceBusyError as exc:
         raise ProvisionError(
-            f"Another infra-tools process is already provisioning {hostname} "
+            f"Another basaltwater process is already provisioning {hostname} "
             f"({target_ip}) on {node}"
         ) from exc
 
@@ -96,21 +96,21 @@ def remote_proxmox_locks(
     description: str,
 ) -> Iterator[None]:
     """Hold node-side flock leases for the lifetime of an SSH stdin stream."""
-    lock_commands = ["set -eu", "install -d -m 0700 /run/lock/infra-tools"]
+    lock_commands = ["set -eu", "install -d -m 0700 /run/lock/basaltwater"]
     for index, resource in enumerate(sorted(set(resources))):
         descriptor = 9 - index
         if descriptor < 3:
             raise ValueError("Too many Proxmox locks requested")
         digest = hashlib.sha256(resource.encode("utf-8")).hexdigest()
-        lock_path = f"/run/lock/infra-tools/provision-{digest}.lock"
+        lock_path = f"/run/lock/basaltwater/provision-{digest}.lock"
         lock_commands.append(f"exec {descriptor}>{shlex.quote(lock_path)}")
         flock_options = "--exclusive" if wait else "--exclusive --nonblock"
         lock_commands.append(
             f"flock {flock_options} {descriptor} || "
-            f"{{ echo {shlex.quote('infra-tools lock busy: ' + description)} >&2; exit 75; }}"
+            f"{{ echo {shlex.quote('basaltwater lock busy: ' + description)} >&2; exit 75; }}"
         )
     lock_commands.extend(
-        ["printf 'infra-tools-lock-ready\\n'", "cat >/dev/null"]
+        ["printf 'basaltwater-lock-ready\\n'", "cat >/dev/null"]
     )
     remote_command = shlex.join(
         ["/bin/sh", "-c", "; ".join(lock_commands)]
@@ -125,7 +125,7 @@ def remote_proxmox_locks(
     try:
         assert process.stdout is not None
         ready = process.stdout.readline()
-        if ready != "infra-tools-lock-ready\n":
+        if ready != "basaltwater-lock-ready\n":
             _stdout, stderr = process.communicate()
             detail = stderr.strip() or f"SSH exited {process.returncode}"
             raise ProvisionError(
@@ -1156,9 +1156,9 @@ def enroll_provisioned_guest_host_keys(
     """Enroll a provisioned guest's SSH key through its trusted Proxmox node.
 
     Callers must first establish that the guest is either newly created or
-    matches saved infra-tools provisioning metadata. Scanning from the already
+    matches saved basaltwater provisioning metadata. Scanning from the already
     authenticated Proxmox node keeps the discovery on the guest's bridge and
-    lets strict host-key checking remain enabled for both infra-tools and the
+    lets strict host-key checking remain enabled for both basaltwater and the
     invoking user's subsequent direct guest connections.
     """
     if dry_run:

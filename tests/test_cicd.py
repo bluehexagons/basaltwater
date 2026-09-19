@@ -76,7 +76,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(mock_run.call_args_list[2][0][0], ['id', 'webhook'])
         self.assertEqual(
             mock_run.call_args_list[3][0][0],
-            ['usermod', '--home', '/var/lib/infra_tools/cicd', 'webhook'],
+            ['usermod', '--home', '/var/lib/basaltwater/cicd', 'webhook'],
         )
     
     @patch('web.cicd_steps.run')
@@ -97,7 +97,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 4)
         self.assertEqual(mock_run.call_args_list[1][0][0][0], 'useradd')
         self.assertIn('--home-dir', mock_run.call_args_list[1][0][0])
-        self.assertIn('/var/lib/infra_tools/cicd/build', mock_run.call_args_list[1][0][0])
+        self.assertIn('/var/lib/basaltwater/cicd/build', mock_run.call_args_list[1][0][0])
         self.assertIn('cicd-build', mock_run.call_args_list[1][0][0])
     
     @patch('web.cicd_steps.os.path.exists')
@@ -208,8 +208,8 @@ class TestCICDSteps(unittest.TestCase):
         replace.assert_called_once()
         self.assertEqual(replace.call_args.kwargs['activate'], ('webhook-receiver.service',))
         unit = replace.call_args.args[0]['webhook-receiver.service']
-        self.assertIn('Environment=HOME=/var/lib/infra_tools/cicd', unit)
-        self.assertIn('ReadWritePaths=/var/lib/infra_tools/cicd\n', unit)
+        self.assertIn('Environment=HOME=/var/lib/basaltwater/cicd', unit)
+        self.assertIn('ReadWritePaths=/var/lib/basaltwater/cicd\n', unit)
 
     @patch('web.cicd_steps.replace_units')
     @patch('web.cicd_steps.run')
@@ -222,7 +222,7 @@ class TestCICDSteps(unittest.TestCase):
         self.assertIn('User=root\nGroup=root', units['cicd-executor.service'])
         self.assertIn('ExecStart=/usr/bin/python3 -I ', units['cicd-executor.service'])
         self.assertIn('CAP_SETUID CAP_SETGID CAP_SETPCAP', units['cicd-executor.service'])
-        self.assertIn('PathChanged=/var/lib/infra_tools/cicd/jobs', units['cicd-executor.path'])
+        self.assertIn('PathChanged=/var/lib/basaltwater/cicd/jobs', units['cicd-executor.path'])
         self.assertIn('Unit=cicd-executor.service', units['cicd-executor.path'])
 
     def test_trigger_cicd_job_does_not_call_systemctl(self):
@@ -406,7 +406,7 @@ class TestAppServerSteps(unittest.TestCase):
             configure_deploy_sudoers(MagicMock())
 
         written_sudoers = ''.join(call.args[0] for call in mock_file().write.call_args_list)
-        self.assertIn('/usr/local/sbin/infra-tools-deploy-admin *', written_sudoers)
+        self.assertIn('/usr/local/sbin/basaltwater-deploy-admin *', written_sudoers)
         self.assertNotIn('/usr/bin/rm', written_sudoers)
         self.assertNotIn('/usr/bin/mkdir', written_sudoers)
         self.assertNotIn('/usr/bin/touch', written_sudoers)
@@ -432,7 +432,7 @@ class TestBuildServerSteps(unittest.TestCase):
             " ".join(str(call.args[0]) for call in mock_run.call_args_list),
         )
         self.assertIn(
-            call(["chmod", "600", "/var/lib/infra_tools/cicd/.ssh/deploy_key"]),
+            call(["chmod", "600", "/var/lib/basaltwater/cicd/.ssh/deploy_key"]),
             mock_run.call_args_list,
         )
         self.assertFalse(any("-R" in c.args[0] for c in mock_run.call_args_list))
@@ -474,7 +474,7 @@ class TestBuildServerSteps(unittest.TestCase):
         from web.build_server_steps import install_build_node
         install_build_node(mock_config)
 
-        mock_install_node.assert_called_once_with('cicd-build', '/var/lib/infra_tools/cicd/build')
+        mock_install_node.assert_called_once_with('cicd-build', '/var/lib/basaltwater/cicd/build')
 
     @patch('web.build_server_steps.install_or_update_uv', return_value=True)
     @patch('web.build_server_steps.run')
@@ -490,7 +490,7 @@ class TestBuildServerSteps(unittest.TestCase):
                 for call in mock_run.call_args_list
             )
         )
-        mock_install_uv.assert_called_once_with(user_home='/var/lib/infra_tools/cicd/build', username='cicd-build')
+        mock_install_uv.assert_called_once_with(user_home='/var/lib/basaltwater/cicd/build', username='cicd-build')
     
     @patch('web.build_server_steps.os.path.exists')
     @patch('web.build_server_steps.os.makedirs')
@@ -510,7 +510,7 @@ class TestBuildServerSteps(unittest.TestCase):
         self.assertIn('app2.example.com', config_data)
 
     @patch('web.build_server_steps.is_host_key_enrolled', return_value=True)
-    @patch('web.build_server_steps.get_known_hosts_path', return_value='/var/lib/infra_tools/cicd/known_hosts')
+    @patch('web.build_server_steps.get_known_hosts_path', return_value='/var/lib/basaltwater/cicd/known_hosts')
     @patch('web.build_server_steps.os.path.exists')
     @patch('web.build_server_steps.os.makedirs')
     @patch('web.build_server_steps.run')
@@ -522,24 +522,24 @@ class TestBuildServerSteps(unittest.TestCase):
         _mock_enrolled,
         _mock_known_hosts_path,
     ):
-        mock_exists.side_effect = lambda path: path == '/var/lib/infra_tools/cicd/known_hosts'
+        mock_exists.side_effect = lambda path: path == '/var/lib/basaltwater/cicd/known_hosts'
         mock_config = MagicMock()
         mock_config.deploy_targets = ['app1.example.com', 'app2.example.com']
 
         from web.build_server_steps import configure_deploy_known_hosts
         configure_deploy_known_hosts(mock_config)
 
-        mock_makedirs.assert_called_once_with('/var/lib/infra_tools/cicd', mode=0o700, exist_ok=True)
+        mock_makedirs.assert_called_once_with('/var/lib/basaltwater/cicd', mode=0o700, exist_ok=True)
         self.assertEqual(
             mock_run.call_args_list,
             [
-                call(['chown', 'webhook:webhook', '/var/lib/infra_tools/cicd/known_hosts']),
-                call(['chmod', '644', '/var/lib/infra_tools/cicd/known_hosts']),
+                call(['chown', 'webhook:webhook', '/var/lib/basaltwater/cicd/known_hosts']),
+                call(['chmod', '644', '/var/lib/basaltwater/cicd/known_hosts']),
             ],
         )
 
     @patch('web.build_server_steps.is_host_key_enrolled', return_value=False)
-    @patch('web.build_server_steps.get_known_hosts_path', return_value='/var/lib/infra_tools/cicd/known_hosts')
+    @patch('web.build_server_steps.get_known_hosts_path', return_value='/var/lib/basaltwater/cicd/known_hosts')
     @patch('web.build_server_steps.os.makedirs')
     def test_configure_deploy_known_hosts_requires_explicit_enrollment(
         self, mock_makedirs, _mock_known_hosts_path, _mock_enrolled
@@ -551,7 +551,7 @@ class TestBuildServerSteps(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'not enrolled'):
             configure_deploy_known_hosts(mock_config)
         mock_makedirs.assert_called_once_with(
-            '/var/lib/infra_tools/cicd', mode=0o700, exist_ok=True
+            '/var/lib/basaltwater/cicd', mode=0o700, exist_ok=True
         )
 
 
@@ -777,8 +777,8 @@ class TestExecutorStructuredLogging(unittest.TestCase):
         self.assertTrue(result)
         args, kwargs = mock_run.call_args
         self.assertEqual(args[0][:2], ['/bin/bash', '-lc'])
-        self.assertIn('NVM_DIR=/var/lib/infra_tools/cicd/build/.nvm', args[0][2])
-        self.assertIn('/var/lib/infra_tools/cicd/build/.local/bin', args[0][2])
+        self.assertIn('NVM_DIR=/var/lib/basaltwater/cicd/build/.nvm', args[0][2])
+        self.assertIn('/var/lib/basaltwater/cicd/build/.local/bin', args[0][2])
         self.assertIn(f'exec /bin/bash {script_path}', args[0][2])
         self.assertNotIn('env', kwargs)
         output = "\n".join(logs.output)

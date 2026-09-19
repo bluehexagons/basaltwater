@@ -263,6 +263,6 @@ def enroll_host_key(
     print(f"Enrolled host key in {known_hosts}")
     print(
         "Plain ssh uses ~/.ssh/known_hosts unless configured to use the "
-        "infra-tools workspace file."
+        "basaltwater workspace file."
     )
     return 0

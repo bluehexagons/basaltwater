@@ -203,14 +203,14 @@ class TestHostMemorySafety(unittest.TestCase):
         )
         self.assertEqual(
             tee_call.kwargs["input_data"],
-            "# Managed by infra-tools for Proxmox hosts.\nvm.swappiness = 10\n",
+            "# Managed by basaltwater for Proxmox hosts.\nvm.swappiness = 10\n",
         )
 
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
     @patch("common.proxmox_steps.run")
     def test_host_memory_policy_is_idempotent(self, mock_run, _mock_dry):
         content = (
-            "# Managed by infra-tools for Proxmox hosts.\n"
+            "# Managed by basaltwater for Proxmox hosts.\n"
             "vm.swappiness = 10\n"
         )
         mock_run.side_effect = [

@@ -19,7 +19,7 @@ from common.service_tools import cleanup_maintenance
 class TestCleanupMaintenance(unittest.TestCase):
     @patch("common.service_tools.cleanup_maintenance.notify_if_storage_still_low")
     @patch("common.service_tools.cleanup_maintenance.cleanup_stale_crash_reports", return_value=[])
-    @patch("common.service_tools.cleanup_maintenance.cleanup_stale_infra_tmp_artifacts", return_value=[])
+    @patch("common.service_tools.cleanup_maintenance.cleanup_stale_basaltwater_tmp_artifacts", return_value=[])
     @patch("common.service_tools.cleanup_maintenance.run_optional_cleanup", return_value=None)
     @patch("common.service_tools.cleanup_maintenance.cleanup_filesystem_free_space", return_value=None)
     @patch("common.service_tools.cleanup_maintenance.audit_package_database", return_value=None)
@@ -70,7 +70,7 @@ class TestCleanupMaintenance(unittest.TestCase):
 
     @patch("common.service_tools.cleanup_maintenance.notify_if_storage_still_low")
     @patch("common.service_tools.cleanup_maintenance.cleanup_stale_crash_reports", return_value=[])
-    @patch("common.service_tools.cleanup_maintenance.cleanup_stale_infra_tmp_artifacts", return_value=[])
+    @patch("common.service_tools.cleanup_maintenance.cleanup_stale_basaltwater_tmp_artifacts", return_value=[])
     @patch("common.service_tools.cleanup_maintenance.send_notification_safe")
     @patch(
         "common.service_tools.cleanup_maintenance.run_optional_cleanup",
@@ -389,12 +389,12 @@ class TestCleanupHelpers(unittest.TestCase):
 
             self.assertEqual(failures, [f"{old_core}: busy"])
 
-    def test_cleanup_stale_infra_tmp_artifacts_removes_only_old_owned_paths(self):
+    def test_cleanup_stale_basaltwater_tmp_artifacts_removes_only_old_owned_paths(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            old_dir = os.path.join(tmp_dir, "infra_setup_build_abcd")
+            old_dir = os.path.join(tmp_dir, "basaltwater_setup_build_abcd")
             old_file = os.path.join(tmp_dir, "antistatic-server-linux-amd64.v1")
             old_bundler_dir = os.path.join(tmp_dir, "bundler20240101-12345-abc123")
-            fresh_file = os.path.join(tmp_dir, "infra_deploy_fresh")
+            fresh_file = os.path.join(tmp_dir, "basaltwater_deploy_fresh")
             unrelated_file = os.path.join(tmp_dir, "unrelated")
             misleading_file = os.path.join(tmp_dir, "bundler_project")
             os.mkdir(old_dir)
@@ -409,7 +409,7 @@ class TestCleanupHelpers(unittest.TestCase):
             os.utime(old_file, (old_time, old_time))
             os.utime(misleading_file, (old_time, old_time))
 
-            failures = cleanup_maintenance.cleanup_stale_infra_tmp_artifacts(
+            failures = cleanup_maintenance.cleanup_stale_basaltwater_tmp_artifacts(
                 tmp_dir=tmp_dir,
                 max_age_days=7,
             )
@@ -422,9 +422,9 @@ class TestCleanupHelpers(unittest.TestCase):
             self.assertTrue(os.path.exists(unrelated_file))
             self.assertTrue(os.path.exists(misleading_file))
 
-    def test_cleanup_stale_infra_tmp_artifacts_reports_remove_failure(self):
+    def test_cleanup_stale_basaltwater_tmp_artifacts_reports_remove_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            old_dir = os.path.join(tmp_dir, "infra_recall_abcd")
+            old_dir = os.path.join(tmp_dir, "basaltwater_recall_abcd")
             os.mkdir(old_dir)
             old_time = time.time() - (8 * 24 * 60 * 60)
             os.utime(old_dir, (old_time, old_time))
@@ -433,7 +433,7 @@ class TestCleanupHelpers(unittest.TestCase):
                 "common.service_tools.cleanup_maintenance.shutil.rmtree",
                 side_effect=OSError("busy"),
             ):
-                failures = cleanup_maintenance.cleanup_stale_infra_tmp_artifacts(
+                failures = cleanup_maintenance.cleanup_stale_basaltwater_tmp_artifacts(
                     tmp_dir=tmp_dir,
                     max_age_days=7,
                 )

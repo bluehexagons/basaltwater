@@ -9,13 +9,13 @@ know.
   remote setup. A failed fetch aborts the complete run, preventing a partial
   desired set from removing an existing Nginx route.
 - Refuses repositories or existing release trees with common Ruby/Rails markers.
-  Ruby support belongs to pinned legacy infra-tools releases; current setup
+  Ruby support belongs to pinned legacy basaltwater releases; current setup
   leaves existing legacy Rails units and their generated Nginx routes alone.
 - Legacy automatic static and Node builds run beside the active release and
   switch directories atomically only after a successful build. A failed build
   leaves the previous release active.
 - Manifest service components get dedicated runtime users and writable state
-  only under `.infra_tools_shared/<app>/<component>/data`; the component root
+  only under `.basaltwater_shared/<app>/<component>/data`; the component root
   and deployment backups remain root-controlled and outside the systemd unit's
   writable paths.
 - Manifest builds use per-application build users, stable automatic ports, and
@@ -49,13 +49,13 @@ Replace the angle-bracket placeholders in these command templates with values fo
 Manifest SQLite backups live under the component instead:
 
 ```text
-/var/www/.infra_tools_shared/<app_name>/<component>/backups/
+/var/www/.basaltwater_shared/<app_name>/<component>/backups/
 ```
 
 Interrupted manifest state is recorded at:
 
 ```text
-/var/www/.infra_tools_shared/<app_name>/manifest-operation.json
+/var/www/.basaltwater_shared/<app_name>/manifest-operation.json
 ```
 
 If a later deployment reports an unfinished operation, inspect the marker and
@@ -71,8 +71,8 @@ database with service ownership, checking it, and starting the service again:
 ```bash
 service_unit="app-<app_name>-<component>.service"
 service_user="$(systemctl show "$service_unit" --property=User --value)"
-database_path="/var/www/.infra_tools_shared/<app_name>/<component>/data/<database>.sqlite3"
-backup_path="/var/www/.infra_tools_shared/<app_name>/<component>/backups/<backup_file>"
+database_path="/var/www/.basaltwater_shared/<app_name>/<component>/data/<database>.sqlite3"
+backup_path="/var/www/.basaltwater_shared/<app_name>/<component>/backups/<backup_file>"
 test -n "$service_user" &&
   sudo systemctl stop "$service_unit" &&
   sudo rm -f "$database_path-wal" "$database_path-shm" "$database_path-journal" &&

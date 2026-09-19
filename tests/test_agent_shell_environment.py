@@ -76,7 +76,7 @@ class UserToolShellEnvironmentTest(unittest.TestCase):
             self.assertIn(os.path.join(local_bin, "uv"), output)
             with open(bashrc, encoding="utf-8") as file_obj:
                 self.assertTrue(
-                    file_obj.read().startswith("# infra-tools user tool environment\n")
+                    file_obj.read().startswith("# basaltwater user tool environment\n")
                 )
 
     def test_existing_bash_profile_is_the_managed_login_file(self) -> None:
@@ -92,9 +92,9 @@ class UserToolShellEnvironmentTest(unittest.TestCase):
                 _ensure_user_tool_shell_environment("agent", home)
 
             with open(profile, encoding="utf-8") as file_obj:
-                self.assertNotIn("infra-tools user tool environment", file_obj.read())
+                self.assertNotIn("basaltwater user tool environment", file_obj.read())
             with open(bash_profile, encoding="utf-8") as file_obj:
-                self.assertIn("infra-tools user tool environment", file_obj.read())
+                self.assertIn("basaltwater user tool environment", file_obj.read())
 
     def test_agent_tools_use_the_shared_shell_environment(self) -> None:
         config = SetupConfig(host="host", username="agent", system_type="agent_vm")

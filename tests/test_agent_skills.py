@@ -34,11 +34,11 @@ class ManagedAgentSkillTests(unittest.TestCase):
 
     def test_installs_and_refreshes_the_base_managed_skill_set(self) -> None:
         expected = {
-            "infra-tools-agent-operations",
-            "infra-tools-agent-workspace",
-            "infra-tools-deploy-smoke",
-            "infra-tools-shared-assets",
-            "infra-tools-vm-triage",
+            "basaltwater-agent-operations",
+            "basaltwater-agent-workspace",
+            "basaltwater-deploy-smoke",
+            "basaltwater-shared-assets",
+            "basaltwater-vm-triage",
         }
         self.assertEqual(set(BASE_AGENT_SKILL_NAMES), expected)
 
@@ -76,7 +76,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
                 with open(path, encoding="utf-8") as file_obj:
                     content = file_obj.read()
                 self.assertIn(f"name: {skill_name}", content)
-                self.assertIn("managed-by: infra_tools", content)
+                self.assertIn("managed-by: basaltwater", content)
 
     def test_every_managed_skill_belongs_to_an_installer_catalog(self) -> None:
         source_names = {
@@ -91,7 +91,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
             *BROWSER_AGENT_SKILL_NAMES,
             *T3_AGENT_SKILL_NAMES,
             *GODOT_AGENT_SKILLS,
-            "infra-tools-desktop",
+            "basaltwater-desktop",
         }
 
         self.assertEqual(source_names, installed_names)
@@ -99,9 +99,9 @@ class ManagedAgentSkillTests(unittest.TestCase):
     def test_selects_browser_skill_for_the_provisioned_capabilities(self) -> None:
         cases = (
             (False, None, None),
-            (False, "playwright", "infra-tools-playwright-testing"),
-            (True, None, "infra-tools-t3-preview-testing"),
-            (True, "playwright", "infra-tools-browser-testing"),
+            (False, "playwright", "basaltwater-playwright-testing"),
+            (True, None, "basaltwater-t3-preview-testing"),
+            (True, "playwright", "basaltwater-browser-testing"),
         )
         for t3_preview, browser_automation, expected in cases:
             with self.subTest(
@@ -130,16 +130,16 @@ class ManagedAgentSkillTests(unittest.TestCase):
         config = SetupConfig(host="vm", username="agent", system_type="agent_vm",
                              include_desktop=True, agent_tools=["codex"],
                              browser_automation="playwright")
-        self.assertIn("infra-tools-desktop", agent_workflow_skill_names(config))
-        self.assertIn("infra-tools-playwright-testing", agent_workflow_skill_names(config))
+        self.assertIn("basaltwater-desktop", agent_workflow_skill_names(config))
+        self.assertIn("basaltwater-playwright-testing", agent_workflow_skill_names(config))
         config.include_desktop = False
-        self.assertNotIn("infra-tools-desktop", agent_workflow_skill_names(config))
+        self.assertNotIn("basaltwater-desktop", agent_workflow_skill_names(config))
 
     def test_reconciles_obsolete_managed_browser_skill_variants(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             account = self._account(home)
-            combined = "infra-tools-browser-testing"
-            playwright = "infra-tools-playwright-testing"
+            combined = "basaltwater-browser-testing"
+            playwright = "basaltwater-playwright-testing"
             with (
                 patch("common.agent_steps.pwd.getpwnam", return_value=account),
                 patch("common.agent_steps.os.chown"),
@@ -171,7 +171,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
 
     def test_reconciliation_preserves_an_unmanaged_browser_skill(self) -> None:
         with tempfile.TemporaryDirectory() as home:
-            combined = "infra-tools-browser-testing"
+            combined = "basaltwater-browser-testing"
             skill_dir = os.path.join(home, ".agents", "skills", combined)
             os.makedirs(skill_dir)
             destination = os.path.join(skill_dir, "SKILL.md")
@@ -188,7 +188,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
                 install_managed_agent_skills(
                     "agent",
                     ["codex"],
-                    (*BASE_AGENT_SKILL_NAMES, "infra-tools-playwright-testing"),
+                    (*BASE_AGENT_SKILL_NAMES, "basaltwater-playwright-testing"),
                     source_root=AGENT_SKILLS_ROOT,
                     reconcile_skill_names=BROWSER_AGENT_SKILL_NAMES,
                 )

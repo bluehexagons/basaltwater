@@ -57,7 +57,7 @@ _MAX_OUTPUT_BYTES = 24 * 1024
 _MAX_SERVICE_PROBE_BYTES = 8 * 1024
 _SERVICE_PROBE_TIMEOUT_SECONDS = 1
 _SYSTEM_OVERVIEW_CACHE_SECONDS = 30
-_INTERNAL_WEB_URL_FILE = "/etc/infra-tools/internal-web/base-url"
+_INTERNAL_WEB_URL_FILE = "/etc/basaltwater/internal-web/base-url"
 _T3_UPDATE_TIMEOUT_SECONDS = 30 * 60
 _T3_CORE_READINESS_CHECKS = (
     "service_active",
@@ -91,8 +91,8 @@ _T3_UPDATE_SCRIPT = r'''
 set -eu
 export NVM_DIR="$HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
-export PATH="$INFRA_TOOLS_T3_LOGINCTL_SHIM:$HOME/.local/share/infra-tools/t3-npm/bin:$PATH"
-unset INFRA_TOOLS_T3_LOGINCTL_SHIM
+export PATH="$BASALTWATER_T3_LOGINCTL_SHIM:$HOME/.local/share/basaltwater/t3-npm/bin:$PATH"
+unset BASALTWATER_T3_LOGINCTL_SHIM
 unset npm_config_dangerously_allow_all_scripts
 unset NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS
 unset npm_config_allow_scripts
@@ -232,10 +232,10 @@ def _internal_web_landing_service(
     }
 
 
-def discover_infra_web_services() -> list[dict[str, str]]:
+def discover_basaltwater_web_services() -> list[dict[str, str]]:
     """Return live routes owned by the web panel service user."""
 
-    utility = shutil.which("infra-web")
+    utility = shutil.which("basaltwater-web")
     if not utility:
         return []
     services: list[dict[str, str]] = []
@@ -269,7 +269,7 @@ def discover_infra_web_services() -> list[dict[str, str]]:
 def discover_certificate_trust() -> dict[str, str | bool] | None:
     """Return safe trust metadata for the shared internal-web certificate."""
 
-    utility = shutil.which("infra-web")
+    utility = shutil.which("basaltwater-web")
     if not utility:
         return None
     payload = _run_json([utility, "ca", "--json"])
@@ -282,7 +282,7 @@ def discover_certificate_trust() -> dict[str, str | bool] | None:
         not url
         or parsed is None
         or parsed.scheme != "https"
-        or parsed.path != "/infra-tools-ca.crt"
+        or parsed.path != "/basaltwater-ca.crt"
         or parsed.query
         or parsed.fragment
         or not isinstance(fingerprint, str)
@@ -746,12 +746,12 @@ class WebPanelState:
     def _run_t3_update(self) -> None:
         home = os.path.expanduser("~")
         environment = os.environ.copy()
-        environment.pop("INFRA_TOOLS_T3_LOGINCTL_SHIM", None)
+        environment.pop("BASALTWATER_T3_LOGINCTL_SHIM", None)
         environment["HOME"] = home
         environment["PATH"] = os.pathsep.join(
             (
                 os.path.join(home, ".local", "bin"),
-                os.path.join(home, ".local", "share", "infra-tools", "t3-npm", "bin"),
+                os.path.join(home, ".local", "share", "basaltwater", "t3-npm", "bin"),
                 environment.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             )
         )
@@ -765,7 +765,7 @@ class WebPanelState:
                 home, self.manifest["username"]
             ) as shim_path:
                 update_environment = environment.copy()
-                update_environment["INFRA_TOOLS_T3_LOGINCTL_SHIM"] = shim_path
+                update_environment["BASALTWATER_T3_LOGINCTL_SHIM"] = shim_path
                 update_environment["PATH"] = os.pathsep.join(
                     (shim_path, environment["PATH"])
                 )
@@ -795,7 +795,7 @@ class WebPanelState:
             )
             return
 
-        doctor = shutil.which("infra-tools", path=environment["PATH"])
+        doctor = shutil.which("basaltw", path=environment["PATH"])
         if not doctor:
             self._finish_action(
                 "failed",
@@ -1230,7 +1230,7 @@ def _linux_trust_script(
   set -eu
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
-  certificate='./infra-tools-ca.crt'
+  certificate='./basaltwater-ca.crt'
   temporary=$(mktemp)
   trap 'rm -f "$temporary"' EXIT
   # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
@@ -1260,7 +1260,7 @@ def _macos_trust_script(fingerprint: str, download_url: str) -> str:
   set -eu
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
-  certificate='./infra-tools-ca.crt'
+  certificate='./basaltwater-ca.crt'
   temporary=$(mktemp)
   trap 'rm -f "$temporary"' EXIT
   # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
@@ -1313,7 +1313,7 @@ def _render_certificate_trust(
                     fingerprint,
                     download_url,
                     "  sudo install -m 0644 \"$certificate\" "
-                    "/usr/local/share/ca-certificates/infra-tools-ca.crt\n"
+                    "/usr/local/share/ca-certificates/basaltwater-ca.crt\n"
                     "  sudo update-ca-certificates",
                 ),
             ),
@@ -1324,7 +1324,7 @@ def _render_certificate_trust(
                     download_url,
                     "  if ! sudo trust anchor \"$certificate\"; then\n"
                     "    sudo install -Dm0644 \"$certificate\" "
-                    "/etc/ca-certificates/trust-source/anchors/infra-tools-ca.crt\n"
+                    "/etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt\n"
                     "  fi\n"
                     "  sudo update-ca-trust",
                 ),
@@ -1335,7 +1335,7 @@ def _render_certificate_trust(
                     fingerprint,
                     download_url,
                     "  sudo install -Dm0644 \"$certificate\" "
-                    "/etc/pki/ca-trust/source/anchors/infra-tools-ca.crt\n"
+                    "/etc/pki/ca-trust/source/anchors/basaltwater-ca.crt\n"
                     "  sudo update-ca-trust extract",
                 ),
             ),
@@ -1347,7 +1347,7 @@ def _render_certificate_trust(
                 "Windows PowerShell",
                 f'''$DownloadUrl = '{powershell_url}'
 $ExpectedSha256 = "{fingerprint}"
-$Certificate = Join-Path (Get-Location) "infra-tools-ca.crt"
+$Certificate = Join-Path (Get-Location) "basaltwater-ca.crt"
 $Temporary = [System.IO.Path]::GetTempFileName()
 try {{
   # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
@@ -1373,7 +1373,7 @@ Write-Host "Certificate downloaded, verified, and installed. Fully restart your 
 <span class="trust-summary-note">One-time setup for browsers and other devices</span></span></summary>
 <div class="trust-panel"><strong>Trust this machine on another device</strong>
 <p>Install this machine's public CA once to trust the web panel, hosted sites, and managed HTTPS services. The help stays collapsed when you do not need it.</p>
-<p>For first enrollment, copy <code>/srv/infra-tools/web/infra-tools-ca.crt</code> through an existing trusted SSH connection. Obtain its SHA-256 with <code>infra-web ca</code> over that connection or the VM console. Verify that independent value before installation; a fingerprint on a page opened past a certificate warning is not proof of authenticity.</p>
+<p>For first enrollment, copy <code>/srv/basaltwater/web/basaltwater-ca.crt</code> through an existing trusted SSH connection. Obtain its SHA-256 with <code>basaltwater-web ca</code> over that connection or the VM console. Verify that independent value before installation; a fingerprint on a page opened past a certificate warning is not proof of authenticity.</p>
 <div class="trust-actions"><a class="trust-download" href="{trust_url}">Download VM CA certificate</a></div>
 <code class="fingerprint">SHA-256 {escaped_fingerprint}</code>
 <details><summary>Download, verify, and install with a script</summary>
@@ -1383,7 +1383,7 @@ Write-Host "Certificate downloaded, verified, and installed. Fully restart your 
 <details><summary>Manual / GUI installation</summary><p class="trust-intro">Transfer the certificate over SSH, or download it through an already trusted HTTPS connection, and compare its SHA-256 with the independently obtained fingerprint before following the platform steps.</p><ul class="trust-gui">
 <li><strong>Windows:</strong> download the certificate, open it, choose Install Certificate → Current User, then place it in Trusted Root Certification Authorities.</li>
 <li><strong>macOS:</strong> download it, import it into the System keychain with Keychain Access, open the certificate, and set Trust to Always Trust.</li>
-<li><strong>Linux:</strong> after independent verification, Debian/Ubuntu users can run <code>sudo install -m 0644 infra-tools-ca.crt /usr/local/share/ca-certificates/infra-tools-ca.crt &amp;&amp; sudo update-ca-certificates</code>. On Arch/Fedora, use <code>sudo trust anchor infra-tools-ca.crt &amp;&amp; sudo update-ca-trust</code>.</li>
+<li><strong>Linux:</strong> after independent verification, Debian/Ubuntu users can run <code>sudo install -m 0644 basaltwater-ca.crt /usr/local/share/ca-certificates/basaltwater-ca.crt &amp;&amp; sudo update-ca-certificates</code>. On Arch/Fedora, use <code>sudo trust anchor basaltwater-ca.crt &amp;&amp; sudo update-ca-trust</code>.</li>
 <li><strong>Firefox on Linux:</strong> Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import. Chromium-based browsers use the operating-system store.</li>
 <li><strong>ChromeOS:</strong> Certificate Manager → Authorities → Import, then enable website trust.</li>
 <li><strong>Android:</strong> Security &amp; privacy → Install a certificate → CA certificate.</li>
@@ -1610,7 +1610,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 {link_help}
 <details class="notification-help"><summary>Configure a Basaltwater sender</summary>
 <p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. During an initial sender setup, replace the placeholders with its profile, host, account, and a reachable panel host:</p>
-<p>Read the token on this panel host with <code>sudo cat /etc/infra-tools/web-panel/notification-ingest.token</code>.</p>
+<p>Read the token on this panel host with <code>sudo cat /etc/basaltwater/web-panel/notification-ingest.token</code>.</p>
 <pre><code>basaltw setup agent_vm SENDER_HOST SENDER_USER \\
   --notify webhook 'https://PANEL_HOST{WEB_PANEL_NOTIFICATION_ENDPOINT}#TOKEN_FROM_PANEL_HOST'</code></pre>
 <p>For an existing sender, use <code>basaltw patch SENDER_HOST SENDER_USER</code> with the same <code>--notify webhook</code> flag.</p>
@@ -1623,7 +1623,7 @@ def render_page(state: WebPanelState) -> str:
 
     manifest = state.manifest
     services = _deduplicate_services(
-        manifest["services"], discover_infra_web_services()
+        manifest["services"], discover_basaltwater_web_services()
     )
     service_cards = ""
     for record in services:
@@ -1772,7 +1772,7 @@ def render_page(state: WebPanelState) -> str:
 
 
 class WebPanelHandler(BaseHTTPRequestHandler):
-    server_version = "infra-tools-web-panel/1"
+    server_version = "basaltwater-web-panel/1"
     sys_version = ""
     state: WebPanelState
 
@@ -1913,7 +1913,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 HTTPStatus.UNAUTHORIZED,
                 "Unauthorized\n",
                 "text/plain",
-                headers={"WWW-Authenticate": 'Bearer realm="infra-tools"'},
+                headers={"WWW-Authenticate": 'Bearer realm="basaltwater"'},
             )
             return
         content_type = self.headers.get("Content-Type", "").partition(";")[0].strip()

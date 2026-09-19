@@ -50,7 +50,7 @@ class TestGenerateSesmanIni(unittest.TestCase):
         
         # Xorg section should exist
         self.assertIn("[Xorg]", result)
-        self.assertIn("param=/usr/local/libexec/infra-tools-xrdp-Xorg", result)
+        self.assertIn("param=/usr/local/libexec/basaltwater-xrdp-Xorg", result)
         self.assertIn("param=xrdp/xorg.conf", result)
         self.assertNotIn("param=/etc/X11/xrdp/xorg.conf", result)
         self.assertIn("param=.local/share/xorg/Xorg.%s.log", result)
@@ -71,7 +71,7 @@ class TestGenerateSesmanIni(unittest.TestCase):
         
         # Security settings
         self.assertIn("AllowRootLogin=false", result)
-        self.assertIn("TerminalServerUsers=infra-desktop", result)
+        self.assertIn("TerminalServerUsers=basaltwater-desktop", result)
         self.assertIn("AllowAlternateShell=false", result)
         self.assertIn("EnableUserWindowManager=false", result)
         self.assertIn("AlwaysGroupCheck=true", result)
@@ -86,7 +86,7 @@ class TestGenerateSesmanIni(unittest.TestCase):
         self.assertIn("DisconnectedTimeLimit=0", result)
         self.assertIn("IdleTimeLimit=14400", result)
         self.assertIn("SessionSockdirGroup=xrdp", result)
-        self.assertIn("param=/usr/local/libexec/infra-tools-xrdp-Xorg", result)
+        self.assertIn("param=/usr/local/libexec/basaltwater-xrdp-Xorg", result)
 
 
 class TestGenerateXrdpIni(unittest.TestCase):
@@ -371,7 +371,7 @@ class TestInstallXrdp(unittest.TestCase):
 
     @patch("desktop.xrdp_steps.run")
     def test_install_handles_modified_package_conffiles(self, mock_run):
-        """Package upgrades must not prompt for infra-tools-managed files."""
+        """Package upgrades must not prompt for basaltwater-managed files."""
         mock_run.side_effect = [
             Mock(returncode=0, stdout="Inst xrdp (0.10.6.1-2 Debian:unstable)", stderr=""),
             Mock(returncode=0, stdout="", stderr=""),
@@ -483,7 +483,7 @@ class TestInstallXrdp(unittest.TestCase):
         combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
         
         self.assertIn("[Xorg]", combined_content)
-        self.assertIn("param=/usr/local/libexec/infra-tools-xrdp-Xorg", combined_content)
+        self.assertIn("param=/usr/local/libexec/basaltwater-xrdp-Xorg", combined_content)
         
     @patch('desktop.xrdp_steps.run')
     @patch('desktop.xrdp_steps.os.path.exists')
@@ -606,7 +606,7 @@ class TestInstallXrdp(unittest.TestCase):
 
         write_calls = [c for c in mock_open_func().write.call_args_list]
         combined_content = ''.join([str(c[0][0]) for c in write_calls if c[0]])
-        self.assertIn("DefaultWindowManager=/etc/xrdp/infra-tools-startwm.sh", combined_content)
+        self.assertIn("DefaultWindowManager=/etc/xrdp/basaltwater-startwm.sh", combined_content)
         from desktop.session_runtime import SESSION_COMMANDS
         self.assertEqual(SESSION_COMMANDS[config.desktop], ["startlxqt"])
         

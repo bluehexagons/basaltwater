@@ -14,7 +14,7 @@ from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.maintenance_systemd import configure_maintenance_timer
-from lib.orchestrator_bootstrap import LAUNCHER_NAME, TRANSITION_LAUNCHER_NAME
+from lib.orchestrator_bootstrap import LAUNCHER_NAME
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.types import StrList
 from lib.validation import (
@@ -27,25 +27,25 @@ from lib.validators import validate_github_login, validate_username
 from .common_steps import _ensure_user_tool_shell_environment, _run_as_login_user
 
 
-REMOTE_AGENT_PAYLOAD_DIR = "/opt/infra_tools/agent_payload"
+REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
 AGENT_CLI_SOURCE = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "infra_tools.py")
+    os.path.join(os.path.dirname(__file__), "..", "basaltwater.py")
 )
 AGENT_SKILLS_ROOT = os.path.join(os.path.dirname(__file__), "agent_skills")
 BASE_AGENT_SKILL_NAMES = (
-    "infra-tools-agent-operations",
-    "infra-tools-agent-workspace",
-    "infra-tools-deploy-smoke",
-    "infra-tools-shared-assets",
-    "infra-tools-vm-triage",
+    "basaltwater-agent-operations",
+    "basaltwater-agent-workspace",
+    "basaltwater-deploy-smoke",
+    "basaltwater-shared-assets",
+    "basaltwater-vm-triage",
 )
 BROWSER_AGENT_SKILL_NAMES = (
-    "infra-tools-browser-testing",
-    "infra-tools-playwright-testing",
-    "infra-tools-t3-preview-testing",
+    "basaltwater-browser-testing",
+    "basaltwater-playwright-testing",
+    "basaltwater-t3-preview-testing",
 )
 _SKILL_COMPATIBLE_AGENT_TOOLS = frozenset({"codex", "opencode"})
-_AGENT_CLI_MARKER = "# Managed by infra_tools agent setup"
+_AGENT_CLI_MARKER = "# Managed by basaltwater agent setup"
 _FRESH_AGENT_TOOLS_ATTRIBUTE = "_freshly_installed_agent_tools"
 _GIT_IDENTITY_PAYLOAD_PATH = os.path.join("config", "git", "identity.json")
 _MAX_GIT_IDENTITY_PAYLOAD_BYTES = 16 * 1024
@@ -140,11 +140,11 @@ def browser_agent_skill_name(config: SetupConfig) -> str | None:
     playwright = config.browser_automation == "playwright"
     t3_preview = "t3code" in (config.web_interfaces or [])
     if playwright and t3_preview:
-        return "infra-tools-browser-testing"
+        return "basaltwater-browser-testing"
     if playwright:
-        return "infra-tools-playwright-testing"
+        return "basaltwater-playwright-testing"
     if t3_preview:
-        return "infra-tools-t3-preview-testing"
+        return "basaltwater-t3-preview-testing"
     return None
 
 
@@ -153,7 +153,7 @@ def agent_workflow_skill_names(config: SetupConfig) -> tuple[str, ...]:
 
     names = BASE_AGENT_SKILL_NAMES
     if config.include_desktop or config.enable_rdp:
-        names = (*names, "infra-tools-desktop")
+        names = (*names, "basaltwater-desktop")
     browser_skill = browser_agent_skill_name(config)
     if browser_skill is None:
         return names
@@ -232,7 +232,7 @@ def install_managed_agent_skills(
                 previous = file_obj.read()
         except FileNotFoundError:
             previous = None
-        if previous is not None and "managed-by: infra_tools" not in previous:
+        if previous is not None and "managed-by: basaltwater" not in previous:
             raise RuntimeError(
                 f"Refusing to replace unmanaged agent skill: {destination}"
             )
@@ -263,7 +263,7 @@ def install_managed_agent_skills(
             raise RuntimeError(f"Refusing unsafe managed agent skill: {destination}")
         with open(destination, encoding="utf-8") as file_obj:
             content = file_obj.read()
-        if "managed-by: infra_tools" not in content:
+        if "managed-by: basaltwater" not in content:
             continue
         os.unlink(destination)
         try:
@@ -281,7 +281,7 @@ def reconcile_agent_workflow_skills(config: SetupConfig) -> bool:
         config.username,
         config.selected_agent_tools(),
         agent_workflow_skill_names(config),
-        reconcile_skill_names=(*BROWSER_AGENT_SKILL_NAMES, "infra-tools-desktop"),
+        reconcile_skill_names=(*BROWSER_AGENT_SKILL_NAMES, "basaltwater-desktop"),
     )
 
 
@@ -317,7 +317,7 @@ def install_agent_cli_launcher(config: SetupConfig) -> None:
     bin_dir = os.path.join(user_home, ".local", "bin")
     launcher_paths = [
         os.path.join(bin_dir, name)
-        for name in (TRANSITION_LAUNCHER_NAME, LAUNCHER_NAME)
+        for name in (LAUNCHER_NAME,)
     ]
     for launcher_path in launcher_paths:
         _reject_symlinked_agent_destination(launcher_path)
@@ -360,7 +360,7 @@ def _install_agent_cli_wrapper(config: SetupConfig, launcher_path: str) -> None:
             print(f"  Agent VM management command already installed: {launcher_path}")
             return
 
-    descriptor, temporary = tempfile.mkstemp(dir=bin_dir, prefix=".infra-tools-")
+    descriptor, temporary = tempfile.mkstemp(dir=bin_dir, prefix=".basaltwater-")
     try:
         os.fchmod(descriptor, 0o755)
         with os.fdopen(descriptor, "w", encoding="utf-8") as file_obj:
@@ -623,7 +623,7 @@ def configure_codex_auth_maintenance(config: SetupConfig) -> None:
         service_desc="Maintain renewable Codex authentication",
         timer_desc="Check renewable Codex authentication daily",
         script_path=(
-            "/opt/infra_tools/common/service_tools/codex_auth_maintenance.py"
+            "/opt/basaltwater/common/service_tools/codex_auth_maintenance.py"
         ),
         schedule="daily",
         on_boot_sec="15min",
@@ -937,7 +937,7 @@ def _copy_secret_file(
             ):
                 descriptor, temporary = tempfile.mkstemp(
                     dir=destination_parent,
-                    prefix=".infra-tools-auth-",
+                    prefix=".basaltwater-auth-",
                 )
                 try:
                     os.fchmod(descriptor, 0o600)

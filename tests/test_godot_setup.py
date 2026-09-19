@@ -454,7 +454,7 @@ class TestGodotSetup(unittest.TestCase):
             service_name="auto-update-godot",
             service_desc="Auto-update Godot Engine",
             timer_desc="Auto-update Godot Engine weekly",
-            script_path="/opt/infra_tools/common/service_tools/auto_update_godot.py",
+            script_path="/opt/basaltwater/common/service_tools/auto_update_godot.py",
             schedule="Sun *-*-* 06:30:00",
             check_path="/usr/local/bin/godot",
             check_name="Godot",

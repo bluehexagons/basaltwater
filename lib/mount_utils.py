@@ -154,7 +154,7 @@ def validate_smb_connectivity(path: str, *, writable: bool = True) -> bool:
 
 def _probe_writable_directory(path: str) -> None:
     """Probe an exclusively created temporary file, never a user's filename."""
-    descriptor, probe = tempfile.mkstemp(prefix='.infra-tools-probe-', dir=path)
+    descriptor, probe = tempfile.mkstemp(prefix='.basaltwater-probe-', dir=path)
     try:
         with os.fdopen(descriptor, 'w+') as stream:
             stream.write('mount test')

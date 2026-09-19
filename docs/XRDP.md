@@ -38,7 +38,7 @@ files without prompting, then reapplies the managed versions after the
 package transaction completes.
 
 Generic APT repair preserves this exact managed source only with its matching
-low-priority pin. It restores sources commented out by older infra-tools repair
+low-priority pin. It restores sources commented out by older basaltwater repair
 runs; desktop setup also reconciles the source when packages are already
 installed. Package upgrades still require `--refresh-packages` for this pinned
 XRDP path; restoring the source alone does not upgrade the running server.
@@ -75,7 +75,7 @@ Add `--rdp-source IP_OR_CIDR` when a source should reach RDP without being
 added to the generic policy; RDP uses the union of both lists. Without either
 kind of source, XRDP remains reachable through the globally rate-limited rule.
 Use `--rdp-bind-address IP` to bind the listener to one local address. The
-firewall reconciles only rules tagged `infra_tools RDP` and does not remove
+firewall reconciles only rules tagged `basaltwater RDP` and does not remove
 unrelated UFW rules.
 This reconciliation also runs for `server_lite --rdp`, before starting XRDP.
 
@@ -186,7 +186,7 @@ paths, never overwritten; delete temporary evidence after use.
 For almost all browser testing, use available T3 Code collaborative preview or
 managed Playwright. Desktop input is for native applications, desktop-specific
 integration, or a justified fallback. These browsers have separate profiles
-and authentication. The managed `infra-tools-desktop` skill provides routing
+and authentication. The managed `basaltwater-desktop` skill provides routing
 and command guidance for Codex/OpenCode.
 
 ## Native application productivity
@@ -235,7 +235,7 @@ human pause remains available. Timeout defaults to 15 seconds (maximum 120),
 plus any in-flight bounded request. A timeout does not kill or relaunch the app.
 
 Screenshots without `--output` receive unique persistent paths under private
-`~/Pictures/infra-tools/` and return a capture timestamp. These files are never
+`~/Pictures/basaltwater/` and return a capture timestamp. These files are never
 automatically removed; retain linked response artifacts and clean disposable ones.
 
 `sequence PATH --generation GENERATION` accepts a JSON list of 1–20 `input`,
@@ -292,7 +292,7 @@ Unknown display-manager aliases require operator migration. OCI and
 are required. XFCE is the primary target; other environments and LXC need the
 live qualification below before relying on them.
 
-The dedicated `infra-desktop` group contains only the configured owner. SSH's
+The dedicated `basaltwater-desktop` group contains only the configured owner. SSH's
 `remoteusers` group remains separate. User window-manager overrides and alternate
 RDP shells are disabled. Legacy `~/startwm.sh` files are no longer executed.
 The startup wrapper owns a private D-Bus session; applications launched by the
@@ -310,9 +310,9 @@ incorporate vendor unit changes. The obsolete `shared-desktop.conf` drop-in is
 removed during migration.
 
 Managed XRDP files keep first-install `.bak` copies. Desktop configuration is
-versioned at `/etc/infra-tools/desktop.json`, with a `.json.bak` on replacement.
+versioned at `/etc/basaltwater/desktop.json`, with a `.json.bak` on replacement.
 The former display-manager symlink is retained as
-`/etc/systemd/system/display-manager.service.infra-tools-backup`.
+`/etc/systemd/system/display-manager.service.basaltwater-backup`.
 Setup failure stops the setup operation; inspect its error and rerun during a
 session-free window. There is no automatic rollback that logs users out.
 For administrator rollback, first log out, stop XRDP, restore the backed-up
@@ -412,13 +412,13 @@ audio or multi-monitor compatibility.
 | `/etc/xrdp/xrdp.ini` | RDP protocol and channel settings |
 | `/etc/X11/xrdp/xorg.conf` | `xrdpdev` display with automatic glamor/software selection |
 | `/etc/X11/Xwrapper.config` | X server permissions |
-| `/etc/apt/sources.list.d/infra-tools-sid.sources` | Official Sid source for newer XRDP packages on Debian |
-| `/etc/apt/preferences.d/infra-tools-sid.pref` | Keeps Sid packages low priority outside the XRDP transaction |
+| `/etc/apt/sources.list.d/basaltwater-sid.sources` | Official Sid source for newer XRDP packages on Debian |
+| `/etc/apt/preferences.d/basaltwater-sid.pref` | Keeps Sid packages low priority outside the XRDP transaction |
 | `/etc/apparmor.d/local/Xorg` | Allows xorgxrdp sockets, capture buffers, and the selected render node |
 | `~/.local/share/xorg/Xorg.<display>.log` | Per-session Xorg diagnostics |
-| `/etc/xrdp/infra-tools-startwm.sh` | Root-owned shared desktop supervisor entry point |
-| `/etc/infra-tools/desktop.json` | Versioned owner and environment declaration |
-| `/run/user/UID/infra-tools-desktop/control.sock` | Private same-UID control channel |
+| `/etc/xrdp/basaltwater-startwm.sh` | Root-owned shared desktop supervisor entry point |
+| `/etc/basaltwater/desktop.json` | Versioned owner and environment declaration |
+| `/run/user/UID/basaltwater-desktop/control.sock` | Private same-UID control channel |
 
 The Xwrapper configuration requires:
 
@@ -601,7 +601,7 @@ Distribution-packaged Remmina clients are the compatibility target; an older
 client comparison is diagnostic, not a deployment requirement. Record the
 running FreeRDP version as well as Remmina's version.
 
-XRDP 0.10.6.1 does not recognize `enable_gfx=false`. Older infra-tools templates
+XRDP 0.10.6.1 does not recognize `enable_gfx=false`. Older basaltwater templates
 included that ineffective setting while claiming to force classic RDP. The
 template now documents actual negotiation: `max_bpp=32` permits GFX/H.264.
 Removing the ignored setting does not change behavior or fix the cached-pointer

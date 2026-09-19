@@ -34,7 +34,7 @@ class TestCloudflareTunnelState(unittest.TestCase):
     def test_generated_yaml_quotes_values_and_validates_hosts(self):
         content = tunnel_setup.generate_config_yml(
             {
-                "name": "infra-tools",
+                "name": "basaltwater",
                 "id": "tunnel-id",
                 "credentials_file": "/etc/cloudflared/tunnel.json",
             },
@@ -60,7 +60,7 @@ class TestCloudflareTunnelState(unittest.TestCase):
             (
                 {
                     "tunnel": {
-                        "name": "infra-tools",
+                        "name": "basaltwater",
                         "id": "tunnel-id",
                         "credentials_file": "relative.json",
                     },
@@ -71,7 +71,7 @@ class TestCloudflareTunnelState(unittest.TestCase):
             (
                 {
                     "tunnel": {
-                        "name": "infra-tools",
+                        "name": "basaltwater",
                         "id": "tunnel-id",
                         "credentials_file": "/etc/cloudflared/tunnel.json",
                     },
@@ -82,7 +82,7 @@ class TestCloudflareTunnelState(unittest.TestCase):
             (
                 {
                     "tunnel": {
-                        "name": "infra-tools",
+                        "name": "basaltwater",
                         "id": "tunnel-id",
                         "credentials_file": "/etc/cloudflared/tunnel.json",
                     },
@@ -258,7 +258,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
     def test_non_interactive_refresh_skips_config_write_when_nothing_changed(self):
         state = {
             "tunnel": {
-                "name": "infra-tools",
+                "name": "basaltwater",
                 "id": "tunnel-id",
                 "credentials_file": "/etc/cloudflared/tunnel.json",
             },
@@ -302,7 +302,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 json.dump(
                     {
                         "tunnel": {
-                            "name": "infra-tools",
+                            "name": "basaltwater",
                             "id": "tunnel-id",
                             "credentials_file": credentials,
                         },

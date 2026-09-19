@@ -64,7 +64,7 @@ setup command. For scripted workflows, read the token on the panel host with
 `sudo`:
 
 ```bash
-sudo cat /etc/infra-tools/web-panel/notification-ingest.token
+sudo cat /etc/basaltwater/web-panel/notification-ingest.token
 ```
 
 ### 2. Configure each sender
@@ -98,7 +98,7 @@ For enablement, disablement, rotation, retention, and API limits, see
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
 > setup state because scheduled jobs need it. Scheduled jobs also receive a
-> root-owned `/etc/infra-tools/notifications.json` subset containing the
+> root-owned `/etc/basaltwater/notifications.json` subset containing the
 > notification targets, level, and HTTPS policy, so they do not need access to
 > the full root-only setup state.
 
@@ -188,7 +188,7 @@ Webhook payloads use schema version 2:
 
 | Field | Receiver use |
 | --- | --- |
-| `event.id` | Idempotency; retries keep the same value and `X-Infra-Tools-Event-ID` header |
+| `event.id` | Idempotency; retries keep the same value and `X-Basaltwater-Event-ID` header |
 | `event.type`, `state`, `status` | Routing, filtering, and incident state |
 | `event.deduplication_key` | Group related firing and recovery events |
 | `operator` | Stable, directly renderable operator context |

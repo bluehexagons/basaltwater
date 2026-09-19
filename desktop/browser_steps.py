@@ -34,7 +34,7 @@ HELIUM_RELEASE_API = "https://api.github.com/repos/imputnet/helium-linux/release
 BROWSH_GITHUB_REPO = "browsh-org/browsh"
 _LIBREWOLF_APPARMOR_PROFILE = "/etc/apparmor.d/librewolf"
 _XFCE_HELPER_SUBDIR = os.path.join(".local", "share", "xfce4", "helpers")
-_LIBREWOLF_APPARMOR_PROFILE_CONTENT = """# Managed by infra-tools.
+_LIBREWOLF_APPARMOR_PROFILE_CONTENT = """# Managed by basaltwater.
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -261,7 +261,7 @@ else:
             print(f"    {result.stderr.strip()[:200]}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="infra-tools-helium-") as temporary_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltwater-helium-") as temporary_dir:
         package_path = os.path.join(temporary_dir, "helium.deb")
         download_result = run(
             f"wget --https-only -qO {shlex.quote(package_path)} "
@@ -360,7 +360,7 @@ def install_single_browser(browser: str, use_flatpak: bool) -> None:
         except RuntimeError as exc:
             print(f"  ✗ Failed to resolve current Browsh release: {exc}")
             return
-        with tempfile.TemporaryDirectory(prefix="infra-tools-browsh-") as temporary_dir:
+        with tempfile.TemporaryDirectory(prefix="basaltwater-browsh-") as temporary_dir:
             package_path = os.path.join(temporary_dir, "browsh.deb")
             download_result = run(
                 f"wget --https-only -qO {shlex.quote(package_path)} "
@@ -449,7 +449,7 @@ x-scheme-handler/https={desktop_file}
 text/html={desktop_file}
 application/xhtml+xml={desktop_file}
 """
-    # This file is managed by infra-tools. Recreate it instead of preserving
+    # This file is managed by basaltwater. Recreate it instead of preserving
     # stale defaults from an older workstation setup.
     with open(mimeapps_path, "w", encoding="utf-8") as f:
         f.write(mimeapps_content)

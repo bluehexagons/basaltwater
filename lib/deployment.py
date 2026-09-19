@@ -40,7 +40,7 @@ class DeploymentOrchestrator:
         self.deploy_group = deploy_group
 
     def _get_persistent_root(self, app_name: str) -> str:
-        return os.path.join(self.base_dir, ".infra_tools_shared", app_name)
+        return os.path.join(self.base_dir, ".basaltwater_shared", app_name)
     
     def _ensure_dir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
@@ -53,7 +53,7 @@ class DeploymentOrchestrator:
         return output[:500]
 
     def _get_used_ports(self, exclude_services: Optional[set[str]] = None) -> set[int]:
-        """Get set of ports currently used by infra_tools services."""
+        """Get set of ports currently used by basaltwater services."""
         used_ports: set[int] = set()
         excluded = exclude_services or set()
         try:
@@ -135,7 +135,7 @@ class DeploymentOrchestrator:
             os.path.isdir(dest_path) and is_ruby_project(dest_path)
         ):
             raise RuntimeError(
-                "Refusing to modify a Ruby/Rails deployment with this infra-tools "
+                "Refusing to modify a Ruby/Rails deployment with this basaltwater "
                 "version; use its pinned legacy release"
             )
 
@@ -222,7 +222,7 @@ class DeploymentOrchestrator:
                 shutil.rmtree(staging_path)
     
     # ------------------------------------------------------------------
-    # infra.json manifest deploys
+    # basaltwater.json manifest deploys
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -251,9 +251,9 @@ class DeploymentOrchestrator:
         return unit_name, username
 
     def _component_shared_dir(self, dest_path: str, component: Component) -> str:
-        """infra_tools-managed persistent dir for a service component.
+        """basaltwater-managed persistent dir for a service component.
 
-        Lives outside the release dir (under the same .infra_tools_shared root as
+        Lives outside the release dir (under the same .basaltwater_shared root as
         application state) so it survives the release being replaced on each deploy.
         """
         app_name = os.path.basename(dest_path.rstrip("/"))
@@ -298,7 +298,7 @@ class DeploymentOrchestrator:
         result = run(f"id {shlex.quote(username)}", check=False)
         if result.returncode == 0:
             return
-        home_dir = os.path.join("/var/lib/infra_tools/build-users", username)
+        home_dir = os.path.join("/var/lib/basaltwater/build-users", username)
         result = run(
             "useradd --system --user-group --create-home "
             f"--home-dir {shlex.quote(home_dir)} --shell /usr/sbin/nologin {shlex.quote(username)}",
@@ -309,7 +309,7 @@ class DeploymentOrchestrator:
 
     @staticmethod
     def _build_home(username: str) -> str:
-        return os.path.join("/var/lib/infra_tools/build-users", username)
+        return os.path.join("/var/lib/basaltwater/build-users", username)
 
     def _port_state_path(self, dest_path: str) -> str:
         app_name = os.path.basename(dest_path.rstrip("/"))
@@ -575,7 +575,7 @@ class DeploymentOrchestrator:
     def deploy_manifest(self, manifest: Manifest, source_path: str, domain: Optional[str],
                         path: str, git_url: str, commit_hash: Optional[str],
                         keep_source: bool = False) -> list[dict[str, Any]]:
-        """Deploy every component of an infra.json manifest.
+        """Deploy every component of an basaltwater.json manifest.
 
         Returns one nginx "dep" descriptor per component. Components declare
         their own domains, so a single repo can serve a static apex site and a
@@ -588,7 +588,7 @@ class DeploymentOrchestrator:
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
 
-        shared_root = os.path.join(self.base_dir, ".infra_tools_shared")
+        shared_root = os.path.join(self.base_dir, ".basaltwater_shared")
         self._ensure_dir(shared_root)
         lock_handle = open(
             os.path.join(shared_root, ".manifest-deploy.lock"),
@@ -904,7 +904,7 @@ class DeploymentOrchestrator:
 
     @staticmethod
     def _source_has_marker(source_path: str, markers: set[str]) -> bool:
-        ignored = {".git", ".infra_tools", ".venv", "node_modules", "vendor"}
+        ignored = {".git", ".basaltwater", ".venv", "node_modules", "vendor"}
         for _current_dir, directories, filenames in os.walk(source_path):
             directories[:] = [name for name in directories if name not in ignored]
             if markers.intersection(filenames):
@@ -1105,7 +1105,7 @@ class DeploymentOrchestrator:
             username,
             username,
             env_file=env_file,
-            description=f"infra.json service: {component.name}",
+            description=f"basaltwater.json service: {component.name}",
             runtime_env=runtime_env,
             writable_paths=[data_dir],
         )

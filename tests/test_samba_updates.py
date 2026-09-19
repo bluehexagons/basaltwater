@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import infra_tools
+import basaltwater
 from lib.config import SetupConfig
 
 
@@ -41,7 +41,7 @@ class TestApplyShareUpdates(unittest.TestCase):
             ssh_key=None,
         )
 
-        infra_tools._apply_share_updates(config, args)
+        basaltwater._apply_share_updates(config, args)
 
         self.assertEqual(
             config.samba_shares,
@@ -63,7 +63,7 @@ class TestApplyShareUpdates(unittest.TestCase):
             ssh_key="/tmp/key",
         )
 
-        infra_tools._apply_share_updates(config, args)
+        basaltwater._apply_share_updates(config, args)
 
         self.assertEqual(len(config.samba_shares or []), 2)
         self.assertTrue(config.dry_run)
@@ -73,7 +73,7 @@ class TestApplyShareUpdates(unittest.TestCase):
 
 class TestSharesParser(unittest.TestCase):
     def test_parses_fast_path_options(self) -> None:
-        parser, _setup, _patch = infra_tools.create_infra_tools_parser()
+        parser, _setup, _patch = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "shares",
@@ -118,9 +118,9 @@ class TestRunSharesCommand(unittest.TestCase):
             sent.append(config)
             return 0
 
-        with patch.object(infra_tools, "load_setup_command", return_value=cached), \
-             patch.object(infra_tools, "run_remote_setup", side_effect=fake_run):
-            result = infra_tools.run_shares_command(args)
+        with patch.object(basaltwater, "load_setup_command", return_value=cached), \
+             patch.object(basaltwater, "run_remote_setup", side_effect=fake_run):
+            result = basaltwater.run_shares_command(args)
 
         self.assertEqual(result, 0)
         self.assertEqual(sent[0].custom_steps, "reconcile_samba_shares")

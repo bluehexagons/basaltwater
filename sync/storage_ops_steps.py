@@ -90,7 +90,7 @@ def create_storage_ops_service(config: SetupConfig, **_kwargs: Any) -> None:
     service_content = f"""[Unit]
 Description=Unified storage operations (sync, scrub, parity)
 After=local-fs.target network.target
-Documentation=https://github.com/anomalyco/infra_tools/blob/main/sync/README.md
+Documentation=https://github.com/bluehexagons/infra_tools/blob/main/sync/README.md
 
 [Service]
 Type=oneshot

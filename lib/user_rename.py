@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Privileged target-side implementation for ``infra-tools user rename``.
+"""Privileged target-side implementation for ``basaltw user rename``.
 
 The controller stages a manifest and starts this module from a root-owned
 systemd unit.  It is intentionally not a normal local CLI workflow: changing
@@ -32,7 +32,7 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
-RENAME_ROOT = "/var/lib/infra_tools/user-renames"
+RENAME_ROOT = "/var/lib/basaltwater/user-renames"
 SYSTEMD_DIR = "/etc/systemd/system"
 LINGER_DIR = "/var/lib/systemd/linger"
 CRON_DIR = "/var/spool/cron/crontabs"
@@ -47,18 +47,18 @@ MANAGED_UNIT_NAMES = {
     "auto-update-uv",
     "codex-auth-maintenance",
     "user-cache-maintenance",
-    "infra-tools-t3code",
-    "infra-tools-t3code-connect",
-    "infra-tools-device-pairing",
-    "infra-syncthing",
+    "basaltwater-t3code",
+    "basaltwater-t3code-connect",
+    "basaltwater-device-pairing",
+    "basaltwater-syncthing",
 }
 
 MANAGED_UNIT_PREFIXES = (
     "auto-update-node",
     "auto-update-uv",
     "user-cache-maintenance",
-    "infra-tools-t3code",
-    "infra-tools-device-pairing",
+    "basaltwater-t3code",
+    "basaltwater-device-pairing",
 )
 
 class RenameError(RuntimeError):
@@ -153,7 +153,7 @@ def _marker_path(operation_id: str) -> str:
 
 
 def _unit_name(operation_id: str) -> str:
-    return f"infra-tools-user-rename-{operation_id}"
+    return f"basaltwater-user-rename-{operation_id}"
 
 
 def _unit_path(operation_id: str) -> str:
@@ -358,7 +358,7 @@ def _unmanaged_sudoers_references(old_username: str) -> list[str]:
         paths.extend(
             os.path.join("/etc/sudoers.d", name)
             for name in os.listdir("/etc/sudoers.d")
-            if name != f"infra-tools-{old_username}"
+            if name != f"basaltwater-{old_username}"
         )
     except FileNotFoundError:
         pass
@@ -504,10 +504,10 @@ def _preflight(manifest: dict[str, Any]) -> dict[str, Any]:
             "Destination username already appears in group databases: "
             + ", ".join(existing_group_memberships)
         )
-    old_sudoers = os.path.join("/etc/sudoers.d", f"infra-tools-{old_username}")
-    new_sudoers = os.path.join("/etc/sudoers.d", f"infra-tools-{new_username}")
+    old_sudoers = os.path.join("/etc/sudoers.d", f"basaltwater-{old_username}")
+    new_sudoers = os.path.join("/etc/sudoers.d", f"basaltwater-{new_username}")
     if os.path.islink(old_sudoers) or os.path.islink(new_sudoers):
-        raise RenameError("infra-tools sudoers entries must be regular files")
+        raise RenameError("basaltwater sudoers entries must be regular files")
     if os.path.isfile(old_sudoers) and os.path.lexists(new_sudoers):
         raise RenameError(f"Destination sudoers entry already exists: {new_sudoers}")
     unmanaged_sudoers = _unmanaged_sudoers_references(old_username)
@@ -961,7 +961,7 @@ def _rename_managed_credentials(manifest: dict[str, Any]) -> None:
 
 def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
     changed: list[str] = []
-    for relative in (".local/bin", ".local/share/infra-tools", ".local/share/t3code"):
+    for relative in (".local/bin", ".local/share/basaltwater", ".local/share/t3code"):
         root = os.path.join(new_home, relative)
         if not os.path.isdir(root):
             continue
@@ -978,7 +978,7 @@ def _rewrite_managed_home_files(old_home: str, new_home: str) -> list[str]:
             "systemd",
             "user",
             "t3code.service.d",
-            "infra-tools.conf",
+            "basaltwater.conf",
         ),
     ):
         if _replace_in_file(path, [(old_home, new_home)]):
@@ -1011,7 +1011,7 @@ def _verify_managed_rewrites(manifest: dict[str, Any], old_home: str) -> None:
             "systemd",
             "user",
             "t3code.service.d",
-            "infra-tools.conf",
+            "basaltwater.conf",
         ),
     ):
         if not os.path.isfile(path) or os.path.islink(path):
@@ -1024,8 +1024,8 @@ def _verify_managed_rewrites(manifest: dict[str, Any], old_home: str) -> None:
 
 def _rewrite_sudoers(old_username: str, new_username: str) -> list[str]:
     changed: list[str] = []
-    old_path = os.path.join("/etc/sudoers.d", f"infra-tools-{old_username}")
-    new_path = os.path.join("/etc/sudoers.d", f"infra-tools-{new_username}")
+    old_path = os.path.join("/etc/sudoers.d", f"basaltwater-{old_username}")
+    new_path = os.path.join("/etc/sudoers.d", f"basaltwater-{new_username}")
     if os.path.isfile(old_path) and not os.path.lexists(new_path):
         os.replace(old_path, new_path)
         changed.append(new_path)

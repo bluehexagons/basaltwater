@@ -8,13 +8,13 @@ import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
 
-from infra_tools import create_infra_tools_parser
+from basaltwater import create_basaltwater_parser
 from lib.sysadmin_cli import run_sysadmin_command
 
 
 class SysadminCliTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.parser, _, _ = create_infra_tools_parser()
+        self.parser, _, _ = create_basaltwater_parser()
 
     def _parse(self, *argv: str) -> argparse.Namespace:
         return self.parser.parse_args(list(argv))

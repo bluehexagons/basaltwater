@@ -34,7 +34,7 @@ explicitly selected T3 Code service enables lingering again because that
 service requires a persistent user manager.
 
 Basaltwater journals group removals and the original wider account settings in
-`/var/lib/infra_tools/agent-user-security/UID.json` before changing them.
+`/var/lib/basaltwater/agent-user-security/UID.json` before changing them.
 Use `--no-harden-user` to return to agent-only hardening, or combine it with
 `--no-harden-agent` to restore all recorded settings. An omitted hardening
 option preserves the saved posture during a patch. The root-owned mode-`0600`
@@ -65,7 +65,7 @@ network access still begins outside the workspace boundary and can be requested
 through the normal approval flow instead of being silently enabled.
 
 `--harden-agent` also writes `/etc/codex/requirements.toml` and selects `never`
-within an infra-tools-defined workspace profile. That profile explicitly
+within an basaltwater-defined workspace profile. That profile explicitly
 disables command networking, so a user cannot re-enable it through the legacy
 workspace network setting. In that mode there is no approval path to add
 permissions. Live web search, login shells, apps and plugins, MCP servers,

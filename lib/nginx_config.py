@@ -18,7 +18,7 @@ SSL_CIPHERS = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-E
 NGINX_SITES_AVAILABLE_DIR = "/etc/nginx/sites-available"
 NGINX_SITES_ENABLED_DIR = "/etc/nginx/sites-enabled"
 PRESERVED_SITE_PREFIXES = ("antistatic_", "gogs_")
-GENERATED_CONFIG_MARKER = "# Managed by infra_tools deployment nginx generator"
+GENERATED_CONFIG_MARKER = "# Managed by basaltwater deployment nginx generator"
 
 
 def _config_name_for_domain(domain: Optional[str]) -> str:
@@ -34,7 +34,7 @@ def _remove_path(path: str) -> None:
         os.remove(path)
 
 
-def _is_infra_tools_deployment_site(path: str) -> bool:
+def _is_basaltwater_deployment_site(path: str) -> bool:
     read_path = os.path.realpath(path) if os.path.islink(path) else path
     try:
         with open(read_path, 'r', encoding='utf-8') as handle:
@@ -89,11 +89,11 @@ def _write_config_atomic(path: str, content: bytes, mode: int = 0o644) -> None:
 
 
 def _assert_managed_config_names(current_config_names: set[str]) -> None:
-    """Refuse to replace a same-named Nginx site not owned by infra_tools."""
+    """Refuse to replace a same-named Nginx site not owned by basaltwater."""
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         for name in current_config_names:
             path = os.path.join(directory, name)
-            if os.path.lexists(path) and not _is_infra_tools_deployment_site(path):
+            if os.path.lexists(path) and not _is_basaltwater_deployment_site(path):
                 raise RuntimeError(
                     f"Refusing to replace unmanaged Nginx configuration: {path}"
                 )
@@ -119,7 +119,7 @@ def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
                 continue
 
             path = os.path.join(directory, name)
-            if not _is_infra_tools_deployment_site(path):
+            if not _is_basaltwater_deployment_site(path):
                 continue
 
             try:
@@ -137,7 +137,7 @@ def _snapshot_deployment_sites(current_config_names: set[str]) -> dict[str, tupl
             continue
         for name in os.listdir(directory):
             path = os.path.join(directory, name)
-            if name not in current_config_names and not _is_infra_tools_deployment_site(path):
+            if name not in current_config_names and not _is_basaltwater_deployment_site(path):
                 continue
             if os.path.islink(path):
                 snapshot[path] = ("symlink", os.readlink(path))
@@ -156,7 +156,7 @@ def _restore_deployment_sites(
             continue
         for name in os.listdir(directory):
             path = os.path.join(directory, name)
-            if name in current_config_names or _is_infra_tools_deployment_site(path):
+            if name in current_config_names or _is_basaltwater_deployment_site(path):
                 _remove_path(path)
     for path, (kind, value) in snapshot.items():
         os.makedirs(os.path.dirname(path), exist_ok=True)

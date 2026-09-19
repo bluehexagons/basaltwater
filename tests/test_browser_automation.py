@@ -229,7 +229,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         self.assertFalse(changed)
         run_as_user.assert_called_once()
         probe = run_as_user.call_args.args[2]
-        self.assertIn('test -f "$HOME/.cache/ms-playwright/.infra-tools-chromium-', probe)
+        self.assertIn('test -f "$HOME/.cache/ms-playwright/.basaltwater-chromium-', probe)
         self.assertIn('test -f "$(/usr/bin/node -e ', probe)
         self.assertIn('test -x "$(/usr/bin/node -e ', probe)
 
@@ -310,8 +310,8 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         self.assertEqual(run_as_user.call_count, 2)
         remove_command = run_as_user.call_args_list[0].args[2]
         add_command = run_as_user.call_args_list[1].args[2]
-        self.assertIn("codex mcp remove infra-tools-playwright", remove_command)
-        self.assertIn("codex mcp add infra-tools-playwright", add_command)
+        self.assertIn("codex mcp remove basaltwater-playwright", remove_command)
+        self.assertIn("codex mcp add basaltwater-playwright", add_command)
 
     def test_codex_registration_reports_add_failure(self) -> None:
         config = _config("codex")
@@ -453,7 +453,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
         self.assertIn("--caps vision", content)
         self.assertIn('umask 077', content)
         self.assertIn(
-            'output_dir="$HOME/.local/state/infra_tools/playwright-mcp"',
+            'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"',
             content,
         )
         self.assertIn('--output-dir "$output_dir"', content)
@@ -518,7 +518,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             patch.object(
                 agent_cli,
                 "_browser_workflow_skills",
-                return_value=("infra-tools-playwright-testing",),
+                return_value=("basaltwater-playwright-testing",),
             ),
             patch.object(
                 agent_cli,
@@ -574,7 +574,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             patch.object(
                 agent_cli,
                 "_browser_workflow_skills",
-                return_value=("infra-tools-playwright-testing",),
+                return_value=("basaltwater-playwright-testing",),
             ),
             patch.object(
                 agent_cli,
@@ -600,7 +600,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             mcp_wrapper.write_text(
                 "#!/bin/sh\n"
                 "umask 077\n"
-                'output_dir="$HOME/.local/state/infra_tools/playwright-mcp"\n'
+                'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"\n'
                 'browser_path="$(printf \'%s\' '
                 '"$HOME/.cache/ms-playwright/chromium/chrome")" '
                 "# chromium.executablePath()\n"
@@ -624,11 +624,11 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 home
                 / ".agents"
                 / "skills"
-                / "infra-tools-playwright-testing"
+                / "basaltwater-playwright-testing"
             )
             skill_dir.mkdir(parents=True)
             (skill_dir / "SKILL.md").write_text(
-                "metadata:\n  managed-by: infra_tools\n",
+                "metadata:\n  managed-by: basaltwater\n",
                 encoding="utf-8",
             )
             os.chmod(skill_dir / "SKILL.md", 0o644)
@@ -656,7 +656,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
         self.assertEqual(result["registrations"], {"codex": True})
         self.assertEqual(
             result["workflow_skills"],
-            ["infra-tools-playwright-testing"],
+            ["basaltwater-playwright-testing"],
         )
         self.assertTrue(result["workflow_skill_ready"])
         self.assertTrue(result["healthy"])
@@ -675,7 +675,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             patch.object(
                 agent_cli,
                 "_browser_workflow_skills",
-                return_value=("infra-tools-playwright-testing",),
+                return_value=("basaltwater-playwright-testing",),
             ),
             patch.object(
                 agent_cli,
@@ -717,10 +717,10 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
                 "_browser_workflow_skills",
                 side_effect=(
                     (),
-                    ("infra-tools-t3-preview-testing",),
+                    ("basaltwater-t3-preview-testing",),
                     (
-                        "infra-tools-browser-testing",
-                        "infra-tools-playwright-testing",
+                        "basaltwater-browser-testing",
+                        "basaltwater-playwright-testing",
                     ),
                 ),
             ),
@@ -746,10 +746,10 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
         ):
             for expected_skills in (
                 [],
-                ["infra-tools-t3-preview-testing"],
+                ["basaltwater-t3-preview-testing"],
                 [
-                    "infra-tools-browser-testing",
-                    "infra-tools-playwright-testing",
+                    "basaltwater-browser-testing",
+                    "basaltwater-playwright-testing",
                 ],
             ):
                 with self.subTest(workflow_skills=expected_skills):
@@ -780,7 +780,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             stale = proc / "200"
             current.mkdir()
             stale.mkdir()
-            output_dir = home / ".local" / "state" / "infra_tools" / "playwright-mcp"
+            output_dir = home / ".local" / "state" / "basaltwater" / "playwright-mcp"
             browser_path = (
                 home
                 / ".cache"

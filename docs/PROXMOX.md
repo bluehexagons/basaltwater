@@ -18,12 +18,12 @@ explicitly named Proxmox SDN bridges are supported alongside conventional
 
 Install Basaltwater on a trusted Linux orchestration machine first. The
 Proxmox host does not need a checkout; setup uploads the installed source to
-`/opt/infra_tools`.
+`/opt/basaltwater`.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
-sh "$HOME/.infra_tools-install.sh"
-rm -f "$HOME/.infra_tools-install.sh"
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+sh "$HOME/.basaltwater-install.sh"
+rm -f "$HOME/.basaltwater-install.sh"
 basaltw channel
 ```
 
@@ -111,7 +111,7 @@ the same second.
 
 Only one setup may mutate a particular target at a time. The controller rejects
 an overlapping same-target run, and the target holds
-`/run/lock/infra-tools-setup.lock` while `/opt/infra_tools` is replaced and the
+`/run/lock/basaltwater-setup.lock` while `/opt/basaltwater` is replaced and the
 remote setup executes. This target lock also protects against a second
 controller using a separate workspace.
 
@@ -154,7 +154,7 @@ from 1 through 95; this changes the node policy, so reserve enough memory for
 Proxmox services, storage, and QEMU overhead.
 
 By default, setup does not change Proxmox firewall state. Supplying
-`--lan-access` or `--access-source` reconciles only infra-tools-commented
+`--lan-access` or `--access-source` reconciles only basaltwater-commented
 entries in Proxmox's standard cluster-wide `management` IP set, preserves
 operator entries, then enables the cluster firewall after the replacement
 sources exist. That standard set covers the Proxmox web GUI, SSH, VNC, and
@@ -295,8 +295,8 @@ stops setup. The mount does not use `nofail`, and a marker on the mounted
 filesystem prevents an empty root-disk directory from passing application
 checks. Gogs and agent repository setup verify the mount before writing.
 Observed mount and cache state is stored root-only in
-`/opt/infra_tools/state/vm-storage.json`; each mounted filesystem also carries
-`.infra-tools-storage.json` for fail-closed verification. Gogs, Samba shares,
+`/opt/basaltwater/state/vm-storage.json`; each mounted filesystem also carries
+`.basaltwater-storage.json` for fail-closed verification. Gogs, Samba shares,
 and agent repositories verify a matching declared mount before writing, so a
 failed data mount cannot silently redirect application data to the SSD boot
 filesystem.
@@ -372,7 +372,7 @@ any of
 Supplying any `--disk-discard`, `--disk-ssd`, or `--disk-backup` policy also
 requests a provider check even when it matches local metadata. This lets an
 explicit setup rerun repair disk-hardware drift or apply policy first recorded
-by an older infra-tools release. A target without saved provisioning metadata
+by an older basaltwater release. A target without saved provisioning metadata
 still requires `--memory` and root `--storage` on its first run. Any provider
 check associated with saved VM metadata requires that VM to still exist;
 Basaltwater does not silently create a replacement when reconciliation cannot
@@ -722,7 +722,7 @@ metadata. `--yes` skips only confirmation, while `--force` force-stops a
 running VM before destruction. The command verifies that the VM is absent
 afterward and retains the saved setup declaration for deliberate
 reprovisioning; remove that declaration separately with
-`infra-tools rm agent-dev-01` when appropriate. The legacy
+`basaltwater rm agent-dev-01` when appropriate. The legacy
 `basaltw proxmox destroy` path remains available during the broader guest
 command migration.
 

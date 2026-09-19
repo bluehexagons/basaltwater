@@ -9,8 +9,8 @@ from lib.config import SetupConfig
 from lib.remote_utils import run, is_package_installed, is_service_active
 
 
-DEPLOY_ADMIN_SOURCE = "/opt/infra_tools/web/service_tools/deploy_admin.py"
-DEPLOY_ADMIN_HELPER = "/usr/local/sbin/infra-tools-deploy-admin"
+DEPLOY_ADMIN_SOURCE = "/opt/basaltwater/web/service_tools/deploy_admin.py"
+DEPLOY_ADMIN_HELPER = "/usr/local/sbin/basaltwater-deploy-admin"
 
 
 def install_app_server_dependencies(config: SetupConfig) -> None:
@@ -85,7 +85,7 @@ def create_app_directories(config: SetupConfig) -> None:
     """Create directories for app deployments."""
     directories = [
         "/var/www",
-        "/var/log/infra_tools/web",
+        "/var/log/basaltwater/web",
         "/etc/nginx/sites-available",
         "/etc/nginx/sites-enabled",
     ]

@@ -30,12 +30,12 @@ from lib.unit_transaction import replace_units
 ANTISTATIC_USER = "antistatic"
 ANTISTATIC_BINARY = "/usr/local/bin/antistatic-server"
 ANTISTATIC_SERVICE = "antistatic"
-ANTISTATIC_RELEASE_STATE_FILE = "/opt/infra_tools/state/antistatic_release.json"
+ANTISTATIC_RELEASE_STATE_FILE = "/opt/basaltwater/state/antistatic_release.json"
 ANTISTATIC_DATA_DIR = "/var/lib/antistatic"
 ANTISTATIC_CONFIG_DIR = "/etc/antistatic"
 ANTISTATIC_ENV_FILE = f"{ANTISTATIC_CONFIG_DIR}/server.env"
 ANTISTATIC_AUTH_FAILURE_LOG = (
-    "/var/log/nginx/infra-tools-antistatic-auth-failures.log"
+    "/var/log/nginx/basaltwater-antistatic-auth-failures.log"
 )
 MIN_ANTISTATIC_RELEASE = (0, 10, 0)
 GITHUB_REPO = "bluehexagons/antistatic-server"
@@ -47,7 +47,7 @@ TRUSTED_NGINX_PROXY_CIDRS = "127.0.0.1/32,::1/128"
 ANTISTATIC_DB_USER = "antistatic-db"
 ANTISTATIC_DB_BINARY = "/usr/local/bin/antistatic-db"
 ANTISTATIC_DB_SERVICE = "antistatic-db"
-ANTISTATIC_DB_RELEASE_STATE_FILE = "/opt/infra_tools/state/antistatic_db_release.json"
+ANTISTATIC_DB_RELEASE_STATE_FILE = "/opt/basaltwater/state/antistatic_db_release.json"
 ANTISTATIC_DB_GITHUB_REPO = "bluehexagons/antistatic-db"
 ANTISTATIC_DB_DATA_DIR = "/var/lib/antistatic-db"
 ANTISTATIC_DB_PATH = f"{ANTISTATIC_DB_DATA_DIR}/antistatic.db"
@@ -342,9 +342,9 @@ def generate_antistatic_nginx_config(
 
     cert_file, key_file = get_ssl_cert_path(domain)
     zone_suffix = hashlib.sha256(domain.encode("utf-8")).hexdigest()[:12]
-    admin_zone = f"infra_tools_antistatic_admin_{zone_suffix}"
-    auth_failure = f"infra_tools_antistatic_auth_failure_{zone_suffix}"
-    log_format = f"infra_tools_antistatic_auth_{zone_suffix}"
+    admin_zone = f"basaltwater_antistatic_admin_{zone_suffix}"
+    auth_failure = f"basaltwater_antistatic_auth_failure_{zone_suffix}"
+    log_format = f"basaltwater_antistatic_auth_{zone_suffix}"
     http_listeners = (
         "    listen 127.0.0.1:80;\n    listen [::1]:80;"
         if private_origin
@@ -395,7 +395,7 @@ map "$http_authorization:$status:$uri" ${auth_failure} {{
     ~^.+:401:/admin(?:/|$) 1;
 }}
 
-log_format {log_format} '{forwarded_client_ip} [$time_local] infra-tools-auth-failure';
+log_format {log_format} '{forwarded_client_ip} [$time_local] basaltwater-auth-failure';
 
 server {{
 {http_listeners}

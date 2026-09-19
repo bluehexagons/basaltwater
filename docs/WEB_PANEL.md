@@ -87,10 +87,10 @@ retries.
 Run these checks on the panel host:
 
 ```bash
-sudo systemctl status infra-tools-web-panel.service
-sudo journalctl -u infra-tools-web-panel.service -n 100 --no-pager
-sudo systemctl status infra-tools-web-panel-audit.timer
-sudo journalctl -u infra-tools-web-panel-audit.service -n 100 --no-pager
+sudo systemctl status basaltwater-web-panel.service
+sudo journalctl -u basaltwater-web-panel.service -n 100 --no-pager
+sudo systemctl status basaltwater-web-panel-audit.timer
+sudo journalctl -u basaltwater-web-panel-audit.service -n 100 --no-pager
 sudo nginx -t
 ```
 
@@ -99,7 +99,7 @@ sudo nginx -t
 | Setup rejects notification ingest | Include both `--web-panel` and `--ssl` |
 | No sender events | Confirm sender URL, token, and HTTPS reachability |
 | Audit activity is stale | Check the audit timer and service journal |
-| Login is repeatedly rejected | Check Nginx and the `infra-tools-web-panel` fail2ban jail |
+| Login is repeatedly rejected | Check Nginx and the `basaltwater-web-panel` fail2ban jail |
 | Browser warns about the certificate | Follow [Client CA trust](CLIENT_CA_TRUST.md) |
 
 Failed browser logins are written to a privacy-preserving Nginx log. Passwords

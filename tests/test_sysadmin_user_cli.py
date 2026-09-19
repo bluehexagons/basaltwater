@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import unittest
 
-from infra_tools import create_infra_tools_parser
+from basaltwater import create_basaltwater_parser
 
 
 class TestSysadminUserCli(unittest.TestCase):
     def test_rename_parser(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(
             [
                 "user",
@@ -33,7 +33,7 @@ class TestSysadminUserCli(unittest.TestCase):
         self.assertTrue(args.yes)
 
     def test_rename_home_options_are_mutually_exclusive(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         with self.assertRaises(SystemExit):
             parser.parse_args(
                 [

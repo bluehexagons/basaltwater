@@ -17,7 +17,7 @@ from lib.validation import validate_filesystem_path
 _READINESS_STATE_RELATIVE = os.path.join(
     ".local",
     "state",
-    "infra_tools",
+    "basaltwater",
     "agent-readiness.json",
 )
 _BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
@@ -35,9 +35,9 @@ _BROWSER_LAUNCHER_FEATURES = (
 )
 _BROWSER_WORKFLOW_SKILLS = frozenset(
     (
-        "infra-tools-browser-testing",
-        "infra-tools-playwright-testing",
-        "infra-tools-t3-preview-testing",
+        "basaltwater-browser-testing",
+        "basaltwater-playwright-testing",
+        "basaltwater-t3-preview-testing",
     )
 )
 _BROWSER_ISSUES = frozenset(

@@ -22,7 +22,7 @@ class TestDeployUserDefaults(unittest.TestCase):
         self.assertEqual(mock_run.call_args_list[0].args[0], ["id", DEPLOY_USER])
         self.assertEqual(
             mock_run.call_args_list[1].args[0],
-            ["mkdir", "-p", "/var/lib/infra_tools"],
+            ["mkdir", "-p", "/var/lib/basaltwater"],
         )
         create_cmd = mock_run.call_args_list[2].args[0]
         self.assertEqual(create_cmd[:3], ["useradd", "--system", "--user-group"])

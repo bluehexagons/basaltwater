@@ -24,13 +24,10 @@ def main() -> int:
     if project.get("name") != "basaltwater":
         print("pyproject.toml must declare the basaltwater distribution")
         return 1
-    if scripts.get("infra-tools") != "infra_tools:main":
-        print("The v2 transition launcher infra-tools must remain available")
+    if scripts.get("basaltw") != "basaltwater:main":
+        print("pyproject.toml must expose basaltwater:main as the basaltw entry point")
         return 1
-    if scripts.get("basaltw") != "infra_tools:main":
-        print("pyproject.toml must expose infra_tools:main as the basaltw entry point")
-        return 1
-    if {"infra_tools", "basalt", "bw", "b6"}.intersection(scripts):
+    if {"infra-tools", "infra_tools", "basaltwater", "basalt", "bw", "b6"}.intersection(scripts):
         print("pyproject.toml must not add unapproved executable aliases")
         return 1
     command_reference = (ROOT / "docs" / "COMMAND_LINE.md").read_text(encoding="utf-8")

@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import infra_tools
+import basaltwater
 from lib.arg_parser import create_setup_argument_parser
 from lib.config import SetupConfig
 from lib.system_types import get_steps_for_system_type
@@ -106,18 +106,18 @@ class TestAgentWebPortConfig(unittest.TestCase):
         self.assertFalse(args.default_web_ports)
 
     def test_patch_preserves_default_policy_when_flag_is_omitted(self) -> None:
-        parser, _setup_parser, _patch_parser = infra_tools.create_infra_tools_parser()
+        parser, _setup_parser, _patch_parser = basaltwater.create_basaltwater_parser()
         omitted = parser.parse_args(["patch", "agent-vm", "agent"])
         disabled = parser.parse_args(
             ["patch", "agent-vm", "agent", "--no-default-web-ports"]
         )
 
         self.assertIsNone(omitted.default_web_ports)
-        self.assertIn("default_web_ports", infra_tools._patch_preserve_keys(omitted))
+        self.assertIn("default_web_ports", basaltwater._patch_preserve_keys(omitted))
         self.assertFalse(disabled.default_web_ports)
         self.assertNotIn(
             "default_web_ports",
-            infra_tools._patch_preserve_keys(disabled),
+            basaltwater._patch_preserve_keys(disabled),
         )
 
     def test_invalid_port_is_rejected(self) -> None:
@@ -197,7 +197,7 @@ class TestAgentWebPortFirewall(unittest.TestCase):
         commands = [call.args[0] for call in mock_run.call_args_list]
         for port in (80, 443, 3000, 8080, 8081):
             self.assertIn(
-                f"ufw allow {port}/tcp comment 'infra_tools web TCP {port}'",
+                f"ufw allow {port}/tcp comment 'basaltwater web TCP {port}'",
                 commands,
             )
         self.assertNotIn("apt-get install -y -qq ufw", commands)
@@ -212,9 +212,9 @@ class TestAgentWebPortFirewall(unittest.TestCase):
     ) -> None:
         status_output = """Status: active
 [ 1] 22/tcp LIMIT IN Anywhere
-[ 2] 3000/tcp ALLOW IN Anywhere # infra_tools web TCP 3000
+[ 2] 3000/tcp ALLOW IN Anywhere # basaltwater web TCP 3000
 [ 3] 9000/tcp ALLOW IN Anywhere # operator rule
-[ 4] 8080/tcp ALLOW IN Anywhere # infra_tools web TCP 8080
+[ 4] 8080/tcp ALLOW IN Anywhere # basaltwater web TCP 8080
 """
 
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:

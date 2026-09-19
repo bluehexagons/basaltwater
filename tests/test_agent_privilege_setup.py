@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 
 from common.privilege_broker_steps import _requester_has_sudo_grants, render_units
 from common.web_panel_steps import build_web_panel_manifest
-from infra_tools import _patch_preserve_keys, create_infra_tools_parser
+from basaltwater import _patch_preserve_keys, create_basaltwater_parser
 from lib.arg_parser import add_setup_arguments
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -28,7 +28,7 @@ class SetupTests(unittest.TestCase):
         return SetupConfig(host="vm.example", username="agent", system_type="agent_vm", **kwargs)
 
     def test_default_port_is_private_transient_and_survives_remote_parsing(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker",
                                   "--privilege-broker-password", "test-only independent password"])
         config = SetupConfig.from_args(args, "agent_vm")
@@ -49,7 +49,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(privilege_broker_origin(received), "https://vm.example:9444")
 
     def test_custom_port_is_accepted_and_url_is_rejected(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args(["setup", "agent_vm", "vm.example", "agent", "--privilege-broker", "9445"])
         config = SetupConfig.from_args(args, "agent_vm")
         self.assertEqual(config.privilege_broker_port, 9445)
@@ -60,7 +60,7 @@ class SetupTests(unittest.TestCase):
                                "https://vm.example:9444"])
 
     def test_command_request_keeps_the_top_level_command(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         args = parser.parse_args([
             "agent", "privilege", "request", "command.run", "--reason", "Test", "--command", "/usr/bin/true",
         ])
@@ -68,7 +68,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(args.privilege_argv, ["/usr/bin/true"])
 
     def test_omitted_patch_preserves_and_explicit_disable_removes(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         cached = self.config(privilege_broker_port=9444)
         for flags, expected in (([], cached.privilege_broker_port), (["--no-privilege-broker"], None)):
             args = parser.parse_args(["patch", "vm.example", "agent", *flags])
@@ -76,7 +76,7 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(config.privilege_broker_port, expected)
 
     def test_password_only_patch_rotates_without_losing_origin(self):
-        parser, _, _ = create_infra_tools_parser()
+        parser, _, _ = create_basaltwater_parser()
         cached = self.config(privilege_broker_port=9444)
         args = parser.parse_args(["patch", "vm.example", "agent", "--privilege-broker-password", "test-only changed password"])
         config = merge_setup_configs(cached, SetupConfig.from_args(args, "agent_vm"), preserve_keys=_patch_preserve_keys(args))
@@ -104,13 +104,13 @@ class SetupTests(unittest.TestCase):
 
     def test_units_have_distinct_identity_and_private_credentials(self):
         units = render_units()
-        broker = units["infra-tools-privilege-broker"]
-        web = units["infra-tools-privilege-approval"]
+        broker = units["basaltwater-privilege-broker"]
+        web = units["basaltwater-privilege-approval"]
         self.assertIn("User=root", broker)
-        self.assertIn("User=infra-approval", web)
+        self.assertIn("User=basaltwater-approval", web)
         self.assertIn("LoadCredential=auth:", web)
         self.assertNotIn("SupplementaryGroups", web)
-        self.assertIn("python3 -I /opt/infra_tools/", broker)
+        self.assertIn("python3 -I /opt/basaltwater/", broker)
         self.assertIn("StateDirectoryMode=0700", broker)
         self.assertIn("ProtectSystem=strict", web)
 

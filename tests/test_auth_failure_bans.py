@@ -40,7 +40,7 @@ class AuthFailureBanTest(unittest.TestCase):
             with open(filter_path, encoding="utf-8") as file_obj:
                 filter_content = file_obj.read()
             with open(
-                os.path.join(jail_dir, "infra-tools-device-pairing.local"),
+                os.path.join(jail_dir, "basaltwater-device-pairing.local"),
                 encoding="utf-8",
             ) as file_obj:
                 jail_content = file_obj.read()
@@ -64,7 +64,7 @@ class AuthFailureBanTest(unittest.TestCase):
 
     def test_removes_managed_jail_and_reloads_fail2ban(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            jail_path = os.path.join(temporary, "infra-tools-gogs.local")
+            jail_path = os.path.join(temporary, "basaltwater-gogs.local")
             with open(jail_path, "w", encoding="utf-8") as file_obj:
                 file_obj.write("stale")
             completed = SimpleNamespace(returncode=0, stdout="", stderr="")
