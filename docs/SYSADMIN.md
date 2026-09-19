@@ -38,7 +38,7 @@ explicit `logs --follow` sessions remain unbounded.
 | [`upgrade`](#upgrade) | Run apt upgrade across one or more hosts |
 | [`reachable`](#reachable) | Check which saved hosts respond via SSH |
 | [`user rename`](#user-rename) | Rename a managed target login and reconcile its configuration |
-| [`agent auth pull`](AGENT_AUTHENTICATION.md#pull-credentials-from-an-agent-vm) | Recover file-backed agent credentials to a minimal control system |
+| [`agent auth login`](AGENT_AUTHENTICATION.md#authorize-codex-on-a-target) | Authorize a target-owned Codex session from a minimal control system |
 
 ---
 

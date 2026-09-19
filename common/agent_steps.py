@@ -655,7 +655,7 @@ def configure_codex_auth_maintenance(config: SetupConfig) -> None:
 
 
 def run_codex_auth_maintenance(config: SetupConfig) -> None:
-    """Run one best-effort Codex authentication check during setup."""
+    """Renew target credentials, authorizing a new login when requested."""
 
     if is_dry_run():
         print("  [DRY-RUN] Would check Codex authentication freshness")
@@ -681,6 +681,29 @@ def run_codex_auth_maintenance(config: SetupConfig) -> None:
         check=False,
         capture_output=True,
     )
+    if config.agent_auth_source in {"login", "check"}:
+        metadata = inspect_codex_auth_file(os.path.join(user_home, ".codex", "auth.json"))
+        if result.returncode == 0 and metadata.get("status") == "current":
+            print("  ✓ Existing Codex authentication retained")
+            return
+        if config.agent_auth_source == "check":
+            raise RuntimeError(
+                "Codex authorization required. From your controller run "
+                f"basaltw agent auth login {config.host} {config.username}, "
+                "then rerun setup; unattended setup does not start a login."
+            )
+        print("  Codex requires authorization; starting a target-owned ChatGPT subscription login", flush=True)
+        login_script = os.path.join(os.path.dirname(__file__), "service_tools", "codex_auth_login.py")
+        validate_filesystem_path(login_script, must_exist=True)
+        result = _run_as_login_user(
+            config.username, user_home,
+            shlex.join(["/usr/bin/python3", "-u", login_script, "--setup"]),
+            check=False, capture_output=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Codex authorization did not complete; rerun setup or use basaltw agent auth login HOST USER")
+        print("  ✓ Codex subscription authentication configured")
+        return
     if result.returncode == 0:
         print("  ✓ Codex authentication freshness check completed")
     else:

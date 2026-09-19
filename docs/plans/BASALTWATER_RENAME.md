@@ -158,6 +158,16 @@ handling, interrupted-cutover recovery and external automation changes.
 
 ## Acceptance and release boundary
 
+The setup qualification follow-up replaces credential pulling with
+`agent auth login`: target-owned ChatGPT device authorization is the primary
+Codex path, with optional controller browser opening and explicit separately
+billed API-key input. `agent_code_vm` now defaults to that login flow; terminal
+setup can recover rejected refresh credentials through device authorization,
+while unattended setup reports the required login command. Existing healthy
+target credentials remain in place. Provider authorization and T3 consumption
+of the resulting login still require live operator qualification; automated
+tests use mocked provider responses and never log in to an actual account.
+
 - Source, package metadata, launchers, internal callers, help and completion
   consistently use the new entry point and command.
 - Recent-install migration preserves private data, refuses ambiguous conflicts,

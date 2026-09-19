@@ -1,8 +1,81 @@
 # Agent authentication
 
-This guide covers file-backed authentication for GitHub CLI, Codex, Claude
-Code, and OpenCode on managed agent VMs. Tool installation, authentication,
-non-secret configuration, and browser website sessions are separate concerns.
+Basaltwater manages Codex authentication through `agent auth login`. ChatGPT
+subscription login is the default; API-key authentication is an explicit option.
+Each VM owns its renewable session. The controller needs Python and SSH, but
+does not need Codex, stored subscription credentials, or a graphical desktop.
+
+## Authorize Codex on a target
+
+From the controller, run:
+
+```bash
+python3 basaltwater.py agent auth login 192.168.0.44 agent
+```
+
+The command starts Codex's device authorization flow on the target and prints
+a URL and one-time code. Open that URL in a browser on any trusted device and
+enter the code. Device authorization must be enabled for your ChatGPT account
+or workspace. Add `--open-browser` to open the page on the controller when a
+browser is available. This still uses device authorization and does not require
+a callback port or SSH tunnel. Fully unattended subscription sign-in is not
+supported: the provider requires the account holder to authorize the device.
+
+The target needs a recent Codex version with device-code app-server support
+(the protocol is checked against 0.155.1). Add `--key PATH` or `--port PORT`
+for SSH settings. Host-key enrollment follows the usual strict SSH policy.
+The target does not need an existing Basaltwater installation for this command.
+
+Authorization stages credentials privately on the target, then atomically
+replaces `~/.codex/auth.json` with mode `0600`. It sets the user's
+`cli_auth_credentials_store` to `file`, preserving unrelated TOML settings.
+Cancellation, rejection, and timeout preserve the previous credential;
+concurrent changes to credentials or config stop replacement. The command
+waits at most 15 minutes for authorization and returns status 3 if it cannot
+complete. Subscription tokens never cross SSH to the controller.
+
+### Setup and recovery
+
+`agent_code_vm` defaults to `--agent-auth login`. Other Codex-enabled profiles
+can select it explicitly. Replace `--agent-auth active` in an existing setup
+command with `--agent-auth login` to use this workflow.
+
+Setup first retains or renews the target credential. If authorization is
+needed and setup was launched from a terminal, it prints a device code and
+continues after you authorize. This also recovers a copied session whose
+refresh token was already used elsewhere. When input or output is redirected,
+setup fails with the controller login command instead of waiting for a human.
+Run that command and rerun setup. `--agent-auth none` disables this profile
+default. A healthy existing API-key credential is also retained.
+
+Credential pulling has been removed. An existing VM's subscription session
+cannot serve as a reusable source of independent sessions for other VMs.
+Authorize each target independently; do not copy rotating refresh tokens.
+
+### Optional API-key authentication
+
+**API-key usage is billed separately through the OpenAI API; it does not use
+your ChatGPT subscription allowance.** Basaltwater prints this notice before
+collecting an API key and never switches to API billing automatically.
+
+```bash
+# Hidden terminal prompt:
+python3 basaltwater.py agent auth login 192.168.0.44 agent --method api-key
+
+# A mode-0600 file owned by the controller user:
+python3 basaltwater.py agent auth login 192.168.0.44 agent \
+  --method api-key --api-key-file /run/secrets/agent-openai-key
+
+# Or pass a secret-manager output stream with --api-key-stdin.
+```
+
+Keys travel through SSH stdin and are never command arguments or saved setup
+values. A successful API-key login confirms storage, not provider acceptance
+or available billing quota; it does not issue a billable model request.
+Run subscription login again to switch back to your ChatGPT account.
+
+See OpenAI's [authentication guide](https://learn.chatgpt.com/docs/auth) for
+account requirements and billing modes.
 
 ## Supported files
 
@@ -21,7 +94,7 @@ Selecting an agent tool does not create authentication. Select tools with
 
 ```bash
 --agent-tool gh,codex,opencode \
---agent-auth active
+--agent-auth login
 ```
 
 ## Credential sources
@@ -63,10 +136,11 @@ configuration, and optional pairing. Hidden prompts keep tokens and passwords
 out of process arguments. Automation should use protected files. Dry-run mode
 does not prompt for or stage credentials.
 
-## Setup, status, and rotation
+## Explicit credential imports, status, and rotation
 
-Initial setup installs missing selected credentials at the canonical path with
-mode `0600`. Ordinary reruns preserve existing mutable credentials. The narrow
+Explicit active/file imports install missing selected credentials at the
+canonical path with mode `0600`. Ordinary reruns preserve existing mutable
+credentials. The narrow
 exception is a Codex target marked `refresh_required`, `refresh_due`, or
 `expires_soon`: a staged, unambiguously current source may replace it. Setup
 therefore consumes a supplied current credential before an overdue target's
@@ -105,56 +179,6 @@ Status reports installation, presence, ownership, permissions, age, and safe
 Codex freshness metadata without displaying file contents, tokens, or account
 IDs. Rotation replaces the selected target atomically. Inspect status before
 replacing a credential.
-
-## Pull credentials from an agent VM
-
-Run the pull command from a cloned Basaltwater repository. The Debian or
-CachyOS control system needs Python 3 and OpenSSH, but does not need a
-Basaltwater installation or local agent programs.
-
-```bash
-python3 basaltwater.py ssh-key enroll 192.168.0.41
-python3 basaltwater.py agent auth pull 192.168.0.41 agent-1
-```
-
-| Option | Purpose |
-| --- | --- |
-| `--tool TOOL` | Pull only `gh`, `codex`, `claude`, or `opencode`; repeat as needed |
-| `--output-dir PATH` | Write renamed files to a private staging directory instead of active-user paths |
-| `-k, --key PATH` | SSH identity file |
-| `-p, --port PORT` | SSH port |
-| `--overwrite` | Deliberately replace other existing regular files |
-
-Without `--tool`, absent files are skipped. An explicitly requested but absent
-file fails. The command uses the workspace's strict SSH host-key policy and
-never prints credential contents or remote error text. It reads only the
-canonical paths above and rejects unsafe ownership, permissions, symlinks,
-changes during transfer, empty files, and files over 4 MiB.
-
-By default, each file is written to the active controller user's canonical
-path from the table above. Parent directories must be owned by that user and
-not writable by other users; new directories use mode `0700`. Output files are
-atomically written with mode `0600`. With `--output-dir`, the names are
-`gh-hosts.yml`, `codex-auth.json`, `claude-credentials.json`, and
-`opencode-auth.json`, ready for the matching setup option or `agent auth set
---file`.
-
-Without `--overwrite`, an existing file is retained except when stale Codex
-auth can be safely refreshed from a current pulled credential. If both Codex
-files contain expired cached access tokens, the command reports an error.
-Expiry cannot be established safely for the other formats, so replacing those
-still requires `--overwrite`. The command cannot export an operating-system
-keyring; a `gh` file without an embedded token is not portable.
-
-The pull destination is on the machine running the command, not the named VM.
-When replacement is declined, Codex diagnostics show source and destination
-freshness classifications. For an intentional replacement, select only the
-desired tool and add `--overwrite`; use a new `--output-dir` to stage a separate
-copy without changing active credentials.
-
-Pulling is for migration or recovery, not synchronization. Stop using the
-source VM's renewable Codex ChatGPT session before activating its pulled
-`auth.json` elsewhere.
 
 ## Portability and sharing
 
@@ -209,8 +233,8 @@ basaltw agent auth status HOST USER --tool codex --json
 
 Inspect `codex-auth-maintenance.service` when the timer is present. If the file
 is invalid, lacks required refresh state, or remains stale after provider
-rejection, authenticate the VM independently or deliberately replace it with
-`agent auth set`.
+rejection, run `basaltw agent auth login HOST USER` or rerun setup with
+`--agent-auth login` from a terminal.
 
 Maintenance explicitly selects file storage for its child Codex process and
 checks the private credential file after the request, even when the selected
@@ -222,8 +246,9 @@ Transient refresh failures receive one automatic retry within the service's
 two-minute timeout. Vendor stderr is drained in bounded memory, reduced to
 fixed failure categories, and never copied into Basaltwater logs. Recognized
 terminal failures (`refresh_token_expired`, `refresh_token_reused`,
-`refresh_token_invalidated`, `invalid_grant`) are not retried. Setup shows the
-sanitized maintenance output directly. If no usable replacement was supplied
+`refresh_token_invalidated`, `invalid_grant`) are not retried. Setup with
+`--agent-auth login` starts a fresh authorization after failed renewal; other
+setup modes show sanitized maintenance output directly. If no usable replacement was supplied
 and the provider has rejected the refresh credential, unattended renewal is
 not possible; repeating the same rejected credential cannot repair it.
 

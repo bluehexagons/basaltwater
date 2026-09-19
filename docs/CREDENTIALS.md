@@ -19,7 +19,7 @@ they have different storage, rotation, and sharing rules.
 | --- | --- |
 | Save a service or self-hosted Git password | [Workspace credential store](#workspace-credential-store) |
 | Seed or rotate `gh`, Codex, Claude Code, or OpenCode auth | [Agent authentication](AGENT_AUTHENTICATION.md) |
-| Recover agent auth from an existing VM | [Pull credentials from an agent VM](AGENT_AUTHENTICATION.md#pull-credentials-from-an-agent-vm) |
+| Authorize or recover Codex on a VM | [Target-owned subscription or API-key login](AGENT_AUTHENTICATION.md#authorize-codex-on-a-target) |
 | Configure GitHub or another HTTPS Git server | [Git access and authentication](GIT_ACCESS.md) |
 | Configure the pairing portal | [Protected device pairing](DEVICE_PAIRING.md) |
 | Diagnose SSH login | [SSH authentication](SSH.md) |
@@ -65,8 +65,9 @@ Claude Code, and OpenCode. They are independent from tool installation and
 from non-secret agent configuration.
 
 [Agent authentication](AGENT_AUTHENTICATION.md) covers canonical paths,
-credential sources, initial seeding, status, rotation, recovery from an
-existing VM, portability, and lifecycle.
+target-owned subscription login, explicit API-key billing, credential imports,
+status, rotation, recovery, and lifecycle. Codex login requires no local Codex
+installation on the controller. Credential pulling has been removed.
 
 [Git access and authentication](GIT_ACCESS.md) covers Git policy, GitHub CLI,
 private repositories, self-hosted HTTPS origins, private certificate

@@ -15,7 +15,7 @@ identity's privileges.
 | Configuration | Profile | Suitable for | Privilege model |
 | --- | --- | --- | --- |
 | Headless coding VM | `agent_vm` | SSH, terminal agents, CI-like project work | Password-required sudo by default, or browser-approved operations |
-| Full coding VM | `agent_code_vm` | T3 Code, RDP, Geany, Git write access, and active agent authentication | Browser-approved operations recommended; it keeps the agent capable without reusable root access |
+| Full coding VM | `agent_code_vm` | T3 Code, RDP, Geany, Git write access, and target-owned Codex authentication | Browser-approved operations recommended; it keeps the agent capable without reusable root access |
 | Unrestricted maintenance VM | `agent_code_vm` or `agent_vm` with `--nopasswd` | A VM where a trusted operator intentionally wants agents to administer the whole guest | Unrestricted passwordless sudo; use only for trusted work and disposable guests |
 | Hardened evaluation VM | `agent_vm` with `--harden-user` | Unfamiliar code, unattended work, and disposable evaluation | No escalation path; many agent, browser, network, and credential capabilities are disabled |
 
@@ -58,7 +58,7 @@ for the supported actions, service allowlists, recovery path, and policy rules.
 ## A fully capable coding VM with a linked approval panel
 
 `agent_code_vm` is the complete graphical profile: it includes T3 Code, Geany,
-RDP, protected T3 pairing, read-write Git, active authentication sources, and
+RDP, protected T3 pairing, read-write Git, active GitHub auth, target-owned Codex login, and
 the GitHub CLI and Codex defaults. Add OpenCode and Playwright when the project
 needs those tools. This example provides the web panel as a convenient launch
 point for the separate approval page.

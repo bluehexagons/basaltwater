@@ -1383,7 +1383,7 @@ def validate_agent_git_settings(config: Any) -> None:
         or getattr(config, "git_auth_token", None)
     )
     github_agent_auth_requested = bool(
-        getattr(config, "agent_auth_source", None)
+        getattr(config, "agent_auth_source", None) == "active"
         and "gh" in set(config.selected_agent_tools())
     ) or any(
         isinstance(spec, (list, tuple))
@@ -1414,7 +1414,7 @@ def validate_agent_git_settings(config: Any) -> None:
         and not selected_tools.intersection(supported_auth_tools)
     ):
         raise ValueError(
-            "--agent-auth active requires a selected tool with supported credentials"
+            "--agent-auth requires a selected tool with supported credentials"
         )
 
     seen_auth_tools: set[str] = set()

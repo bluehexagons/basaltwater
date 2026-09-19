@@ -139,8 +139,8 @@ The `agent_vm`, `agent_workstation`, and `agent_code_vm` profiles default to
 GitHub CLI and Codex. `--agent-tool` values add to those defaults and accept
 comma-separated lists; use `--no-agent-tool` to remove a default. The
 `agent_code_vm` profile additionally defaults to Geany, T3 Code, RDP, T3
-pairing, read-write Git, and active auth sources. It does not assume a
-management network; add `--lan-access`, `--access-source`, or service-specific
+pairing, read-write Git, active GitHub auth, and target-owned Codex login. It
+does not assume a management network; add `--lan-access`, `--access-source`, or service-specific
 source flags explicitly. Node.js is installed automatically because T3 Code
 requires it. Playwright remains available explicitly with
 `--browser-automation playwright` for SSH-only and standalone-agent browser
@@ -148,8 +148,10 @@ automation. Go, Python, and other project runtimes remain optional. Use
 `--agent-config active`, `--git-auth active`, or the specified-file credential
 options when the control plane should transfer selected settings or
 credentials. Active GitHub auth can use the controller's `gh auth token`
-command when the token is stored in the controller's keyring; file-backed
-Codex, Claude Code, and OpenCode credentials must be supplied as files. Use
+command when the token is stored in the controller's keyring. Codex subscription
+login uses a device code through `--agent-auth login`,
+without a controller Codex installation. Claude Code and OpenCode imports
+use file-backed credentials. Use
 `--repo GIT_URL` for target-side HTTPS clones; public repositories on any
 reachable Git host are supported.
 The [credentials overview](CREDENTIALS.md) routes workspace passwords,

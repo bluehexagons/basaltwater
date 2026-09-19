@@ -75,7 +75,7 @@ PLUGIN = PluginDefinition(
             default_enable_rdp=True,
             default_git_access="read-write",
             default_git_auth_source="active",
-            default_agent_auth_source="active",
+            default_agent_auth_source="login",
             step_builder="plugins.workstation:build_workstation_steps",
         ),
     ),

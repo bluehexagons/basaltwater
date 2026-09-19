@@ -7,20 +7,14 @@ import json
 import os
 import re
 import shlex
-import stat
 import subprocess
-import sys
-import tempfile
 from typing import Any, Optional
 
 from lib.agent_credentials import (
     codex_auth_warning,
-    inspect_codex_auth_file,
     inspect_codex_auth_payload,
 )
 from lib.ssh_utils import build_ssh_command, ssh_batch_mode, ssh_process_timeout
-from lib.validation import validate_filesystem_path
-from lib.validators import validate_host, validate_username
 
 
 AGENT_AUTH_TOOLS = ("gh", "codex", "claude", "opencode")
@@ -29,12 +23,6 @@ _AUTH_PATHS = {
     "codex": ".codex/auth.json",
     "claude": ".claude/.credentials.json",
     "opencode": ".local/share/opencode/auth.json",
-}
-_PULL_FILENAMES = {
-    "gh": "gh-hosts.yml",
-    "codex": "codex-auth.json",
-    "claude": "claude-credentials.json",
-    "opencode": "opencode-auth.json",
 }
 _MAX_CREDENTIAL_BYTES = 4 * 1024 * 1024
 _HOST_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?")
@@ -223,72 +211,6 @@ print(json.dumps({{
 """
 
 
-def _remote_pull_script(tool: str) -> str:
-    path_literal = json.dumps(_AUTH_PATHS[tool])
-    return f"""
-import os, stat, sys
-
-relative_path = {path_literal}
-limit = {_MAX_CREDENTIAL_BYTES}
-home = os.environ.get('HOME', '')
-if not os.path.isabs(home):
-    raise SystemExit(4)
-
-current = home
-for component in relative_path.split('/'):
-    current = os.path.join(current, component)
-    try:
-        details = os.lstat(current)
-    except FileNotFoundError:
-        raise SystemExit(3)
-    except OSError:
-        raise SystemExit(4)
-    if stat.S_ISLNK(details.st_mode):
-        raise SystemExit(4)
-
-if (
-    not stat.S_ISREG(details.st_mode)
-    or details.st_uid != os.geteuid()
-    or details.st_mode & 0o077
-    or not 0 < details.st_size <= limit
-):
-    raise SystemExit(4)
-
-descriptor = os.open(current, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-try:
-    opened = os.fstat(descriptor)
-    if (
-        not stat.S_ISREG(opened.st_mode)
-        or opened.st_uid != os.geteuid()
-        or opened.st_mode & 0o077
-        or opened.st_dev != details.st_dev
-        or opened.st_ino != details.st_ino
-        or not 0 < opened.st_size <= limit
-    ):
-        raise SystemExit(4)
-    payload = bytearray()
-    while len(payload) <= limit:
-        chunk = os.read(descriptor, min(65536, limit + 1 - len(payload)))
-        if not chunk:
-            break
-        payload.extend(chunk)
-    finished = os.fstat(descriptor)
-finally:
-    os.close(descriptor)
-
-if (
-    not payload
-    or len(payload) > limit
-    or len(payload) != opened.st_size
-    or finished.st_size != opened.st_size
-    or finished.st_mtime_ns != opened.st_mtime_ns
-    or finished.st_ctime_ns != opened.st_ctime_ns
-):
-    raise SystemExit(4)
-sys.stdout.buffer.write(bytes(payload))
-"""
-
-
 def _run_remote_script(
     host: str,
     username: str,
@@ -314,229 +236,6 @@ def _run_remote_script(
         text=payload is None,
         timeout=ssh_process_timeout(60, batch_mode=batch_mode),
     )
-
-
-def _private_output_directory(path: str) -> str:
-    expanded = os.path.abspath(os.path.expanduser(path))
-    validate_filesystem_path(expanded, must_exist=False)
-    if os.path.lexists(expanded):
-        details = os.lstat(expanded)
-        if not stat.S_ISDIR(details.st_mode) or stat.S_ISLNK(details.st_mode):
-            raise ValueError(f"Output path must be a non-symlink directory: {expanded}")
-        if details.st_uid != os.geteuid():
-            raise ValueError(f"Output directory is not owned by the current user: {expanded}")
-        if stat.S_IMODE(details.st_mode) & 0o077:
-            raise ValueError(f"Output directory must have mode 0700: {expanded}")
-    else:
-        os.makedirs(expanded, mode=0o700)
-        os.chmod(expanded, 0o700)
-    return expanded
-
-
-def _credential_output_directory(path: str) -> str:
-    """Validate or create a canonical active-user credential directory."""
-    expanded = os.path.abspath(os.path.expanduser(path))
-    validate_filesystem_path(expanded, must_exist=False)
-    if os.path.lexists(expanded):
-        details = os.lstat(expanded)
-        if not stat.S_ISDIR(details.st_mode) or stat.S_ISLNK(details.st_mode):
-            raise ValueError(
-                f"Credential parent must be a non-symlink directory: {expanded}"
-            )
-        if details.st_uid != os.geteuid():
-            raise ValueError(
-                f"Credential parent is not owned by the current user: {expanded}"
-            )
-        if stat.S_IMODE(details.st_mode) & 0o022:
-            raise ValueError(
-                f"Credential parent must not be group- or world-writable: {expanded}"
-            )
-    else:
-        os.makedirs(expanded, mode=0o700)
-        os.chmod(expanded, 0o700)
-    return expanded
-
-
-def _write_pulled_credential(
-    destination: str,
-    payload: bytes,
-    *,
-    overwrite: bool,
-) -> None:
-    if os.path.lexists(destination):
-        details = os.lstat(destination)
-        if not overwrite:
-            raise FileExistsError(f"Destination already exists: {destination}")
-        if not stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode):
-            raise ValueError(f"Refusing to replace unsafe destination: {destination}")
-        if details.st_uid != os.geteuid():
-            raise ValueError(f"Destination is not owned by the current user: {destination}")
-
-    descriptor, temporary = tempfile.mkstemp(
-        dir=os.path.dirname(destination),
-        prefix=f".{os.path.basename(destination)}.",
-    )
-    try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "wb") as file_obj:
-            descriptor = -1
-            file_obj.write(payload)
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
-        if overwrite:
-            os.replace(temporary, destination)
-        else:
-            os.link(temporary, destination)
-            os.unlink(temporary)
-        os.chmod(destination, 0o600)
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-
-
-def _codex_pull_should_overwrite(destination: str, payload: bytes) -> bool:
-    """Return whether current pulled Codex auth may replace stale local auth."""
-    if not os.path.lexists(destination):
-        return False
-    details = os.lstat(destination)
-    if not stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode):
-        return False
-    if details.st_uid != os.geteuid():
-        return False
-
-    target = inspect_codex_auth_file(destination)
-    source = inspect_codex_auth_payload(payload)
-    if (
-        target.get("access_token_expired") is True
-        and source.get("access_token_expired") is True
-    ):
-        raise ValueError("source and destination Codex credentials are both expired")
-    return (
-        target.get("status") == "refresh_required"
-        and source.get("status") == "current"
-        and codex_auth_warning(source) is None
-    )
-
-
-def _pull_destination(tool: str, output_dir: Optional[str]) -> str:
-    if output_dir is None:
-        return _active_source_path(tool)
-    return os.path.join(output_dir, _PULL_FILENAMES[tool])
-
-
-def pull_agent_credentials(
-    *,
-    host: str,
-    username: str,
-    tools: list[str],
-    output_dir: Optional[str],
-    ssh_key: Optional[str],
-    port: int = 22,
-    overwrite: bool = False,
-    explicit_tools: bool = False,
-) -> int:
-    """Pull selected canonical auth files without displaying their contents."""
-    if not validate_host(host):
-        raise ValueError(f"Invalid IP address or hostname: {host}")
-    if not validate_username(username):
-        raise ValueError(f"Invalid username: {username}")
-    if not 1 <= port <= 65535:
-        raise ValueError("SSH port must be between 1 and 65535")
-    if ssh_key:
-        ssh_key = os.path.abspath(os.path.expanduser(ssh_key))
-        validate_filesystem_path(ssh_key, must_exist=True)
-        if os.path.islink(ssh_key) or not os.path.isfile(ssh_key):
-            raise ValueError(f"SSH key must be a regular, non-symlink file: {ssh_key}")
-
-    selected = list(dict.fromkeys(tools))
-    for tool in selected:
-        if tool not in AGENT_AUTH_TOOLS:
-            raise ValueError(f"Unsupported agent auth tool: {tool}")
-    destination_dir = (
-        _private_output_directory(output_dir) if output_dir is not None else None
-    )
-    pulled = 0
-    failed = 0
-    for tool in selected:
-        try:
-            result = _run_remote_script(
-                host,
-                username,
-                ssh_key,
-                _remote_pull_script(tool),
-                payload=b"",
-                port=port,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            print(f"Error: {tool}: SSH credential transfer failed", file=sys.stderr)
-            failed += 1
-            break
-        if result.returncode == 3:
-            print(f"Skipped {tool}: credential file is not present")
-            failed += int(explicit_tools)
-            continue
-        if result.returncode != 0:
-            print(
-                f"Error: {tool}: remote credential read failed "
-                f"(SSH exit status {result.returncode})",
-                file=sys.stderr,
-            )
-            failed += 1
-            if result.returncode != 4:
-                break
-            continue
-        payload = (
-            bytes(result.stdout)
-            if isinstance(result.stdout, (bytes, bytearray))
-            else b""
-        )
-        if not 0 < len(payload) <= _MAX_CREDENTIAL_BYTES:
-            print(f"Error: {tool}: invalid credential payload", file=sys.stderr)
-            failed += 1
-            continue
-        destination = _pull_destination(tool, destination_dir)
-        try:
-            if destination_dir is None:
-                _credential_output_directory(os.path.dirname(destination))
-            else:
-                _private_output_directory(os.path.dirname(destination))
-            freshness_overwrite = (
-                _codex_pull_should_overwrite(destination, payload)
-                if tool == "codex"
-                else False
-            )
-            _write_pulled_credential(
-                destination,
-                payload,
-                overwrite=overwrite or freshness_overwrite,
-            )
-        except FileExistsError:
-            detail = ""
-            if tool == "codex":
-                source_status = inspect_codex_auth_payload(payload).get("status")
-                target_status = inspect_codex_auth_file(destination).get("status")
-                detail = f" (source freshness: {source_status}; destination freshness: {target_status})"
-            print(f"Error: {tool}: destination already exists: {destination}{detail}; "
-                  "use --overwrite for deliberate replacement, or --output-dir with a new private directory",
-                  file=sys.stderr)
-            failed += 1
-            continue
-        except (OSError, ValueError) as exc:
-            print(f"Error: {tool}: {exc}", file=sys.stderr)
-            failed += 1
-            continue
-        action = "Refreshed" if freshness_overwrite and not overwrite else "Pulled"
-        print(f"{action} {tool} credentials to {destination}")
-        pulled += 1
-
-    if pulled == 0:
-        print("Error: no credential files were pulled", file=sys.stderr)
-        return 1
-    return 1 if failed else 0
 
 
 def set_agent_credential(
@@ -644,20 +343,6 @@ def run_agent_auth_set(args: Any) -> int:
         use_active=use_active,
         git_host=args.git_host,
         token=token,
-    )
-
-
-def run_agent_auth_pull(args: Any) -> int:
-    selected = list(args.agent_auth_tools or AGENT_AUTH_TOOLS)
-    return pull_agent_credentials(
-        host=args.agent_auth_host,
-        username=args.agent_auth_username,
-        tools=selected,
-        output_dir=args.output_dir,
-        ssh_key=args.ssh_key,
-        port=args.port,
-        overwrite=args.overwrite,
-        explicit_tools=bool(args.agent_auth_tools),
     )
 
 

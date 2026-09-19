@@ -1133,11 +1133,11 @@ def add_setup_arguments(
         agent_auth_group.add_argument(
             "--agent-auth",
             dest="agent_auth_source",
-            choices=("active", "none"),
+            choices=("login", "active", "none"),
             help=(
-                "Seed missing active agent credentials, safely refresh "
-                "known-outdated Codex credentials, or use none to disable "
-                "profile defaults"
+                "Authorize Codex on the target with a ChatGPT device code (login), "
+                "import active controller credentials (active), or disable profile "
+                "defaults (none); agent_code_vm defaults to login"
             ),
         )
         agent_auth_group.add_argument(
@@ -1163,6 +1163,10 @@ def add_setup_arguments(
             action="store_true",
             help="Choose tools, repositories, access, and credential sources interactively",
         )
+    if for_remote:
+        parser.add_argument("--agent-auth-mode", dest="agent_auth_source",
+                            choices=("login", "check", "none"), default="none",
+                            help=argparse.SUPPRESS)
     parser.add_argument("--repo", dest="agent_repos",
                        action="append",
                        metavar="GIT_URL",

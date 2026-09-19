@@ -789,9 +789,11 @@ def _github_host_entry_from_validated_path(hosts_path: str, host: str) -> Option
 def _active_agent_credential_error(tool: str, source: str) -> str:
     if tool == "codex":
         return (
-            f"Codex active credentials are not present at {source}. Codex may be "
-            "using its OS credential store; set cli_auth_credentials_store to "
-            '"file" and authenticate, or use --agent-auth-file codex PATH'
+            f"Codex active credentials are not present at {source}. "
+            "cli_auth_credentials_store may select an OS credential store; "
+            "use --agent-auth login to authorize "
+            "the target independently without a controller Codex installation, "
+            "or --agent-auth-file codex PATH for an explicit file import"
         )
     if tool == "claude":
         return (
@@ -942,7 +944,7 @@ def prepare_agent_payload(config: SetupConfig, payload_dir: str) -> None:
             raise ValueError("GitHub auth requires --agent-tool gh and --git-host github.com")
         _stage_github_auth(config, payload_dir, local_home)
 
-    if config.agent_auth_source:
+    if config.agent_auth_source == "active":
         for tool, relative_path in _AGENT_AUTH_PATHS.items():
             if tool in config.selected_agent_tools() and tool != "gh":
                 _stage_active_agent_credential(tool, local_home, payload_dir, relative_path)
@@ -1342,6 +1344,9 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             config.web_panel_payload = True
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
+        if config.agent_auth_source == "login" and config.install_codex:
+            interactive = sys.stdin.isatty() and sys.stdout.isatty()
+            remote_arg_tokens.extend(("--agent-auth-mode", "login" if interactive else "check"))
         _write_remote_args_file(build_dir, remote_arg_tokens)
         remote_args_path = os.path.join(REMOTE_INSTALL_DIR, REMOTE_ARGS_FILENAME)
         command_tokens = [

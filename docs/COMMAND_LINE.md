@@ -66,7 +66,7 @@ basaltw agent doctor [HOST USER] [options]
 basaltw agent update [HOST USER] [options]
 basaltw agent auth set HOST USER --tool TOOL --file PATH
 basaltw agent auth status HOST USER [--tool TOOL]
-basaltw agent auth pull HOST USER [--output-dir PATH] [--tool TOOL]
+basaltw agent auth login HOST USER [--open-browser] [--method subscription|api-key]
 basaltw agent privilege <request|status|wait|password-hash> ...
 basaltw agent web pair HOST USER [-k PATH]
 basaltw agent workspace <create|list|status|remove> ...
@@ -408,7 +408,7 @@ workstation subset documented in [CachyOS](CACHYOS.md). `agent_vm` is the
 recommended terminal-only profile,
 `agent_workstation` adds a desktop and Firefox ESR, and `agent_code_vm` adds
 the common T3 Code web service, Geany, RDP, private source ranges, protected T3
-pairing, read-write Git, and active auth sources. Playwright remains an explicit
+pairing, read-write Git, active GitHub auth, and target-owned Codex login. Playwright remains an explicit
 fallback through `--browser-automation playwright` for SSH-only or standalone
 Codex and OpenCode sessions.
 All three default to GitHub CLI and Codex. `--agent-tool` values add to those
@@ -479,8 +479,8 @@ basaltw setup agent_code_vm 10.0.0.11 agentuser \
   --agent-tool opencode --lan-access
 ```
 
-The profile supplies T3 Code, Geany, RDP, read-write Git, active auth sources,
-and T3 pairing. Access sources are deliberately explicit; the
+The profile supplies T3 Code, Geany, RDP, read-write Git, active GitHub auth,
+target-owned Codex subscription login, and T3 pairing. Access sources are deliberately explicit; the
 example uses `--lan-access`, while a narrower deployment can use
 `--access-source` or the service-specific source flags. Passwords omitted from
 the command are requested with hidden prompts;
@@ -541,7 +541,7 @@ rm -f "$HOME/.basaltwater-install.sh"
 | `--no-git-credentials` | Remove all Basaltwater-managed Git HTTPS credentials, helper configuration, and private CA files from the target user |
 | `--git-auth active\|none` | Seed missing active GitHub CLI host credentials, or disable a profile auth default |
 | `--git-auth-file PATH` | Seed a missing selected-host `hosts.yml` entry or one-line GitHub token from a controller-local file |
-| `--agent-auth active\|none` | Seed missing selected agent credentials, refresh known-outdated Codex credentials from a current source, or disable a profile auth default |
+| `--agent-auth login\|active\|none` | Authorize Codex on the target (default for `agent_code_vm`), explicitly import controller credentials, or disable the profile auth default |
 | `--agent-auth-file TOOL PATH` | Stage one selected agent credential from a controller-local file at its canonical target path; `gh` accepts a hosts file or one-line token; setup otherwise preserves existing credentials, except for safe stale-Codex refresh; repeatable |
 | `--agent-config active` | Copy known non-secret config from the active controller; does not copy auth files |
 | `--interactive` | Prompt for tools, HTTPS repositories, Git policy, and credential sources |
@@ -638,7 +638,8 @@ dependencies.
 Credential seeding and config copy are intentionally tool-scoped and transient:
 
 - `--git-auth`/`--git-auth-file` seed only a missing selected GitHub host entry, preserve target-managed credentials on rerun, and run `gh auth setup-git`.
-- `--agent-auth`/`--agent-auth-file` seed missing Codex, Claude Code, or OpenCode credentials without requiring those tools on the controller. They also replace refresh-required Codex auth when the staged source is unambiguously current; active `gh` requires controller `gh` only when its token is keyring-backed.
+- `--agent-auth login` retains or renews target Codex auth and starts device authorization when needed in a terminal. Unattended setup fails clearly when authorization is required.
+- Explicit `--agent-auth active`/`--agent-auth-file` seed missing Codex, Claude Code, or OpenCode credentials without requiring those tools on the controller. They also replace refresh-required Codex auth when the staged source is unambiguously current; active `gh` requires controller `gh` only when its token is keyring-backed.
 - `--agent-config active` copies known non-secret configuration from the active controller user.
 - Codex and OpenCode receive only non-secret managed workflow skills; T3 Code
   adds its focused service and HTTPS-gateway guidance. Basaltwater does not copy
@@ -852,9 +853,9 @@ Credential rotation does not rebuild the VM or overwrite repositories:
 
 ```bash
 basaltw agent auth set 10.0.0.10 agent --tool gh --file /run/secrets/gh-hosts.yml
-basaltw agent auth set 10.0.0.10 agent --tool codex --active
+basaltw agent auth login 10.0.0.10 agent --open-browser
 basaltw agent auth status 10.0.0.10 agent --json
-python3 basaltwater.py agent auth pull 10.0.0.10 agent
+python3 basaltwater.py agent auth login 10.0.0.10 agent --method api-key
 ```
 
 `auth set` accepts an active-user source, a controller-local file, or
@@ -866,14 +867,15 @@ replacement. Status reports only tool
 installation, credential presence/metadata, safe Codex refresh and cached-token
 dates, and the GitHub authentication check; it never prints credential
 contents, token strings, or Codex account IDs. Normal setup preserves existing
-credentials except for a safe refresh of known-outdated Codex auth; `auth set`
-is the deliberate replacement path for every other case.
-`auth pull` copies canonical file-backed credentials from an existing agent VM
-to the active controller user's canonical paths without requiring local agent
-programs. A private staging directory remains available through
-`--output-dir`. Known-stale Codex auth is refreshed automatically only from a
-current source; other existing files require `--overwrite`. Run it from a
-clone when Basaltwater is not installed; see [Agent authentication](AGENT_AUTHENTICATION.md#pull-credentials-from-an-agent-vm).
+credentials except for a safe refresh of known-outdated Codex auth; use
+`auth login` for Codex reauthorization and `auth set` for explicit file imports.
+`auth login` defaults to a target-owned ChatGPT subscription session. The
+controller prints a device URL/code; `--open-browser` optionally opens the URL.
+It needs no local Codex installation. Explicit `--method api-key` accepts a
+hidden prompt, `--api-key-file PATH`, or `--api-key-stdin` and warns that API
+usage is separately billed rather than covered by the ChatGPT subscription.
+Keys never enter argv or setup history. Credential pulling is removed; see
+[Agent authentication](AGENT_AUTHENTICATION.md#authorize-codex-on-a-target).
 
 The normal restart policy defers for active login sessions, coding agents,
 build and Git processes, terminal multiplexers, maintenance holds, and
