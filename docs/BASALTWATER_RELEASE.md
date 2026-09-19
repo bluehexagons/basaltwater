@@ -47,5 +47,29 @@ panel specimens do not certify live provisioning or migration.
 - [ ] When the repository is renamed later, update its URLs together and verify
   every source-download and updater path; do not assume redirects suffice.
 
-No live host migration, package publication, repository rename or domain purchase
-was performed during repository development.
+## Live agent VM audit — 2026-09-19
+
+After the operator reran setup with commit `03298b0`, a read-only audit of the
+Debian agent VM (kernel `6.12.107+deb13-cloud-amd64`) confirmed:
+
+- The user migration journal is complete. The old runtime and default user
+  config/share/state directories are absent.
+- All 14 registered Git checkouts resolve at their current paths, including
+  the relocated managed worktrees.
+- Codex 0.155.1 subscription credentials are current. T3 0.0.42 service,
+  pairing, native runtime, Git identity and GitHub integration checks pass.
+- Maintenance timers report successful runs; no system units are failed.
+  Managed unit/launcher scans found no old runtime paths or broken unit links.
+- The managed browser smoke test passes. Go, Node and Godot toolchain checks
+  pass, including Godot export templates.
+
+The host reports retained swap usage above 25%, with about 2.6 GiB available
+RAM and no active swapping in the short sample. A failed user
+`xfce4-notifyd.service` reports no display; graphical desktop operation was not
+tested or changed. Active T3 sessions were not restarted. Service checks do
+not establish successful provider prompts or client-side previews.
+
+This is post-setup evidence for one agent VM, not full release qualification:
+pre-migration private-data checksums, live interruption/recovery, fresh installs,
+and the other platform combinations above remain outstanding. No package
+publication, repository rename or domain purchase was performed.
