@@ -82,6 +82,13 @@ monochrome variants, light/dark palette tokens, and a short usage guide.
 Evaluate them together in a README header, documentation page, and existing
 web-panel screen before committing to a finished identity.
 
+Keep editable vector sources and generated exports in the repository, with
+font/asset licenses and attribution. Define reusable semantic tokens for
+background, text, action, focus, and status instead of copying raw hex values
+into each interface. Include terminal output with color disabled in the
+readability review. Visual exploration may proceed alongside the technical
+rename; a complete sister-project design system is not a launch dependency.
+
 ## A family of independent projects
 
 Basaltwater should support a recognizable family without forcing future
@@ -118,6 +125,12 @@ keeping bluehexagons as the owner is compatible with an independent identity.
 Decide the release version and transition window, and document any temporary
 compatibility behavior with explicit removal criteria.
 
+Record each availability check with its date, exact identifier, registry or
+source, and result. Distinguish an unused identifier from one the project
+actually controls. A new domain is optional; existing repository hosting can
+support the release. The current names are the intended choices, subject to
+resolving a concrete collision if these checks uncover one.
+
 ## Technical rename scope
 
 The current package metadata in `pyproject.toml` declares distribution
@@ -137,6 +150,7 @@ external reference, or historical evidence.
 | Installation and updates | `install.sh`, source/archive URLs, channels, environment variables, managed-install markers, staged source, and upgrade/rollback logic. |
 | Saved state and recovery | Local and target configuration, ownership records, credentials, backups, transaction journals, inventory, and reconstruction/recall paths. |
 | Managed system resources | Services, timers, sudoers rules, hooks, runtime files, locks, temporary paths, logs, and service discovery. |
+| External and machine-readable contracts | JSON fields, schemas, API/readiness routes, webhook consumers, monitoring rules, authentication scopes, and generated configuration consumed outside this repository. |
 | Agent integrations | Bundled skill names and content, installation/reconciliation, readiness checks, tool registration, and generated agent instructions. |
 | Documentation and hosting | README, operator/contributor guides, examples, links, badges, repository metadata, CI, releases, and any published site. |
 | Tests and fixtures | Assertions, temporary filesystem layouts, mocked commands, packaging checks, and supported migration scenarios. |
@@ -151,6 +165,45 @@ Preserve third-party project names and external historical references.
 For contracts such as `infra.json`, make an explicit retain-or-migrate
 decision based on user impact; a branding change does not require changing
 every generic use of the word infra.
+
+For each inventory entry, record its producer and consumers, proposed name
+or explicit retention decision, migration action, verification, and any
+transition end. Default to retaining existing serialized keys and manifest
+formats unless a change has a concrete benefit and a versioned migration.
+Do not combine the rename with unrelated schema or package-layout redesign.
+
+Resource names can participate in security and ownership checks: review
+systemd sandbox paths, sudoers command paths, firewall ownership comments,
+log parsers, and readiness probes together with their targets. For example,
+`web/cicd_steps.py` embeds working directories, environment files, and
+`ReadWritePaths`, while `web/homebox_steps.py` generates a branded readiness
+route. Updating only visible labels or filenames would leave stale consumers.
+
+## Release and migration contracts
+
+The delivery sequence below describes development order. Package, installer,
+caller, and required state/resource migration changes must reach a coherent
+release boundary before users receive the new entry point. If intermediate
+commits are exposed through an update channel, each must remain usable.
+
+A new distribution name is not automatically discovered by an upgrade of the
+old distribution. Define how existing Git-managed installations and Python
+package installations reach the new release, including users pinned to a
+release or following an update channel. Document the exact upgrade command
+and how ownership of installed files transfers. Test old-package uninstall
+ordering so it cannot remove files or launchers belonging to the new install.
+
+Specify precedence for old/new environment variables and configuration
+locations, including what happens when both are set. Preserve explicit user
+paths. An ordinary help, status, or inspection command must not move state
+as a side effect of recognizing the old name.
+
+Make migration repeatable and recoverable after interruption. Record
+completion only after verifying the destination, preserve permissions and
+ownership, and define treatment of symlinks and user-modified managed files.
+Keep recovery data until verification succeeds. If new state cannot be read
+by an older release, rollback must restore the matching state snapshot or
+report the unsupported downgrade before making changes.
 
 ## Delivery sequence
 
@@ -195,6 +248,15 @@ launcher while generated automation still invokes it.
 - Focused tests exercise meaningful migration and caller behavior using
   mocked system operations and temporary directories. Packaging and installer
   smoke checks cover both a fresh install and a previous-release upgrade.
+- Verification covers root/system and non-root/user installs, custom install
+  paths, Git-managed and Python-package installs, and the supported Debian
+  and CachyOS workflows. Exercise a migration rerun, interruption recovery,
+  conflicting state, old/new environment settings, and rollback. Use
+  disposable environments for installation and service lifecycle checks.
+- Existing users can discover and execute the documented upgrade; old-package
+  removal does not damage the new installation. Inspection commands do not
+  perform hidden migration, and retained machine-readable contracts remain
+  compatible with their consumers.
 - Active documentation and owned links are current. Remaining old-name
   occurrences are reviewed and explained, rather than requiring zero matches.
 - Visual specimens establish consistent light/dark colors, readable contrast,
