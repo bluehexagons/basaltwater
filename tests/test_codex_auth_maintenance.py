@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+import shlex
 import sys
 import tempfile
 import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +40,14 @@ def _metadata(
 
 
 class TestCodexAuthMaintenance(unittest.TestCase):
+    def test_command_can_renew_a_private_staged_home(self) -> None:
+        with (
+            patch.object(sys, "argv", ["maintenance", "--home", "/private/staged", "--codex-path", "/bin/codex"]),
+            patch.object(codex_auth_maintenance, "maintain_codex_auth", return_value=0) as maintain,
+        ):
+            self.assertEqual(codex_auth_maintenance.main(), 0)
+        maintain.assert_called_once_with(home="/private/staged", codex_path="/bin/codex")
+
     def test_missing_account_with_renewed_file_is_success(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             self._credential_home(home)
@@ -294,6 +305,60 @@ class TestCodexAuthMaintenance(unittest.TestCase):
 
 
 class TestCodexAuthMaintenanceSetup(unittest.TestCase):
+    def test_setup_renews_stale_source_without_risking_live_credentials(self) -> None:
+        for outcome in ("renewed", "rejected", "same_token", "concurrent_login"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as home:
+                source = os.path.join(home, "source.json")
+                destination = os.path.join(home, "auth.json")
+                source_auth = {
+                    "auth_mode": "chatgpt", "last_refresh": "2020-01-01T00:00:00Z",
+                    "tokens": {"refresh_token": "candidate-secret", "access_token": "old-access"},
+                }
+                target_auth = dict(source_auth, tokens={"refresh_token": "target-secret"})
+                if outcome == "same_token":
+                    target_auth = source_auth
+                for path, content in ((source, source_auth), (destination, target_auth)):
+                    with open(path, "w", encoding="utf-8") as stream:
+                        json.dump(content, stream)
+
+                def renew(_user: str, _home: str, command: str, **_kwargs: object) -> SimpleNamespace:
+                    args = shlex.split(command)
+                    staged_home = args[args.index("--home") + 1]
+                    candidate = os.path.join(staged_home, ".codex", "auth.json")
+                    with open(destination, encoding="utf-8") as stream:
+                        self.assertEqual(json.load(stream), target_auth)
+                    self.assertEqual(os.stat(candidate).st_mode & 0o777, 0o600)
+                    if outcome != "rejected":
+                        renewed = dict(source_auth, last_refresh=datetime.now(timezone.utc).isoformat())
+                        with open(candidate, "w", encoding="utf-8") as stream:
+                            json.dump(renewed, stream)
+                        if outcome == "concurrent_login":
+                            with open(destination, "w", encoding="utf-8") as stream:
+                                json.dump(dict(target_auth, last_refresh=renewed["last_refresh"]), stream)
+                    return SimpleNamespace(returncode=int(outcome == "rejected"), stdout="", stderr="")
+
+                config = SetupConfig(host="host", username="agent", system_type="server_dev")
+                output = io.StringIO()
+                with (
+                    patch("common.agent_steps._user_home", return_value=home),
+                    patch("common.agent_steps._chown_path"),
+                    patch("common.agent_steps._chown_user_directory_chain"),
+                    patch("common.agent_steps._tool_path", return_value=sys.executable),
+                    patch("common.agent_steps._run_as_login_user", side_effect=renew) as run,
+                    redirect_stdout(output),
+                ):
+                    changed = _copy_secret_file(config, source, destination, "Codex", credential_tool="codex")
+                self.assertEqual(changed, outcome == "renewed")
+                self.assertEqual(run.call_count, 0 if outcome == "same_token" else 1)
+                with open(source, encoding="utf-8") as stream:
+                    self.assertEqual(json.load(stream), source_auth)
+                with open(destination, encoding="utf-8") as stream:
+                    expected = source_auth if outcome == "renewed" else target_auth
+                    self.assertEqual(json.load(stream)["tokens"], expected["tokens"])
+                self.assertEqual(sorted(os.listdir(home)), ["auth.json", "source.json"])
+                self.assertNotIn("candidate-secret", output.getvalue())
+                self.assertNotIn("target-secret", output.getvalue())
+
     def test_setup_replaces_due_credentials_with_current_supplied_source(self) -> None:
         for target_status in ("refresh_due", "expires_soon", "current"):
             with self.subTest(target_status=target_status), tempfile.TemporaryDirectory() as home:

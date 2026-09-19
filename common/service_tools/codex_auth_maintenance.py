@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pwd
@@ -412,8 +413,12 @@ def maintain_codex_auth(
 def main() -> int:
     """Run one scheduled authentication maintenance check."""
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--home", help="Private home used to renew a staged credential")
+    parser.add_argument("--codex-path", help="Codex executable used for renewal")
+    args = parser.parse_args()
     try:
-        return maintain_codex_auth()
+        return maintain_codex_auth(home=args.home, codex_path=args.codex_path)
     except (OSError, RuntimeError, ValueError) as exc:
         log_event(
             logger,

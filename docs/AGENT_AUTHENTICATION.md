@@ -72,6 +72,20 @@ exception is a Codex target marked `refresh_required`, `refresh_due`, or
 therefore consumes a supplied current credential before an overdue target's
 access token expires, without requiring a separate `agent auth set` command.
 
+If both files need renewal and the supplied ChatGPT refresh token differs from
+the target's, setup first attempts to renew the supplied credential in a private,
+temporary home on the target VM. It uses the target user's Codex executable and
+installs the result only after successful renewal and a fresh metadata check.
+Failure preserves the existing target credential. A target that becomes current
+during the attempt is also preserved. Temporary files are removed afterward.
+This applies to both `--agent-auth active` and `--agent-auth-file codex PATH`;
+the controller does not need Codex installed. Identical refresh tokens are not
+tested as a separate recovery source.
+
+Renewal rotates the staged session for use on the target. It does not update the
+controller's copy or synchronize credentials with the source VM. Reusing that
+session concurrently on another machine can invalidate its older copies.
+
 Use `agent auth set` for every other intentional replacement:
 
 ```bash

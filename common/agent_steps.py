@@ -10,7 +10,11 @@ import shutil
 import sys
 import tempfile
 
-from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
+from lib.agent_credentials import (
+    MAX_AGENT_CREDENTIAL_BYTES,
+    codex_auth_warning,
+    inspect_codex_auth_file,
+)
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.maintenance_systemd import configure_maintenance_timer
@@ -935,6 +939,13 @@ def _copy_secret_file(
             warning = codex_auth_warning(target_metadata)
             source_metadata = inspect_codex_auth_file(source)
             if (
+                target_metadata.get("status") in {"refresh_required", "refresh_due", "expires_soon"}
+                and source_metadata.get("auth_mode") == "chatgpt"
+                and source_metadata.get("refresh_token_present") is True
+                and source_metadata.get("status") in {"refresh_required", "refresh_due", "expires_soon"}
+            ):
+                return _recover_staged_codex_credential(config, source, destination)
+            if (
                 target_metadata.get("status") in {
                     "refresh_required", "refresh_due", "expires_soon",
                 }
@@ -993,6 +1004,68 @@ def _copy_secret_file(
     _chown_path(config, destination)
     print(f"  Seeded {label} credentials")
     return True
+
+
+def _recover_staged_codex_credential(
+    config: SetupConfig, source: str, destination: str,
+) -> bool:
+    """Renew a supplied credential privately before replacing an overdue login."""
+
+    def read_tokens(path: str) -> dict:
+        _reject_symlinked_agent_destination(path)
+        with open(path, "rb") as stream:
+            payload = stream.read(MAX_AGENT_CREDENTIAL_BYTES + 1)
+        if len(payload) > MAX_AGENT_CREDENTIAL_BYTES:
+            return {}
+        try:
+            value = json.loads(payload)
+        except (ValueError, RecursionError):
+            return {}
+        tokens = value.get("tokens") if isinstance(value, dict) else None
+        return tokens if isinstance(tokens, dict) else {}
+
+    source_tokens = read_tokens(source)
+    if not source_tokens.get("refresh_token"):
+        return False
+    if source_tokens.get("refresh_token") == read_tokens(destination).get("refresh_token"):
+        print("  Supplied Codex credential has the same refresh token as the target; retained target")
+        return False
+    codex_path = _tool_path(config, "codex")
+    if not codex_path:
+        print("  Codex is unavailable to renew the supplied credential; retained target")
+        return False
+    user_home = _user_home(config)
+    # Work under the user's home so a failed probe never touches live auth.
+    with tempfile.TemporaryDirectory(prefix=".basaltwater-auth-recovery-", dir=user_home) as staged_home:
+        staged_codex = os.path.join(staged_home, ".codex")
+        os.mkdir(staged_codex, 0o700)
+        staged_auth = os.path.join(staged_codex, "auth.json")
+        shutil.copyfile(source, staged_auth)
+        os.chmod(staged_auth, 0o600)
+        _chown_path(config, staged_home)
+        script = os.path.join(os.path.dirname(__file__), "service_tools", "codex_auth_maintenance.py")
+        print("  Attempting renewal of the supplied Codex credential in private staging")
+        result = _run_as_login_user(
+            config.username, user_home,
+            shlex.join(["/usr/bin/python3", script, "--home", staged_home, "--codex-path", codex_path]),
+            check=False, capture_output=True,
+        )
+        _reject_symlinked_agent_destination(staged_auth)
+        metadata = inspect_codex_auth_file(staged_auth)
+        if (
+            result.returncode != 0
+            or metadata.get("status") != "current"
+            or codex_auth_warning(metadata) is not None
+        ):
+            for line in (result.stdout or "").splitlines():
+                print(f"  {line}")
+            print("  Supplied Codex credential could not be renewed; retained target")
+            return False
+        # Reinspect the target in the ordinary atomic copy path, preserving a
+        # target that became current while the candidate was being renewed.
+        return _copy_secret_file(
+            config, staged_auth, destination, "Codex", credential_tool="codex",
+        )
 
 
 def _configure_github_git_credentials(config: SetupConfig) -> None:
