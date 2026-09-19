@@ -1395,6 +1395,35 @@ def _agent_storage_inventory(home: str) -> JSONDict:
     }
 
 
+def _sample_swap_activity(path: str = "/proc/vmstat") -> JSONDict:
+    """Sample swap counters for one second; lifetime totals are not activity."""
+    def read() -> tuple[int, int]:
+        with open(path, encoding="utf-8") as stream:
+            values = dict(line.split() for line in stream if line.startswith(("pswpin ", "pswpout ")))
+        counters = (int(values["pswpin"]), int(values["pswpout"]))
+        if min(counters) < 0:
+            raise ValueError("Negative swap counters")
+        return counters
+
+    try:
+        before = read()
+        start = time.monotonic()
+        time.sleep(1)
+        after = read()
+        elapsed = time.monotonic() - start
+        delta = tuple(end - initial for initial, end in zip(before, after))
+        if min(delta) < 0 or elapsed <= 0:
+            raise ValueError("Invalid swap sample")
+    except (OSError, ValueError, KeyError):
+        return {"status": "unknown"}
+    return {
+        "status": "active" if any(delta) else "idle",
+        "sample_seconds": round(elapsed, 3),
+        "pages_in": delta[0],
+        "pages_out": delta[1],
+    }
+
+
 def inspect_host_readiness(
     home: Optional[str] = None,
     *,
@@ -1427,10 +1456,13 @@ def inspect_host_readiness(
         warnings.append(
             "memory is below the 4 GiB recommendation for T3 Code with browser or build workloads"
         )
-    if memory_available and memory_available < _AGENT_HOST_LOW_AVAILABLE_MEMORY:
+    if "MemAvailable" in meminfo and memory_available < _AGENT_HOST_LOW_AVAILABLE_MEMORY:
         warnings.append("available memory is below 512 MiB")
-    if swap_total and swap_used * 4 >= swap_total:
-        warnings.append("at least 25% of swap is in use")
+    swap_activity = _sample_swap_activity() if swap_total else {"status": "disabled"}
+    if swap_activity["status"] == "active":
+        warnings.append("swap I/O occurred during the one-second sample; check sustained memory pressure under normal workload")
+    elif swap_activity["status"] == "unknown" and swap_used:
+        warnings.append("swap is in use but current swap activity could not be inspected")
 
     try:
         disk = shutil.disk_usage(user_home)
@@ -1514,9 +1546,10 @@ def inspect_host_readiness(
             "total_bytes": memory_total or None,
             "capacity_bytes": memory_capacity or None,
             "ballooned": memory_ballooned,
-            "available_bytes": memory_available or None,
+            "available_bytes": memory_available if "MemAvailable" in meminfo else None,
             "swap_total_bytes": swap_total,
             "swap_used_bytes": swap_used,
+            "swap_activity": swap_activity,
         },
         "disk": disk_details,
         "agent_storage": storage,

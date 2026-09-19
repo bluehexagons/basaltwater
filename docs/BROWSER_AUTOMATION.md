@@ -86,6 +86,14 @@ agents and prevents one task from silently inheriting another task's browser
 session. Use the normal desktop browser over RDP when a durable, human-managed
 browser profile is required.
 
+The managed MCP configuration at `/opt/basaltwater-playwright/mcp-config.json`
+and the direct smoke test disable Chromium's `NativeNotifications` feature.
+Headless browser startup therefore avoids activating the display-dependent
+XFCE notification daemon on the user's service bus. This does not disable
+notifications in the interactive desktop browser or modify the desktop session.
+Rerunning setup refreshes the configuration and launchers; existing MCP sessions
+pick it up when they next restart.
+
 Generated snapshots, console captures, screenshots, and other MCP evidence
 default to the private
 `~/.local/state/basaltwater/playwright-mcp` directory instead of the current

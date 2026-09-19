@@ -12,6 +12,7 @@ from lib.agent_cli import (
     _maintenance_status,
     _read_memory_capacity_bytes,
     _read_meminfo,
+    _sample_swap_activity,
     inspect_host_readiness,
 )
 from lib.types import BYTES_PER_GB, BYTES_PER_MB
@@ -25,6 +26,59 @@ class _DiskUsage:
 
 
 class TestAgentHostReadiness(unittest.TestCase):
+    def setUp(self) -> None:
+        sampler = patch("lib.agent_cli._sample_swap_activity", return_value={"status": "idle"})
+        self.swap_sample = sampler.start()
+        self.addCleanup(sampler.stop)
+
+    def test_swap_warning_uses_activity_and_available_memory(self) -> None:
+        for status, available, expected in (
+            ("idle", 3 * BYTES_PER_GB, False),
+            ("active", 3 * BYTES_PER_GB, True),
+            ("unknown", 3 * BYTES_PER_GB, True),
+            ("idle", 0, True),
+        ):
+            with self.subTest(status=status, available=available), tempfile.TemporaryDirectory() as home:
+                self.swap_sample.return_value = {"status": status}
+                with (
+                    patch("lib.agent_cli._read_meminfo", return_value={
+                        "MemTotal": 4 * BYTES_PER_GB, "MemAvailable": available,
+                        "SwapTotal": 4 * BYTES_PER_GB, "SwapFree": BYTES_PER_GB,
+                    }),
+                    patch("lib.agent_cli._read_memory_capacity_bytes", return_value=0),
+                    patch("lib.agent_cli._agent_storage_inventory", return_value={"paths": {}, "size_bytes": {}, "codex_release_count": 0}),
+                    patch("lib.agent_cli._systemd_properties", return_value={}),
+                    patch("lib.agent_cli._maintenance_status", return_value={"units": {}, "warnings": [], "errors": []}),
+                    patch("lib.agent_cli.inspect_agent_maintenance", return_value={"status": "inactive"}),
+                    patch("lib.agent_cli.shutil.disk_usage", return_value=_DiskUsage(32 * BYTES_PER_GB, 8 * BYTES_PER_GB, 24 * BYTES_PER_GB)),
+                    patch("lib.agent_cli.os.path.exists", return_value=False),
+                ):
+                    result = inspect_host_readiness(home)
+                self.assertEqual(bool(result["warnings"]), expected)
+                self.assertEqual(result["memory"]["available_bytes"], available)
+                self.assertEqual(result["memory"]["swap_activity"]["status"], status)
+
+    def test_swap_sampler_uses_deltas_and_handles_missing_or_reset_counters(self) -> None:
+        for after, status in (
+            ("pswpin 50000\npswpout 90000\n", "idle"),
+            ("pswpin 50004\npswpout 90001\n", "active"),
+            ("pswpin 1\npswpout 1\n", "unknown"),
+            ("pswpin invalid\n", "unknown"),
+        ):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "vmstat")
+                def write(content):
+                    with open(path, "w", encoding="utf-8") as stream:
+                        stream.write(content)
+                write("pswpin 50000\npswpout 90000\n")
+                with patch("lib.agent_cli.time.sleep", side_effect=lambda _: write(after)), patch("lib.agent_cli.time.monotonic", side_effect=[10, 11]):
+                    result = _sample_swap_activity(path)
+                self.assertEqual(result["status"], status)
+                if status == "active":
+                    self.assertEqual((result["pages_in"], result["pages_out"]), (4, 1))
+        with patch("builtins.open", side_effect=OSError):
+            self.assertEqual(_sample_swap_activity(), {"status": "unknown"})
+
     def test_maintenance_includes_installed_development_timers_only(self) -> None:
         def properties(
             unit: str,

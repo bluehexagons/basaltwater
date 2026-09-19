@@ -60,6 +60,7 @@ PLAYWRIGHT_MODULE = os.path.join(
     "playwright",
 )
 PLAYWRIGHT_SMOKE_SCRIPT = os.path.join(PLAYWRIGHT_ROOT, "browser-smoke.js")
+PLAYWRIGHT_MCP_CONFIG = os.path.join(PLAYWRIGHT_ROOT, "mcp-config.json")
 PLAYWRIGHT_MCP_WRAPPER = "/usr/local/bin/basaltwater-playwright-mcp"
 PLAYWRIGHT_DOCTOR_WRAPPER = "/usr/local/bin/basaltwater-playwright-doctor"
 SYSTEM_NODE = "/usr/bin/node"
@@ -95,6 +96,7 @@ _MCP_WRAPPER_CONTENT = (
     'mkdir -p "$output_dir"\n'
     'chmod 0700 "$output_dir"\n'
     f"exec {SYSTEM_NODE} {PLAYWRIGHT_MCP_CLI} --headless --isolated \\\n"
+    f"  --config {PLAYWRIGHT_MCP_CONFIG} \\\n"
     '  --executable-path "$browser_path" \\\n'
     "  --caps vision \\\n"
     '  --output-dir "$output_dir" \\\n'
@@ -120,6 +122,7 @@ const {{ chromium }} = require('{PLAYWRIGHT_ROOT}/node_modules/playwright');
   const browser = await chromium.launch({{
     executablePath,
     headless: true,
+    args: ['--disable-features=NativeNotifications'],
     timeout: {PLAYWRIGHT_SMOKE_ACTION_TIMEOUT_MS},
   }});
   try {{
@@ -362,9 +365,14 @@ def _write_launchers() -> None:
         PLAYWRIGHT_MCP_WRAPPER,
         PLAYWRIGHT_DOCTOR_WRAPPER,
         PLAYWRIGHT_SMOKE_SCRIPT,
+        PLAYWRIGHT_MCP_CONFIG,
     ):
         _ensure_safe_root_path(path)
 
+    # Publish the config before a newly launched MCP process can reference it.
+    write_json_atomic(PLAYWRIGHT_MCP_CONFIG, {
+        "browser": {"launchOptions": {"args": ["--disable-features=NativeNotifications"]}},
+    }, mode=0o644)
     write_text_atomic(PLAYWRIGHT_MCP_WRAPPER, _MCP_WRAPPER_CONTENT, mode=0o755)
     write_text_atomic(PLAYWRIGHT_DOCTOR_WRAPPER, _DOCTOR_WRAPPER_CONTENT, mode=0o755)
     write_text_atomic(PLAYWRIGHT_SMOKE_SCRIPT, _SMOKE_SCRIPT_CONTENT, mode=0o644)

@@ -115,6 +115,22 @@ class BrowserAutomationConfigTests(unittest.TestCase):
 
 
 class BrowserAutomationProvisioningTests(unittest.TestCase):
+    def test_headless_launchers_install_native_notification_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(browser_automation_steps, "PLAYWRIGHT_MCP_WRAPPER", str(root / "mcp")),
+                patch.object(browser_automation_steps, "PLAYWRIGHT_DOCTOR_WRAPPER", str(root / "doctor")),
+                patch.object(browser_automation_steps, "PLAYWRIGHT_SMOKE_SCRIPT", str(root / "smoke.js")),
+                patch.object(browser_automation_steps, "PLAYWRIGHT_MCP_CONFIG", str(root / "config.json")),
+            ):
+                browser_automation_steps._write_launchers()
+            config = json.loads((root / "config.json").read_text())
+            self.assertEqual(config["browser"]["launchOptions"]["args"], ["--disable-features=NativeNotifications"])
+            self.assertEqual((root / "config.json").stat().st_mode & 0o777, 0o644)
+            self.assertIn("--disable-features=NativeNotifications", (root / "smoke.js").read_text())
+            self.assertIn(f"--config {browser_automation_steps.PLAYWRIGHT_MCP_CONFIG}", (root / "mcp").read_text())
+
     def test_existing_install_reconciles_launchers_without_full_reinstall(self) -> None:
         config = _config("codex", browser_automation=None)
         with (

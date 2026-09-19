@@ -368,6 +368,15 @@ T3 cgroup usage, recurring maintenance state, and pending reboots. Capacity
 warnings do not make an otherwise healthy service fail; critical disk pressure
 and recorded maintenance failures do.
 
+Swap occupancy alone is not a pressure warning: idle swapped pages can remain
+while plenty of RAM is available. When swap is configured, the host doctor
+samples Linux swap-in/out counters for one second and includes the page deltas
+and sample duration in `memory.swap_activity`. It warns about observed swap
+I/O, unavailable activity measurements when swap is in use, and available RAM
+below 512 MiB (including zero). An idle sample is only a point-in-time result;
+repeat the check under normal workload before deciding to increase VM memory.
+The doctor does not clear swap or change kernel tuning.
+
 ## Related documentation
 
 - [Device pairing](DEVICE_PAIRING.md)
