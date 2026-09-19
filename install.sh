@@ -6,7 +6,7 @@ REPOSITORY="bluehexagons/infra_tools"
 # New spellings win when explicitly set, including empty values (validated
 # below). Retain old spellings through v2.x for installed automation.
 REPOSITORY_URL="${BASALTWATER_REPOSITORY_URL-${INFRA_TOOLS_REPOSITORY_URL:-https://github.com/$REPOSITORY.git}}"
-CHANNEL="${BASALTWATER_CHANNEL-${INFRA_TOOLS_CHANNEL-dev}}"
+CHANNEL="${BASALTWATER_CHANNEL-${INFRA_TOOLS_CHANNEL:-dev}}"
 CHANNEL_SET=0
 if [ "${BASALTWATER_CHANNEL+x}" = "x" ] || [ "${INFRA_TOOLS_CHANNEL+x}" = "x" ]; then
     CHANNEL_SET=1
@@ -724,11 +724,13 @@ else
     fi
 fi
 
-# Old pinned releases only install infra-tools. Select the launcher declared
+# Old pinned releases install infra-tools or infra_tools. Select the launcher declared
 # by the checked-out source, never an unrelated stale executable on PATH.
 USER_LAUNCHER="$TARGET_HOME/.local/bin/infra-tools"
 if [ -f "$INSTALL_DIR/pyproject.toml" ] && grep -Eq '^basaltw[[:space:]]*=' "$INSTALL_DIR/pyproject.toml"; then
     USER_LAUNCHER="$TARGET_HOME/.local/bin/basaltw"
+elif [ -f "$INSTALL_DIR/pyproject.toml" ] && grep -Eq '^infra_tools[[:space:]]*=' "$INSTALL_DIR/pyproject.toml"; then
+    USER_LAUNCHER="$TARGET_HOME/.local/bin/infra_tools"
 fi
 if [ ! -x "$USER_LAUNCHER" ]; then
     fail "bootstrap completed without creating $USER_LAUNCHER"

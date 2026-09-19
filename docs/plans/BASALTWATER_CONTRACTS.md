@@ -60,7 +60,7 @@ reserve a registry name or establish trademark clearance.
 
 ## Qualification
 
-`make check` passed: 3,956 tests ran, with two skipped, plus syntax, CLI docs,
+`make check` passed: 3,958 tests ran, with two skipped, plus syntax, CLI docs,
 package metadata and fresh wheel installation checks. A wheel built from the
 pre-rename source at `e966305ed92e47150d725dd5f184d7f1ce327d95` also passed the
 optional package upgrade/rollback check. Both distributions use the existing
@@ -73,3 +73,12 @@ Actual wrapper subprocesses read an old-format workspace without relocating it.
 Installer tests use local repositories and mocked system commands. No live
 controller/target upgrade or system-service mutation was performed; live VM
 qualification and external hosting/visual rollout remain release follow-ups.
+
+The follow-up PR review added bootstrap collision checks that preserve an
+unrelated `basaltw` file, binary, directory or symlink before touching either
+older launcher. It also restored empty `INFRA_TOOLS_CHANNEL` behavior and
+tested installer selection for underscore-only older releases. The latest
+tag, `v0.2.0`, declares `infra_tools` and lacks channel/upgrade commands;
+its migration instructions therefore use the current installer and retain
+the source backup. The old-launcher installer test remains a local fixture,
+not a live installation of that tag or a qualification of its wheel.

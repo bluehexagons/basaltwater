@@ -8,7 +8,8 @@ executable is added.
 
 ## Git-managed installations
 
-For an existing development-channel installation, run as the installation owner:
+For an existing development-channel installation with the `infra-tools`
+command and channel support, run as the installation owner:
 
 ```sh
 infra-tools upgrade
@@ -28,12 +29,27 @@ can select `infra-tools channel dev` before bootstrap to try the renamed
 development source. After publication, select `infra-tools channel v2.0.0`.
 Keep the previous commit from `infra-tools channel` for rollback.
 
+Older tagged source such as `v0.2.0` installs `infra_tools` and has no
+`channel` or `upgrade` command. Record its commit with `git -C /path/to/source
+rev-parse HEAD`, then use the current installer with `--channel dev`, the
+same `--install-dir`, and `--migrate-existing-install` to adopt an unmarked
+source tree. Keep the installer's backup for rollback. Do not run the
+channel-based commands above against those older versions. Selecting an old
+tag with the current installer uses the launcher declared by that source,
+including `infra_tools`; the renamed release itself does not install it.
+
 Alternatively, rerun the [installer](INSTALLATION.md) with the same
 `--install-dir`, user and shell, and a channel containing this change. Default
 source directories remain `/opt/infra_tools` for root installs and
 `~/.local/share/infra_tools` for user installs. Always pass an existing custom
 path explicitly. There is no automatic discovery or relocation of a second
 installation at a new branded path. Only run one installer per destination.
+
+Bootstrap refuses an existing `basaltw` symlink or unrecognized executable
+before replacing either launcher. Resolve that name collision explicitly and
+rerun; remove package-managed launchers with their owning package manager
+before switching to a Git/bootstrap installation. Existing Basaltwater
+bootstrap and managed-agent wrappers can be refreshed in place.
 
 An unmarked legacy source tree needs `--migrate-existing-install`. Dirty Git
 worktrees are refused. The installer preserves `state/` and `.infra_tools/`,
@@ -102,9 +118,11 @@ Installer settings accept `BASALTWATER_REPOSITORY_URL`, `BASALTWATER_CHANNEL`
 and `BASALTWATER_REF`. Each new spelling overrides its `INFRA_TOOLS_*`
 equivalent when set. Either channel setting takes precedence over refs;
 explicit `--channel`/`--ref` options take precedence over the environment.
-An explicitly empty channel or repository URL fails validation; an empty new
-ref suppresses the old ref. With no selection, a reinstall reuses its saved
-channel, and a fresh install uses `dev`.
+An explicitly empty new channel or repository URL fails validation; an empty
+new ref suppresses the old ref. With no selection, a reinstall reuses its
+saved channel, and a fresh install uses `dev`. For compatibility,
+an explicitly empty `INFRA_TOOLS_CHANNEL` still selects `dev` and overrides
+ref settings, matching the previous installer.
 
 Other runtime `INFRA_TOOLS_*` settings, `~/.config/infra_tools`,
 `/opt/infra_tools/state`, ownership markers, locks, JSON keys, `infra.json`,

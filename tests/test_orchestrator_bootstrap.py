@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import shlex
 import pwd
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -234,6 +234,37 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
 
 
 class TestInstallLauncher(unittest.TestCase):
+    def test_primary_collision_preserves_all_existing_launchers(self):
+        for kind in ("file", "binary", "symlink", "directory"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                source = os.path.join(tmp, "infra_tools.py")
+                with open(source, "w") as handle:
+                    handle.write("print('fixture')\n")
+                target = os.path.join(tmp, "bin")
+                os.mkdir(target)
+                for name in ("infra-tools", "infra_tools"):
+                    with open(os.path.join(target, name), "w") as handle:
+                        handle.write("original")
+                primary = os.path.join(target, "basaltw")
+                if kind == "symlink":
+                    os.symlink(source, primary)
+                elif kind == "directory":
+                    os.mkdir(primary)
+                else:
+                    with open(primary, "wb") as handle:
+                        handle.write(b"\xff\x00" if kind == "binary" else b"#!/bin/sh\nexit 17\n")
+                before = os.lstat(primary)
+                with self.assertRaisesRegex(ValueError, "command collision"):
+                    orchestrator_bootstrap.install_launcher(source, target_dir=target)
+                after = os.lstat(primary)
+                self.assertEqual(
+                    (after.st_ino, after.st_mode, after.st_mtime_ns, after.st_size),
+                    (before.st_ino, before.st_mode, before.st_mtime_ns, before.st_size),
+                )
+                for name in ("infra-tools", "infra_tools"):
+                    with open(os.path.join(target, name)) as handle:
+                        self.assertEqual(handle.read(), "original")
+
     def test_both_launchers_survive_source_rollback_and_rerun(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = os.path.join(tmp, "infra_tools.py")

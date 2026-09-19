@@ -293,6 +293,8 @@ class TestInstallScript(unittest.TestCase):
 
     def test_rename_environment_precedence(self):
         cases = (
+            ({"INFRA_TOOLS_CHANNEL": ""}, [], "dev"),
+            ({"INFRA_TOOLS_CHANNEL": "", "BASALTWATER_REF": "missing"}, [], "dev"),
             ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_CHANNEL": "dev"}, [], "dev"),
             ({"INFRA_TOOLS_REF": "missing", "BASALTWATER_REF": "main"}, [], "dev"),
             ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_REF": "missing"}, [], "stable"),
@@ -327,6 +329,30 @@ class TestInstallScript(unittest.TestCase):
                 )
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(os.path.exists(install_dir))
+
+    def test_older_tagged_source_uses_its_underscore_launcher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, _, environment = self._create_fixture(directory)
+            source = environment["INFRA_TOOLS_REPOSITORY_URL"]
+            cli = os.path.join(source, "infra_tools.py")
+            with open(cli, encoding="utf-8") as stream:
+                content = stream.read()
+            with open(cli, "w", encoding="utf-8") as stream:
+                stream.write(content.replace('"infra-tools"', '"infra_tools"'))
+            with open(os.path.join(source, "pyproject.toml"), "w") as stream:
+                stream.write('[project.scripts]\ninfra_tools = "infra_tools:main"\n')
+            for args in (
+                ["add", "."],
+                ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "older launcher"],
+                ["tag", "v1.1.0"],
+            ):
+                subprocess.run(["git", "-C", source, *args], check=True, capture_output=True)
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", os.path.join(directory, "installed"), "--channel", "stable"],
+                env=environment, text=True, capture_output=True, timeout=20,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"Command: {home}/.local/bin/infra_tools", result.stdout)
 
     def test_old_release_upgrade_rerun_and_rollback_preserve_private_state(self):
         with tempfile.TemporaryDirectory() as directory:
