@@ -17,7 +17,9 @@ from lib.workspace import get_setup_cache_dir, get_workspace_dir
 class ClientMigrationTests(unittest.TestCase):
     def setUp(self):
         self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.enterContext(patch.dict(os.environ, {'HOME': str(self.home)}, clear=True))
+        environment = {**os.environ, 'HOME': str(self.home)}
+        environment.pop('BASALTWATER_WORKSPACE', None)
+        self.enterContext(patch.dict(os.environ, environment, clear=True))
         self.enterContext(patch('lib.concurrency.tempfile.gettempdir', return_value=str(self.home)))
         self.old = self.home / '.config/infra_tools'
         self.new = self.home / '.config/basaltwater'
@@ -72,8 +74,9 @@ class ClientMigrationTests(unittest.TestCase):
         secret.write_bytes(b'{"agent":"infra_tools-secret"}')
         secret.chmod(0o600)
         command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'basaltwater.py'), 'list', '--json']
-        result = subprocess.run(command, capture_output=True, text=True, check=True,
+        result = subprocess.run(command, capture_output=True, text=True, check=False,
                                 env={**os.environ, 'TMPDIR': str(self.home)})
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('node.example', result.stdout)
         json.loads(result.stdout)
         self.assertNotIn('infra_tools-secret', result.stdout + result.stderr)
