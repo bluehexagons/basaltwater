@@ -140,11 +140,21 @@ accounts are refused. Nothing is selected by timestamp or silently overwritten.
 The exception is matching empty `provision-<SHA256>.lock` files in
 `/run/lock/infra-tools` (or `infra_tools`) and `/run/lock/basaltwater`. Migration
 acquires both locks, preserves the canonical Basaltwater inode, and archives the
-legacy inode in its private recovery journal. Active locks in either namespace
+empty legacy file in its private recovery journal. When `/run/lock` and `/var/lib`
+are on different filesystems, the empty archive is written durably before the
+legacy path is removed; recovery restores its permissions and ownership.
+Active locks in either namespace
 stop migration before changes; nonempty, linked, or unrecognized duplicate files
 remain conflicts. If setup previously stopped on this lock-file conflict, update
 the controller and rerun setup after provisioning operations finish. Do not
 delete lock files or migration journals to bypass the check.
+
+Setup automatically recovers the specific interrupted lock-retirement state
+left by the earlier `Invalid cross-device link` failure, provided the old and
+canonical empty locks still exist and all provisioning locks are idle. It
+reverses the interrupted cutover, archives the recovered journal beside the
+original directory with a `-recovered-` suffix, and retries migration. Completed
+nodes remain completed. Other interrupted cutovers still use explicit recovery.
 
 The apply operation records private recovery intent under
 `/var/lib/basaltwater-migration` for system work and

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import fcntl
 import os
 from pathlib import Path
@@ -180,6 +181,72 @@ class RenameMigrationTests(unittest.TestCase):
             migration.apply_plan(migration.build_plan(root, system=True))
             self.assertEqual(canonical.stat().st_ino, inode)
             self.assertFalse(old.exists())
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_cross_filesystem_lock_retirement_and_recovery(self, _account):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, canonical = self.provision_lock_pair(root)
+            canonical_inode = canonical.stat().st_ino
+            rename = Path.rename
+
+            def across_devices(source, destination):
+                if source.name.startswith('provision-') or source.name.startswith('retired-'):
+                    raise OSError(errno.EXDEV, 'Invalid cross-device link')
+                return rename(source, destination)
+
+            plan = migration.build_plan(root, system=True)
+            with patch.object(Path, 'rename', across_devices):
+                with patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                    with self.assertRaisesRegex(OSError, 'interrupted'):
+                        migration.apply_plan(plan)
+                self.assertFalse(old.exists())
+                retired = list(Path(plan['recovery']).glob('retired-*'))
+                self.assertEqual(len(retired), 1)
+                self.assertEqual(retired[0].read_bytes(), b'')
+                migration.recover(root, system=True)
+            self.assertEqual(old.read_bytes(), b'')
+            self.assertEqual(stat.S_IMODE(old.stat().st_mode), 0o600)
+            self.assertEqual(canonical.stat().st_ino, canonical_inode)
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_setup_recovers_previous_cross_device_failure_then_migrates(self, _account):
+        from lib.setup_upgrade import _check_journal
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, canonical = self.provision_lock_pair(root)
+            original = self.write(root, 'var/lib/infra_tools/setup.json', '{}')
+            plan = migration.build_plan(root, system=True)
+            with patch.object(migration, '_move_empty_lock', side_effect=OSError(errno.EXDEV, 'Invalid cross-device link')):
+                with self.assertRaises(OSError):
+                    migration.apply_plan(plan)
+            self.assertFalse(original.exists())
+            with canonical.open('r+') as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaisesRegex(ValueError, 'Active operation'):
+                    _check_journal(root, system=True)
+            self.assertFalse(original.exists())
+            self.assertFalse(_check_journal(root, system=True))
+            self.assertTrue(original.exists())
+            self.assertTrue(old.exists())
+            archives = list((root / 'var/lib').glob('basaltwater-migration-recovered-*'))
+            self.assertEqual(len(archives), 1)
+            self.assertEqual(json.loads((archives[0] / 'journal.json').read_text())['status'], 'recovered')
+            migration.apply_plan(migration.build_plan(root, system=True))
+            self.assertTrue(_check_journal(root, system=True))
+            self.assertFalse(original.exists())
+            self.assertTrue((root / 'var/lib/basaltwater/setup.json').exists())
+
+    def test_lock_archive_does_not_hide_other_rename_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.write(Path(directory), 'lock', '')
+            destination = Path(directory) / 'retired'
+            with patch.object(Path, 'rename', side_effect=PermissionError('denied')):
+                with self.assertRaises(PermissionError):
+                    migration._move_empty_lock(source, destination)
+            self.assertTrue(source.exists())
+            self.assertFalse(destination.exists())
 
     @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
     def test_duplicate_lock_retirement_recovers_without_replacing_canonical(self, _account):

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import fcntl
 import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import stat
 import subprocess
+import uuid
 
 from lib import rename_migration
 from lib.validation import validate_filesystem_path
@@ -26,8 +30,65 @@ def _check_journal(root: Path, *, system: bool) -> bool:
         info = path.lstat()
         if path.is_symlink() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise ValueError(f"Unsafe migration journal: {path}")
-    if json.loads(journal.read_text()).get("status") != "complete":
+    plan = json.loads(journal.read_text())
+    if system and _recover_lock_retirement(root, directory, plan):
+        return False
+    if plan.get("status") != "complete":
         raise ValueError(f"Interrupted migration requires recovery before setup: {journal}")
+    return True
+
+
+def _recover_lock_retirement(root: Path, directory: Path, plan: dict) -> bool:
+    """Recover only the recognizable pre-unlink provisioning-lock failure."""
+    if plan.get("root") != str(root) or plan.get("recovery") != str(directory) or plan.get("system") is not True:
+        return False
+    recovered = plan.get("status") == "recovered" and plan.get("automatic_lock_recovery") is True
+    if not recovered:
+        index = plan.get("pending")
+        actions = plan.get("actions", [])
+        if plan.get("status") != "planned" or type(index) is not int or not 0 <= index < len(actions) or plan.get("completed") != index:
+            return False
+        action = actions[index]
+        old = Path(action.get("old", ""))
+        canonical = Path(action.get("preserve_lock", ""))
+        if action.get("kind") != "retire" or old.parent not in {root / "run/lock/infra-tools", root / "run/lock/infra_tools"} or canonical.parent != root / "run/lock/basaltwater" or old.name != canonical.name:
+            return False
+        if not re.fullmatch(r"provision-[0-9a-f]{64}\.lock", old.name):
+            return False
+        if not old.exists() or not canonical.exists() or os.path.lexists(directory / f"retired-{index}"):
+            return False
+        # All node-local lock inodes stay held while earlier journaled moves
+        # are reversed. The running setup's separate outer lock is untouched.
+        with ExitStack() as stack:
+            for brand in ("infra-tools", "infra_tools", "basaltwater"):
+                parent = root / "run/lock" / brand
+                rename_migration._safe(parent / "placeholder")
+                if not parent.exists():
+                    continue
+                for path in sorted(parent.rglob("*")):
+                    rename_migration._safe(path)
+                    info = path.lstat()
+                    if stat.S_ISDIR(info.st_mode):
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+                        raise ValueError(f"Unsafe migration recovery lock: {path}")
+                    if path in (old, canonical) and info.st_size:
+                        raise ValueError(f"Nonempty provisioning lock during recovery: {path}")
+                    handle = stack.enter_context(os.fdopen(os.open(path, os.O_RDWR | os.O_NOFOLLOW), "r+"))
+                    opened = os.fstat(handle.fileno())
+                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                        raise ValueError(f"Migration recovery lock changed: {path}")
+                    try:
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except OSError as exc:
+                        raise ValueError(f"Active operation holds {path}; wait for it to finish") from exc
+            print("Recovering interrupted provisioning-lock migration", flush=True)
+            plan["automatic_lock_recovery"] = True
+            rename_migration._save(plan)
+            rename_migration.recover(root, system=True)
+    archive = directory.with_name(directory.name + "-recovered-" + uuid.uuid4().hex)
+    directory.rename(archive)
+    print(f"Preserved recovered migration journal: {archive}", flush=True)
     return True
 
 

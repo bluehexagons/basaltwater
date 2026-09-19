@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import fcntl
 import json
 import os
@@ -540,6 +541,25 @@ def _save(plan: dict) -> None:
     write_json_atomic(str(Path(plan["recovery"]) / "journal.json"), plan, mode=0o600)
 
 
+def _move_empty_lock(source: Path, destination: Path) -> None:
+    """Archive/restore an idle empty lock across /run and persistent storage."""
+    _safe(source)
+    _safe(destination)
+    info = source.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size:
+        raise ValueError(f"Unsafe retired provisioning lock: {source}")
+    if os.path.lexists(destination):
+        raise ValueError(f"Retired lock destination already exists: {destination}")
+    try:
+        source.rename(destination)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        from lib.atomic_io import write_text_atomic
+        write_text_atomic(str(destination), "", mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
+        source.unlink()
+
+
 def _systemctl(plan: dict, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["systemctl", *([] if plan["system"] else ["--user"]), *args], check=check, capture_output=True, text=True)
 
@@ -696,7 +716,10 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
             old.unlink()
             Path(action["new"]).symlink_to(action["after"])
         elif kind == "retire":
-            old.rename(recovery / f"retired-{index}")
+            if "preserve_lock" in action:
+                _move_empty_lock(old, recovery / f"retired-{index}")
+            else:
+                old.rename(recovery / f"retired-{index}")
         elif kind == "runtime":
             from lib.setup_common import copy_project_files
             stage = recovery / "runtime-stage"
@@ -776,7 +799,10 @@ def recover(root: Path, *, system: bool) -> None:
         elif kind == "retire":
             saved = recovery / f"retired-{index}"
             if os.path.lexists(saved) and not os.path.lexists(old):
-                saved.rename(old)
+                if "preserve_lock" in action:
+                    _move_empty_lock(saved, old)
+                else:
+                    saved.rename(old)
         elif kind == "runtime":
             previous = recovery / "previous-runtime"
             new = Path(action["new"])
