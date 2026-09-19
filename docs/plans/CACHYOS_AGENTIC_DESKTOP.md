@@ -46,7 +46,7 @@ authority for CachyOS desktop qualification and feature delivery.
   build a competing custom desktop controller into it; local browser and
   desktop capabilities should report status and artifacts through existing
   interfaces.
-- The existing `infra-tools desktop` command remains the XRDP/X11 workflow
+- The existing `basaltw desktop` command remains the XRDP/X11 workflow
   until a separate Wayland implementation is qualified. Do not silently route
   CachyOS sessions through X11-only tools such as `xdotool`.
 
@@ -296,7 +296,7 @@ record should carry the capability origin, owning user, sensitivity, and
 whether human interaction is pending (nullable when unknown). Keep error text
 actionable and avoid treating optional capability failures as failures of
 unrelated agent updates. Initially expose read-only diagnostics through
-`infra-tools local cachyos-doctor --json`; this command must also explain an
+`basaltw local cachyos-doctor --json`; this command must also explain an
 unsupported host without probing its unrelated desktop.
 
 ## Security and privacy requirements
@@ -366,7 +366,7 @@ desktop-control implementation.
 ## Implementation record
 
 - Implemented the versioned capability metadata contract and
-  `infra-tools local cachyos-doctor [--json]`, with fixed read-only probes,
+  `basaltw local cachyos-doctor [--json]`, with fixed read-only probes,
   bounded streaming, local bus addressing, and no service activation.
 - Added mocked contract, parser, privacy, ownership, and probe-bound tests,
   operator documentation, and workstation skill guidance.

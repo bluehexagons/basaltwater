@@ -9,12 +9,12 @@ additional provider support remain subject to the gates below.
 Reviewed against `main` and upstream T3 Code, Nginx, Samba, and Git LFS
 documentation on 2026-08-21.
 
-This project sharpens infra-tools around the environments it is intended to
+This project sharpens Basaltwater around the environments it is intended to
 serve: small businesses running Debian systems on their own Proxmox hardware
 or on manually created VPS instances. Proxmox is the only infrastructure
-provider infra-tools will provision or manage in the first release. A VPS from
+provider Basaltwater will provision or manage in the first release. A VPS from
 DigitalOcean or another host remains an ordinary SSH setup target created and
-destroyed outside infra-tools.
+destroyed outside Basaltwater.
 
 The project has three related tracks:
 
@@ -31,6 +31,17 @@ The project has three related tracks:
 The tracks share the same product constraints: prefer straightforward
 open-source components, keep saved commands as the reusable declaration, and
 avoid abstraction whose only purpose is a hypothetical provider or service.
+
+## Current contract and historical scope
+
+The August baseline and lane descriptions below retain earlier design decisions;
+they are not the current CLI or T3 installation contract. The managed desktop
+AppImage path has been retired. T3 now uses its native user-service lifecycle,
+and managed HTTPS exposure is implemented. Use [T3 Code](../T3_CODE.md)
+and the [CLI reference](../COMMAND_LINE.md) for supported commands. Storage and
+recovery qualification remains open; the [release checklist](../BASALTWATER_RELEASE.md)
+records the rename-specific remaining work. Product names and command prefixes
+below use Basaltwater even where the described design has been superseded.
 
 ## Delivery status
 
@@ -133,7 +144,7 @@ avoid abstraction whose only purpose is a hypothetical provider or service.
 - T3 Code is an acceptable first interface because its source is available
   under the MIT license. Each later interface still needs its own license,
   release, runtime, and update-path review before being added.
-- Prefer small infra-tools modules for deterministic parsing, validation,
+- Prefer small Basaltwater modules for deterministic parsing, validation,
   rendering, state inspection, and health checks. Continue to use mature
   open-source components for security-sensitive or protocol-heavy work such
   as TLS, WebSocket proxying, process supervision, Git, and SQLite.
@@ -162,7 +173,7 @@ layer.
 
 ### Setup and VPS targets
 
-`infra-tools setup` already treats an existing Debian host as an SSH target.
+`basaltw setup` already treats an existing Debian host as an SSH target.
 That is the complete intended integration for a manually created VPS: the
 operator creates the instance, networking, and provider firewall, then runs
 the same setup command used for a physical host or an existing VM.
@@ -176,7 +187,7 @@ than creating a second target-configuration engine under the management CLI.
 
 ### Proxmox management
 
-The current `infra-tools proxmox` tree combines two different concerns:
+The current `basaltw proxmox` tree combines two different concerns:
 
 - host and cluster operations such as registration, discovery, audit,
   rolling update, placement, rebalance, storage cleanup, and notification
@@ -297,14 +308,14 @@ backup or snapshot and explicit operator confirmation. A failed migration must
 leave the original path usable and must never hide populated data beneath an
 unverified mount.
 
-On a manually provisioned VPS, infra-tools does not attach provider volumes.
+On a manually provisioned VPS, Basaltwater does not attach provider volumes.
 The operator or control system must attach the volume, after which a future
 generic guest-storage path may apply the same identity and mount checks. The
 first implementation should focus on Proxmox attachment plus guest setup and
-should not pretend that a VPS provider volume was managed by infra-tools.
+should not pretend that a VPS provider volume was managed by Basaltwater.
 
 Cloud-init's disk and filesystem modules may be used for first-boot mechanics,
-but they must not become a second source of truth. The persisted infra-tools
+but they must not become a second source of truth. The persisted Basaltwater
 declaration owns the logical disk, expected identity, mount policy, and health
 result; the target-side step must still verify the result after SSH readiness
 and before application setup. Native systemd mount units are preferred for
@@ -341,7 +352,7 @@ for T3's HTTP/WebSocket endpoint.
 T3 Code's supported remote model already provides a headless server, one-time
 owner pairing credentials, authenticated sessions, session revocation, and a
 Linux systemd user service. Its server also serves the matching web client and
-uses WebSockets. infra-tools should integrate those upstream contracts rather
+uses WebSockets. Basaltwater should integrate those upstream contracts rather
 than creating another T3 login database or maintaining a parallel T3 process
 launcher.
 
@@ -441,7 +452,7 @@ A managed VM reference consists of:
 - observed fields such as name, state, address, CPU, memory, disks, lock, and
   provider-specific kind.
 
-The CLI accepts `HOST ID` as separate arguments. For an infra-tools-provisioned
+The CLI accepts `HOST ID` as separate arguments. For a Basaltwater-provisioned
 QEMU VM, single-resource observation, power-state lifecycle, autostart, and
 `destroy` commands also accept the exact saved local friendly name or saved IP
 address. That shorthand resolves the provider host from the saved setup and
@@ -464,35 +475,35 @@ Use positional `HOST` consistently and group subordinate resources under one
 noun. Do not retain flat aliases for the development-era command names:
 
 ```text
-infra-tools vm list HOST [--json]
-infra-tools vm show TARGET [ID] [--json]
-infra-tools vm health TARGET [ID] [--json]
-infra-tools vm stats TARGET [ID] [--json]
-infra-tools vm status TARGET [ID] [--json]
-infra-tools vm start TARGET [ID] [--json]
-infra-tools vm shutdown TARGET [ID] [--timeout SECONDS] [--json]
-infra-tools vm stop TARGET [ID] [--json]
-infra-tools vm reboot TARGET [ID] [--timeout SECONDS] [--json]
-infra-tools vm pause TARGET [ID] [--json]
-infra-tools vm resume TARGET [ID] [--json]
-infra-tools vm autostart TARGET [ID] [--enable|--disable] [--order N] [--start-delay SECONDS] [--shutdown-timeout SECONDS] [--json]
-infra-tools vm modify HOST ID [--cores N] [--memory SIZE] [--balloon-min SIZE] [--dry-run]
-infra-tools vm disk list HOST ID [--json]
-infra-tools vm disk attach HOST ID NAME --storage POOL --size SIZE [--dry-run]
-infra-tools vm disk resize HOST ID NAME SIZE [--dry-run]
-infra-tools vm disk detach HOST ID NAME [--yes] [--dry-run]
-infra-tools vm mount status HOST ID [--json]
-infra-tools vm snapshot list TARGET [ID] [--json]
-infra-tools vm snapshot create HOST ID NAME [--description TEXT] [--dry-run]
-infra-tools vm snapshot rollback HOST ID NAME [--dry-run]
-infra-tools vm snapshot delete HOST ID NAME [--dry-run]
-infra-tools vm backup list TARGET [ID] [--json]
-infra-tools vm backup create HOST ID [options]
-infra-tools vm backup restore HOST BACKUP --id ID [options]
-infra-tools vm clone HOST ID --name NAME [options]
-infra-tools vm migrate HOST ID --to DESTINATION [options]
-infra-tools vm unlock HOST ID [--dry-run]
-infra-tools vm destroy TARGET [ID] [--force] [--yes]
+basaltw vm list HOST [--json]
+basaltw vm show TARGET [ID] [--json]
+basaltw vm health TARGET [ID] [--json]
+basaltw vm stats TARGET [ID] [--json]
+basaltw vm status TARGET [ID] [--json]
+basaltw vm start TARGET [ID] [--json]
+basaltw vm shutdown TARGET [ID] [--timeout SECONDS] [--json]
+basaltw vm stop TARGET [ID] [--json]
+basaltw vm reboot TARGET [ID] [--timeout SECONDS] [--json]
+basaltw vm pause TARGET [ID] [--json]
+basaltw vm resume TARGET [ID] [--json]
+basaltw vm autostart TARGET [ID] [--enable|--disable] [--order N] [--start-delay SECONDS] [--shutdown-timeout SECONDS] [--json]
+basaltw vm modify HOST ID [--cores N] [--memory SIZE] [--balloon-min SIZE] [--dry-run]
+basaltw vm disk list HOST ID [--json]
+basaltw vm disk attach HOST ID NAME --storage POOL --size SIZE [--dry-run]
+basaltw vm disk resize HOST ID NAME SIZE [--dry-run]
+basaltw vm disk detach HOST ID NAME [--yes] [--dry-run]
+basaltw vm mount status HOST ID [--json]
+basaltw vm snapshot list TARGET [ID] [--json]
+basaltw vm snapshot create HOST ID NAME [--description TEXT] [--dry-run]
+basaltw vm snapshot rollback HOST ID NAME [--dry-run]
+basaltw vm snapshot delete HOST ID NAME [--dry-run]
+basaltw vm backup list TARGET [ID] [--json]
+basaltw vm backup create HOST ID [options]
+basaltw vm backup restore HOST BACKUP --id ID [options]
+basaltw vm clone HOST ID --name NAME [options]
+basaltw vm migrate HOST ID --to DESTINATION [options]
+basaltw vm unlock HOST ID [--dry-run]
+basaltw vm destroy TARGET [ID] [--force] [--yes]
 ```
 
 Here `TARGET` is either a registered provider `HOST` followed by `ID`, or an
@@ -511,7 +522,7 @@ declared as required application storage unless the operator explicitly
 removes or overrides that declaration.
 
 Do not add `vm create` in the first release. Provisioning continues to compose
-through `infra-tools setup ... --provision-on HOST`, which calls the provider
+through `basaltw setup ... --provision-on HOST`, which calls the provider
 and then the one normal OS configuration engine. A later standalone creation
 command would have to call those same provider functions and must not grow a
 second setup path.
@@ -527,23 +538,23 @@ state.
 
 ### Proxmox command boundary
 
-After guest operations move, `infra-tools proxmox` remains the explicit
+After guest operations move, `basaltw proxmox` remains the explicit
 administrative namespace for the provider itself:
 
 ```text
-infra-tools proxmox hosts list
-infra-tools proxmox hosts add ...
-infra-tools proxmox hosts remove ...
-infra-tools proxmox hosts probe ...
-infra-tools proxmox cluster discover ...
-infra-tools proxmox cluster audit ...
-infra-tools proxmox cluster update ...
-infra-tools proxmox cluster top ...
-infra-tools proxmox plan place ...
-infra-tools proxmox plan rebalance ...
-infra-tools proxmox storage list ...
-infra-tools proxmox storage clean ...
-infra-tools proxmox notifications ...
+basaltw proxmox hosts list
+basaltw proxmox hosts add ...
+basaltw proxmox hosts remove ...
+basaltw proxmox hosts probe ...
+basaltw proxmox cluster discover ...
+basaltw proxmox cluster audit ...
+basaltw proxmox cluster update ...
+basaltw proxmox cluster top ...
+basaltw proxmox plan place ...
+basaltw proxmox plan rebalance ...
+basaltw proxmox storage list ...
+basaltw proxmox storage clean ...
+basaltw proxmox notifications ...
 ```
 
 The exact grouping can be adjusted while implementing parser tests, but node
@@ -690,7 +701,7 @@ one or more private sources are explicitly declared:
 ```
 
 `--gogs-source` is repeatable and valid only for hostless mode. Before Gogs
-binds a non-loopback address, infra-tools must install and verify matching UFW
+binds a non-loopback address, Basaltwater must install and verify matching UFW
 rules; if it cannot enforce them, setup fails without exposing the service.
 The first implementation accepts only non-global IPv4 sources because Gogs is
 rendered with an explicit IPv4 listener. IPv6 exposure remains deferred until
@@ -736,7 +747,7 @@ not automatically delete repositories or LFS objects. Gogs remains the owner
 of object reachability, so a generic filesystem cleanup must never prune the
 LFS directory. When Cloudflare or another operator-managed edge sits in front
 of Gogs, report that its account-specific body-size and timeout limits are
-outside infra-tools' control; a small health upload does not prove that the
+outside Basaltwater's control; a small health upload does not prove that the
 largest intended LFS object will pass that edge.
 
 ### Backup and restore contract
@@ -748,7 +759,7 @@ A recoverable Gogs instance includes:
 - all Git repositories and server-managed hooks;
 - all completed Git LFS objects;
 - attachments, avatars, and other selected data-root contents; and
-- enough infra-tools state to identify the installed release and data paths.
+- enough Basaltwater state to identify the installed release and data paths.
 
 For the low-end SQLite baseline, the first consistent backup workflow may use
 a short planned service stop while the complete data roots are snapshotted or
@@ -899,7 +910,7 @@ provider CLIs, browser automation, or credentials implicitly; those remain
 separate explicit setup choices. It does not create a systemd web service,
 nginx site, firewall rule, or remote pairing endpoint. Desktop T3 Code may
 still start its own local server as part of normal upstream desktop behavior,
-but infra-tools does not advertise or expose that server as a managed web
+but Basaltwater does not advertise or expose that server as a managed web
 interface.
 
 The current Linux artifact is an upstream AppImage. The installer must verify
@@ -976,7 +987,7 @@ tunnel is also sufficient network authentication for such a tool.
 
 Current implementation boundary: direct T3 pairing, loopback/LAN source
 filtering, pairing-token redaction, the control-plane
-`infra-tools agent web pair HOST USER` helper, and a protected on-demand
+`basaltw agent web pair HOST USER` helper, and a protected on-demand
 enrollment portal are implemented. The portal broker is provider-backed rather
 than T3-specific internally, with T3 Code as the first fixed adapter.
 
@@ -1004,9 +1015,9 @@ validates that the returned URL belongs to the expected public T3 origin.
 
 The auth file is an Nginx-compatible `name:hash` file. The operator may supply
 an existing regular file or, in interactive setup, enter a username and hidden
-password so infra-tools can generate one with the controller's existing OpenSSL
+password so Basaltwater can generate one with the controller's existing OpenSSL
 `passwd` support. Do not add `apache2-utils` only to obtain `htpasswd`, and do
-not implement password hashing in infra-tools. Store one root-owned,
+not implement password hashing in Basaltwater. Store one root-owned,
 appropriately group-readable file for the portal, replace it
 atomically during rotation, and reload Nginx only after a complete
 configuration test. A supplied file is a secret input and is never copied to
@@ -1028,7 +1039,7 @@ Pairing URLs and tokens must be treated as credentials. Normal setup output,
 saved commands, dry runs, generated nginx files, and service logs must not
 contain them. Before using the upstream background service, verify whether its
 startup path writes an initial token to its private log. If it does,
-infra-tools must use the upstream on-demand `t3 auth` flow or a redacting
+Basaltwater must use the upstream on-demand `t3 auth` flow or a redacting
 launcher so ordinary journald and setup logs never capture the token. An
 explicit access-issuance command may return a new token once to an interactive
 operator, but JSON status and diagnostics must always redact it.
@@ -1043,10 +1054,10 @@ The planned remote agent-management shape for lifecycle and access operations
 remains:
 
 ```text
-infra-tools agent web status HOST USER [--tool t3code] [--json]
-infra-tools agent web pair HOST USER
-infra-tools agent web sessions HOST USER --tool t3code [--json]
-infra-tools agent web revoke HOST USER --tool t3code ACCESS_ID
+basaltw agent web status HOST USER [--tool t3code] [--json]
+basaltw agent web pair HOST USER
+basaltw agent web sessions HOST USER --tool t3code [--json]
+basaltw agent web revoke HOST USER --tool t3code ACCESS_ID
 ```
 
 `pair` invokes the tool's supported access-issuance command on the target and
@@ -1063,7 +1074,7 @@ without revoking existing provider sessions.
 
 `--web-interface t3code` installs the Node runtime, native build prerequisites,
 and a persistent target-user T3 runtime under
-`~/.local/share/infra-tools/t3code`, then invokes its supported headless CLI.
+`~/.local/share/basaltwater/t3code`, then invokes its supported headless CLI.
 The web selection does not require a
 separate `--node` flag, install the desktop AppImage, or install GitHub CLI or
 provider CLIs that were not explicitly selected with `--agent-tool`. The
@@ -1076,7 +1087,7 @@ running as the target user, loopback/LAN bind, and source firewall rules; the
 desktop adapter owns its per-user launcher and desktop entry. Neither adapter
 copies credentials merely because T3 Code was selected.
 
-The current service is an infra-tools-managed system unit with explicit HOME,
+The current service is a Basaltwater-managed system unit with explicit HOME,
 working directory, bind, port, restart policy, and target-user ownership. Its
 wrapper loads the target user's nvm environment and invokes the persistent T3
 binary directly; service stdout is discarded so pairing material is not
@@ -1099,7 +1110,7 @@ Setup ordering currently installs Node as a derived T3 dependency, installs
 selected provider CLIs and their staged credentials/configuration, then creates
 the T3 service and its pairing helper. Repository cloning remains the normal
 `--repo` path. After pairing, the T3 client can add a prepared repository with
-its normal Add Project flow; infra-tools does not currently invent a second
+its normal Add Project flow; Basaltwater does not currently invent a second
 project-registration API.
 Firewall exposure is reconciled before service start and only for validated
 private sources. A credential rotation should restart T3 only when the
@@ -1143,7 +1154,7 @@ Observed state has an explicit schema version and records ownership, interface
 kind, tool, Unix user, installed version, fixed backend port when applicable,
 generated artifact paths, exposure mode when applicable, and last health
 result. It contains no credential or copied configuration data.
-Reconciliation removes only artifacts carrying the same infra-tools ownership
+Reconciliation removes only artifacts carrying the same Basaltwater ownership
 marker; a same-named unmanaged unit, launcher, desktop entry, or nginx site is
 a hard error. Dry run lists every resource that would be created, replaced,
 retained, or removed.
@@ -1201,7 +1212,7 @@ Use this decision test whenever implementation proposes another package:
    and Basic Auth gate, Samba remains the SMB server/client, systemd remains
    the supervisor, and T3 Code remains the owner of its authentication,
    database migration, and version rollback.
-2. Implement small deterministic behavior in infra-tools when Python's
+2. Implement small deterministic behavior in Basaltwater when Python's
    standard library and existing modules are sufficient. This includes
    web-option parsing, tool/host/port/CIDR validation, nginx rendering, state
    observation, health polling, redaction, and saved-command serialization.
@@ -1490,7 +1501,7 @@ pairing/session management remain open.
 
 ## Acceptance criteria
 
-- An operator can manage a Proxmox QEMU VM entirely through `infra-tools vm`
+- An operator can manage a Proxmox QEMU VM entirely through `basaltw vm`
   without using Proxmox-specific command names for common lifecycle actions.
 - Proxmox node, cluster, storage, placement, maintenance, and notification
   commands remain available under a clearly organized provider namespace.
@@ -1545,14 +1556,14 @@ pairing/session management remain open.
 - Interface declarations are repeatable in the parser and saved command;
   duplicate T3 declarations collapse to one service instance for the target
   user. The pairing helper can be invoked from the control system with
-  `infra-tools agent web pair`. The optional generic device-enrollment broker
+  `basaltw agent web pair`. The optional generic device-enrollment broker
   exposes a separate Basic-Auth Nginx portal, mints short-lived native T3
   credentials, and leaves HTTPS/WebSocket proxying for the T3 endpoint itself
   as later C2 work.
 - T3 Code discovers only the explicitly installed provider CLIs from its
   service context and uses the setup user's existing protected credentials.
 - An operator can issue one pairing credential with the control-plane
-  `infra-tools agent web pair HOST USER` command or the target-side
+  `basaltw agent web pair HOST USER` command or the target-side
   `t3code-pair` helper. An authenticated browser can also issue its own
   credential through the protected portal without live terminal access;
   managed session listing/revocation remains open.
@@ -1583,7 +1594,7 @@ first release:
    Git configuration, workspace ownership, and non-login `PATH` from inside
    the running service. An interactive-shell check is insufficient.
 4. **Public-edge prerequisites**: DNS, certificate issuance, router/NAT rules,
-   and VPS-provider firewalls may live outside infra-tools. Preflight what can
+   and VPS-provider firewalls may live outside Basaltwater. Preflight what can
    be observed and print the exact remaining operator action without claiming
    the endpoint is ready prematurely.
 5. **HTTP trust boundary**: test allowed host and origin behavior, forwarded

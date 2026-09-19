@@ -23,12 +23,12 @@ from lib.maintenance_defaults import (
     CLEANUP_COMMAND_TIMEOUT_SECONDS,
     CRASH_REPORT_DIRS,
     CRASH_REPORT_PATTERNS,
-    INFRA_TMP_DIRS,
-    INFRA_TMP_PATTERNS,
+    BASALTWATER_TMP_DIRS,
+    BASALTWATER_TMP_PATTERNS,
     JOURNAL_MAX_AGE,
     JOURNAL_MAX_USE,
     STALE_CRASH_REPORT_MAX_AGE_DAYS,
-    STALE_INFRA_TMP_MAX_AGE_DAYS,
+    STALE_BASALTWATER_TMP_MAX_AGE_DAYS,
     STORAGE_CRITICAL_PERCENT,
     STORAGE_WARNING_PERCENT,
 )
@@ -40,7 +40,7 @@ from lib.validation import validate_filesystem_path, validate_positive_integer
 
 logger = get_service_logger('cleanup_maintenance', 'common', use_syslog=True)
 STATE_FILE = "/var/lib/basaltwater/cleanup_maintenance_state.json"
-_INFRA_TMP_RE = re.compile(rf"^(?:{'|'.join(INFRA_TMP_PATTERNS)})$")
+_BASALTWATER_TMP_RE = re.compile(rf"^(?:{'|'.join(BASALTWATER_TMP_PATTERNS)})$")
 _CRASH_REPORT_RE = re.compile(rf"^(?:{'|'.join(CRASH_REPORT_PATTERNS)})$")
 _REMOTE_FILESYSTEM_TYPES = {
     "9p",
@@ -310,7 +310,7 @@ def cleanup_stale_crash_reports(
 
 def cleanup_stale_basaltwater_tmp_artifacts(
     tmp_dir: str = "/tmp",
-    max_age_days: int = STALE_INFRA_TMP_MAX_AGE_DAYS,
+    max_age_days: int = STALE_BASALTWATER_TMP_MAX_AGE_DAYS,
 ) -> list[str]:
     """Remove stale basaltwater temp files/directories left by interrupted runs."""
     validate_filesystem_path(tmp_dir, must_exist=False)
@@ -329,12 +329,12 @@ def cleanup_stale_basaltwater_tmp_artifacts(
             tmp_dir=tmp_dir,
             error=details,
         )
-        return [f"infra temp cleanup: {details}"]
+        return [f"Basaltwater temp cleanup: {details}"]
 
     cutoff = time.time() - (max_age_days * 24 * 60 * 60)
     removed: list[str] = []
     for name in names:
-        if not _INFRA_TMP_RE.fullmatch(name):
+        if not _BASALTWATER_TMP_RE.fullmatch(name):
             continue
         path = os.path.join(tmp_dir, name)
         try:
@@ -638,7 +638,7 @@ def main() -> int:
         if failure:
             failures.append(failure)
 
-    for tmp_dir in INFRA_TMP_DIRS:
+    for tmp_dir in BASALTWATER_TMP_DIRS:
         log_tmp_usage(tmp_dir)
         failures.extend(cleanup_stale_basaltwater_tmp_artifacts(tmp_dir=tmp_dir))
     for crash_dir in CRASH_REPORT_DIRS:

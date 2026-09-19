@@ -4,7 +4,7 @@ Status: queued P1 native path, after deploy secrets and transactional
 activation. Coolify evaluation is deferred; it is an optional future platform
 for complex applications and does not gate this work. As of 2026-08-09, the
 webhook CI/CD path still consumes its server-side repository/script
-configuration and does not load `infra.json`.
+configuration and does not load `basaltwater.json`.
 This is the follow-up project for teaching that path to use the shared manifest.
 
 Why it is separate:
@@ -37,7 +37,7 @@ dedicated build user. Reuse does not weaken the current webhook trust boundary.
 
 ## Delivery phases
 
-1. Validate `infra.json` at the authenticated commit before queueing mutation.
+1. Validate `basaltwater.json` at the authenticated commit before queueing mutation.
 2. Build all components in the isolated build workspace and record an artifact
    manifest with checksums and component metadata.
 3. Transfer artifacts to a target-side staging directory.
@@ -51,7 +51,7 @@ key is insufficient when secrets or build configuration can change.
 
 ## Acceptance criteria
 
-- The same `infra.json` produces equivalent services, users, routing, and
+- The same `basaltwater.json` produces equivalent services, users, routing, and
   persistent paths through setup and webhook entry points.
 - Multi-component static and service deployments activate transactionally.
 - A failed component health check prevents the release from becoming current.

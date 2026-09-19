@@ -8,7 +8,7 @@ below remain qualification targets, not a claim that live testing has passed.
 
 ## Objective and scope
 
-Make every infra-tools-managed desktop use one graphical session owned by
+Make every Basaltwater-managed desktop use one graphical session owned by
 one configured non-root account. A human or an agent can start it, attach to
 it, and use its applications. Disconnecting leaves it running; desktop logout
 ends it. This replaces the current model across desktop setup, rather than
@@ -24,7 +24,7 @@ single-session contract.
 
 One session means one desktop across the machine, not one session per remote
 client or one per username. Other Unix accounts, SSH sessions, services, and
-concurrent coding agents remain possible. Infra-tools does not support
+concurrent coding agents remain possible. Basaltwater does not support
 creating additional managed graphical sessions. It does not attempt to
 prevent an administrator from manually launching an unrelated X server.
 
@@ -144,18 +144,18 @@ Locking preserves the session; reconnecting must not bypass the lock.
 Proposed command shapes, subject to the existing CLI conventions:
 
 ```text
-infra-tools desktop status --json
-infra-tools desktop start --json
-infra-tools desktop exec -- APPLICATION ARGUMENTS...
-infra-tools desktop screenshot --output PATH
-infra-tools desktop control pause
-infra-tools desktop control resume
-infra-tools desktop logout
+basaltw desktop status --json
+basaltw desktop start --json
+basaltw desktop exec -- APPLICATION ARGUMENTS...
+basaltw desktop screenshot --output PATH
+basaltw desktop control pause
+basaltw desktop control resume
+basaltw desktop logout
 ```
 
 These commands are implemented through the local CLI shell-tool adapter. Keep
-`infra-tools desktop ...` runtime operations distinct from the existing
-`infra-tools local desktop ENVIRONMENT` installation command. Default `exec`
+`basaltw desktop ...` runtime operations distinct from the existing
+`basaltw local desktop ENVIRONMENT` installation command. Default `exec`
 and screenshot to requiring a running session; `start` is the explicit
 creation operation. Provide an authenticated human connect action that
 performs start-or-attach.
@@ -219,8 +219,8 @@ evidence, especially when the network origin or user session matters.
 
 Add the desktop skill under `common/agent_skills/` and reconcile its delivery
 with desktop capability installation/removal. Update routing and cross-links
-in `infra-tools-browser-testing`, `infra-tools-t3-preview-testing`, and
-`infra-tools-playwright-testing`, plus the agent skill catalog and relevant
+in `basaltwater-browser-testing`, `basaltwater-t3-preview-testing`, and
+`basaltwater-playwright-testing`, plus the agent skill catalog and relevant
 native-application guidance. Preserve each VM's capability-specific browser
 skill selection; do not advertise unavailable desktop or browser tools.
 
@@ -350,7 +350,7 @@ suitable shell/API tools and T3/Playwright browser testing remains unchanged.
 | Readiness waits | Present/visible/active/absent polling outside the supervisor and lease. Incomplete inventories cannot establish absence. Document/export readiness needs application adapters. |
 | Launch results | Session-local launch token, PID, running/exited state, optional title wait and pre-existing window detection. Retain latest 128 records. Title matches do not prove process ownership or document readiness. |
 | Visible human handoff | Application-menu control window with status and pause/resume; closing preserves pause. Permanent tray indicator and optional task labels deferred pending desktop-specific qualification. |
-| Screenshot artifacts | Unique default paths in private Pictures/infra-tools storage, timestamps, window metadata and response-sharing guidance. Region selection, annotations and opt-in recordings deferred; retain original evidence alongside future annotations. |
+| Screenshot artifacts | Unique default paths in private Pictures/basaltwater storage, timestamps, window metadata and response-sharing guidance. Region selection, annotations and opt-in recordings deferred; retain original evidence alongside future annotations. |
 | Coordinated sequences | 1–20 JSON actions under one revocable 30-second lease, partial results and release attempts on failure. No rollback, automatic retries or lease extension; slow waits stay outside sequences. |
 | Diagnostics | Read-only doctor checks session, executables, handoff dependency and XRDP services. No automatic repairs or content capture. Human transport behavior remains unverified. |
 | Document workflows | Open existing local documents using default applications and reveal their parent directory. Future export adapters must verify output content and canceled dialogs; prefer domain CLIs when suitable. |

@@ -7,14 +7,14 @@ start only after its shared lifecycle and recovery dependencies receive an
 explicit roadmap slot.
 
 This project evaluates popular, lightweight open-source services that
-infra_tools could install on Debian VMs. The intended operating model is a
+Basaltwater could install on Debian VMs. The intended operating model is a
 small business running several independently managed services on one VM, not
 one appliance VM or container stack per application.
 
 The selection boundary is deliberately narrow:
 
 - PHP applications are excluded.
-- A mandatory PostgreSQL dependency defers a candidate until infra_tools has a
+- A mandatory PostgreSQL dependency defers a candidate until Basaltwater has a
   supported PostgreSQL lifecycle, which may never become a project priority.
 - Native binaries and SQLite-backed services are preferred over Docker-first
   or multi-process stacks.
@@ -34,7 +34,7 @@ Popularity figures below are approximate GitHub star counts observed on
   can complete an external HTTP request through DNS, TLS, and the edge.
 - Make Gatus the first implementation because it is one declarative service
   with no fleet enrollment protocol. It can immediately consume health
-  endpoints that infra_tools already manages.
+  endpoints that Basaltwater already manages.
 - Add the Beszel hub and agent as a second slice. Default remote agents to an
   outbound WebSocket connection and a loopback listener so agent ports are not
   exposed across the fleet.
@@ -56,7 +56,7 @@ Popularity figures below are approximate GitHub star counts observed on
 
 ## Why monitoring should come first
 
-Infra_tools can install and update services, inspect systemd, collect security
+Basaltwater can install and update services, inspect systemd, collect security
 events, and emit notifications, but it does not provide a durable view of
 service availability or VM resource history. Adding more applications before
 closing that observability gap would increase the number of workloads an
@@ -71,7 +71,7 @@ The two recommended products divide the problem cleanly:
 | Useful output | Health dashboard, status page, response history, alerts | CPU, memory, disk, network, temperature, SMART, trends, and alerts |
 | Deployment shape | One binary and declarative configuration | One hub plus an agent on each observed VM |
 | Public exposure | Optional status UI behind Nginx | Administrative hub behind Nginx; agents should not be public |
-| Infra_tools integration | Generate checks from managed service facts | Enroll saved hosts and report agent/hub health in audits |
+| Basaltwater integration | Generate checks from managed service facts | Enroll saved hosts and report agent/hub health in audits |
 
 Supporting both is justified because their overlap is limited to dashboards
 and alerts. They should share notification destinations and operator
@@ -91,7 +91,7 @@ first-class support:
 3. **Modest dependencies:** a native binary and local state are preferred.
    Mandatory PostgreSQL, Redis, workers, object storage, or container
    orchestration count against initial support.
-4. **Verifiable releases:** infra_tools can select an architecture, obtain an
+4. **Verifiable releases:** Basaltwater can select an architecture, obtain an
    immutable version, verify publisher-provided integrity data or another
    explicit trust source, and retain a known-good rollback artifact.
 5. **Observable startup:** the service exposes a reliable readiness or health
@@ -105,7 +105,7 @@ first-class support:
 8. **Bounded network surface:** listeners, proxy trust, TLS ownership, and
    firewall intent are explicit. An upstream Docker example is not permission
    to expose its default port publicly.
-9. **Configuration ownership:** infra_tools can reconcile the settings it
+9. **Configuration ownership:** Basaltwater can reconcile the settings it
    owns without erasing supported operator configuration or silently accepting
    drift.
 10. **Sustainable upstream:** releases and security fixes are active enough to
@@ -123,7 +123,7 @@ first-class support:
 | [SFTPGo](https://github.com/drakkan/sftpgo) (~12.4k) | Business-partner file exchange over SFTP, WebDAV, and HTTPS | Go binary; SQLite by default; local or object storage | Evaluate later | Useful complement to Samba/Syncthing, but adds protocol, account, storage, quota, and firewall complexity; review AGPL/UI terms |
 | [Vikunja](https://github.com/go-vikunja/vikunja) (~4.4k) | Task and project management | Bundled Go service and frontend; SQLite, MySQL, or PostgreSQL | Conditional/deferred | SQLite is suitable only for personal use or a handful of users according to upstream guidance; do not market that baseline for a growing team |
 | [Pocket ID](https://github.com/pocket-id/pocket-id) (~8.8k) | Passkey-focused OIDC identity provider | Standalone binary; SQLite or PostgreSQL | Defer | Attractive shared identity layer, but credential recovery, issuer stability, key backup, lockout prevention, and dependent-app rollback need a separate security project |
-| [Uptime Kuma](https://github.com/louislam/uptime-kuma) (~87.3k) | User-friendly uptime monitoring | Node.js plus PM2 or Docker; SQLite data | Do not prioritize | Much broader adoption than Gatus, but its runtime and update lifecycle fit infra_tools less well; Gatus covers the required synthetic-monitoring role more cleanly |
+| [Uptime Kuma](https://github.com/louislam/uptime-kuma) (~87.3k) | User-friendly uptime monitoring | Node.js plus PM2 or Docker; SQLite data | Do not prioritize | Much broader adoption than Gatus, but its runtime and update lifecycle fit Basaltwater less well; Gatus covers the required synthetic-monitoring role more cleanly |
 | [listmonk](https://github.com/knadh/listmonk) (~22.5k) | Newsletters and mailing lists | Go application binary with mandatory PostgreSQL | PostgreSQL-gated | High small-business value, but unsupported until PostgreSQL provisioning, backup, upgrade, health, and restore are first-class |
 | [Vaultwarden](https://github.com/dani-garcia/vaultwarden) | Bitwarden-compatible password service | Rust service, web vault, SQLite/MySQL/PostgreSQL; Docker is the common distribution | Defer indefinitely unless separately justified | A compromise or failed recovery would affect every managed credential; popularity does not lower the security and recovery bar |
 | [linkding](https://github.com/sissbruecker/linkding) | Shared bookmarks | Python/Django; Docker-oriented; SQLite or PostgreSQL | Do not prioritize | Lightweight state, but a narrower business case and less suitable native lifecycle than the selected candidates |
@@ -140,7 +140,7 @@ runtime boundary:
 | [FreeScout](https://github.com/freescout-help-desk/freescout) (~4.3k) | Shared mailbox and help desk | Requires PHP plus MySQL, MariaDB, or PostgreSQL |
 
 The exclusion is architectural rather than a claim about application quality.
-Infra_tools should not add PHP-FPM, extension selection, application pools,
+Basaltwater should not add PHP-FPM, extension selection, application pools,
 and a second web-runtime update policy solely to support one candidate.
 
 ## Recommended Gatus scope
@@ -170,12 +170,12 @@ to separate ownership:
 
 - one root-managed file owns application-level storage, web, and common alert
   defaults;
-- one generated file owns endpoints derived from infra_tools-managed
+- one generated file owns endpoints derived from Basaltwater-managed
   services; and
 - an operator endpoint directory may append explicitly unmanaged checks.
 
 Primitive configuration keys cannot be safely duplicated across merged Gatus
-files. The initial implementation must document which global keys infra_tools
+files. The initial implementation must document which global keys Basaltwater
 owns and reject ambiguous managed/operator overlap rather than relying on file
 ordering.
 
@@ -200,14 +200,14 @@ external availability.
 The delivered operator surface should include:
 
 - idempotent installation, reconfiguration, update, disable, and removal;
-- `infra-tools gatus health HOST` with stable text and JSON output;
+- `basaltw gatus health HOST` with stable text and JSON output;
 - configuration validation before replacing the live file;
 - service, listener, SQLite integrity, free-space, update-timer, and dashboard
   probes;
 - release rollback after failed startup or health checks;
 - backup inventory and a documented restore operation before scheduled
   updates are enabled; and
-- notification delivery through existing infra_tools webhook targets where a
+- notification delivery through existing Basaltwater webhook targets where a
   stable Gatus custom/webhook integration can preserve useful event fields.
 
 ## Recommended Beszel scope
@@ -231,7 +231,7 @@ capability.
 ### Agent deployment and enrollment
 
 Beszel supports an outgoing WebSocket connection when `HUB_URL` is set. Make
-that the infra_tools default for remote VMs:
+that the Basaltwater default for remote VMs:
 
 - bind any agent listener to loopback unless the operator explicitly selects
   the upstream inbound/SSH connection mode;
@@ -242,7 +242,7 @@ that the infra_tools default for remote VMs:
   service unit text, logs, or support bundles;
 - install the agent as its own restricted service account and grant only the
   host facts required by selected metrics; and
-- do not mount or expose a Docker/Podman socket on infra_tools' native-service
+- do not mount or expose a Docker/Podman socket on Basaltwater's native-service
   VMs merely to populate an otherwise empty container view.
 
 The first enrollment slice may require the operator to create a universal
@@ -257,7 +257,7 @@ The delivered operator surface should include:
 
 - separate hub and agent installation choices;
 - explicit association between a saved host and its hub;
-- read-only hub/agent health in `infra-tools audit` once the shared audit
+- read-only hub/agent health in `basaltw audit` once the shared audit
   contract is ready;
 - agent version, connection age, last telemetry time, and hub identity without
   returning enrollment material;
@@ -342,7 +342,7 @@ publisher install scripts as root.
    Nginx routing, and health-gated rollback.
 3. Generate checks only from explicit supported observations.
 4. Add health, update, backup, restore, disable, and removal operations.
-5. Test on a VM containing multiple infra_tools-managed services and from a
+5. Test on a VM containing multiple Basaltwater-managed services and from a
    separate monitoring VM so probe perspectives remain honest.
 
 ### Phase 2: Beszel
@@ -366,7 +366,7 @@ publisher install scripts as root.
 - Gatus and Beszel can coexist on one Debian VM with other supported services
   without conflicting users, state paths, ports, Nginx sites, firewall rules,
   timers, or cleanup logic.
-- Gatus reports the origin and perspective of every infra_tools-generated
+- Gatus reports the origin and perspective of every Basaltwater-generated
   check and never labels a loopback check as external availability.
 - Beszel agents use outbound enrollment by default and require no public agent
   firewall rule.

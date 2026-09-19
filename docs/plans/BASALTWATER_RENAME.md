@@ -1,8 +1,9 @@
 # Basaltwater identity and project rename
 
-Status: v2.0.0 repository implementation complete, including the package/CLI,
+Status: v2.0.0 core namespace delivered, including the package/CLI,
 active guides, bundled skills and [visual identity](../BRANDING.md).
-Public release operations and live VM qualification remain. See
+Abbreviated storage identity cutover, public release operations and live VM
+qualification remain. See
 [cutover contracts](BASALTWATER_CONTRACTS.md) and
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.
@@ -148,7 +149,8 @@ managed skills and deployment manifests use the Basaltwater namespace.
 
 The only compatibility feature is a one-time migration from recent
 infra-tools installations, run automatically on setup targets before setup
-steps and explicitly for standalone/controller migration. It does
+steps, automatically for default controller configuration reads, and explicitly
+for the remaining standalone/controller user data. It does
 not create old-name aliases. Historical release support, old environment-variable
 fallbacks and mixed old/new operation after successful cutover are excluded.
 

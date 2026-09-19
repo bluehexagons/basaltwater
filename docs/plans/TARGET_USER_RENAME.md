@@ -1,6 +1,6 @@
 # Managed target-user rename
 
-This plan defines the `infra-tools user rename` operation for changing the
+This plan defines the `basaltw user rename` operation for changing the
 login name of the account stored as a target's setup username. The public
 operation runs from the controller. It does not add a separate administrator
 command intended to be run locally on the target.
@@ -8,7 +8,7 @@ command intended to be run locally on the target.
 ## Goals and boundaries
 
 The operation must preserve the account's numeric UID, primary identity, home
-content, SSH access, supplementary groups, and infra-tools-managed services.
+content, SSH access, supplementary groups, and Basaltwater-managed services.
 It must update the target's current machine/setup state and the controller's
 current setup cache. Historical setup records remain unchanged.
 
@@ -21,7 +21,7 @@ blind text substitution.
 ## Public command
 
 ```text
-infra-tools user rename HOST NEW_USERNAME [--admin-user USER] [--key PATH]
+basaltw user rename HOST NEW_USERNAME [--admin-user USER] [--key PATH]
                            [--new-home PATH | --keep-home]
                            [--dry-run] [--yes] [--resume OPERATION_ID]
 ```
@@ -41,7 +41,7 @@ target user's SSH session is terminated.
    private-group relationship, linger state, active managed units, and exact
    configuration paths that will change.
 3. Create a root-owned operation directory and manifest under
-   `/var/lib/infra_tools/user-renames/<operation-id>/`. Stage a persistent,
+   `/var/lib/basaltwater/user-renames/<operation-id>/`. Stage a persistent,
    self-cleaning systemd oneshot unit that runs the target migration helper,
    and submit its start without waiting on the SSH session it will terminate.
 4. Start the unit and return the operation ID. The helper makes the old shell
@@ -54,7 +54,7 @@ target user's SSH session is terminated.
    UID, so a partially completed identity phase can be resumed.
 6. Rewrite only schema-known path values in saved setup configuration. Update
    the username in `machine.json` and `setup.json` atomically.
-7. Reconcile infra-tools-owned sudoers files, systemd units, timers, mount
+7. Reconcile Basaltwater-owned sudoers files, systemd units, timers, mount
    units, and user-scoped wrappers. Unmanaged references discovered during
    preflight are blockers rather than being rewritten opportunistically.
 8. Reload systemd, restore the active/enabled state recorded during preflight,
@@ -88,7 +88,7 @@ target user's SSH session is terminated.
 ## Implementation seams
 
 - Add parser/dispatch entries in `lib/sysadmin_cli.py` and the main command
-  dispatch in `infra_tools.py`.
+  dispatch in `basaltwater.py`.
 - Add controller orchestration in `lib/sysadmin_user.py`, using the existing
   SSH builders, sudo preflight, workspace cache, and host credentials.
 - Add the internal target helper in `lib/user_rename.py`; it is invoked by the

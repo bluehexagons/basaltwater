@@ -51,8 +51,8 @@ class TestCleanupMaintenance(unittest.TestCase):
         mock_trim.assert_called_once()
         self.assertEqual(mock_optional.call_count, 3)
         self.assertFalse(any(call.args[2] == "gem cleanup" for call in mock_optional.call_args_list))
-        # Stale infra tmp cleanup runs once per known temp directory (/tmp, /var/tmp).
-        self.assertEqual(mock_tmp_cleanup.call_count, len(cleanup_maintenance.INFRA_TMP_DIRS))
+        # Stale Basaltwater tmp cleanup runs once per known temp directory (/tmp, /var/tmp).
+        self.assertEqual(mock_tmp_cleanup.call_count, len(cleanup_maintenance.BASALTWATER_TMP_DIRS))
         self.assertEqual(
             mock_crash_cleanup.call_count,
             len(cleanup_maintenance.CRASH_REPORT_DIRS),

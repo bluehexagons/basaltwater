@@ -1,14 +1,18 @@
 # Basaltwater v2.0 release notes and qualification
 
-Basaltwater is a complete repository and runtime rename. The distribution is
+Basaltwater replaces the repository and runtime namespace. The distribution is
 `basaltwater`, the Python entry point is `basaltwater.py`, and the command is
 `basaltw`. Internal callers, install/staging paths, state directories, services,
 accounts, locks, skills, generated configuration, and deployment manifests use
-the new namespace. The gateway command is `basaltwater-web`.
+the new namespace. The gateway command is `basaltwater-web`. Abbreviated disk
+serial and LVM identities still need the coordinated cutover described in the
+[rename contracts](plans/BASALTWATER_CONTRACTS.md#outstanding-storage-identity-cutover).
 
 Setup automatically performs the [one-time migration](BASALTWATER_MIGRATION.md)
 on recent infra-tools target installations before continuing. Standalone and
-controller migrations retain the explicit `basaltw migrate` command.
+controller migrations retain the explicit `basaltw migrate` command for the
+remaining user data; default controller configuration reads migrate recent
+default client files automatically, including saved hosts.
 There are no persistent old-name aliases, environment fallbacks, or historical
 release support after cutover. The existing `bluehexagons/infra_tools` GitHub
 location remains authoritative until the owner renames the repository.
@@ -20,6 +24,9 @@ location remains authoritative until the owner renames the repository.
 - Migration fixtures cover read-only preview, private data preservation,
   disjoint-directory merging, collision/symlink rejection, skill replacement,
   service cutover, and recovery after a failed service start.
+- Migration regression tests also cover active provisioning locks, duplicate
+  legacy/canonical lock names, cross-filesystem lock retirement and recovery,
+  and automatic recovery of the narrowly identified interrupted lock cutover.
 - Installer tests cover new root/user installations, Debian/CachyOS selection,
   custom destinations, source activation failure and interruption recovery.
 - The fresh wheel is built, installed and exercised outside the source tree.
@@ -41,6 +48,15 @@ panel specimens do not certify live provisioning or migration.
 - [ ] Interrupt a migration on disposable systems and exercise journal-based
   recovery. Verify no duplicate scheduled jobs and no concurrently active
   old/new lock namespaces. Do not perform this qualification on production.
+- [ ] Complete the abbreviated disk-serial/LVM identity cutover and test
+  provider/guest reruns, reboot, missing disks, and interruption recovery.
+- [ ] Requalify migration and setup on multiple nodes of a disposable Proxmox
+  cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm
+  that a rerun on the first node and subsequent nodes preserves lock exclusion.
+- [ ] Qualify NAS and Samba + Gogs + Syncthing setup/reruns, boot ordering,
+  missing mounts, Syncthing identity preservation and service-user access.
+  Exercise sync/scrub failures and restoration using disposable data; a
+  successful mirror is not evidence of application-consistent recovery.
 - [ ] Confirm namespace ownership and naming clearance before public publication.
 - [ ] Tag the qualified commit `v2.0.0`, publish artifacts and these notes, and
   verify installer/raw/archive/download URLs and `stable` channel selection.

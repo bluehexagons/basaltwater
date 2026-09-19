@@ -49,8 +49,8 @@ T3_ROTATED_LOG_MAX_AGE_DAYS = 14
 # cleaned up by finally blocks, but interrupted setup/deploy/provision runs can
 # leave them behind.
 #
-STALE_INFRA_TMP_MAX_AGE_DAYS = 7
-INFRA_TMP_PATTERNS = (
+STALE_BASALTWATER_TMP_MAX_AGE_DAYS = 7
+BASALTWATER_TMP_PATTERNS = (
     r"basaltwater_setup_build_[A-Za-z0-9_-]+",
     r"basaltwater_recall_[A-Za-z0-9_-]+",
     r"basaltwater_deploy_[A-Za-z0-9_-]+",
@@ -61,4 +61,4 @@ INFRA_TMP_PATTERNS = (
     r"bundler\d{8}-\d+-[A-Za-z0-9_-]+",
 )
 # Build tools use /var/tmp to avoid filling small tmpfs-backed /tmp partitions.
-INFRA_TMP_DIRS = ("/tmp", "/var/tmp")
+BASALTWATER_TMP_DIRS = ("/tmp", "/var/tmp")

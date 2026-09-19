@@ -13,13 +13,15 @@ issue-to-implementation evidence.
 
 ## Basaltwater release checkpoint (2026-09-19)
 
-The rename's repository implementation is complete in
+The rename's core namespace implementation is delivered in
 [PR #101](https://github.com/bluehexagons/infra_tools/pull/101): distribution
 `basaltwater`, entry point `basaltwater.py`, command `basaltw`, renamed runtime
 resources and skills, one-time migration from recent installations, and visual
-assets. Successful cutover leaves no old-name runtime aliases. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
+assets. Abbreviated disk serials and LVM names still require the
+[coordinated storage identity cutover](BASALTWATER_CONTRACTS.md#outstanding-storage-identity-cutover).
+Successful cutover leaves no old-name runtime aliases. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
 the [release checklist](../BASALTWATER_RELEASE.md) owns disposable-host
-qualification and external publication. Implementation complete does not mean
+qualification and external publication. Core namespace delivery does not mean
 merged, tagged, published or live-host qualified. These release checks do not
 replace or reorder the reliability work below.
 
@@ -161,13 +163,13 @@ This work is the foundation for every later apply or rollback feature.
 ## P1: One manifest-driven deployment platform
 
 Planning update, 2026-09-07: Coolify evaluation is deferred. Keep the
-infra-tools controller lightweight and independent of Docker, a Coolify
+Basaltwater controller lightweight and independent of Docker, a Coolify
 service, or an external application-management API. The [Coolify integration
 plan](COOLIFY_INTEGRATION.md) records an optional future boundary for complex
 applications such as Akaunting; it does not change the supported deployment
 path or create a dependency.
 
-The direct deployment and webhook paths should converge on `infra.json` as the
+The direct deployment and webhook paths should converge on `basaltwater.json` as the
 shared application model.
 
 The sequence should be:

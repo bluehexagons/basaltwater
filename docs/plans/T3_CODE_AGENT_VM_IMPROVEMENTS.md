@@ -6,7 +6,7 @@ disposable-VM deployment validation still pending.
 
 ## Objective
 
-Make infra-tools-managed T3 Code VMs easier to operate during long agent
+Make Basaltwater-managed T3 Code VMs easier to operate during long agent
 sessions without turning the base profile into an implicit collection of every
 runtime and automation tool. Preserve the existing user-scoped service,
 credential, repository, HTTPS, and pairing boundaries.
@@ -56,7 +56,7 @@ Completed in `6c050dc`.
 Implemented with conservative ownership boundaries. npm `_npx` workspaces and
 numbered T3 log rotations are now bounded by the user maintenance job.
 Playwright already records every consuming installation in its shared `.links`
-registry and performs reference-aware garbage collection; infra-tools will not
+registry and performs reference-aware garbage collection; Basaltwater will not
 add a competing directory-deletion mechanism that could remove another
 client's browser. Codex standalone releases remain diagnostic-only vendor
 rollback state.
@@ -74,7 +74,7 @@ rollback state.
 
 Implemented with a local managed-worktree lifecycle, redacted JSON support
 snapshot, and focused workspace, deployment-smoke, and VM-triage skills. Port
-allocation stays with the existing `infra-web preview start` and `forward add
+allocation stays with the existing `basaltwater-web preview start` and `forward add
 --listen auto` paths so the VM has one source of truth for loopback processes,
 HTTPS listeners, UFW policy, and cleanup.
 

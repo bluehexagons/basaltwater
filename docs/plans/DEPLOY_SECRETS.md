@@ -70,5 +70,5 @@ activation because a secret was discovered late.
 ## Non-goals
 
 - Inventing a new encryption format.
-- Storing secret values in `infra.json`.
+- Storing secret values in `basaltwater.json`.
 - Supporting every secret manager in the initial release.

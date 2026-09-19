@@ -4,7 +4,7 @@ Status: proposed P1 implementation plan. This convention should land before
 the next fresh production web VM is provisioned.
 
 This project defines a versioned `go-site/v1` contract for building and
-running small Go web services with infra_tools. Its purpose is to make the safe
+running small Go web services with Basaltwater. Its purpose is to make the safe
 path require little or no repository-specific deployment configuration while
 keeping multi-service repositories, public non-HTTP listeners, secrets, and
 data migrations explicit.
@@ -15,12 +15,12 @@ transactional activation path. It is not a second deployment engine.
 ## Decision summary
 
 - A root Go module with one conventional server entry point can use
-  `go-site/v1` without an `infra.json` file.
+  `go-site/v1` without a `basaltwater.json` file.
 - Nested Go modules are discovered and reported, but never activated
   implicitly. Activating one requires an explicit component selection.
 - Apps consume one standard environment contract for their primary listener,
   public URL, proxy trust, and managed directories.
-- Infra_tools owns TLS termination, service users, ports, systemd hardening,
+- Basaltwater owns TLS termination, service users, ports, systemd hardening,
   health gating, release activation, and supported backups.
 - The primary HTTP listener is loopback-only. Public UDP, raw TCP, direct TLS,
   and additional listeners are explicit capabilities rather than inference.
@@ -31,7 +31,7 @@ transactional activation path. It is not a second deployment engine.
 - Sibling `cmd/*` main packages are built as operator tools but are never run
   automatically. Application and data migrations remain deliberate actions.
 - Resolved convention output is previewable, versioned, and recorded with the
-  deployment so an infra_tools upgrade cannot silently reinterpret a project.
+  deployment so a Basaltwater upgrade cannot silently reinterpret a project.
 
 ## Evidence from current projects
 
@@ -56,7 +56,7 @@ These projects establish several constraints:
 4. Auxiliary commands are useful release artifacts, but automatically running
    them would make a data migration an unsafe side effect of deployment.
 5. Direct application TLS is useful for standalone/manual operation but should
-   be disabled when infra_tools and Nginx own the public endpoint.
+   be disabled when Basaltwater and Nginx own the public endpoint.
 
 ## Goals
 
@@ -106,11 +106,11 @@ The implicit component defaults to:
 - internal port: stable automatic assignment;
 - service entry point: `./cmd/server` or `.`;
 - readiness path: `/readyz`; and
-- state root: the component's infra_tools-managed shared directory.
+- state root: the component's Basaltwater-managed shared directory.
 
 ### Nested modules and monorepos
 
-Infra_tools should recursively discover runtime markers for planning, while
+Basaltwater should recursively discover runtime markers for planning, while
 ignoring dependency and generated directories. A nested Go module is reported
 as a candidate with its source path, entry points, Go version, and likely
 operator commands. It is not included in the desired deployment until an
@@ -156,16 +156,16 @@ replace the generated systemd unit or weaken mandatory hardening.
 
 ## Build contract
 
-For each selected `go-site/v1` component, infra_tools should:
+For each selected `go-site/v1` component, Basaltwater should:
 
 1. Read the component module's `go.mod` and install a compatible current patch
    release for its declared Go major/minor line.
 2. Build under the application's persistent, isolated build account.
 3. Run `go test ./...` in the selected module before activation.
 4. Build the primary service with `go build -trimpath` into
-   `.infra_tools/bin/server`.
+   `.basaltwater/bin/server`.
 5. Discover other immediate `cmd/*` main packages, build each into
-   `.infra_tools/bin/<command>`, and record them as operator tools.
+   `.basaltwater/bin/<command>`, and record them as operator tools.
 6. Validate that every declared output exists and is executable before stopping
    the active service.
 
@@ -182,7 +182,7 @@ explicit build capability.
 
 ## Runtime environment contract
 
-Infra_tools supplies these values to every `go-site/v1` process:
+Basaltwater supplies these values to every `go-site/v1` process:
 
 | Variable | Contract |
 | --- | --- |
@@ -196,7 +196,7 @@ Infra_tools supplies these values to every `go-site/v1` process:
 | `CONFIG_DIR` | Read-only operator-managed configuration |
 | `CACHE_DIR` | Writable, disposable application cache |
 | `TRUST_PROXY` | `loopback`; trust proxy headers only from loopback peers |
-| `COOKIE_SECURE` | `true` when infra_tools owns the HTTPS public endpoint |
+| `COOKIE_SECURE` | `true` when Basaltwater owns the HTTPS public endpoint |
 
 Applications should prefer `LISTEN_ADDR`, use `DATA_DIR` for durable writes,
 and treat an absent optional config file as a normal state when that feature is
@@ -209,7 +209,7 @@ forwarded headers from non-loopback peers, while Nginx must overwrite
 `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`, and `Host` rather than
 passing client-supplied values through unchanged.
 
-Infra_tools writes an optional mode-`0600` environment file outside the release
+Basaltwater writes an optional mode-`0600` environment file outside the release
 tree. Secret references and required-secret preflights remain owned by
 [Deploy secrets](DEPLOY_SECRETS.md); convention inference never commits or
 copies secret values from the repository.
@@ -219,7 +219,7 @@ copies secret values from the repository.
 - The application serves plain HTTP on `LISTEN_ADDR`.
 - Nginx owns certificates, HTTPS policy, public compression, and routing.
 - The application does not start autocert, bind public port 80/443, or expose a
-  second TLS listener in an infra_tools deployment.
+  second TLS listener in a Basaltwater deployment.
 - Graceful SIGTERM shutdown is required so activation and rollback do not
   corrupt state.
 - `GET /healthz` is a cheap liveness check and must not expose sensitive data.
@@ -286,7 +286,7 @@ binary supports it.
 Add a read-only command such as:
 
 ```text
-infra-tools manifest explain /path/to/repository
+basaltw manifest explain /path/to/repository
 ```
 
 It should print or emit JSON containing:
@@ -322,7 +322,7 @@ Target state: zero repository deployment manifest.
    operator tool.
 4. Verify the resolved convention reproduces the current loopback listener,
    service user, SQLite location, health gate, and 14-backup policy.
-5. Remove `infra.json` only after an explicit-versus-inferred parity test passes.
+5. Remove `basaltwater.json` only after an explicit-versus-inferred parity test passes.
 
 The Rails importer is never a deployment hook. It is run once, under the
 goclick service identity, while goclick is stopped and against the copied Rails
@@ -373,7 +373,7 @@ Target state: composed `node-static/v1` site with an explicitly selected nested
    design before enabling payments or account creation.
 6. Enable the backend by adding the compact `source: "server", path: "/api"`
    convention component. Do not infer it from the nested `go.mod`.
-7. Remove the obsolete infra_tools-specific custom systemd template once the
+7. Remove the obsolete Basaltwater-specific custom systemd template once the
    generated-unit path is authoritative. The manual Caddy/systemd examples may
    remain only if they are clearly documented as a separate unsupported path.
 
@@ -407,7 +407,7 @@ rails_test application. The cutover sequence is:
    policy. Keep the old VM offline/read-only for a bounded rollback window,
    then decommission it.
 
-## Ruby and Rails retirement from infra_tools
+## Ruby and Rails retirement from Basaltwater
 
 Removal happens after the goclick migration is accepted and its rollback window
 closes. It is a deliberate breaking cleanup, not part of the import operation.
@@ -471,7 +471,7 @@ build or deploy Rails applications.
 
 ## Acceptance criteria
 
-- Goclick deploys from a fresh checkout with no `infra.json`, receives a stable
+- Goclick deploys from a fresh checkout with no `basaltwater.json`, receives a stable
   loopback port and managed data directory, passes database readiness, and
   creates restorable SQLite backups.
 - `cmd/migrate-rails` is available as an operator tool but is never executed by
@@ -498,6 +498,6 @@ build or deploy Rails applications.
   recovery roadmap.
 - CI/CD must consume the same resolved convention and artifact metadata defined
   here; see [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md).
-- Exact additional-listener firewall application must follow infra_tools'
+- Exact additional-listener firewall application must follow Basaltwater'
   reviewed network policy rather than issue ad-hoc firewall commands from the
   deployment engine.

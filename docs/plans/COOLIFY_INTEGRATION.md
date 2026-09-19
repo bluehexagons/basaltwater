@@ -1,13 +1,13 @@
 # Coolify integration and application platform evaluation
 
-Status: deferred decision, 2026-09-07. Infra-tools will not integrate Coolify
+Status: deferred decision, 2026-09-07. Basaltwater will not integrate Coolify
 or make it a dependency at this time. No Coolify integration or Akaunting
 support is implemented by this plan. Revisit only when a concrete complex
 application need justifies an optional platform evaluation.
 
 ## Recommendation and constraints
 
-Do not pilot or adopt Coolify as part of the current roadmap. Keep infra-tools
+Do not pilot or adopt Coolify as part of the current roadmap. Keep Basaltwater
 usable with only its lightweight controller, saved configuration, and SSH
 access. Native deployment and CI/CD remain the supported path for simple
 applications. A future, separately managed Coolify installation may still be
@@ -15,11 +15,11 @@ used for a particularly complex application, but it must remain optional and
 isolated from the control system.
 
 Do not make Coolify a required service, Docker dependency, database, or API for
-the infra-tools controller. Avoid building a second Compose manager, mirroring
-the Coolify UI, or translating every `infra.json` feature into Coolify. Continue
+the Basaltwater controller. Avoid building a second Compose manager, mirroring
+the Coolify UI, or translating every `basaltwater.json` feature into Coolify. Continue
 reliability work on the native deployment path.
 
-Infra-tools and its management platform must remain FOSS. Source-available
+Basaltwater and its management platform must remain FOSS. Source-available
 applications may be supported separately. Coolify's current repository license
 is Apache-2.0; retain the license from the exact release selected for the pilot.
 Self-hosting must not require a proprietary management service. Registry, Git,
@@ -42,12 +42,12 @@ The current contracts are [deployments](../DEPLOYMENTS.md),
 | `--cicd` receiver, queue, executor, repository scripts | Coolify deployment integration; build tests in external CI or a required build stage | Preserve commit identity and test gating; retire old webhook jobs after cutover. |
 | `--build-server`, rsync artifact delivery | Container build pipeline and registry | Push immutable images; app servers pull them. Qualify separate builds for each selected resource type. |
 | `--app-server`, `--deploy`, release directories and systemd units | Coolify containers | Existing native applications remain supported until individually migrated. |
-| `infra.json` application model | Dockerfile/Compose for migrated applications | Keep app-specific recovery documentation and inventory references; do not require dual declarations of topology. |
+| `basaltwater.json` application model | Dockerfile/Compose for migrated applications | Keep app-specific recovery documentation and inventory references; do not require dual declarations of topology. |
 | Generated application Nginx and Certbot configuration | Coolify proxy and certificate management | One owner per endpoint and host role; private TLS and tunnel behavior need explicit qualification. |
-| Panel service links and machine maintenance | infra-tools, linking to Coolify for app operations | Current panel has no general app deployment UI or arbitrary service controller to replace. |
-| Proxmox, disks, mounts, host access, network policy, OS maintenance | infra-tools | Preserve capability checks, validation, dry runs, and host recovery. |
+| Panel service links and machine maintenance | Basaltwater, linking to Coolify for app operations | Current panel has no general app deployment UI or arbitrary service controller to replace. |
+| Proxmox, disks, mounts, host access, network policy, OS maintenance | Basaltwater | Preserve capability checks, validation, dry runs, and host recovery. |
 | Application initialization, readiness, migrations, backup consistency | Tested application support recipe | Coolify operates the stack; the recipe defines what safe operation means. |
-| Database backups, volume recovery, VM backups | Coordinated application recipe plus infra-tools infrastructure backup workflows | Qualify actual database coverage; restore data and matching application versions together. |
+| Database backups, volume recovery, VM backups | Coordinated application recipe plus Basaltwater infrastructure backup workflows | Qualify actual database coverage; restore data and matching application versions together. |
 
 Coolify documents source builds, Dockerfiles, images, static applications, and
 Compose support. These are deployment facilities, not evidence that an
@@ -82,7 +82,7 @@ project.
 
 ```mermaid
 flowchart TD
-    I[infra-tools: provision and maintain VMs] --> C[Coolify management VM]
+    I[Basaltwater: provision and maintain VMs] --> C[Coolify management VM]
     I --> A[Static or Go application VM]
     I --> K[Akaunting application VM]
     I --> B[Optional build VM]
@@ -104,11 +104,11 @@ model, but continued serving during a management outage remains a pilot test.
 
 Proposed ownership rules:
 
-- Infra-tools declares VM resources, storage mounts, network reachability and
+- Basaltwater declares VM resources, storage mounts, network reachability and
   maintenance policy. Coolify owns deployment resources, containers, networks
   within its stacks, and application ingress configuration.
 - Establish one Docker installation/update owner. Initially follow the
-  supported Coolify prerequisite flow; infra-tools coordinates host package
+  supported Coolify prerequisite flow; Basaltwater coordinates host package
   maintenance and reboots around it. Do not add competing Docker installers or
   cleanup timers. Verify what ordinary saved-configuration reruns actually do.
 - Do not combine a Coolify application-host role with native `--deploy`,
@@ -120,7 +120,7 @@ Proposed ownership rules:
   Nginx listeners; changing just the advertised panel port is insufficient.
 - Use Traefik for the first pilot, following Coolify's default. Test internal
   domains, private CA trust or ACME validation, and any Cloudflare tunnel path
-  separately. Existing infra-tools certificate and ingress settings do not
+  separately. Existing Basaltwater certificate and ingress settings do not
   transfer automatically. [Proxy documentation](https://coolify.io/docs/knowledge-base/server/proxies).
 - Restrict management UI/API and SSH reachability to management sources;
   expose only the intended application ingress. Do not publish database ports.
@@ -137,7 +137,7 @@ CI pipeline that tests and pushes images is an acceptable baseline.
 
 ## Integration scope after the manual pilot
 
-Start with a documented manual Coolify setup on infra-tools-provisioned VMs.
+Start with a documented manual Coolify setup on Basaltwater-provisioned VMs.
 Only automate the steps that the pilot proves necessary and repeatable.
 The following interfaces are design proposals, not existing CLI options:
 
@@ -162,7 +162,7 @@ The following interfaces are design proposals, not existing CLI options:
 5. **Explicit ownership handoff.** Native deploy/redeploy commands must reject
    Coolify-owned targets or deliberately route through a documented backend;
    they must never silently run the native path. UI edits to Coolify-owned
-   configuration are not drift for infra-tools to overwrite.
+   configuration are not drift for Basaltwater to overwrite.
 
 The current API documents team-scoped bearer tokens and separate read, deploy,
 write and sensitive-read permissions. Confirm the selected release's actual

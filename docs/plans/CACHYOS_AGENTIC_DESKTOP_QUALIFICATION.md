@@ -16,7 +16,7 @@ run the current bare-metal setup profile or qualify real GPU behavior.
 
 ## P0 prerequisite gate
 
-Run `infra-tools local cachyos-doctor --json` from a terminal in the disposable
+Run `basaltw local cachyos-doctor --json` from a terminal in the disposable
 user's Plasma Wayland session. The JSON is a prerequisite inventory, not a
 test result. Compare session health and listener/service state before and
 after each run using the test machine's existing tools.

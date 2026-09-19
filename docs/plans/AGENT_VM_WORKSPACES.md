@@ -42,8 +42,8 @@ values in a saved command.
   credentials or a Git-host-specific tool.
 - Clone private repositories on the target when target credentials are used,
   so the controller does not need the corresponding Git tooling or access.
-- Support credentials from either the active user's known configuration or an
-  explicitly supplied file in non-interactive setup.
+- Use target-owned subscription login for Codex; support explicit provider
+  files and a separate active-user credential option for GitHub.
 - Provide an interactive setup flow for selecting tools, Git access, agent
   credentials, and repositories.
 - Keep secrets out of process arguments, saved setup commands, logs, and
@@ -182,47 +182,35 @@ fetching, resetting, or overwriting agent work. A failed clone or credential
 preflight must fail the requested workspace setup rather than silently
 producing a VM missing one of its declared repositories.
 
-### Two non-interactive credential inputs
+### Provider-specific authentication
 
-Non-interactive setup has only two credential source choices:
+Coding-agent profiles default to target-owned Codex subscription login through
+`--agent-auth login`. The controller needs SSH, not a local Codex installation.
+The device URL/code can be completed in a browser on another machine;
+`basaltw agent auth login HOST USER --open-browser` optionally opens it locally.
+Unattended setup fails clearly if authorization is needed. Existing healthy
+target credentials are retained, and renewable target credentials are renewed.
 
-1. **Active user configuration**: read the known configuration for the user
-   invoking infra-tools. When invoked through `sudo`, resolve the original
-   active user rather than accidentally reading root's home directory.
-2. **Specified file**: read the credential payload from a path supplied by the
-   operator or an external secret-mount mechanism.
+GitHub has a separate policy: `--git-auth active` imports only the selected
+host's controller identity; `--git-auth-file PATH` supplies an explicit file.
+Keyring-backed GitHub credentials require controller-side `gh auth token`.
+These GitHub inputs do not select a coding-agent credential source.
 
-The controller does not need the corresponding executable installed. It reads
-the known file format directly and transfers the resulting payload over the
-existing authenticated setup connection.
+`--agent-auth-file TOOL PATH` explicitly imports a provider file. Source files
+must satisfy ownership, permission, regular-file and symlink checks. Setup
+seeds missing credentials and preserves existing ones except for the documented
+safe stale-Codex replacement. Other providers use explicit files or their own
+target login workflows; Codex login does not authenticate them.
 
-Tool-specific files remain explicit and allowlisted:
+Coding-agent active copying and credential pulling are removed. Rotating a
+shared subscription refresh token on several machines is not a supported
+credential-management strategy. Prefer a separate target-owned login for each
+VM. Explicit Codex API-key login is also supported, with a warning that API
+usage is billed separately from the ChatGPT subscription.
 
-| Tool | Active-user source | Target destination |
-| --- | --- | --- |
-| GitHub CLI | selected host entry in `~/.config/gh/hosts.yml` | `~/.config/gh/hosts.yml` |
-| Codex | `~/.codex/auth.json` | `~/.codex/auth.json` |
-| OpenCode | `~/.local/share/opencode/auth.json` | `~/.local/share/opencode/auth.json` |
-
-For GitHub, the operator must select a host, defaulting explicitly to
-`github.com`. Active-user setup copies only that host entry; it must not copy
-credentials for every host in a multi-host `hosts.yml`. A specified file must
-either contain one selected-host entry or be a plain GitHub token file in the
-format documented by the command. The setup flow should configure HTTPS Git
-without requiring the operator to hand-edit GitHub CLI YAML.
-
-Specified source paths must be validated as regular files, must not be
-symlinks, and must meet the documented ownership and permission policy. The
-controller may read them directly; it must not invoke `gh`, Codex, OpenCode,
-or another agent executable to discover credentials.
-
-Credential source selection is a one-time input to a setup or auth-rotation
-operation. It may exist in the transient runtime configuration, but it is not
-written to the persisted `SetupConfig` representation or saved setup command.
-Saved configuration contains tools, Git policy, and repository declarations; a
-rerun preserves existing credentials unless an explicit auth operation is
-requested. The target path must be owned by the selected setup user and the
-payload format must be valid.
+Credential sources are transient inputs, omitted from persisted setup commands.
+Non-secret per-provider selection and Git policy remain separate from secrets.
+See [Agent authentication](../AGENT_AUTHENTICATION.md) for the current contract.
 
 ### Non-secret agent configuration
 
@@ -239,7 +227,7 @@ instructions.
 The setup command should offer an explicit interactive mode, for example:
 
 ```text
-infra-tools setup server_dev 10.0.0.10 agent --interactive
+basaltw setup server_dev 10.0.0.10 agent --interactive
 ```
 
 After the target and machine details are known, the flow presents choices in
@@ -253,8 +241,8 @@ this order:
 4. Select GitHub credentials: skip, use the active user's selected-host
    configuration, choose a credential file, or enter a GitHub token.
 5. For each selected agent, choose whether to copy active-user non-secret
-   configuration and whether to authenticate it from the active configuration,
-   a credential file, or supported interactive input.
+   configuration and choose target login, an explicit credential file, or
+   no authentication according to that provider's supported options.
 6. Display a complete redacted plan and require confirmation.
 
 The interactive flow produces the same validated `SetupConfig` and saved setup
@@ -278,17 +266,17 @@ Add a focused remote command for changing credentials without rebuilding the
 VM, such as:
 
 ```text
-infra-tools agent auth set HOST USER --tool gh --file PATH
-infra-tools agent auth set HOST USER --tool codex --file PATH
-infra-tools agent auth set HOST USER --tool opencode --file PATH
+basaltw agent auth set HOST USER --tool gh --file PATH
+basaltw agent auth login HOST USER
+basaltw agent auth set HOST USER --tool opencode --file PATH
 ```
 
 For GitHub, the command also accepts an explicit Git host and performs the
 same one-host filtering as initial setup. `PATH` is a controller-local source
 path, never a target path or a value passed through the remote command line.
-The same command should offer an interactive selection of active-user config,
-file path, or supported token entry. It must not require the controller to
-have the target tool installed. Replacement must be atomic and preserve the
+Active-user selection is GitHub-only; coding-agent imports require an explicit
+file. Codex subscription authorization uses `auth login` and does not require
+the controller to have Codex installed. Replacement must be atomic and preserve the
 previous credential if validation or transfer fails. `agent auth status` should
 report only presence, ownership, mode, age, installation state, and
 authentication result; never credential contents.
@@ -298,7 +286,7 @@ authentication result; never credential contents.
 A normal public-repository setup should read approximately as follows:
 
 ```bash
-infra-tools setup agent_vm 10.0.0.10 agent \
+basaltw setup agent_vm 10.0.0.10 agent \
   --agent-tool codex --agent-tool opencode \
   --repo https://github.com/acme/application.git \
   --repo https://gitlab.com/acme/documentation.git
@@ -308,7 +296,7 @@ For private GitHub repositories, GitHub CLI and a one-host credential source
 are explicit:
 
 ```bash
-infra-tools setup agent_vm 10.0.0.10 agent \
+basaltw setup agent_vm 10.0.0.10 agent \
   --git-access read \
   --git-host github.com \
   --git-auth active \
@@ -319,7 +307,7 @@ An operator using mounted secret files could instead select an individual
 GitHub credential file:
 
 ```bash
-infra-tools setup agent_vm 10.0.0.10 agent \
+basaltw setup agent_vm 10.0.0.10 agent \
   --git-access read \
   --git-host github.com \
   --git-auth-file /run/secrets/github-hosts.yml \
@@ -329,8 +317,8 @@ infra-tools setup agent_vm 10.0.0.10 agent \
 
 The implementation uses these flag names and keeps the public model small:
 explicit tools, one VM-level Git policy, optional host-neutral repositories,
-GitHub authentication as the first provider-specific integration, active-user
-configuration or specified files, and an interactive alternative. Credential
+GitHub authentication as the first Git-host integration, target-owned Codex
+login, explicit provider files, and an interactive alternative. Credential
 source options are operation-only and are omitted from saved commands.
 
 ## Delivered implementation phases
@@ -387,7 +375,8 @@ explicitly deferred as stated above.
 
 ### Phase 4: Credential rotation and diagnostics — complete
 
-- Added `agent auth set` and `agent auth status`.
+- Added `agent auth login`, `agent auth set`, and `agent auth status`;
+  removed pulling and active copying for coding-agent credentials.
 - Added post-setup checks for tool availability, credential permissions, Git
   remote access, and each declared repository.
 - Kept explicit snapshot mode deferred because no supported offline workflow
