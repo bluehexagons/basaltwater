@@ -172,7 +172,7 @@ class TestSetupAdminPython(unittest.TestCase):
         self.assertEqual(argcomplete_cmd[:5], ["/tmp/testuser/.local/bin/uv", "tool", "install", "--upgrade", "argcomplete"])
         self.assertIn("--exclude-newer", argcomplete_cmd)
         mock_run_completion_setup.assert_called_once_with(
-            shell="bash", global_install=False, command_name="infra-tools"
+            shell="bash", global_install=False, command_name="basaltw"
         )
 
     @patch("lib.python_setup.validate_username", return_value=False)

@@ -82,5 +82,5 @@ def run_local_python_setup(
     if result != 0:
         return result
 
-    print("✓ Local infra-tools Python install complete.")
+    print("✓ Local Basaltwater Python install complete.")
     return 0

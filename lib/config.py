@@ -1356,7 +1356,7 @@ class SetupConfig:
                     setup_host = str(guest_interface)
 
         cmd_parts: StrList = [
-            f"infra-tools setup {shlex.quote(self.system_type)}",
+            f"basaltw setup {shlex.quote(self.system_type)}",
             shlex.quote(setup_host),
         ]
 

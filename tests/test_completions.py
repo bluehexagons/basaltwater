@@ -12,6 +12,21 @@ from lib import completions
 
 
 class TestCompletionMigration(unittest.TestCase):
+    @patch("lib.completions._find_register_argcomplete", return_value="/usr/bin/register-python-argcomplete")
+    def test_new_completions_preserve_transition_registration_and_are_repeatable(self, _register):
+        for shell in ("bash", "zsh"):
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as tmp:
+                config = Path(tmp) / f".{shell}rc"
+                original = 'eval "$(register-python-argcomplete infra-tools)"\n'
+                config.write_text(original, encoding="utf-8")
+                with patch.object(completions, f"get_{shell}_config_file", return_value=config):
+                    setup = getattr(completions, f"setup_{shell}_completions")
+                    self.assertTrue(setup())
+                    self.assertTrue(setup())
+                content = config.read_text(encoding="utf-8")
+                self.assertIn(original, content)
+                self.assertEqual(content.count("register-python-argcomplete basaltw)"), 1)
+
     def test_retire_legacy_shell_registrations_preserves_other_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_file = Path(tmp) / ".bashrc"
@@ -49,13 +64,13 @@ class TestCompletionMigration(unittest.TestCase):
 
             content = config_file.read_text(encoding="utf-8")
             self.assertNotIn("register-python-argcomplete infra_tools)", content)
-            self.assertIn("register-python-argcomplete infra-tools)", content)
+            self.assertIn("register-python-argcomplete basaltw)", content)
 
     @patch("lib.completions._find_register_argcomplete", return_value="/usr/bin/register-python-argcomplete")
     @patch("lib.completions.subprocess.run")
     def test_fish_setup_removes_legacy_completion_files(self, mock_run, _register):
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="complete --command infra-tools\n", stderr=""
+            args=[], returncode=0, stdout="complete --command basaltw\n", stderr=""
         )
         with tempfile.TemporaryDirectory() as tmp:
             fish_dir = Path(tmp)
@@ -66,7 +81,7 @@ class TestCompletionMigration(unittest.TestCase):
             with patch("lib.completions.get_fish_config_dir", return_value=fish_dir):
                 self.assertTrue(completions.setup_fish_completions())
 
-            self.assertTrue((fish_dir / "completions" / "infra-tools.fish").is_file())
+            self.assertTrue((fish_dir / "completions" / "basaltw.fish").is_file())
             for name in completions.LEGACY_INFRA_TOOLS_COMMANDS:
                 self.assertFalse((fish_dir / "completions" / f"{name}.fish").exists())
 

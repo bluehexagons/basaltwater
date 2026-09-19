@@ -129,7 +129,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         mock_bootstrap,
         mock_confirm,
     ):
-        with patch.object(sys, "argv", ["infra-tools", "bootstrap"]):
+        with patch.object(sys, "argv", ["basaltw", "bootstrap"]):
             result = infra_tools.main()
 
         self.assertEqual(result, 1)
@@ -178,7 +178,7 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
         )
         self.assertEqual(result, 1)
 
-    @patch("lib.orchestrator_bootstrap.install_launcher", return_value="/usr/local/bin/infra-tools")
+    @patch("lib.orchestrator_bootstrap.install_launcher", return_value="/usr/local/bin/basaltw")
     @patch("lib.orchestrator_bootstrap.resolve_bootstrap_user", return_value=("admin", "/home/admin"))
     @patch("lib.orchestrator_bootstrap.install_system_packages", return_value=0)
     @patch("lib.orchestrator_bootstrap.get_current_username", return_value="root")
@@ -233,6 +233,47 @@ class TestRunOrchestratorBootstrap(unittest.TestCase):
 
 
 class TestInstallLauncher(unittest.TestCase):
+    def test_both_launchers_survive_source_rollback_and_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "infra_tools.py")
+            target = os.path.join(tmp, "bin")
+            for version in ("previous", "renamed", "previous"):
+                with open(source, "w", encoding="utf-8") as handle:
+                    handle.write(f"print({version!r})\n")
+                orchestrator_bootstrap.install_launcher(source, target_dir=target)
+                for name in ("basaltw", "infra-tools"):
+                    result = subprocess.run(
+                        [os.path.join(target, name)], capture_output=True,
+                        text=True, check=True, timeout=10,
+                    )
+                    self.assertEqual(result.stdout.strip(), version)
+            self.assertEqual(set(os.listdir(target)), {"basaltw", "infra-tools"})
+
+    def test_agent_launcher_upgrade_retains_user_command_and_adds_basaltw(self):
+        from common import agent_steps
+        from lib.config import SetupConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, ".local", "bin")
+            os.makedirs(target)
+            old = os.path.join(target, "infra-tools")
+            with open(old, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\nexit 17\n")
+            os.chmod(old, 0o755)
+            config = SetupConfig(host="example.com", username="agent", system_type="agent_vm")
+            with patch.object(agent_steps, "_user_home", return_value=tmp), \
+                 patch.object(agent_steps, "_chown_path"), \
+                 patch.object(agent_steps, "_ensure_agent_shell_path"), \
+                 patch.object(agent_steps, "is_dry_run", return_value=False):
+                agent_steps.install_agent_cli_launcher(config)
+                agent_steps.install_agent_cli_launcher(config)
+            self.assertEqual(subprocess.run([old], check=False).returncode, 17)
+            result = subprocess.run(
+                [os.path.join(target, "basaltw"), "--version"],
+                capture_output=True, text=True, check=True, timeout=10,
+            )
+            self.assertEqual(result.stdout, "basaltw 2.0.0\n")
+
     def test_install_launcher_writes_executable_wrapper(self):
         with tempfile.TemporaryDirectory() as tmp:
             project_script = os.path.join(tmp, "infra_tools.py")
@@ -242,7 +283,7 @@ class TestInstallLauncher(unittest.TestCase):
             launcher = orchestrator_bootstrap.install_launcher(
                 project_script, target_dir=target_dir
             )
-            self.assertEqual(launcher, os.path.join(target_dir, "infra-tools"))
+            self.assertEqual(launcher, os.path.join(target_dir, "basaltw"))
             self.assertTrue(os.access(launcher, os.X_OK))
             with open(launcher, encoding="utf-8") as file_obj:
                 content = file_obj.read()
@@ -265,7 +306,7 @@ class TestInstallLauncher(unittest.TestCase):
                 project_script, target_dir=target_dir
             )
 
-            self.assertEqual(launcher, os.path.join(target_dir, "infra-tools"))
+            self.assertEqual(launcher, os.path.join(target_dir, "basaltw"))
             self.assertFalse(os.path.lexists(legacy_launcher))
 
     def test_install_launcher_safely_quotes_project_path(self):
@@ -318,7 +359,7 @@ class TestRetireLegacyTmpfilesConf(unittest.TestCase):
                 orchestrator_bootstrap.retire_legacy_tmpfiles_conf(file_obj.name)
 
     @patch("lib.orchestrator_bootstrap.retire_legacy_tmpfiles_conf", return_value=True)
-    @patch("lib.orchestrator_bootstrap.install_launcher", return_value="/usr/local/bin/infra-tools")
+    @patch("lib.orchestrator_bootstrap.install_launcher", return_value="/usr/local/bin/basaltw")
     @patch("lib.orchestrator_bootstrap.subprocess.run")
     @patch("lib.orchestrator_bootstrap.install_system_packages", return_value=0)
     @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)

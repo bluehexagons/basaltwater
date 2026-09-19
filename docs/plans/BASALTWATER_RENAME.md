@@ -1,9 +1,11 @@
 # Basaltwater identity and project rename
 
-Status: project brief; name and CLI selected, implementation unscheduled.
-This document records the branding discussion and defines the scope of a
-future rename. Adding this plan does not rename the running software,
-repository, packages, or managed installations. The [roadmap](ROADMAP.md)
+Status: v2.0.0 package/CLI cutover implemented; public hosting and visual design
+remain follow-on work. See [cutover contracts](BASALTWATER_CONTRACTS.md) and
+the [operator migration guide](../BASALTWATER_MIGRATION.md).
+This document records the branding discussion and the full project scope.
+The implementation introduces `basaltwater` packaging and `basaltw` while
+retaining persisted contracts and the v2 transition command. The [roadmap](ROADMAP.md)
 continues to own delivery priority.
 
 ## Naming decisions
@@ -133,11 +135,11 @@ resolving a concrete collision if these checks uncover one.
 
 ## Technical rename scope
 
-The current package metadata in `pyproject.toml` declares distribution
-`infra_tools`, module `infra_tools`, and script `infra-tools = infra_tools:main`.
-These are separate surfaces and need a coordinated update. The intended
-distribution is `basaltwater`, with `basaltw` as its console entry point.
-Determine the final module layout after reviewing imports and callers.
+The v2 package metadata declares distribution `basaltwater`, retained module
+`infra_tools`, and primary script `basaltw = infra_tools:main`. The transition
+script `infra-tools = infra_tools:main` supports existing automation through
+v2.x. Module layout and persisted identifiers are retained deliberately; see
+the inventory for producers, consumers, verification and retirement criteria.
 
 Create an old-to-new inventory before editing runtime code. Include spelling
 variants `infra-tools`, `infra_tools`, and `INFRA_TOOLS`, and classify each
@@ -264,7 +266,9 @@ launcher while generated automation still invokes it.
 - The release notes identify the command/package changes, operator actions,
   supported version combinations, rollback procedure, and transition end.
 
-Actual runtime renaming, external repository changes, domain registration,
-package publication, visual asset production, and sister-project development
-are subsequent implementation work. This brief establishes their scope
-without claiming they have been completed.
+The package/CLI implementation and migration instructions are delivered in
+this checkout. External repository changes, domain registration, package
+publication, visual asset production, the remaining specialized guide/skill
+wording refresh, live VM qualification and eventual alias retirement remain
+separate delivery work. Existing integration commands continue through the
+supported transition launcher. No external cutover is claimed here.

@@ -20,7 +20,7 @@ def main() -> int:
     parser, _, _ = infra_tools.create_infra_tools_parser()
     documented = set(
         re.findall(
-            r"^infra-tools ([a-z][a-z0-9-]*)",
+            r"^basaltw ([a-z][a-z0-9-]*)",
             DOC.read_text(encoding="utf-8"),
             re.MULTILINE,
         )

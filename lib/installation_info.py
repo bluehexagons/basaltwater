@@ -45,7 +45,7 @@ def _project_version(project_root: str) -> str:
         pass
 
     try:
-        version = importlib_metadata.version("infra_tools")
+        version = importlib_metadata.version("basaltwater")
     except importlib_metadata.PackageNotFoundError:
         return "unknown"
     return version if _VERSION_RE.fullmatch(version) else "unknown"

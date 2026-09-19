@@ -1,6 +1,6 @@
 # Command-Line Reference
 
-Reference for the upcoming stable `v2.0.0` `infra-tools` CLI. The code help and
+Reference for the upcoming stable `v2.0.0` `basaltw` CLI. The code help and
 `lib/arg_parser.py` are the source of truth; this page summarizes the command
 surface and behaviors that are easy to miss.
 
@@ -31,63 +31,63 @@ Related pages:
 ## Commands
 
 ```text
-infra-tools --version
-infra-tools setup <system_type> <host> [username] [options]
-infra-tools patch <host> [username] [options]
-infra-tools shares <host> [username] [options]
-infra-tools recall <host> [username] [options]
-infra-tools reconstruct [--compact]
-infra-tools list [pattern] [--json]
-infra-tools info [pattern] [--compact]
-infra-tools cmd [pattern]
-infra-tools rm <pattern>
-infra-tools cleanup [host] [options]
-infra-tools deploy <pattern> [--yes]
-infra-tools credentials set <username> [password]
-infra-tools credentials list
-infra-tools credentials remove <username>
-infra-tools completions [options]
-infra-tools python-tools [options]
-infra-tools bootstrap [options]
-infra-tools self-setup [options]
-infra-tools local [subcommand]
-infra-tools desktop <command> ...
-infra-tools firmware <audit|update> [options]
-infra-tools channel [CHANNEL]
-infra-tools upgrade
-infra-tools user rename <host> <new_username> [options]
-infra-tools agent doctor [HOST USER] [options]
-infra-tools agent update [HOST USER] [options]
-infra-tools agent auth set HOST USER --tool TOOL --file PATH
-infra-tools agent auth status HOST USER [--tool TOOL]
-infra-tools agent auth pull HOST USER [--output-dir PATH] [--tool TOOL]
-infra-tools agent privilege <request|status|wait|password-hash> ...
-infra-tools agent web pair HOST USER [-k PATH]
-infra-tools agent workspace <create|list|status|remove> ...
-infra-tools agent maintenance <hold|status|release> [HOST USER] [options]
-infra-tools agent support-bundle [--output PATH] [--browser-smoke]
-infra-tools gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
-infra-tools gogs repo-configure [REPOSITORY] --github-url URL --gogs-url URL [options]
-infra-tools homebox health HOST [--json]
-infra-tools homebox backup HOST /absolute/target/archive.tar.gz [--dry-run]
-infra-tools homebox restore HOST /absolute/target/archive.tar.gz --yes [--dry-run]
-infra-tools cicd connect BUILD APP [options]
-infra-tools cicd status BUILD [--json]
-infra-tools cicd test BUILD TARGET
-infra-tools maintenance github [--root PATH] <audit|prune> [options]
-infra-tools shell
-infra-tools network ...
-infra-tools proxmox ...
-infra-tools ssh-key enroll <host> [--port PORT] [--yes]
+basaltw --version
+basaltw setup <system_type> <host> [username] [options]
+basaltw patch <host> [username] [options]
+basaltw shares <host> [username] [options]
+basaltw recall <host> [username] [options]
+basaltw reconstruct [--compact]
+basaltw list [pattern] [--json]
+basaltw info [pattern] [--compact]
+basaltw cmd [pattern]
+basaltw rm <pattern>
+basaltw cleanup [host] [options]
+basaltw deploy <pattern> [--yes]
+basaltw credentials set <username> [password]
+basaltw credentials list
+basaltw credentials remove <username>
+basaltw completions [options]
+basaltw python-tools [options]
+basaltw bootstrap [options]
+basaltw self-setup [options]
+basaltw local [subcommand]
+basaltw desktop <command> ...
+basaltw firmware <audit|update> [options]
+basaltw channel [CHANNEL]
+basaltw upgrade
+basaltw user rename <host> <new_username> [options]
+basaltw agent doctor [HOST USER] [options]
+basaltw agent update [HOST USER] [options]
+basaltw agent auth set HOST USER --tool TOOL --file PATH
+basaltw agent auth status HOST USER [--tool TOOL]
+basaltw agent auth pull HOST USER [--output-dir PATH] [--tool TOOL]
+basaltw agent privilege <request|status|wait|password-hash> ...
+basaltw agent web pair HOST USER [-k PATH]
+basaltw agent workspace <create|list|status|remove> ...
+basaltw agent maintenance <hold|status|release> [HOST USER] [options]
+basaltw agent support-bundle [--output PATH] [--browser-smoke]
+basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
+basaltw gogs repo-configure [REPOSITORY] --github-url URL --gogs-url URL [options]
+basaltw homebox health HOST [--json]
+basaltw homebox backup HOST /absolute/target/archive.tar.gz [--dry-run]
+basaltw homebox restore HOST /absolute/target/archive.tar.gz --yes [--dry-run]
+basaltw cicd connect BUILD APP [options]
+basaltw cicd status BUILD [--json]
+basaltw cicd test BUILD TARGET
+basaltw maintenance github [--root PATH] <audit|prune> [options]
+basaltw shell
+basaltw network ...
+basaltw proxmox ...
+basaltw ssh-key enroll <host> [--port PORT] [--yes]
 ```
 
-`infra-tools --version` prints one stable line containing the installed project
+`basaltw --version` prints one stable line containing the installed project
 version, suitable for feedback and support records.
 
 For the desktop command catalog, including accessibility, window operations,
 waits, and live smoke checks, see [Desktop automation](DESKTOP_AUTOMATION.md).
 
-Use `infra-tools agent doctor --capability t3code` to check the managed T3
+Use `basaltw agent doctor --capability t3code` to check the managed T3
 service, native runtime, provider authentication, Git identity, pairing helper,
 endpoint, and agent skill. Add `--fix` to rebuild missing native dependencies,
 configure the GitHub HTTPS credential helper after a successful login, enable
@@ -103,7 +103,7 @@ manager.
 When that host is a Proxmox VM, install and activate the guest agent with:
 
 ```bash
-sudo infra-tools self-setup --qemu-guest-agent
+sudo basaltw self-setup --qemu-guest-agent
 ```
 
 | Flag | Description |
@@ -206,7 +206,7 @@ live; reboot or deliberately restart the interface after reviewing it.
 For `--provision-on`, the IPv4 gateway and DNS default to values discovered
 from the selected Proxmox bridge and node. Those values are saved with the
 setup and restored on reruns. If a legacy setup cache is missing them,
-infra-tools refreshes the Proxmox defaults instead of skipping discovery. Once
+Basaltwater refreshes the Proxmox defaults instead of skipping discovery. Once
 guest SSH is available, setup also verifies the live IPv4 default route and
 repairs a missing route before package installation; the normal final network
 step persists the repaired configuration. A provisioned VM connects for this
@@ -233,9 +233,9 @@ verified against the cached pool and minimum-size declaration. All provider
 reconciliation driven by saved VM metadata is existing-only: if the saved VM
 cannot be found, setup stops instead of silently creating a replacement.
 
-After moving an infra-tools-provisioned QEMU VM with the Proxmox GUI, rerun its
+After moving a Basaltwater-provisioned QEMU VM with the Proxmox GUI, rerun its
 saved setup command with the destination in `--provision-on`. A changed
-provider host is never replaced with the cached source: infra-tools verifies
+provider host is never replaced with the cached source: Basaltwater verifies
 that any matching source VM is stopped, requires the destination VM to match
 the saved name, IPv4 address, and managed-disk identities, then updates the
 saved provider binding only after remote setup succeeds. A missing destination
@@ -274,14 +274,14 @@ persistent configuration. Existing ifupdown files changed for the selected
 interface receive a one-time `.infra-tools.bak` copy.
 
 ```bash
-infra-tools setup server_lite 192.168.1.50 admin \
+basaltw setup server_lite 192.168.1.50 admin \
   --hostname app-01 \
   --ip 192.168.1.50/24 --gateway 192.168.1.1 \
   --dns 1.1.1.1 --dns 1.0.0.1 \
   --network-interface eth0
 
 # Reassign an existing saved host without interrupting the setup SSH session
-infra-tools patch 192.168.1.50 admin \
+basaltw patch 192.168.1.50 admin \
   --ip 192.168.1.60/24 --gateway 192.168.1.1 \
   --dns 1.1.1.1 --network-interface eth0 --activate-network
 ```
@@ -302,7 +302,7 @@ address from cloud-init or `pct`, so initial provisioned setup rejects
 Use `--lan-access` when every managed administrative service should be private:
 
 ```bash
-infra-tools setup workstation_dev 192.168.0.25 agent \
+basaltw setup workstation_dev 192.168.0.25 agent \
   --lan-access --rdp
 ```
 
@@ -330,7 +330,7 @@ service-only addition for SMB ingress. Cloudflare tunnels and intentionally
 public Antistatic endpoints retain their own exposure policy.
 
 Without a generic source or `--rdp-source`, enabling RDP keeps a globally
-rate-limited UFW rule. On rerun, infra-tools installs requested source rules
+rate-limited UFW rule. On rerun, Basaltwater installs requested source rules
 before removing broad rules and reconciles only its own comment-tagged rules.
 The single desktop is retained through disconnect until logout. Session-count
 and disconnect-cleanup flags are removed; saved legacy policies are migrated
@@ -458,7 +458,7 @@ service, and protected pairing. Credentials remain opt-in through the normal
 `--git-auth` and `--agent-auth` options.
 
 ```bash
-infra-tools setup agent_vm 10.0.0.10 agentuser \
+basaltw setup agent_vm 10.0.0.10 agentuser \
   --agent-config active \
   --git-access read --repo https://github.com/user/my_codebase.git
 ```
@@ -467,7 +467,7 @@ For a provisioned graphical coding VM, use the full profile while keeping
 capacity and project runtimes explicit:
 
 ```bash
-infra-tools setup agent_code_vm 10.0.0.11 agentuser \
+basaltw setup agent_code_vm 10.0.0.11 agentuser \
   --provision-on pve1 --name agent-1 \
   --memory 4G --cores 4 --storage root local-lvm 32G \
   --agent-tool opencode --lan-access
@@ -532,7 +532,7 @@ rm -f "$HOME/.infra_tools-install.sh"
 | `--git-host HOST` | Select the GitHub CLI credential host; authenticated GitHub setup currently supports `github.com` |
 | `--git-credential HTTPS_ORIGIN USERNAME` | Configure target-user Git and Git LFS authentication for one non-GitHub HTTPS origin using the matching workspace credential; repeatable |
 | `--git-ca-certificate HTTPS_ORIGIN SOURCE` | Trust a local PEM path or retrieve one from an authenticated `ssh://USERNAME@HOST/ABSOLUTE_PATH` source, scoped only to one managed Git HTTPS origin; repeatable |
-| `--no-git-credentials` | Remove all infra-tools-managed Git HTTPS credentials, helper configuration, and private CA files from the target user |
+| `--no-git-credentials` | Remove all Basaltwater-managed Git HTTPS credentials, helper configuration, and private CA files from the target user |
 | `--git-auth active\|none` | Seed missing active GitHub CLI host credentials, or disable a profile auth default |
 | `--git-auth-file PATH` | Seed a missing selected-host `hosts.yml` entry or one-line GitHub token from a controller-local file |
 | `--agent-auth active\|none` | Seed missing selected agent credentials, refresh known-outdated Codex credentials from a current source, or disable a profile auth default |
@@ -582,11 +582,12 @@ make the engine available in SSH, desktop, T3 Code, and coding-agent shells.
 Repeat `--godot-bundle` to give that same target account web-export and
 publishing commands without changing its agent configuration.
 
-Any setup with agent features installs a managed `~/.local/bin/infra-tools`
-launcher for the target user. On a remote setup the launcher uses the source
+Any setup with agent features installs managed `~/.local/bin/basaltw` and
+`~/.local/bin/infra-tools` launchers for the target user. On a remote setup they
+use the source
 deployed under `/opt/infra_tools`, so diagnostics and deliberate agent updates
 work directly from an SSH, desktop, or T3 Code terminal without a separate
-infra-tools installation on the VM. An existing executable with that name is
+Basaltwater installation on the VM. An existing executable with either name is
 retained; setup never overwrites an unmanaged user launcher.
 
 When Codex or OpenCode is selected, setup also installs the shared base
@@ -595,7 +596,7 @@ capability-specific skills. See [Managed agent workflow
 skills](AGENT_SKILLS.md) for the catalog and reconciliation rules.
 
 T3 Code is selected with `--web-interface t3code`; it is not an `--agent-tool`
-provider, and infra-tools no longer installs the desktop AppImage. The server
+provider, and Basaltwater no longer installs the desktop AppImage. The server
 path installs Node and T3 Code's upstream per-user background service; see
 [T3_CODE.md](T3_CODE.md) for updates, LAN access, pairing, client choices, and
 the loopback/HTTPS boundary. The optional
@@ -605,7 +606,7 @@ HTTPS gateway by default; see [DEVICE_PAIRING.md](DEVICE_PAIRING.md).
 
 For a managed VM/server with a LAN T3 Code service, obtain its one-time
 administrative pairing URL from the control system with
-`infra-tools agent web pair HOST USER` (add `--key PATH` when needed). The
+`basaltw agent web pair HOST USER` (add `--key PATH` when needed). The
 resulting app session includes T3's `access:write` scope for pairing-link and
 client-session management. Opening the bare service address is expected to show
 T3's pairing-key form; it is not an authenticated session. The local CachyOS
@@ -634,7 +635,7 @@ Credential seeding and config copy are intentionally tool-scoped and transient:
 - `--agent-auth`/`--agent-auth-file` seed missing Codex, Claude Code, or OpenCode credentials without requiring those tools on the controller. They also replace refresh-required Codex auth when the staged source is unambiguously current; active `gh` requires controller `gh` only when its token is keyring-backed.
 - `--agent-config active` copies known non-secret configuration from the active controller user.
 - Codex and OpenCode receive only non-secret managed workflow skills; T3 Code
-  adds its focused service and HTTPS-gateway guidance. infra-tools does not copy
+  adds its focused service and HTTPS-gateway guidance. Basaltwater does not copy
   T3 Code credentials.
 
 The root-only upload payload is removed after selected config is applied and
@@ -650,7 +651,7 @@ password is resolved from the workspace credential store, never embedded in a
 repository URL or saved setup declaration. `--git-ca-certificate` optionally
 adds origin-scoped trust for an internal CA or self-signed service certificate.
 The source may be a local file or a certificate read directly from another
-infra-tools host over host-key-verified SSH, so no intermediate controller copy
+Basaltwater host over host-key-verified SSH, so no intermediate controller copy
 is required. It does not disable certificate verification globally. The target
 stores the credential in a dedicated mode-`0600` file because unattended Git
 and Git LFS need persistent access.
@@ -660,28 +661,28 @@ Doctor is read-only unless `--fix` or `--record` is selected. Updates, workspace
 creation, and maintenance holds change state:
 
 ```bash
-infra-tools agent doctor
-infra-tools agent doctor --tool codex --tool claude --json
-infra-tools agent doctor --all-capabilities --json
-infra-tools agent doctor --capability development --json
-infra-tools agent doctor --tool codex --tool opencode --capability browser
-infra-tools agent doctor --capability browser
-infra-tools agent doctor --capability t3code --capability host
-infra-tools agent doctor --capability t3code --capability host --record
-infra-tools agent doctor --last-record --json
-infra-tools agent doctor --capability t3code --fix
-infra-tools agent doctor 10.0.0.10 agent --tool codex --json
-infra-tools agent update --dry-run
-infra-tools agent update --tool codex --tool claude
-infra-tools agent update --json
-infra-tools agent update 10.0.0.10 agent --tool codex --dry-run
-infra-tools agent workspace create ~/repos/project api-check --base HEAD --json
-infra-tools agent workspace list ~/repos/project --json
-infra-tools agent workspace remove WORKTREE --dry-run --json
-infra-tools agent maintenance hold --hours 8
-infra-tools agent maintenance status --json
-infra-tools agent maintenance release 10.0.0.10 agent
-infra-tools agent support-bundle --output ~/agent-support.json
+basaltw agent doctor
+basaltw agent doctor --tool codex --tool claude --json
+basaltw agent doctor --all-capabilities --json
+basaltw agent doctor --capability development --json
+basaltw agent doctor --tool codex --tool opencode --capability browser
+basaltw agent doctor --capability browser
+basaltw agent doctor --capability t3code --capability host
+basaltw agent doctor --capability t3code --capability host --record
+basaltw agent doctor --last-record --json
+basaltw agent doctor --capability t3code --fix
+basaltw agent doctor 10.0.0.10 agent --tool codex --json
+basaltw agent update --dry-run
+basaltw agent update --tool codex --tool claude
+basaltw agent update --json
+basaltw agent update 10.0.0.10 agent --tool codex --dry-run
+basaltw agent workspace create ~/repos/project api-check --base HEAD --json
+basaltw agent workspace list ~/repos/project --json
+basaltw agent workspace remove WORKTREE --dry-run --json
+basaltw agent maintenance hold --hours 8
+basaltw agent maintenance status --json
+basaltw agent maintenance release 10.0.0.10 agent
+basaltw agent support-bundle --output ~/agent-support.json
 ```
 
 The default doctor check covers GitHub CLI, Codex CLI, Claude Code, and OpenCode.
@@ -721,7 +722,7 @@ option is mutually exclusive with a narrowed `--capability` selection and works
 with the remote `HOST USER` form.
 Supplying `HOST USER` runs the same doctor through managed SSH from the control
 system and preserves its text or JSON output and exit status. The target must
-have been configured by infra-tools so `/opt/infra_tools` is present. Add
+have been configured by Basaltwater so `/opt/infra_tools` is present. Add
 `--key PATH` when the VM uses a non-default SSH identity.
 
 Add `--record` after a deliberate update or reboot to replace the private
@@ -762,7 +763,7 @@ restart proceeds even if a session, hold, or recognized workload remains.
 
 `agent support-bundle` composes a stable local JSON snapshot from the agent,
 T3 Code, browser, host, and maintenance diagnostics. It includes aggregate T3
-log sizes and counts, not log text. It also records the infra-tools project
+log sizes and counts, not log text. It also records the Basaltwater project
 version, validated source commit, and dirty-state boolean when available, while
 omitting the source branch. Browser diagnostics retain the safe-coordinate,
 private-evidence, WebGL-settle, and launcher-security states so a stale or
@@ -800,16 +801,16 @@ tools and host readiness, adds T3 Code readiness when that managed service is
 present, and saves the redacted readiness record described above. An unhealthy
 post-update result or failure to persist it makes the update command exit
 nonzero even when the vendor updater itself succeeded. Inspect the evidence
-with `infra-tools agent doctor --last-record`; update JSON output retains its
+with `basaltw agent doctor --last-record`; update JSON output retains its
 existing per-tool result-array contract. The setup-internal invocation uses
 `--tools-only-readiness` so an unrelated pre-existing T3 or host condition does
 not make a successful terminal-agent update fail. The complete host/T3 result is
 still stored and a warning points to the follow-up check; run the default
-command or `infra-tools agent doctor --capability host --capability t3code` for
+command or `basaltw agent doctor --capability host --capability t3code` for
 the full audit.
 
 The optional `HOST USER` form runs that update as the target VM user. Run
-`infra-tools agent update HOST USER --dry-run`, then repeat it without
+`basaltw agent update HOST USER --dry-run`, then repeat it without
 `--dry-run` to apply. It does not use sudo or update another user's
 installation. Remote doctor and update use the workspace `known_hosts` file
 with strict host-key checking, like other managed SSH operations.
@@ -817,7 +818,7 @@ with strict host-key checking, like other managed SSH operations.
 Setup reruns still skip the official installer when a selected command is
 already available, then reconcile selected user-installed terminal agents
 through the verified updater. Executables owned outside the target user's home
-are left to their package manager. Use `infra-tools agent update` for an
+are left to their package manager. Use `basaltw agent update` for an
 agent-only update outside setup or when you want to select tools explicitly.
 Codex-enabled setup reruns also perform one bounded authentication freshness
 check before the updater, giving renewable credentials a chance to recover on
@@ -829,14 +830,14 @@ For example, when an operator is logged in as another account:
 
 ```bash
 sudo -u agent -H sh -lc \
-  'cd /home/agent && infra-tools agent update --tool codex'
+  'cd /home/agent && basaltw agent update --tool codex'
 ```
 
 The updater resets the working directory and user-scoped environment before
 calling the vendor installer, so the invoking account's home and PATH do not
 leak into the update.
 
-For a deliberately chosen vendor update outside infra-tools, verify the
+For a deliberately chosen vendor update outside Basaltwater, verify the
 installed tool's supported update mechanism and use its owning account and
 home directory. The managed command above supplies those settings and adds
 preflight checks and rollback.
@@ -844,9 +845,9 @@ preflight checks and rollback.
 Credential rotation does not rebuild the VM or overwrite repositories:
 
 ```bash
-infra-tools agent auth set 10.0.0.10 agent --tool gh --file /run/secrets/gh-hosts.yml
-infra-tools agent auth set 10.0.0.10 agent --tool codex --active
-infra-tools agent auth status 10.0.0.10 agent --json
+basaltw agent auth set 10.0.0.10 agent --tool gh --file /run/secrets/gh-hosts.yml
+basaltw agent auth set 10.0.0.10 agent --tool codex --active
+basaltw agent auth status 10.0.0.10 agent --json
 python3 infra_tools.py agent auth pull 10.0.0.10 agent
 ```
 
@@ -866,11 +867,11 @@ to the active controller user's canonical paths without requiring local agent
 programs. A private staging directory remains available through
 `--output-dir`. Known-stale Codex auth is refreshed automatically only from a
 current source; other existing files require `--overwrite`. Run it from a
-clone when infra-tools is not installed; see [Agent authentication](AGENT_AUTHENTICATION.md#pull-credentials-from-an-agent-vm).
+clone when Basaltwater is not installed; see [Agent authentication](AGENT_AUTHENTICATION.md#pull-credentials-from-an-agent-vm).
 
 The normal restart policy defers for active login sessions, coding agents,
 build and Git processes, terminal multiplexers, maintenance holds, and
-processes running in an infra-tools-managed agent worktree. It can still force
+processes running in a Basaltwater-managed agent worktree. It can still force
 a reboot after seven days by default. For a host running long unattended agent
 tasks, use both `--no-auto-restart` and `--auto-restart-force-days 0` only if
 automatic restarts must be fully disabled, then manage pending security
@@ -957,7 +958,7 @@ Notes:
   path, a path below `/srv`, `/var/lib`, `/opt`, or `/mnt`, or `/home` while
   provisioning a new QEMU VM. The `/home` case mounts the disk before the
   setup user is created. A newly declared mounted disk can be hot-added to an
-  existing saved QEMU VM; start from `infra-tools cmd NAME` when the setup has
+  existing saved QEMU VM; start from `basaltw cmd NAME` when the setup has
   other service flags that must be retained. Populated-path migration,
   existing-disk adoption, detach, and data-disk resize remain unsupported.
 - Guest mounts are required UUID-based systemd mounts. Missing or mismatched
@@ -1012,7 +1013,7 @@ Notes:
 
 | Flag | Description |
 |------|-------------|
-| `--swap-mode auto|preserve|none` | `auto` reconciles declarations or creates `/swapfile` only when no swap exists; `preserve` changes no areas; `none` removes only infra-tools-owned areas |
+| `--swap-mode auto|preserve|none` | `auto` reconciles declarations or creates `/swapfile` only when no swap exists; `preserve` changes no areas; `none` removes only Basaltwater-owned areas |
 | `--swap-file NAME PATH SIZE [priority=N]` | Manage a swap file; repeatable |
 | `--swap-device NAME SOURCE [priority=N] [discard=POLICY]` | Manage a whole block device; `SOURCE` is a declared VM disk, `UUID=...`, or `/dev/disk/by-id/...`; discard is `off`, `once`, `pages`, or `both` |
 | `--swap-zram NAME SIZE [priority=N] [algorithm=TOKEN]` | Manage compressed-RAM swap with `systemd-zram-generator`; repeatable |
@@ -1043,7 +1044,7 @@ unless blank and named by `--swap-initialize`; existing filesystems,
 partitions, mounts, or unrelated signatures stop setup. Removing a swap
 declaration never wipes its block-device signature.
 
-Infra-tools records owned areas in `/opt/infra_tools/state/swap.json` and
+Basaltwater records owned areas in `/opt/infra_tools/state/swap.json` and
 edits only a marked block in `/etc/fstab`. Existing unmanaged swap is
 preserved. Managed fstab entries use `nofail`, and ownership is journaled
 before creating files or zram so interrupted setup can be retried safely.
@@ -1088,9 +1089,9 @@ After saving one `--build-server` setup and one `--app-server` setup, connect
 them from the controller without copying keys manually:
 
 ```bash
-infra-tools cicd connect build app --target-name production
-infra-tools cicd status build
-infra-tools cicd test build production
+basaltw cicd connect build app --target-name production
+basaltw cicd status build
+basaltw cicd test build production
 ```
 
 `BUILD` and `APP` accept saved hosts, friendly names, or exact tags. The
@@ -1137,7 +1138,7 @@ Deploy a minimal self-hosted Git service with an optional hostname, port, and
 data directory:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 \
+basaltw setup server_web 192.168.1.10 \
   --gogs git.example.com:3000 /var/lib/gogs \
   --ssl --ssl-email admin@example.com
 ```
@@ -1171,8 +1172,8 @@ fail.
 Inspect an installed service from the control system with:
 
 ```bash
-infra-tools gogs health 192.168.1.10
-infra-tools gogs health 192.168.1.10 --json \
+basaltw gogs health 192.168.1.10
+basaltw gogs health 192.168.1.10 --json \
   --min-free-bytes 2147483648 --min-free-inodes 20000
 ```
 
@@ -1194,7 +1195,7 @@ Configure a clean local worktree so GitHub remains the canonical fetch source,
 Gogs receives mirrored Git refs, and only Gogs stores Git LFS objects:
 
 ```bash
-infra-tools gogs repo-configure ~/repos/project \
+basaltw gogs repo-configure ~/repos/project \
   --github-url https://github.com/team/project.git \
   --gogs-url https://git.example.com:3000/team/project.git \
   --track 'assets/**' --dry-run
@@ -1271,12 +1272,12 @@ targets and failure behavior.
 ### Firmware audit and updates
 
 ```text
-infra-tools firmware audit [--no-refresh] [--json] [--install-dependencies]
-infra-tools firmware update [DEVICE_ID] [--no-refresh] [--allow-running-guests] [--install-dependencies] [--yes]
+basaltw firmware audit [--no-refresh] [--json] [--install-dependencies]
+basaltw firmware update [DEVICE_ID] [--no-refresh] [--allow-running-guests] [--install-dependencies] [--yes]
 ```
 
 Both commands operate on the local machine through `fwupdmgr`. When it is
-missing, infra-tools offers to install the Debian `fwupd` package with APT;
+missing, Basaltwater offers to install the Debian `fwupd` package with APT;
 `--install-dependencies` records that consent without a separate dependency
 prompt. `audit` reports DMI identity, related package versions, supported
 devices, and available fwupd releases. Metadata is refreshed unless
@@ -1287,31 +1288,31 @@ Proxmox host, running guests block the update unless
 `--allow-running-guests` is explicit, while an incomplete guest-state check
 always blocks it. `--yes` skips the firmware confirmation and forwards
 fwupd's non-interactive consent; it never bypasses the audit or guest check.
-infra-tools always suppresses fwupd's reboot prompt and does not reboot the
+Basaltwater always suppresses fwupd's reboot prompt and does not reboot the
 machine. See [Firmware auditing and
 updates](./FIRMWARE.md) for coverage limits, legacy vendor firmware, and
 recovery precautions.
 
 ### Cleaning obsolete local configuration
 
-Use `cleanup` after upgrading infra-tools when a saved setup or development
+Use `cleanup` after upgrading Basaltwater when a saved setup or development
 registry entry was written by an older, incompatible revision. A host argument
 limits the operation to that setup host:
 
 ```bash
 # Inspect only the saved setup state for this VM.
-infra-tools cleanup 192.168.0.41 --dry-run
+basaltw cleanup 192.168.0.41 --dry-run
 
 # Remove obsolete setup state after reviewing the findings.
-infra-tools cleanup 192.168.0.41 --yes
+basaltw cleanup 192.168.0.41 --yes
 
 # Inspect and clean every invalid setup cache and Proxmox record.
-infra-tools cleanup --dry-run
-infra-tools cleanup --yes
+basaltw cleanup --dry-run
+basaltw cleanup --yes
 
 # Select one category explicitly.
-infra-tools cleanup --setup-cache --yes
-infra-tools cleanup --proxmox-registry --yes
+basaltw cleanup --setup-cache --yes
+basaltw cleanup --proxmox-registry --yes
 ```
 
 With a host argument, setup-cache cleanup is selected by default. Add
@@ -1327,9 +1328,9 @@ and `--dry-run` never changes files.
 ### GitHub Maintenance
 
 ```bash
-infra-tools maintenance github --root /home/loren/repos audit
-infra-tools maintenance github --root /home/loren/repos prune --yes
-infra-tools maintenance github --root /home/loren/repos prune --delete-caches --yes
+basaltw maintenance github --root /home/loren/repos audit
+basaltw maintenance github --root /home/loren/repos prune --yes
+basaltw maintenance github --root /home/loren/repos prune --delete-caches --yes
 ```
 
 Defaults: keep 2 releases, delete expired artifacts, prune caches only when
@@ -1357,12 +1358,12 @@ See [`MAINTENANCE.md`](./MAINTENANCE.md) for schedules and policy controls.
 ### Network Inventory
 
 ```text
-infra-tools network list
-infra-tools network init <profile> [--management CIDR] [--control-plane CIDR] [--guest-network CIDR]
-infra-tools network add-host <profile> <name> <address> [--provider NAME] [--role ROLE]
-infra-tools network import-proxmox <profile> [--host NAME] [--tag TAG]
-infra-tools network import-proxmox-guests <profile> [--host NAME] [--tag TAG]
-infra-tools network plan-proxmox <profile> [--proxmox] [--json]
+basaltw network list
+basaltw network init <profile> [--management CIDR] [--control-plane CIDR] [--guest-network CIDR]
+basaltw network add-host <profile> <name> <address> [--provider NAME] [--role ROLE]
+basaltw network import-proxmox <profile> [--host NAME] [--tag TAG]
+basaltw network import-proxmox-guests <profile> [--host NAME] [--tag TAG]
+basaltw network plan-proxmox <profile> [--proxmox] [--json]
 ```
 
 `plan-proxmox` is read-only and requires at least one management source and
@@ -1371,63 +1372,63 @@ one control-plane address before it will produce a non-error plan.
 ### Proxmox Management
 
 ```text
-infra-tools proxmox add <name> <address> [--user USER] [--key PATH]
-infra-tools proxmox hosts
-infra-tools proxmox remove <name-or-address>
-infra-tools proxmox probe <host>
-infra-tools proxmox probe-cluster <address> [--user USER] [--key PATH] [--tag TAG]
-infra-tools proxmox audit <host> [<host> ...] [--json]
-infra-tools proxmox rolling-update <target> [<target> ...] [--dry-run] [--reboot-timeout SECONDS]
-infra-tools proxmox top <host> [<host> ...]
-infra-tools proxmox plan place [options]
-infra-tools proxmox plan rebalance [options]
-infra-tools proxmox ls <host>
-infra-tools proxmox status <host> <vmid>
-infra-tools proxmox start <host> <vmid>
-infra-tools proxmox pause <host> <vmid>  # alias: suspend
-infra-tools proxmox resume <host> <vmid>
-infra-tools proxmox stop <host> <vmid> [--force]
-infra-tools proxmox destroy <host> <vmid> [-y] [--force]
-infra-tools proxmox health <host> <vmid> [--no-ssh]
-infra-tools proxmox config <host> <vmid> [--pending]
-infra-tools proxmox reconfigure <host> <vmid> --set KEY=VALUE [--set ...]
-infra-tools proxmox modify <host> <vmid> [--cores N] [--memory N[M|G]]
-infra-tools proxmox resize-disk <host> <vmid> <volume> <size>
-infra-tools proxmox backups <host> <vmid>
-infra-tools proxmox backup <host> <vmid> [--storage POOL] [--mode MODE] [--compress FORMAT]
-infra-tools proxmox snapshots <host> <vmid>
-infra-tools proxmox snapshot <host> <vmid> <name> [--description TEXT] [--dry-run]
-infra-tools proxmox rollback <host> <vmid> <name> [--dry-run]
-infra-tools proxmox delsnapshot <host> <vmid> <name> [--dry-run]
-infra-tools proxmox migrate <host> <vmid> <target> [--online] [--with-local-disks]
-infra-tools proxmox clean-disks <host> [--delete] [--yes] [--dry-run]
-infra-tools proxmox unlock <host> <vmid> [--dry-run]
-infra-tools proxmox notifications install-webhook <host> <url> [--send-test]
-infra-tools proxmox notifications test-webhook <host>
-infra-tools proxmox [shell]
+basaltw proxmox add <name> <address> [--user USER] [--key PATH]
+basaltw proxmox hosts
+basaltw proxmox remove <name-or-address>
+basaltw proxmox probe <host>
+basaltw proxmox probe-cluster <address> [--user USER] [--key PATH] [--tag TAG]
+basaltw proxmox audit <host> [<host> ...] [--json]
+basaltw proxmox rolling-update <target> [<target> ...] [--dry-run] [--reboot-timeout SECONDS]
+basaltw proxmox top <host> [<host> ...]
+basaltw proxmox plan place [options]
+basaltw proxmox plan rebalance [options]
+basaltw proxmox ls <host>
+basaltw proxmox status <host> <vmid>
+basaltw proxmox start <host> <vmid>
+basaltw proxmox pause <host> <vmid>  # alias: suspend
+basaltw proxmox resume <host> <vmid>
+basaltw proxmox stop <host> <vmid> [--force]
+basaltw proxmox destroy <host> <vmid> [-y] [--force]
+basaltw proxmox health <host> <vmid> [--no-ssh]
+basaltw proxmox config <host> <vmid> [--pending]
+basaltw proxmox reconfigure <host> <vmid> --set KEY=VALUE [--set ...]
+basaltw proxmox modify <host> <vmid> [--cores N] [--memory N[M|G]]
+basaltw proxmox resize-disk <host> <vmid> <volume> <size>
+basaltw proxmox backups <host> <vmid>
+basaltw proxmox backup <host> <vmid> [--storage POOL] [--mode MODE] [--compress FORMAT]
+basaltw proxmox snapshots <host> <vmid>
+basaltw proxmox snapshot <host> <vmid> <name> [--description TEXT] [--dry-run]
+basaltw proxmox rollback <host> <vmid> <name> [--dry-run]
+basaltw proxmox delsnapshot <host> <vmid> <name> [--dry-run]
+basaltw proxmox migrate <host> <vmid> <target> [--online] [--with-local-disks]
+basaltw proxmox clean-disks <host> [--delete] [--yes] [--dry-run]
+basaltw proxmox unlock <host> <vmid> [--dry-run]
+basaltw proxmox notifications install-webhook <host> <url> [--send-test]
+basaltw proxmox notifications test-webhook <host>
+basaltw proxmox [shell]
 
-infra-tools vm list <host> [--json]
-infra-tools vm show <local-name> [--json]
-infra-tools vm show <host> <id> [--json]
-infra-tools vm health <local-name> [--no-ssh] [--json]
-infra-tools vm health <host> <id> [--no-ssh] [--json]
-infra-tools vm stats <target> [<id>] [--json]
-infra-tools vm status <target> [<id>] [--json]
-infra-tools vm start <target> [<id>] [--json]
-infra-tools vm pause <target> [<id>] [--json]  # alias: suspend
-infra-tools vm resume <target> [<id>] [--json]
-infra-tools vm shutdown <target> [<id>] [--timeout SECONDS] [--json]
-infra-tools vm stop <target> [<id>] [--json]
-infra-tools vm reboot <target> [<id>] [--timeout SECONDS] [--json]  # alias: restart
-infra-tools vm autostart <target> [<id>] [--json]
-infra-tools vm autostart <target> [<id>] --enable [--order N] [--start-delay SECONDS] [--shutdown-timeout SECONDS] [--json]
-infra-tools vm autostart <target> [<id>] --disable [--json]
-infra-tools vm snapshot list <local-name> [--json]
-infra-tools vm snapshot list <host> <id> [--json]
-infra-tools vm backup list <local-name> [--json]
-infra-tools vm backup list <host> <id> [--json]
-infra-tools vm destroy <local-name> [-y] [--force]
-infra-tools vm destroy <host> <id> [-y] [--force]
+basaltw vm list <host> [--json]
+basaltw vm show <local-name> [--json]
+basaltw vm show <host> <id> [--json]
+basaltw vm health <local-name> [--no-ssh] [--json]
+basaltw vm health <host> <id> [--no-ssh] [--json]
+basaltw vm stats <target> [<id>] [--json]
+basaltw vm status <target> [<id>] [--json]
+basaltw vm start <target> [<id>] [--json]
+basaltw vm pause <target> [<id>] [--json]  # alias: suspend
+basaltw vm resume <target> [<id>] [--json]
+basaltw vm shutdown <target> [<id>] [--timeout SECONDS] [--json]
+basaltw vm stop <target> [<id>] [--json]
+basaltw vm reboot <target> [<id>] [--timeout SECONDS] [--json]  # alias: restart
+basaltw vm autostart <target> [<id>] [--json]
+basaltw vm autostart <target> [<id>] --enable [--order N] [--start-delay SECONDS] [--shutdown-timeout SECONDS] [--json]
+basaltw vm autostart <target> [<id>] --disable [--json]
+basaltw vm snapshot list <local-name> [--json]
+basaltw vm snapshot list <host> <id> [--json]
+basaltw vm backup list <local-name> [--json]
+basaltw vm backup list <host> <id> [--json]
+basaltw vm destroy <local-name> [-y] [--force]
+basaltw vm destroy <host> <id> [-y] [--force]
 ```
 
 `probe` caches bridge, gateway, DNS, and storage recommendations. `audit` is
@@ -1442,16 +1443,16 @@ guessing how to interpret them. Remove an incompatible record by its stored
 name or address, then register it again:
 
 ```bash
-infra-tools proxmox remove pve1
-infra-tools proxmox add pve1 10.0.0.10 --user root --key ~/.ssh/proxmox_ed25519
+basaltw proxmox remove pve1
+basaltw proxmox add pve1 10.0.0.10 --user root --key ~/.ssh/proxmox_ed25519
 ```
 
-The provider-neutral `infra-tools vm ...` commands provide stable inventory,
+The provider-neutral `basaltw vm ...` commands provide stable inventory,
 inspection, health, power-state lifecycle, snapshot, and backup-list output,
 plus confirmed QEMU VM destruction. Their JSON envelope includes
 `schema_version`, `provider`, `host`, `operation`, and `resources`. In the
 command shapes above, `<target> [<id>]` means either `<host> <id>` or the exact
-friendly `--name` (or saved IP address) of an infra-tools setup with the ID
+friendly `--name` (or saved IP address) of a Basaltwater setup with the ID
 omitted. Name resolution is fail-closed: the saved setup must identify a QEMU
 VM and a registered provider host, and both its expected Proxmox name and
 configured IPv4 address must match the observed guest. Tags are not accepted
@@ -1485,9 +1486,9 @@ before asking the operator to type `yes`; `--yes` skips only that prompt and
 `--force` uses an immediate stop rather than graceful shutdown. A successful
 destroy is verified with a fresh provider inventory. The saved setup is
 retained so it remains available as a reconstruction/reprovisioning
-declaration; remove it separately with `infra-tools rm NAME` when it is no
+declaration; remove it separately with `basaltw rm NAME` when it is no
 longer wanted. Other Proxmox-specific guest mutations and host-administration
-operations remain under `infra-tools proxmox ...` until their command paths
+operations remain under `basaltw proxmox ...` until their command paths
 are migrated.
 
 `rolling-update` uses saved setup commands and workspace credentials. It audits
@@ -1498,7 +1499,7 @@ update dry run still performs the read-only preflight audits.
 
 ### Interactive Shell
 
-`infra-tools shell` opens a REPL for saved configurations. The shell loads
+`basaltw shell` opens a REPL for saved configurations. The shell loads
 `~/.infra_toolsrc` on startup and persists history at
 `~/.local/share/infra_tools/shell_history`.
 
@@ -1519,7 +1520,7 @@ Before using SSH setup, deployment, or administration commands for a new host,
 enroll its host key and verify the displayed fingerprint independently:
 
 ```bash
-infra-tools ssh-key enroll example.com
+basaltw ssh-key enroll example.com
 ```
 
 SSH commands use strict checking against the workspace `known_hosts` file and
@@ -1535,7 +1536,7 @@ or refreshing completion manually:
 python3 -m unittest discover -s tests
 ./run_tests.py --suite smoke
 uv tool install --upgrade argcomplete
-infra-tools completions --shell bash
+basaltw completions --shell bash
 ```
 
 The full test matrix and detailed bootstrap behavior are covered by

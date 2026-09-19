@@ -237,6 +237,11 @@ class TestInstallScript(unittest.TestCase):
         os.symlink(shutil.which("git"), os.path.join(command_bin, "git"))
 
         environment = os.environ.copy()
+        for name in (
+            "BASALTWATER_CHANNEL", "BASALTWATER_REF", "BASALTWATER_REPOSITORY_URL",
+            "INFRA_TOOLS_CHANNEL", "INFRA_TOOLS_REF", "INFRA_TOOLS_REPOSITORY_URL",
+        ):
+            environment.pop(name, None)
         environment["PATH"] = os.pathsep.join((
             fake_bin,
             command_bin,
@@ -285,6 +290,83 @@ class TestInstallScript(unittest.TestCase):
                 calls[1],
                 ["setup", "server_dev", "10.0.0.50", "agent", "--dry-run"],
             )
+
+    def test_rename_environment_precedence(self):
+        cases = (
+            ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_CHANNEL": "dev"}, [], "dev"),
+            ({"INFRA_TOOLS_REF": "missing", "BASALTWATER_REF": "main"}, [], "dev"),
+            ({"INFRA_TOOLS_CHANNEL": "stable", "BASALTWATER_REF": "missing"}, [], "stable"),
+            ({"BASALTWATER_CHANNEL": "missing"}, ["--channel", "stable"], "stable"),
+            ({"INFRA_TOOLS_REF": "missing", "BASALTWATER_REF": ""}, [], "dev"),
+        )
+        for settings, options, expected in cases:
+            with self.subTest(settings=settings), tempfile.TemporaryDirectory() as directory:
+                _, _, environment = self._create_fixture(directory)
+                environment.update(settings)
+                environment["BASALTWATER_REPOSITORY_URL"] = environment["INFRA_TOOLS_REPOSITORY_URL"]
+                environment["INFRA_TOOLS_REPOSITORY_URL"] = "/missing/old-source"
+                install_dir = os.path.join(directory, "installed")
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, *options],
+                    env=environment, text=True, capture_output=True, timeout=20,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                with open(os.path.join(install_dir, ".infra_tools", "channel.json")) as stream:
+                    self.assertEqual(json.load(stream)["channel"], expected)
+
+    def test_empty_new_installer_settings_do_not_fall_back(self):
+        for name in ("CHANNEL", "REPOSITORY_URL"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                _, _, environment = self._create_fixture(directory)
+                environment[f"BASALTWATER_{name}"] = ""
+                environment.setdefault(f"INFRA_TOOLS_{name}", "dev")
+                install_dir = os.path.join(directory, "installed")
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
+                    env=environment, text=True, capture_output=True, timeout=20,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(os.path.exists(install_dir))
+
+    def test_old_release_upgrade_rerun_and_rollback_preserve_private_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, _, environment = self._create_fixture(directory)
+            source = environment["INFRA_TOOLS_REPOSITORY_URL"]
+            # v1.0.0 exposes only infra-tools. The next commit declares and
+            # installs basaltw, so the installer must inspect selected source.
+            cli = os.path.join(source, "infra_tools.py")
+            with open(cli, encoding="utf-8") as stream:
+                content = stream.read()
+            with open(cli, "w", encoding="utf-8") as stream:
+                stream.write(content.replace('"infra-tools"', '"basaltw"'))
+            with open(os.path.join(source, "pyproject.toml"), "w") as stream:
+                stream.write('[project.scripts]\nbasaltw = "infra_tools:main"\n')
+            for args in (["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "rename"]):
+                subprocess.run(["git", "-C", source, *args], check=True, capture_output=True)
+            install_dir = os.path.join(directory, "custom installation")
+            secret = os.path.join(install_dir, "state", "credentials.json")
+            for channel in ("stable", "dev", "dev", "stable"):
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--install-dir", install_dir, "--channel", channel],
+                    env=environment, text=True, capture_output=True, timeout=20,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                command = "basaltw" if channel == "dev" else "infra-tools"
+                self.assertIn(f"Command: {home}/.local/bin/{command}", result.stdout)
+                if not os.path.exists(secret):
+                    os.makedirs(os.path.dirname(secret))
+                    with open(secret, "w") as stream:
+                        stream.write('{"fixture": "private-state"}')
+                    os.chmod(secret, 0o600)
+                    # The real repository ignores persistent state.
+                    with open(os.path.join(install_dir, ".git", "info", "exclude"), "a") as stream:
+                        stream.write("\nstate/\n.infra_tools/\n")
+                with open(secret) as stream:
+                    self.assertEqual(stream.read(), '{"fixture": "private-state"}')
+                self.assertEqual(os.stat(secret).st_mode & 0o777, 0o600)
+                # Each checkout has a fresh .git directory after reinstall.
+                with open(os.path.join(install_dir, ".git", "info", "exclude"), "a") as stream:
+                    stream.write("\nstate/\n.infra_tools/\n")
 
     def test_root_install_uses_target_home_for_launcher(self):
         with tempfile.TemporaryDirectory() as directory:

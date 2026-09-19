@@ -10,6 +10,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import infra_tools
@@ -41,6 +42,37 @@ def _git(root: str, *arguments: str) -> str:
 
 
 class TestInstallationSnapshot(unittest.TestCase):
+    def test_both_commands_read_existing_workspace_without_moving_state(self) -> None:
+        from lib.orchestrator_bootstrap import install_launcher
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / ".config" / "infra_tools"
+            (workspace / "setups").mkdir(parents=True)
+            saved = workspace / "setups" / "server.json"
+            saved.write_text(json.dumps({
+                "host": "server", "system_type": "server_lite",
+                "args": {"username": "agent"}, "command": "infra-tools setup server_lite server",
+            }), encoding="utf-8")
+            credentials = workspace / "credentials.json"
+            credentials.write_text('{"fixture": "private"}', encoding="utf-8")
+            credentials.chmod(0o600)
+            before = {p: (p.read_bytes(), p.stat().st_mode) for p in (saved, credentials)}
+            bin_dir = root / "bin"
+            install_launcher(infra_tools.__file__, target_dir=str(bin_dir))
+            environment = {**os.environ, "HOME": temp_dir, "INFRA_TOOLS_WORKSPACE": str(workspace)}
+            for name in ("infra-tools", "basaltw"):
+                for arguments in (["--help"], ["list", "--json"], ["cmd"]):
+                    result = subprocess.run(
+                        [str(bin_dir / name), *arguments], env=environment,
+                        capture_output=True, text=True, check=True, timeout=10,
+                    )
+                    if arguments == ["cmd"]:
+                        self.assertIn("basaltw setup server_lite server agent", result.stdout)
+            after = {p: (p.read_bytes(), p.stat().st_mode) for p in (saved, credentials)}
+            self.assertEqual(after, before)
+            self.assertEqual(list((root / ".config").iterdir()), [workspace])
+
     def _source_repository(self, root: str) -> str:
         source = os.path.join(root, "source")
         os.mkdir(source)
@@ -166,7 +198,7 @@ class TestInstallationSnapshot(unittest.TestCase):
             parser.parse_args(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(output.getvalue(), "infra-tools 2.0.0\n")
+        self.assertEqual(output.getvalue(), "basaltw 2.0.0\n")
 
 
 if __name__ == "__main__":

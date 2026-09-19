@@ -21,15 +21,21 @@ def main() -> int:
         )
         return 1
     scripts = project.get("scripts", {})
-    if scripts.get("infra-tools") != "infra_tools:main":
-        print("pyproject.toml must expose infra_tools:main as the infra-tools entry point")
+    if project.get("name") != "basaltwater":
+        print("pyproject.toml must declare the basaltwater distribution")
         return 1
-    if "infra_tools" in scripts:
-        print("pyproject.toml must not restore the retired infra_tools launcher")
+    if scripts.get("infra-tools") != "infra_tools:main":
+        print("The v2 transition launcher infra-tools must remain available")
+        return 1
+    if scripts.get("basaltw") != "infra_tools:main":
+        print("pyproject.toml must expose infra_tools:main as the basaltw entry point")
+        return 1
+    if {"infra_tools", "basalt", "bw", "b6"}.intersection(scripts):
+        print("pyproject.toml must not add unapproved executable aliases")
         return 1
     command_reference = (ROOT / "docs" / "COMMAND_LINE.md").read_text(encoding="utf-8")
-    if "infra-tools setup" not in command_reference:
-        print("docs/COMMAND_LINE.md must document the infra-tools launcher")
+    if "basaltw setup" not in command_reference:
+        print("docs/COMMAND_LINE.md must document the basaltw launcher")
         return 1
     print("Package metadata check passed")
     return 0

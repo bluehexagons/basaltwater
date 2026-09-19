@@ -98,7 +98,9 @@ def _venv_command(venv_dir: Path, command: str) -> Path:
     return venv_dir / bin_dir / command
 
 
-def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
+def _smoke_installed_wheel(
+    wheel: Path, work_dir: Path, previous_wheel: Path | None = None,
+) -> None:
     venv_dir = work_dir / "venv"
     venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
     python = _venv_command(venv_dir, "python")
@@ -106,6 +108,23 @@ def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
     environment = os.environ.copy()
     environment.pop("PYTHONPATH", None)
     environment.pop("PYTHONHOME", None)
+
+    if previous_wheel is not None:
+        subprocess.run(
+            [str(pip), "install", "--no-deps", str(previous_wheel)],
+            check=True, cwd=work_dir, env=environment,
+        )
+        subprocess.run(
+            [str(_venv_command(venv_dir, "infra-tools")), "--help"],
+            check=True, cwd=work_dir, env=environment, stdout=subprocess.DEVNULL,
+        )
+        # The distributions share runtime files. Ownership must transfer in
+        # this order; uninstalling infra_tools after installing basaltwater
+        # would remove the newly installed modules and transition launcher.
+        subprocess.run(
+            [str(pip), "uninstall", "--yes", "infra_tools"],
+            check=True, cwd=work_dir, env=environment,
+        )
 
     subprocess.run(
         [str(pip), "install", "--no-deps", str(wheel)],
@@ -130,7 +149,7 @@ def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
         env=environment,
     )
     subprocess.run(
-        [str(_venv_command(venv_dir, "infra-tools")), "--help"],
+        [str(_venv_command(venv_dir, "basaltw")), "--help"],
         check=True,
         cwd=work_dir,
         env=environment,
@@ -141,7 +160,7 @@ def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
             str(python),
             "-I",
             "-c",
-            "from importlib.metadata import version; print(version('infra_tools'))",
+            "from importlib.metadata import version; print(version('basaltwater'))",
         ],
         check=True,
         cwd=work_dir,
@@ -150,15 +169,21 @@ def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
         text=True,
     ).stdout.strip()
     version_result = subprocess.run(
-        [str(_venv_command(venv_dir, "infra-tools")), "--version"],
+        [str(_venv_command(venv_dir, "basaltw")), "--version"],
         check=True,
         cwd=work_dir,
         env=environment,
         capture_output=True,
         text=True,
     )
-    if version_result.stdout.strip() != f"infra-tools {installed_version}":
-        raise RuntimeError("Installed infra-tools launcher returned the wrong version")
+    if version_result.stdout.strip() != f"basaltw {installed_version}":
+        raise RuntimeError("Installed basaltw launcher returned the wrong version")
+    transition_result = subprocess.run(
+        [str(_venv_command(venv_dir, "infra-tools")), "--version"],
+        check=True, cwd=work_dir, env=environment, capture_output=True, text=True,
+    )
+    if transition_result.stdout != version_result.stdout:
+        raise RuntimeError("Transition launcher does not use the same implementation")
     subprocess.run(
         [str(_venv_command(venv_dir, "webhook_manager")), "--help"],
         check=True,
@@ -166,6 +191,22 @@ def _smoke_installed_wheel(wheel: Path, work_dir: Path) -> None:
         env=environment,
         stdout=subprocess.DEVNULL,
     )
+
+    if previous_wheel is not None:
+        subprocess.run(
+            [str(pip), "uninstall", "--yes", "basaltwater"],
+            check=True, cwd=work_dir, env=environment,
+        )
+        if _venv_command(venv_dir, "basaltw").exists():
+            raise RuntimeError("Uninstall left the Basaltwater launcher behind")
+        subprocess.run(
+            [str(pip), "install", "--no-deps", str(previous_wheel)],
+            check=True, cwd=work_dir, env=environment,
+        )
+        subprocess.run(
+            [str(_venv_command(venv_dir, "infra-tools")), "--help"],
+            check=True, cwd=work_dir, env=environment, stdout=subprocess.DEVNULL,
+        )
 
 
 def main() -> int:
@@ -176,15 +217,22 @@ def main() -> int:
         type=Path,
         help="Existing wheel to inspect; omit to build one in a temporary directory",
     )
+    parser.add_argument(
+        "--previous-wheel", type=Path,
+        help="Also verify old-package removal, upgrade and rollback in the isolated environment",
+    )
     args = parser.parse_args()
+    previous_wheel = args.previous_wheel.resolve() if args.previous_wheel else None
+    if previous_wheel is not None and not previous_wheel.is_file():
+        parser.error(f"previous wheel does not exist: {previous_wheel}")
 
-    with tempfile.TemporaryDirectory(prefix="infra-tools-wheel-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="basaltw-wheel-") as temp_dir:
         work_dir = Path(temp_dir)
         wheel = args.wheel.resolve() if args.wheel else _build_wheel(work_dir / "dist")
         if not wheel.is_file():
             parser.error(f"wheel does not exist: {wheel}")
         _check_wheel_contents(wheel)
-        _smoke_installed_wheel(wheel, work_dir)
+        _smoke_installed_wheel(wheel, work_dir, previous_wheel)
 
     print(f"Wheel artifact check passed: {wheel.name}")
     return 0

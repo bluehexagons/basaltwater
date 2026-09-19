@@ -14,6 +14,7 @@ from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.maintenance_systemd import configure_maintenance_timer
+from lib.orchestrator_bootstrap import LAUNCHER_NAME, TRANSITION_LAUNCHER_NAME
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.types import StrList
 from lib.validation import (
@@ -314,9 +315,20 @@ def install_agent_cli_launcher(config: SetupConfig) -> None:
 
     user_home = _user_home(config)
     bin_dir = os.path.join(user_home, ".local", "bin")
-    launcher_path = os.path.join(bin_dir, "infra-tools")
-    _reject_symlinked_agent_destination(launcher_path)
+    launcher_paths = [
+        os.path.join(bin_dir, name)
+        for name in (TRANSITION_LAUNCHER_NAME, LAUNCHER_NAME)
+    ]
+    for launcher_path in launcher_paths:
+        _reject_symlinked_agent_destination(launcher_path)
     _prepare_agent_local_bin(config, user_home)
+    for launcher_path in launcher_paths:
+        _install_agent_cli_wrapper(config, launcher_path)
+
+
+def _install_agent_cli_wrapper(config: SetupConfig, launcher_path: str) -> None:
+    """Reconcile one launcher, retaining the existing ownership contract."""
+    bin_dir = os.path.dirname(launcher_path)
 
     content = (
         "#!/bin/sh\n"
@@ -339,7 +351,7 @@ def install_agent_cli_launcher(config: SetupConfig) -> None:
                     f"Existing unmanaged agent launcher is not executable: {launcher_path}"
                 )
             _ensure_agent_shell_path(config)
-            print(f"  Existing infra-tools launcher retained: {launcher_path}")
+            print(f"  Existing management launcher retained: {launcher_path}")
             return
         if existing == content:
             os.chmod(launcher_path, 0o755)
@@ -793,7 +805,7 @@ def update_managed_agent_tools(config: SetupConfig) -> None:
     ):
         print(
             "  ⚠ Managed agent tools are current; broader host/T3 readiness "
-            "reported unhealthy. Run `infra-tools agent doctor --capability host "
+            "reported unhealthy. Run `basaltw agent doctor --capability host "
             "--capability t3code` to inspect it."
         )
     print("  Managed agent tools are current: " + ", ".join(selected))

@@ -1,7 +1,13 @@
-# infra-tools
+# Basaltwater
+
+Infrastructure management, from one machine to your whole network.
+
+Formerly infra-tools. The command is now `basaltw`; existing `infra-tools`
+automation remains supported through v2.x. See the
+[upgrade and rollback guide](docs/BASALTWATER_MIGRATION.md).
 
 Automated setup and operations for Debian control planes, servers, workstations,
-and Proxmox guests. infra-tools applies repeatable, machine-aware configuration
+and Proxmox guests. Basaltwater applies repeatable, machine-aware configuration
 over SSH, stores redacted setup state in a workspace, and provides targeted
 operations for hosts that are already configured.
 
@@ -11,7 +17,7 @@ release. Until that tag is published, the installer’s `dev` channel tracks
 
 ## Start here
 
-New to Linux or infra-tools? Follow [Try infra-tools on a Debian
+New to Linux or Basaltwater? Follow [Try Basaltwater on a Debian
 VM](docs/GETTING_STARTED.md) for a guided first setup, small feature experiments,
 and checks that show whether each step worked.
 
@@ -25,8 +31,8 @@ rm -f "$HOME/.infra_tools-install.sh"
 
 Run each line in order and continue only if the previous command succeeds.
 If `wget` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
-Installing the launcher does not configure a target. Use `infra-tools setup ...` for
-remote hosts and `infra-tools upgrade` to update the selected channel. The
+Installing the launcher does not configure a target. Use `basaltw setup ...` for
+remote hosts and `basaltw upgrade` to update the selected channel. The
 [installation guide](docs/INSTALLATION.md) covers prerequisites, verification,
 alternate download commands, local control-plane and desktop/RDP profiles,
 channels, credentials, and recovery. The [documentation index](docs/README.md)
@@ -38,7 +44,7 @@ before changing the project.
 
 ## Supported targets
 
-infra-tools officially supports Debian on:
+Basaltwater officially supports Debian on:
 
 - bare-metal systems;
 - virtual machines, including Proxmox-provisioned VMs; and
@@ -96,7 +102,7 @@ helps with brief memory spikes but does not replace RAM for sustained work.
 Coding-agent rows assume remote model providers; local model inference needs
 its own RAM, accelerator, and model-storage budget.
 These sizes exceed [Debian's base installation requirements](https://www.debian.org/releases/trixie/amd64/ch03s04.en.html)
-to accommodate infra-tools and useful work. For Proxmox hosts, add the resources
+to accommodate Basaltwater and useful work. For Proxmox hosts, add the resources
 required by every guest and storage workload to the host's own requirements;
 the table describes individual guests, not an entire virtualization host.
 
@@ -159,7 +165,7 @@ See the
 ### Targeted updates
 
 Use `patch` for general saved-configuration changes. Use a feature-specific
-fast path when available—for example, `infra-tools shares HOST` updates Samba
+fast path when available—for example, `basaltw shares HOST` updates Samba
 users, access, paths, and share declarations without running unrelated setup
 work. See [Saved configuration operations](docs/OPERATIONS.md).
 
@@ -167,11 +173,11 @@ work. See [Saved configuration operations](docs/OPERATIONS.md).
 
 ```bash
 # Explore the command help and preview a local profile without applying it
-infra-tools --help
-infra-tools setup server_dev localhost "$USER" --node --dry-run
+basaltw --help
+basaltw setup server_dev localhost "$USER" --node --dry-run
 
 # List configurations saved by this account (empty before the first live setup)
-infra-tools list
+basaltw list
 ```
 
 Use the [beginner walkthrough](docs/GETTING_STARTED.md) to apply your first
@@ -182,7 +188,7 @@ and the [documentation index](docs/README.md) for the feature map.
 
 Run the default checks from a checkout. This includes building a wheel in a
 temporary directory, installing it into an isolated virtual environment, and
-smoke-testing both installed launchers outside the source tree:
+smoke-testing all installed launchers outside the source tree:
 
 ```bash
 make check

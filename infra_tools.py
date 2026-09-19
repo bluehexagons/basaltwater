@@ -7,9 +7,9 @@ This script provides a unified interface to all infra_tools functionality,
 combining setup and patch operations into a single command-line tool.
 
 Usage:
-    infra-tools setup <system_type> <host> [options]
-    infra-tools patch <host> [options]
-    infra-tools --help
+    basaltw setup <system_type> <host> [options]
+    basaltw patch <host> [options]
+    basaltw --help
 
 System Types:
     control_plane         Infrastructure control plane setup
@@ -148,7 +148,7 @@ def _build_infra_tools_epilog() -> str:
     deploy <pattern>            Redeploy saved configurations
     recall <host> [username]    Fetch or reconstruct a remote setup command
     reconstruct                 Analyze this host and emit a setup summary
-    completions                 Install shell completion for infra-tools
+    completions                 Install shell completion for basaltw
     python-tools                Install local Python aliases, uv, and completion
     bootstrap                   Install packages, launcher, and completions (alias: self-setup)
     channel [CHANNEL]           Show or switch the installed source channel
@@ -185,15 +185,15 @@ System Types for setup:
 {format_system_type_help()}
 
 Examples:
-  infra-tools setup server_web 192.168.1.100 admin --ssl
-  infra-tools patch 192.168.1.100 --deploy api.example.com https://github.com/user/api.git
-  infra-tools shares 192.168.1.100 --share write media /srv/media alice,bob
-  infra-tools list prod
-  infra-tools deploy prod --yes
-  infra-tools recall example.com admin
-  infra-tools completions --shell zsh
-  sudo infra-tools self-setup --user admin [--qemu-guest-agent]
-  infra-tools list prod    # after self-setup, the launcher is on PATH
+  basaltw setup server_web 192.168.1.100 admin --ssl
+  basaltw patch 192.168.1.100 --deploy api.example.com https://github.com/user/api.git
+  basaltw shares 192.168.1.100 --share write media /srv/media alice,bob
+  basaltw list prod
+  basaltw deploy prod --yes
+  basaltw recall example.com admin
+  basaltw completions --shell zsh
+  sudo basaltw self-setup --user admin [--qemu-guest-agent]
+  basaltw list prod    # after self-setup, the launcher is on PATH
  """
 
 
@@ -248,7 +248,7 @@ def run_tool_upgrade_command(args: argparse.Namespace | None = None) -> int:
         if info.get("updated"):
             print(f"Upgraded {info['channel']} to {str(info['commit'])[:12]}")
         else:
-            print(f"infra-tools is already up to date on {info['channel']} ({str(info['commit'])[:12]})")
+            print(f"basaltw is already up to date on {info['channel']} ({str(info['commit'])[:12]})")
         return 0
     except (ChannelError, ValueError, OSError) as exc:
         print(f"Error: {exc}")
@@ -259,7 +259,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     """Create the main argument parser for infra_tools."""
     parser = argparse.ArgumentParser(
         prog=LAUNCHER_NAME,
-        description="Unified infrastructure setup and management tool",
+        description="Basaltwater — infrastructure management, from one machine to your whole network",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_build_infra_tools_epilog()
     )
@@ -282,7 +282,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         "setup",
         help="Run initial setup for a system type",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Run 'infra-tools setup --help' for full options"
+        epilog="Run 'basaltw setup --help' for full options"
     )
     add_setup_arguments(setup_parser, allow_steps=True, include_system_type=True)
     setup_parser.add_argument(
@@ -299,7 +299,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         "patch",
         help="Patch/update an existing system",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Run 'infra-tools patch --help' for full options"
+        epilog="Run 'basaltw patch --help' for full options"
     )
     patch_parser.add_argument(
         "host",
@@ -474,7 +474,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
 
     completions_parser = subparsers.add_parser(
         "completions",
-        help="Install shell completion for infra-tools",
+        help="Install shell completion for basaltw",
     )
     completions_parser.add_argument(
         "--shell",
@@ -515,7 +515,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     bootstrap_parser = subparsers.add_parser(
         "bootstrap",
         aliases=["self-setup"],
-        help="Install local packages, launcher, and completions for infra-tools",
+        help="Install local packages, launcher, and completions for basaltw",
     )
     bootstrap_parser.add_argument(
         "--shell",
@@ -531,7 +531,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     bootstrap_parser.add_argument(
         "--skip-system-packages",
         action="store_true",
-        help="Skip local system-package installation and only configure infra-tools for the target user",
+        help="Skip local system-package installation and only configure basaltw for the target user",
     )
     bootstrap_parser.add_argument(
         "--qemu-guest-agent",
@@ -592,7 +592,7 @@ def create_infra_tools_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
 
     shell_parser = subparsers.add_parser(
         "shell",
-        help="Start the interactive infra-tools REPL",
+        help="Start the interactive basaltw REPL",
     )
     shell_parser.add_argument(
         "--workspace",
@@ -2104,7 +2104,7 @@ def run_patch_command(args: argparse.Namespace) -> int:
     cached_config = load_setup_command(args.host)
     if not cached_config:
         print(f"Error: No cached setup found for {args.host}")
-        print(f"Please run the initial setup first using 'infra-tools setup <system_type> {args.host}'")
+        print(f"Please run the initial setup first using 'basaltw setup <system_type> {args.host}'")
         return 1
 
     if getattr(args, "enable_rdp", None) is None:
@@ -2214,7 +2214,7 @@ def run_shares_command(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    """Main entry point for infra-tools."""
+    """Main entry point for basaltw."""
     parser, _setup_parser, _patch_parser = create_infra_tools_parser()
 
     if argcomplete:

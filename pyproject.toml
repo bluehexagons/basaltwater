@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "infra_tools"
+name = "basaltwater"
 version = "2.0.0"
-description = "Automated setup scripts for remote Linux systems"
+description = "Basaltwater: infrastructure management, from one machine to your whole network"
 requires-python = ">=3.10"
 dependencies = []
 
@@ -14,6 +14,8 @@ completion = ["argcomplete>=3.0.0"]
 dev = ["coverage>=7.0"]
 
 [project.scripts]
+basaltw = "infra_tools:main"
+# Supported through v2.x for existing automation; see docs/BASALTWATER_MIGRATION.md.
 infra-tools = "infra_tools:main"
 webhook_manager = "web.service_tools.webhook_manager:main"
 

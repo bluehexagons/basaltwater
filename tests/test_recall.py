@@ -137,7 +137,7 @@ class TestRecallCommand(unittest.TestCase):
         retrieve.assert_called_once_with("server", "remote", None)
         reconstruct.assert_not_called()
         self.assertIn("Stored configuration file", stdout.getvalue())
-        self.assertIn("infra-tools setup server_dev", stdout.getvalue())
+        self.assertIn("basaltw setup server_dev", stdout.getvalue())
         self.assertIn("  remote", stdout.getvalue())
 
     def test_recall_reports_reconstruction_failure(self) -> None:
