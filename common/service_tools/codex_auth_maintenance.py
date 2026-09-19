@@ -11,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 from logging import ERROR
 from typing import Any, BinaryIO
@@ -32,7 +33,7 @@ logger = get_service_logger(
     use_syslog=True,
 )
 
-_PROTOCOL_TIMEOUT_SECONDS = 60
+_PROTOCOL_TIMEOUT_SECONDS = 40
 _MAX_PROTOCOL_LINE_BYTES = 1024 * 1024
 _MAX_PROTOCOL_MESSAGES = 256
 _INITIALIZE_REQUEST_ID = 1
@@ -46,6 +47,43 @@ class AuthRefreshError(RuntimeError):
         super().__init__(reason)
         self.reason = reason
         self.error_code = error_code
+
+
+class _RefreshDiagnostics:
+    """Drain stderr without retaining or emitting secret-bearing vendor logs."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self.stream = stream
+        self.reasons: set[str] = set()
+
+    def drain(self) -> None:
+        tail = b""
+        try:
+            while chunk := self.stream.read(4096):
+                if not isinstance(chunk, bytes):
+                    break
+                data = (tail + chunk).lower()
+                for marker in (
+                    b"refresh_token_expired", b"refresh_token_reused",
+                    b"refresh_token_invalidated", b"invalid_grant",
+                ):
+                    if marker in data:
+                        self.reasons.add(marker.decode("ascii"))
+                if b"failed to refresh token while getting account:" in data:
+                    self.reasons.add("transient_refresh_failure")
+                tail = data[-128:]
+        except (OSError, ValueError):
+            pass
+
+    def failure(self) -> str | None:
+        for reason in (
+            "refresh_token_expired", "refresh_token_reused",
+            "refresh_token_invalidated", "invalid_grant",
+            "transient_refresh_failure",
+        ):
+            if reason in self.reasons:
+                return reason
+        return None
 
 
 def _response_error(response: dict[str, Any], stage: str) -> AuthRefreshError:
@@ -156,13 +194,17 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
         }
     )
     process = subprocess.Popen(
-        [codex_path, "app-server"],
+        [codex_path, "-c", 'cli_auth_credentials_store="file"', "app-server"],
         cwd=home,
         env=environment,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
+    assert process.stderr is not None
+    diagnostics = _RefreshDiagnostics(process.stderr)
+    reader = threading.Thread(target=diagnostics.drain, daemon=True)
+    reader.start()
     deadline = time.monotonic() + _PROTOCOL_TIMEOUT_SECONDS
     response_buffer = bytearray()
     try:
@@ -226,11 +268,19 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
         except OSError:
             pass
         _stop_process(process)
+        reader.join(timeout=1)
         try:
             if process.stdout is not None:
                 process.stdout.close()
         except OSError:
             pass
+        if not reader.is_alive():
+            process.stderr.close()
+        # Codex can swallow refresh errors and still return a normal account
+        # response. Only fixed categories cross the vendor logging boundary.
+        reason = diagnostics.failure()
+        if reason is not None:
+            raise AuthRefreshError(reason)
 
 
 def _credential_file_is_private(path: str) -> bool:
@@ -320,50 +370,43 @@ def maintain_codex_auth(
         return 1
 
     log_event(logger, "Refreshing Codex authentication", prior_status=status)
-    try:
-        refreshed = refresh_codex_auth(codex_path, home)
-    except AuthRefreshError as exc:
-        log_event(
-            logger,
-            "Codex authentication refresh failed",
-            level=ERROR,
-            reason=exc.reason,
-            rpc_error_code=exc.error_code,
-        )
-        return 1
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        log_event(
-            logger,
-            "Codex authentication refresh failed",
-            level=ERROR,
-            failure_type=type(exc).__name__,
-        )
-        return 1
-    if not refreshed:
-        log_event(logger, "Codex authentication refresh did not return a ChatGPT account", level=ERROR)
-        return 1
+    for attempt in range(2):
+        failure: AuthRefreshError | None = None
+        try:
+            refresh_codex_auth(codex_path, home)
+        except AuthRefreshError as exc:
+            failure = exc
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            failure = AuthRefreshError("refresh_process_failed")
 
-    if not _credential_file_is_private(auth_path):
+        if not (
+            _credential_directory_is_owner_controlled(codex_home)
+            and _credential_file_is_private(auth_path)
+        ):
+            log_event(logger, "Codex credential file became unsafe during refresh", level=ERROR)
+            return 1
+        updated = inspect_codex_auth_file(auth_path)
+        if (
+            updated.get("auth_mode") == "chatgpt"
+            and updated.get("status") == "current"
+            and updated.get("refresh_token_present") is True
+        ):
+            # Account visibility depends on the selected model provider. The
+            # persisted credential is authoritative, including concurrent renewal.
+            log_event(logger, "Codex authentication refreshed successfully")
+            return 0
+        if failure is not None and failure.reason == "transient_refresh_failure" and attempt == 0:
+            log_event(logger, "Retrying transient Codex authentication refresh failure")
+            continue
         log_event(
             logger,
-            "Codex credential file became unsafe during refresh",
+            "Codex authentication refresh failed",
             level=ERROR,
+            reason=failure.reason if failure else "credentials_remained_stale",
+            rpc_error_code=failure.error_code if failure else None,
         )
         return 1
-    updated = inspect_codex_auth_file(auth_path)
-    if (
-        updated.get("auth_mode") != "chatgpt"
-        or updated.get("status") != "current"
-        or updated.get("refresh_token_present") is not True
-    ):
-        log_event(
-            logger,
-            "Codex authentication remained stale after refresh",
-            level=ERROR,
-        )
-        return 1
-    log_event(logger, "Codex authentication refreshed successfully")
-    return 0
+    return 1
 
 
 def main() -> int:

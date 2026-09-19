@@ -67,8 +67,10 @@ does not prompt for or stage credentials.
 
 Initial setup installs missing selected credentials at the canonical path with
 mode `0600`. Ordinary reruns preserve existing mutable credentials. The narrow
-exception is a Codex target whose metadata definitively requires a refresh: a
-staged, unambiguously current source may replace it.
+exception is a Codex target marked `refresh_required`, `refresh_due`, or
+`expires_soon`: a staged, unambiguously current source may replace it. Setup
+therefore consumes a supplied current credential before an overdue target's
+access token expires, without requiring a separate `agent auth set` command.
 
 Use `agent auth set` for every other intentional replacement:
 
@@ -190,9 +192,24 @@ is invalid, lacks required refresh state, or remains stale after provider
 rejection, authenticate the VM independently or deliberately replace it with
 `agent auth set`.
 
-Maintenance distinguishes `account_read_rpc_error` (with a numeric JSON-RPC
+Maintenance explicitly selects file storage for its child Codex process and
+checks the private credential file after the request, even when the selected
+model provider returns no account. A newly current file counts as successful
+renewal; a returned account alone does not. The user's Codex configuration is
+not rewritten.
+
+Transient refresh failures receive one automatic retry within the service's
+two-minute timeout. Vendor stderr is drained in bounded memory, reduced to
+fixed failure categories, and never copied into Basaltwater logs. Recognized
+terminal failures (`refresh_token_expired`, `refresh_token_reused`,
+`refresh_token_invalidated`, `invalid_grant`) are not retried. Setup shows the
+sanitized maintenance output directly. If no usable replacement was supplied
+and the provider has rejected the refresh credential, unattended renewal is
+not possible; repeating the same rejected credential cannot repair it.
+
+Maintenance also distinguishes `account_read_rpc_error` (with a numeric JSON-RPC
 code when available), `no_account_returned`, `unexpected_account_type`, and
-`invalid_account_response`. These categories do not by themselves prove that
+`invalid_account_response`. These account-response categories do not by themselves prove that
 the provider rejected a refresh token. Provider response messages and account
 contents are deliberately omitted from logs. A successful earlier timer run
 may simply have occurred before the local refresh threshold; an inactive

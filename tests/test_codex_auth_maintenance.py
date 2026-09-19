@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from common.agent_steps import (
+    _copy_secret_file,
     configure_codex_auth_maintenance,
     run_codex_auth_maintenance,
 )
@@ -36,6 +37,46 @@ def _metadata(
 
 
 class TestCodexAuthMaintenance(unittest.TestCase):
+    def test_missing_account_with_renewed_file_is_success(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            self._credential_home(home)
+            with (
+                patch.object(codex_auth_maintenance, "inspect_codex_auth_file", side_effect=(
+                    _metadata("refresh_due"), _metadata("current"),
+                )),
+                patch.object(codex_auth_maintenance, "refresh_codex_auth", side_effect=
+                    codex_auth_maintenance.AuthRefreshError("no_account_returned")),
+            ):
+                self.assertEqual(codex_auth_maintenance.maintain_codex_auth(
+                    home=home, codex_path=sys.executable,
+                ), 0)
+
+    def test_transient_failure_retries_but_rejected_token_does_not(self) -> None:
+        for reason, expected_calls, expected_result in (
+            ("transient_refresh_failure", 2, 0),
+            ("refresh_token_reused", 1, 1),
+        ):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as home:
+                self._credential_home(home)
+                with (
+                    patch.object(codex_auth_maintenance, "inspect_codex_auth_file", side_effect=(
+                        _metadata("refresh_due"), _metadata("refresh_due"), _metadata("current"),
+                    )),
+                    patch.object(codex_auth_maintenance, "refresh_codex_auth", side_effect=(
+                        codex_auth_maintenance.AuthRefreshError(reason), True,
+                    )) as refresh,
+                ):
+                    result = codex_auth_maintenance.maintain_codex_auth(home=home, codex_path=sys.executable)
+                self.assertEqual(result, expected_result)
+                self.assertEqual(refresh.call_count, expected_calls)
+
+    def test_vendor_diagnostics_retain_only_fixed_categories(self) -> None:
+        raw = b"secret-token " * 10000 + b'Failed to refresh token: 401 {"code":"refresh_token_reused"}'
+        diagnostics = codex_auth_maintenance._RefreshDiagnostics(io.BytesIO(raw))
+        diagnostics.drain()
+        self.assertEqual(diagnostics.failure(), "refresh_token_reused")
+        self.assertEqual(diagnostics.reasons, {"refresh_token_reused"})
+
     def test_refresh_failures_report_safe_categories(self) -> None:
         cases = (
             ({"error": {"code": -32000, "message": "secret-token"}}, "account_read_rpc_error", -32000),
@@ -205,7 +246,7 @@ class TestCodexAuthMaintenance(unittest.TestCase):
             import json
             import sys
 
-            assert sys.argv[1:] == ["app-server"]
+            assert sys.argv[1:] == ["-c", 'cli_auth_credentials_store="file"', "app-server"]
             initialize = json.loads(sys.stdin.buffer.readline())
             assert initialize["method"] == "initialize"
             print(json.dumps({"id": 99, "result": {"ignored": True}}), flush=True)
@@ -224,21 +265,57 @@ class TestCodexAuthMaintenance(unittest.TestCase):
             }), flush=True)
             """
         )
-        with tempfile.TemporaryDirectory() as home:
-            fake_codex = os.path.join(home, "codex")
-            with open(fake_codex, "w", encoding="utf-8") as file_obj:
-                file_obj.write(fake_source)
-            os.chmod(fake_codex, 0o700)
-
-            refreshed = codex_auth_maintenance.refresh_codex_auth(
-                fake_codex,
-                home,
-            )
-
-        self.assertTrue(refreshed)
+        for marker, expected in (
+            ("", None),
+            ("failed to refresh token while getting account: network error", "transient_refresh_failure"),
+            ('{"code":"refresh_token_reused"}', "refresh_token_reused"),
+        ):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as home:
+                fake_codex = os.path.join(home, "codex")
+                # Exceed pipe capacity to verify stderr is drained concurrently;
+                # the successful RPC deliberately hides the refresh failure.
+                source = fake_source.replace(
+                    "import json",
+                    "import sys\n"
+                    f"sys.stderr.write('secret-token ' * 10000 + {marker!r})\n"
+                    "sys.stderr.flush()\nimport json",
+                    1,
+                )
+                with open(fake_codex, "w", encoding="utf-8") as file_obj:
+                    file_obj.write(source)
+                os.chmod(fake_codex, 0o700)
+                if expected is None:
+                    self.assertTrue(codex_auth_maintenance.refresh_codex_auth(fake_codex, home))
+                else:
+                    with self.assertRaises(codex_auth_maintenance.AuthRefreshError) as raised:
+                        codex_auth_maintenance.refresh_codex_auth(fake_codex, home)
+                    self.assertEqual(raised.exception.reason, expected)
+                    self.assertNotIn("secret-token", str(raised.exception))
 
 
 class TestCodexAuthMaintenanceSetup(unittest.TestCase):
+    def test_setup_replaces_due_credentials_with_current_supplied_source(self) -> None:
+        for target_status in ("refresh_due", "expires_soon", "current"):
+            with self.subTest(target_status=target_status), tempfile.TemporaryDirectory() as home:
+                source = os.path.join(home, "source.json")
+                destination = os.path.join(home, "auth.json")
+                for path, content in ((source, "new"), (destination, "old")):
+                    with open(path, "w", encoding="utf-8") as stream:
+                        stream.write(content)
+                config = SetupConfig(host="host", username="agent", system_type="server_dev")
+                with (
+                    patch("common.agent_steps._user_home", return_value=home),
+                    patch("common.agent_steps._chown_path"),
+                    patch("common.agent_steps._chown_user_directory_chain"),
+                    patch("common.agent_steps.inspect_codex_auth_file", side_effect=(
+                        _metadata(target_status), _metadata("current"),
+                    )),
+                ):
+                    changed = _copy_secret_file(config, source, destination, "Codex", credential_tool="codex")
+                with open(destination, encoding="utf-8") as stream:
+                    self.assertEqual(stream.read(), "old" if target_status == "current" else "new")
+                self.assertEqual(changed, target_status != "current")
+
     def test_configures_non_root_persistent_timer(self) -> None:
         config = SetupConfig(
             host="host",

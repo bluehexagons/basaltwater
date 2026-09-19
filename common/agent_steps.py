@@ -679,6 +679,10 @@ def run_codex_auth_maintenance(config: SetupConfig) -> None:
     if result.returncode == 0:
         print("  ✓ Codex authentication freshness check completed")
     else:
+        # The maintenance helper emits only fixed categories and safe metadata;
+        # vendor stderr and credential contents never reach this stream.
+        for line in (result.stdout or "").splitlines():
+            print(f"  {line}")
         print(
             "  ⚠ Codex authentication remains unhealthy; the agent readiness "
             "check will report the required follow-up",
@@ -931,7 +935,9 @@ def _copy_secret_file(
             warning = codex_auth_warning(target_metadata)
             source_metadata = inspect_codex_auth_file(source)
             if (
-                target_metadata.get("status") == "refresh_required"
+                target_metadata.get("status") in {
+                    "refresh_required", "refresh_due", "expires_soon",
+                }
                 and source_metadata.get("status") == "current"
                 and codex_auth_warning(source_metadata) is None
             ):
