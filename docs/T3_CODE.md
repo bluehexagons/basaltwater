@@ -343,6 +343,11 @@ setup finishes and the host is idle, open **Settings → Providers** in T3 and
 refresh the Codex provider status. Then try a prompt in T3. Successful direct
 CLI prompts alone do not validate T3's separate app-server probe.
 
+Basaltwater's completion access summary includes this recovery hint when T3
+and Codex are selected. Refresh remains a client action: the T3 v0.0.42 CLI
+does not expose a provider-refresh command. Setup does not restart the service
+or edit its provider cache to force a refresh.
+
 If refreshing still times out, record the T3 server and Codex versions, collect
 `basaltw agent doctor --capability t3code --capability host`, and inspect the
 service log around the refresh time. Remove sensitive content before sharing

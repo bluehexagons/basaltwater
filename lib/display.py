@@ -315,6 +315,15 @@ def print_service_access_summary(
             suffix = f" — {note}" if note else ""
             print(f"    {label}: {address}{suffix}")
 
+    if (
+        "t3code" in (config.web_interfaces or [])
+        and "codex" in config.selected_agent_tools()
+    ):
+        print("T3 Code first connection:")
+        print("  If the model list is empty or Codex provider status times out,")
+        print("  let setup activity settle, then open Settings → Providers in T3")
+        print("  and refresh Codex provider status. Try a prompt after models appear.")
+
 
 def print_setup_summary(config: SetupConfig, description: Optional[str] = None) -> None:
     """Print a summary of the setup configuration."""
