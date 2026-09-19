@@ -23,6 +23,18 @@ def _result(*, returncode: int = 0, stdout: str = "", stderr: str = ""):
 
 class TestDiskIdentity(unittest.TestCase):
     @patch("common.storage_steps._lsblk")
+    def test_shared_mapper_can_appear_under_multiple_backing_disks(self, mock_lsblk):
+        mapper = {"path": "/dev/mapper/it_data-data", "type": "lvm", "fstype": "ext4"}
+        mock_lsblk.return_value = [
+            {"path": "/dev/sdb", "children": [mapper]},
+            {"path": "/dev/sdc", "children": [mapper.copy()]},
+        ]
+        self.assertEqual(storage_steps._find_device_by_path(mapper["path"]), mapper)
+        mock_lsblk.return_value[1]["children"][0]["fstype"] = "xfs"
+        with self.assertRaisesRegex(RuntimeError, "conflicting device"):
+            storage_steps._find_device_by_path(mapper["path"])
+
+    @patch("common.storage_steps._lsblk")
     def test_requires_exactly_one_matching_serial(self, mock_lsblk):
         mock_lsblk.return_value = [
             {"type": "disk", "serial": "it-data", "size": 2 * 1024**3},
@@ -67,6 +79,16 @@ class TestDiskIdentity(unittest.TestCase):
 
 
 class TestDiskPreparationSafety(unittest.TestCase):
+    @patch("common.storage_steps._run_capture")
+    def test_failed_signature_scan_never_partitions_disk(self, mock_run):
+        mock_run.return_value = _result(returncode=1, stderr="permission denied")
+        with self.assertRaisesRegex(RuntimeError, "Could not inspect"):
+            storage_steps._partition_for_mount(
+                {"path": "/dev/sdb", "children": []}, "it-data", "2G"
+            )
+        self.assertEqual(mock_run.call_count, 1)
+        self.assertTrue(mock_run.call_args.args[0].startswith("wipefs "))
+
     @patch("common.storage_steps._wipefs_signatures", return_value=["ext4"])
     def test_refuses_signatures_on_unpartitioned_disk(self, _signatures):
         disk = {
@@ -182,9 +204,38 @@ class TestLVMCachePreparation(unittest.TestCase):
         commands = [item.args[0] for item in mock_run.call_args_list]
         self.assertIn("vgremove --yes --force it_data", commands)
         self.assertIn(
-            "pvremove --yes --force --force -- /dev/sdb /dev/sdc",
+            "pvremove --yes -- /dev/sdb /dev/sdc",
             commands,
         )
+
+    @patch("common.storage_steps._wipefs_signatures", return_value=[])
+    @patch("common.storage_steps._run_capture")
+    def test_failed_pv_creation_or_vg_cleanup_preserves_pv_labels(self, mock_run, _wipefs):
+        for failed_command in ("pvcreate ", "vgremove "):
+            with self.subTest(failed_command=failed_command):
+                mock_run.reset_mock()
+
+                def run_side_effect(command, **_kwargs):
+                    if command.startswith("lvs "):
+                        return _result(returncode=5)
+                    if command.startswith("pvcreate ") and failed_command == "pvcreate ":
+                        raise RuntimeError("creation failed")
+                    if command.startswith("lvconvert "):
+                        raise RuntimeError("conversion failed")
+                    if command.startswith("vgremove "):
+                        return _result(returncode=5)
+                    return _result()
+
+                mock_run.side_effect = run_side_effect
+                with self.assertRaises(RuntimeError):
+                    storage_steps._prepare_lvm_cache(
+                        VMStorageCache("data", "cache"),
+                        data_disk={"path": "/dev/sdb", "children": []},
+                        cache_disk={"path": "/dev/sdc", "children": []},
+                    )
+                self.assertFalse(any(
+                    item.args[0].startswith("pvremove ") for item in mock_run.call_args_list
+                ))
 
     @patch("common.storage_steps._find_device_by_path", return_value={"type": "lvm"})
     @patch("common.storage_steps._verify_lvm_physical_volume")

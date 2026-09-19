@@ -264,7 +264,12 @@ class ProxmoxShell:
                 return 0
             try:
                 self.dispatch(line)
-            except (ProxmoxManageError, ProxmoxStorageError) as exc:
+            except (
+                ProxmoxManageError,
+                ProxmoxStorageError,
+                ProxmoxBackupError,
+                ProxmoxMigrateError,
+            ) as exc:
                 self._output(f"Error: {exc}")
             except ValueError as exc:
                 self._output(f"Error: {exc}")

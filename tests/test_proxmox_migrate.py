@@ -44,8 +44,8 @@ class TestMigrateGuest(unittest.TestCase):
 
     @patch("lib.proxmox_migrate._ssh_run")
     def test_lxc_uses_pct_migrate(self, mock_run: MagicMock) -> None:
-        # qm status fails → it's LXC; pct migrate succeeds
-        mock_run.side_effect = [_fail("not found"), _ok()]
+        # LXC must be positively identified before pct migrate.
+        mock_run.side_effect = [_fail("not found"), _ok("status: running"), _ok()]
         src = _host("pve1", "10.0.0.10")
         target = _host("pve2", "10.0.0.11", node_name="pve2")
         migrate_guest(src, 100, target)
@@ -66,11 +66,26 @@ class TestMigrateGuest(unittest.TestCase):
 
     @patch("lib.proxmox_migrate._ssh_run")
     def test_online_lxc_raises(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _fail("not found")
+        mock_run.side_effect = [_fail("not found"), _ok("status: running")]
         src = _host()
         target = _host("pve2", "10.0.0.11", node_name="pve2")
         with self.assertRaises(ProxmoxMigrateError):
             migrate_guest(src, 100, target, online=True)
+
+    @patch("lib.proxmox_migrate._ssh_run")
+    def test_failed_guest_lookup_does_not_attempt_migration(self, mock_run):
+        mock_run.return_value = _fail("SSH unavailable")
+        with self.assertRaisesRegex(ProxmoxMigrateError, "Could not identify guest"):
+            migrate_guest(_host(), 100, _host("pve2", "10.0.0.11", node_name="pve2"))
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertFalse(any("migrate" in call.args[3] for call in mock_run.call_args_list))
+
+    @patch("lib.proxmox_migrate._get_node_name", return_value="")
+    @patch("lib.proxmox_migrate._ssh_run")
+    def test_unresolved_destination_is_not_replaced_with_registry_alias(self, mock_run, _name):
+        with self.assertRaisesRegex(ProxmoxMigrateError, "Could not resolve"):
+            migrate_guest(_host(), 100, _host("friendly-alias", "10.0.0.11"))
+        mock_run.assert_not_called()
 
     @patch("lib.proxmox_migrate._ssh_run")
     def test_raises_on_migrate_failure(self, mock_run: MagicMock) -> None:

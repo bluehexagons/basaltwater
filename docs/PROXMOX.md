@@ -279,6 +279,12 @@ can reduce write latency but accepts additional data-loss risk if the cache
 volume or SSD fails; use it only with an explicit power-loss and recovery
 plan. Cache creation is provisioning-only. Existing VGs, partitions,
 signatures, or filesystems are rejected rather than adopted.
+Signature-scan failures also stop setup before partitioning or formatting.
+Repeated identical LVM mapper records are accepted when both backing disks
+report the same cached volume; conflicting records stop setup. If cache
+creation fails, cleanup removes PV labels only after successful PV creation
+and, when needed, successful removal of the new VG. Failed or uncertain cleanup
+preserves the remaining metadata for inspection instead of force-erasing it.
 
 For a separate home filesystem on a newly provisioned VM:
 
@@ -757,6 +763,11 @@ stronger consistency where the guest workload requires it. Always verify that
 the selected storage has enough capacity and a retention policy outside
 Basaltwater.
 
+Backup listing reports failed or malformed storage inventories as errors,
+including a failure in one pool after another pool was read successfully.
+An empty result means the queried active pools contained no matching backups;
+it does not establish that offline pools contain none.
+
 Migrate a guest between registered cluster nodes:
 
 ```bash
@@ -768,6 +779,9 @@ basaltw proxmox migrate pve1 101 pve2 \
 `--online` keeps a VM running and requires suitable shared or migrated storage.
 `--with-local-disks` copies local disks to target-node storage. Use the dry run
 first for production migrations.
+Migration requires a successful QEMU or LXC guest lookup and a resolved
+destination node name. Failed lookups stop the operation rather than guessing
+the guest type or using a controller registry alias as the node name.
 
 ## Orphaned volumes and stuck locks
 

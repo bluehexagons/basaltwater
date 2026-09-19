@@ -53,21 +53,32 @@ def _backup_storages(host: ProxmoxHost) -> list[str]:
     """Return active storage names that support the backup content type."""
     result = _run(
         host,
-        "pvesh get /nodes/$(hostname -s)/storage --output-format json 2>/dev/null",
+        "pvesh get /nodes/$(hostname -s)/storage --output-format json",
     )
-    if result.returncode != 0 or not result.stdout.strip():
-        return []
+    data = _inventory(result, f"storage on {host.address}")
+    pools: list[str] = []
+    for entry in data:
+        content = entry.get("content")
+        storage = entry.get("storage")
+        if not isinstance(content, str) or not isinstance(storage, str) or not storage:
+            raise ProxmoxBackupError(f"Invalid backup storage inventory on {host.address}")
+        if "backup" in content.split(",") and entry.get("active", 0):
+            pools.append(storage)
+    return pools
+
+
+def _inventory(result: subprocess.CompletedProcess[str], label: str) -> list[dict]:
+    """Require a complete JSON inventory instead of reporting errors as empty."""
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip() or "unknown error"
+        raise ProxmoxBackupError(f"Could not list {label}: {detail}")
     try:
         data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return []
-    return [
-        entry["storage"]
-        for entry in data
-        if isinstance(entry, dict)
-        and "backup" in entry.get("content", "")
-        and entry.get("active", 0)
-    ]
+    except (TypeError, ValueError) as exc:
+        raise ProxmoxBackupError(f"Invalid inventory for {label}") from exc
+    if not isinstance(data, list) or any(not isinstance(entry, dict) for entry in data):
+        raise ProxmoxBackupError(f"Invalid inventory for {label}")
+    return data
 
 
 def list_backups(host: ProxmoxHost, vmid: int) -> list[BackupInfo]:
@@ -76,25 +87,27 @@ def list_backups(host: ProxmoxHost, vmid: int) -> list[BackupInfo]:
     for storage in _backup_storages(host):
         cmd = (
             f"pvesh get /nodes/$(hostname -s)/storage/{shlex.quote(storage)}/content"
-            f" --content backup --output-format json 2>/dev/null"
+            f" --content backup --output-format json"
         )
         result = _run(host, cmd)
-        if result.returncode != 0 or not result.stdout.strip():
-            continue
-        try:
-            entries = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            continue
+        entries = _inventory(result, f"backups in {storage} on {host.address}")
         for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            if int(entry.get("vmid", -1)) != vmid:
+            try:
+                entry_vmid = int(entry["vmid"])
+                size = int(entry["size"])
+                ctime = int(entry["ctime"]) if entry.get("ctime") is not None else None
+                volid = entry["volid"]
+                if entry_vmid <= 0 or size < 0 or not isinstance(volid, str) or not volid:
+                    raise ValueError("invalid backup fields")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ProxmoxBackupError(f"Invalid backup entry in {storage}") from exc
+            if entry_vmid != vmid:
                 continue
             backups.append(BackupInfo(
-                volid=str(entry.get("volid", "")),
+                volid=volid,
                 vmid=vmid,
-                size=int(entry.get("size", 0)),
-                ctime=entry.get("ctime"),
+                size=size,
+                ctime=ctime,
                 format=str(entry.get("format", "")),
                 notes=str(entry.get("notes", "")),
             ))

@@ -77,8 +77,9 @@ def _find_device_by_path(device_path: str) -> dict[str, Any] | None:
         value = device.get("path") or device.get("name")
         if value == device_path:
             matches.append(device)
-    if len(matches) > 1:
-        raise RuntimeError(f"lsblk returned duplicate device paths: {device_path}")
+    # lsblk repeats a shared mapper under each of its backing devices.
+    if matches and any(device != matches[0] for device in matches[1:]):
+        raise RuntimeError(f"lsblk returned conflicting device paths: {device_path}")
     return matches[0] if matches else None
 
 
@@ -143,7 +144,7 @@ def _wipefs_signatures(device_path: str) -> list[str]:
         f"wipefs --no-act --noheadings --output TYPE {shlex.quote(device_path)}",
         check=False,
     )
-    if result.returncode not in {0, 1}:
+    if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or "wipefs failed"
         raise RuntimeError(f"Could not inspect {device_path} for signatures: {detail}")
     return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
@@ -307,11 +308,13 @@ def _prepare_lvm_cache(
         data_path = _assert_blank_lvm_disk(data_disk, f"it-{cache.data_name}")
         cache_path = _assert_blank_lvm_disk(cache_disk, f"it-{cache.cache_name}")
         created_vg = False
+        created_pvs = False
         try:
             _run_capture(
                 "pvcreate --yes --zero y -- "
                 f"{shlex.quote(data_path)} {shlex.quote(cache_path)}"
             )
+            created_pvs = True
             _run_capture(
                 f"vgcreate {shlex.quote(volume_group)} -- "
                 f"{shlex.quote(data_path)} {shlex.quote(cache_path)}"
@@ -334,15 +337,19 @@ def _prepare_lvm_cache(
             _run_capture("udevadm settle")
         except Exception:
             if created_vg:
-                _run_capture(
+                removed = _run_capture(
                     f"vgremove --yes --force {shlex.quote(volume_group)}",
                     check=False,
                 )
-            _run_capture(
-                "pvremove --yes --force --force -- "
-                f"{shlex.quote(data_path)} {shlex.quote(cache_path)}",
-                check=False,
-            )
+                if removed.returncode != 0:
+                    # Preserve PV labels if their VG could not be removed.
+                    raise
+            if created_pvs:
+                _run_capture(
+                    "pvremove --yes -- "
+                    f"{shlex.quote(data_path)} {shlex.quote(cache_path)}",
+                    check=False,
+                )
             raise
 
     if _find_device_by_path(mapped_path) is None:

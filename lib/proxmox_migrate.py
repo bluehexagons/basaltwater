@@ -30,12 +30,20 @@ def _node_name(host: ProxmoxHost) -> str:
     name = _get_node_name(
         host.address, host.user, _ssh_opts(host.ssh_key)
     )
-    return name or host.name
+    if not name:
+        raise ProxmoxMigrateError(f"Could not resolve Proxmox node name for {host.address}")
+    return name
 
 
 def _is_vm(host: ProxmoxHost, vmid: int) -> bool:
     """Return True when ``vmid`` is a QEMU VM; False when it is an LXC container."""
-    return _run(host, f"qm status {int(vmid)}").returncode == 0
+    if _run(host, f"qm status {int(vmid)}").returncode == 0:
+        return True
+    if _run(host, f"pct status {int(vmid)}").returncode == 0:
+        return False
+    raise ProxmoxMigrateError(
+        f"Could not identify guest {vmid} on {host.address}; migration was not attempted"
+    )
 
 
 def migrate_guest(

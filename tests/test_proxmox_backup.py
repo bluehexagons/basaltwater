@@ -58,6 +58,22 @@ _CONTENT_JSON = json.dumps([
 
 
 class TestListBackups(unittest.TestCase):
+    def test_shell_reports_backup_and_migration_errors_and_continues(self):
+        from lib.proxmox_migrate import ProxmoxMigrateError
+        from lib.proxmox_shell import ProxmoxShell
+
+        for error_type in (ProxmoxBackupError, ProxmoxMigrateError):
+            with self.subTest(error_type=error_type):
+                inputs = iter(["backups 100", "help", "quit"])
+                output = []
+                shell = ProxmoxShell(
+                    input_func=lambda _prompt: next(inputs), output_func=output.append
+                )
+                with patch.object(shell, "dispatch", side_effect=[error_type("lookup failed"), None]) as dispatch:
+                    self.assertEqual(shell.run(), 0)
+                self.assertEqual(dispatch.call_count, 2)
+                self.assertIn("Error: lookup failed", output)
+
     @patch("lib.proxmox_backup._ssh_run")
     def test_returns_backups_for_vmid(self, mock_run: MagicMock) -> None:
         mock_run.side_effect = [
@@ -76,10 +92,28 @@ class TestListBackups(unittest.TestCase):
         self.assertEqual(backups, [])
 
     @patch("lib.proxmox_backup._ssh_run")
-    def test_returns_empty_on_pvesh_failure(self, mock_run: MagicMock) -> None:
+    def test_reports_pvesh_failure(self, mock_run: MagicMock) -> None:
         mock_run.return_value = _fail()
-        backups = list_backups(_host(), 100)
-        self.assertEqual(backups, [])
+        with self.assertRaises(ProxmoxBackupError):
+            list_backups(_host(), 100)
+
+    @patch("lib.proxmox_backup._ssh_run")
+    def test_failed_pool_listing_does_not_return_partial_inventory(self, mock_run):
+        pools = json.dumps([
+            {"storage": name, "content": "backup", "active": 1}
+            for name in ("local", "nas")
+        ])
+        mock_run.side_effect = [_ok(pools), _ok(_CONTENT_JSON), _fail("NAS offline")]
+        with self.assertRaisesRegex(ProxmoxBackupError, "NAS offline"):
+            list_backups(_host(), 100)
+
+    @patch("lib.proxmox_backup._ssh_run")
+    def test_invalid_inventory_is_reported(self, mock_run):
+        for payload in ("", "null", "{}", "[null]", '[{"vmid":"invalid"}]'):
+            with self.subTest(payload=payload):
+                mock_run.side_effect = [_ok(_STORAGE_JSON), _ok(payload)]
+                with self.assertRaises(ProxmoxBackupError):
+                    list_backups(_host(), 100)
 
     @patch("lib.proxmox_backup._ssh_run")
     def test_filters_other_vmids(self, mock_run: MagicMock) -> None:
