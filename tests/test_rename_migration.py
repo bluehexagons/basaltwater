@@ -132,6 +132,108 @@ class RenameMigrationTests(unittest.TestCase):
                 migration.build_plan(root, system=False)
             self.assertEqual((root / '.config/infra_tools/credentials.json').read_text(), 'infra_tools')
 
+    def provision_lock_pair(self, root: Path) -> tuple[Path, Path]:
+        name = "provision-" + "a" * 64 + ".lock"
+        return tuple(self.write(root, f"run/lock/{brand}/{name}", "")
+                     for brand in ("infra-tools", "basaltwater"))
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_idle_duplicate_provision_locks_preserve_canonical_inode(self, _account):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new = self.provision_lock_pair(root)
+            old_inode, new_inode = old.stat().st_ino, new.stat().st_ino
+            self.write(root, 'run/lock/infra-tools/unique.lock', '')
+            plan = migration.build_plan(root, system=True)
+            self.assertTrue(old.exists())  # Preview remains read-only.
+            migration.apply_plan(plan)
+            self.assertEqual(new.stat().st_ino, new_inode)
+            self.assertFalse(old.parent.exists())
+            self.assertTrue((new.parent / 'unique.lock').exists())
+            retired = list(Path(plan['recovery']).glob('retired-*'))
+            self.assertEqual([path.stat().st_ino for path in retired], [old_inode])
+            self.assertEqual(migration.build_plan(root, system=True)['actions'], [])
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_active_duplicate_provision_lock_in_either_namespace_blocks(self, _account):
+        for index in (0, 1):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                locks = self.provision_lock_pair(root)
+                saved = self.write(root, 'var/lib/infra_tools/setup.json', '{}')
+                plan = migration.build_plan(root, system=True)
+                with locks[index].open('r+') as handle:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaisesRegex(ValueError, 'Active operation'):
+                        migration.apply_plan(plan)
+                self.assertTrue(saved.exists())
+                self.assertTrue(all(path.exists() for path in locks))
+                self.assertFalse(Path(plan['recovery']).exists())
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_two_legacy_lock_spellings_merge_when_canonical_directory_is_absent(self, _account):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, canonical = self.provision_lock_pair(root)
+            canonical.parent.rename(canonical.parent.with_name('infra_tools'))
+            inode = old.stat().st_ino
+            migration.apply_plan(migration.build_plan(root, system=True))
+            self.assertEqual(canonical.stat().st_ino, inode)
+            self.assertFalse(old.exists())
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_duplicate_lock_retirement_recovers_without_replacing_canonical(self, _account):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old, new = self.provision_lock_pair(root)
+            old_inode, new_inode = old.stat().st_ino, new.stat().st_ino
+            plan = migration.build_plan(root, system=True)
+            with patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                with self.assertRaisesRegex(OSError, 'interrupted'):
+                    migration.apply_plan(plan)
+            migration.recover(root, system=True)
+            self.assertEqual(old.stat().st_ino, old_inode)
+            self.assertEqual(new.stat().st_ino, new_inode)
+
+    def test_duplicate_lock_exception_rejects_data_links_and_unknown_names(self):
+        for unsafe in ('contents', 'symlink', 'hardlink', 'unknown'):
+            with self.subTest(unsafe=unsafe), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                old, new = self.provision_lock_pair(root)
+                if unsafe == 'contents':
+                    old.write_text('not disposable data')
+                elif unsafe == 'symlink':
+                    old.unlink()
+                    old.symlink_to(new)
+                elif unsafe == 'hardlink':
+                    os.link(old, root / 'another-link')
+                else:
+                    old.rename(old.with_name('unknown.lock'))
+                    new.rename(new.with_name('unknown.lock'))
+                with self.assertRaises(ValueError):
+                    migration.build_plan(root, system=True)
+
+    @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
+    def test_later_cluster_node_keeps_already_migrated_shared_configuration(self, _account):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = Path(directory) / 'node1', Path(directory) / 'node2'
+            shared_path = 'etc/pve/firewall/cluster.fw'
+            self.write(first, shared_path, '[IPSET management]\n192.0.2.0/24 # infra-tools access source\n')
+            self.write(first, 'var/lib/infra_tools/setup.json', '{}')
+            migration.apply_plan(migration.build_plan(first, system=True))
+            # Model pmxcfs replication: the later node already sees renamed
+            # cluster configuration, but still has its own legacy data/locks.
+            shared = (first / shared_path).read_bytes()
+            second_shared = self.write(second, shared_path, shared.decode())
+            self.write(second, 'var/lib/infra_tools/setup.json', '{}')
+            self.provision_lock_pair(second)
+            plan = migration.build_plan(second, system=True)
+            self.assertFalse(any('/etc/pve/' in action['old'] for action in plan['actions']))
+            migration.apply_plan(plan)
+            self.assertEqual(second_shared.read_bytes(), shared)
+            self.assertTrue((second / 'var/lib/basaltwater/setup.json').exists())
+
+
     def test_symlinked_data_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

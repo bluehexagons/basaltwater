@@ -137,6 +137,15 @@ Disjoint legacy directories can merge. Duplicate files, conflicting canonical
 destinations, unsafe symlinks, unknown managed skills and conflicting service
 accounts are refused. Nothing is selected by timestamp or silently overwritten.
 
+The exception is matching empty `provision-<SHA256>.lock` files in
+`/run/lock/infra-tools` (or `infra_tools`) and `/run/lock/basaltwater`. Migration
+acquires both locks, preserves the canonical Basaltwater inode, and archives the
+legacy inode in its private recovery journal. Active locks in either namespace
+stop migration before changes; nonempty, linked, or unrecognized duplicate files
+remain conflicts. If setup previously stopped on this lock-file conflict, update
+the controller and rerun setup after provisioning operations finish. Do not
+delete lock files or migration journals to bypass the check.
+
 The apply operation records private recovery intent under
 `/var/lib/basaltwater-migration` for system work and
 `~/.local/state/basaltwater-migration` for user work. These directories can contain

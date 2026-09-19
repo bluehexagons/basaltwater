@@ -123,7 +123,7 @@ def _safe(path: Path) -> None:
             raise ValueError(f"Refusing symlinked migration parent: {parent}")
 
 
-def _move_plan(old: Path, new: Path, actions: list[dict], occupied: dict[Path, Path]) -> None:
+def _move_plan(old: Path, new: Path, actions: list[dict], occupied: dict[Path, Path], *, provision_locks: bool = False) -> None:
     """Merge disjoint directory trees; never overwrite duplicate entries."""
     _safe(old)
     _safe(new)
@@ -137,10 +137,25 @@ def _move_plan(old: Path, new: Path, actions: list[dict], occupied: dict[Path, P
                 target = new / child.name
                 if (existing / child.name).exists():
                     occupied.setdefault(target, existing / child.name)
-                _move_plan(child, target, actions, occupied)
+                _move_plan(child, target, actions, occupied, provision_locks=provision_locks)
             info = old.stat()
             actions.append({"kind": "rmdir", "old": str(old), "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid})
             actions.append({"kind": "chmod", "old": str(new), "before": stat.S_IMODE(target_info.st_mode), "after": stat.S_IMODE(target_info.st_mode) & stat.S_IMODE(info.st_mode)})
+            return
+        if (
+            provision_locks
+            and old.parent.name in {"infra-tools", "infra_tools"}
+            and new.parent.name == "basaltwater"
+            and old.name == new.name
+            and re.fullmatch(r"provision-[0-9a-f]{64}\.lock", old.name)
+        ):
+            for path in (old, existing):
+                info = path.lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_size != 0:
+                    raise ValueError(f"Unsafe duplicate provisioning lock: {path}")
+            # Preserve the canonical inode used by current controllers. Both
+            # locks must be acquired before the legacy inode is journaled away.
+            actions.append({"kind": "retire", "old": str(old), "preserve_lock": str(existing)})
             return
         raise ValueError(f"Conflicting migration paths: {old} and {new}")
     occupied[new] = old
@@ -308,7 +323,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
             new = old.with_name(rename_text(old.name))
             if old.is_dir():
                 edits.extend(_worktree_edits(old, new, root))
-            _move_plan(old, new, actions, occupied)
+            _move_plan(old, new, actions, occupied, provision_locks=parent == "run/lock")
             if old.is_dir():
                 edits.extend(_state_edits(old, new))
                 edits.extend(_owned_tree_edits(old, new))
@@ -603,23 +618,42 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
                 raise ValueError("Conflicting desktop groups")
     # Check the recent setup lock before moving it to the new namespace.
     # Active controllers must finish before a one-time host cutover.
+    locked_inodes: set[tuple[int, int]] = set()
     for action in plan["actions"]:
         old = Path(action["old"])
         if "run/lock/" not in str(old):
             continue
+        if action["kind"] == "chmod" and not os.path.lexists(old):
+            # This destination directory may be created by an earlier planned
+            # move; its source inodes are covered by that move's preflight.
+            continue
         candidates = list(old.rglob("*")) if old.is_dir() else [old]
+        if "preserve_lock" in action:
+            candidates.append(Path(action["preserve_lock"]))
         for candidate in candidates:
-            if not candidate.is_file() or candidate.is_symlink():
+            _safe(candidate)
+            if candidate.is_dir() and not candidate.is_symlink():
                 continue
-            handle = candidate.open("r+")
+            info = candidate.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+                raise ValueError(f"Unsafe migration lock: {candidate}")
+            identity = (info.st_dev, info.st_ino)
+            if identity in locked_inodes:
+                continue
+            handle = os.fdopen(os.open(candidate, os.O_RDWR | os.O_NOFOLLOW), "r+")
             try:
+                opened = os.fstat(handle.fileno())
+                if (opened.st_dev, opened.st_ino) != identity:
+                    raise ValueError(f"Migration lock changed during inspection: {candidate}")
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 handle.close()
-                for previous in lock_handles:
-                    previous.close()
                 raise ValueError(f"Active operation holds {candidate}; wait for it to finish")
+            except Exception:
+                handle.close()
+                raise
             lock_handles.append(handle)
+            locked_inodes.add(identity)
     recovery.mkdir(mode=0o700, parents=True)
     _save(plan)
     if plan["units"]:
