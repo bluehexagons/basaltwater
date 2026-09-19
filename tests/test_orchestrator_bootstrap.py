@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import pwd
 import subprocess
 import sys
@@ -268,8 +269,14 @@ class TestInstallLauncher(unittest.TestCase):
                 agent_steps.install_agent_cli_launcher(config)
                 agent_steps.install_agent_cli_launcher(config)
             self.assertEqual(subprocess.run([old], check=False).returncode, 17)
+            with open(os.path.join(target, "basaltw"), encoding="utf-8") as handle:
+                invocation = shlex.split(handle.read().splitlines()[-1])
+            self.assertEqual(invocation[:2], ["exec", "/usr/bin/python3"])
+            self.assertEqual(invocation[2:], [agent_steps.AGENT_CLI_SOURCE, "$@"])
+            # The CI container supplies Python via setup-python, not the
+            # /usr/bin/python3 installed on managed agent hosts.
             result = subprocess.run(
-                [os.path.join(target, "basaltw"), "--version"],
+                [sys.executable, invocation[2], "--version"],
                 capture_output=True, text=True, check=True, timeout=10,
             )
             self.assertEqual(result.stdout, "basaltw 2.0.0\n")
