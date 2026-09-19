@@ -2109,16 +2109,28 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         "pairing_helper": os.path.isfile(pair_wrapper)
         and os.access(pair_wrapper, os.X_OK),
         "endpoint": endpoint,
-        "git_identity": bool(git_name and git_email),
         "t3_agent_skill": not skill_required or _t3_agent_skills_ready(user_home),
     }
+    required_checks = list(checks)
+    healthy = all(checks.values())
+    checks["git_identity"] = bool(git_name and git_email)
+    warnings: list[str] = []
+    if not checks["git_identity"]:
+        warnings.append("Git author identity is missing; configure user.name and user.email before committing")
     if gh_path:
         checks["gh_authenticated"] = gh_auth
         checks["git_credential_helper"] = credential_helper
+        if not gh_auth:
+            warnings.append("GitHub CLI is installed but not authenticated; required only for GitHub operations")
+        if not credential_helper:
+            warnings.append("Git credential helper is missing; authenticated HTTPS Git operations may need configuration")
     return {
         "capability": "t3code",
-        "healthy": all(checks.values()),
+        "healthy": healthy,
+        "status": "unhealthy" if not healthy else "warning" if warnings else "healthy",
         "checks": checks,
+        "required_checks": required_checks,
+        "warnings": warnings,
         "runtime": t3_binary,
         "version": _tool_version("t3", t3_binary)
         if checks["runtime"] and t3_binary
@@ -2303,11 +2315,13 @@ def _readiness_failure_details(record: JSONDict) -> list[str]:
             if not isinstance(capability, str):
                 continue
             checks = capability_record.get("checks")
+            required_checks = capability_record.get("required_checks")
             failed_checks = (
                 [
                     check
                     for check, healthy in checks.items()
                     if isinstance(check, str) and healthy is not True
+                    and (not isinstance(required_checks, list) or check in required_checks)
                 ]
                 if isinstance(checks, dict)
                 else []
@@ -2725,12 +2739,14 @@ def run_agent_command(args: argparse.Namespace) -> int:
         for result in capability_results:
             if result["capability"] == "t3code":
                 if result["healthy"]:
-                    print("  ✓ t3code: service, Git, pairing, and skill are ready")
+                    print("  ✓ t3code: service, pairing, and skill checks passed (provider sessions are not tested)")
                 else:
                     print("  ✗ t3code: readiness checks failed")
                     for check, healthy in result["checks"].items():
-                        if not healthy:
+                        if not healthy and check in result.get("required_checks", result["checks"]):
                             print(f"      {check}: failed")
+                for warning in result.get("warnings", []):
+                    print(f"      warning: {warning}")
                 for fix in result.get("fixes", []):
                     print(f"      repaired: {fix}")
             elif result["capability"] == "development":

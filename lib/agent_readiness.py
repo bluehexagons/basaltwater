@@ -197,7 +197,14 @@ def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
         return {
             "capability": "t3code",
             "healthy": record.get("healthy") is True,
+            "status": record.get("status"),
             "checks": _safe_mapping(record.get("checks")),
+            "required_checks": list(record["required_checks"])
+            if isinstance(record.get("required_checks"), list)
+            else list(_safe_mapping(record.get("checks"))),
+            "warnings": [warning for warning in record.get("warnings", []) if isinstance(warning, str)]
+            if isinstance(record.get("warnings"), list)
+            else [],
             "version": record.get("version"),
             "fixes": list(record.get("fixes", []))
             if isinstance(record.get("fixes"), list)

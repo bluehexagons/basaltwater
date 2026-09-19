@@ -319,6 +319,16 @@ repository initialized as `master`, run `git branch -m main`. Using
 commit to reference. Additional branches can be created or selected normally
 after the initial commit.
 
+The doctor's `healthy` result covers T3 service readiness, not successful
+provider requests. Missing Git author identity, GitHub authentication, or a
+Git credential helper is reported separately as an integration warning; an
+installed but unselected `gh` does not make T3 unhealthy. JSON retains these
+observations in `checks` and identifies the mandatory service checks in
+`required_checks`. The web panel still requires Git checks explicitly selected
+by its setup manifest. Use `agent doctor --tool gh` to check GitHub credentials
+directly. The doctor does not send a model prompt or establish that a previous
+provider timeout was resolved by running diagnostics.
+
 The doctor validates the upstream service-state protocol and selected immutable
 runtime, required native terminal module, active and boot-enabled user service,
 endpoint, pairing helper, Git identity, and managed agent skill. Add `--fix` to
