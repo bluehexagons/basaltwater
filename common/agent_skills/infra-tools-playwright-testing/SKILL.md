@@ -1,6 +1,6 @@
 ---
 name: infra-tools-playwright-testing
-description: Browser-test web applications with the managed VM-local Playwright installation on an infra-tools agent VM without T3 Code preview guidance.
+description: Browser-test web applications with the managed VM-local Playwright installation on a Basaltwater agent VM without T3 Code preview guidance.
 metadata:
   managed-by: infra_tools
 ---
@@ -20,7 +20,7 @@ integration or a justified fallback when Playwright cannot cover the task.
 Before the first browser action, run:
 
 ```bash
-infra-tools agent doctor --capability browser --json
+basaltw agent doctor --capability browser --json
 ```
 
 Proceed only when `healthy` is true. Use the stable `issues` list and primary

@@ -1,6 +1,6 @@
 # T3 Code server
 
-infra-tools supports T3 Code as a server-side web interface. It does not install
+Basaltwater supports T3 Code as a server-side web interface. It does not install
 or manage the T3 Code desktop AppImage.
 
 For an existing CachyOS KDE workstation, use the limited local profile described
@@ -12,7 +12,7 @@ The VM/server options below do not apply to `agent_cachyos`.
 Use either the focused profile:
 
 ```bash
-infra-tools setup server_dev vm.example agent \
+basaltw setup server_dev vm.example agent \
   --t3code-ready \
   --access-source 192.168.1.0/24
 ```
@@ -20,7 +20,7 @@ infra-tools setup server_dev vm.example agent \
 or select the interface and providers explicitly:
 
 ```bash
-infra-tools setup server_dev vm.example agent \
+basaltw setup server_dev vm.example agent \
   --agent-tool gh \
   --agent-tool codex \
   --web-interface t3code \
@@ -33,7 +33,7 @@ The usual client is the separately installed T3 Code desktop or mobile app.
 Generate a one-time URL from the control system:
 
 ```bash
-infra-tools agent web pair vm.example agent
+basaltw agent web pair vm.example agent
 ```
 
 T3 Code sessions can expose collaborative preview tools through the client.
@@ -43,7 +43,7 @@ browser while the T3 application is closed, request VM-local Chromium
 explicitly during setup:
 
 ```bash
-infra-tools setup agent_code_vm vm.example agent \
+basaltw setup agent_code_vm vm.example agent \
   --browser-automation playwright
 ```
 
@@ -70,19 +70,19 @@ or remove T3's collaborative preview. See
 The workspace skill uses the safe local lifecycle command:
 
 ```bash
-infra-tools agent workspace create ~/repos/PROJECT TASK --json
-infra-tools agent workspace remove WORKTREE --dry-run --json
+basaltw agent workspace create ~/repos/PROJECT TASK --json
+basaltw agent workspace remove WORKTREE --dry-run --json
 ```
 
 The removal path rejects dirty, untracked, or unmerged work and cannot remove
 the primary checkout. For a shareable diagnostic snapshot that omits log and
-credential contents, use `infra-tools agent support-bundle`.
+credential contents, use `basaltw agent support-bundle`.
 
 ## Service and update model
 
-infra-tools uses T3 Code's supported per-user background service. Upstream owns
+Basaltwater uses T3 Code's supported per-user background service. Upstream owns
 the launcher, immutable version directories, service state, updates, and
-rollback. infra-tools adds a systemd drop-in for the configured workspace,
+rollback. Basaltwater adds a systemd drop-in for the configured workspace,
 host, port, PATH, and GitHub CLI environment.
 
 The service unit is:
@@ -91,7 +91,7 @@ The service unit is:
 ~/.config/systemd/user/t3code.service
 ```
 
-Its infra-tools settings are:
+Its Basaltwater settings are:
 
 ```text
 ~/.config/systemd/user/t3code.service.d/infra-tools.conf
@@ -143,12 +143,12 @@ systemctl --user restart t3code.service
 Reconnect the client and retry one status/open cycle. Prefer managed Playwright
 or non-browser checks when collaboration is optional. Restart the service
 before considering a whole-VM reboot so VM-side T3 state is isolated.
-infra-tools does not automatically restart a healthy T3 service on a normal
+Basaltwater does not automatically restart a healthy T3 service on a normal
 setup rerun or maintenance schedule because that could terminate the agent
 session performing the setup; refresh/update paths already restart when the
 managed runtime or service configuration actually changes.
 
-When T3 Code is selected, every infra-tools setup run checks the upstream
+When T3 Code is selected, every Basaltwater setup run checks the upstream
 service for a newer release. A healthy service is restarted only when the
 runtime changes or its managed configuration needs it, so routine reruns do
 not interrupt an unchanged session. The T3 client can also offer an explicit
@@ -177,17 +177,17 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
     t3 service install'
-infra-tools agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --fix
 ```
 
-The direct command and infra-tools setup operate on the same upstream-managed
+The direct command and Basaltwater setup operate on the same upstream-managed
 user service. To update through setup, rerun the saved command with its
 existing options; `--refresh-packages` is only needed when APT packages should
 also be refreshed.
 
 During an automatic setup update, an upstream updater failure does not take
 down a previously working installation. If the managed service file and active
-runtime remain valid, infra-tools health-checks that runtime, reports that it
+runtime remain valid, Basaltwater health-checks that runtime, reports that it
 was retained instead of updated, and continues setup. A first install,
 a damaged runtime, or a failed readiness check remains fatal. Updater failures
 include bounded diagnostics from both the beginning and end of npm's output so
@@ -198,7 +198,7 @@ dependency scripts by default, but inherited `allow-scripts` or
 `dangerously-allow-all-scripts` settings cannot be used by T3's nested
 project-scoped install: npm rejects that combination with `EALLOWSCRIPTS`.
 This also applies when npm reads `allow-scripts` from a user or global
-`.npmrc`: the outer `npx` re-exports the setting before T3 starts. infra-tools
+`.npmrc`: the outer `npx` re-exports the setting before T3 starts. Basaltwater
 removes only those policy variables inside the `npx` command boundary and
 places a managed npm passthrough first in the T3 service PATH. The passthrough
 recognizes only an exact versioned `t3` install targeting T3's immutable
@@ -208,7 +208,7 @@ policy before T3 publishes the runtime. All other npm commands pass through
 unchanged, and the target user's normal npm configuration remains unchanged.
 
 If npm 12 already produced an incomplete candidate and T3 rolled back, rerun
-the same infra-tools setup on that VM. Setup identifies the retained `failed`
+the same Basaltwater setup on that VM. Setup identifies the retained `failed`
 or `rolled-back` candidate from protocol-2 service state and rebuilds its two
 trusted native dependencies without stopping the active working version. Then
 retry **Update server** in the client. A refresh setup performs the same repair
@@ -216,22 +216,22 @@ before invoking the upstream updater.
 
 T3 v0.0.35 also invokes `loginctl enable-linger` without a username. That can
 fail in the sessionless `runuser` environment used by remote setup even after
-infra-tools has enabled lingering as root. During the upstream update only,
-infra-tools places a short-lived `loginctl` compatibility shim first in PATH;
+Basaltwater has enabled lingering as root. During the upstream update only,
+Basaltwater places a short-lived `loginctl` compatibility shim first in PATH;
 it confirms lingering is already enabled, otherwise adds the validated target
 username to that exact no-argument request, and delegates every other
 invocation unchanged. The shim is removed immediately after the updater exits.
 
-T3's published `node-pty` package has no Linux prebuild, so infra-tools also
+T3's published `node-pty` package has no Linux prebuild, so Basaltwater also
 selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
-from selecting a missing versioned compiler. infra-tools validates the native
+from selecting a missing versioned compiler. Basaltwater validates the native
 module, rebuilds an incomplete active runtime, and waits for several
 consecutive healthy service and HTTP checks before setup succeeds. The same
 active-runtime repair is available after setup:
 
 ```bash
-infra-tools agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --fix
 ```
 
 As of 2026-09-01, infra-tools service and collaborative-preview checks pass with
@@ -243,7 +243,7 @@ its intended target and verify the outcome. The validated runtime uses
 service-state protocol 2, keeps the same `node-pty` and
 `msgpackr-extract` native dependencies, and requires Node.js `^22.16`,
 `^23.11`, or `>=24.10`. It also raises supported file uploads to 50 MiB;
-infra-tools applies the matching request-body limit to T3's managed HTTPS route
+Basaltwater applies the matching request-body limit to T3's managed HTTPS route
 while leaving the pairing route at its deliberately small limit. See the upstream [background-service documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/background-service.md),
 [update documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md),
 and [v0.0.36 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.36).
@@ -254,7 +254,7 @@ stops that service, starts and validates the upstream user service, and only
 then disables and removes the old unit and clears its retained failed state.
 The old service is restarted if the migration fails.
 
-Removing desktop support from infra-tools does not delete an AppImage that an
+Removing desktop support from Basaltwater does not delete an AppImage that an
 older setup placed in a user's home. After confirming the files were not
 replaced with user-managed content, that retired installation can be removed
 manually:
@@ -276,7 +276,7 @@ The safe default is loopback:
 --web-interface-port 3773
 ```
 
-infra-tools publishes a managed HTTPS endpoint through its shared gateway. The
+Basaltwater publishes a managed HTTPS endpoint through its shared gateway. The
 plain HTTP listener remains for local compatibility. For a non-loopback bind,
 declare private source networks:
 
@@ -286,7 +286,7 @@ declare private source networks:
 ```
 
 A non-loopback bind is rejected unless UFW is active and a private or
-non-global allowlist is present. infra-tools reconciles only its own labeled
+non-global allowlist is present. Basaltwater reconciles only its own labeled
 UFW rules and refuses conflicting unmanaged rules on the managed ports.
 
 The protected device-pairing broker uses port 3774 by default. Its Basic Auth
@@ -302,15 +302,15 @@ home and configured workspace.
 Useful checks:
 
 ```bash
-infra-tools agent doctor --capability t3code --capability host
+basaltw agent doctor --capability t3code --capability host
 gh auth status
 git config --global --get user.name
 git config --global --get user.email
 git config --global --get init.defaultBranch
-infra-tools agent support-bundle
+basaltw agent support-bundle
 ```
 
-infra-tools configures `main` as the default for newly initialized repositories
+Basaltwater configures `main` as the default for newly initialized repositories
 unless the target user already selected another global default. This matters
 for T3's branch controls: an unborn repository has only a symbolic branch name
 and no branch ref until its first commit. To correct an existing unborn

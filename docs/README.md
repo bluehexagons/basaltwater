@@ -1,6 +1,14 @@
-# infra-tools documentation
+# Basaltwater documentation
 
-Start with [Try infra-tools on a Debian VM](GETTING_STARTED.md) for a guided
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-dark.svg">
+  <img src="brand/wordmark-light.svg" alt="Basaltwater" width="264" height="48">
+</picture>
+
+See [upgrade and rollback](BASALTWATER_MIGRATION.md) for the rename, or
+the [identity guide](BRANDING.md) for reusable visual assets.
+
+Start with [Try Basaltwater on a Debian VM](GETTING_STARTED.md) for a guided
 first setup and small feature experiments. Use the
 [quick reference](QUICK_REFERENCE.md) once you know the basic workflow.
 Use the detailed guides only when you need the configuration model, limits, or
@@ -11,8 +19,8 @@ overview.
 
 | I need to… | Start here | Then use |
 | --- | --- | --- |
-| Try infra-tools for the first time | [Beginner walkthrough](GETTING_STARTED.md) | [Installation](INSTALLATION.md), [Quick reference](QUICK_REFERENCE.md) |
-| Install infra-tools or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
+| Try Basaltwater for the first time | [Beginner walkthrough](GETTING_STARTED.md) | [Installation](INSTALLATION.md), [Quick reference](QUICK_REFERENCE.md) |
+| Install Basaltwater or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
 | Add coding tools to an existing CachyOS KDE workstation | [CachyOS local setup](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md) |
@@ -20,7 +28,7 @@ overview.
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |
 | Configure alerts, audit visibility, or the panel | [Notifications](NOTIFICATIONS.md) | [Minimal web panel](WEB_PANEL.md), [Authentication hardening](AUTHENTICATION_HARDENING.md) |
 | Configure storage, shares, or backups | [Storage operations](STORAGE_OPERATIONS.md) | [Samba](SAMBA_SHARES.md), [Syncthing](SYNCTHING.md), [Backups](BACKUPS.md) |
-| Research a Debian-based infra-tools operating environment | [InfraOS concept](INFRAOS.md) | [Machine types](MACHINE_TYPES.md), [Deployment safety](DEPLOYMENT_SAFETY.md) |
+| Research a Debian-based Basaltwater operating environment | [InfraOS concept](INFRAOS.md) | [Machine types](MACHINE_TYPES.md), [Deployment safety](DEPLOYMENT_SAFETY.md) |
 
 ## Core setup and operations
 
@@ -104,12 +112,12 @@ supported operating system or an implementation commitment.
 
 Repository contributors should read the
 [contributor and coding-agent guide](agents/contributing/README.md). It
-describes repository change rules, not how to administer an
-infra-tools-managed machine.
+describes repository change rules, not how to administer a
+Basaltwater-managed machine.
 
 ## Documentation conventions
 
 Guides should lead with the task, use short procedures and tables for lookup,
 and link to a detailed reference rather than duplicate it. Examples use the
-installed `infra-tools` launcher and placeholders only; never put real secrets
+installed `basaltw` launcher and placeholders only; never put real secrets
 in documentation.

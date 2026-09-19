@@ -1,7 +1,9 @@
 # Basaltwater identity and project rename
 
-Status: v2.0.0 package/CLI cutover implemented; public hosting and visual design
-remain follow-on work. See [cutover contracts](BASALTWATER_CONTRACTS.md) and
+Status: v2.0.0 repository implementation complete, including the package/CLI,
+active guides, bundled skills and [visual identity](../BRANDING.md).
+Public release operations and live VM qualification remain. See
+[cutover contracts](BASALTWATER_CONTRACTS.md) and
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.
 The implementation introduces `basaltwater` packaging and `basaltw` while
@@ -266,9 +268,10 @@ launcher while generated automation still invokes it.
 - The release notes identify the command/package changes, operator actions,
   supported version combinations, rollback procedure, and transition end.
 
-The package/CLI implementation and migration instructions are delivered in
-this checkout. External repository changes, domain registration, package
-publication, visual asset production, the remaining specialized guide/skill
-wording refresh, live VM qualification and eventual alias retirement remain
-separate delivery work. Existing integration commands continue through the
-supported transition launcher. No external cutover is claimed here.
+The package/CLI, migration instructions, active documentation, bundled skill
+content, shared panel identity, and editable/generated visual assets are
+delivered in this checkout. Existing integration identifiers remain stable.
+External repository changes, optional domain registration, package publication,
+live VM qualification and eventual alias retirement are release operations;
+see the [release checklist](../BASALTWATER_RELEASE.md). No external publication
+or live-host upgrade is claimed here.

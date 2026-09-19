@@ -1,6 +1,6 @@
 # Deployments and manifests
 
-`infra-tools` deploys a repository with `--deploy DOMAIN GIT_URL`. A repository
+`basaltw` deploys a repository with `--deploy DOMAIN GIT_URL`. A repository
 can use automatic project-type detection, or place an `infra.json` file at its
 root to describe one or more static sites and services explicitly. The manifest
 is validated before deployment; an invalid file stops deployment instead of
@@ -14,7 +14,7 @@ projects should run those commands in CI as a separate build preflight.
 ## Basic deployment
 
 ```bash
-infra-tools setup server_web web.example.com deploy \
+basaltw setup server_web web.example.com deploy \
   --ssl --ssl-email admin@example.com \
   --deploy web.example.com https://github.com/example/web.git
 ```
@@ -105,7 +105,7 @@ manifest component with the same fields as `static`:
 The build command belongs to the application; this example assumes it provides
 that script. Pin and install the matching Godot engine and export templates in
 the non-root build account's persistent home, or provision them beforehand.
-Infra-tools does not guess an engine version or install Android/native SDKs.
+Basaltwater does not guess an engine version or install Android/native SDKs.
 Godot's headless web exporter needs matching templates and enough disk for its
 downloads. Builds run only on requested deployments unless you separately enable
 webhooks. `--dry-run` validates the manifest but does not run Godot.
@@ -204,7 +204,7 @@ In addition to the common fields (`name`, `type`, `domain`, `path`, `build`, and
   path must remain under that component's service-owned `{{data_dir}}`; and
 - `backup_retention`: number of deployment backups to retain, from 1 to 100.
 
-Infra-tools always writes the hardened systemd unit and runs it under the
+Basaltwater always writes the hardened systemd unit and runs it under the
 component's dedicated service account. Repository-supplied unit files are not
 accepted because installing one as root would bypass that isolation boundary.
 
@@ -249,8 +249,8 @@ units.
   activated, preventing concurrent deployments from claiming the same port.
 - Release files preserve executable bits instead of making every source file
   executable or writable.
-- `infra-tools patch HOST --deploy ...` reruns the saved deployment with the
-  same manifest-aware path. Use `infra-tools deploy PATTERN` to rerun saved
+- `basaltw patch HOST --deploy ...` reruns the saved deployment with the
+  same manifest-aware path. Use `basaltw deploy PATTERN` to rerun saved
   configurations.
 
 ## Validation and troubleshooting
@@ -268,7 +268,7 @@ sudo journalctl -u app-<deployment>-<component>.service -n 100 --no-pager
 ```
 
 Replace `<deployment>` and `<component>` with the generated service name.
-Infra-tools also refuses to replace an existing same-named Nginx site unless it
+Basaltwater also refuses to replace an existing same-named Nginx site unless it
 recognizes that site as one it generated. Rename or explicitly migrate a manual
 site before assigning its domain to a managed deployment.
 

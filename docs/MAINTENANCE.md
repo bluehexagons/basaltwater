@@ -38,14 +38,14 @@ sudo journalctl -u auto-update-apt.service -n 100 --no-pager
 ```
 
 Scheduled services use systemd's journal as their console sink. When systemd
-provides a journal stream, infra-tools suppresses the additional syslog sink so
+provides a journal stream, Basaltwater suppresses the additional syslog sink so
 each event appears once in `journalctl`.
 
 Required host timers are verified during setup. Failure to reload, enable,
 start, or confirm the security-monitor, APT-update, cleanup, user-cache, or
 restart timer stops setup. When the replacement APT timer cannot be verified,
 Debian's existing APT timers remain enabled.
-`infra-tools agent doctor --capability host` also reports installed Node,
+`basaltw agent doctor --capability host` also reports installed Node,
 Godot, and Codex authentication timers, while omitting those optional jobs on
 VMs where their tools were not selected.
 
@@ -87,10 +87,10 @@ rollback before reopening ingress. HomeBox retains the newest four automatic
 pre-update archives without touching manual backups. Keep a complete backup
 off-host for recovery from host loss or a failed rollback.
 
-APT uses the infra-tools updater instead of competing distro unattended-upgrade
+APT uses the Basaltwater updater instead of competing distro unattended-upgrade
 timers. It runs `apt-get update` and a non-removing distribution upgrade; it
 does not run `autoremove` or automatically remove packages. Before each
-scheduled update, infra-tools repairs CD-ROM-only entries and stale official
+scheduled update, Basaltwater repairs CD-ROM-only entries and stale official
 Debian suites using the installed release codename. The distro timers
 are disabled only after the replacement timer is enabled, started, and verified.
 Setup and scheduled APT refreshes treat any repository-index error, including
@@ -135,12 +135,12 @@ is also checked and updated whenever its interface is selected. Use the
 client's **Update server** action or the npm 12-safe host command in
 [`T3_CODE.md`](T3_CODE.md) when an update should be performed outside setup.
 Run
-`infra-tools agent update --dry-run` and then `infra-tools agent update` as the
+`basaltw agent update --dry-run` and then `basaltw agent update` as the
 account that owns the terminal tools (for example,
-`sudo -u agent -H infra-tools agent update --tool codex`) for a deliberate
+`sudo -u agent -H basaltw agent update --tool codex`) for a deliberate
 terminal-agent vendor update with before/after verification, a retained prior
 executable, automatic rollback after a broken update, and a private audit
-record. After a non-dry-run update, infra-tools also records a redacted
+record. After a non-dry-run update, Basaltwater also records a redacted
 tools-and-host readiness result, including T3 Code when it is installed. The
 update command exits nonzero if that audit is unhealthy or cannot be saved.
 The update environment is reset to that account's home so a caller's working
@@ -167,7 +167,7 @@ managed agent tools, so an infrequently started VM can refresh renewable
 credentials without waiting for the next timer trigger.
 
 From the control system, the equivalent remote workflow is
-`infra-tools agent update HOST USER --dry-run` followed by the same command
+`basaltw agent update HOST USER --dry-run` followed by the same command
 without `--dry-run`; use `--tool` to narrow either operation. Agent-enabled
 setups install the target-user launcher needed for local VM maintenance as
 part of the normal reconciliation.
@@ -176,8 +176,8 @@ After a deliberate T3 Code update or host reboot, run and persist the
 composite readiness check as the target account:
 
 ```bash
-infra-tools agent doctor --capability t3code --capability host --record
-infra-tools agent doctor --last-record --json
+basaltw agent doctor --capability t3code --capability host --record
+basaltw agent doctor --last-record --json
 ```
 
 The private mode-`0600` record contains the boot ID and redacted aggregate
@@ -245,7 +245,7 @@ APT holds and `NeverAutoRemove` rules remain respected, including Proxmox's
 generated boot-selection protections. Default-kernel and helper packages,
 unversioned Debian/Ubuntu tracking metapackages, other flavours, and unknown
 custom kernel names are left alone. APT determines actual removals from its
-dependency and retention rules; infra-tools never deletes boot images directly.
+dependency and retention rules; Basaltwater never deletes boot images directly.
 
 Rerun setup to deploy this behavior and perform one cleanup immediately.
 The weekly timer handles later runs. Preview the manual selections it would
@@ -359,15 +359,15 @@ Before starting agent work that must survive the normal automatic-restart
 window, create a bounded hold as the account that owns the agent tools:
 
 ```bash
-infra-tools agent maintenance hold --hours 8
-infra-tools agent maintenance status
-infra-tools agent maintenance release
+basaltw agent maintenance hold --hours 8
+basaltw agent maintenance status
+basaltw agent maintenance release
 ```
 
 The hold is a private, atomic file below the account's home and expires without
 manual cleanup. Durations are limited to 1–72 hours. Creating another hold
 renews it; release is idempotent. The same operation can be requested from a
-control system with `infra-tools agent maintenance hold HOST USER --hours 8`.
+control system with `basaltw agent maintenance hold HOST USER --hours 8`.
 
 When a restart is pending, the existing restart job also defers for recognized
 coding-agent, build, Git, terminal-multiplexer, and managed agent-worktree
@@ -375,7 +375,7 @@ processes owned by the configured setup account. It records only workload
 categories: process command lines, prompts, and repository contents are not
 read, while working directories are used only to test membership in the fixed
 managed-worktree root and are never recorded. An invalid hold fails safe and
-is visible in `infra-tools agent doctor --capability host`; release and
+is visible in `basaltw agent doctor --capability host`; release and
 recreate it. The configured forced-restart deadline still overrides sessions,
 holds, and workloads after its maximum deferral period.
 
@@ -385,7 +385,7 @@ holds, and workloads after its maximum deferral period.
 - `--auto-restart-force-days N` sets the maximum deferral period; `0` disables
   forced restarts.
 - `--auto-restart-grace N` sets the warning period before a restart.
-- `infra-tools agent maintenance hold|status|release` manages a temporary,
+- `basaltw agent maintenance hold|status|release` manages a temporary,
   per-user automatic-restart hold without changing the host's saved policy.
 - Notification targets configured with `--notify` receive important maintenance
   failures and successes where the service supports notifications.

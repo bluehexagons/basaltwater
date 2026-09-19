@@ -1,6 +1,6 @@
-# Trust the infra-tools CA on a client
+# Trust the Basaltwater CA on a client
 
-An infra-tools internal web gateway can use a VM-local certificate authority
+A Basaltwater internal web gateway can use a VM-local certificate authority
 (CA) when a publicly trusted certificate is not available for its private IP
 address or internal hostname. The VM enrolls that CA for its own tools, but a
 T3 Code preview or browser running on another device uses that device's trust
@@ -65,7 +65,7 @@ they cannot bootstrap an untrusted connection. Obtain first-enrollment
 instructions and the fingerprint through SSH or the VM console. Do not trust
 a script or checksum from a page opened past a certificate warning.
 
-Infra-tools webhook senders have a separate compatibility setting. They accept
+Basaltwater webhook senders have a separate compatibility setting. They accept
 self-signed HTTPS receiver certificates by default, so a sender can notify a
 panel that uses this VM-local CA without installing that CA on the sender. Use
 `--notification-strict-https` on the sender setup or patch when certificate
@@ -113,7 +113,7 @@ sudo update-ca-certificates
 ```
 
 `update-ca-certificates` requires a PEM certificate with a `.crt` extension;
-the file emitted by infra-tools has that format.
+the file emitted by Basaltwater has that format.
 
 ### Arch Linux, Manjaro, and derivatives
 
@@ -201,7 +201,7 @@ On a personally managed Chromebook:
 3. Open **Authorities**, select **Import**, and choose the certificate.
 4. Enable trust for identifying websites, then finish the import.
 5. Fully close and reopen the T3 Code tab or browser window before retrying
-   the infra-tools URL.
+   the Basaltwater URL.
 
 If certificate import controls are unavailable, check whether the Chromebook
 is managed. A school administrator can disable user CA management, and users

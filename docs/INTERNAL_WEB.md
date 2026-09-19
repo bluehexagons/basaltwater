@@ -33,8 +33,8 @@ cat > "$demo_dir/public/index.html" <<'HTML'
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<title>My infra-tools demo</title>
-<h1>Hello from infra-tools!</h1>
+<title>My Basaltwater demo</title>
+<h1>Hello from Basaltwater!</h1>
 <p>This page is served by the managed HTTPS gateway.</p>
 </html>
 HTML
@@ -47,7 +47,7 @@ infra-web site url hello
 does not require `sudo`.
 
 The doctor should report a healthy site. Open the printed URL in a browser and
-look for **Hello from infra-tools!** A browser on another computer needs a route
+look for **Hello from Basaltwater!** A browser on another computer needs a route
 to the VM and may need [client CA trust](CLIENT_CA_TRUST.md); `localhost` on
 that computer refers to itself, not the VM. Use a gateway-reported VM address.
 
@@ -164,7 +164,7 @@ cd ~/repos/my-vite-project
 sudo infra-web preview start my-project --project .
 ```
 
-For Vite projects, infra-tools detects the `dev` or `preview` package script,
+For Vite projects, Basaltwater detects the `dev` or `preview` package script,
 allocates a private loopback port, supplies strict `127.0.0.1` binding
 arguments, starts a bounded systemd service as the requesting user, waits for
 HTTP readiness, and then creates the managed HTTPS forward. The service is not

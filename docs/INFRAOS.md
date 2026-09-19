@@ -16,7 +16,7 @@ packages. It is a curated Debian derivative: signed images and packages plus an
 infra-tools-powered configuration and operations layer. Debian remains the
 supplier of the kernel, base packages, security fixes, and package ecosystem.
 
-This distinction is deliberate. The valuable part of infra-tools is
+This distinction is deliberate. The valuable part of Basaltwater is
 machine-aware composition, safe operations, and an understandable lifecycle—not
 the cost of maintaining a kernel, package archive, installer, and hardware
 certification program from scratch.
@@ -32,7 +32,7 @@ A productive Linux machine should be able to answer five questions clearly:
 5. How can the same result be reproduced on a replacement machine?
 
 InfraOS would answer these with a versioned desired-state manifest, profiles
-composed from infra-tools plugins, capability-aware planning, redacted local
+composed from Basaltwater plugins, capability-aware planning, redacted local
 state, and ordinary Debian administration where that remains the clearest
 interface.
 
@@ -49,12 +49,12 @@ interface.
                                |
                  profile + desired-state manifest
                                |
-               infra-tools planner and reconciler
+               Basaltwater planner and reconciler
                                |
   Debian packages, systemd services, data, diagnostics, and operations
 ```
 
-## Principles inherited from infra-tools
+## Principles inherited from Basaltwater
 
 ### Machine-aware configuration
 
@@ -122,7 +122,7 @@ InfraOS would publish a small, signed set of artifacts:
 - checksums, signatures, SBOMs, release notes, and a support-lifetime policy.
 
 The initial image should be thin: Debian base, boot and network support, the
-enrollment/recovery components, infra-tools, repository trust material, and the
+enrollment/recovery components, Basaltwater, repository trust material, and the
 security baseline. Desktops, browsers, coding agents, and services are profile
 features, not universal image contents.
 
@@ -187,7 +187,7 @@ manifest, state snapshot, process arguments, logs, or support bundle.
 ### Runtime and operations layer
 
 The local `infraos` command can initially be an intentional façade over
-infra-tools rather than a separate implementation:
+Basaltwater rather than a separate implementation:
 
 ```text
 infraos plan manifest.yaml
@@ -198,7 +198,7 @@ infraos update check
 infraos recover
 ```
 
-The underlying system continues to use ordinary Debian mechanisms. infra-tools
+The underlying system continues to use ordinary Debian mechanisms. Basaltwater
 owns setup composition and targeted operations; systemd owns services; APT owns
 package transactions; application-specific tools own their data. This avoids a
 parallel package manager or opaque configuration daemon.
@@ -211,7 +211,7 @@ There are three distinct update domains:
 | --- | --- | --- |
 | Debian base and security packages | APT, stable Debian release | automatic security updates; transaction status and reboot visibility |
 | InfraOS packages and profile definitions | signed InfraOS APT repository | tested channels, pinned compatibility metadata, staged rollout, and release notes |
-| application/runtime deployments | current infra-tools deployment mechanisms | state outside releases, verified backup where required, application-specific rollback |
+| application/runtime deployments | current Basaltwater deployment mechanisms | state outside releases, verified backup where required, application-specific rollback |
 
 An OS-release upgrade is separately planned, never an incidental consequence of
 profile reconciliation. The initial recovery model is bootable rescue media,
@@ -223,7 +223,7 @@ rollback is a future capability, not a v1 promise.
 
 ### Mode A: conventional Debian derivative (recommended v1)
 
-Use a writable Debian root filesystem, APT, systemd, and infra-tools
+Use a writable Debian root filesystem, APT, systemd, and Basaltwater
 reconciliation. Publish images and packages, but do not fork Debian packages
 unless a specific InfraOS component requires one.
 
@@ -248,7 +248,7 @@ constraints, not a surprise behavior change for the conventional edition.
 
 | Project | Similarity | Useful lesson | Why it is not the v1 base |
 | --- | --- | --- | --- |
-| [NixOS](https://nixos.org/manual/nixos/stable/) | declarative system configuration, module composition, atomic generations | make desired state first-class, composable, and testable | it replaces the Debian/APT and infra-tools execution model |
+| [NixOS](https://nixos.org/manual/nixos/stable/) | declarative system configuration, module composition, atomic generations | make desired state first-class, composable, and testable | it replaces the Debian/APT and Basaltwater execution model |
 | [Fedora Atomic Desktops](https://www.fedoraproject.org/atomic-desktops/) | image-mode developer desktop | clearly separate OS image change from application tooling | Fedora/RPM-OSTree is a different operating-system foundation |
 | [Universal Blue](https://universal-blue.org/) | customized desktop images derived from a trusted base | deliver a product as reproducible, composable images | built on Fedora Atomic rather than the project’s Debian target |
 | [Flatcar Container Linux](https://www.flatcar.org/docs/latest/installing/) | declarative first boot, staged updates, channels | treat provisioning and update/reboot policy as deliberate product boundaries | optimized for minimal container hosts rather than hands-on desktops and servers |
@@ -269,7 +269,7 @@ remote operations across server, workstation, and virtualization roles.
 - amd64 initially; arm64 only after a tested image and support plan exist;
 - ISO, generic cloud/QEMU image, and Proxmox template;
 - local-first enrollment and versioned manifests;
-- profile compilation through infra-tools plugins;
+- profile compilation through Basaltwater plugins;
 - ordinary APT-based updates plus an InfraOS package repository;
 - signed releases, checksums, SBOM/provenance work, and documented recovery;
 - testable VM, bare-metal, and supported unprivileged-container paths.
@@ -292,7 +292,7 @@ schema, a threat model for artifacts/enrollment/secrets/updates/recovery media,
 and a decision that v1 is conventional Debian. The exit statement should be:
 
 > A signed Debian image or enrollment package that turns a machine into a
-> securely operated infra-tools profile from a versioned manifest.
+> securely operated Basaltwater profile from a versioned manifest.
 
 ### Phase 1 — reproducible image proof of concept
 
@@ -368,7 +368,7 @@ upstream. Do not proceed on aesthetics alone.
 4. What support window applies to published images and InfraOS packages?
 5. What signing/provenance system is practical, and who owns key rotation?
 6. What information, if any, may an optional controller collect?
-7. Which current infra-tools configuration fields can become stable manifest
+7. Which current Basaltwater configuration fields can become stable manifest
    fields, and which need a new abstraction?
 8. Is existing Debian enrollment non-destructive only, carefully convertible,
    or intentionally unsupported?
@@ -377,7 +377,7 @@ upstream. Do not proceed on aesthetics alone.
 
 Create an architecture decision record that commits only to this experiment:
 
-> Build a reproducible Debian QEMU/Proxmox image containing infra-tools and an
+> Build a reproducible Debian QEMU/Proxmox image containing Basaltwater and an
 > idempotent local enrollment service. It accepts one versioned `server_dev`
 > manifest, produces a dry-run plan, applies the supported profile, and exports
 > a redacted manifest for replacement-machine recovery.
@@ -388,7 +388,7 @@ immutable root, controller service, or public release.
 
 ## References
 
-- [infra-tools architecture and capabilities](../README.md)
+- [Basaltwater architecture and capabilities](../README.md)
 - [machine-type model](MACHINE_TYPES.md)
 - [deployment safety model](DEPLOYMENT_SAFETY.md)
 - [Debian Live Manual: installation and live-build](https://live-team.pages.debian.net/live-manual/html/live-manual/installation.en.html)

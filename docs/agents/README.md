@@ -1,6 +1,6 @@
 # Agent systems
 
-This is the operator starting point for infra-tools-managed coding VMs and
+This is the operator starting point for Basaltwater-managed coding VMs and
 workstations. It groups the guides needed to choose a profile, set a security
 posture, provide credentials, and verify the resulting environment.
 
@@ -39,8 +39,8 @@ Run these commands from the controller after setup or when an agent service
 needs attention:
 
 ```bash
-infra-tools agent doctor HOST USER --all-capabilities --json
-infra-tools agent maintenance status HOST USER
+basaltw agent doctor HOST USER --all-capabilities --json
+basaltw agent maintenance status HOST USER
 ```
 
 `--all-capabilities` checks provisioned capabilities and installed terminal
@@ -50,7 +50,7 @@ tools without failing for intentionally absent clients. Narrow the check with
 For a deliberate terminal-agent upgrade, preview the selected tool first:
 
 ```bash
-infra-tools agent update HOST USER --tool codex --dry-run
+basaltw agent update HOST USER --tool codex --dry-run
 ```
 
 Repeat without `--dry-run` to apply. This updates terminal-agent executables;

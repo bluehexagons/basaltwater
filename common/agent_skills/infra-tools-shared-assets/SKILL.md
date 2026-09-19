@@ -1,6 +1,6 @@
 ---
 name: infra-tools-shared-assets
-description: Work safely with SMB or SSHFS asset shares and Git LFS from an infra-tools agent VM.
+description: Work safely with SMB or SSHFS asset shares and Git LFS from a Basaltwater agent VM.
 metadata:
   managed-by: infra_tools
 ---
@@ -30,7 +30,7 @@ share does not replace it. Use ordinary `git lfs pull`, checkout, and push
 workflows through the Git remote. Do not create a `file://` remote on a share or
 move the local LFS cache there.
 
-For an infra-tools-managed self-hosted Git origin, inspect only non-secret
+For a Basaltwater-managed self-hosted Git origin, inspect only non-secret
 configuration when troubleshooting:
 
 ```bash

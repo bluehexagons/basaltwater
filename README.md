@@ -1,10 +1,17 @@
 # Basaltwater
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.svg">
+  <img src="docs/brand/wordmark-light.svg" alt="Basaltwater" width="264" height="48">
+</picture>
+
 Infrastructure management, from one machine to your whole network.
 
 Formerly infra-tools. The command is now `basaltw`; existing `infra-tools`
 automation remains supported through v2.x. See the
 [upgrade and rollback guide](docs/BASALTWATER_MIGRATION.md).
+
+The [identity guide](docs/BRANDING.md) includes editable assets and visual specimens.
 
 Automated setup and operations for Debian control planes, servers, workstations,
 and Proxmox guests. Basaltwater applies repeatable, machine-aware configuration

@@ -1,6 +1,6 @@
 # Contributor and coding-agent guide
 
-Use this guide when changing the infra-tools repository. For operating a
+Use this guide when changing the Basaltwater repository. For operating a
 managed coding VM or workstation, use the sibling
 [agent-systems guide](../README.md) instead.
 
@@ -36,7 +36,7 @@ managed coding VM or workstation, use the sibling
 
 | Boundary | Responsibility |
 | --- | --- |
-| `infra-tools setup` | Parses and validates user-facing configuration, then stages source for the target |
+| `basaltw setup` | Parses and validates user-facing configuration, then stages source for the target |
 | `remote_setup.py` | Performs target-side mutations using steps selected by the plugin registry |
 | `plugins/` | Owns setup composition through builders and capability extensions |
 | `bootstrap` / `self-setup` | Configures the local orchestration host through `lib/orchestrator_bootstrap.py` |
@@ -49,7 +49,7 @@ operator documentation.
 
 ```bash
 python3 -m py_compile file.py
-infra-tools setup server_web test.com --dry-run
+basaltw setup server_web test.com --dry-run
 python3 -m unittest discover -s tests
 git diff --check
 ```

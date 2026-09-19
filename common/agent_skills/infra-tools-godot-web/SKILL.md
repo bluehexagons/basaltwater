@@ -1,6 +1,6 @@
 ---
 name: infra-tools-godot-web
-description: Export, publish, and browser-test Godot web games on an infra-tools-managed VM.
+description: Export, publish, and browser-test Godot web games on a Basaltwater-managed VM.
 metadata:
   managed-by: infra_tools
 ---
@@ -13,7 +13,7 @@ a public plain-HTTP server or edit Nginx and UFW directly.
 
 ## Publish
 
-1. Run `infra-tools agent doctor --capability development --json` and confirm
+1. Run `basaltw agent doctor --capability development --json` and confirm
    the Godot toolchain is healthy and reports `web_templates: true`.
 2. Confirm the repository contains `project.godot` and an appropriate Web
    export preset in `export_presets.cfg`.

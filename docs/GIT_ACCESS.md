@@ -12,7 +12,7 @@ self-hosted Git servers. SSH login credentials are documented in
 | `read` | Repository work is intended to be read-only |
 | `read-write` | Repository work may push changes |
 
-This declaration controls infra-tools behavior; it does not reduce the
+This declaration controls Basaltwater behavior; it does not reduce the
 provider token's permissions. Enforce least privilege at GitHub or the
 self-hosted Git service.
 
@@ -45,17 +45,17 @@ one. The active source reads the selected `hosts.yml` entry or asks an
 authenticated controller-local `gh` command for a keyring-backed token.
 
 A file source may contain a `github.com` entry from `hosts.yml` or a one-line
-token. infra-tools extracts only the selected host entry. Authenticated GitHub
+token. Basaltwater extracts only the selected host entry. Authenticated GitHub
 setup currently supports only `github.com`; use the managed origin flow below
 for another HTTPS Git server.
 
-On initial setup, infra-tools appends a missing GitHub host entry without
+On initial setup, Basaltwater appends a missing GitHub host entry without
 removing other hosts. It preserves an existing selected entry on ordinary
 reruns. When authentication succeeds, it runs `gh auth setup-git` and fills
 missing global `user.name` and `user.email` from the controller or authenticated
 account. It does not copy the controller's complete `.gitconfig`.
 
-Use `infra-tools agent auth set HOST USER --tool gh ...` for deliberate
+Use `basaltw agent auth set HOST USER --tool gh ...` for deliberate
 replacement. See [Agent authentication](AGENT_AUTHENTICATION.md) for status,
 rotation, and file portability.
 
@@ -65,9 +65,9 @@ Save the password in the workspace store, then bind its username to one exact
 HTTPS origin:
 
 ```bash
-infra-tools credentials set agent-git
+basaltw credentials set agent-git
 
-infra-tools setup agent_vm 192.168.0.41 agent \
+basaltw setup agent_vm 192.168.0.41 agent \
   --git-access read-write \
   --git-credential https://192.168.0.51:3000 agent-git \
   --git-ca-certificate https://192.168.0.51:3000 \
@@ -87,7 +87,7 @@ writable. SSH sources use strict host-key checking and non-interactive `sudo`
 when required. Enroll and verify an unknown SSH host key first:
 
 ```bash
-infra-tools ssh-key enroll 192.168.0.51
+basaltw ssh-key enroll 192.168.0.51
 ```
 
 Never bypass a trust failure with `http.sslVerify=false`.
@@ -97,11 +97,11 @@ file below `~/.config/infra-tools/git/`. The scoped helper leaves GitHub's `gh`
 helper intact. Standard HTTPS and Git LFS use the same origin credential.
 
 Updating the workspace password and rerunning setup rotates the managed
-origin. Remove every infra-tools-managed Git credential and private CA setting
+origin. Remove every Basaltwater-managed Git credential and private CA setting
 with:
 
 ```bash
-infra-tools patch 192.168.0.41 agent --no-git-credentials
+basaltw patch 192.168.0.41 agent --no-git-credentials
 ```
 
 ## Troubleshooting

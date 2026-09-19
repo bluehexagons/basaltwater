@@ -1,4 +1,4 @@
-"""Tests for the optional authenticated infra-tools web panel."""
+"""Tests for the optional authenticated Basaltwater web panel."""
 
 from __future__ import annotations
 
@@ -248,7 +248,7 @@ class WebPanelConfigTest(unittest.TestCase):
         ]
 
         self.assertIn("Configuring firewall for requested web ports", names)
-        self.assertIn("Removing infra-tools web panel", names)
+        self.assertIn("Removing Basaltwater web panel", names)
 
     def test_access_summary_includes_complete_panel_link(self) -> None:
         output = StringIO()
@@ -306,7 +306,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Serve the infra-tools web panel", result.stdout)
+        self.assertIn("Serve the Basaltwater web panel", result.stdout)
 
     def test_unix_socket_is_shared_only_with_the_web_server_group(self) -> None:
         args = SimpleNamespace(
@@ -1546,7 +1546,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Notifications", rendered)
         self.assertIn(WEB_PANEL_NOTIFICATION_ENDPOINT, rendered)
         self.assertIn("--notify webhook", rendered)
-        self.assertIn("infra-tools setup agent_vm", rendered)
+        self.assertIn("basaltw setup agent_vm", rendered)
         self.assertIn("PANEL_HOST", rendered)
         self.assertIn("local network", rendered)
         self.assertIn("Reveal full sender link", rendered)
@@ -1589,7 +1589,7 @@ class WebPanelEventTest(unittest.TestCase):
             rendered = render_page(WebPanelState(manifest))
 
         self.assertIn("Agent &lt;VM&gt;", rendered)
-        self.assertIn("infra-tools web panel", rendered)
+        self.assertIn("Basaltwater web panel", rendered)
         self.assertIn("Agent Code VM", rendered)
         self.assertIn("Update to latest", rendered)
         self.assertIn("ssh agent@agent-vm.local", rendered)

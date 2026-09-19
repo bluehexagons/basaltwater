@@ -167,7 +167,7 @@ def render_jobs(
 <dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a></section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
-    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>Scheduled jobs</h1>
+    header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Scheduled jobs</h1>
 <p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>
 <p class="endpoint">A snapshot of managed system timers. Times use the host timezone; interval deadlines are approximate. Inactive job services are normal between runs. Results may reset after a reboot or service-manager reload.</p>

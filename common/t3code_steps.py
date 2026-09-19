@@ -1840,7 +1840,7 @@ def install_t3code_web(config: SetupConfig) -> None:
         "  T3 Code HTTP compatibility: "
         f"port {port} ({host}); use the printed HTTPS endpoint"
     )
-    print("  Readiness check: infra-tools agent doctor --capability t3code")
+    print("  Readiness check: basaltw agent doctor --capability t3code")
     if config.device_pairing_providers:
         print(
             "  Protected device enrollment HTTP compatibility: "
@@ -1848,7 +1848,7 @@ def install_t3code_web(config: SetupConfig) -> None:
         )
     else:
         print(
-            "  Pairing is required: run 'infra-tools agent web pair HOST USER' "
+            "  Pairing is required: run 'basaltw agent web pair HOST USER' "
             "from the control system"
         )
     print(

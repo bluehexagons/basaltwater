@@ -1,6 +1,6 @@
 # Samba Shares
 
-infra-tools configures authenticated Samba 4 file shares on Debian systems.
+Basaltwater configures authenticated Samba 4 file shares on Debian systems.
 This document covers initial setup, credentials, access changes, fast updates,
 removals, and related SMB client mounts.
 
@@ -30,7 +30,7 @@ fail2ban on machines that can enforce their own firewall policy, and creates
 the requested shares:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --samba-source 192.168.1.0/24 \
   --share read documents /srv/documents alice,bob \
@@ -52,7 +52,7 @@ on an SSD-backed filesystem, declare an absolute directory that is outside all
 share paths:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --samba-source 192.168.1.0/24 \
   --samba-metadata-cache /srv/ssd-cache/samba \
@@ -69,7 +69,7 @@ Samba, use the VM block-cache feature documented in
 For a NAS with storage maintenance, combine shares with sync and scrub jobs:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --share read media /srv/media guest \
   --sync /srv/documents /srv/backup daily \
@@ -82,10 +82,10 @@ The safest workflow stores passwords in the mode-0600 workspace credential
 store, without putting them in shell history or process arguments:
 
 ```bash
-infra-tools credentials set alice
-infra-tools credentials set bob
+basaltw credentials set alice
+basaltw credentials set bob
 
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --share write documents /srv/documents alice,bob
 ```
@@ -96,7 +96,7 @@ credential. Inline `username:password` values are supported for controlled
 automation, but the password is visible to local process inspectors:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --share read public /srv/public guest:temporary-password
 ```
@@ -105,7 +105,7 @@ infra-tools setup server_lite fileserver admin \
 part of a command. Use it only when the invoking environment is trusted:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba \
   --credential alice 'correct horse battery staple' \
   --share write documents /srv/documents alice
@@ -123,11 +123,11 @@ setgid directory permissions so new files inherit the share group:
 
 ```bash
 # Read-only reference material
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba --share read reference /srv/reference alice,bob
 
 # Collaborative directory
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba --share write projects /srv/projects alice,bob
 ```
 
@@ -143,7 +143,7 @@ full setup lifecycle. The host must have a saved setup configuration:
 
 ```bash
 # Add a new share while preserving the other saved shares
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --share read archive /srv/archive alice
 ```
 
@@ -152,7 +152,7 @@ complete desired user list when changing membership:
 
 ```bash
 # Add carol and remove bob from the documents share
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --share write documents /srv/documents alice,carol
 ```
 
@@ -160,14 +160,14 @@ Change access mode or path with the same operation:
 
 ```bash
 # Convert documents from read-only to collaborative write access
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --share write documents /srv/documents alice,carol
 ```
 
 Update a user's workspace password while updating a share:
 
 ```bash
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --credential carol 'new-password' \
   --share write documents /srv/documents alice,carol
 ```
@@ -176,14 +176,14 @@ Remove a share by logical name. Its managed Samba section and access group are
 removed; unrelated hand-written sections remain untouched:
 
 ```bash
-infra-tools shares fileserver --remove-share archive
+basaltw shares fileserver --remove-share archive
 ```
 
 Multiple changes can be combined. Each requested share is reconciled and Samba
 is reloaded once after the complete candidate configuration passes `testparm`:
 
 ```bash
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --share write documents /srv/documents alice,carol \
   --share read photos /srv/photos bob \
   --remove-share old-media
@@ -193,7 +193,7 @@ Use `--dry-run` to validate and display the remote operation without making a
 connection or changing the saved configuration:
 
 ```bash
-infra-tools shares fileserver \
+basaltw shares fileserver \
   --share read photos /srv/photos bob \
   --dry-run
 ```
@@ -267,14 +267,14 @@ store first; the examples intentionally contain no password:
 
 ```bash
 # Prompts for the restricted share account without putting its password in the command
-infra-tools credentials set backup-admin
+basaltw credentials set backup-admin
 
 # Restricted server-side archive area
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --samba --share read gogs-backups /srv/gogs-backups backup-admin
 
 # Optional asset share mounted on an agent VM
-infra-tools setup workstation_dev agent-vm agent \
+basaltw setup workstation_dev agent-vm agent \
   --smbclient --mount-smb /mnt/assets fileserver agent-assets assets_write /
 ```
 
@@ -296,12 +296,12 @@ sudo mount -t cifs //fileserver/projects_write /mnt/projects \
   -o username=alice,vers=3.0,seal
 ```
 
-For persistent client mounts managed by infra-tools, use `--mount-smb` on the
+For persistent client mounts managed by Basaltwater, use `--mount-smb` on the
 client setup. It creates a root-only credential file and a systemd automount:
 
 ```bash
-infra-tools credentials set alice
-infra-tools setup workstation_desktop client admin \
+basaltw credentials set alice
+basaltw setup workstation_desktop client admin \
   --mount-smb /mnt/projects fileserver alice projects_write /
 ```
 
@@ -329,6 +329,6 @@ with `--samba`. If a username-only share fails validation, create or update its
 workspace credential first:
 
 ```bash
-infra-tools credentials set alice
-infra-tools shares fileserver --share read documents /srv/documents alice
+basaltw credentials set alice
+basaltw shares fileserver --share read documents /srv/documents alice
 ```

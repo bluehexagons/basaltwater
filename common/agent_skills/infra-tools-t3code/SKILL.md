@@ -1,20 +1,20 @@
 ---
 name: infra-tools-t3code
-description: Operate and troubleshoot the managed T3 Code server, pairing flow, and server-side Git environment on an infra-tools VM.
+description: Operate and troubleshoot the managed T3 Code server, pairing flow, and server-side Git environment on a Basaltwater VM.
 metadata:
   managed-by: infra_tools
 ---
 
 # Managed T3 Code
 
-Use this skill for the T3 Code server installed by infra-tools.
+Use this skill for the T3 Code server installed by Basaltwater.
 
 ## Readiness
 
 Start with:
 
 ```bash
-infra-tools agent doctor --capability t3code --capability host --json
+basaltw agent doctor --capability t3code --capability host --json
 ```
 
 Treat T3 service readiness and host-pressure warnings as separate results. Use
@@ -29,7 +29,7 @@ tail -n 100 ~/.t3/userdata/logs/boot-service.log
 ```
 
 The upstream unit is `~/.config/systemd/user/t3code.service`.
-infra-tools keeps networking and workspace settings in
+Basaltwater keeps networking and workspace settings in
 `~/.config/systemd/user/t3code.service.d/infra-tools.conf`.
 
 ## Interpret logs in context
@@ -46,7 +46,7 @@ remote and ordinary Git operations work. Do not invent a remote or change its
 branch solely to suppress PR-only UI noise. If the repository should use
 GitHub, repair its owning remote configuration instead.
 
-infra-tools bounds numbered T3 log rotations through user-cache maintenance;
+Basaltwater bounds numbered T3 log rotations through user-cache maintenance;
 the host doctor reports total T3 log use and warns when it crosses the managed
 threshold. Do not delete current log files while T3 is running. Treat a timeout
 created by a deliberate preview wait as action evidence, not a service failure,
@@ -54,7 +54,7 @@ unless readiness or unrelated operations fail too.
 
 ## Updates
 
-When T3 Code is selected, an infra-tools setup rerun checks the upstream
+When T3 Code is selected, a Basaltwater setup rerun checks the upstream
 service and updates it when a newer release is available. A healthy service is
 restarted only when the runtime or managed configuration changes. Prefer the
 connected client's explicit **Update server** action when an update should be
@@ -79,21 +79,21 @@ env -u npm_config_dangerously_allow_all_scripts \
     -u npm_config_dangerously_allow_all_scripts \
     -u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS \
     t3 service install'
-infra-tools agent doctor --capability t3code --fix
+basaltw agent doctor --capability t3code --fix
 ```
 
 Keep those npm settings scoped to this trusted T3 update command. npm 12
 rejects inherited `allow-scripts` and `dangerously-allow-all-scripts` settings
-in T3's nested runtime. infra-tools installs the referenced npm passthrough; it
+in T3's nested runtime. Basaltwater installs the referenced npm passthrough; it
 recognizes only a versioned T3 install into an immutable `.staging-*` runtime,
 creates a short-lived project policy allowing only `node-pty` and
 `msgpackr-extract`, and removes it before publication. Other npm commands pass
 through unchanged.
 
 If the UI update or setup rerun rolled back with a native-module load error,
-rerun the VM's infra-tools setup. It repairs the retained candidate without
+rerun the VM's Basaltwater setup. It repairs the retained candidate without
 stopping the working active version; then retry **Update server**. The doctor
-repairs and verifies the active runtime. `infra-tools agent update` is not a
+repairs and verifies the active runtime. `basaltw agent update` is not a
 T3 updater; setup reruns update selected Codex, Claude Code, and OpenCode
 installations as well, while the command remains available for an agent-only
 update.
@@ -133,7 +133,7 @@ turn this deliberate recovery into an automatic setup or monitoring restart.
 From the control system, request a one-time pairing URL:
 
 ```bash
-infra-tools agent web pair HOST USER
+basaltw agent web pair HOST USER
 ```
 
 Use the full returned URL. A bare T3 URL showing a pairing-key form is expected.
@@ -155,7 +155,7 @@ git config --global --get init.defaultBranch
 Keep repository remotes on HTTPS when GitHub CLI is the credential helper.
 Never copy or print tokens from `~/.config/gh/hosts.yml`.
 
-infra-tools configures new repositories to use `main` unless the user already
+Basaltwater configures new repositories to use `main` unless the user already
 selected another global default. An unborn repository has no branch ref until
 its first commit: rename its symbolic branch with `git branch -m main`; do not
 use `git branch main`, which requires an existing commit and fails in T3's

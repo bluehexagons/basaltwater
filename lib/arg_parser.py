@@ -358,7 +358,7 @@ def add_setup_arguments(
         help=(
             "Swap ownership policy: auto creates a root swap file only when no "
             "swap exists, preserve leaves areas alone, and none removes only "
-            "infra-tools-managed areas"
+            "Basaltwater-managed areas"
         ),
     )
     parser.add_argument(
@@ -998,7 +998,7 @@ def add_setup_arguments(
         type=int,
         metavar="PORT",
         help=(
-            "Install the authenticated infra-tools web panel; the optional "
+            "Install the authenticated Basaltwater web panel; the optional "
             "port defaults to 80, or 443 with --ssl"
         ),
     )
@@ -1092,7 +1092,7 @@ def add_setup_arguments(
         dest="clear_git_credentials",
         action="store_true",
         help=(
-            "Remove all infra-tools-managed HTTPS Git credentials and private "
+            "Remove all Basaltwater-managed HTTPS Git credentials and private "
             "CA settings from the target user"
         ),
     )

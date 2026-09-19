@@ -1,6 +1,6 @@
 # Agent browser automation
 
-infra-tools can provision a browser that Codex and OpenCode use directly from
+Basaltwater can provision a browser that Codex and OpenCode use directly from
 their agent sessions. This is separate from the workstation browser selected
 with `--browser`: agent automation uses a pinned Playwright MCP package and its
 matching Chromium build, while `--browser` installs an interactive desktop or
@@ -11,7 +11,7 @@ terminal browser for a person.
 Select at least one compatible agent and request the provider explicitly:
 
 ```bash
-infra-tools setup workstation_dev 192.168.0.41 agent \
+basaltw setup workstation_dev 192.168.0.41 agent \
   --provision-on ts1 --name agent-1 \
   --image-storage ts1-storage \
   --memory 4G --balloon-min 1G --storage root ts1-storage 32G \
@@ -43,12 +43,12 @@ custom step as well.
 Compatible agent setups install `infra-tools-playwright-testing` when this is
 the only browser capability. A VM that also provisions T3 Code receives the
 combined `infra-tools-browser-testing` skill instead. Setup removes a stale
-infra-tools-managed browser variant when that capability combination changes;
+Basaltwater-managed browser variant when that capability combination changes;
 see [Managed agent workflow skills](AGENT_SKILLS.md).
 
 ## Installed components and agent configuration
 
-Setup installs the exact Playwright MCP version declared by infra-tools under
+Setup installs the exact Playwright MCP version declared by Basaltwater under
 `/opt/infra-tools-playwright`, verifies the npm package version and registry
 integrity metadata, installs native browser dependencies, and downloads the
 matching Chromium build into the target user's Playwright cache. npm lifecycle
@@ -112,7 +112,7 @@ process limit, so a cold browser can complete while a small ballooned VM is
 temporarily swapping. Exceeding that limit reports likely memory, swap, or
 storage pressure instead of an ambiguous locator timeout.
 
-Website authentication is deliberately not part of infra-tools credential
+Website authentication is deliberately not part of Basaltwater credential
 copying. Supply site-specific credentials through the application or a scoped
 secret workflow appropriate to the task; do not put passwords or session tokens
 in setup commands, repository files, prompts intended for logging, or agent
@@ -339,7 +339,7 @@ snapshot and network error. Use the observed failure to choose the next step:
 | Background DOM works but no visible surface or snapshot | Follow the bounded stale-preview recovery above. |
 
 Before using provisioned Playwright as the fallback, run
-`infra-tools agent doctor --capability browser --json`. If the capability is
+`basaltw agent doctor --capability browser --json`. If the capability is
 absent or unhealthy, continue non-browser checks and report the missing
 coverage. Do not install another browser stack merely to fill that gap.
 
@@ -353,7 +353,7 @@ optional and does not block unrelated work.
 Run the browser check on the configured VM as the setup user:
 
 ```bash
-infra-tools agent doctor --capability browser --json
+basaltw agent doctor --capability browser --json
 ```
 
 This checks the browser capability without requiring unrelated terminal tools.
@@ -365,7 +365,7 @@ launchers are executable, root-owned regular files without group or world write
 access; explicit managed-Chromium selection and current private, bounded
 evidence, safe-coordinate, and one-second-settle defaults are present; every
 installed compatible agent has the managed MCP registration; exactly one
-infra-tools-managed Playwright-capable browser workflow skill is installed as
+Basaltwater-managed Playwright-capable browser workflow skill is installed as
 a bounded, user-owned file without group or world write access;
 active managed MCP processes use those same safe defaults; and the local
 interaction/rendering smoke test passes. A stale or unsafe launcher is
@@ -414,5 +414,5 @@ Chromium retains its browser sandbox; VM targets are recommended. Browser
 namespaces and sandboxes may not work in every container policy, so use a VM
 when browser automation must be reproducible. Rerunning setup reconciles the
 managed registration and package version. Version changes are delivered through
-an infra-tools update and should be reviewed like other executable dependency
+a Basaltwater update and should be reviewed like other executable dependency
 updates.

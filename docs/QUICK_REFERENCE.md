@@ -1,4 +1,4 @@
-# infra-tools quick reference
+# Basaltwater quick reference
 
 Use this page to find the right command family and detailed guide. It is not a
 replacement for the [command-line reference](COMMAND_LINE.md): read that page
@@ -10,14 +10,14 @@ For a first experiment without a domain or SSH setup, follow the
 
 | Goal | Command | Details |
 | --- | --- | --- |
-| Preview a new setup | `infra-tools setup server_dev server.example admin --node --dry-run` | [Installation](INSTALLATION.md#install-and-configure-a-remote-host) |
-| Set up a new host | `infra-tools setup server_dev server.example admin --node` | [CLI reference](COMMAND_LINE.md#setup-at-a-glance) |
-| List saved hosts | `infra-tools list` | [Saved configuration operations](OPERATIONS.md#inspect-saved-hosts) |
-| Inspect a saved host | `infra-tools info server.example` | [Saved configuration operations](OPERATIONS.md#inspect-saved-hosts) |
-| View its saved command | `infra-tools cmd server.example` | [Saved configuration operations](OPERATIONS.md#recall-and-reconstruction) |
-| Preview adding Python tools | `infra-tools patch server.example admin --python --dry-run` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
-| Update shares only | `infra-tools shares fileserver` | [Samba shares](SAMBA_SHARES.md) |
-| Rerun a saved setup | `infra-tools deploy server.example` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
+| Preview a new setup | `basaltw setup server_dev server.example admin --node --dry-run` | [Installation](INSTALLATION.md#install-and-configure-a-remote-host) |
+| Set up a new host | `basaltw setup server_dev server.example admin --node` | [CLI reference](COMMAND_LINE.md#setup-at-a-glance) |
+| List saved hosts | `basaltw list` | [Saved configuration operations](OPERATIONS.md#inspect-saved-hosts) |
+| Inspect a saved host | `basaltw info server.example` | [Saved configuration operations](OPERATIONS.md#inspect-saved-hosts) |
+| View its saved command | `basaltw cmd server.example` | [Saved configuration operations](OPERATIONS.md#recall-and-reconstruction) |
+| Preview adding Python tools | `basaltw patch server.example admin --python --dry-run` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
+| Update shares only | `basaltw shares fileserver` | [Samba shares](SAMBA_SHARES.md) |
+| Rerun a saved setup | `basaltw deploy server.example` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
 
 `server.example` is a placeholder: replace it with your Debian target's IP
 address or hostname, and replace `admin` with the account to configure there.

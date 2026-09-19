@@ -1,6 +1,6 @@
 # Authentication and brute-force protection
 
-infra-tools combines network reachability controls, request throttling, and
+Basaltwater combines network reachability controls, request throttling, and
 temporary source bans for remotely reachable authentication surfaces. Keep
 credentials unique and high-entropy: rate limits reduce online guessing but do
 not make a reused or common password safe.

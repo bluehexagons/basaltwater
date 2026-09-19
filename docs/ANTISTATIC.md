@@ -1,13 +1,13 @@
 # Antistatic services
 
-infra-tools can deploy the Antistatic lobby server and antistatic-db on a
+Basaltwater can deploy the Antistatic lobby server and antistatic-db on a
 Debian web or lightweight server. Services run under systemd and can be
 published through Nginx or directly on a host port.
 
 ## Lobby server behind Nginx and SSL
 
 ```bash
-infra-tools setup server_lite 192.168.1.10 \
+basaltw setup server_lite 192.168.1.10 \
   --antistatic-server lobby.example.com \
   --ssl --ssl-email admin@example.com
 ```
@@ -20,7 +20,7 @@ restart behavior.
 Use `--cloudflare` when the hostname is published through a Cloudflare tunnel:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 \
+basaltw setup server_web 192.168.1.10 \
   --antistatic-server lobby.example.com \
   --cloudflare
 ```
@@ -33,7 +33,7 @@ Plaintext admin requests are rejected.
 The default internal port is 8080. Specify another port after the hostname:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 \
+basaltw setup server_web 192.168.1.10 \
   --antistatic-server lobby.example.com:9090 \
   --ssl --ssl-email admin@example.com
 ```
@@ -43,7 +43,7 @@ infra-tools setup server_web 192.168.1.10 \
 Use `:PORT` to listen directly without an Nginx virtual host:
 
 ```bash
-infra-tools setup server_lite 192.168.1.10 \
+basaltw setup server_lite 192.168.1.10 \
   --antistatic-server :8080
 ```
 
@@ -56,8 +56,8 @@ reachable on UDP 3478.
 Store the admin password interactively, then reference the username:
 
 ```bash
-infra-tools credentials set antistatic-admin
-infra-tools setup server_lite 192.168.1.10 \
+basaltw credentials set antistatic-admin
+basaltw setup server_lite 192.168.1.10 \
   --antistatic-server lobby.example.com \
   --antistatic-admin antistatic-admin \
   --ssl --ssl-email admin@example.com
@@ -66,7 +66,7 @@ infra-tools setup server_lite 192.168.1.10 \
 Disable the interface and remove its remote credential with:
 
 ```bash
-infra-tools setup server_lite 192.168.1.10 \
+basaltw setup server_lite 192.168.1.10 \
   --antistatic-server lobby.example.com \
   --no-antistatic-admin \
   --ssl --ssl-email admin@example.com
@@ -84,7 +84,7 @@ ten minutes trigger a one-hour Fail2ban source ban. Check the active jail with
 Deploy the database service behind Nginx:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 \
+basaltw setup server_web 192.168.1.10 \
   --antistatic-db db.example.com \
   --ssl --ssl-email admin@example.com
 ```
@@ -92,7 +92,7 @@ infra-tools setup server_web 192.168.1.10 \
 Use `:8081` for direct hostless mode:
 
 ```bash
-infra-tools setup server_lite 192.168.1.10 \
+basaltw setup server_lite 192.168.1.10 \
   --antistatic-db :8081
 ```
 

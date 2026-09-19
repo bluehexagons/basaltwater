@@ -3,7 +3,7 @@
 Selecting a tool or setup profile that installs these tools accepts the
 vendor-managed channel below, including additional payloads fetched by its
 installer. These channels are maintained by the vendor and can change without
-an infra-tools release. Sites requiring independently pinned payloads should
+a Basaltwater release. Sites requiring independently pinned payloads should
 preinstall their approved tool versions and omit the corresponding installer
 and update options.
 
@@ -23,7 +23,7 @@ Claude and OpenCode updates use their native vendor update commands.
 First-stage downloads require HTTPS, including redirects, and are limited to
 4 MiB and 120 seconds. Shared installer execution has a one-hour deadline;
 the Codex updater retains its shorter update deadline. Before execution,
-infra-tools records the source, effective URL when available, selected policy,
+Basaltwater records the source, effective URL when available, selected policy,
 observed SHA-256, size, executing UID, and time. A provenance write failure
 prevents execution. The digest identifies downloaded bytes; it is **not** an
 independently pinned expected digest or verification of transitive payloads.

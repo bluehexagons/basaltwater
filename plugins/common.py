@@ -370,7 +370,7 @@ def extend_web_panel_steps(
     from common.web_panel_steps import configure_web_panel
 
     action = "Removing" if config.disable_web_panel else "Configuring"
-    steps.append((f"{action} infra-tools web panel", configure_web_panel))
+    steps.append((f"{action} Basaltwater web panel", configure_web_panel))
 
 
 def get_custom_step_functions() -> Mapping[str, StepFunc]:

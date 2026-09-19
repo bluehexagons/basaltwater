@@ -10,18 +10,18 @@ no office suite or application adapter is required. Existing installations need
 updated runtime code and these packages; normal desktop setup applies them after
 its existing logout checks. Save work before rerunning setup.
 
-`infra-tools desktop doctor` checks that the system Python can import AT-SPI.
+`basaltw desktop doctor` checks that the system Python can import AT-SPI.
 This dependency probe neither starts the desktop nor reads application content;
 application accessibility coverage still requires an inspection.
 
 ## Inspect and act
 
 ```bash
-infra-tools desktop start
-infra-tools desktop windows
-infra-tools desktop inspect --pid PID
-infra-tools desktop inspect --pid PID --name Save --role button
-infra-tools desktop element invoke --generation GENERATION --ref REF --action-name click
+basaltw desktop start
+basaltw desktop windows
+basaltw desktop inspect --pid PID
+basaltw desktop inspect --pid PID --name Save --role button
+basaltw desktop element invoke --generation GENERATION --ref REF --action-name click
 ```
 
 Copy the PID from the current window inventory. Inspection covers that
@@ -49,9 +49,9 @@ reference as `--root`. The root and its showing descendants become the entire
 search scope, so unrelated menus and windows do not consume the scan budget:
 
 ```bash
-infra-tools desktop inspect --pid PID --role dialog
-infra-tools desktop inspect --pid PID --root ROOT_REF --generation GENERATION
-infra-tools desktop wait-element --pid PID --root ROOT_REF --name Save \
+basaltw desktop inspect --pid PID --role dialog
+basaltw desktop inspect --pid PID --root ROOT_REF --generation GENERATION
+basaltw desktop wait-element --pid PID --root ROOT_REF --name Save \
   --role button --state enabled --generation GENERATION
 ```
 
@@ -89,9 +89,9 @@ without observing the result.
 ## Wait and verify
 
 ```bash
-infra-tools desktop wait-element --pid PID --name Save --role button \
+basaltw desktop wait-element --pid PID --name Save --role button \
   --state enabled --generation GENERATION --timeout 15
-infra-tools desktop wait-element --pid PID --role text \
+basaltw desktop wait-element --pid PID --role text \
   --state focused --text 'expected text' --generation GENERATION
 ```
 
@@ -114,7 +114,7 @@ export, or reopen the output. There is no separate artifact-verification service
 Run the repeatable live check on a running desktop:
 
 ```bash
-infra-tools desktop smoke
+basaltw desktop smoke
 ```
 
 It launches a new Geany instance with a private temporary profile and an English
@@ -137,7 +137,7 @@ Save button. On other profiles, first check `command -v geany`.
 
 1. Create a private temporary directory and a UTF-8 text file containing a short,
    unique marker. Keep a separate expected file containing the desired result.
-2. Launch `infra-tools desktop exec --wait-window Geany -- geany --new-instance
+2. Launch `basaltw desktop exec --wait-window Geany -- geany --new-instance
    --no-session --config /absolute/temporary/profile /absolute/temporary/check.txt`.
    The private profile avoids changing the user's editor preferences or session.
 3. Read the new window's PID and generation. Use `desktop inspect --pid PID

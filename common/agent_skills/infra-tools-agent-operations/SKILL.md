@@ -1,6 +1,6 @@
 ---
 name: infra-tools-agent-operations
-description: Check or deliberately update coding agents, rotate their credentials, or protect long work from host maintenance on an infra-tools agent VM.
+description: Check or deliberately update coding agents, rotate their credentials, or protect long work from host maintenance on a Basaltwater agent VM.
 metadata:
   managed-by: infra_tools
 ---
@@ -16,9 +16,9 @@ Select the relevant checks; these are alternatives, not a checklist to run in
 full. Combine capabilities and explicit tools in one invocation when needed:
 
 ```bash
-infra-tools agent doctor --capability host --json
-infra-tools agent doctor --capability development --tool codex --json
-infra-tools agent doctor --all-capabilities --json
+basaltw agent doctor --capability host --json
+basaltw agent doctor --capability development --tool codex --json
+basaltw agent doctor --all-capabilities --json
 ```
 
 The comprehensive check inventories every default terminal client but requires
@@ -34,13 +34,13 @@ Preview terminal-agent updates before applying them as the account that owns
 the installation. Apply an update only when the user requested it:
 
 ```bash
-infra-tools agent update --dry-run
-infra-tools agent update --tool codex
-infra-tools agent doctor --last-record --json
+basaltw agent update --dry-run
+basaltw agent update --tool codex
+basaltw agent doctor --last-record --json
 ```
 
 `agent update` manages Codex, Claude Code, and OpenCode. It does not update
-GitHub CLI, T3 Code, infra-tools itself, managed skills, or system packages.
+GitHub CLI, T3 Code, Basaltwater itself, managed skills, or system packages.
 Refresh managed skills by rerunning saved setup from the updated control plane;
 editing a VM's installed copy is overwritten by setup. `--last-record` reads
 saved evidence, not a fresh check; inspect its timestamp and `current_boot`.
@@ -56,9 +56,9 @@ dry run first.
 Create a hold only when work must cross the normal restart window:
 
 ```bash
-infra-tools agent maintenance hold --hours 8
-infra-tools agent maintenance status --json
-infra-tools agent maintenance release
+basaltw agent maintenance hold --hours 8
+basaltw agent maintenance status --json
+basaltw agent maintenance release
 ```
 
 Release it when the protected work ends. Holds expire after at most 72 hours
@@ -69,8 +69,8 @@ and do not override the host's forced-restart deadline.
 Credential status and replacement run from the control system:
 
 ```bash
-infra-tools agent auth status HOST USER --json
-infra-tools agent auth set HOST USER --tool codex --interactive
+basaltw agent auth status HOST USER --json
+basaltw agent auth set HOST USER --tool codex --interactive
 ```
 
 Inspect status first and replace a credential only when explicitly requested.
@@ -88,7 +88,7 @@ For an explicitly requested migration or recovery, pull file-backed credentials
 to a private controller directory without displaying them:
 
 ```bash
-infra-tools agent auth pull HOST USER
+basaltw agent auth pull HOST USER
 ```
 
 The default writes canonical active-user paths and safely refreshes known-stale

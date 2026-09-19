@@ -1,6 +1,6 @@
 ---
 name: infra-tools-browser-testing
-description: Browser-test web applications on an infra-tools agent VM that has both T3 Code collaborative previews and managed VM-local Playwright.
+description: Browser-test web applications on a Basaltwater agent VM that has both T3 Code collaborative previews and managed VM-local Playwright.
 metadata:
   managed-by: infra_tools
 ---
@@ -40,7 +40,7 @@ surface and network origin produced the result when that distinction matters.
 Before the first VM-local browser action, run:
 
 ```bash
-infra-tools agent doctor --capability browser --json
+basaltw agent doctor --capability browser --json
 ```
 
 Use Playwright only when `healthy` is true. Follow the stable `issues` and
@@ -187,7 +187,7 @@ installation. Never transfer the CA private key.
 
 For enrollment, read only the matching platform section of the
 [client CA trust guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/CLIENT_CA_TRUST.md)
-(or `docs/CLIENT_CA_TRUST.md` in an infra-tools checkout). The user performs
+(or `docs/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
 this client security change. After enrollment, restart the client, recheck
 preview status, and retry the existing tab. If enrollment is declined or the
 guide is unavailable, retain the coverage gap and continue the other checks.

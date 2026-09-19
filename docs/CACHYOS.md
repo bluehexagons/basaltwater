@@ -51,14 +51,14 @@ setting is nonempty. Empty overrides are preserved and reported for you to
 resolve; rerunning setup alone will not replace them. Test transfers in your
 project to verify custom filters and remote authentication.
 
-The launcher is `~/.local/bin/infra-tools`; open a new terminal if the
+The launcher is `~/.local/bin/basaltw`; open a new terminal if the
 installer's PATH change is not visible. Bash, Zsh, and Fish are supported.
 Other shells need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
 ## Pick the options you need
 
 Append options to `--local-setup agent_cachyos` in the installer command, or to
-`infra-tools setup agent_cachyos localhost` after the launcher is installed.
+`basaltw setup agent_cachyos localhost` after the launcher is installed.
 
 | Need | Options |
 | --- | --- |
@@ -78,15 +78,15 @@ Examples:
 
 ```bash
 # Game and media workstation with an additional coding agent
-infra-tools setup agent_cachyos localhost \
+basaltw setup agent_cachyos localhost \
   --agent-tool opencode --node --python --git-lfs --godot \
   --av-tools --gl-tools
 
 # Gaming and game streaming
-infra-tools setup agent_cachyos localhost --gaming --sunshine --moonlight
+basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight
 
 # Preview a plan without installing packages or changing files
-infra-tools setup agent_cachyos localhost --node --python --dry-run
+basaltw setup agent_cachyos localhost --node --python --dry-run
 ```
 
 All application options install native packages from the configured CachyOS
@@ -128,7 +128,7 @@ sh "$HOME/.infra_tools-install.sh" --channel dev --local-setup agent_cachyos \
 For an already installed launcher, the equivalent setup is:
 
 ```bash
-infra-tools setup agent_cachyos localhost --web-interface t3code
+basaltw setup agent_cachyos localhost --web-interface t3code
 systemctl --user status infra-tools-cachyos-t3.service
 ```
 
@@ -148,7 +148,7 @@ the setup installs the T3 CLI and service, while you authorize the workstation
 with your T3 account once from the desktop session. Keep the default loopback
 bind when using T3 Connect; the managed relay expects the server's loopback
 origin. Use `connect link` instead of `connect`: the latter may offer to install
-a second upstream `t3code.service`, while infra-tools already owns this unit.
+a second upstream `t3code.service`, while Basaltwater already owns this unit.
 Run:
 
 ```bash
@@ -192,7 +192,7 @@ workstation's private LAN address. Find that address with `ip -4 addr`, then
 replace the example below and rerun setup:
 
 ```bash
-infra-tools setup agent_cachyos localhost --web-interface t3code \
+basaltw setup agent_cachyos localhost --web-interface t3code \
   --web-interface-host 192.168.1.50 --web-interface-port 3773
 systemctl --user status infra-tools-cachyos-t3.service
 "$HOME/.local/share/infra-tools/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
@@ -201,12 +201,12 @@ systemctl --user status infra-tools-cachyos-t3.service
 Open the generated URL on the other device, or paste it into its T3 desktop
 app. The URL will contain `192.168.1.50`; a loopback URL only works on the
 workstation itself. Allow TCP 3773 (or your selected port) from the trusted LAN
-in the workstation's firewall and use a static or reserved address. infra-tools
+in the workstation's firewall and use a static or reserved address. Basaltwater
 does not change firewall rules, provide the VM pairing broker, configure a
 gateway, or maintain a source allowlist.
 
 If a previous checkout produced `has a bad unit file setting`, update
-infra-tools and rerun setup. Validate the generated unit with:
+Basaltwater and rerun setup. Validate the generated unit with:
 
 ```bash
 systemd-analyze verify "$HOME/.config/systemd/user/infra-tools-cachyos-t3.service"
@@ -226,7 +226,7 @@ The generic VM T3 pairing and update commands do not manage this unit. For a
 deliberate runtime update, finish active work and rerun setup as yourself:
 
 ```bash
-infra-tools setup agent_cachyos localhost --web-interface t3code
+basaltw setup agent_cachyos localhost --web-interface t3code
 ```
 
 Keep your selected host, port, and workspace options when rerunning. Each T3
@@ -273,7 +273,7 @@ for current provider, client, and T3 Connect requirements.
 - Reruns retain installed software, credentials, and repositories. Omitting an
   option does not uninstall it; existing repositories are never pulled, reset,
   or recursively chowned. Selecting T3 on a rerun updates and restarts its service.
-- `infra-tools upgrade` updates infra-tools itself. If a CachyOS mirror or DNS
+- `basaltw upgrade` updates Basaltwater itself. If a CachyOS mirror or DNS
   lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
   workflow and rerun.
 - `--repo` clones only a missing repository. An existing destination must be a
@@ -291,8 +291,8 @@ The read-only desktop doctor reports package versions, user-bus sockets, and
 PipeWire, WirePlumber, and optional T3 unit state:
 
 ```bash
-infra-tools local cachyos-doctor
-infra-tools local cachyos-doctor --json
+basaltw local cachyos-doctor
+basaltw local cachyos-doctor --json
 ```
 
 It does not install, launch, capture, open listeners, or write a report. A

@@ -1,8 +1,8 @@
 # SSH authentication
 
-`infra-tools` uses the system OpenSSH client for remote commands, uploads,
+`basaltw` uses the system OpenSSH client for remote commands, uploads,
 Proxmox operations, rsync transfers, and sshfs mounts. A configured `--key`
-is passed to OpenSSH as an identity file; infra-tools never needs to store or
+is passed to OpenSSH as an identity file; Basaltwater never needs to store or
 receive the key's passphrase.
 
 ## Password-protected private keys
@@ -23,7 +23,7 @@ the command remains interruptible with Ctrl-C.
 
 Commands started without a terminal—such as piped setup, automation, and
 parallel host checks—cannot safely ask several processes for a passphrase. In
-that case infra-tools enables OpenSSH batch mode and retains bounded operation
+that case Basaltwater enables OpenSSH batch mode and retains bounded operation
 timeouts. Load the key into an SSH agent before starting the command:
 
 ```bash
@@ -31,11 +31,11 @@ eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
 ssh-add -l
 
-infra-tools setup workstation_dev 192.0.2.40 admin --key ~/.ssh/id_ed25519
+basaltw setup workstation_dev 192.0.2.40 admin --key ~/.ssh/id_ed25519
 ```
 
 The agent keeps the decrypted key in memory and does not save the passphrase
-to disk. `ssh-add` prompts once in the terminal, after which all infra-tools
+to disk. `ssh-add` prompts once in the terminal, after which all Basaltwater
 SSH subprocesses inherit `SSH_AUTH_SOCK` and can authenticate without another
 prompt. The agent must remain running for later commands; a new shell, reboot,
 or agent restart may require `ssh-add` again.
@@ -70,16 +70,16 @@ by fail2ban. Rerunning setup migrates older source-specific `LIMIT` rules to
 the trusted-source `ALLOW` policy without opening global SSH access.
 
 Proxmox guests are a special host-key enrollment case. After provisioning,
-infra-tools scans the guest's ED25519 key from the authenticated Proxmox node,
+Basaltwater scans the guest's ED25519 key from the authenticated Proxmox node,
 replaces any stale plain or hashed entry for that address in both the workspace
 `known_hosts` and the invoking user's default `~/.ssh/known_hosts`, and then
 uses strict checking for the direct guest connection. It also refreshes both
 files before every setup rerun for a cached managed guest whose saved
-infra-tools metadata matches the address, machine type, and Proxmox node. This
+Basaltwater metadata matches the address, machine type, and Proxmox node. This
 cleans up stale trust left by older or recreated managed guests before either
-infra-tools or plain `ssh HOST` performs a strict check. Existing guests
+Basaltwater or plain `ssh HOST` performs a strict check. Existing guests
 without that matching saved identity are not enrolled automatically; enroll
-those explicitly with `infra-tools ssh-key enroll` after verifying the
+those explicitly with `basaltw ssh-key enroll` after verifying the
 displayed fingerprint. Proxmox node and guest connections both use strict
 checking against the workspace `known_hosts` file.
 Explicit enrollment scans only the ED25519 key, avoiding a burst of parallel
@@ -87,7 +87,7 @@ probe connections against hosts that enforce SSH connection-rate limits.
 The explicit enrollment command does not modify OpenSSH's default
 `~/.ssh/known_hosts`; plain `ssh HOST` continues to use that separate file
 unless setup has reconciled a matching managed Proxmox guest or the user's SSH
-configuration selects the infra-tools workspace file.
+configuration selects the Basaltwater workspace file.
 
 Hosted guest setup uses retained, key-only root SSH for both live route
 preparation and the streamed setup upload. The coding account is never asked
@@ -110,10 +110,10 @@ while leaving authorized-key shell SSH usable. It also disables SSH agent,
 TCP, Unix-socket, X11, and tunnel forwarding for that identity and prevents
 `~/.ssh/rc` execution. A later root-driven setup with
 `--no-harden-user --no-harden-agent` restores the account settings that
-infra-tools recorded before the lockdown and removes those per-user SSH
+Basaltwater recorded before the lockdown and removes those per-user SSH
 restrictions.
-For an existing VM that was not provisioned by infra-tools, install the
-selected public key for root before the first setup. Infra-tools does not
+For an existing VM that was not provisioned by Basaltwater, install the
+selected public key for root before the first setup. Basaltwater does not
 accept, store, or transmit a sudo password. The configured non-root account's
 managed `NOPASSWD` rule is present only when `--nopasswd` is selected.
 

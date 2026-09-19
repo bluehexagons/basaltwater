@@ -24,7 +24,7 @@ the notification API contract.
 HTTPS is recommended:
 
 ```bash
-infra-tools setup agent_vm 192.168.1.50 agent \
+basaltw setup agent_vm 192.168.1.50 agent \
   --web-panel \
   --web-panel-password 'replace-this-value' \
   --ssl
@@ -34,7 +34,7 @@ The default port is 80 for HTTP or 443 with `--ssl`. Use another port when
 needed:
 
 ```bash
-infra-tools patch 192.168.1.50 agent \
+basaltw patch 192.168.1.50 agent \
   --web-panel 9443 \
   --web-panel-password 'replace-this-value' \
   --ssl
@@ -63,7 +63,7 @@ agent and user workflow.
 Enable the HTTPS receiver on an existing panel:
 
 ```bash
-infra-tools patch 192.168.1.50 agent \
+basaltw patch 192.168.1.50 agent \
   --web-panel --ssl --web-panel-notification-ingest
 ```
 
@@ -72,7 +72,7 @@ a sender. It contains a bearer token, so treat it as a credential. The sender
 uses the normal webhook setup:
 
 ```bash
-infra-tools setup agent_vm sender.example agent \
+basaltw setup agent_vm sender.example agent \
   --notify webhook 'https://PANEL_HOST/api/v1/notifications#TOKEN'
 ```
 

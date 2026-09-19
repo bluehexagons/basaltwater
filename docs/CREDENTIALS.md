@@ -1,17 +1,17 @@
 # Credentials overview
 
-infra-tools handles several kinds of credentials. Keep them separate because
+Basaltwater handles several kinds of credentials. Keep them separate because
 they have different storage, rotation, and sharing rules.
 
 | Credential | Used for | Manage it with |
 | --- | --- | --- |
-| Workspace password | Syncthing administration, initial Gogs administration, Samba, SMB mounts, and managed non-GitHub Git origins | `infra-tools credentials` |
+| Workspace password | Syncthing administration, initial Gogs administration, Samba, SMB mounts, and managed non-GitHub Git origins | `basaltw credentials` |
 | HomeBox initial password and API-key pepper | Inventory login and API-key verification | Target-only `/etc/homebox/secrets.json`; see [HomeBox](HOMEBOX.md) for recovery |
 | GitHub CLI authentication | Private GitHub repositories and `gh` | Git or agent auth options |
 | Coding-agent authentication | Codex, Claude Code, and OpenCode | Agent auth options |
 | Target account password | Unix login and optional RDP login | `--password` or a hidden setup prompt |
 | Device-enrollment password | Protected provider-pairing portal | Device-pairing options |
-| Browser website session | Sites opened through browser automation | The site or a scoped secret flow; infra-tools does not copy it |
+| Browser website session | Sites opened through browser automation | The site or a scoped secret flow; Basaltwater does not copy it |
 
 ## Choose the right workflow
 
@@ -26,13 +26,13 @@ they have different storage, rotation, and sharing rules.
 
 ## Workspace credential store
 
-The workspace store contains named passwords for infra-tools-managed services.
+The workspace store contains named passwords for Basaltwater-managed services.
 It is not read by GitHub CLI, Codex, Claude Code, or OpenCode.
 
 ```bash
-infra-tools credentials set workspace-user
-infra-tools credentials list
-infra-tools credentials remove workspace-user
+basaltw credentials set workspace-user
+basaltw credentials list
+basaltw credentials remove workspace-user
 ```
 
 Omit the password from `credentials set` to use a hidden prompt. The default
@@ -90,7 +90,7 @@ authorities, and Git LFS.
 | Private GitHub clone fails | Tool selection, auth source, repository authorization, and `--git-access` in [Git access](GIT_ACCESS.md) |
 | Agent auth source is missing | Canonical path and keyring limitations in [Agent authentication](AGENT_AUTHENTICATION.md) |
 | Source file is rejected | It must be regular, non-symlink, nonempty, no larger than 4 MiB, and not group/world-writable |
-| Codex reports expired auth | Run `infra-tools agent doctor HOST USER --tool codex --capability host --json`, then use [Codex maintenance](AGENT_AUTHENTICATION.md#codex-maintenance) |
+| Codex reports expired auth | Run `basaltw agent doctor HOST USER --tool codex --capability host --json`, then use [Codex maintenance](AGENT_AUTHENTICATION.md#codex-maintenance) |
 | Syncthing, Samba, or Gogs password is wrong | Confirm the workspace, credential name, and service-specific rotation procedure |
 
 ## Related documentation

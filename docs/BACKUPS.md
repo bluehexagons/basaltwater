@@ -6,7 +6,7 @@ a directory on an additional mounted block device, or a mounted filesystem
 managed outside infra-tools.
 
 ```bash
-infra-tools setup server_dev 192.168.0.41 agent \
+basaltw setup server_dev 192.168.0.41 agent \
   --backup /srv/agent-workspace /srv/backups/agent-workspace daily \
   --backup /srv/gogs /srv/backups/gogs daily \
   --scrub /srv/backups /srv/backups.par2 10% weekly
@@ -30,7 +30,7 @@ When a VM is provisioned on Proxmox, attach and mount a named data disk before
 using it as a backup destination:
 
 ```bash
-infra-tools setup server_dev 192.168.0.41 agent \
+basaltw setup server_dev 192.168.0.41 agent \
   --provision-on pve1 --memory 2G --cores 2 \
   --storage root local-lvm 32G \
   --disk-ssd root --disk-discard root --disk-backup root \
@@ -49,7 +49,7 @@ not schedule the file-level mirror declared by `--backup`.
 
 ## Consistency and recovery limits
 
-For HomeBox, use [`infra-tools homebox backup`](HOMEBOX.md#backup-and-restore).
+For HomeBox, use [`basaltw homebox backup`](HOMEBOX.md#backup-and-restore).
 It stops the application and captures SQLite, attachments, secrets, and the
 matching executable together. Mirror completed archives off-host with
 `--backup`; do not mirror its live data directory as a recovery snapshot.

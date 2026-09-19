@@ -9,7 +9,7 @@ The shared `setup` and `patch` options can persist a hostname and static
 dual-stack network configuration on Debian targets:
 
 ```bash
-infra-tools setup server_lite 10.20.0.15 admin \
+basaltw setup server_lite 10.20.0.15 admin \
   --hostname storage-01 \
   --ip 10.20.0.15/24 --gateway 10.20.0.1 \
   --ipv6 2001:db8:20::15/64 --gateway6 2001:db8:20::1 \
@@ -30,7 +30,7 @@ For an existing host that must move immediately, add `--activate-network` to a
 saved-host patch:
 
 ```bash
-infra-tools patch 10.20.0.15 admin \
+basaltw patch 10.20.0.15 admin \
   --ip 10.20.0.25/24 --gateway 10.20.0.1 \
   --dns 10.20.0.53 --network-interface eth0 \
   --activate-network
@@ -60,7 +60,7 @@ an older cache is missing them, the command refreshes the defaults from
 Proxmox instead of silently skipping the provisioning handoff.
 
 After guest SSH becomes available, hosted setup verifies the live IPv4 default
-route. If cloud-init brought up the address without the route, infra-tools
+route. If cloud-init brought up the address without the route, Basaltwater
 repairs it automatically before package installation. For VMs, this check and
 the remote setup upload use retained, key-only root SSH. This stable privileged
 channel applies to both VMs and LXCs and does not depend on the configured
@@ -139,42 +139,42 @@ to isolate data for a project or environment.
 
 ```bash
 # Create a profile
-infra-tools network init homelab \
+basaltw network init homelab \
   --management 192.168.1.0/24 \
   --control-plane 10.0.0.10 \
   --guest-network 10.0.10.0/24
 
 # Add metadata manually when needed
-infra-tools network add-host homelab pve1 10.0.0.10 \
+basaltw network add-host homelab pve1 10.0.0.10 \
   --provider proxmox \
   --role control-plane \
   --role proxmox
 
 # Or import from the saved Proxmox host registry
-infra-tools network import-proxmox homelab --tag prod
-infra-tools network import-proxmox-guests homelab --tag prod
+basaltw network import-proxmox homelab --tag prod
+basaltw network import-proxmox-guests homelab --tag prod
 
 # Review the abstract plan
-infra-tools network plan-proxmox homelab
+basaltw network plan-proxmox homelab
 
 # Render the matching Proxmox snippets without applying them
-infra-tools network plan-proxmox homelab --proxmox
+basaltw network plan-proxmox homelab --proxmox
 ```
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `infra-tools network list` | List saved network profiles |
-| `infra-tools network show <profile>` | Show one profile in text form |
-| `infra-tools network show <profile> --json` | Dump one profile as JSON |
-| `infra-tools network init <profile> [...]` | Create a profile with management, control-plane, guest-network, subnet, or VLAN entries |
-| `infra-tools network add-host <profile> <name> <address> [...]` | Add a tagged host record to a profile |
-| `infra-tools network import-proxmox <profile> [...]` | Import registered Proxmox nodes into the profile |
-| `infra-tools network import-proxmox-guests <profile> [...]` | Import guest networks from registered Proxmox hosts |
-| `infra-tools network plan-proxmox <profile>` | Print the abstract read-only lockdown plan |
-| `infra-tools network plan-proxmox <profile> --proxmox` | Render concrete Proxmox firewall artifacts for review |
-| `infra-tools network plan-proxmox <profile> --json` | Emit machine-readable JSON |
+| `basaltw network list` | List saved network profiles |
+| `basaltw network show <profile>` | Show one profile in text form |
+| `basaltw network show <profile> --json` | Dump one profile as JSON |
+| `basaltw network init <profile> [...]` | Create a profile with management, control-plane, guest-network, subnet, or VLAN entries |
+| `basaltw network add-host <profile> <name> <address> [...]` | Add a tagged host record to a profile |
+| `basaltw network import-proxmox <profile> [...]` | Import registered Proxmox nodes into the profile |
+| `basaltw network import-proxmox-guests <profile> [...]` | Import guest networks from registered Proxmox hosts |
+| `basaltw network plan-proxmox <profile>` | Print the abstract read-only lockdown plan |
+| `basaltw network plan-proxmox <profile> --proxmox` | Render concrete Proxmox firewall artifacts for review |
+| `basaltw network plan-proxmox <profile> --json` | Emit machine-readable JSON |
 
 ## Safety model
 

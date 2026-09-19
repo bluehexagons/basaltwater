@@ -1,6 +1,6 @@
 # Managed agent workflow skills
 
-infra-tools installs concise operational skills for Codex and OpenCode under
+Basaltwater installs concise operational skills for Codex and OpenCode under
 the shared `~/.agents/skills` directory. The skills describe VM-specific
 commands and boundaries that a general coding agent cannot infer reliably from
 the project alone.
@@ -72,7 +72,7 @@ Claude-only setup receives the agent management command but not this skill set.
 
 Setup copies repository-owned `SKILL.md` files into the target account. A rerun
 refreshes files containing `managed-by: infra_tools` and leaves identical files
-alone. It removes obsolete infra-tools-managed desktop/browser skills when the
+alone. It removes obsolete Basaltwater-managed desktop/browser skills when the
 selected capability combination changes, while preserving unrelated skills and
 user configuration. It refuses symlinked paths, directories owned by another
 user, and a same-name skill without the managed marker.
@@ -83,15 +83,20 @@ variant. Running both checks on a combined VM therefore verifies the combined
 skill rather than accepting independent Playwright-only and T3-only guidance.
 
 An older VM receives the current base set when its saved setup is rerun from an
-updated infra-tools control plane. The same setup rerun also updates selected
+updated Basaltwater control plane. The same setup rerun also updates selected
 Codex, Claude Code, and OpenCode executables through the verified user-scoped
-updater; `infra-tools agent update` remains available for an agent-only update.
-Neither command refreshes infra-tools or these skills.
+updater; `basaltw agent update` remains available for an agent-only update.
+Neither command refreshes Basaltwater or these skills.
 
-For an explicit `--steps` setup, `install_agent_workflow_skills` installs the
-base and selected browser set. The Playwright, T3 Code, and Godot capability
-steps reconcile the relevant catalog as well, so capability-only and
-custom-step runs still produce appropriate guidance.
+Current skills invoke `basaltw`; their `infra-tools-*` IDs remain stable.
+Normal agent setup installs both launchers before refreshing skills. When
+upgrading an older VM with explicit `--steps`, include
+`install_agent_cli_launcher` before `install_agent_workflow_skills` or another
+capability step that refreshes the catalog, for example
+`--steps 'install_agent_cli_launcher install_agent_workflow_skills'`.
+Capability-only runs must not publish new guidance while leaving an old-only
+launcher installation. On CachyOS, refresh the user bootstrap as described in
+the [migration guide](BASALTWATER_MIGRATION.md) before updating skills.
 
 ## Maintaining the catalog
 
@@ -108,7 +113,7 @@ The installer currently copies only `SKILL.md`; sibling `references/`,
 fallbacks in the entrypoint. Link optional detailed procedures to the maintained
 operator documentation with an absolute repository URL, and mention the local
 checkout path as an alternative. Do not assume the agent's application checkout
-contains infra-tools documentation. Supporting skill files require installer
+contains Basaltwater documentation. Supporting skill files require installer
 and reconciliation support before skills can depend on them.
 
 During an audit, check command examples against their parsers and implementation,

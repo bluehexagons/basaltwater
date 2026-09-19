@@ -9,6 +9,11 @@ description = "Basaltwater: infrastructure management, from one machine to your 
 requires-python = ">=3.10"
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/bluehexagons/infra_tools"
+Documentation = "https://github.com/bluehexagons/infra_tools/blob/main/docs/README.md"
+Issues = "https://github.com/bluehexagons/infra_tools/issues"
+
 [project.optional-dependencies]
 completion = ["argcomplete>=3.0.0"]
 dev = ["coverage>=7.0"]

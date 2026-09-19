@@ -1,6 +1,6 @@
 # XRDP configuration and troubleshooting
 
-`infra-tools` configures one shared XRDP desktop owned by the setup account, with
+`basaltw` configures one shared XRDP desktop owned by the setup account, with
 dynamic resolution. The supported path uses Xorg with `xorgxrdp`; it does not
 use Xvnc or a Proxmox emulated display as the RDP display.
 
@@ -46,7 +46,7 @@ XRDP path; restoring the source alone does not upgrade the running server.
 For a remote target, provide the Unix account password through a secret source:
 
 ```bash
-infra-tools setup workstation_dev 10.0.0.25 agent \
+basaltw setup workstation_dev 10.0.0.25 agent \
   --desktop xfce --rdp --password "$RDP_PASSWORD" \
   --lan-access
 ```
@@ -55,7 +55,7 @@ For local setup of an existing non-root desktop account, reuse its password
 without placing it in process arguments:
 
 ```bash
-sudo "$(command -v infra-tools)" setup workstation_dev localhost "$USER" \
+sudo "$(command -v basaltw)" setup workstation_dev localhost "$USER" \
   --control-plane --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -98,13 +98,13 @@ keep independent long-running work in SSH, tmux, or supervised agent services.
 As the configured account, without sudo:
 
 ```bash
-infra-tools desktop status
-infra-tools desktop start
-infra-tools desktop exec -- thunar
-infra-tools desktop screenshot --output /tmp/desktop-1.png
-infra-tools desktop control pause
-infra-tools desktop control resume
-infra-tools desktop logout
+basaltw desktop status
+basaltw desktop start
+basaltw desktop exec -- thunar
+basaltw desktop screenshot --output /tmp/desktop-1.png
+basaltw desktop control pause
+basaltw desktop control resume
+basaltw desktop logout
 ```
 
 All commands return JSON. `status` observes without starting a session; `start`
@@ -170,9 +170,9 @@ The desktop skill documents capture selection and response attachment guidance.
 Use those exact values for bounded input, then inspect the result:
 
 ```bash
-infra-tools desktop input --generation GENERATION --geometry 1280 720 click --x 100 --y 200
-infra-tools desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
-infra-tools desktop input --generation GENERATION --geometry 1280 720 text --text 'Example'
+basaltw desktop input --generation GENERATION --geometry 1280 720 click --x 100 --y 200
+basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
+basaltw desktop input --generation GENERATION --geometry 1280 720 text --text 'Example'
 ```
 
 `move` takes coordinates; click buttons 4–7 scroll. Each mutation acquires a
@@ -195,18 +195,18 @@ Setup installs `wmctrl` and `python3-tk` from the normal package repositories
 and adds **Shared Desktop Control** to the application menu. Rerun setup to
 install these additions; setup handles managed desktop logout. The control
 window shows agent status and offers pause/resume; closing it leaves pause in
-effect. Agents can open it with `infra-tools desktop handoff` before handing over.
+effect. Agents can open it with `basaltw desktop handoff` before handing over.
 
 ```bash
-infra-tools desktop doctor
-infra-tools desktop open /home/agent/document.txt
-infra-tools desktop open /home/agent/document.txt --reveal
-infra-tools desktop exec --wait-window Mousepad --timeout 15 -- mousepad
-infra-tools desktop windows
-infra-tools desktop window focus --window WINDOW --identity IDENTITY --generation GENERATION
-infra-tools desktop window resize --window WINDOW --identity IDENTITY --generation GENERATION --width 800 --height 600
-infra-tools desktop wait --window WINDOW --condition active --generation GENERATION
-infra-tools desktop screenshot --active-window
+basaltw desktop doctor
+basaltw desktop open /home/agent/document.txt
+basaltw desktop open /home/agent/document.txt --reveal
+basaltw desktop exec --wait-window Mousepad --timeout 15 -- mousepad
+basaltw desktop windows
+basaltw desktop window focus --window WINDOW --identity IDENTITY --generation GENERATION
+basaltw desktop window resize --window WINDOW --identity IDENTITY --generation GENERATION --width 800 --height 600
+basaltw desktop wait --window WINDOW --condition active --generation GENERATION
+basaltw desktop screenshot --active-window
 ```
 
 Use the configured account's actual document paths. `open` accepts existing local
@@ -358,7 +358,7 @@ PID and generation. The human handoff cycle passed.
 The default XFCE Lock action did nothing: Light Locker is intentionally disabled
 for the display-manager-free XRDP session, and no replacement locker is installed.
 Lock/unlock is outside the default support contract. Do not treat disconnect or
-agent pause as a screen lock. No automatic lock timer is configured by infra-tools;
+agent pause as a screen lock. No automatic lock timer is configured by Basaltwater;
 an operator may deliberately add a locker and timers. An optional manual locker
 requires its own authentication, reconnect and recovery qualification before
 being offered as supported. Existing lock UI entries may remain visible.
@@ -444,7 +444,7 @@ RDP frame capture; without this rule, `g_alloc_shm_map_fd` fails and the
 capture path can terminate Xorg as soon as a client connects. The rule is
 limited to user-owned shared-memory entries and does not disable AppArmor.
 
-At setup time, infra-tools probes `/dev/dri/renderD*` and the corresponding
+At setup time, Basaltwater probes `/dev/dri/renderD*` and the corresponding
 kernel driver. It enables the xorgxrdp glamor path only when the driver is on
 xorgxrdp's supported allowlist (`amdgpu`, `i915`, `xe`, `msm`, or `radeon`)
 and the desktop user can read and write the render node. In that case the
@@ -623,7 +623,7 @@ test another RDP client. Confirm that the session uses `xrdpdev`, that
 RANDR. If the freeze persists, capture the XRDP, Xorg, and session logs while
 reproducing it.
 
-Use `infra-tools desktop exec -- xterm` in a running session to isolate an
+Use `basaltw desktop exec -- xterm` in a running session to isolate an
 application problem. Do not bypass the managed startup wrapper or restart
 sesman while applications are running.
 

@@ -32,10 +32,10 @@ Selecting an agent tool does not create authentication. Select tools with
 or the original user under `sudo`. `--git-auth active` is the GitHub-specific
 form.
 
-For `gh`, infra-tools uses the selected `hosts.yml` token. If GitHub CLI stores
-the token in an operating-system keyring, infra-tools asks the authenticated
+For `gh`, Basaltwater uses the selected `hosts.yml` token. If GitHub CLI stores
+the token in an operating-system keyring, Basaltwater asks the authenticated
 controller-local `gh` command for it. Other tools use only their file-backed
-paths; infra-tools does not run them to create credentials.
+paths; Basaltwater does not run them to create credentials.
 
 ### Specified files
 
@@ -73,10 +73,10 @@ staged, unambiguously current source may replace it.
 Use `agent auth set` for every other intentional replacement:
 
 ```bash
-infra-tools agent auth status 192.168.0.41 agent-1 --json
-infra-tools agent auth set 192.168.0.41 agent-1 \
+basaltw agent auth status 192.168.0.41 agent-1 --json
+basaltw agent auth set 192.168.0.41 agent-1 \
   --tool codex --file /run/secrets/agent-1/codex-auth.json
-infra-tools agent auth set 192.168.0.41 agent-1 --tool gh --active
+basaltw agent auth set 192.168.0.41 agent-1 --tool gh --active
 ```
 
 Status reports installation, presence, ownership, permissions, age, and safe
@@ -86,9 +86,9 @@ replacing a credential.
 
 ## Pull credentials from an agent VM
 
-Run the pull command from a cloned infra-tools repository. The Debian or
-CachyOS control system needs Python 3 and OpenSSH, but does not need an
-infra-tools installation or local agent programs.
+Run the pull command from a cloned Basaltwater repository. The Debian or
+CachyOS control system needs Python 3 and OpenSSH, but does not need a
+Basaltwater installation or local agent programs.
 
 ```bash
 python3 infra_tools.py ssh-key enroll 192.168.0.41
@@ -168,8 +168,8 @@ readiness.
 If Codex authentication fails:
 
 ```bash
-infra-tools agent doctor HOST USER --tool codex --capability host --json
-infra-tools agent auth status HOST USER --tool codex --json
+basaltw agent doctor HOST USER --tool codex --capability host --json
+basaltw agent auth status HOST USER --tool codex --json
 ```
 
 Inspect `codex-auth-maintenance.service` when the timer is present. If the file

@@ -295,7 +295,7 @@ class TestRdpDisplay(unittest.TestCase):
         self.assertNotIn("compatibility", rendered)
         self.assertNotIn("0.0.0.0", rendered)
         self.assertIn(
-            "T3 Code pairing: infra-tools agent web pair agent-vm agent",
+            "T3 Code pairing: basaltw agent web pair agent-vm agent",
             rendered,
         )
 

@@ -1,6 +1,6 @@
 ---
 name: infra-tools-deploy-smoke
-description: Prepare and verify a test deployment from an infra-tools-managed coding VM.
+description: Prepare and verify a test deployment from a Basaltwater-managed coding VM.
 metadata:
   managed-by: infra_tools
 ---
@@ -8,7 +8,7 @@ metadata:
 # Deployment smoke checks
 
 Use this workflow to prepare and verify the requested test deployment. Run the
-application's required checks; run infra-tools tests when infrastructure code
+application's required checks; run Basaltwater tests when infrastructure code
 changes are part of the task.
 
 ## Preflight
@@ -21,17 +21,17 @@ their owning repositories:
 ```bash
 git status --short --branch
 git log -1 --oneline
-infra-tools agent doctor --capability host --json
+basaltw agent doctor --capability host --json
 ```
 
 Check `--capability t3code` separately when the deployment workflow actually
 depends on the managed T3 service. Do not make T3 readiness a prerequisite for
 an SSH-only agent VM.
 
-Inspect the application's deployment manifest and the saved infra-tools setup
+Inspect the application's deployment manifest and the saved Basaltwater setup
 before mutation. Use the repository's documented test command and deployment
 command; do not invent production secrets, hostnames, or database paths. Run a
-dry run when the selected infra-tools command provides one.
+dry run when the selected Basaltwater command provides one.
 
 ## Verify the deployed service
 
@@ -42,7 +42,7 @@ collaboration is unnecessary; prefer T3 preview when shared client-visible
 evidence or participation matters. Before using managed Playwright, run:
 
 ```bash
-infra-tools agent doctor --capability browser
+basaltw agent doctor --capability browser
 ```
 
 If only T3 preview is installed and the application is closed or its client
@@ -60,7 +60,7 @@ credentials or private user data. For a live development preview, use the
 On failure, preserve the last known-good release and collect:
 
 ```bash
-infra-tools agent support-bundle --output ~/agent-support.json
+basaltw agent support-bundle --output ~/agent-support.json
 ```
 
 Add only bounded service logs relevant to the failed deployment after

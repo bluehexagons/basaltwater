@@ -1,6 +1,6 @@
 ---
 name: infra-tools-agent-workspace
-description: Isolate concurrent coding tasks in managed Git branches and worktrees on an infra-tools agent VM.
+description: Isolate concurrent coding tasks in managed Git branches and worktrees on a Basaltwater agent VM.
 metadata:
   managed-by: infra_tools
 ---
@@ -9,16 +9,16 @@ metadata:
 
 Use the managed workspace command before concurrent tasks could edit the same
 checkout. It creates a dedicated `agent/TASK` branch below the user's private
-infra-tools worktree root and never modifies the primary checkout's files.
+Basaltwater worktree root and never modifies the primary checkout's files.
 
 ## Create and inspect
 
 From any location, supply the primary repository and a short task name:
 
 ```bash
-infra-tools agent workspace create ~/repos/PROJECT TASK --base HEAD --json
-infra-tools agent workspace list ~/repos/PROJECT --json
-infra-tools agent workspace status WORKTREE --json
+basaltw agent workspace create ~/repos/PROJECT TASK --base HEAD --json
+basaltw agent workspace list ~/repos/PROJECT --json
+basaltw agent workspace status WORKTREE --json
 ```
 
 Use the returned absolute worktree path as the task's working directory. Use a
@@ -44,9 +44,9 @@ the new changes before retrying; do not force-push to bypass divergence.
 Inspect first, then preview the removal:
 
 ```bash
-infra-tools agent workspace status WORKTREE --json
-infra-tools agent workspace remove WORKTREE --dry-run --json
-infra-tools agent workspace remove WORKTREE --json
+basaltw agent workspace status WORKTREE --json
+basaltw agent workspace remove WORKTREE --dry-run --json
+basaltw agent workspace remove WORKTREE --json
 ```
 
 Removal is intentionally narrow. It refuses the primary checkout, paths

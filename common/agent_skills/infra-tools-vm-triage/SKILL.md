@@ -1,6 +1,6 @@
 ---
 name: infra-tools-vm-triage
-description: Diagnose an infra-tools agent VM that is slow, unhealthy, low on capacity, or needs a shareable support snapshot.
+description: Diagnose a Basaltwater agent VM that is slow, unhealthy, low on capacity, or needs a shareable support snapshot.
 metadata:
   managed-by: infra_tools
 ---
@@ -10,7 +10,7 @@ metadata:
 Start with stable, non-secret diagnostics:
 
 ```bash
-infra-tools agent doctor --capability host --json
+basaltw agent doctor --capability host --json
 ```
 
 Add `--capability t3code` when the VM was provisioned for T3 Code. Add explicit
@@ -29,7 +29,7 @@ systemctl --user status t3code.service --no-pager
 journalctl --user -u t3code.service -n 100 --no-pager
 ```
 
-When repair is in scope, `infra-tools agent doctor --capability t3code --fix`
+When repair is in scope, `basaltw agent doctor --capability t3code --fix`
 can configure GitHub's Git credential helper, rebuild an incomplete active T3
 native runtime, enable the managed service at boot, and restart it if inactive.
 It is a mutation, not an additional read-only diagnostic.
@@ -39,13 +39,13 @@ It is a mutation, not an additional read-only diagnostic.
 Print a redacted JSON snapshot:
 
 ```bash
-infra-tools agent support-bundle
+basaltw agent support-bundle
 ```
 
 Or save a new private file below the current user's home:
 
 ```bash
-infra-tools agent support-bundle --output ~/agent-support.json
+basaltw agent support-bundle --output ~/agent-support.json
 ```
 
 The snapshot inventories optional browser configuration without launching a

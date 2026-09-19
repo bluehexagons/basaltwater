@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Web panel · Workshop · Basaltwater</title><style>* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+main { max-width: 1240px; margin: auto; padding: 36px 28px 64px 240px; }
+body { overflow-wrap: anywhere; }
+.sidebar {
+  position: fixed; inset: 0 auto 0 0; width: 212px; padding: 32px 18px;
+  background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto;
+}
+.sidebar strong { display: block; margin: 0 12px 24px; color: var(--accent); }
+.sidebar a { display: block; padding: 12px; color: var(--text); text-decoration: none; border-radius: 8px; }
+.sidebar a:hover { background: var(--accent-soft); color: var(--accent); }
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; background: var(--panel); z-index: 3; }
+.skip-link:focus { top: 12px; }
+h2, #trust { scroll-margin-top: 24px; }
+.refresh-link { color: var(--accent); display: inline-block; padding: 10px 0; }
+.metric-value.active { color: var(--ok); }
+.metric-value.failed, .metric-value.unavailable { color: var(--bad); }
+.history > summary { margin: 10px 0; }
+.diagnostic-filters {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 14px; align-items: end; padding: 18px; margin-bottom: 18px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+}
+.diagnostic-filters label { min-width: 0; font-weight: 650; }
+.diagnostic-filters > div { min-width: 0; }
+select, .diagnostic-filters input { display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 8px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+.metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
+.job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
+.job-facts dt { color: var(--muted); font-size: .85rem; }
+.job-facts dd { margin: 4px 0 0; }
+.job-load { margin-bottom: 14px; }
+.badge.success { color: var(--ok); }
+header { margin-bottom: 36px; }
+.eyebrow, .section-kicker {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: .75rem;
+  font-weight: 750;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  letter-spacing: -.045em;
+  line-height: 1.06;
+}
+.lede { max-width: 620px; margin: 12px 0 0; color: var(--muted); }
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 22px 0 0;
+}
+.meta div {
+  display: flex;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+}
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; font-weight: 650; }
+section { margin-top: 36px; }
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 13px;
+}
+h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
+.count { color: var(--muted); font-size: .85rem; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 11px;
+}
+.card {
+  display: flex;
+  min-height: 132px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  text-decoration: none;
+}
+.card:hover { border-color: var(--accent); }
+.card:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.card-description { color: var(--muted); font-size: .9rem; }
+.card-status { font-size: .8rem; font-weight: 700; }
+.card-status.ready { color: var(--ok); }
+.card-status.attention, .card-status.unavailable { color: var(--bad); }
+.card-url {
+  margin-top: auto;
+  color: var(--accent);
+  font-size: .8rem;
+  overflow-wrap: anywhere;
+}
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 11px;
+  margin: 0;
+}
+.metric {
+  min-height: 112px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.metric dt { color: var(--muted); font-size: .82rem; }
+.metric dd { margin: 5px 0 0; }
+.metric-value { display: block; font-size: 1.15rem; font-weight: 750; }
+.metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .82rem; }
+.trust-panel {
+  padding: 17px 18px 18px;
+}
+.trust-disclosure {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.trust-disclosure > summary {
+  display: flex;
+  width: auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  color: var(--text);
+  list-style: none;
+}
+.trust-disclosure > summary::-webkit-details-marker { display: none; }
+.trust-disclosure > summary::after {
+  content: "+";
+  color: var(--accent);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+.trust-disclosure[open] > summary { border-bottom: 1px solid var(--line); }
+.trust-disclosure[open] > summary::after { content: "−"; }
+.trust-summary-label { display: block; font-weight: 750; }
+.trust-summary-note { display: block; color: var(--muted); font-size: .85rem; }
+.trust-panel > strong { display: block; }
+.trust-panel > p { margin: 5px 0 0; color: var(--muted); }
+.trust-panel details { margin-top: 14px; }
+.trust-panel details > summary { width: auto; font-weight: 700; }
+.trust-panel details[open] > summary { margin-bottom: 10px; }
+.trust-panel .trust-actions + .fingerprint { margin-top: 13px; }
+.trust-gui { margin: 0; padding-left: 22px; }
+.trust-gui li { margin-top: 8px; }
+.trust-gui li:first-child { margin-top: 0; }
+.trust-panel-public {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.trust-panel-public > p { margin: 5px 0 0; color: var(--muted); }
+.trust-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 15px; }
+.trust-download {
+  display: inline-block;
+  padding: 9px 13px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 750;
+  text-decoration: none;
+}
+.fingerprint { display: block; margin-top: 13px; overflow-wrap: anywhere; }
+.trust-intro { margin: 10px 0; }
+.platform-script { margin-top: 15px; }
+.platform-script h3 { margin: 0 0 5px; font-size: .95rem; }
+.platform-script pre { margin: 0; max-height: none; user-select: all; }
+.access-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.access-list li {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 4px 18px;
+  padding: 14px 17px;
+  border-bottom: 1px solid var(--line);
+}
+.access-list li:last-child { border: 0; }
+.access-list span { grid-column: 2; color: var(--muted); font-size: .88rem; }
+.event-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.event {
+  padding: 15px 17px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.event-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.event-meta { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
+.event-detail { margin: 8px 0 0; }
+.event-values { margin: 8px 0 0; color: var(--muted); font-size: .85rem; }
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.badge.warning, .badge.error { color: var(--bad); }
+.endpoint { margin: 0 0 12px; color: var(--muted); }
+.audit-issues {
+  margin: 0 0 12px;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--bad);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.audit-issues strong { display: block; margin-bottom: 4px; }
+.audit-issues ul { margin: 0; padding-left: 20px; color: var(--muted); }
+code { overflow-wrap: anywhere; }
+.empty {
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+}
+.action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.action p { max-width: 590px; margin: 4px 0 0; color: var(--muted); }
+button {
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--panel);
+  font: inherit;
+  font-weight: 750;
+  padding: 10px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:disabled { opacity: .58; cursor: wait; }
+.status {
+  margin: 0 0 30px;
+  padding: 15px 17px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.status.complete { border-left-color: var(--ok); }
+.status.failed { border-left-color: var(--bad); }
+.status p { margin: 2px 0 0; }
+details { margin-top: 10px; }
+summary { width: fit-content; max-width: 100%; min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--accent); }
+pre {
+  max-height: 22rem;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  white-space: pre-wrap;
+  font-size: .8rem;
+}
+footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 48px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .85rem;
+}
+@media (max-width: 900px) {
+  main { padding: 28px 20px 48px; }
+  .sidebar { position: static; width: auto; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .sidebar strong { margin: 0 8px 6px; }
+  .sidebar .nav-links { display: flex; flex-wrap: wrap; gap: 0 4px; }
+  .sidebar a { padding: 10px 8px; }
+}
+@media (max-width: 560px) {
+  main { padding-top: 30px; }
+  .section-heading, .event-head { align-items: start; flex-direction: column; gap: 6px; }
+  .meta div { flex-wrap: wrap; border-radius: 12px; }
+  .access-list li { grid-template-columns: 1fr; }
+  .access-list span { grid-column: 1; }
+  .action { align-items: stretch; flex-direction: column; }
+  button { width: 100%; }
+  footer { flex-direction: column; }
+}:root{--bg:#f3f8fa;--panel:#ffffff;--text:#17232c;--muted:#49616e;--line:#738995;--accent:#17657d;--accent-soft:#d8f0f4;--ok:#21694f;--bad:#a2342b;--warning:#825119;--brand-water:#17657d;--shadow:0 12px 36px rgb(23 35 44 / 7%)}@media(prefers-color-scheme:dark){:root{--bg:#101a21;--panel:#17232c;--text:#e8f5f8;--muted:#aec6cf;--line:#718c99;--accent:#4dc5dd;--accent-soft:#223e4b;--ok:#75d2ae;--bad:#ffa69d;--warning:#e9b979;--brand-water:#4dc5dd;--shadow:none}}body{font-family:"DejaVu Sans",system-ui,sans-serif}code,pre{font-family:"DejaVu Sans Mono",monospace}.sidebar strong.brand{display:flex;align-items:center;gap:8px;font-size:17px;letter-spacing:-.04em;color:var(--text)}.brand svg{flex:none;width:28px;height:28px}.badge.warning{color:var(--warning)}@media(forced-colors:active){.brand svg{--brand-water:CanvasText}}</style></head><body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav class="sidebar" aria-label="Panel sections"><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="3" d="M2 28h8l6-4h14"/></svg><span>Basaltwater</span></strong><div class="nav-links"><a href="/" aria-current="page">Dashboard</a><a href="#services-heading">Web services</a><a href="#audit-heading">Security activity</a><a href="#access-heading">Access</a><a href="/services">Local service status</a><a href="/jobs">Scheduled jobs</a><a href="/logs">Service diagnostics</a></div></nav>
+<main id="main" tabindex="-1"><header><p class="eyebrow">Basaltwater web panel</p><h1>Workshop</h1>
+<p class="lede">Services, system health, security activity, and available maintenance for <code>workshop.example.test</code>.</p>
+<dl class="meta"><div><dt>System</dt><dd>Server Dev</dd></div>
+<div><dt>User</dt><dd>operator</dd></div></dl>
+<a class="refresh-link" href="/">Refresh dashboard</a></header><section aria-labelledby="overview-heading"><div class="section-heading"><div>
+<p class="section-kicker">Host health</p><h2 id="overview-heading">System overview</h2></div>
+<span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
+<dl class="overview-grid"><div class="metric"><dt>Host</dt><dd><span class="metric-value">Ready</span><span class="metric-description">Example data</span></dd></div></dl></section>
+<section aria-labelledby="services-heading"><div class="section-heading"><div>
+<p class="section-kicker">Open in browser</p><h2 id="services-heading">Web services</h2></div>
+<span class="count">1 service</span></div><div class="grid"><a class="card" href="https://projects.example.test"><strong>Project library</strong><span class="card-description">Repositories and shared work</span><span class="card-url">https://projects.example.test &#8599;</span></a></div></section>
+<section aria-labelledby="audit-heading"><div class="section-heading"><div>
+<p class="section-kicker">Security activity</p><h2 id="audit-heading">System audit log</h2></div>
+<span class="count">0 events · Latest 24 hours</span>
+</div><p class="empty">No matching audit events were recorded in the last 24 hours.</p></section>
+<section aria-labelledby="access-heading"><div class="section-heading"><div>
+<p class="section-kicker">Connect directly</p><h2 id="access-heading">Access</h2></div>
+<span class="count">1 method</span></div><ul class="access-list"><li><strong>SSH</strong><code>ssh operator@workshop.example.test</code><span>Verified host identity</span></li></ul></section><div id="trust"></div>
+<footer><span>Managed by Basaltwater</span><span>Authenticated as operator</span></footer></main></body></html>

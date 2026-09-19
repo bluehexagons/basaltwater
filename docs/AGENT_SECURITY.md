@@ -33,12 +33,12 @@ and prevents `~/.ssh/rc` execution. It disables systemd lingering too; an
 explicitly selected T3 Code service enables lingering again because that
 service requires a persistent user manager.
 
-Infra-tools journals group removals and the original wider account settings in
+Basaltwater journals group removals and the original wider account settings in
 `/var/lib/infra_tools/agent-user-security/UID.json` before changing them.
 Use `--no-harden-user` to return to agent-only hardening, or combine it with
 `--no-harden-agent` to restore all recorded settings. An omitted hardening
 option preserves the saved posture during a patch. The root-owned mode-`0600`
-state follows the numeric user identity, so an infra-tools user rename does not
+state follows the numeric user identity, so a Basaltwater user rename does not
 orphan the rollback information. If a recorded group is temporarily absent,
 the journal retains it and a later setup rerun retries the restoration. An
 explicit rollback restores a recorded passwordless state too, so use the
@@ -83,10 +83,10 @@ Codex requirements schema does not make that environment setting an enforced
 constraint, so do not inject sensitive environment variables into an
 untrusted session and assume the filter is an isolation boundary.
 Hardened setup also disables Codex's in-app updater; apply reviewed agent
-updates deliberately with `infra-tools agent update --tool codex`.
+updates deliberately with `basaltw agent update --tool codex`.
 
 Hardened requirements are constraints, not warning preferences. Returning to
-the default posture removes an infra-tools-owned requirements file so all Codex
+the default posture removes a Basaltwater-owned requirements file so all Codex
 choices are available again. Administrator-owned defaults and requirements are
 preserved in the default posture; hardened setup refuses to replace them, so
 organization policy must be merged deliberately.
@@ -124,7 +124,7 @@ For unfamiliar packages or unattended builds, prefer a fresh VM and enable the
 hardened posture at creation:
 
 ```bash
-infra-tools setup agent_vm 10.0.0.40 agent \
+basaltw setup agent_vm 10.0.0.40 agent \
   --provision-on pve1 \
   --harden-user \
   --git-access read \

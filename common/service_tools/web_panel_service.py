@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve the authenticated infra-tools web panel behind Nginx."""
+"""Serve the authenticated Basaltwater web panel behind Nginx."""
 
 from __future__ import annotations
 
@@ -871,32 +871,6 @@ class WebPanelState:
 
 
 _PAGE_STYLE = """
-:root {
-  --bg: #f4f6f8;
-  --panel: #fff;
-  --text: #17202a;
-  --muted: #667085;
-  --line: #dce2e8;
-  --accent: #2457c5;
-  --accent-soft: #eaf0ff;
-  --ok: #167044;
-  --bad: #b32929;
-  --shadow: 0 12px 36px rgb(18 32 52 / 7%);
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101419;
-    --panel: #181e25;
-    --text: #eef2f6;
-    --muted: #a5afbd;
-    --line: #303945;
-    --accent: #91adff;
-    --accent-soft: #202c49;
-    --ok: #76d69d;
-    --bad: #ff9b9b;
-    --shadow: none;
-  }
-}
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -1461,7 +1435,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
             f'<dl class="overview-grid">{cards}</dl>' if cards else
             '<p class="empty">No supported local services were found.</p>'
         )
-    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>Local service status</h1>
+    header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks fixed system services and the panel user's T3 Code service. It does not prove public DNS, TLS, or application readiness.</p>
@@ -1507,7 +1481,7 @@ def _render_audit_section(state: WebPanelState) -> str:
         suppression_html = (
             '<p class="endpoint">'
             f"Omitted {suppressed_setup_events:,} routine audit {event_label} "
-            "recorded during a managed infra-tools setup.</p>"
+            "recorded during a managed Basaltwater setup.</p>"
         )
     if events:
         rows = []
@@ -1634,12 +1608,12 @@ def _render_notification_section(state: WebPanelState) -> str:
 <span class="count">{count} received</span></div>
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
 {link_help}
-<details class="notification-help"><summary>Configure an infra-tools sender</summary>
+<details class="notification-help"><summary>Configure a Basaltwater sender</summary>
 <p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. During an initial sender setup, replace the placeholders with its profile, host, account, and a reachable panel host:</p>
 <p>Read the token on this panel host with <code>sudo cat /etc/infra-tools/web-panel/notification-ingest.token</code>.</p>
-<pre><code>infra-tools setup agent_vm SENDER_HOST SENDER_USER \\
+<pre><code>basaltw setup agent_vm SENDER_HOST SENDER_USER \\
   --notify webhook 'https://PANEL_HOST{WEB_PANEL_NOTIFICATION_ENDPOINT}#TOKEN_FROM_PANEL_HOST'</code></pre>
-<p>For an existing sender, use <code>infra-tools patch SENDER_HOST SENDER_USER</code> with the same <code>--notify webhook</code> flag.</p>
+<p>For an existing sender, use <code>basaltw patch SENDER_HOST SENDER_USER</code> with the same <code>--notify webhook</code> flag.</p>
 <p>The token fragment becomes a bearer header and is not sent in the request path. Keep the full fragment-bearing URL private.</p></details>
 {content}</section>'''
 
@@ -1763,7 +1737,7 @@ def render_page(state: WebPanelState) -> str:
         if isinstance(record, dict) and record.get("value")
     )
     access_label = f"{access_count} method" + ("" if access_count == 1 else "s")
-    header = f'''<header><p class="eyebrow">infra-tools web panel</p><h1>{html.escape(title)}</h1>
+    header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>{html.escape(title)}</h1>
 <p class="lede">Services, system health, security activity, and available maintenance for <code>{host}</code>.</p>
 <dl class="meta"><div><dt>System</dt><dd>{system_type}</dd></div>
 <div><dt>User</dt><dd>{username}</dd></div></dl>
@@ -1780,7 +1754,7 @@ def render_page(state: WebPanelState) -> str:
 <p class="section-kicker">Connect directly</p><h2 id="access-heading">Access</h2></div>
 <span class="count">{access_label}</span></div>{access_content}</section><div id="trust">{trust_section}</div>{action}
 '''
-    footer = f'<footer><span>Managed by infra-tools</span><span>Authenticated as {username}</span></footer>'
+    footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
         title=f"Web panel · {title}",
         style=_PAGE_STYLE,
@@ -1999,7 +1973,7 @@ class _ThreadingTCPHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Serve the infra-tools web panel")
+    parser = argparse.ArgumentParser(description="Serve the Basaltwater web panel")
     parser.add_argument("--config", required=True)
     listener = parser.add_mutually_exclusive_group(required=True)
     listener.add_argument("--socket")

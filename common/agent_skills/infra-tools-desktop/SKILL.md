@@ -35,9 +35,9 @@ and the client-side T3 browser. Do not copy cookies or assume shared logins.
 Run commands as the setup account, without sudo:
 
 ```bash
-infra-tools desktop status
-infra-tools desktop start
-infra-tools desktop exec -- thunar /home/agent
+basaltw desktop status
+basaltw desktop start
+basaltw desktop exec -- thunar /home/agent
 ```
 
 Use the actual account's paths. `status` only observes; `start` reuses a running
@@ -53,9 +53,9 @@ Use `desktop open /absolute/document` to use its default native application,
 or add `--reveal` to open the parent directory. For launch readiness:
 
 ```bash
-infra-tools desktop exec --wait-window Mousepad --timeout 15 -- mousepad
-infra-tools desktop wait --title Mousepad --condition visible --timeout 15
-infra-tools desktop launch-status LAUNCH --generation GENERATION
+basaltw desktop exec --wait-window Mousepad --timeout 15 -- mousepad
+basaltw desktop wait --title Mousepad --condition visible --timeout 15
+basaltw desktop launch-status LAUNCH --generation GENERATION
 ```
 
 Launch results include a session-local `launch` token and PID. Only the latest
@@ -70,12 +70,12 @@ inspect before retrying; never automatically launch a duplicate application.
 For native controls, prefer accessibility inspection before coordinate input:
 
 ```bash
-infra-tools desktop windows
-infra-tools desktop inspect --pid PID
-infra-tools desktop inspect --pid PID --name Save --role button
-infra-tools desktop element invoke --ref REF --generation GENERATION --action-name click
-infra-tools desktop wait-element --pid PID --role text --state focused --generation GENERATION
-infra-tools desktop element set-text --ref REF --generation GENERATION --text 'replacement text'
+basaltw desktop windows
+basaltw desktop inspect --pid PID
+basaltw desktop inspect --pid PID --name Save --role button
+basaltw desktop element invoke --ref REF --generation GENERATION --action-name click
+basaltw desktop wait-element --pid PID --role text --state focused --generation GENERATION
+basaltw desktop element set-text --ref REF --generation GENERATION --text 'replacement text'
 ```
 
 Use a current application PID from `windows`. Inspection returns the AT-SPI
@@ -108,20 +108,20 @@ Actions use the same generation and control lease as pointer input.
 Waits do not hold control, and timeout responses include the last observation.
 Accessibility support varies by application; use screenshots and existing input
 when controls are unavailable. No application-specific adapter is required.
-Run `infra-tools desktop smoke` for a live Geany edit/save/scoped-dialog check
+Run `basaltw desktop smoke` for a live Geany edit/save/scoped-dialog check
 on a running desktop. It uses a private test profile, verifies saved UTF-8 bytes,
 and closes its own window and removes test files on success. On failure it
 reports the stage and retains the test instance/files for inspection; inspect
 and close that instance before rerunning. It never resumes paused control.
 See the [desktop automation guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/DESKTOP_AUTOMATION.md)
-for smoke-check details and manual steps when needed (or read that file in an
-infra-tools checkout). Verify ordinary task outputs with file tools as well.
+for smoke-check details and manual steps when needed (or read that file in a
+Basaltwater checkout). Verify ordinary task outputs with file tools as well.
 
 Capture a new private PNG (existing files are never overwritten), then inspect
 it using your available image viewer:
 
 ```bash
-infra-tools desktop screenshot --output /tmp/desktop-check-1.png
+basaltw desktop screenshot --output /tmp/desktop-check-1.png
 ```
 
 Omit `--output` to retain a unique capture in private `~/Pictures/infra-tools/`.
@@ -131,9 +131,9 @@ cleanup removes response artifacts; delete disposable captures yourself.
 Prefer an application screenshot when the result concerns one application:
 
 ```bash
-infra-tools desktop windows
-infra-tools desktop screenshot --window 0x123456 --output /tmp/application-check-1.png
-infra-tools desktop screenshot --active-window --output /tmp/active-application-1.png
+basaltw desktop windows
+basaltw desktop screenshot --window 0x123456 --output /tmp/application-check-1.png
+basaltw desktop screenshot --active-window --output /tmp/active-application-1.png
 ```
 
 Use a current ID from `windows`; do not guess IDs or select by an ambiguous title.
@@ -161,9 +161,9 @@ passwords, tokens, or unrelated private windows in evidence.
 Use the returned `generation` and `geometry` for input, for example:
 
 ```bash
-infra-tools desktop input --generation GENERATION --geometry 1280 720 click --x 400 --y 300
-infra-tools desktop input --generation GENERATION --geometry 1280 720 text --text 'example'
-infra-tools desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
+basaltw desktop input --generation GENERATION --geometry 1280 720 click --x 400 --y 300
+basaltw desktop input --generation GENERATION --geometry 1280 720 text --text 'example'
+basaltw desktop input --generation GENERATION --geometry 1280 720 key --key ctrl+s
 ```
 
 Coordinates are full-display pixels. Buttons 4–7 scroll; `move` moves the pointer.
@@ -180,9 +180,9 @@ Delete disposable captures when finished; retain screenshots linked in responses
 Use the current identity and generation to target an application:
 
 ```bash
-infra-tools desktop window focus --window WINDOW --identity IDENTITY --generation GENERATION
-infra-tools desktop window resize --window WINDOW --identity IDENTITY --generation GENERATION --width 800 --height 600
-infra-tools desktop wait --window WINDOW --generation GENERATION --condition active
+basaltw desktop window focus --window WINDOW --identity IDENTITY --generation GENERATION
+basaltw desktop window resize --window WINDOW --identity IDENTITY --generation GENERATION --width 800 --height 600
+basaltw desktop wait --window WINDOW --generation GENERATION --condition active
 ```
 
 Other operations are `move --x X --y Y`, `maximize`, `minimize`, `restore`, and
@@ -210,9 +210,9 @@ report does not qualify RDP reconnect, clipboard, or application responsiveness.
 
 ## Human handoff and logout
 
-Before the human takes control, run `infra-tools desktop control pause`. This
+Before the human takes control, run `basaltw desktop control pause`. This
 revokes agent control while preserving screenshots and human RDP input. Resume
-with `infra-tools desktop control resume` when the human hands control back.
+with `basaltw desktop control resume` when the human hands control back.
 Agents must honor pause; it coordinates same-account tools rather than isolating
 untrusted code. Ordinary RDP input does not automatically pause agent input.
 
@@ -228,7 +228,7 @@ can reach a loopback-only listener; do not widen network access merely for a tes
 Do not save the user's password in agent scripts or command arguments.
 
 Leave the session running after your task unless logout is requested.
-`infra-tools desktop logout` asks the desktop to log out; unsaved-work dialogs
+`basaltw desktop logout` asks the desktop to log out; unsaved-work dialogs
 may require human action. Confirm `status` becomes stopped. Do not force logout,
 kill the user's systemd manager, or restart sesman to recover a failed app.
 Explicit start or a new authenticated RDP login creates a fresh session after

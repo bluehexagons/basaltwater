@@ -2,19 +2,19 @@
 
 Use `--godot` with any setup profile to install the newest stable standard
 Godot Engine release. The installer resolves the engine version at run time;
-the `v2.0.0` infra-tools release therefore does not pin a Godot version in its
+the `v2.0.0` Basaltwater release therefore does not pin a Godot version in its
 operator contract.
 
 ```bash
 # Graphical editor on an agent workstation
-infra-tools setup agent_workstation 192.168.1.40 agent --godot
+basaltw setup agent_workstation 192.168.1.40 agent --godot
 
 # Headless editor/runtime on an SSH-only agent VM
-infra-tools setup agent_vm 192.168.1.41 agent --godot
+basaltw setup agent_vm 192.168.1.41 agent --godot
 ssh agent@192.168.1.41 'godot --headless --version'
 
 # Web export and itch.io/Steam publishing tools
-infra-tools setup agent_workstation 192.168.1.42 agent \
+basaltw setup agent_workstation 192.168.1.42 agent \
   --godot-bundle web \
   --godot-bundle publishing
 ```
@@ -204,7 +204,7 @@ client, so ARM64 targets receive Butler and report that SteamCMD was skipped.
 Because SteamCMD updates its own user-owned installation, the publishing
 bundle requires a non-root setup account.
 
-infra-tools does not collect, stage, or persist publishing credentials. Sign in
+Basaltwater does not collect, stage, or persist publishing credentials. Sign in
 as the configured account only when needed:
 
 ```bash
@@ -374,7 +374,7 @@ debug instrumentation and paused captures do not establish release performance.
 
 ## Release and integrity policy
 
-Godot itself is not installed from Debian's default APT sources. infra-tools
+Godot itself is not installed from Debian's default APT sources. Basaltwater
 queries stable releases from the official `godotengine/godot` repository,
 selects the matching x86_64 or arm64 Linux archive, requires the
 publisher-provided SHA-256 from GitHub release metadata, and verifies the

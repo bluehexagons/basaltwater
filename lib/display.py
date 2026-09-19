@@ -170,7 +170,7 @@ def print_service_access_summary(
                 lines.append(
                     (
                         "T3 Code pairing",
-                        f"infra-tools agent web pair {config.host} {config.username}",
+                        f"basaltw agent web pair {config.host} {config.username}",
                         "create a one-time client link",
                     )
                 )

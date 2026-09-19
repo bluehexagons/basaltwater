@@ -15,7 +15,7 @@ administrator-registered service restarts remain available as structured actions
 Run this from the trusted controller:
 
 ```bash
-infra-tools patch 192.168.1.50 agent \
+basaltw patch 192.168.1.50 agent \
   --privilege-broker \
   --privilege-broker-password
 ```
@@ -40,16 +40,16 @@ sessions after setup so they cannot retain removed group memberships.
 The agent runs one of these commands:
 
 ```bash
-infra-tools agent privilege request system.reboot \
+basaltw agent privilege request system.reboot \
   --reason "Apply the installed kernel update" --json
 
-infra-tools agent privilege request service.restart --unit example.service \
+basaltw agent privilege request service.restart --unit example.service \
   --reason "Restart the reviewed service" --json
 
-infra-tools agent privilege wait REQUEST_ID --timeout 300 --json
+basaltw agent privilege wait REQUEST_ID --timeout 300 --json
 
 # Request an exact command, without a shell or a leading sudo.
-infra-tools agent privilege request command.run \
+basaltw agent privilege request command.run \
   --reason "Refresh package metadata" --command /usr/bin/apt-get update
 ```
 
@@ -72,10 +72,10 @@ approval credentials or approve requests.
 
 ```bash
 # Prompt for and set a new approval password.
-infra-tools patch 192.168.1.50 agent --privilege-broker-password
+basaltw patch 192.168.1.50 agent --privilege-broker-password
 
 # Stop the services and remove approval authority.
-infra-tools patch 192.168.1.50 agent --no-privilege-broker
+basaltw patch 192.168.1.50 agent --no-privilege-broker
 ```
 
 Omitting these flags preserves the feature and current password. Rotation

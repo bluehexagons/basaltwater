@@ -10,7 +10,7 @@ SQLite, and local attachments. Initial installations use the verified
 For access through an SSH tunnel:
 
 ```bash
-infra-tools setup server_lite inventory-host operator \
+basaltw setup server_lite inventory-host operator \
   --homebox :7745 /srv/homebox --homebox-admin owner@example.com
 ssh -N -L 7745:127.0.0.1:7745 operator@inventory-host
 ```
@@ -19,7 +19,7 @@ Open `http://127.0.0.1:7745/` while the tunnel is running. For a dedicated
 hostname with publicly trusted HTTPS:
 
 ```bash
-infra-tools setup server_web inventory-host operator \
+basaltw setup server_web inventory-host operator \
   --homebox inventory.example.com /srv/homebox \
   --homebox-admin owner@example.com --ssl --ssl-email owner@example.com
 ```
@@ -75,7 +75,7 @@ contain a HomeBox subdirectory; do not select the mount root itself. Setup and
 operations verify backing-mount identity and capacity, and the unit requires
 its data mount. Data-path changes require a deliberate migration, not a patch.
 
-infra-tools owns the environment, systemd unit, and Nginx site. Manual changes
+Basaltwater owns the environment, systemd unit, and Nginx site. Manual changes
 to those generated files are reconciled on setup. Keep the API-key pepper:
 changing it invalidates existing API keys. Neither it nor the initial password
 is stored in controller setup records or printed by health commands.
@@ -83,14 +83,14 @@ is stored in controller setup records or printed by health commands.
 ## Health and updates
 
 ```bash
-infra-tools homebox health inventory-host --username root --json
+basaltw homebox health inventory-host --username root --json
 sudo systemctl status homebox.service
 sudo journalctl -u homebox.service -n 100 --no-pager
 ```
 
 Remote commands inherit the saved SSH key and username. Select root explicitly
 when the saved account lacks non-interactive sudo. All SSH host keys must be
-enrolled through the normal infra-tools workflow.
+enrolled through the normal Basaltwater workflow.
 
 Health checks service activity, maintenance state, mount identity, free space,
 SQLite integrity and users, secrets, executable digest, API version,
@@ -105,8 +105,8 @@ not public DNS, external firewall reachability, or an authenticated session.
 Select a reviewed stable release explicitly:
 
 ```bash
-infra-tools patch inventory-host --homebox-version v0.26.2 --dry-run
-infra-tools patch inventory-host --homebox-version v0.26.2
+basaltw patch inventory-host --homebox-version v0.26.2 --dry-run
+basaltw patch inventory-host --homebox-version v0.26.2
 ```
 
 Replace the example tag with the desired newer stable release. Releases are
@@ -130,9 +130,9 @@ reach the private listener independently of Nginx's maintenance gate.
 Commands use absolute paths **on the target**, and briefly stop HomeBox:
 
 ```bash
-infra-tools homebox backup inventory-host \
+basaltw homebox backup inventory-host \
   /var/lib/homebox-backups/manual.tar.gz --username root
-infra-tools homebox restore inventory-host \
+basaltw homebox restore inventory-host \
   /var/lib/homebox-backups/manual.tar.gz --username root --yes
 ```
 
@@ -151,7 +151,7 @@ or a protected transfer. Archives contain credentials: store them privately
 and restore them as root-owned mode-`0600` regular files. Reserve space for the
 archive, its unpacked contents, and restoration on the data filesystem. No
 automatic pruning touches manual archives. After each successful setup or
-automatic upgrade, infra-tools retains the four newest
+automatic upgrade, Basaltwater retains the four newest
 `*-before-setup.tar.gz` recovery archives and removes older automatic recovery
 archives only.
 
@@ -198,7 +198,7 @@ credential. Use the normal HTTPS endpoint or SSH tunnel to open it. Restore the
 pepper from backup if it is lost; password recovery does not repair API keys.
 
 ```bash
-infra-tools patch inventory-host --no-homebox
+basaltw patch inventory-host --no-homebox
 ```
 
 Disabling stops the application and removes its unit and Nginx ingress while

@@ -1650,7 +1650,7 @@ def setup_main(system_type: str, description: str, success_msg_fn: Callable[[Set
             print("  Sign in with the configured Basic Auth account, then pair this browser.")
         else:
             print("T3 Code pairing (one-time):")
-            print(f"  infra-tools agent web pair {config.host} {config.username}")
+            print(f"  basaltw agent web pair {config.host} {config.username}")
             if config.ssh_key:
                 print(
                     f"  Add --key {config.ssh_key} if the SSH key is not your "

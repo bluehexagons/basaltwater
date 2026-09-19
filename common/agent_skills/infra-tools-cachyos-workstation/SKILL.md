@@ -12,7 +12,7 @@ and its existing credentials and project configuration. The `agent_cachyos`
 profile installs tooling; it does not manage the OS, graphics drivers, login
 manager, account groups, network, firewall, or power policy.
 
-To add supported tools, rerun `infra-tools setup agent_cachyos localhost` as the
+To add supported tools, rerun `basaltw setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
 `--kdenlive`, `--krita`, `--inkscape`, `--scribus`, `--audacity`, `--ardour`,
@@ -21,7 +21,7 @@ desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`
 updated on rerun, while system-managed executables remain under their package
 manager. Authentication uses the provider's local login.
 
-Packages use pacman, not APT. infra-tools installs missing packages using the
+Packages use pacman, not APT. Basaltwater installs missing packages using the
 existing sync database. Leave full OS updates to the user's CachyOS workflow;
 never repair an installation failure with a partial `pacman -Sy` upgrade.
 Use the original installer for deliberate tool updates.
@@ -32,7 +32,7 @@ own test commands. For GUI-only validation, launch the application in the user's
 desktop session and arrange human testing. Do not assume XRDP, X11 automation,
 a managed gateway, remote pairing, or VM maintenance services exist here.
 
-Start desktop prerequisite diagnosis with `infra-tools local cachyos-doctor --json`
+Start desktop prerequisite diagnosis with `basaltw local cachyos-doctor --json`
 as the desktop user. It does not activate services or capture content.
 An available package, socket, or bus owner is only a prerequisite observation;
 it does not verify automation or permission. Treat null selection/permission

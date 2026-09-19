@@ -1,7 +1,7 @@
 # Local system maintenance
 
 Use the `local` command for focused changes to the Debian machine where
-`infra-tools` is installed. These commands reuse the same package, desktop,
+`basaltw` is installed. These commands reuse the same package, desktop,
 browser, hostname, and network steps used by full setup, but do not rebuild
 the whole workstation or control-plane profile.
 
@@ -9,8 +9,8 @@ Mutating local commands require root, so run them with `sudo`. Use
 `--dry-run` before a change when the command supports it:
 
 ```bash
-sudo infra-tools local --help
-sudo infra-tools local install --dry-run btop ripgrep
+sudo basaltw local --help
+sudo basaltw local install --dry-run btop ripgrep
 ```
 
 ## Packages and system updates
@@ -19,13 +19,13 @@ Refresh Debian package metadata, upgrade installed packages, and remove
 packages APT no longer needs:
 
 ```bash
-sudo infra-tools local update
+sudo basaltw local update
 ```
 
 Install one or more Debian packages without running the rest of setup:
 
 ```bash
-sudo infra-tools local install neovim tmux jq
+sudo basaltw local install neovim tmux jq
 ```
 
 Package names are validated before APT runs. The command uses the same
@@ -36,7 +36,7 @@ For larger changes that also need a language runtime, security policy, or
 maintenance timer, use the normal local setup flags instead:
 
 ```bash
-sudo infra-tools setup workstation_dev localhost "$USER" \
+sudo basaltw setup workstation_dev localhost "$USER" \
   --node --python --go --dry-run
 ```
 
@@ -46,8 +46,8 @@ Configure the machine's one shared XRDP desktop while all graphical sessions
 are logged out:
 
 ```bash
-sudo infra-tools local desktop xfce
-sudo infra-tools local desktop cinnamon --dark
+sudo basaltw local desktop xfce
+sudo basaltw local desktop cinnamon --dark
 ```
 
 Environment choices are `xfce`, `i3`, `cinnamon`, and `lxqt`. This command
@@ -60,7 +60,7 @@ migration](XRDP.md) before converting an existing graphical workstation.
 To expose RDP remotely and configure its firewall policy, use setup with `--rdp`:
 
 ```bash
-sudo infra-tools setup workstation_dev localhost "$USER" \
+sudo basaltw setup workstation_dev localhost "$USER" \
   --desktop xfce --rdp --rdp-existing-password
 ```
 
@@ -69,8 +69,8 @@ sudo infra-tools setup workstation_dev localhost "$USER" \
 Install a supported browser without repeating desktop setup:
 
 ```bash
-sudo infra-tools local browser firefox
-sudo infra-tools local browser librewolf --flatpak --no-default
+sudo basaltw local browser firefox
+sudo basaltw local browser librewolf --flatpak --no-default
 ```
 
 The default behavior configures the browser for the local desktop user. Use
@@ -81,7 +81,7 @@ For LibreOffice or an explicit graphical editor, use the workstation profile's
 existing flags and inspect the plan first:
 
 ```bash
-sudo infra-tools setup workstation_dev localhost "$USER" \
+sudo basaltw setup workstation_dev localhost "$USER" \
   --office --editor geany --dry-run
 ```
 
@@ -96,21 +96,21 @@ explicit; install them by package identifier with `--flatpak-install`.
 Set the persistent hostname without rerunning the full setup:
 
 ```bash
-sudo infra-tools local hostname workstation-01
+sudo basaltw local hostname workstation-01
 ```
 
 Advertise a server hostname on the local network with Avahi/mDNS. This enables
 names such as `fileserver.local` for SSH and other LAN clients:
 
 ```bash
-infra-tools setup server_lite 192.168.1.50 admin \
+basaltw setup server_lite 192.168.1.50 admin \
   --hostname fileserver --mdns --dry-run
-infra-tools setup server_lite 192.168.1.50 admin \
+basaltw setup server_lite 192.168.1.50 admin \
   --hostname fileserver --mdns
 ```
 
 The flag installs and enables `avahi-daemon`, installs `libnss-mdns`, and adds
-the managed UDP 5353 UFW rule. Use `infra-tools patch HOST --no-mdns` to stop
+the managed UDP 5353 UFW rule. Use `basaltw patch HOST --no-mdns` to stop
 the managed Avahi service and remove its managed firewall rule. Clients must
 support mDNS; Debian/Ubuntu clients can install `libnss-mdns`. mDNS is limited
 to the local Layer-2 network and normally does not cross VLANs or routed
@@ -119,13 +119,13 @@ subnets.
 View current interface addresses:
 
 ```bash
-infra-tools local ip
+basaltw local ip
 ```
 
 Stage a static IPv4 address, gateway, and DNS servers:
 
 ```bash
-sudo infra-tools local ip 192.168.1.50/24 \
+sudo basaltw local ip 192.168.1.50/24 \
   --gateway 192.168.1.1 \
   --dns 1.1.1.1 --dns 1.0.0.1 \
   --interface enp1s0
@@ -134,7 +134,7 @@ sudo infra-tools local ip 192.168.1.50/24 \
 Use `local network` for a dual-stack configuration:
 
 ```bash
-sudo infra-tools local network \
+sudo basaltw local network \
   --ip 192.168.1.50/24 --gateway 192.168.1.1 \
   --ipv6 2001:db8:1::50/64 --gateway6 2001:db8:1::1 \
   --dns 1.1.1.1 --dns 2606:4700:4700::1111 \
@@ -158,25 +158,25 @@ The focused commands complement, rather than replace, the existing local
 tools:
 
 ```bash
-# Install or refresh the infra-tools launcher and its base dependencies.
-sudo infra-tools bootstrap
+# Install or refresh the basaltw launcher and its base dependencies.
+sudo basaltw bootstrap
 
 # Install Python aliases, uv, and shell completion support.
-infra-tools python-tools
+basaltw python-tools
 
 # Refresh shell completion files.
-infra-tools completions --shell bash
+basaltw completions --shell bash
 
 # Inspect and deliberately update user-installed coding agents.
-infra-tools agent doctor
-infra-tools agent update --dry-run
+basaltw agent doctor
+basaltw agent update --dry-run
 
-# Inspect or change the infra-tools source channel, then update it.
-infra-tools channel
-infra-tools upgrade
+# Inspect or change the basaltw source channel, then update it.
+basaltw channel
+basaltw upgrade
 ```
 
-Use `infra-tools setup ... localhost ...` when several changes should be
+Use `basaltw setup ... localhost ...` when several changes should be
 coordinated, when a profile's security and maintenance steps are needed, or
 when the operation is part of a saved configuration. Use the focused `local`
 commands for small, independent maintenance tasks.

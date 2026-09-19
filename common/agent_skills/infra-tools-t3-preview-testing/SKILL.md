@@ -1,6 +1,6 @@
 ---
 name: infra-tools-t3-preview-testing
-description: Browser-test web applications with T3 Code's collaborative preview on an infra-tools agent VM where managed Playwright is not provisioned.
+description: Browser-test web applications with T3 Code's collaborative preview on a Basaltwater agent VM where managed Playwright is not provisioned.
 metadata:
   managed-by: infra_tools
 ---
@@ -126,7 +126,7 @@ installation. Never transfer the CA private key.
 
 For enrollment, read only the matching platform section of the
 [client CA trust guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/CLIENT_CA_TRUST.md)
-(or `docs/CLIENT_CA_TRUST.md` in an infra-tools checkout). The user performs
+(or `docs/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
 this client security change. After enrollment, restart the client, recheck
 preview status, and retry the existing tab. If enrollment is declined or the
 guide is unavailable, retain the coverage gap and continue the other checks.

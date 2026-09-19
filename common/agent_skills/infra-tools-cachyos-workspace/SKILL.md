@@ -14,9 +14,9 @@ Setup clones only missing repositories and never pulls or resets an existing one
 When concurrent work needs isolation, use the shared managed-worktree commands:
 
 ```bash
-infra-tools agent workspace create ~/repos/PROJECT TASK --base HEAD --json
-infra-tools agent workspace list ~/repos/PROJECT --json
-infra-tools agent workspace status WORKTREE --json
+basaltw agent workspace create ~/repos/PROJECT TASK --base HEAD --json
+basaltw agent workspace list ~/repos/PROJECT --json
+basaltw agent workspace status WORKTREE --json
 ```
 
 Work in the returned directory. `HEAD` uses the local checkout's commit; fetch
@@ -26,8 +26,8 @@ unrelated work, and integrate or push only within the user's requested scope.
 Inspect status before cleanup, then preview removal:
 
 ```bash
-infra-tools agent workspace remove WORKTREE --dry-run --json
-infra-tools agent workspace remove WORKTREE --json
+basaltw agent workspace remove WORKTREE --dry-run --json
+basaltw agent workspace remove WORKTREE --json
 ```
 
 Removal refuses dirty, unmerged, or unmanaged worktrees. Resolve the reported

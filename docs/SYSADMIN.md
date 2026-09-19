@@ -1,7 +1,7 @@
 # Sysadmin Convenience Commands
 
 Quick-access commands for daily server administration tasks. All commands
-inherit SSH credentials (username, key, port) from the saved infra-tools
+inherit SSH credentials (username, key, port) from the saved Basaltwater
 configuration for the host when available, so you rarely need to pass them
 explicitly.
 
@@ -48,7 +48,7 @@ Mount a remote directory using sshfs. The local mountpoint is created
 automatically if it does not exist.
 
 ```
-infra-tools mount <host>:<remote_path> <local_path> [options]
+basaltw mount <host>:<remote_path> <local_path> [options]
 ```
 
 | Option | Description |
@@ -61,9 +61,9 @@ infra-tools mount <host>:<remote_path> <local_path> [options]
 | `-p, --port N` | SSH port |
 
 ```bash
-infra-tools mount myserver:/var/log /mnt/myserver-logs
-infra-tools mount myserver:/srv/data /mnt/data --ro
-infra-tools mount 10.0.0.10:/home/admin /mnt/admin -u admin -i ~/.ssh/id_ed25519
+basaltw mount myserver:/var/log /mnt/myserver-logs
+basaltw mount myserver:/srv/data /mnt/data --ro
+basaltw mount 10.0.0.10:/home/admin /mnt/admin -u admin -i ~/.ssh/id_ed25519
 ```
 
 Mounts use `reconnect` and `ServerAliveInterval=30` so short network
@@ -76,12 +76,12 @@ interruptions recover automatically.
 Unmount an sshfs mount by local path or by host name.
 
 ```
-infra-tools umount <local_path|hostname>
+basaltw umount <local_path|hostname>
 ```
 
 ```bash
-infra-tools umount /mnt/myserver-logs   # by local path
-infra-tools umount myserver             # by host name (finds the mount automatically)
+basaltw umount /mnt/myserver-logs   # by local path
+basaltw umount myserver             # by host name (finds the mount automatically)
 ```
 
 When given a host name, `findmnt` is used to locate the mount point. If more
@@ -102,7 +102,7 @@ SSH into a host and print a structured health summary:
 - Reboot-required status
 
 ```
-infra-tools health <host> [options]
+basaltw health <host> [options]
 ```
 
 | Option | Description |
@@ -112,8 +112,8 @@ infra-tools health <host> [options]
 | `-i, --key PATH` | SSH identity file (overrides saved config) |
 
 ```bash
-infra-tools health myserver
-infra-tools health 10.0.0.10 -u admin
+basaltw health myserver
+basaltw health 10.0.0.10 -u admin
 ```
 
 Each section degrades gracefully — if a command is unavailable on the remote
@@ -124,11 +124,11 @@ host (e.g. `journalctl` on a non-systemd system), that section prints
 
 ## ssh
 
-Open an interactive SSH session using credentials from the saved infra-tools
+Open an interactive SSH session using credentials from the saved Basaltwater
 config for the host. Adds `ControlMaster=auto` for connection reuse.
 
 ```
-infra-tools ssh <host> [options] [-- <remote_command>]
+basaltw ssh <host> [options] [-- <remote_command>]
 ```
 
 | Option | Description |
@@ -140,9 +140,9 @@ infra-tools ssh <host> [options] [-- <remote_command>]
 | `-- cmd ...` | Run a remote command instead of opening a shell |
 
 ```bash
-infra-tools ssh myserver
-infra-tools ssh myserver -- journalctl -f
-infra-tools ssh myserver -- systemctl status nginx
+basaltw ssh myserver
+basaltw ssh myserver -- journalctl -f
+basaltw ssh myserver -- systemctl status nginx
 ```
 
 Uses `execvp` to replace the current process, so the terminal is fully
@@ -155,7 +155,7 @@ interactive (signals, terminal size, etc. all work correctly).
 Sync a local file or directory to a remote host using rsync over SSH.
 
 ```
-infra-tools push <local_path> <host>:<remote_path> [options]
+basaltw push <local_path> <host>:<remote_path> [options]
 ```
 
 | Option | Description |
@@ -169,9 +169,9 @@ infra-tools push <local_path> <host>:<remote_path> [options]
 | `-p, --port N` | SSH port |
 
 ```bash
-infra-tools push ./dist myserver:/var/www/app
-infra-tools push ./data myserver:/backup/data --dry-run
-infra-tools push ./data myserver:/backup/data --delete
+basaltw push ./dist myserver:/var/www/app
+basaltw push ./data myserver:/backup/data --dry-run
+basaltw push ./data myserver:/backup/data --delete
 ```
 
 When `--delete` is specified without `--dry-run`, a confirmation prompt is
@@ -184,7 +184,7 @@ shown before proceeding.
 Sync a remote file or directory to local using rsync over SSH.
 
 ```
-infra-tools pull <host>:<remote_path> [<local_path>] [options]
+basaltw pull <host>:<remote_path> [<local_path>] [options]
 ```
 
 | Option | Description |
@@ -197,9 +197,9 @@ infra-tools pull <host>:<remote_path> [<local_path>] [options]
 | `-p, --port N` | SSH port |
 
 ```bash
-infra-tools pull myserver:/var/log ./logs
-infra-tools pull myserver:/srv/data          # saves to ./data
-infra-tools pull myserver:/var/log --dry-run
+basaltw pull myserver:/var/log ./logs
+basaltw pull myserver:/srv/data          # saves to ./data
+basaltw pull myserver:/var/log --dry-run
 ```
 
 ---
@@ -211,7 +211,7 @@ Idempotent — skips if the key is already present. Creates the `.ssh` directory
 and `authorized_keys` file with correct permissions if needed.
 
 ```
-infra-tools key push <host> [options]
+basaltw key push <host> [options]
 ```
 
 | Option | Description |
@@ -222,9 +222,9 @@ infra-tools key push <host> [options]
 | `-i, --key PATH` | SSH key to authenticate with |
 
 ```bash
-infra-tools key push myserver
-infra-tools key push myserver --pubkey ~/.ssh/id_rsa.pub
-infra-tools key push 10.0.0.10 -u admin -i ~/.ssh/bootstrap_key
+basaltw key push myserver
+basaltw key push myserver --pubkey ~/.ssh/id_rsa.pub
+basaltw key push 10.0.0.10 -u admin -i ~/.ssh/bootstrap_key
 ```
 
 ---
@@ -235,7 +235,7 @@ Run `df -h` on one or more remote hosts in parallel and print a combined table
 sorted by percent used. Entries above 85% are prefixed with `[!]`.
 
 ```
-infra-tools df <host> [<host2> ...] [options]
+basaltw df <host> [<host2> ...] [options]
 ```
 
 | Option | Description |
@@ -245,9 +245,9 @@ infra-tools df <host> [<host2> ...] [options]
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools df myserver
-infra-tools df web1 web2 db1
-infra-tools df web1 web2 -u admin
+basaltw df myserver
+basaltw df web1 web2 db1
+basaltw df web1 web2 -u admin
 ```
 
 Hosts that cannot be reached are reported as warnings and omitted from the table.
@@ -260,7 +260,7 @@ Run a shell command on multiple hosts concurrently, printing each host's output
 in a labeled block followed by a pass/fail summary.
 
 ```
-infra-tools fan <host> [<host2> ...] [options] -- <command>
+basaltw fan <host> [<host2> ...] [options] -- <command>
 ```
 
 | Option | Description |
@@ -271,9 +271,9 @@ infra-tools fan <host> [<host2> ...] [options] -- <command>
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools fan web1 web2 -- uptime
-infra-tools fan web1 web2 db1 -- systemctl restart myapp
-infra-tools fan web1 web2 -u deploy -- git -C /srv/app pull
+basaltw fan web1 web2 -- uptime
+basaltw fan web1 web2 db1 -- systemctl restart myapp
+basaltw fan web1 web2 -u deploy -- git -C /srv/app pull
 ```
 
 All hosts run concurrently. Output is serialized per host after all results are
@@ -286,7 +286,7 @@ collected, sorted by hostname for stable output.
 Manage a systemd service on a remote host. Defaults to `status`.
 
 ```
-infra-tools svc <host> <unit> [action] [options]
+basaltw svc <host> <unit> [action] [options]
 ```
 
 | Argument | Description |
@@ -301,10 +301,10 @@ infra-tools svc <host> <unit> [action] [options]
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools svc myserver nginx              # show status
-infra-tools svc myserver nginx restart      # restart and show status
-infra-tools svc myserver myapp.service stop
-infra-tools svc myserver nginx enable
+basaltw svc myserver nginx              # show status
+basaltw svc myserver nginx restart      # restart and show status
+basaltw svc myserver myapp.service stop
+basaltw svc myserver nginx enable
 ```
 
 Mutating actions (`restart`, `start`, `stop`, `enable`, `disable`, `reload`)
@@ -317,7 +317,7 @@ use `sudo` and display a status readout afterward.
 Show recent journal entries for a systemd unit, or follow live output.
 
 ```
-infra-tools logs <host> <unit> [options]
+basaltw logs <host> <unit> [options]
 ```
 
 | Option | Description |
@@ -328,9 +328,9 @@ infra-tools logs <host> <unit> [options]
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools logs myserver nginx
-infra-tools logs myserver myapp -f
-infra-tools logs myserver nginx -n 200
+basaltw logs myserver nginx
+basaltw logs myserver myapp -f
+basaltw logs myserver nginx -n 200
 ```
 
 Uses `execvp` so `-f` gives a true live stream with correct terminal behavior.
@@ -339,12 +339,12 @@ Uses `execvp` so `-f` gives a true live stream with correct terminal behavior.
 
 ## upgrade
 
-With no host arguments, update the installed infra-tools worktree on its
+With no host arguments, update the installed Basaltwater worktree on its
 selected channel. With one or more hosts, run `apt-get update && apt-get
 upgrade` on those hosts in parallel and report which require a reboot.
 
 ```bash
-infra-tools upgrade
+basaltw upgrade
 ```
 
 The installed-source form refuses to overwrite local worktree changes. See
@@ -353,7 +353,7 @@ The installed-source form refuses to overwrite local worktree changes. See
 ### Remote host upgrade
 
 ```
-infra-tools upgrade <host> [<host2> ...] [options]
+basaltw upgrade <host> [<host2> ...] [options]
 ```
 
 | Option | Description |
@@ -364,9 +364,9 @@ infra-tools upgrade <host> [<host2> ...] [options]
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools upgrade myserver
-infra-tools upgrade web1 web2 db1
-infra-tools upgrade web1 web2 --check     # show pending counts only
+basaltw upgrade myserver
+basaltw upgrade web1 web2 db1
+basaltw upgrade web1 web2 --check     # show pending counts only
 ```
 
 Requires `sudo` access on the remote host. Hosts that fail are reported and do
@@ -380,7 +380,7 @@ Probe hosts via SSH and print a latency table. Connections have a 5-second
 limit and the full probe has a 10-second deadline.
 
 ```
-infra-tools reachable [<hosts>] [options]
+basaltw reachable [<hosts>] [options]
 ```
 
 | Option | Description |
@@ -391,10 +391,10 @@ infra-tools reachable [<hosts>] [options]
 | `-i, --key PATH` | SSH identity file |
 
 ```bash
-infra-tools reachable                      # probe all saved hosts
-infra-tools reachable '*.example.com'      # glob filter on saved hosts
-infra-tools reachable --pattern 'web*'
-infra-tools reachable web1 web2 db1        # explicit host list
+basaltw reachable                      # probe all saved hosts
+basaltw reachable '*.example.com'      # glob filter on saved hosts
+basaltw reachable --pattern 'web*'
+basaltw reachable web1 web2 db1        # explicit host list
 ```
 
 All probes run concurrently. The summary line lists any unreachable hosts by
@@ -406,17 +406,17 @@ name. Exit code is 1 if any host is unreachable, 0 if all respond.
 
 Rename the account stored as a target's setup username. The operation runs as
 a detached, root-owned systemd job on the target, logs out the old account,
-moves the conventional home directory, reconciles infra-tools-managed units
+moves the conventional home directory, reconciles Basaltwater-managed units
 and state, verifies SSH access as the new account, and then updates the current
 controller cache.
 
 ```
-infra-tools user rename <host> <new_username> [options]
+basaltw user rename <host> <new_username> [options]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `host` | Remote host with a saved infra-tools setup |
+| `host` | Remote host with a saved Basaltwater setup |
 | `new_username` | New local login name |
 | `--admin-user USER` | Administrative SSH account (defaults to saved target user) |
 | `-i, --key PATH` | SSH identity file |
@@ -429,10 +429,10 @@ infra-tools user rename <host> <new_username> [options]
 Examples:
 
 ```bash
-infra-tools user rename myserver newadmin
-infra-tools user rename myserver newadmin --admin-user root --yes
-infra-tools user rename myserver newadmin --dry-run
-infra-tools user rename myserver newadmin --resume 7d4e...
+basaltw user rename myserver newadmin
+basaltw user rename myserver newadmin --admin-user root --yes
+basaltw user rename myserver newadmin --dry-run
+basaltw user rename myserver newadmin --resume 7d4e...
 ```
 
 The saved setup username is used as the old name and is checked against the
@@ -447,6 +447,6 @@ from that session. On resume, the controller tries both the configured
 administrative identity and the new username; home-selection options and
 `--dry-run` cannot be changed during a resume.
 
-The target must already have the current infra-tools target files installed so
+The target must already have the current Basaltwater target files installed so
 the migration helper is available under `/opt/infra_tools/lib/`. Run the
 normal target upgrade first if preflight reports that the helper is missing.

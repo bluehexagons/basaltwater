@@ -8,17 +8,17 @@ system account with `git-shell`; it cannot be used as a general login account.
 ## Choose a deployment mode
 
 Hostname mode is the usual choice. The port in `--gogs DOMAIN:PORT` is the
-public Gogs HTTPS port. Gogs listens on a separate infra-tools-managed
+public Gogs HTTPS port. Gogs listens on a separate Basaltwater-managed
 loopback port and nginx serves the public URL:
 
 ```bash
-infra-tools setup server_web git.example.com deploy \
+basaltw setup server_web git.example.com deploy \
   --gogs git.example.com:3000 /var/lib/gogs \
   --ssl --ssl-email admin@example.com
 ```
 
 The example is available at `https://git.example.com:3000/`; Gogs does not
-claim port 443. With `--ssl`, infra-tools obtains and renews a Let's Encrypt
+claim port 443. With `--ssl`, Basaltwater obtains and renews a Let's Encrypt
 certificate. Port 80 remains the ACME challenge and redirect listener. With
 `--cloudflare`, the nginx-to-Gogs connection remains private and the tunnel
 serves standard external HTTPS; public HTTP/HTTPS firewall ports are not
@@ -28,7 +28,7 @@ For a lab or private-network service, omit the hostname. With no source rules,
 Gogs stays on loopback and setup prints an SSH tunnel command:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 deploy \
+basaltw setup server_web 192.168.1.10 deploy \
   --gogs :3000 /srv/gogs-data
 
 ssh -L 3000:127.0.0.1:3000 deploy@192.168.1.10
@@ -38,7 +38,7 @@ To make HTTPS reachable directly on a private network, enable SSL and repeat
 `--gogs-source` for the exact IPv4 hosts or networks that need access:
 
 ```bash
-infra-tools setup server_web 192.168.1.10 deploy \
+basaltw setup server_web 192.168.1.10 deploy \
   --gogs :3000 /srv/gogs-data \
   --ssl \
   --gogs-source 192.168.1.0/24 \
@@ -48,7 +48,7 @@ infra-tools setup server_web 192.168.1.10 deploy \
 Because a private IP cannot use the normal public-domain certificate flow,
 hostless `--ssl` creates a self-signed certificate with the target IP in its
 subject alternative name and includes `127.0.0.1` when the listener is
-loopback-only. Infra-tools revalidates the certificate identity, key pair, and
+loopback-only. Basaltwater revalidates the certificate identity, key pair, and
 remaining lifetime on rerun and replaces it when fewer than 30 days remain.
 Trust `/etc/nginx/ssl/192.168.1.10.crt` explicitly on each client, or use a
 hostname with Let's Encrypt to avoid certificate warnings. The resulting URL
@@ -56,7 +56,7 @@ is `https://192.168.1.10:3000/`.
 
 Source-restricted mode requires active UFW. Setup stops the existing Gogs
 service, installs and verifies replacement source rules, removes obsolete
-infra-tools-managed rules, and only then writes the listener. It refuses
+Basaltwater-managed rules, and only then writes the listener. It refuses
 public IPv4 sources from either `--gogs-source` or the generic
 `--access-source`/`--lan-access` policy, explicit Gogs IPv6 sources, and
 unmanaged allow rules for the same port. Generic IPv6 sources remain available
@@ -82,7 +82,7 @@ the setup username. To choose its password without exposing it in shell
 history, save a matching workspace credential before setup:
 
 ```bash
-infra-tools credentials set gitadmin
+basaltw credentials set gitadmin
 ```
 
 The setup command may instead include `--credential gitadmin PASSWORD`, but
@@ -127,7 +127,7 @@ database under `data/gogs.db`, repositories, logs, completed LFS objects under
 `data/tmp/lfs-objects`. Gogs uses its local LFS backend explicitly; no separate
 LFS daemon or object store is required. Release binaries live under
 `/opt/gogs/releases`; `/opt/gogs/current` and `/usr/local/bin/gogs` point to
-the active release. Infra-tools requires the SHA-256 supplied in GitHub's
+the active release. Basaltwater requires the SHA-256 supplied in GitHub's
 release asset metadata and verifies the downloaded archive before extracting
 or activating it. A failed activation restores the prior verified release;
 if no verified rollback target exists, setup stops the service. Setup also
@@ -143,11 +143,11 @@ sudo systemctl status gogs
 sudo fail2ban-client status infra-tools-gogs
 sudo journalctl -u gogs -n 100 --no-pager
 sudo /usr/local/bin/gogs --version
-infra-tools gogs health git.example.com
-infra-tools gogs health git.example.com --json
+basaltw gogs health git.example.com
+basaltw gogs health git.example.com --json
 ```
 
-Run `infra-tools gogs health` on the control system. It reads the root-owned
+Run `basaltw gogs health` on the control system. It reads the root-owned
 managed state through non-interactive sudo and reports service and SQLite
 health, the backing filesystem, free bytes and inodes, per-category usage,
 directory access as `git`, the update service/timer, nginx's upload limit, and
@@ -185,9 +185,9 @@ Agent VMs that need LFS can install and initialize the client once before all
 normal repository clones:
 
 ```bash
-infra-tools credentials set agent-git
+basaltw credentials set agent-git
 
-infra-tools setup server_dev 192.168.1.41 agent \
+basaltw setup server_dev 192.168.1.41 agent \
   --git-access read-write \
   --git-credential https://git.example.com:3000 agent-git \
   --git-lfs \
@@ -213,7 +213,7 @@ GitHub worktree. Then run the local utility from a clean worktree on local
 storage:
 
 ```bash
-infra-tools gogs repo-configure ~/repos/project \
+basaltw gogs repo-configure ~/repos/project \
   --github-url https://github.com/team/project.git \
   --gogs-url https://git.example.com:3000/team/project.git \
   --track 'assets/**' \
@@ -245,12 +245,12 @@ disks. Save the placeholder Samba credentials without putting passwords in the
 setup command or shell history:
 
 ```bash
-infra-tools credentials set gitadmin
-infra-tools credentials set cluster
-infra-tools credentials set alice
-infra-tools credentials set bob
+basaltw credentials set gitadmin
+basaltw credentials set cluster
+basaltw credentials set alice
+basaltw credentials set bob
 
-infra-tools setup server_web 192.168.0.50 gitadmin \
+basaltw setup server_web 192.168.0.50 gitadmin \
   --provision-on ts1 --name git-1 --image-storage local \
   --memory 2G --balloon-min 1536M --cores 2 \
   --storage root local-lvm 32G \
@@ -307,7 +307,7 @@ must not point inside a share or the Gogs data tree. Gogs already supplies the
 server side of Git LFS; `--git-lfs` installs the client and therefore is not
 needed on this server command.
 
-Infra-tools identifies all data devices by stable serial, requires new devices
+Basaltwater identifies all data devices by stable serial, requires new devices
 to be blank, and mounts the ext4 filesystems before Gogs or Samba creates data.
 Gogs and each Samba share then check the mount marker. A missing or wrong mount
 stops setup instead of allowing repositories, LFS objects, or shared files to
@@ -323,7 +323,7 @@ or export, not as the live SQLite, repository, or LFS-object filesystem.
 
 - A setup failure refreshing `authorized_keys` with `panic: error getting work
   directory: stat .: permission denied` means the Gogs CLI inherited a directory
-  inaccessible to `git`. Update infra-tools and rerun setup. Managed admin
+  inaccessible to `git`. Update Basaltwater and rerun setup. Managed admin
   commands now change to `/opt/gogs/current`, and release checks run from the
   candidate release directory. This fix does not require `--nopasswd` or broader
   home-directory permissions.

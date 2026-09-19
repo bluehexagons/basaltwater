@@ -135,8 +135,10 @@ not copy or move state. See the [contract inventory](plans/BASALTWATER_CONTRACTS
 
 GitHub source/download links still use `bluehexagons/infra_tools`. This PR does
 not rename the hosted repository, publish to PyPI, register a domain or claim
-trademark clearance. Remaining older documentation and installed workflow
-skills using `infra-tools` work through the supported transition command.
+trademark clearance. Current guides and bundled skills use `basaltw`.
+Previously installed workflow skills using `infra-tools` continue through
+the supported transition command until setup refreshes them. Skill IDs stay
+unchanged to preserve reconciliation and readiness checks.
 
 The maintainer may retire that command no earlier than v3.0, after migrating
 generated automation and agent guidance and publishing removal instructions.

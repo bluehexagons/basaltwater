@@ -1,6 +1,6 @@
 ---
 name: infra-tools-web-gateway
-description: Publish static sites or expose loopback web services through an infra-tools-managed HTTPS gateway.
+description: Publish static sites or expose loopback web services through a Basaltwater-managed HTTPS gateway.
 metadata:
   managed-by: infra_tools
 ---

@@ -1,6 +1,6 @@
 # Firmware auditing and updates
 
-infra-tools provides a small local firmware workflow backed by `fwupd`. It is
+Basaltwater provides a small local firmware workflow backed by `fwupd`. It is
 audit-first, does not enable unattended firmware flashing, and never reboots a
 host automatically.
 
@@ -9,7 +9,7 @@ host automatically.
 Run the audit on the physical machine whose firmware you want to inspect:
 
 ```bash
-infra-tools firmware audit
+basaltw firmware audit
 ```
 
 The audit records DMI system and BIOS identity, the running kernel, related
@@ -18,11 +18,11 @@ configured fwupd remotes. It refreshes remote metadata by default. Use cached
 metadata or produce machine-readable output with:
 
 ```bash
-infra-tools firmware audit --no-refresh
-infra-tools firmware audit --json
+basaltw firmware audit --no-refresh
+basaltw firmware audit --json
 ```
 
-If `fwupdmgr` is unavailable, infra-tools offers to install the `fwupd` Debian
+If `fwupdmgr` is unavailable, Basaltwater offers to install the `fwupd` Debian
 package through APT before continuing. The installer uses `sudo` when needed
 and available. For an already-authorized non-interactive dependency install,
 use `--install-dependencies`.
@@ -39,14 +39,14 @@ Start with an audit, stop or migrate workloads, and then update every eligible
 device:
 
 ```bash
-infra-tools firmware audit
-infra-tools firmware update
+basaltw firmware audit
+basaltw firmware update
 ```
 
 To update one device, copy its ID from the audit:
 
 ```bash
-infra-tools firmware update DEVICE_ID
+basaltw firmware update DEVICE_ID
 ```
 
 The update command repeats the audit immediately before changing anything. On
@@ -55,12 +55,12 @@ block the update unless the operator explicitly passes
 `--allow-running-guests`. A failed guest-state check always blocks the update.
 
 The final firmware action requires confirmation. `--yes` acknowledges that
-confirmation and passes fwupd's assume-yes option, but infra-tools always
+confirmation and passes fwupd's assume-yes option, but Basaltwater always
 suppresses fwupd's reboot prompt and does not bypass the audit or Proxmox
 checks:
 
 ```bash
-infra-tools firmware update --yes
+basaltw firmware update --yes
 ```
 
 Firmware can interrupt devices or leave an update pending until shutdown or

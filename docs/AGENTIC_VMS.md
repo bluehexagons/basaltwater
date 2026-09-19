@@ -1,6 +1,6 @@
 # Agentic VMs
 
-This guide helps you choose and configure an infra-tools VM for coding agents.
+This guide helps you choose and configure a Basaltwater VM for coding agents.
 It covers both headless and graphical machines, from a narrow disposable
 environment to a fully capable coding desktop. Start with a fresh VM when an
 agent will inspect unfamiliar repositories or execute unfamiliar build scripts.
@@ -32,7 +32,7 @@ sudo authority. The user can still approve a supported maintenance action from
 their own device.
 
 ```bash
-infra-tools setup agent_vm 192.168.1.50 agent \
+basaltw setup agent_vm 192.168.1.50 agent \
   --agent-config active \
   --git-access read \
   --repo https://github.com/example/project.git \
@@ -46,7 +46,7 @@ the Linux, Git, T3, or web-panel password again. After setup, the agent makes a
 request such as:
 
 ```bash
-infra-tools agent privilege request system.reboot \
+basaltw agent privilege request system.reboot \
   --reason "Apply the installed kernel update" --json
 ```
 
@@ -64,7 +64,7 @@ needs those tools. This example provides the web panel as a convenient launch
 point for the separate approval page.
 
 ```bash
-infra-tools setup agent_code_vm 192.168.1.60 agent \
+basaltw setup agent_code_vm 192.168.1.60 agent \
   --provision-on pve1 --name full-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
   --agent-tool opencode \
@@ -102,7 +102,7 @@ for a disposable maintenance VM or a tightly controlled project, but any code
 running as the agent account can use root through sudo.
 
 ```bash
-infra-tools setup agent_code_vm 192.168.1.70 maintainer \
+basaltw setup agent_code_vm 192.168.1.70 maintainer \
   --provision-on pve1 --name maintenance-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
   --agent-tool opencode \
@@ -123,7 +123,7 @@ Use a fresh VM for untrusted dependencies or repository analysis that does not
 need interactive browser, plugin, credential, or elevation features:
 
 ```bash
-infra-tools setup agent_vm 192.168.1.80 evaluator \
+basaltw setup agent_vm 192.168.1.80 evaluator \
   --provision-on pve1 --name evaluation-agent-1 \
   --harden-user \
   --git-access read \
@@ -141,16 +141,16 @@ one in place.
 After setup, verify the agent environment from the controller:
 
 ```bash
-infra-tools agent doctor 192.168.1.60 agent --all-capabilities --json
-infra-tools agent maintenance status 192.168.1.60 agent
+basaltw agent doctor 192.168.1.60 agent --all-capabilities --json
+basaltw agent maintenance status 192.168.1.60 agent
 ```
 
-Use `infra-tools info` and `infra-tools cmd` before changing a saved VM. Add
+Use `basaltw info` and `basaltw cmd` before changing a saved VM. Add
 features with `patch`, first using `--dry-run`. To add the approval panel to an
 existing compatible agent VM, run:
 
 ```bash
-infra-tools patch 192.168.1.60 agent \
+basaltw patch 192.168.1.60 agent \
   --privilege-broker \
   --privilege-broker-password
 ```

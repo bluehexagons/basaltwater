@@ -2573,7 +2573,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
         ):
             print(
                 "Error: post-update readiness is unhealthy; inspect it with "
-                "infra-tools agent doctor --last-record",
+                "basaltw agent doctor --last-record",
                 file=sys.stderr,
             )
         elif (
@@ -2583,7 +2583,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
         ):
             print(
                 "Warning: broader post-update readiness is unhealthy; inspect it "
-                "with infra-tools agent doctor --capability host --capability t3code",
+                "with basaltw agent doctor --capability host --capability t3code",
                 file=sys.stderr,
             )
         updates_healthy = all(

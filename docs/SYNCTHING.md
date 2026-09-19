@@ -5,10 +5,10 @@ known group without requiring a VPN or a publicly reachable server. Syncthing
 encrypts device-to-device traffic and can use outbound relays when direct
 connections are unavailable.
 
-Infra-tools owns the service boundary: a non-root systemd service, an
+Basaltwater owns the service boundary: a non-root systemd service, an
 authenticated HTTPS admin endpoint, one configurable writable storage root,
 and conservative network defaults. The Syncthing web GUI owns devices,
-folders, folder direction, and versioning. Rerunning infra-tools preserves
+folders, folder direction, and versioning. Rerunning Basaltwater preserves
 those GUI changes.
 
 ## Install the endpoint
@@ -17,8 +17,8 @@ Save the web administrator password in the workspace credential store, then
 enable Syncthing:
 
 ```bash
-infra-tools credentials set syncthing-admin
-infra-tools setup server_lite fileserver admin --syncthing
+basaltw credentials set syncthing-admin
+basaltw setup server_lite fileserver admin --syncthing
 ```
 
 The credential command prompts without exposing the password in shell history.
@@ -28,12 +28,12 @@ username is `syncthing-admin`; choose a different workspace credential name
 with `--syncthing-admin USERNAME`:
 
 ```bash
-infra-tools credentials set file-admin
-infra-tools setup server_lite fileserver admin \
+basaltw credentials set file-admin
+basaltw setup server_lite fileserver admin \
   --syncthing --syncthing-admin file-admin
 ```
 
-The HTTPS listener uses the existing infra-tools web gateway, certificate, and
+The HTTPS listener uses the existing Basaltwater web gateway, certificate, and
 access-source policy. If the server uses its local CA, enroll that public CA on
 each administrator's browser device as described in
 [Internal HTTPS sites and previews](INTERNAL_WEB.md#certificate-trust). Do not
@@ -46,11 +46,11 @@ path with `--syncthing-root`; `/data` and paths below `/data`, `/mnt`, `/srv`,
 or `/var/lib` are accepted:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --syncthing --syncthing-root /mnt/team-files
 ```
 
-Infra-tools creates the root for the setup user and confines the systemd
+Basaltwater creates the root for the setup user and confines the systemd
 service to that root. Setup verifies an infra-tools-declared VM data mount
 before writing to it, and the generated service also uses `RequiresMountsFor=`
 for declared or separately managed mounts. This prevents a missing disk from
@@ -62,9 +62,9 @@ When provisioning a Proxmox VM, declare the root disk, a named data disk, its
 guest mount, and the matching Syncthing root together:
 
 ```bash
-infra-tools credentials set syncthing-admin
+basaltw credentials set syncthing-admin
 
-infra-tools setup server_lite 192.168.0.60 admin \
+basaltw setup server_lite 192.168.0.60 admin \
   --provision-on pve1 --name fileserver \
   --cores 2 --memory 4G \
   --storage root local-lvm 32G \
@@ -81,16 +81,16 @@ same path for both makes the dependency explicit and fail-closed. Proxmox disk
 backup inclusion does not replace Syncthing versioning or an independent
 off-host backup.
 
-For an existing infra-tools-managed QEMU VM, start with the command shown by
-`infra-tools cmd fileserver` so its other service choices remain intact, then
+For an existing Basaltwater-managed QEMU VM, start with the command shown by
+`basaltw cmd fileserver` so its other service choices remain intact, then
 append the new disk, mount, and Syncthing flags. Existing storage declarations
 may be left in that reconstructed command unchanged, or the shorter storage
 portion may contain only the addition:
 
 ```bash
-infra-tools credentials set syncthing-admin
+basaltw credentials set syncthing-admin
 
-infra-tools setup server_lite 192.168.0.60 admin \
+basaltw setup server_lite 192.168.0.60 admin \
   --provision-on pve1 \
   --storage syncthing-data bulk-lvm 512G \
   --storage-mount syncthing-data /srv/syncthing ext4 empty \
@@ -98,7 +98,7 @@ infra-tools setup server_lite 192.168.0.60 admin \
   --syncthing --syncthing-root /srv/syncthing
 ```
 
-Infra-tools merges the saved root disk and existing mounted disks, verifies
+Basaltwater merges the saved root disk and existing mounted disks, verifies
 them at Proxmox, checks capacity, and hot-adds only the newly named blank disk.
 The same additive workflow supports ordinary mounted data disks unrelated to
 Syncthing. It does not replace a missing old disk, adopt a manually attached
@@ -130,7 +130,7 @@ inside one folder.
 
 New folders default to the configured storage root and staggered versioning for
 up to one year. Both are visible and adjustable in the GUI. Existing folder
-settings are never reset by an infra-tools rerun. Versioning is useful recovery
+settings are never reset by a Basaltwater rerun. Versioning is useful recovery
 but is not an independent backup; retain server snapshots or another backup
 for disk loss, administrator mistakes, or compromise.
 
@@ -139,8 +139,8 @@ for disk loss, administrator mistakes, or compromise.
 Replace the stored credential and reconcile the saved setup:
 
 ```bash
-infra-tools credentials set syncthing-admin
-infra-tools patch fileserver --syncthing
+basaltw credentials set syncthing-admin
+basaltw patch fileserver --syncthing
 ```
 
 Use the custom username instead when `--syncthing-admin` was selected. Setup
@@ -163,7 +163,7 @@ self-updater is disabled.
 To remove the service and HTTPS route while preserving state and files:
 
 ```bash
-infra-tools patch fileserver --no-syncthing
+basaltw patch fileserver --no-syncthing
 ```
 
 Re-enabling the endpoint retains the configured storage root, device ID, and
@@ -174,7 +174,7 @@ the data is no longer needed.
 ## Security boundaries
 
 - The GUI remains bound to `127.0.0.1:8384`; only the managed HTTPS gateway is
-  externally reachable, and its firewall scope follows infra-tools access
+  externally reachable, and its firewall scope follows Basaltwater access
   sources.
 - The service can write only its state directory and configured storage root;
   GUI folder paths outside that root fail rather than expanding access.

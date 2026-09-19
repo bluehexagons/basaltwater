@@ -7,7 +7,7 @@ executor. Repository-specific scripts live in
 Example setup:
 
 ```bash
-infra-tools setup server_web ci.example.com deploy \
+basaltw setup server_web ci.example.com deploy \
   --cicd --ssl --ssl-email admin@example.com
 ```
 
@@ -31,7 +31,7 @@ root access on the app server.
 Set up the app server first:
 
 ```bash
-infra-tools setup server_web app.example.com deploy \
+basaltw setup server_web app.example.com deploy \
   --app-server --ssl --ssl-email admin@example.com
 ```
 
@@ -41,7 +41,7 @@ storage and mount the bulk disk directly at the CI state directory. A nominal
 3500 GiB rather than assuming the full advertised capacity is allocatable:
 
 ```bash
-infra-tools setup server_web 192.168.1.60 deploy \
+basaltw setup server_web 192.168.1.60 deploy \
   --provision-on pve1 --hostname build \
   --memory 16G --cores 8 \
   --storage root local-lvm 96G \
@@ -71,7 +71,7 @@ runtime and workspace exist. The storage-aware command above already performs
 this phase. Then connect the two saved setups from the controller:
 
 ```bash
-infra-tools cicd connect 192.168.1.60 app.example.com
+basaltw cicd connect 192.168.1.60 app.example.com
 ```
 
 Saved host names, friendly `--name` values, and exact tags are accepted. If the
@@ -80,7 +80,7 @@ fingerprint for independent verification. Non-interactive automation can pin
 that verified identity explicitly:
 
 ```bash
-infra-tools cicd connect 192.168.1.60 app.example.com \
+basaltw cicd connect 192.168.1.60 app.example.com \
   --target-name production \
   --fingerprint SHA256:REPLACE_WITH_VERIFIED_FINGERPRINT
 ```
@@ -92,8 +92,8 @@ tests SSH as the unprivileged `webhook` credential owner. It is safe to rerun. I
 or retest connections with:
 
 ```bash
-infra-tools cicd status 192.168.1.60
-infra-tools cicd test 192.168.1.60 app.example.com
+basaltw cicd status 192.168.1.60
+basaltw cicd test 192.168.1.60 app.example.com
 ```
 
 The target entries default to the `deploy` user, SSH port 22, and `/var/www`.
@@ -261,7 +261,7 @@ the new build home, snapshots and logs.
   Each upload uses a per-run staged filename, and the privileged helper
   serializes nginx writes, validation, and rollback on the app server
 - existing nginx sites can only be replaced or removed when their file starts
-  with the infra-tools deployment generator marker and their enabled link
+  with the Basaltwater deployment generator marker and their enabled link
   references that file. Administrator-owned or unrelated service sites are
   preserved; adopting an unmarked legacy site requires administrator review
 - build logs live under `/var/lib/infra_tools/cicd/logs/`

@@ -1,12 +1,12 @@
 # Proxmox workflows
 
-infra-tools can register Proxmox hosts, cache their capabilities, provision
+Basaltwater can register Proxmox hosts, cache their capabilities, provision
 Debian VMs or unprivileged LXCs, and manage guest lifecycle operations.
 [Machine types](MACHINE_TYPES.md) explains the guest capability differences.
 Provider-specific host operations and advanced mutations remain under
-`infra-tools proxmox ...`. Common guest observations, resource statistics,
+`basaltw proxmox ...`. Common guest observations, resource statistics,
 power-state lifecycle, boot ordering, and confirmed QEMU VM destruction are
-available through the provider-neutral `infra-tools vm ...` commands; see the
+available through the provider-neutral `basaltw vm ...` commands; see the
 command reference for the stable JSON shape.
 
 These workflows target Proxmox VE 9.2 and use its current `qm` and `pct`
@@ -16,7 +16,7 @@ explicitly named Proxmox SDN bridges are supported alongside conventional
 
 ## Quick setup: Proxmox host to coding VM
 
-Install infra-tools on a trusted Linux orchestration machine first. The
+Install Basaltwater on a trusted Linux orchestration machine first. The
 Proxmox host does not need a checkout; setup uploads the installed source to
 `/opt/infra_tools`.
 
@@ -24,14 +24,14 @@ Proxmox host does not need a checkout; setup uploads the installed source to
 wget --timeout=20 --tries=2 -O "$HOME/.infra_tools-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
 sh "$HOME/.infra_tools-install.sh"
 rm -f "$HOME/.infra_tools-install.sh"
-infra-tools channel
+basaltw channel
 ```
 
 If the orchestration machine is itself a Proxmox VM, install and activate its
 guest agent during local self-setup:
 
 ```bash
-sudo infra-tools self-setup --qemu-guest-agent
+sudo basaltw self-setup --qemu-guest-agent
 ```
 
 The option installs `qemu-guest-agent` and runs
@@ -41,14 +41,14 @@ already receive the same package and service configuration through cloud-init.
 Set up, register, and inspect the host:
 
 ```bash
-infra-tools setup server_proxmox 10.0.0.10 root \
+basaltw setup server_proxmox 10.0.0.10 root \
   --key ~/.ssh/proxmox_ed25519 \
   --name pve1
 
-infra-tools proxmox probe pve1
-infra-tools proxmox top pve1
-infra-tools proxmox ls pve1
-infra-tools vm list pve1 --json
+basaltw proxmox probe pve1
+basaltw proxmox top pve1
+basaltw proxmox ls pve1
+basaltw vm list pve1 --json
 ```
 
 Successful `server_proxmox` setup registers the host in the selected workspace;
@@ -56,9 +56,9 @@ Successful `server_proxmox` setup registers the host in the selected workspace;
 New host records explicitly store `schema_version: 1` and
 `provider: proxmox`. Records produced by earlier development builds are not
 silently reinterpreted. If loading the registry reports an unsupported schema
-or missing provider, run `infra-tools proxmox remove NAME` using the name shown
+or missing provider, run `basaltw proxmox remove NAME` using the name shown
 in that record, then run the normal `server_proxmox` setup or
-`infra-tools proxmox add` command again. Removal matches only the stored name
+`basaltw proxmox add` command again. Removal matches only the stored name
 or address and can delete an incompatible record without interpreting it.
 This is an intentional breaking-release boundary, not a credential or
 guest-data migration.
@@ -74,7 +74,7 @@ managed `NOPASSWD` rule only when `--nopasswd` is explicit. This also lets a
 rerun enable or remove that rule without depending on its previous state.
 Existing-only reconciliation of a saved VM uses its established SSH access and
 does not require the matching `.pub` file to remain on the controller. `--key`
-is optional: infra-tools first uses a matching key
+is optional: Basaltwater first uses a matching key
 associated with the registered Proxmox host, then the local
 `~/.ssh/id_ed25519`, `id_ecdsa`, or `id_rsa` key.
 If the Proxmox node key and guest key differ, pass `--provision-key` for the
@@ -87,17 +87,17 @@ Custom VM image URLs must use HTTPS and include a matching 128-character
 SHA-512 value with `--image-sha512`; the curated Debian catalog carries pinned
 hashes automatically.
 
-After a newly created VM or LXC begins accepting SSH, infra-tools scans its
+After a newly created VM or LXC begins accepting SSH, Basaltwater scans its
 ED25519 host key from the already authenticated Proxmox node and records it in
 the workspace `known_hosts` file and the invoking user's default
 `~/.ssh/known_hosts` before the first direct guest login. The same refresh
-occurs on a later setup rerun when saved infra-tools metadata still identifies
+occurs on a later setup rerun when saved Basaltwater metadata still identifies
 the same address, machine type, and Proxmox node. This lets a managed guest
-recover from a legitimate host-key change before either infra-tools or plain
+recover from a legitimate host-key change before either Basaltwater or plain
 `ssh HOST` performs a strict check. All following guest SSH still uses
 `StrictHostKeyChecking=yes`. Existing or adopted guests without matching saved
 metadata are not trusted automatically; verify them independently and use
-`infra-tools ssh-key enroll HOST` when workspace enrollment is required.
+`basaltw ssh-key enroll HOST` when workspace enrollment is required.
 
 ## Concurrent setup and provisioning
 
@@ -116,7 +116,7 @@ remote setup executes. This target lock also protects against a second
 controller using a separate workspace.
 
 Multiple VM or LXC provisions on one Proxmox node can proceed concurrently when
-their requested IPv4 addresses and hostnames differ. Infra-tools holds
+their requested IPv4 addresses and hostnames differ. Basaltwater holds
 address- and hostname-specific locks on the Proxmox node for the full provider
 workflow, so separate controllers also reject simultaneous claims for the same
 guest identity. A short node-wide admission lock serializes the final capacity
@@ -180,7 +180,7 @@ The default setup installs these recurring host-maintenance timers:
   default Proxmox policy records and reports a deferral instead of rebooting.
 - `cleanup-maintenance.timer` removes unused APT packages and residual package
   configuration, audits `dpkg` consistency, cleans bounded caches, journals,
-  old crash reports, and infra-tools-owned temporary artifacts, and ensures
+  old crash reports, and Basaltwater-owned temporary artifacts, and ensures
   filesystem TRIM through the native timer or a cleanup fallback each Sunday.
   Post-cleanup checks cover block and inode pressure on distinct local storage
   mounts. The job does not prune backups, templates, ISOs, guest volumes, or
@@ -195,7 +195,7 @@ process.
 Create a Debian VM with XFCE, RDP, Firefox, and coding tools:
 
 ```bash
-infra-tools setup workstation_dev 10.0.0.50 agent \
+basaltw setup workstation_dev 10.0.0.50 agent \
   --provision-on pve1 --base debian --name agent-dev-01 \
   --cores 4 --memory 8G --storage root 40G --image-storage local \
   --desktop xfce --rdp --browser firefox \
@@ -213,7 +213,7 @@ For a newly provisioned QEMU VM, add named data disks and required guest
 mounts in the same declaration:
 
 ```bash
-infra-tools setup workstation_dev 10.0.0.51 agent \
+basaltw setup workstation_dev 10.0.0.51 agent \
   --provision-on pve1 --memory 8G --storage root 40G \
   --disk-ssd root \
   --storage agent-data bulk-lvm 128G \
@@ -270,7 +270,7 @@ virtual disk, add an LVM cache declaration:
 --storage-mount data /srv/data ext4 empty
 ```
 
-Infra-tools verifies both whole disks are blank, creates a guest-side LVM
+Basaltwater verifies both whole disks are blank, creates a guest-side LVM
 volume group, consumes the entire SSD disk as cache media, and formats and
 mounts the resulting cached logical volume. The cache disk is not mounted and
 must not have a `--storage-mount`. `writethrough` is the default and safer mode:
@@ -302,12 +302,12 @@ failed data mount cannot silently redirect application data to the SSD boot
 filesystem.
 
 Named mounted disks may also be added to an existing QEMU VM that has saved
-infra-tools provisioning metadata. Start with its reconstructed setup command,
+Basaltwater provisioning metadata. Start with its reconstructed setup command,
 or supply the same target, system type, setup user, and `--provision-on` value,
 then add only the new disk and mount declarations:
 
 ```bash
-infra-tools setup server_lite 10.0.0.60 admin \
+basaltw setup server_lite 10.0.0.60 admin \
   --provision-on pve1 \
   --storage team-data bulk-lvm 512G \
   --storage-mount team-data /srv/team-files ext4 empty
@@ -315,7 +315,7 @@ infra-tools setup server_lite 10.0.0.60 admin \
 
 The saved root disk, existing data disks, mounts, provider identity, and
 network defaults are merged automatically when omitted. Existing declarations
-may instead be repeated unchanged. Infra-tools verifies every old managed disk
+may instead be repeated unchanged. Basaltwater verifies every old managed disk
 before mutation, checks capacity for only the additions, uses the first free
 SCSI slots without touching unrelated disks, and verifies each new stable
 `it-NAME` identity. All requested slots, storage capacity, and any accompanying
@@ -340,16 +340,16 @@ treated as permission to adopt or add disks.
 Inspect a provisioned VM by its saved local `--name`:
 
 ```bash
-infra-tools vm show agent-dev-01
-infra-tools vm health agent-dev-01
+basaltw vm show agent-dev-01
+basaltw vm health agent-dev-01
 ```
 
 The explicit provider host and VMID form remains available:
 
 ```bash
-infra-tools proxmox ls pve1
-infra-tools vm show pve1 100
-infra-tools vm health pve1 100
+basaltw proxmox ls pve1
+basaltw vm show pve1 100
+basaltw vm health pve1 100
 ```
 
 Replace `100` with the VMID returned by `proxmox ls`.
@@ -359,7 +359,7 @@ Replace `100` with the VMID returned by `proxmox ls`.
 shell history; the password is not persisted in saved setup state.
 
 After a guest has been provisioned, a later `setup` invocation can retain
-`--provision-on`. If the target has saved local setup metadata, infra-tools
+`--provision-on`. If the target has saved local setup metadata, Basaltwater
 reuses its recorded Proxmox details and skips the full provider-shape check
 before updating the guest. It still contacts the authenticated Proxmox node to
 rescan and replace the managed guest's workspace and default user SSH host keys
@@ -375,7 +375,7 @@ explicit setup rerun repair disk-hardware drift or apply policy first recorded
 by an older infra-tools release. A target without saved provisioning metadata
 still requires `--memory` and root `--storage` on its first run. Any provider
 check associated with saved VM metadata requires that VM to still exist;
-infra-tools does not silently create a replacement when reconciliation cannot
+Basaltwater does not silently create a replacement when reconciliation cannot
 find it.
 
 Use `--verify-provider` to check a cached provisioned guest against Proxmox even
@@ -394,7 +394,7 @@ before the guest observes a vCPU, memory-maximum, CPU-model, or disk-hardware
 change; setup reports that requirement without interrupting the guest
 automatically.
 
-If a managed VM disk was moved to another pool or resized outside infra-tools,
+If a managed VM disk was moved to another pool or resized outside Basaltwater,
 update its `--storage` declaration and rerun setup. As long as the declaration
 retains the same logical disk names, setup bypasses the stale cached layout and
 requires Proxmox to report each disk on the requested pool at or above the
@@ -405,7 +405,7 @@ existing disk. New named mounted disks are the exception and use the additive
 workflow above.
 
 For an offline GUI migration, rerun the saved setup command with the new
-`--provision-on` destination. Infra-tools keeps the explicit destination host,
+`--provision-on` destination. Basaltwater keeps the explicit destination host,
 credentials, and bridge instead of restoring the cached source binding. It
 requires the old source VM to be stopped or absent and the destination to have
 the saved IPv4 address, VM name, and managed-disk identities. If storage pools
@@ -431,14 +431,14 @@ or provision a replacement guest.
 
 During a provisioning check, the configured IPv4 address is the stable guest
 identity. If that VM already exists and the corrected declaration changes its
-Proxmox name, infra-tools applies and verifies the rename before continuing
+Proxmox name, Basaltwater applies and verifies the rename before continuing
 setup. A desired name already owned by a different VM is rejected rather than
 creating an ambiguous duplicate. Repeating the saved `--name` and `--hostname`
 values is an ordinary idempotent rerun and does not perform a full provider
 check. Changing `--hostname`, or changing `--name` when it supplies the VM
 hostname, performs the identity check. Regardless of whether a full
 provisioning check is needed, the authenticated Proxmox node refreshes the
-saved guest's workspace and default user SSH host keys before infra-tools checks
+saved guest's workspace and default user SSH host keys before Basaltwater checks
 the guest route or starts remote setup. A guest without matching saved metadata
 still requires explicit host-key enrollment. Use the explicit host and VMID
 forms to inspect or repair provider-side drift and duplicates created by older
@@ -455,14 +455,14 @@ down and changed with `qm set VMID --vga virtio` on the Proxmox node.
 
 The emulated display does **not** by itself accelerate an XRDP session.
 xorgxrdp creates its own resizable X.Org display with the `xrdpdev` driver.
-Infra-tools probes the guest for a supported, accessible DRM render node and
+Basaltwater probes the guest for a supported, accessible DRM render node and
 enables xorgxrdp glamor only when that probe succeeds; otherwise it retains the
 software fallback. A VM is not granted `video` or `render` membership merely
 because it has an emulated display.
 
 The resulting Proxmox baseline is:
 
-| Setting | infra-tools default | Rationale / alternative |
+| Setting | Basaltwater default | Rationale / alternative |
 | --- | --- | --- |
 | Display | VirtIO-GPU for desktop/RDP; serial-only for servers | VirtIO-GPU is a recovery console, not XRDP acceleration by itself. QXL/SPICE and `virtio-gl` do not replace the guest render-node probe. |
 | Serial | `serial0: socket` | Retains low-level diagnostics alongside the graphical console. |
@@ -488,7 +488,7 @@ host pressure, which can force guest swapping or out-of-memory handling; size
 it for the VM's working set rather than treating it as free overcommit. Shares
 default to 1000 and are relative: a higher value gives that VM more weight when
 ballooned guests compete, but does not reserve RAM or permit the host to exceed
-physical capacity. Before creating a VM, infra-tools reports the node's total
+physical capacity. Before creating a VM, Basaltwater reports the node's total
 and currently used RAM, balloon target, running guest floors and burst maxima,
 and the corresponding totals after the proposed VM. A floor-over-target or
 burst-over-target report includes the GiB excess and percentage of target.
@@ -511,7 +511,7 @@ provisioning profile.
 ## Provisioned web server VM
 
 ```bash
-infra-tools setup server_web 10.0.0.50 admin \
+basaltw setup server_web 10.0.0.50 admin \
   --provision-on pve1 --memory 4G --storage root 32G --cores 2 \
   --base debian --name web-01-vm --node \
   --ssl --ssl-email admin@example.com \
@@ -524,7 +524,7 @@ Use `--machine unprivileged` explicitly for an LXC and include template
 storage:
 
 ```bash
-infra-tools setup server_web 10.0.0.50 admin \
+basaltw setup server_web 10.0.0.50 admin \
   --machine unprivileged --provision-on pve1 \
   --memory 4G --cores 2 --storage root 20G --storage template \
   --base debian --name web-01-lxc --node \
@@ -548,7 +548,7 @@ device has SSD-like latency. Append `root` or a named data/cache disk to any
 positive or negative disk flag to override only that device. For example,
 `--disk-ssd root` models an SSD boot device with default HDD-like data devices;
 `--disk-ssd --no-disk-ssd archive` does the inverse selection from an SSD
-default. Infra-tools deliberately does not guess SSD status from a pool name
+default. Basaltwater deliberately does not guess SSD status from a pool name
 or storage type because LVM, ZFS, Ceph, directory, and cached pools can all
 span mixed or remote media. Use `--cpu-type MODEL` to trade host CPU exposure
 for cross-node compatibility.
@@ -568,9 +568,9 @@ Start troubleshooting a slow or memory-constrained host with the node summary,
 then inspect the guests contributing to the load:
 
 ```bash
-infra-tools proxmox top pve1
-infra-tools vm stats fileserver
-infra-tools vm stats build-agent --json
+basaltw proxmox top pve1
+basaltw vm stats fileserver
+basaltw vm stats build-agent --json
 ```
 
 `vm stats` reads Proxmox's provider-side counters and does not require the QEMU
@@ -585,12 +585,12 @@ or a small CPU. Inspect and configure typed boot settings with the saved local
 VM name:
 
 ```bash
-infra-tools vm autostart fileserver
-infra-tools vm autostart fileserver \
+basaltw vm autostart fileserver
+basaltw vm autostart fileserver \
   --enable --order 1 --start-delay 30 --shutdown-timeout 120
-infra-tools vm autostart database \
+basaltw vm autostart database \
   --enable --order 2 --start-delay 45 --shutdown-timeout 180
-infra-tools vm autostart build-agent --disable
+basaltw vm autostart build-agent --disable
 ```
 
 Lower order values start first and stop last. Put infrastructure dependencies
@@ -612,16 +612,16 @@ For a small host, a practical routine is:
 
 ### Power-state commands
 
-For an infra-tools-provisioned VM, prefer its saved local name:
+For a Basaltwater-provisioned VM, prefer its saved local name:
 
 ```bash
-infra-tools vm status agent-dev-01
-infra-tools vm start agent-dev-01
-infra-tools vm pause agent-dev-01       # alias: suspend
-infra-tools vm resume agent-dev-01
-infra-tools vm shutdown agent-dev-01 --timeout 60
-infra-tools vm stop agent-dev-01        # immediate; may cause data loss
-infra-tools vm reboot agent-dev-01      # alias: restart
+basaltw vm status agent-dev-01
+basaltw vm start agent-dev-01
+basaltw vm pause agent-dev-01       # alias: suspend
+basaltw vm resume agent-dev-01
+basaltw vm shutdown agent-dev-01 --timeout 60
+basaltw vm stop agent-dev-01        # immediate; may cause data loss
+basaltw vm reboot agent-dev-01      # alias: restart
 ```
 
 These commands also accept an explicit registered provider host and VMID, and
@@ -633,12 +633,12 @@ state after the provider operation completes.
 The provider-specific forms remain available for compatibility:
 
 ```bash
-infra-tools proxmox status pve1 101
-infra-tools proxmox start pve1 101
-infra-tools proxmox stop pve1 101
-infra-tools proxmox pause pve1 101
-infra-tools proxmox resume pve1 101
-infra-tools proxmox health pve1 101
+basaltw proxmox status pve1 101
+basaltw proxmox start pve1 101
+basaltw proxmox stop pve1 101
+basaltw proxmox pause pve1 101
+basaltw proxmox resume pve1 101
+basaltw proxmox health pve1 101
 ```
 
 For compatibility, the older `proxmox stop` command keeps its original
@@ -648,7 +648,7 @@ automation should use the explicit generic `vm shutdown` or `vm stop` form.
 Show a summary for one or more nodes:
 
 ```bash
-infra-tools proxmox top pve1 pve2
+basaltw proxmox top pve1 pve2
 ```
 
 The summary includes node CPU, memory, storage, and guest counts. It is a
@@ -658,8 +658,8 @@ storage or bridge data has not been cached.
 Run a maintenance-safety audit before planned work:
 
 ```bash
-infra-tools proxmox audit pve1 pve2
-infra-tools proxmox audit pve1 --json
+basaltw proxmox audit pve1 pve2
+basaltw proxmox audit pve1 --json
 ```
 
 The audit checks core Proxmox services, quorum on clustered nodes, active tasks,
@@ -683,10 +683,10 @@ require the key to be loaded into an SSH agent. See
 Modify resources and configuration:
 
 ```bash
-infra-tools proxmox modify pve1 101 --cores 4 --memory 8G
-infra-tools proxmox reconfigure pve1 101 --set hostname=newbox
-infra-tools proxmox reconfigure pve1 101 --set balloon=4096
-infra-tools proxmox resize-disk pve1 101 rootfs 40G
+basaltw proxmox modify pve1 101 --cores 4 --memory 8G
+basaltw proxmox reconfigure pve1 101 --set hostname=newbox
+basaltw proxmox reconfigure pve1 101 --set balloon=4096
+basaltw proxmox resize-disk pve1 101 rootfs 40G
 ```
 
 For an existing VM, Proxmox stores `memory` and `balloon` in MiB. Keep
@@ -696,25 +696,25 @@ dynamic reclamation without removing the balloon device.
 Snapshots and rollback:
 
 ```bash
-infra-tools proxmox snapshots pve1 101
-infra-tools proxmox snapshot pve1 101 pre-upgrade --description "before kernel update"
-infra-tools proxmox rollback pve1 101 pre-upgrade
-infra-tools proxmox delsnapshot pve1 101 pre-upgrade
+basaltw proxmox snapshots pve1 101
+basaltw proxmox snapshot pve1 101 pre-upgrade --description "before kernel update"
+basaltw proxmox rollback pve1 101 pre-upgrade
+basaltw proxmox delsnapshot pve1 101 pre-upgrade
 ```
 
 Snapshot deletion requires typing `yes`, or `--yes` for automation. `--dry-run`
 previews the command without confirmation or deletion. The interactive shell
 uses the same confirmation and dry-run options.
 
-`vm destroy` is permanent and asks for confirmation. For an infra-tools
-provisioned VM, use its exact saved local name; infra-tools resolves the
+`vm destroy` is permanent and asks for confirmation. For a Basaltwater
+provisioned VM, use its exact saved local name; Basaltwater resolves the
 registered provider host and VMID, then verifies the observed QEMU name and
 configured IPv4 address before prompting:
 
 ```bash
-infra-tools vm destroy agent-dev-01
-infra-tools vm destroy agent-dev-01 --yes
-infra-tools vm destroy pve1 101
+basaltw vm destroy agent-dev-01
+basaltw vm destroy agent-dev-01 --yes
+basaltw vm destroy pve1 101
 ```
 
 The provider host/VMID form is useful for a QEMU VM without saved local setup
@@ -723,7 +723,7 @@ running VM before destruction. The command verifies that the VM is absent
 afterward and retains the saved setup declaration for deliberate
 reprovisioning; remove that declaration separately with
 `infra-tools rm agent-dev-01` when appropriate. The legacy
-`infra-tools proxmox destroy` path remains available during the broader guest
+`basaltw proxmox destroy` path remains available during the broader guest
 command migration.
 
 ## Placement, backups, and migration
@@ -731,10 +731,10 @@ command migration.
 The placement planner ranks registered nodes without changing them:
 
 ```bash
-infra-tools proxmox plan place \
+basaltw proxmox plan place \
   --cores 4 --memory 8192 --disk 40 \
   --prefer-tag production --exclude pve3
-infra-tools proxmox plan rebalance --limit 3
+basaltw proxmox plan rebalance --limit 3
 ```
 
 `plan rebalance` reports overloaded nodes and candidate destinations. It only
@@ -746,8 +746,8 @@ have the same storage and cluster prerequisites as the direct `migrate` command.
 List and create immediate `vzdump` backups:
 
 ```bash
-infra-tools proxmox backups pve1 101
-infra-tools proxmox backup pve1 101 \
+basaltw proxmox backups pve1 101
+basaltw proxmox backup pve1 101 \
   --storage backup --mode snapshot --compress zstd --dry-run
 ```
 
@@ -760,8 +760,8 @@ infra-tools.
 Migrate a guest between registered cluster nodes:
 
 ```bash
-infra-tools proxmox migrate pve1 101 pve2 --dry-run
-infra-tools proxmox migrate pve1 101 pve2 \
+basaltw proxmox migrate pve1 101 pve2 --dry-run
+basaltw proxmox migrate pve1 101 pve2 \
   --online --with-local-disks
 ```
 
@@ -774,8 +774,8 @@ first for production migrations.
 List unreferenced guest volumes before deleting anything:
 
 ```bash
-infra-tools proxmox clean-disks pve1 --dry-run
-infra-tools proxmox clean-disks pve1 --delete
+basaltw proxmox clean-disks pve1 --dry-run
+basaltw proxmox clean-disks pve1 --delete
 ```
 
 `clean-disks` is list-only by default. `--delete` requires typing `yes` unless
@@ -794,8 +794,8 @@ After confirming that no backup, migration, or snapshot task is still active,
 clear a stale Proxmox management lock:
 
 ```bash
-infra-tools proxmox unlock pve1 101 --dry-run
-infra-tools proxmox unlock pve1 101
+basaltw proxmox unlock pve1 101 --dry-run
+basaltw proxmox unlock pve1 101
 ```
 
 The unlock operation only clears the guest lock; it does not repair a failed
@@ -804,15 +804,15 @@ underlying task or roll back partial storage changes.
 ## Cluster and notifications
 
 ```bash
-infra-tools proxmox probe-cluster 10.0.0.10 \
+basaltw proxmox probe-cluster 10.0.0.10 \
   --key ~/.ssh/proxmox_ed25519 --tag prod
-infra-tools proxmox hosts
-infra-tools proxmox audit pve1 pve2 pve3
-infra-tools proxmox rolling-update pve1 pve2 pve3
-infra-tools proxmox notifications install-webhook \
+basaltw proxmox hosts
+basaltw proxmox audit pve1 pve2 pve3
+basaltw proxmox rolling-update pve1 pve2 pve3
+basaltw proxmox notifications install-webhook \
   pve1 https://notify.example/hook --send-test
-infra-tools proxmox notifications test-webhook pve1
-infra-tools proxmox shell
+basaltw proxmox notifications test-webhook pve1
+basaltw proxmox shell
 ```
 
 `probe-cluster` discovers nodes from Proxmox's configured names and seeds the
@@ -834,7 +834,7 @@ an exclusive lock. Inspect failed targets before resuming with the same ordered
 names and unchanged saved configuration:
 
 ```bash
-infra-tools proxmox rolling-update pve1 pve2 pve3 --resume
+basaltw proxmox rolling-update pve1 pve2 pve3 --resume
 ```
 
 Completed nodes are skipped; known failed patch runs can be retried explicitly.
@@ -862,22 +862,22 @@ applying any control-plane lockdown.
 For a first rollout, validate one VM and one LXC compatibility path:
 
 ```bash
-infra-tools proxmox hosts
-infra-tools proxmox probe pve1
+basaltw proxmox hosts
+basaltw proxmox probe pve1
 
-infra-tools setup workstation_dev 10.0.0.50 devuser \
+basaltw setup workstation_dev 10.0.0.50 devuser \
   --provision-on pve1 --memory 8G --storage root 40G --cores 4 \
   --name dev-01-vm --rdp
 
-infra-tools proxmox ls pve1
-VMID=100  # replace with the VMID returned by `infra-tools proxmox ls`
-infra-tools proxmox health pve1 "$VMID"
-infra-tools proxmox snapshot pve1 "$VMID" pre-modify
-infra-tools proxmox modify pve1 "$VMID" --cores 6 --memory 12G
-infra-tools proxmox stop pve1 "$VMID"
-infra-tools proxmox start pve1 "$VMID"
+basaltw proxmox ls pve1
+VMID=100  # replace with the VMID returned by `basaltw proxmox ls`
+basaltw proxmox health pve1 "$VMID"
+basaltw proxmox snapshot pve1 "$VMID" pre-modify
+basaltw proxmox modify pve1 "$VMID" --cores 6 --memory 12G
+basaltw proxmox stop pve1 "$VMID"
+basaltw proxmox start pve1 "$VMID"
 
-infra-tools setup server_lite 10.0.0.60 appuser \
+basaltw setup server_lite 10.0.0.60 appuser \
   --machine unprivileged --provision-on pve1 \
   --memory 2G --storage root 10G --storage template
 ```

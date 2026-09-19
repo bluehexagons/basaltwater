@@ -1,6 +1,6 @@
 # Notifications
 
-infra-tools can send setup, maintenance, security, storage, and CI/CD events to
+Basaltwater can send setup, maintenance, security, storage, and CI/CD events to
 webhooks or local mail. Targets and the delivery level are saved per managed
 system and reused by scheduled jobs.
 
@@ -9,7 +9,7 @@ system and reused by scheduled jobs.
 Configure one or more repeatable targets:
 
 ```bash
-infra-tools setup server_lite fileserver admin \
+basaltw setup server_lite fileserver admin \
   --notify webhook https://hooks.example.net/infra \
   --notify mailbox ops@example.com \
   --notification-level normal
@@ -20,11 +20,11 @@ infra-tools setup server_lite fileserver admin \
 | `webhook` | `http://` or `https://` URL | Schema-version-2 JSON `POST` |
 | `mailbox` | Email address | Target machine's `mail` command and local mail transport |
 
-Use `infra-tools info HOST` to check the saved target count and delivery level.
-Use `infra-tools cmd HOST` to inspect the reconstructed setup command.
+Use `basaltw info HOST` to check the saved target count and delivery level.
+Use `basaltw cmd HOST` to inspect the reconstructed setup command.
 
 HTTPS webhook delivery accepts self-signed certificates by default so a sender
-can notify an infra-tools panel that uses its VM-local CA. This keeps the
+can notify a Basaltwater panel that uses its VM-local CA. This keeps the
 connection encrypted but does not authenticate the receiver's certificate or
 hostname. Add `--notification-strict-https` to require the sender's normal CA
 bundle and hostname checks; use `--no-notification-strict-https` on a patch to
@@ -33,7 +33,7 @@ scheduled jobs, and other outbound notifications saved on that system.
 Use strict mode when the network is not already trusted or the receiver's
 identity must be authenticated.
 
-## Send notifications to an infra-tools web panel
+## Send notifications to a Basaltwater web panel
 
 The web panel can receive and display notifications from other managed
 machines. The receiver is disabled by default and requires HTTPS.
@@ -45,7 +45,7 @@ Install the panel first if it is not already present; see
 On the controller, patch the machine that hosts the panel:
 
 ```bash
-infra-tools patch panel.example agent \
+basaltw patch panel.example agent \
   --web-panel \
   --ssl \
   --web-panel-notification-ingest
@@ -73,12 +73,12 @@ Append the token as the webhook URL fragment (or paste the complete link shown
 by the panel):
 
 ```bash
-infra-tools patch sender.example agent \
+basaltw patch sender.example agent \
   --notify webhook \
   'https://panel.example/api/v1/notifications#TOKEN_FROM_PANEL_HOST'
 ```
 
-infra-tools removes the fragment from the URL and sends it in the
+Basaltwater removes the fragment from the URL and sends it in the
 `Authorization: Bearer ...` header. The token does not enter the HTTP request
 path or Nginx access log.
 
@@ -119,13 +119,13 @@ Examples:
 
 ```bash
 # High-signal production alerts
-infra-tools patch fileserver admin --notification-level warning
+basaltw patch fileserver admin --notification-level warning
 
 # Include successful maintenance runs
-infra-tools patch buildbox agent --notification-level verbose
+basaltw patch buildbox agent --notification-level verbose
 
 # Temporarily stop outbound delivery without deleting targets
-infra-tools patch labbox agent --notification-level off
+basaltw patch labbox agent --notification-level off
 ```
 
 A later patch that omits the flag preserves the saved level.
@@ -154,8 +154,8 @@ not a second notification based on pre-setup state.
 | Monitoring source unavailable | auditd, fail2ban, or the SSH journal could not be read | Restore the named source; recovery is sent once |
 
 Routine sudo audit hits, fail2ban ban expirations, and missing optional security
-components do not notify by themselves. Audit events recorded during an
-infra-tools setup window are treated as expected maintenance; the setup result
+components do not notify by themselves. Audit events recorded during a
+Basaltwater setup window are treated as expected maintenance; the setup result
 records that work. The monitor holds its cursor while a required source is
 unavailable so events are not silently skipped.
 
@@ -220,7 +220,7 @@ history as complete.
 Common checks:
 
 - Install and configure a local MTA before relying on mailbox alerts.
-- Confirm the effective level with `infra-tools info HOST`.
+- Confirm the effective level with `basaltw info HOST`.
 - Check local job logs when the level suppresses routine success events.
 - Re-run setup or patch after correcting an invalid target; malformed schemes,
   addresses, empty values, and unknown target types fail validation early.

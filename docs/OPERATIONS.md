@@ -1,18 +1,18 @@
 # Saved configuration operations
 
-infra-tools stores setup arguments, host metadata, credentials, run status, and
+Basaltwater stores setup arguments, host metadata, credentials, run status, and
 history under the active workspace. These commands operate on saved
 configurations without requiring a new setup command line each time.
 
 ## Inspect saved hosts
 
 ```bash
-infra-tools list
-infra-tools list production
-infra-tools info production
-infra-tools list --json
-infra-tools info --compact
-infra-tools cmd production
+basaltw list
+basaltw list production
+basaltw info production
+basaltw list --json
+basaltw info --compact
+basaltw cmd production
 ```
 
 `list` filters by host, friendly name, or tag. `info` shows configuration and
@@ -94,15 +94,15 @@ continue without the answer.
 remote setup flow:
 
 ```bash
-infra-tools patch production --ssl --ssl-email admin@example.com
-infra-tools patch production --deploy api.example.com https://github.com/user/api.git
+basaltw patch production --ssl --ssl-email admin@example.com
+basaltw patch production --deploy api.example.com https://github.com/user/api.git
 ```
 
 Use `deploy` to rerun saved configurations:
 
 ```bash
-infra-tools deploy production
-infra-tools deploy production --yes
+basaltw deploy production
+basaltw deploy production --yes
 ```
 
 Some capabilities have narrower fast paths. Use
@@ -112,9 +112,9 @@ without running unrelated setup work.
 ## Recall and reconstruction
 
 ```bash
-infra-tools recall example.com admin
-infra-tools recall example.com admin --key ~/.ssh/id_ed25519
-infra-tools reconstruct
+basaltw recall example.com admin
+basaltw recall example.com admin --key ~/.ssh/id_ed25519
+basaltw reconstruct
 ```
 
 `reconstruct` analyzes the current host; `recall` targets a remote host.
@@ -134,14 +134,14 @@ Removal affects workspace metadata only; it does not uninstall software from a
 target:
 
 ```bash
-infra-tools rm old-server
-infra-tools rm old-server --yes
+basaltw rm old-server
+basaltw rm old-server --yes
 ```
 
 ## Interactive shell
 
 ```bash
-infra-tools shell
+basaltw shell
 ```
 
 Useful commands include `list`, `info`, `cmd`, `new`, `setup`, `deploy`, `rm`,

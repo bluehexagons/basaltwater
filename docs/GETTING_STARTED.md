@@ -1,4 +1,4 @@
-# Try infra-tools on a Debian VM
+# Try Basaltwater on a Debian VM
 
 Start by previewing a setup, then try a few features on a disposable Debian
 virtual machine (VM). You do not need Proxmox, a domain name, a GitHub account,
@@ -9,7 +9,7 @@ or an AI subscription for the first exercise.
 Use a Debian VM with internet access, a regular user account, and working
 `sudo`. Open its terminal through the VM console. Take a VM snapshot before
 applying setup so you can return to the starting point. You can use an existing
-VM from any virtualization tool; infra-tools does not have to create it.
+VM from any virtualization tool; Basaltwater does not have to create it.
 
 For this small development-server exercise, start with 2 virtual CPUs, 4 GB RAM,
 and a 32 GB disk. A full desktop can also fit a 32 GB disk for limited use;
@@ -25,7 +25,7 @@ Here are the terms used in the examples:
 
 | Term | Meaning |
 | --- | --- |
-| Controller | The computer running the `infra-tools` command. |
+| Controller | The computer running the `basaltw` command. |
 | Target | The computer being configured. In this exercise it is the same VM. |
 | `localhost` | This computer, not another computer on your network. |
 | Profile | A starting collection of setup tasks, such as `server_dev`. |
@@ -44,8 +44,8 @@ inside the VM, then return here. Do not select a desktop conversion or local
 setup during installation. Run:
 
 ```bash
-infra-tools --version
-infra-tools --help
+basaltw --version
+basaltw --help
 ```
 
 You should see a version and the command help. If the command is not found,
@@ -58,7 +58,7 @@ The examples in this checkout follow the `dev` channel; the latest published
 Run this as your regular user, without `sudo`:
 
 ```bash
-infra-tools setup server_dev localhost "$USER" --node --dry-run
+basaltw setup server_dev localhost "$USER" --node --dry-run
 ```
 
 `server_dev` selects the development-server baseline and `--node` adds Node.js,
@@ -72,8 +72,8 @@ You can stop here or try other feature flags with `--dry-run` before changing
 the VM. For example:
 
 ```bash
-infra-tools setup server_dev localhost "$USER" --python --dry-run
-infra-tools setup server_dev localhost "$USER" --godot --dry-run
+basaltw setup server_dev localhost "$USER" --python --dry-run
+basaltw setup server_dev localhost "$USER" --godot --dry-run
 ```
 
 ## 3. Apply the setup in the test VM
@@ -81,10 +81,10 @@ infra-tools setup server_dev localhost "$USER" --godot --dry-run
 When you are ready to change this VM, remove `--dry-run` and use `sudo`:
 
 ```bash
-sudo "$(command -v infra-tools)" setup server_dev localhost "$USER" --node
+sudo "$(command -v basaltw)" setup server_dev localhost "$USER" --node
 ```
 
-`$(command -v infra-tools)` supplies the installed launcher's full path so
+`$(command -v basaltw)` supplies the installed launcher's full path so
 `sudo` can find a user installation. Keep the terminal open until setup
 finishes; package downloads can take time. Successful live setup ends with
 `Setup Complete!`. If it fails, read the first error and the final run notes,
@@ -108,19 +108,19 @@ This local exercise ran setup under `sudo`, so its saved configuration belongs
 to root's workspace. Use `sudo` for the following saved-host commands too:
 
 ```bash
-sudo "$(command -v infra-tools)" list
-sudo "$(command -v infra-tools)" info localhost
-sudo "$(command -v infra-tools)" cmd localhost
+sudo "$(command -v basaltw)" list
+sudo "$(command -v basaltw)" info localhost
+sudo "$(command -v basaltw)" cmd localhost
 ```
 
 `list` shows saved hosts, `info` shows configuration and run status, and `cmd`
-prints the saved setup command. An ordinary `infra-tools list` uses your own
+prints the saved setup command. An ordinary `basaltw list` uses your own
 workspace and may be empty; it does not mean setup failed.
 
 Use `patch` to add a feature to the saved configuration. Preview Python tooling:
 
 ```bash
-sudo "$(command -v infra-tools)" patch localhost "$USER" --python --dry-run
+sudo "$(command -v basaltw)" patch localhost "$USER" --python --dry-run
 ```
 
 Apply it by repeating the command without `--dry-run`. This preserves the
@@ -166,7 +166,7 @@ For other experiments, start with the prerequisites in the relevant guide:
 
 ## Reset or move to another machine
 
-Restore the VM snapshot to undo the experiment. `infra-tools rm` removes saved
+Restore the VM snapshot to undo the experiment. `basaltw rm` removes saved
 configuration only; it does not uninstall packages or reverse setup. Omitting
 a flag on a later command is not a general uninstall mechanism.
 
