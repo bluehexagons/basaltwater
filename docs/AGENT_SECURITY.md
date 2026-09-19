@@ -24,6 +24,11 @@ temporary passwordless rule. Key-only root SSH is the stable privileged setup
 and recovery channel, while SSH password authentication remains disabled;
 protect the authorized private key as a root credential.
 
+Brokered setup reruns never temporarily add the coding account to `sudo`.
+Uploaded runtime code uses administrator-writable-only permissions even when
+the controller checkout is group-writable; setup disables Python bytecode
+writes so imported cache directories cannot weaken that boundary.
+
 `--harden-agent` does not lock the login itself. SSH and an explicitly
 configured desktop remain usable. `--harden-user` locks Unix password
 authentication, including an account that previously had no password, rather

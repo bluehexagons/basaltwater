@@ -326,7 +326,7 @@ def setup_user(config: SetupConfig) -> None:
             if set_user_password(config.username, config.password):
                 print("  Password updated")
     
-    if config.harden_agent:
+    if config.harden_agent or config.privilege_broker_port is not None:
         run(f"gpasswd -d {safe_username} sudo", check=False)
         sudo_message = "without sudo privileges"
     else:

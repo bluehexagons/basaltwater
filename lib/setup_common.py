@@ -281,6 +281,8 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
 
 
 def copy_project_files(dest_dir: str) -> None:
+    """Stage runtime code with permissions suitable for root-owned services."""
+    validate_filesystem_path(dest_dir)
     project_root = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
     items_to_copy = [
         "basaltwater.py",
@@ -305,6 +307,14 @@ def copy_project_files(dest_dir: str) -> None:
                 shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git'))
             else:
                 shutil.copy2(src, dst)
+    # A shared controller checkout can be group-writable. Those modes must not
+    # cross into the privileged runtime. Payloads are staged separately later.
+    for directory, directories, files in os.walk(dest_dir):
+        for name in directories:
+            os.chmod(os.path.join(directory, name), 0o755)
+        for name in files:
+            path = os.path.join(directory, name)
+            os.chmod(path, 0o755 if os.stat(path).st_mode & 0o111 else 0o644)
     write_setup_snapshot_metadata(project_root, dest_dir)
 
 
@@ -1394,6 +1404,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             # this process. Disable Python buffering to keep APT and setup
             # status visible during long-running local installs.
             env["PYTHONUNBUFFERED"] = "1"
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
             
             try:
                 with payload_workspace(setup_timeout) as payload:
@@ -1424,7 +1435,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     return command
                 return ["sudo", "-n", *command]
 
-            remote_cmd_args = ["python3", "-u", "-m", "lib.setup_payloads", "--timeout", str(setup_timeout)]
+            remote_cmd_args = ["env", "PYTHONDONTWRITEBYTECODE=1", "python3", "-u", "-m", "lib.setup_payloads", "--timeout", str(setup_timeout)]
             remote_shell_cmd = chain_remote_commands(
                 [
                     privileged(_remote_state_migration_command()),
