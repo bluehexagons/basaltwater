@@ -361,6 +361,24 @@ class AgentAuthPullTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mode 0700"):
                 agent_auth._private_output_directory(str(output))
 
+    def test_declined_codex_replacement_explains_freshness_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            destination = output / 'codex-auth.json'
+            current = _codex_payload(expired=False)
+            destination.write_bytes(current)
+            destination.chmod(0o600)
+            error = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(error), \
+                 patch.object(agent_auth, '_run_remote_script', return_value=subprocess.CompletedProcess([], 0, current, b'')):
+                result = agent_auth.pull_agent_credentials(host='vm.example', username='agent',
+                    tools=['codex'], output_dir=directory, ssh_key=None)
+            self.assertEqual(result, 1)
+            self.assertIn('source freshness: current; destination freshness: current', error.getvalue())
+            self.assertIn('--overwrite', error.getvalue())
+            self.assertNotIn('signature', error.getvalue())
+            self.assertEqual(destination.read_bytes(), current)
+
 
 if __name__ == "__main__":
     unittest.main()

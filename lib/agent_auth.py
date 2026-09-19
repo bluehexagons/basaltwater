@@ -514,6 +514,17 @@ def pull_agent_credentials(
                 payload,
                 overwrite=overwrite or freshness_overwrite,
             )
+        except FileExistsError:
+            detail = ""
+            if tool == "codex":
+                source_status = inspect_codex_auth_payload(payload).get("status")
+                target_status = inspect_codex_auth_file(destination).get("status")
+                detail = f" (source freshness: {source_status}; destination freshness: {target_status})"
+            print(f"Error: {tool}: destination already exists: {destination}{detail}; "
+                  "use --overwrite for deliberate replacement, or --output-dir with a new private directory",
+                  file=sys.stderr)
+            failed += 1
+            continue
         except (OSError, ValueError) as exc:
             print(f"Error: {tool}: {exc}", file=sys.stderr)
             failed += 1

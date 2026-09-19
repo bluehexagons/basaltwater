@@ -124,6 +124,12 @@ Expiry cannot be established safely for the other formats, so replacing those
 still requires `--overwrite`. The command cannot export an operating-system
 keyring; a `gh` file without an embedded token is not portable.
 
+The pull destination is on the machine running the command, not the named VM.
+When replacement is declined, Codex diagnostics show source and destination
+freshness classifications. For an intentional replacement, select only the
+desired tool and add `--overwrite`; use a new `--output-dir` to stage a separate
+copy without changing active credentials.
+
 Pulling is for migration or recovery, not synchronization. Stop using the
 source VM's renewable Codex ChatGPT session before activating its pulled
 `auth.json` elsewhere.
@@ -159,6 +165,13 @@ Codex-enabled VMs receive a non-root daily maintenance timer with an additional
 check after boot. It asks Codex to refresh file-backed ChatGPT authentication
 only when safe metadata reports stale or uncertain state. It does not refresh
 API-key auth.
+
+The eight-day refresh interval is a local maintenance threshold, not a token
+expiry date. When the cached access token has a future expiry, an overdue
+refresh is reported as `refresh_due`: maintenance still attempts renewal, but
+the age alone does not fail agent-update readiness. Expired tokens, or overdue
+credentials with no readable expiry, remain `refresh_required`. These local
+metadata checks do not establish whether the provider has revoked a token.
 
 An explicit setup rerun performs the same bounded freshness check once after
 installing or configuring Codex, before the managed agent update. This gives a

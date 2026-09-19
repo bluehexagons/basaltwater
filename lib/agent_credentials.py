@@ -134,8 +134,12 @@ def inspect_codex_auth_payload(
         warnings.append("refresh_token_missing")
 
     if auth_mode == "chatgpt":
-        if access_token_expired or refresh_overdue:
+        if access_token_expired or (refresh_overdue and expires_at is None):
             status = "refresh_required"
+        elif refresh_overdue:
+            # Our maintenance interval is not the provider's token lifetime.
+            # Keep renewal due without declaring an unexpired token unusable.
+            status = "refresh_due"
         elif expires_soon:
             status = "expires_soon"
         elif expires_at is not None or last_refresh is not None:
