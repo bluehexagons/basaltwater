@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -73,6 +74,16 @@ class AutomaticSetupMigrationTests(unittest.TestCase):
         self.users.assert_not_called()
         self.assertTrue((old / 'infra_tools.py').exists())
         self.assertTrue(secret.exists())
+
+    def test_restrictive_root_umask_does_not_make_migrated_runtime_private(self):
+        self.legacy()
+        previous = os.umask(0o077)
+        try:
+            setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        finally:
+            os.umask(previous)
+        self.assertEqual(self.runtime.stat().st_mode & 0o777, 0o755)
+        self.assertEqual((self.root / 'var/lib/basaltwater-migration').stat().st_mode & 0o777, 0o700)
 
     def test_deployment_sources_survive_migration_and_setup_retry(self):
         old, _secret = self.legacy()

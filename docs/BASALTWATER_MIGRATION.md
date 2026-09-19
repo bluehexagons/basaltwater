@@ -79,10 +79,13 @@ basaltw agent doctor --json
 The system pass moves persistent product directories, stages a fresh
 Basaltwater runtime, preserves deployed repository sources and machine state,
 and updates owned systemd, Nginx, sudoers, security and gateway configuration.
-Affected units stop before paths change. Enabled and active states are recorded;
+Affected units, including services with managed drop-ins, stop before paths
+change. Enabled and active states are recorded;
 only the corresponding new units are enabled or started. Service-account and
 desktop-group renames retain numeric ownership. Account home-directory records
-under the moved product paths are updated too. Locks must be idle. Certificates
+under the moved product paths are updated too. Locks must be idle; a busy lock
+stops migration before service changes or journal creation, so setup can be
+retried after the operation finishes. Certificates
 and private keys retain their bytes and trust identity; existing certificate
 subjects are not reissued merely to change branding.
 

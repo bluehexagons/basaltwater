@@ -204,6 +204,7 @@ class RenameMigrationTests(unittest.TestCase):
             root = Path(directory)
             lock = self.write(root, 'run/lock/infra_tools/operations/host.lock', '')
             saved = self.write(root, 'var/lib/infra_tools/setup.json', '{}')
+            self.write(root, 'etc/systemd/system/infra-tools-test.service', '[Service]\nExecStart=/bin/true\n')
             plan = migration.build_plan(root, system=True)
             with lock.open('r+') as handle:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -211,7 +212,28 @@ class RenameMigrationTests(unittest.TestCase):
                     migration.apply_plan(plan)
             self.assertTrue(saved.exists())
             self.assertFalse((root / 'var/lib/basaltwater').exists())
-            migration.recover(root, system=True)
+            self.assertFalse(Path(plan['recovery']).exists())
+            self.assertFalse(any(call.args[0][1] in ('stop', 'disable', 'start') for call in run.call_args_list))
+
+    @patch('lib.rename_migration.subprocess.run')
+    def test_user_dropins_reload_and_restart_owning_unit_once(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('infra-tools', 'infra-tools-extra'):
+                self.write(root, f'.config/systemd/user/t3code.service.d/{name}.conf',
+                           '[Service]\nEnvironment=PATH=/home/agent/.local/share/infra_tools/t3-npm/bin\n')
+            plan = migration.build_plan(root, system=False)
+            self.assertEqual(plan['units'], [{'old': 't3code.service', 'new': 't3code.service'}])
+            migration.apply_plan(plan)
+            commands = [call.args[0] for call in run.call_args_list]
+            stop = ['systemctl', '--user', 'stop', 't3code.service']
+            reload = ['systemctl', '--user', 'daemon-reload']
+            start = ['systemctl', '--user', 'start', 't3code.service']
+            self.assertLess(commands.index(stop), commands.index(reload))
+            self.assertLess(commands.index(reload), commands.index(start))
+            self.assertFalse(any('disable' in command or 'enable' in command for command in commands))
+            self.assertIn('/basaltwater/', (root / '.config/systemd/user/t3code.service.d/basaltwater.conf').read_text())
 
     @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
     @patch('lib.rename_migration.subprocess.run')

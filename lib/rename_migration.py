@@ -289,7 +289,16 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                     _move_plan(old, new, actions, occupied)
                 edits.append(_edit_action(new, content.encode(), old))
             if "systemd" in old.parts and not is_link and old.suffix in (".service", ".timer", ".path", ".socket"):
-                units.append({"old": old.name, "new": new.name})
+                unit = {"old": old.name, "new": new.name}
+                if unit not in units:
+                    units.append(unit)
+            elif "systemd" in old.parts and old.suffix == ".conf" and old.parent.name.endswith((".service.d", ".timer.d", ".path.d", ".socket.d")):
+                # Drop-ins affect their owning unit even when the unit itself
+                # comes from an upstream package and keeps its original name.
+                name = old.parent.name[:-2]
+                unit = {"old": name, "new": name}
+                if unit not in units:
+                    units.append(unit)
     if system:
         for relative in ("etc/fstab", "etc/crontab", "etc/environment"):
             path = root / relative
@@ -488,13 +497,6 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
                 plan["groups"].append(["infra-desktop", "basaltwater-desktop"])
             else:
                 raise ValueError("Conflicting desktop groups")
-    recovery.mkdir(mode=0o700, parents=True)
-    _save(plan)
-    if plan["units"]:
-        _systemctl(plan, "stop", *(unit["old"] for unit in plan["units"]))
-    for unit in plan["units"]:
-        if unit["enabled"]:
-            _systemctl(plan, "disable", unit["old"])
     # Check the recent setup lock before moving it to the new namespace.
     # Active controllers must finish before a one-time host cutover.
     for action in plan["actions"]:
@@ -512,8 +514,15 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
                 handle.close()
                 for previous in lock_handles:
                     previous.close()
-                raise ValueError(f"Active operation holds {candidate}; recover and wait for it to finish")
+                raise ValueError(f"Active operation holds {candidate}; wait for it to finish")
             lock_handles.append(handle)
+    recovery.mkdir(mode=0o700, parents=True)
+    _save(plan)
+    if plan["units"]:
+        _systemctl(plan, "stop", *(unit["old"] for unit in plan["units"]))
+    for unit in plan["units"]:
+        if unit["enabled"] and unit["old"] != unit["new"]:
+            _systemctl(plan, "disable", unit["old"])
     for old, new in plan["accounts"]:
         subprocess.run(["usermod", "--login", new, old], check=True)
         try:
@@ -554,6 +563,9 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
             from lib.setup_common import copy_project_files
             stage = recovery / "runtime-stage"
             stage.mkdir()
+            # The recovery parent stays private, but this directory becomes
+            # the shared runtime used by unprivileged services and user passes.
+            stage.chmod(0o755)
             copy_project_files(str(stage))
             for name in ("state", "deployments"):
                 existing = old / name
@@ -573,7 +585,7 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
         _systemctl(plan, "daemon-reload")
     _reload_integrations(plan)
     for unit in plan["units"]:
-        if unit["enabled"]:
+        if unit["enabled"] and unit["old"] != unit["new"]:
             _systemctl(plan, "enable", unit["new"])
         if unit["active"]:
             _systemctl(plan, "start", unit["new"])
@@ -596,7 +608,8 @@ def recover(root: Path, *, system: bool) -> None:
         raise ValueError("Only an interrupted migration can be recovered")
     for unit in plan["units"]:
         _systemctl(plan, "stop", unit["new"], check=False)
-        _systemctl(plan, "disable", unit["new"], check=False)
+        if unit["old"] != unit["new"]:
+            _systemctl(plan, "disable", unit["new"], check=False)
     count = max(plan["completed"], plan.get("pending", -1) + 1)
     for index in reversed(range(count)):
         action = plan["actions"][index]
@@ -664,7 +677,7 @@ def recover(root: Path, *, system: bool) -> None:
     if plan["units"]:
         _systemctl(plan, "daemon-reload")
     for unit in plan["units"]:
-        if unit.get("enabled"):
+        if unit.get("enabled") and unit["old"] != unit["new"]:
             _systemctl(plan, "enable", unit["old"])
         if unit.get("active"):
             _systemctl(plan, "start", unit["old"])
