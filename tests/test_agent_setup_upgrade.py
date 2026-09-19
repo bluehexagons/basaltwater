@@ -109,6 +109,44 @@ class AutomaticSetupMigrationTests(unittest.TestCase):
         self.assertTrue((self.runtime / 'basaltwater.py').exists())
         self.users.assert_not_called()
 
+    def test_completed_cutover_repairs_encoded_firewall_and_codex_markers(self):
+        self.legacy()
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        comment = 'infra-tools T3 Code 3773/tcp source 192.168.0.0/24'
+        packet_rule = '-A ufw-user-input -p tcp --dport 3773 -j ACCEPT\n'
+        for filename in ('user.rules', 'user6.rules'):
+            path = self.root / 'etc/ufw' / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('### tuple ### allow tcp 3773 0.0.0.0/0 any 192.168.0.0/24 in comment=' + comment.encode().hex() + '\n' + packet_rule)
+            path.chmod(0o640)
+        policy = self.root / 'etc/codex/config.toml'
+        policy.parent.mkdir(parents=True)
+        policy.write_text('# Managed by infra-tools coding-agent security policy.\napproval_policy = "on-request"\n')
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        for filename in ('user.rules', 'user6.rules'):
+            path = self.root / 'etc/ufw' / filename
+            self.assertIn(comment.replace('infra-tools', 'basaltwater').encode().hex(), path.read_text())
+            self.assertTrue(path.read_text().endswith(packet_rule))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertIn('# Managed by basaltwater coding-agent security policy.', policy.read_text())
+
+    def test_initial_migration_preserves_unowned_firewall_rules_and_codex_policy(self):
+        self.legacy()
+        rules = self.root / 'etc/ufw/user.rules'
+        rules.parent.mkdir(parents=True)
+        owned = 'infra-tools T3 Code pairing 3774/tcp source 192.168.0.0/24'
+        unowned = 'operator-owned rule'
+        prefix = '### tuple ### allow tcp 3774 0.0.0.0/0 any 192.168.0.0/24 in comment='
+        rules.write_text(prefix + owned.encode().hex() + '\n' + prefix + unowned.encode().hex() + '\n')
+        policy = self.root / 'etc/codex/config.toml'
+        policy.parent.mkdir(parents=True)
+        policy.write_text('# Operator configuration\napproval_policy = "on-request"\n')
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        self.assertIn(owned.replace('infra-tools', 'basaltwater').encode().hex(), rules.read_text())
+        self.assertIn(prefix + unowned.encode().hex(), rules.read_text())
+        self.assertEqual(policy.read_text(), '# Operator configuration\napproval_policy = "on-request"\n')
+
     def test_user_migration_failure_prevents_success_and_is_retried_on_next_setup(self):
         self.legacy()
         self.users.side_effect = subprocess.CalledProcessError(1, ['runuser'])

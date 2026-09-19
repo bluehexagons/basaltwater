@@ -63,6 +63,49 @@ def _configuration_text(content: str, translate=rename_text) -> str:
     return "".join(lines)
 
 
+def _managed_marker_edits(root: Path) -> list[dict]:
+    """Repair encoded UFW ownership and managed Codex policy markers only."""
+    edits = []
+    for relative in ("etc/ufw/user.rules", "etc/ufw/user6.rules",
+                     "etc/codex/config.toml", "etc/codex/requirements.toml"):
+        path = root / relative
+        _safe(path)
+        if not os.path.lexists(path):
+            continue
+        if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.geteuid():
+            raise ValueError(f"Unsafe managed marker resource: {path}")
+        content = path.read_text()
+        if relative.startswith("etc/ufw/"):
+            def rewrite(match):
+                try:
+                    comment = bytes.fromhex(match[2]).decode("utf-8")
+                except (ValueError, UnicodeError):
+                    return match[0]
+                if not comment.startswith(("infra-tools T3 Code ", "infra_tools T3 Code ")):
+                    return match[0]
+                return match[1] + rename_text(comment).encode().hex()
+            updated = re.sub(r"(?m)^(### tuple ###[^\n]* comment=)([0-9a-fA-F]+)(?=\s*$)", rewrite, content)
+        else:
+            updated = content
+            for brand in ("infra-tools", "infra_tools"):
+                marker = f"# Managed by {brand} coding-agent security policy."
+                if marker in content.splitlines():
+                    updated = updated.replace(marker, rename_text(marker))
+        if updated != content:
+            edits.append(_edit_action(path, updated.encode(), path))
+    return edits
+
+
+def repair_managed_markers(root: Path) -> None:
+    """Idempotent follow-up for hosts whose original cutover already finished.
+
+    UFW reads these comments from its rule files on each invocation; packet
+    rules are unchanged, so no firewall reload or deletion is necessary.
+    """
+    for action in _managed_marker_edits(root):
+        _write_bytes(action, "after")
+
+
 def _safe(path: Path) -> None:
     validate_filesystem_path(str(path))
     if not path.is_absolute() or ".." in path.parts:
@@ -234,6 +277,8 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
         _safe(directory / "placeholder")
         entries = directory.rglob("*") if "systemd" in directory.parts else directory.iterdir()
         for old in sorted(entries):
+            if relative == "etc/ufw" and old.name in ("user.rules", "user6.rules"):
+                continue  # Encoded ownership comments are handled separately.
             if any(part.endswith((".wants", ".requires")) for part in old.relative_to(directory).parts):
                 continue
             if old.is_dir() and not old.is_symlink():
@@ -300,6 +345,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                 if unit not in units:
                     units.append(unit)
     if system:
+        edits.extend(_managed_marker_edits(root))
         for relative in ("etc/fstab", "etc/crontab", "etc/environment"):
             path = root / relative
             if path.is_file():

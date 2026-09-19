@@ -76,6 +76,13 @@ instructions below apply. A later setup retries unfinished user passes after a
 successful system pass. The new setup payload is not executed until those
 passes succeed.
 
+Setup reruns also repair the encoded ownership comments on recent managed T3
+Code UFW rules and the ownership markers on managed `/etc/codex` policies.
+This applies even when a prior rename pass completed. Firewall repair changes
+comments only, preserving ports, source restrictions, and unrelated rules;
+operator-owned Codex policies remain untouched. An old refresh timestamp is a
+separate Codex freshness warning, not proof that a refresh token has expired.
+
 For a standalone migration or a custom source path, copy the selected
 Basaltwater checkout to a separate directory on the target and run the explicit
 commands below. The system pass precedes user passes when user launchers point

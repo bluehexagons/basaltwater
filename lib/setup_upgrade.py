@@ -97,6 +97,7 @@ def prepare_target_runtime(source: str, username: str) -> None:
                 shutil.rmtree(destination)
             shutil.copytree(deployments, destination, symlinks=True)
     if migrated or completed:
+        rename_migration.repair_managed_markers(root)
         _migrate_users(runtime, username)
 
 

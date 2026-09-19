@@ -136,7 +136,7 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
         }
     )
     process = subprocess.Popen(
-        [codex_path, "app-server", "--stdio"],
+        [codex_path, "app-server"],
         cwd=home,
         env=environment,
         stdin=subprocess.PIPE,

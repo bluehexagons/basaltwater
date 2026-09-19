@@ -182,6 +182,7 @@ class TestCodexAuthMaintenance(unittest.TestCase):
             import json
             import sys
 
+            assert sys.argv[1:] == ["app-server"]
             initialize = json.loads(sys.stdin.buffer.readline())
             assert initialize["method"] == "initialize"
             print(json.dumps({"id": 99, "result": {"ignored": True}}), flush=True)
