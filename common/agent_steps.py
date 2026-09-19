@@ -7,6 +7,7 @@ import os
 import pwd
 import shlex
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -1006,10 +1007,48 @@ def _copy_secret_file(
     return True
 
 
+def _credential_recovery_source(path: str) -> str:
+    """Resolve only setup's managed payload alias, never nested symlinks."""
+
+    from lib.setup_payloads import PAYLOAD_ROOT
+
+    validate_filesystem_path(path, must_exist=True)
+    source = os.path.abspath(path)
+    alias = os.path.abspath(REMOTE_AGENT_PAYLOAD_DIR)
+    if os.path.commonpath((source, alias)) == alias and os.path.islink(alias):
+        _reject_symlinked_agent_destination(os.path.dirname(alias))
+        target = os.readlink(alias)
+        lease = os.path.dirname(target)
+        root = os.path.abspath(PAYLOAD_ROOT)
+        if (
+            not os.path.isabs(target)
+            or os.path.normpath(target) != target
+            or os.path.basename(target) != "agent_payload"
+            or not os.path.basename(lease).startswith("payload-")
+            or os.path.dirname(lease) != root
+            or os.lstat(alias).st_uid != os.getuid()
+        ):
+            raise RuntimeError("Refusing unmanaged agent payload link")
+        for directory in (root, lease, target):
+            _reject_symlinked_agent_destination(directory)
+            info = os.lstat(directory)
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.getuid()
+                or info.st_mode & 0o077
+            ):
+                raise RuntimeError("Refusing unsafe agent payload directory")
+        source = os.path.join(target, os.path.relpath(source, alias))
+    _reject_symlinked_agent_destination(source)
+    return source
+
+
 def _recover_staged_codex_credential(
     config: SetupConfig, source: str, destination: str,
 ) -> bool:
     """Renew a supplied credential privately before replacing an overdue login."""
+
+    source = _credential_recovery_source(source)
 
     def read_tokens(path: str) -> dict:
         _reject_symlinked_agent_destination(path)

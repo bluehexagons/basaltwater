@@ -17,11 +17,14 @@ from unittest.mock import MagicMock, patch
 
 from common.agent_steps import (
     _copy_secret_file,
+    _credential_recovery_source,
+    copy_agent_tooling_payload,
     configure_codex_auth_maintenance,
     run_codex_auth_maintenance,
 )
 from common.service_tools import codex_auth_maintenance
 from lib.config import SetupConfig
+from lib import setup_payloads
 from lib.system_types import get_steps_for_system_type
 
 
@@ -305,6 +308,91 @@ class TestCodexAuthMaintenance(unittest.TestCase):
 
 
 class TestCodexAuthMaintenanceSetup(unittest.TestCase):
+    def test_recovery_through_setup_payload_link_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = os.path.join(directory, "runtime")
+            home = os.path.join(directory, "home")
+            os.mkdir(runtime)
+            os.makedirs(os.path.join(home, ".codex"), mode=0o700)
+            alias = os.path.join(runtime, "agent_payload")
+            destination = os.path.join(home, ".codex", "auth.json")
+            stale = {"auth_mode": "chatgpt", "last_refresh": "2020-01-01T00:00:00Z"}
+            with open(destination, "w", encoding="utf-8") as stream:
+                json.dump(dict(stale, tokens={"refresh_token": "target-secret"}), stream)
+
+            def renew(_user: str, _home: str, command: str, **_kwargs: object) -> SimpleNamespace:
+                args = shlex.split(command)
+                staged_home = args[args.index("--home") + 1]
+                candidate = os.path.join(staged_home, ".codex", "auth.json")
+                with open(candidate, "w", encoding="utf-8") as stream:
+                    json.dump({
+                        "auth_mode": "chatgpt", "last_refresh": datetime.now(timezone.utc).isoformat(),
+                        "tokens": {"refresh_token": "renewed-secret"},
+                    }, stream)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch.object(setup_payloads, "PAYLOAD_ROOT", os.path.join(directory, "run")),
+                patch("common.agent_steps.REMOTE_AGENT_PAYLOAD_DIR", alias),
+                patch("common.agent_steps._user_home", return_value=home),
+                patch("common.agent_steps._chown_path"),
+                patch("common.agent_steps._chown_user_directory_chain"),
+                patch("common.agent_steps._tool_path", return_value=sys.executable),
+                patch("common.agent_steps._run_as_login_user", side_effect=renew) as run,
+                patch("common.agent_steps.is_dry_run", return_value=False),
+                redirect_stdout(io.StringIO()),
+            ):
+                with setup_payloads.payload_workspace(60) as lease:
+                    source = os.path.join(lease, "agent_payload", "secrets", "codex", "auth.json")
+                    os.makedirs(os.path.dirname(source), mode=0o700)
+                    os.chmod(os.path.join(lease, "agent_payload"), 0o700)
+                    with open(source, "w", encoding="utf-8") as stream:
+                        json.dump(dict(stale, tokens={"refresh_token": "source-secret"}), stream)
+                    os.chmod(source, 0o600)
+                    setup_payloads.link_payloads(lease, runtime)
+                    copy_agent_tooling_payload(SetupConfig(
+                        host="host", username="agent", system_type="server_dev", install_codex=True,
+                    ))
+                    run.assert_called_once()
+                    self.assertFalse(os.path.lexists(alias))
+                    self.assertTrue(os.path.isfile(source))
+                self.assertFalse(os.path.exists(lease))
+            with open(destination, encoding="utf-8") as stream:
+                self.assertEqual(json.load(stream)["tokens"]["refresh_token"], "renewed-secret")
+            self.assertEqual(os.stat(destination).st_mode & 0o777, 0o600)
+            self.assertEqual(os.listdir(home), [".codex"])
+
+    def test_payload_link_exception_rejects_unsafe_sources(self) -> None:
+        for unsafe in ("outside_root", "nested_link", "file_link", "public_directory"):
+            with self.subTest(unsafe=unsafe), tempfile.TemporaryDirectory() as directory:
+                root = os.path.join(directory, "run")
+                target = os.path.join(root, "payload-test", "agent_payload")
+                os.makedirs(target, mode=0o700)
+                os.chmod(root, 0o700)
+                os.chmod(os.path.dirname(target), 0o700)
+                source = os.path.join(target, "auth.json")
+                with open(source, "w", encoding="utf-8") as stream:
+                    stream.write("{}")
+                alias = os.path.join(directory, "agent_payload")
+                os.symlink(target if unsafe != "outside_root" else directory, alias)
+                if unsafe == "public_directory":
+                    os.chmod(target, 0o755)
+                elif unsafe == "file_link":
+                    os.rename(source, source + ".real")
+                    os.symlink(source + ".real", source)
+                elif unsafe == "nested_link":
+                    os.symlink(target, os.path.join(target, "nested"))
+                path = os.path.join(alias, "nested", "auth.json") if unsafe == "nested_link" else os.path.join(alias, "auth.json")
+                if unsafe == "outside_root":
+                    with open(path, "w", encoding="utf-8") as stream:
+                        stream.write("{}")
+                with (
+                    patch.object(setup_payloads, "PAYLOAD_ROOT", root),
+                    patch("common.agent_steps.REMOTE_AGENT_PAYLOAD_DIR", alias),
+                    self.assertRaises(RuntimeError),
+                ):
+                    _credential_recovery_source(path)
+
     def test_setup_renews_stale_source_without_risking_live_credentials(self) -> None:
         for outcome in ("renewed", "rejected", "same_token", "concurrent_login"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as home:

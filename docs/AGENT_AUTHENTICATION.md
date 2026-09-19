@@ -82,6 +82,12 @@ This applies to both `--agent-auth active` and `--agent-auth-file codex PATH`;
 the controller does not need Codex installed. Identical refresh tokens are not
 tested as a separate recovery source.
 
+Recovery accepts the runtime's managed `agent_payload` link into its private
+setup workspace. It validates that workspace's location, ownership, and
+permissions before reading; symlinks inside the payload or in credential
+destinations remain rejected. Setup recreates the link on each run and removes
+the uploaded payload afterward, so no manual link repair is needed.
+
 Renewal rotates the staged session for use on the target. It does not update the
 controller's copy or synchronize credentials with the source VM. Reusing that
 session concurrently on another machine can invalidate its older copies.
