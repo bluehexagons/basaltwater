@@ -112,7 +112,8 @@ class TestConfigureSambaGlobalSettings(unittest.TestCase):
 
             with patch.object(samba_steps, "SMB_CONF_PATH", smb_conf), \
                  patch.object(samba_steps, "run", side_effect=fake_run):
-                samba_steps.configure_samba_global_settings(_make_config())
+                with self.assertRaisesRegex(RuntimeError, "security configuration validation failed"):
+                    samba_steps.configure_samba_global_settings(_make_config())
 
             with open(smb_conf) as file_obj:
                 self.assertEqual(file_obj.read(), original)
@@ -504,6 +505,8 @@ class TestReconcileSambaShares(unittest.TestCase):
 
         commands = [command for command, _ in calls]
         self.assertIn("chgrp -R --preserve-root smb_docs_write /srv/docs", commands)
+        self.assertTrue(any('RequiresMountsFor="/srv/docs"' in command for command in commands))
+        self.assertIn("systemctl daemon-reload", commands)
         self.assertIn("chmod -R --preserve-root g+rwX /srv/docs", commands)
         self.assertIn(
             "find /srv/docs -xdev -type d -exec chmod g+s -- {} +",

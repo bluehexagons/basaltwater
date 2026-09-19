@@ -313,6 +313,11 @@ Gogs and each Samba share then check the mount marker. A missing or wrong mount
 stops setup instead of allowing repositories, LFS objects, or shared files to
 spill onto the SSD boot filesystem.
 
+The Gogs service requires the mount containing its data configuration before
+starting. Samba likewise installs dependencies for its managed share paths and
+custom metadata cache. These dependencies apply on subsequent boots, including
+when a data mount uses fstab's `nofail`; retain the persistent mount definitions.
+
 This automation initializes blank disks allocated with a new VM and reconciles
 the declared Proxmox hardware flags on managed disks during reruns. It does not
 adopt an unrelated existing disk, migrate populated Gogs data, or put live

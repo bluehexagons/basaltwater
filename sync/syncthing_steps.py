@@ -21,6 +21,7 @@ from lib.credentials import get_runtime_credential
 from lib.local_http import open_loopback
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, is_package_installed, run
+from lib.validation import validate_filesystem_path
 
 
 SYNCTHING_HOME = "/var/lib/basaltwater/syncthing"
@@ -371,6 +372,36 @@ def _preflight_existing_folders(username: str, share_root: str) -> None:
     _validate_folder_paths(_load_current_config(username), share_root)
 
 
+def _validate_state_paths() -> None:
+    """Refuse redirected persistent state before privileged ownership changes."""
+    for path in (SYNCTHING_HOME, SYNCTHING_SERVICE_FILE):
+        validate_filesystem_path(path)
+        if os.path.realpath(path) != path:
+            raise RuntimeError(f"Refusing symlinked Syncthing state or service path: {path}")
+    if os.path.lexists(SYNCTHING_HOME) and not os.path.isdir(SYNCTHING_HOME):
+        raise RuntimeError(f"Syncthing state must be a directory: {SYNCTHING_HOME}")
+    if os.path.lexists(SYNCTHING_SERVICE_FILE) and not os.path.isfile(SYNCTHING_SERVICE_FILE):
+        raise RuntimeError(f"Syncthing service must be a regular file: {SYNCTHING_SERVICE_FILE}")
+    # Syncthing reads these when generating/updating an existing identity.
+    for name in ("config.xml", "cert.pem", "key.pem"):
+        path = os.path.join(SYNCTHING_HOME, name)
+        if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path) or os.stat(path).st_nlink != 1):
+            raise RuntimeError(f"Refusing unsafe Syncthing identity file: {path}")
+
+
+def _stop_before_configuration() -> None:
+    """Permit a missing first-install unit, but never configure a live daemon."""
+    unit = f"{SYNCTHING_SERVICE_NAME}.service"
+    stopped = run(["systemctl", "stop", unit], check=False)
+    state = run(["systemctl", "is-active", unit], check=False, capture_output=True)
+    if state.returncode == 0 or str(state.stdout or "").strip() not in {"inactive", "failed", "unknown"}:
+        raise RuntimeError("Managed Syncthing service did not stop; configuration was not changed")
+    if stopped.returncode != 0:
+        loaded = run(["systemctl", "show", unit, "--property=LoadState", "--value"], check=False, capture_output=True)
+        if loaded.returncode != 0 or str(loaded.stdout or "").strip() != "not-found":
+            raise RuntimeError("Could not stop managed Syncthing service")
+
+
 def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     """Install and reconcile one unprivileged, relay-capable Syncthing endpoint."""
     if not config.enable_syncthing and not config.disable_syncthing:
@@ -422,6 +453,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     if "\n" in admin_password or "\r" in admin_password:
         raise RuntimeError("Syncthing administrator password cannot contain line breaks")
 
+    _validate_state_paths()
     if not is_package_installed("syncthing"):
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run(
@@ -446,7 +478,7 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     os.chown(SYNCTHING_HOME, uid, gid)
     _prepare_share_root(config, group_name)
 
-    run(["systemctl", "stop", f"{SYNCTHING_SERVICE_NAME}.service"], check=False)
+    _stop_before_configuration()
     _run_as_user(
         config.username,
         [

@@ -410,7 +410,10 @@ def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
     sections: list[str] = []
     for share_config in share_configs:
         for share_path in cast(list[str], share_config["paths"]):
+            if os.path.realpath(share_path) != os.path.abspath(share_path):
+                raise RuntimeError(f"Refusing symlinked Samba share path: {share_path}")
             assert_declared_storage_mount(config, share_path)
+    for share_config in share_configs:
         group_name, section = _prepare_samba_share(config, share_config)
         desired_groups.add(group_name)
         sections.append(section)
@@ -432,13 +435,30 @@ def reconcile_samba_shares(config: SetupConfig, **_: Any) -> None:
     elif desired_content:
         desired_content += "\n"
 
+    if desired_content != previous_content and not _write_validated_smb_config(
+        SMB_CONF_PATH, previous_content, desired_content,
+    ):
+        raise RuntimeError("Samba share configuration validation failed")
+
+    # Local-fs ordering alone does not require nofail data mounts to succeed.
+    # Keep smbd from exporting an underlying boot-disk directory at startup.
+    paths = sorted({path for share in share_configs for path in share["paths"]})
+    if config.samba_metadata_cache:
+        paths.append(config.samba_metadata_cache)
+    dropin = "/etc/systemd/system/smbd.service.d/basaltwater-storage.conf"
+    if paths:
+        quoted = [
+            '"' + path.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
+            for path in paths
+        ]
+        content = "[Unit]\nRequiresMountsFor=" + " ".join(quoted) + "\n"
+        run("install -d -m 0755 /etc/systemd/system/smbd.service.d")
+        run(f"printf %s {shlex.quote(content)} > {shlex.quote(dropin)}")
+    else:
+        run(f"rm -f -- {shlex.quote(dropin)}")
+    run("systemctl daemon-reload")
+
     if desired_content != previous_content:
-        if not _write_validated_smb_config(
-            SMB_CONF_PATH,
-            previous_content,
-            desired_content,
-        ):
-            raise RuntimeError("Samba share configuration validation failed")
         run("systemctl reload smbd")
         print(f"  ✓ Reconciled {len(sections)} Samba share(s)")
     else:
@@ -587,6 +607,7 @@ def configure_samba_global_settings(config: SetupConfig) -> None:
     settings = dict(SAMBA_GLOBAL_HARDENED_SETTINGS)
     settings["cache directory"] = cache_path
 
+    assert_declared_storage_mount(config, cache_path)
     run(
         "install -d -m 0750 -o root -g root -- "
         f"{shlex.quote(cache_path)}"
@@ -604,7 +625,7 @@ def configure_samba_global_settings(config: SetupConfig) -> None:
         return
 
     if not _write_validated_smb_config(smb_conf, content, desired_content):
-        return
+        raise RuntimeError("Samba global security configuration validation failed")
 
     run("systemctl reload smbd")
     print("  ✓ Updated global Samba configuration with security hardening")

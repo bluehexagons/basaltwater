@@ -26,6 +26,7 @@ from lib.release_management import (
 )
 from lib.remote_utils import generate_password, is_service_active, run, user_exists
 from lib.unit_transaction import replace_units
+from lib.validation import validate_filesystem_path
 from web.cloudflare_steps import run_cloudflare_tunnel_setup
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
 from web.web_steps import install_nginx
@@ -450,11 +451,14 @@ ENABLE_REGISTRATION_CAPTCHA = false
 
 def generate_gogs_service(config_path: str) -> str:
     """Return a hardened systemd unit file for Gogs."""
+    validate_filesystem_path(config_path)
     custom_dir = os.path.dirname(os.path.dirname(config_path))
+    mount_path = custom_dir.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
     return f"""[Unit]
 Description=Gogs
 After=network.target ssh.service sshd.service
 Wants=network.target
+RequiresMountsFor="{mount_path}"
 
 [Service]
 Type=simple

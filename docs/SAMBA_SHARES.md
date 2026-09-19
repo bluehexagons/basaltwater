@@ -42,6 +42,14 @@ paths are created when needed. Paths below `/mnt` must already be on a mounted
 filesystem; this prevents accidentally creating a share on the root disk when
 a data drive is missing.
 
+Setup checks every declared share mount before changing any share permissions.
+Share roots with symbolic-link traversal are rejected. The managed
+`smbd.service.d/basaltwater-storage.conf` drop-in requires the configured share
+and custom metadata-cache mounts at service startup, including mounts marked
+`nofail` in fstab. Keep their persistent mount definitions in place. Rejected
+global hardening configuration restores the previous file and fails setup;
+it is not reported as a successful security update.
+
 `--samba-source` adds a Samba-only ingress policy. It is combined with any
 generic `--access-source`/`--lan-access` policy but does not restrict SSH,
 Gogs, or other services. Repeat it for each client network. A later patch can

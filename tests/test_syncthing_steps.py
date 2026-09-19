@@ -19,6 +19,8 @@ from sync.syncthing_steps import (
     _prepare_share_root,
     _render_service,
     _put_config,
+    _validate_state_paths,
+    _stop_before_configuration,
     build_syncthing_policy_config,
     setup_syncthing,
 )
@@ -181,6 +183,34 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
 
 
 class SyncthingCompositionTest(unittest.TestCase):
+    def test_state_symlinks_are_rejected_before_ownership_changes(self) -> None:
+        for child in (None, "config.xml", "cert.pem", "key.pem"):
+            with self.subTest(child=child), tempfile.TemporaryDirectory() as directory:
+                home = os.path.join(directory, "state")
+                target = os.path.join(directory, "target")
+                os.mkdir(target)
+                if child is None:
+                    os.symlink(target, home)
+                else:
+                    os.mkdir(home)
+                    os.symlink(target, os.path.join(home, child))
+                with patch("sync.syncthing_steps.SYNCTHING_HOME", home):
+                    with self.assertRaisesRegex(RuntimeError, "Refusing"):
+                        _validate_state_paths()
+
+    def test_stop_failure_and_transitional_states_refuse_reconfiguration(self) -> None:
+        for result, state, loaded, allowed in ((0, "active", "loaded", False), (0, "deactivating", "loaded", False), (1, "inactive", "loaded", False), (1, "inactive", "not-found", True), (0, "inactive", "loaded", True)):
+            with self.subTest(result=result, state=state), patch("sync.syncthing_steps.run", side_effect=[
+                SimpleNamespace(returncode=result),
+                SimpleNamespace(returncode=0 if state == "active" else 3, stdout=state),
+                SimpleNamespace(returncode=0, stdout=loaded),
+            ]):
+                if allowed:
+                    _stop_before_configuration()
+                else:
+                    with self.assertRaises(RuntimeError):
+                        _stop_before_configuration()
+
     def test_put_config_uses_the_literal_loopback_client(self) -> None:
         response = MagicMock()
         response.__enter__.return_value.status = 204
@@ -318,6 +348,8 @@ class SyncthingCompositionTest(unittest.TestCase):
             stderr="",
         )
         with (
+            patch("sync.syncthing_steps._validate_state_paths"),
+            patch("sync.syncthing_steps._stop_before_configuration"),
             patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
             patch("sync.syncthing_steps.is_dry_run", return_value=False),
             patch("sync.syncthing_steps.is_package_installed", return_value=True),
@@ -364,6 +396,8 @@ class SyncthingCompositionTest(unittest.TestCase):
             stderr="",
         )
         with (
+            patch("sync.syncthing_steps._validate_state_paths"),
+            patch("sync.syncthing_steps._stop_before_configuration"),
             patch("sync.syncthing_steps.can_manage_system_services", return_value=True),
             patch("sync.syncthing_steps.is_dry_run", return_value=False),
             patch("sync.syncthing_steps.is_package_installed", return_value=True),

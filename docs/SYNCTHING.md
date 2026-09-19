@@ -160,6 +160,18 @@ The device certificate and database live in
 device ID. The Debian package remains authoritative, and Syncthing's
 self-updater is disabled.
 
+Reruns reject symlinked state directories, identity files, and service paths
+before changing ownership or generating configuration. Setup verifies that
+the managed daemon stopped before updating its offline configuration; a failed
+stop aborts instead of racing the running service.
+
+On a combined Samba/Gogs/Syncthing server, use separate sibling roots, such as
+`/srv/shares`, `/srv/gogs`, and `/srv/syncthing`. Do not synchronize or export
+live Gogs state. Sharing the same writable files through Samba and Syncthing
+also requires deliberate Unix group/ACL design; the default per-share Samba
+groups and Syncthing service account do not automatically grant each other
+access. Separate roots avoid setup changing the other service's ownership.
+
 To remove the service and HTTPS route while preserving state and files:
 
 ```bash
