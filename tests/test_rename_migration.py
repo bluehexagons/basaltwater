@@ -58,6 +58,71 @@ class RenameMigrationTests(unittest.TestCase):
             self.assertTrue((root / '.config/basaltwater/git/identity.json').exists())
             self.assertFalse((root / '.config/infra-tools').exists())
 
+    def worktree_fixture(self, root: Path) -> tuple[Path, Path]:
+        tree = root / '.local/share/infra_tools/worktrees/project/task'
+        metadata = root / 'repos/project/.git/worktrees/task'
+        self.write(tree, '.git', f'gitdir: {metadata}\n')
+        self.write(metadata, 'commondir', '../..\n')
+        self.write(metadata, 'gitdir', f'{tree}/.git\n')
+        self.write(metadata, 'HEAD', 'ref: refs/heads/agent/task\n')
+        self.write(metadata, 'index', 'opaque staged changes')
+        self.write(tree, 'local.env', 'INFRA_TOOLS_VALUE=user-owned\n')
+        self.write(tree, 'state.json', json.dumps({'path': str(tree)}))
+        (tree / 'link').symlink_to('infra_tools-user-file')
+        return tree, metadata
+
+    def test_linked_worktrees_move_with_dirty_files_and_registration_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree, metadata = self.worktree_fixture(root)
+            before = {name: (tree / name).read_bytes() for name in ('local.env', 'state.json')}
+            # Relative Git pointers must remain valid after the path changes.
+            (tree / '.git').write_text(f'gitdir: {os.path.relpath(metadata, tree)}\n')
+            plan = migration.build_plan(root, system=False)
+            self.assertEqual((metadata / 'gitdir').read_text(), f'{tree}/.git\n')
+            migration.apply_plan(plan)
+            new = root / '.local/share/basaltwater/worktrees/project/task'
+            self.assertFalse(tree.exists())
+            self.assertEqual((new / '.git').read_text(), f'gitdir: {metadata}\n')
+            self.assertEqual((metadata / 'gitdir').read_text(), f'{new}/.git\n')
+            self.assertEqual((metadata / 'index').read_text(), 'opaque staged changes')
+            self.assertEqual((metadata / 'HEAD').read_text(), 'ref: refs/heads/agent/task\n')
+            for name, content in before.items():
+                self.assertEqual((new / name).read_bytes(), content)
+            self.assertEqual(os.readlink(new / 'link'), 'infra_tools-user-file')
+            self.assertEqual(migration.build_plan(root, system=False)['actions'], [])
+
+    def test_worktree_registration_recovers_after_interrupted_cutover(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree, metadata = self.worktree_fixture(root)
+            plan = migration.build_plan(root, system=False)
+            with patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                with self.assertRaisesRegex(OSError, 'interrupted'):
+                    migration.apply_plan(plan)
+            migration.recover(root, system=False)
+            self.assertEqual((tree / '.git').read_text(), f'gitdir: {metadata}\n')
+            self.assertEqual((metadata / 'gitdir').read_text(), f'{tree}/.git\n')
+
+    def test_worktree_metadata_conflicts_and_links_fail_before_moves(self):
+        for unsafe in ('mismatch', 'symlink', 'moving-common'):
+            with self.subTest(unsafe=unsafe), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                tree, metadata = self.worktree_fixture(root)
+                if unsafe == 'mismatch':
+                    (metadata / 'gitdir').write_text('/unrelated/.git\n')
+                elif unsafe == 'symlink':
+                    (metadata / 'gitdir').unlink()
+                    (metadata / 'gitdir').symlink_to(metadata / 'HEAD')
+                else:
+                    destination = root / '.local/share/infra_tools/common'
+                    (root / 'repos/project/.git').rename(destination)
+                    (tree / '.git').write_text(f'gitdir: {destination}/worktrees/task\n')
+                with self.assertRaises(ValueError):
+                    migration.build_plan(root, system=False)
+                self.assertTrue(tree.exists())
+                self.assertFalse((root / '.local/state/basaltwater-migration').exists())
+
     def test_conflicting_files_fail_before_changes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

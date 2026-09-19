@@ -188,10 +188,61 @@ def _state_edits(old: Path, new: Path) -> list[dict]:
     return edits
 
 
+def _repository_content(path: Path, root: Path) -> bool:
+    """Keep repository files and Git metadata opaque during data migration."""
+    return ".git" in path.relative_to(root).parts or any(
+        os.path.lexists(parent / ".git")
+        for parent in path.parents if parent.is_relative_to(root)
+    )
+
+
+def _worktree_edits(old: Path, new: Path, root: Path) -> list[dict]:
+    """Relocate linked worktrees whose common repository stays in place.
+
+    Only the reciprocal Git pointers change. Use ordinary journaled edits so
+    interrupted cutovers can restore the original registration and gitfile.
+    """
+    edits = []
+    for gitfile in old.rglob(".git"):
+        if gitfile.is_dir() and not gitfile.is_symlink():
+            continue
+        _safe(gitfile)
+        if gitfile.is_symlink() or not gitfile.is_file():
+            raise ValueError(f"Unsafe worktree Git file: {gitfile}")
+        content = gitfile.read_text().strip()
+        if not content.startswith("gitdir: "):
+            raise ValueError(f"Invalid worktree Git file: {gitfile}")
+        gitdir = Path(os.path.abspath(gitfile.parent / content[len("gitdir: "):]))
+        backlink = gitdir / "gitdir"
+        common_file = gitdir / "commondir"
+        for path in (backlink, common_file):
+            _safe(path)
+            if path.is_symlink() or not path.is_file() or path.stat().st_uid != os.geteuid():
+                raise ValueError(f"Unsafe linked worktree metadata: {path}")
+        common = Path(os.path.abspath(gitdir / common_file.read_text().strip()))
+        _safe(common)
+        if common.is_symlink() or not common.is_dir() or gitdir.parent != common / "worktrees":
+            raise ValueError(f"Unrecognized linked worktree layout: {gitfile}")
+        # Moving a primary repository needs a separate plan for all its other
+        # worktrees. Recent managed worktrees use a stable external checkout.
+        if any(common.is_relative_to(root / parent / name)
+               for parent in (*USER_DIRS, *SYSTEM_DIRS) for name in DATA_NAMES):
+            raise ValueError(f"Worktree common repository must be outside migrating data: {common}")
+        registered = Path(os.path.abspath(gitdir / backlink.read_text().strip()))
+        if registered != gitfile:
+            raise ValueError(f"Worktree registration does not match: {gitfile}")
+        destination = new / gitfile.relative_to(old)
+        edits.append(_edit_action(destination, f"gitdir: {gitdir}\n".encode(), gitfile))
+        edits.append(_edit_action(backlink, f"{destination}\n".encode(), backlink))
+    return edits
+
+
 def _owned_tree_edits(old: Path, new: Path) -> list[dict]:
     """Refresh generated environment files and owned data-tree links."""
     actions = []
     for path in old.rglob("*"):
+        if _repository_content(path, old):
+            continue
         destination = new / path.relative_to(old)
         if path.is_symlink():
             before = os.readlink(path)
@@ -254,10 +305,9 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                 continue
             if old.is_symlink() or (not old.is_dir() and parent != "run/lock"):
                 raise ValueError(f"Unexpected legacy data path: {old}")
-            # Linked worktrees embed absolute locations in Git's common dir.
-            if any(p.is_file() for p in old.rglob(".git")):
-                raise ValueError(f"Remove managed Git worktrees before migration: {old}")
             new = old.with_name(rename_text(old.name))
+            if old.is_dir():
+                edits.extend(_worktree_edits(old, new, root))
             _move_plan(old, new, actions, occupied)
             if old.is_dir():
                 edits.extend(_state_edits(old, new))

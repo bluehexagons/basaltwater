@@ -15,10 +15,13 @@ operation after migration are unsupported. Use a separate checkout of the
 selected Basaltwater commit to perform the cutover; do not overwrite the old
 installation with a Git pull first.
 
-Stop controller operations and agent sessions before applying. Close and remove
-managed linked Git worktrees through the old workspace tool first, preserving
-branches and uncommitted work; migration refuses to relocate linked worktrees
-because their Git metadata embeds absolute paths. Back up private data outside
+Stop controller operations and agent sessions before applying. Managed linked
+Git worktrees in user data move with their reciprocal Git path pointers updated
+in the recovery journal. Branches, indexes, uncommitted and untracked files, and
+repository-owned configuration and links are preserved. Reopen sessions at the
+new paths afterward. The common repository must remain outside the migrating
+product directories; nested source-installation worktrees and inconsistent or
+symlinked Git metadata are refused. Back up private data outside
 both installation directories. Preview lists paths and actions, never credential
 contents. It does not change files or start/stop services.
 
@@ -75,6 +78,12 @@ the target. A conflict or interrupted migration stops setup; the recovery
 instructions below apply. A later setup retries unfinished user passes after a
 successful system pass. The new setup payload is not executed until those
 passes succeed.
+
+If an earlier setup stopped with `Remove managed Git worktrees before migration`,
+rerun setup from the updated controller after closing active workspace sessions.
+That preflight refusal did not create a user migration journal or move user
+data; the completed system pass is retained and setup retries the user pass.
+Do not remove worktrees or delete the completed system journal to work around it.
 
 Setup reruns also repair the encoded ownership comments on all recent managed
 UFW rule families: T3 Code, HTTPS forwards, Gogs, SSH, RDP, web TCP, mDNS,
