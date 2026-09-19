@@ -39,6 +39,10 @@ RESOURCE_DIRS = (
 )
 ACCOUNTS = (("infra-web-panel", "basaltwater-web-panel"), ("infra-approval", "basaltwater-approval"))
 PREFIXES = ("infra_tools", "infra-tools", "infra-web", "infra-approval", "infra-syncthing", "infra-desktop", "infra-management", "infra-control-plane", "infra-guests", "infra-cluster-management", "infra-deny-control-plane")
+_UFW_OWNED_COMMENT = re.compile(
+    r"^(infra-tools|infra_tools) "
+    r"(?:T3 Code|HTTPS forward|Gogs|SSH|RDP|web TCP|mDNS UDP|access source|Samba 445/tcp source)(?= |$)"
+)
 
 
 def rename_text(value: str) -> str:
@@ -81,9 +85,13 @@ def _managed_marker_edits(root: Path) -> list[dict]:
                     comment = bytes.fromhex(match[2]).decode("utf-8")
                 except (ValueError, UnicodeError):
                     return match[0]
-                if not comment.startswith(("infra-tools T3 Code ", "infra_tools T3 Code ")):
+                owned = _UFW_OWNED_COMMENT.match(comment)
+                if owned is None:
                     return match[0]
-                return match[1] + rename_text(comment).encode().hex()
+                # Rename only ownership, preserving route names and other
+                # operator-selected text even when it contains the old brand.
+                updated_comment = "basaltwater" + comment[owned.end(1):]
+                return match[1] + updated_comment.encode().hex()
             updated = re.sub(r"(?m)^(### tuple ###[^\n]* comment=)([0-9a-fA-F]+)(?=\s*$)", rewrite, content)
         else:
             updated = content

@@ -156,6 +156,46 @@ class AutomaticSetupMigrationTests(unittest.TestCase):
         setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
         self.assertEqual(self.users.call_count, 2)
 
+    def test_all_recent_firewall_comment_families_migrate_without_changing_rules(self):
+        families = ('T3 Code 3773/tcp source 192.168.0.0/24',
+                    'HTTPS forward infra_tools-app 8444/tcp source 192.168.0.0/24',
+                    'Gogs 3000/tcp source 192.168.0.0/24', 'SSH trusted source 192.168.0.0/24',
+                    'RDP global', 'web TCP 443', 'mDNS UDP', 'access source 192.168.0.0/24',
+                    'Samba 445/tcp source 192.168.0.0/24')
+        comments = [f'{brand} {family}' for brand in ('infra_tools', 'infra-tools') for family in families]
+        untouched = ['operator owned', 'infra_tools SSH-custom', 'infra_tools personal rule', 'basaltwater mDNS UDP']
+        prefix = '### tuple ### allow tcp 8444 0.0.0.0/0 any 192.168.0.0/24 in comment='
+        packet = '-A ufw-user-input -p tcp --dport 8444 -j ACCEPT\n'
+        for name in ('user.rules', 'user6.rules'):
+            path = self.root / 'etc/ufw' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(''.join(prefix + text.encode().hex() + '\n' for text in comments + untouched) + packet)
+        rename_migration.repair_managed_markers(self.root)
+        rename_migration.repair_managed_markers(self.root)
+        expected = ['basaltwater ' + text.split(' ', 1)[1] for text in comments] + untouched
+        for name in ('user.rules', 'user6.rules'):
+            self.assertEqual((self.root / 'etc/ufw' / name).read_text(),
+                             ''.join(prefix + text.encode().hex() + '\n' for text in expected) + packet)
+
+    def test_setup_retry_repairs_https_forward_before_reconciliation(self):
+        from common.service_tools import basaltwater_web
+
+        self.legacy()
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        path = self.root / 'etc/ufw/user.rules'
+        path.parent.mkdir(parents=True)
+        comment = 'infra_tools HTTPS forward t3code 8444/tcp source 192.168.0.0/24'
+        path.write_text('### tuple ### allow tcp 8444 0.0.0.0/0 any 192.168.0.0/24 in comment=' + comment.encode().hex() + '\n')
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        migrated = bytes.fromhex(path.read_text().split('comment=')[1].strip()).decode()
+        rules = [(1, migrated, f'[ 1] 8444/tcp ALLOW IN 192.168.0.0/24 # {migrated}')]
+        with patch.object(basaltwater_web.shutil, 'which', return_value='/usr/sbin/ufw'), \
+             patch.object(basaltwater_web, '_ufw_rules', return_value=rules), \
+             patch.object(basaltwater_web, '_run_checked', return_value=SimpleNamespace(stdout='Status: active')) as run:
+            basaltwater_web._reconcile_firewall([{'name': 't3code', 'listen': 8444}],
+                                              {'access_sources': ['192.168.0.0/24']})
+        self.assertEqual([call.args[0] for call in run.call_args_list], [['ufw', 'status']])
+
 
 class UserMigrationContextTests(unittest.TestCase):
     def test_user_pass_uses_owner_environment_and_cannot_consume_payload_stdin(self):
