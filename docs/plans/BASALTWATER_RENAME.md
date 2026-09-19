@@ -15,7 +15,7 @@ continues to own delivery priority.
 | Context | Name | Convention |
 | --- | --- | --- |
 | Public display name | Basaltwater | Use in document titles, release announcements, and ordinary product references. |
-| Technical identity | `basaltwater` | Use for the intended repository and distribution name and other lowercase identifiers. Availability remains to be checked. |
+| Technical identity | `basaltwater` | Distribution name; the existing `bluehexagons/infra_tools` repository remains the source host. Registry observations and remaining clearance are recorded in the [contract inventory](BASALTWATER_CONTRACTS.md). |
 | Primary command | `basaltw` | Use consistently in installation instructions, examples, completion, and generated commands. |
 | Maintainer identity | bluehexagons | Retain attribution without requiring company knowledge to understand or use the project. |
 | Transitional description | Basaltwater, formerly infra-tools | Use where it helps existing users recognize the rename; retire after a defined transition period. |
@@ -54,7 +54,9 @@ reserved commands or promised features.
 
 Build around charcoal and steel blue/cyan, with water-inspired highlights.
 The desired character is capable, approachable, and a little playful.
-The following colors are a starting proposal, not an approved UI theme:
+The following colors preserve the original design proposal. The implemented,
+contrast-tested light/dark values and assets are in the [identity guide](../BRANDING.md);
+use its generated semantic tokens for new interfaces instead of these anchors:
 
 | Token | Starting color | Intended role |
 | --- | --- | --- |
@@ -81,10 +83,10 @@ Water motion, if used, should be restrained and respect reduced-motion
 preferences. Choose legible, openly licensed interface and monospace fonts
 when producing visual specimens.
 
-Deliverables for the visual design pass are a wordmark, compact symbol,
-monochrome variants, light/dark palette tokens, and a short usage guide.
-Evaluate them together in a README header, documentation page, and existing
-web-panel screen before committing to a finished identity.
+The delivered visual design includes a wordmark, compact symbol, monochrome
+variants, light/dark palette tokens, and a usage guide. README, documentation,
+and existing web-panel specimens have been reviewed together. Regeneration and
+verification instructions live in the identity guide.
 
 Keep editable vector sources and generated exports in the repository, with
 font/asset licenses and attribution. Define reusable semantic tokens for

@@ -3,7 +3,7 @@
 Use `--backup SOURCE DESTINATION INTERVAL` for a recurring path mirror. It is
 deliberately independent of Samba: the destination may be a local directory,
 a directory on an additional mounted block device, or a mounted filesystem
-managed outside infra-tools.
+managed outside Basaltwater.
 
 ```bash
 basaltw setup server_dev 192.168.0.41 agent \

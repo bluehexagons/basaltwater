@@ -1,9 +1,9 @@
-# Makefile for infra_tools development tasks
-.PHONY: check test test-verbose coverage help clean compile docs-check package-check artifact-check
+# Makefile for Basaltwater development tasks
+.PHONY: check test test-verbose coverage help clean compile docs-check brand-check package-check artifact-check
 
 # Default target
 help:
-	@echo "infra_tools development tasks:"
+	@echo "Basaltwater development tasks:"
 	@echo ""
 	@echo "  make check             Run compile checks and the default test suite"
 	@echo "  make test              Run all tests (concise output, shows failures only)"
@@ -11,6 +11,7 @@ help:
 	@echo "  make test TEST=name    Run specific test file (e.g., TEST=test_scrub_par2)"
 	@echo "  make compile           Check all Python files compile"
 	@echo "  make docs-check        Check documented CLI entry points"
+	@echo "  make brand-check       Check generated identity assets are current"
 	@echo "  make package-check     Check package launcher metadata"
 	@echo "  make artifact-check    Build, install, and smoke-test the wheel"
 	@echo "  make clean             Remove Python cache files"
@@ -25,10 +26,13 @@ help:
 	@echo "  make coverage          Run the default suite with branch coverage"
 
 # Run the same checks as continuous integration.
-check: compile docs-check package-check artifact-check test
+check: compile docs-check brand-check package-check artifact-check test
 
 docs-check:
 	@python3 scripts/check_cli_docs.py
+
+brand-check:
+	@python3 scripts/export_brand.py --check
 
 package-check:
 	@python3 scripts/check_package_metadata.py

@@ -63,8 +63,10 @@ symbol and accent. No sibling product identity is included in this release.
 
 Run `python3 scripts/export_brand.py` to regenerate the SVGs, tokens and
 static specimens. The generator renders the existing panel with synthetic
-data and mocks host discovery; it does not contact a service or read private
-host state. Review [identity](brand/index.html), [README](brand/readme.html),
+data. `make brand-check` (also part of `make check`) renders into a temporary
+directory and fails if committed exports are missing or stale, without changing
+the checkout. The generator mocks host discovery; it does not contact a service
+or read private host state. Review [identity](brand/index.html), [README](brand/readme.html),
 and [web panel](brand/panel.html) together, for example through a loopback
 `python3 -m http.server --bind 127.0.0.1 --directory docs/brand` server.
 

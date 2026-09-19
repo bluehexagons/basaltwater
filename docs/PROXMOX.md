@@ -35,7 +35,7 @@ sudo basaltw self-setup --qemu-guest-agent
 ```
 
 The option installs `qemu-guest-agent` and runs
-`systemctl enable --now qemu-guest-agent`. VMs provisioned by infra_tools
+`systemctl enable --now qemu-guest-agent`. VMs provisioned by Basaltwater
 already receive the same package and service configuration through cloud-init.
 
 Set up, register, and inspect the host:
@@ -755,7 +755,7 @@ The backup command defaults to the first backup-capable storage pool, snapshot
 mode, and zstd compression. `suspend` and `stop` modes trade availability for
 stronger consistency where the guest workload requires it. Always verify that
 the selected storage has enough capacity and a retention policy outside
-infra-tools.
+Basaltwater.
 
 Migrate a guest between registered cluster nodes:
 

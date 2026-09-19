@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import sys
+import tempfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,8 +17,8 @@ from common.service_tools.web_panel_templates import BRAND_PALETTES, BRAND_SYMBO
 from common.service_tools import web_panel_service as panel
 
 
-def main() -> None:
-    assets = ROOT / "docs" / "brand"
+def export_assets(assets: Path) -> None:
+    """Render assets into the supplied development output directory."""
     assets.mkdir(exist_ok=True)
     for theme in ("light", "dark", "mono"):
         palette = BRAND_PALETTES["dark" if theme == "dark" else "light"]
@@ -82,5 +84,29 @@ def main() -> None:
         (assets / "panel.html").write_text(panel.render_page(state), encoding="utf-8")
 
 
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Compare generated assets without modifying the checkout")
+    args = parser.parse_args()
+    destination = ROOT / "docs" / "brand"
+    if not args.check:
+        export_assets(destination)
+        return 0
+    with tempfile.TemporaryDirectory(prefix="basaltwater-brand-") as directory:
+        generated = Path(directory)
+        export_assets(generated)
+        stale = []
+        for expected in sorted(generated.iterdir()):
+            actual = destination / expected.name
+            if not actual.is_file() or actual.read_bytes() != expected.read_bytes():
+                stale.append(expected.name)
+        if stale:
+            print("Stale or missing brand assets: " + ", ".join(stale))
+            print("Run python3 scripts/export_brand.py and commit the regenerated assets.")
+            return 1
+    print("Brand assets are current")
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

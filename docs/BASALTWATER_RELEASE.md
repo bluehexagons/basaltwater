@@ -1,9 +1,10 @@
 # Basaltwater v2.0 release notes and qualification
 
 The distribution is now `basaltwater` and the primary command is `basaltw`.
-Bootstrap and package installation retain `infra-tools` through v2.x. Command
-verbs, import modules, saved state, credentials, resource names and API routes
-are unchanged. The web panel, documentation and bundled agent guidance use
+Bootstrap and package installation retain `infra-tools` through v2.x. The rename
+preserves command verbs, import modules, saved state, credentials, resource
+names and API routes; unrelated v2 changes retain their own restrictions.
+The web panel, documentation and bundled agent guidance use
 the new identity. See [migration and rollback](BASALTWATER_MIGRATION.md) before
 upgrading; differently named Python distributions require an explicit uninstall
 of the old package before installation of the new one.
@@ -29,6 +30,9 @@ installer, archive, release and updater URLs individually before changing links.
 - Web-panel tests, skill validation, theme contrast tests and VM-local browser
   checks cover the changed user-facing surfaces. See [identity guide](BRANDING.md)
   and [contract inventory](plans/BASALTWATER_CONTRACTS.md).
+- `make check` detects missing/stale generated brand assets without modifying
+  the checkout. Documentation review verified the branch's relative file links
+  and refreshed the roadmap and root contributor instructions.
 
 ## Before publishing v2.0.0
 

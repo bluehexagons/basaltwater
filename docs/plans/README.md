@@ -29,6 +29,11 @@ criteria.
 The live operator contract is maintained under `docs/`; these plans may
 intentionally describe work deferred beyond `v2.0.0`.
 
+Current examples use `basaltw`. Dated audits and historical proposals retain
+the names used when their evidence was recorded; they do not override the
+[current CLI reference](../COMMAND_LINE.md). Rename implementation and public
+release are separate states, tracked in the [release checklist](../BASALTWATER_RELEASE.md).
+
 ## Project portfolio
 
 | Project | State | Priority | Issue alignment | Canonical plan and next boundary |

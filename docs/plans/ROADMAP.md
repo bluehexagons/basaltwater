@@ -2,7 +2,7 @@
 
 Status: active planning guidance for the upcoming `v2.0.0` stable release.
 
-This roadmap is intentionally opinionated. `infra-tools` already supports a
+This roadmap is intentionally opinionated. Basaltwater already supports a
 wide range of setup and operations tasks; the next releases should complete
 the safety and recovery loops around those tasks before adding more operating
 systems, desktop applications, or service-specific installers.
@@ -10,6 +10,19 @@ systems, desktop applications, or service-specific installers.
 See the [planning and issue index](README.md) for the portfolio view and the
 [GitHub issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) for current
 issue-to-implementation evidence.
+
+## Basaltwater release checkpoint (2026-09-19)
+
+The rename's repository implementation is complete in
+[PR #101](https://github.com/bluehexagons/infra_tools/pull/101): distribution
+`basaltwater`, command `basaltw`, a supported v2 `infra-tools` transition
+launcher, migration documentation, refreshed agent guidance, and visual assets.
+Persistent paths, import modules, service identities and skill IDs remain
+stable. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
+the [release checklist](../BASALTWATER_RELEASE.md) owns disposable-host
+qualification and external publication. Implementation complete does not mean
+merged, tagged, published or live-host qualified. These release checks do not
+replace or reorder the reliability work below.
 
 ## Product direction
 
@@ -174,8 +187,8 @@ scripts may remain an escape hatch, but they should not be the primary model.
 `--dry-run` is useful, but it is not a desired-versus-observed state diff. Add
 a read-only planning layer before expanding mutation features:
 
-- `infra-tools plan HOST` reports proposed changes and unavailable facts;
-- `infra-tools audit PATTERN` checks saved hosts without changing them;
+- proposed `basaltw plan HOST` reports changes and unavailable facts;
+- proposed `basaltw audit PATTERN` checks saved hosts without changing them;
 - plans use stable change categories and meaningful exit codes;
 - text output remains human-friendly while JSON output is consistent enough
   for CI and external tooling; and

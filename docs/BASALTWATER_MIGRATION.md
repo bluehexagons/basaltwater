@@ -1,7 +1,8 @@
 # Basaltwater v2 rename: upgrade and rollback
 
 Basaltwater, formerly infra-tools, uses distribution name `basaltwater` and
-command `basaltw`. All command verbs and options are unchanged. `infra-tools`
+command `basaltw`. The rename itself does not change command verbs or options;
+unrelated v2 changes retain their own documented restrictions. `infra-tools`
 remains an installed transition command through v2.x; both launchers report
 `basaltw 2.0.0` from `--version`. No `basalt`, `bw`, `b6`, or `infra_tools`
 executable is added.
@@ -12,6 +13,7 @@ For an existing development-channel installation with the `infra-tools`
 command and channel support, run as the installation owner:
 
 ```sh
+infra-tools channel  # Record the current commit before upgrading.
 infra-tools upgrade
 infra-tools bootstrap --skip-system-packages
 basaltw --version
@@ -27,7 +29,8 @@ run bootstrap as their desktop user, without sudo.
 Before v2.0.0 is tagged, `stable` still selects an older release. A pinned user
 can select `infra-tools channel dev` before bootstrap to try the renamed
 development source. After publication, select `infra-tools channel v2.0.0`.
-Keep the previous commit from `infra-tools channel` for rollback.
+Record the current commit from `infra-tools channel` before selecting a new
+channel so that rollback can return to that exact source.
 
 Older tagged source such as `v0.2.0` installs `infra_tools` and has no
 `channel` or `upgrade` command. Record its commit with `git -C /path/to/source
@@ -97,7 +100,8 @@ package managers in one environment.
 
 Keep the previous wheel for rollback. Uninstall `basaltwater` first, then
 reinstall that previous `infra_tools` wheel. The new `basaltw` console script
-is removed by uninstall; use `infra-tools` after package rollback. If a new
+is removed by uninstall; use the previous wheel's command (`infra-tools`, or
+`infra_tools` for older builds) after package rollback. If a new
 install fails, reinstall the saved old wheel before resuming automation.
 Workspace state and credentials remain outside package ownership and are
 not removed by either uninstall.
@@ -109,8 +113,10 @@ python3 scripts/check_wheel_artifact.py --previous-wheel /path/to/old.whl
 ```
 
 This builds the current wheel and checks fresh installation by default. When
-supplied the previous wheel, it exercises uninstall-before-install and package rollback
-outside the source tree in a temporary virtual environment.
+supplied a working pre-rename development wheel exposing `infra-tools`, it
+exercises uninstall-before-install and package rollback outside the source tree
+in a temporary virtual environment. The recorded wheel qualification uses that
+development baseline, not the older `v0.2.0` tag.
 
 ## Environment and state
 
