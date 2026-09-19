@@ -196,9 +196,33 @@ def login(home: str, method: str, api_key: str | None, emit: Callable[[dict], No
                     raise LoginError("target_credentials_changed_during_login")
                 if read_private(staged_config, config=True) is None:
                     raise LoginError("login_did_not_save_configuration")
+                backup_config = os.path.join(staging, "previous-config.toml")
+                if previous_config is not None:
+                    os.link(config_path, backup_config, follow_symlinks=False)
+                staged_auth = os.path.join(staging, "auth.json")
+                config_identity = os.stat(staged_config, follow_symlinks=False)
+                auth_identity = os.stat(staged_auth, follow_symlinks=False)
                 os.chmod(staged_config, 0o600)
-                os.replace(staged_config, config_path)
-                os.replace(os.path.join(staging, "auth.json"), destination)
+                try:
+                    os.replace(staged_config, config_path)
+                    os.replace(staged_auth, destination)
+                except BaseException:
+                    # A failed auth replacement must not change the existing
+                    # credential-store setting. Restore only our config inode;
+                    # preserve concurrent edits and a completed auth rename.
+                    def installed(path: str, identity: os.stat_result) -> bool:
+                        try:
+                            current = os.stat(path, follow_symlinks=False)
+                        except FileNotFoundError:
+                            return False
+                        return (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino)
+
+                    if not installed(destination, auth_identity) and installed(config_path, config_identity):
+                        if previous_config is None:
+                            os.unlink(config_path)
+                        else:
+                            os.replace(backup_config, config_path)
+                    raise
                 emit({"event": "complete", "method": method})
             finally:
                 if process.poll() is None:

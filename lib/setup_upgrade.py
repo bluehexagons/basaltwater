@@ -146,6 +146,9 @@ def prepare_target_runtime(source: str, username: str) -> None:
                 raise ValueError("Refusing symlinked deployment directory")
             shutil.copytree(previous_deployments, incoming_deployments, symlinks=True)
         setup_common._activate_local_runtime(source)
+        # Staging sets the shared state parent to 0700. Preserve access even
+        # when this setup selects no Syncthing steps or is retrying a cutover.
+        rename_migration.repair_syncthing_state_access(root)
     else:
         # Migration already installed this source while retaining the previous
         # deployments. Explicitly supplied deployment sources take precedence.

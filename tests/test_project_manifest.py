@@ -371,6 +371,29 @@ class TestLoadManifest(unittest.TestCase):
             assert manifest is not None
             self.assertEqual(len(manifest.components), 2)
 
+    def test_retired_manifest_stops_deployment_instead_of_falling_back(self):
+        with tempfile.TemporaryDirectory() as repo:
+            with open(os.path.join(repo, "infra.json"), "w", encoding="utf-8") as handle:
+                json.dump(_manifest(_static(), _service()), handle)
+            with self.assertRaisesRegex(ValueError, "Rename infra.json to basaltwater.json"):
+                load_manifest(repo)
+
+    def test_canonical_manifest_takes_precedence_over_retired_file(self):
+        with tempfile.TemporaryDirectory() as repo:
+            for name, data in (("infra.json", _manifest(_service())),
+                               (MANIFEST_FILENAME, _manifest(_static()))):
+                with open(os.path.join(repo, name), "w", encoding="utf-8") as handle:
+                    json.dump(data, handle)
+            manifest = load_manifest(repo)
+            self.assertEqual([component.name for component in manifest.components], ["site"])
+
+    def test_broken_manifest_links_do_not_trigger_automatic_detection(self):
+        for name in (MANIFEST_FILENAME, "infra.json"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as repo:
+                os.symlink("missing.json", os.path.join(repo, name))
+                with self.assertRaises(ValueError):
+                    load_manifest(repo)
+
     def test_invalid_json(self):
         with tempfile.TemporaryDirectory() as repo:
             with open(os.path.join(repo, MANIFEST_FILENAME), "w", encoding="utf-8") as f:

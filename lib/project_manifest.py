@@ -151,7 +151,12 @@ def load_manifest(repo_path: str) -> Optional[Manifest]:
     fail fast instead of deploying a half-understood repo.
     """
     manifest_path = os.path.join(repo_path, MANIFEST_FILENAME)
-    if not os.path.exists(manifest_path):
+    if not os.path.lexists(manifest_path):
+        if os.path.lexists(os.path.join(repo_path, "infra.json")):
+            raise ValueError(
+                f"Rename infra.json to {MANIFEST_FILENAME} before deployment; "
+                "the retired manifest cannot be ignored safely"
+            )
         return None
 
     try:

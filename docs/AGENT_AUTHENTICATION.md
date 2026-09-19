@@ -30,9 +30,11 @@ Authorization stages credentials privately on the target, then atomically
 replaces `~/.codex/auth.json` with mode `0600`. It sets the user's
 `cli_auth_credentials_store` to `file`, preserving unrelated TOML settings.
 Cancellation, rejection, and timeout preserve the previous credential;
-concurrent changes to credentials or config stop replacement. The command
-waits at most 15 minutes for authorization and returns status 3 if it cannot
-complete. Subscription tokens never cross SSH to the controller.
+concurrent changes to credentials or config stop replacement. If installing
+the credential fails, the command restores the previous config, preserving
+its permissions and any config file replaced concurrently by another process.
+The command waits at most 15 minutes for authorization and returns status 3 if
+it cannot complete. Subscription tokens never cross SSH to the controller.
 The controller sends its current login helper over SSH, so updating the
 controller checkout also updates this command's target-side login logic.
 An SSH disconnect cancels an incomplete authorization; normal completion stops

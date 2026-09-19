@@ -109,6 +109,32 @@ class AutomaticSetupMigrationTests(unittest.TestCase):
         self.assertTrue((self.runtime / 'basaltwater.py').exists())
         self.users.assert_not_called()
 
+    def test_runtime_replacement_restores_existing_syncthing_traversal(self):
+        home = self.root / 'var/lib/basaltwater/syncthing'
+        home.mkdir(parents=True)
+        original_stat = Path.stat
+
+        def stat_with_service_owner(path, *args, **kwargs):
+            result = original_stat(path, *args, **kwargs)
+            if path == home:
+                fields = list(result)
+                fields[4] = os.geteuid() + 1
+                return os.stat_result(fields)
+            return result
+
+        def command_result(command, **kwargs):
+            # The real staging operation has already tightened the parent.
+            self.assertEqual(home.parent.stat().st_mode & 0o777, 0o700)
+            return subprocess.CompletedProcess(command, 0, 'user::rwx\ngroup::---\nother::---\n', '')
+
+        with patch.object(Path, 'stat', stat_with_service_owner), \
+             patch.object(rename_migration.shutil, 'which', return_value='/usr/bin/tool'), \
+             patch.object(rename_migration.subprocess, 'run', side_effect=command_result) as run:
+            setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        self.assertEqual(run.call_args.args[0], ['setfacl', '--set-file=-', '--', str(home.parent)])
+        self.assertIn(f'user:{os.geteuid() + 1}:--x', run.call_args.kwargs['input'])
+        self.users.assert_not_called()
+
     def test_completed_cutover_repairs_encoded_firewall_and_codex_markers(self):
         self.legacy()
         setup_upgrade.prepare_target_runtime(str(self.source), 'agent')

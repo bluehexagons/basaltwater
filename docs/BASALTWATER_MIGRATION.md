@@ -111,9 +111,17 @@ Basaltwater runtime, preserves deployed repository sources and machine state,
 and updates owned systemd, Nginx, sudoers, security and gateway configuration.
 Affected units, including services with managed drop-ins, stop before paths
 change. Enabled and active states are recorded;
-only the corresponding new units are enabled or started. Service-account and
+only the corresponding new units are enabled or started. Unit drop-in
+directories move with their owning units, retaining operator
+overrides. The managed initramfs resume configuration also moves, so later swap
+changes can replace or remove it through the new path. Service-account and
 desktop-group renames retain numeric ownership. Account home-directory records
-under the moved product paths are updated too. Locks must be idle; a busy lock
+under the moved product paths are updated too. When Syncthing state joins the
+private host-state directory, migration installs ACL tools if needed and grants
+its existing account traversal before restarting services. Recovery restores
+the recorded directory ACL; other accounts gain no access. Later runtime staging
+also restores traversal, including setup runs without Syncthing steps.
+Locks must be idle; a busy lock
 stops migration before service changes or journal creation, so setup can be
 retried after the operation finishes. Certificates
 and private keys retain their bytes and trust identity; existing certificate
@@ -129,7 +137,9 @@ private file modes and application access before resuming automation. Update
 external scripts to `basaltw`, `BASALTWATER_*`, `basaltwater-web`, and the new
 paths. Deployment repositories now use `basaltwater.json`; rename their
 `infra.json` manifests before the next deployment. External repositories and
-arbitrary user scripts are not modified by migration.
+arbitrary user scripts are not modified by migration. A repository containing
+only the retired manifest is rejected instead of falling back to automatic
+project detection.
 
 ## Conflicts and interrupted cutover
 
@@ -160,7 +170,10 @@ The apply operation records private recovery intent under
 `/var/lib/basaltwater-migration` for system work and
 `~/.local/state/basaltwater-migration` for user work. These directories can contain
 configuration backups; keep them private. If cutover is interrupted, preserve
-the journal and run from the separate Basaltwater checkout:
+the journal and its referenced archives. Runtime snapshots and retired launchers
+are kept in private `.basaltwater-migration-*` directories beside their original
+paths, allowing atomic moves when `/opt`, `/usr`, and `/var` use separate
+filesystems. Run recovery from the separate Basaltwater checkout:
 
 ```sh
 python3 basaltwater.py migrate --recover

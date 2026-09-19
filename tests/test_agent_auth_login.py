@@ -53,6 +53,7 @@ class TargetLoginTests(unittest.TestCase):
             self.assertEqual(params['value'], 'file')
             with (staging / 'config.toml').open('a') as stream:
                 stream.write('cli_auth_credentials_store = "file"\n')
+            (staging / 'config.toml').chmod(0o600)
         if method == 'account/login/start':
             payload = ({'OPENAI_API_KEY': params['apiKey']} if params['type'] == 'apiKey'
                        else {'tokens': {'access_token': 'fake-access', 'refresh_token': 'fake-refresh'}})
@@ -101,6 +102,66 @@ class TargetLoginTests(unittest.TestCase):
         with self.assertRaisesRegex(target.LoginError, '^authorization_failed$'):
             self.login()
         self.assertEqual(self.auth.read_bytes(), b'old-credential')
+
+    def test_failed_credential_install_restores_previous_config_and_permissions(self):
+        self.config.write_text('cli_auth_credentials_store = "keyring"\n')
+        previous_inode = self.config.stat().st_ino
+        replace = os.replace
+        for failure in (OSError('cannot replace auth'), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+                def fail_auth(source, destination):
+                    if destination == str(self.auth):
+                        raise failure
+                    replace(source, destination)
+                with patch.object(target.os, 'replace', side_effect=fail_auth):
+                    with self.assertRaises(type(failure)):
+                        self.login()
+                self.assertEqual(self.auth.read_bytes(), b'old-credential')
+                self.assertEqual(self.config.read_text(), 'cli_auth_credentials_store = "keyring"\n')
+                self.assertEqual(self.config.stat().st_ino, previous_inode)
+                self.assertEqual(self.config.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(list(self.auth_dir.glob('.login-*')), [])
+        self.assertNotIn('complete', [event['event'] for event in self.events])
+
+    def test_failed_credential_install_removes_new_config(self):
+        self.config.unlink()
+        replace = os.replace
+        def fail_auth(source, destination):
+            if destination == str(self.auth):
+                raise OSError('cannot replace auth')
+            replace(source, destination)
+        with patch.object(target.os, 'replace', side_effect=fail_auth):
+            with self.assertRaises(OSError):
+                self.login()
+        self.assertFalse(self.config.exists())
+        self.assertEqual(self.auth.read_bytes(), b'old-credential')
+
+    def test_failed_credential_install_preserves_concurrently_replaced_config(self):
+        replace = os.replace
+        def fail_auth(source, destination):
+            if destination == str(self.auth):
+                concurrent = self.auth_dir / 'concurrent.toml'
+                concurrent.write_text('model = "concurrent"\n')
+                replace(concurrent, self.config)
+                raise OSError('cannot replace auth')
+            replace(source, destination)
+        with patch.object(target.os, 'replace', side_effect=fail_auth):
+            with self.assertRaises(OSError):
+                self.login()
+        self.assertEqual(self.config.read_text(), 'model = "concurrent"\n')
+        self.assertEqual(self.auth.read_bytes(), b'old-credential')
+
+    def test_interruption_after_auth_commit_preserves_matching_config(self):
+        replace = os.replace
+        def interrupt_after_auth(source, destination):
+            replace(source, destination)
+            if destination == str(self.auth):
+                raise KeyboardInterrupt()
+        with patch.object(target.os, 'replace', side_effect=interrupt_after_auth):
+            with self.assertRaises(KeyboardInterrupt):
+                self.login()
+        self.assertEqual(json.loads(self.auth.read_text())['tokens']['refresh_token'], 'fake-refresh')
+        self.assertIn('cli_auth_credentials_store = "file"', self.config.read_text())
 
     def test_rejects_changed_target_during_authorization(self):
         def completed(_match):
