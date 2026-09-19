@@ -17,6 +17,7 @@ from sync.syncthing_steps import (
     _configure_syncthing_https,
     _preflight_existing_folders,
     _prepare_share_root,
+    _prepare_state_home,
     _render_service,
     _put_config,
     _validate_state_paths,
@@ -183,6 +184,26 @@ class SyncthingDesiredConfigTest(unittest.TestCase):
 
 
 class SyncthingCompositionTest(unittest.TestCase):
+    def test_state_home_restores_traversal_without_replacing_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            parent = os.path.join(root, "private")
+            home = os.path.join(parent, "syncthing")
+            os.makedirs(home)
+            key = os.path.join(home, "key.pem")
+            with open(key, "w") as stream:
+                stream.write("existing identity")
+            os.chmod(parent, 0o700)
+            with patch("sync.syncthing_steps.SYNCTHING_HOME", home), patch("sync.syncthing_steps.is_package_installed", return_value=False), patch("sync.syncthing_steps.os.chown") as chown, patch("sync.syncthing_steps.run") as run_command:
+                _prepare_state_home("gitadmin", 1001, 1001)
+            commands = [call.args[0] for call in run_command.call_args_list]
+            self.assertIn(["setfacl", "-m", "u:1001:--x", "--", parent], commands)
+            self.assertIn(["runuser", "-u", "gitadmin", "--", "/usr/bin/test", "-w", home], commands)
+            self.assertEqual(os.stat(parent).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(home).st_mode & 0o777, 0o700)
+            chown.assert_called_once_with(home, 1001, 1001)
+            with open(key) as stream:
+                self.assertEqual(stream.read(), "existing identity")
+
     def test_state_symlinks_are_rejected_before_ownership_changes(self) -> None:
         for child in (None, "config.xml", "cert.pem", "key.pem"):
             with self.subTest(child=child), tempfile.TemporaryDirectory() as directory:

@@ -53,6 +53,8 @@ def _confined_path(path: str, root: str) -> None:
 def _scan_tree(directory: str) -> list[tuple[str, list[str], list[str]]]:
     """Finish a confined inventory before allowing parity mutations."""
     _confined_path(directory, directory)
+    if not os.path.isdir(directory):
+        raise ValueError(f"Scrub root is not an existing directory: {directory}")
 
     def fail(error: OSError) -> None:
         raise error
@@ -562,6 +564,15 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                     file_size = os.path.getsize(file_path)
                     if file_size == 0:
                         files_skipped_empty += 1
+                        # Existing parity can diagnose a file truncated to zero.
+                        # Never replace it with parity for the empty contents.
+                        if verify and parity_files:
+                            outcome = verify_repair(file_path, directory, database, log_file)
+                            files_verified += 1
+                            if outcome == VERIFY_REPAIRED:
+                                files_repaired += 1
+                            elif outcome == VERIFY_UNREPAIRABLE:
+                                files_unrepairable.append(relative_path)
                         continue  # Skip 0-byte files (create_par2 will skip them anyway)
                     total_file_size += file_size
                 except OSError:

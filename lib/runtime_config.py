@@ -39,6 +39,7 @@ class RuntimeConfig:
     smb_mounts: Optional[list[list[str]]] = None
     notification_level: Optional[str] = None
     notification_strict_https: bool = False
+    storage_mounts: list[list[str]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RuntimeConfig":
@@ -58,6 +59,7 @@ class RuntimeConfig:
             notify_specs=data.get("notify_specs") or [],
             friendly_name=data.get("friendly_name"),
             smb_mounts=data.get("smb_mounts"),
+            storage_mounts=data.get("storage_mounts") or [],
             notification_level=data.get("notification_level"),
             notification_strict_https=data.get("notification_strict_https") is True,
         )
@@ -80,6 +82,7 @@ class RuntimeConfig:
             notify_specs=config.notify_specs or [],
             friendly_name=getattr(config, 'friendly_name', None),
             smb_mounts=config.smb_mounts,
+            storage_mounts=getattr(config, "storage_mounts", None) or [],
             notification_level=getattr(config, 'notification_level', None),
             notification_strict_https=(
                 getattr(config, 'notification_strict_https', None) is True
@@ -100,6 +103,7 @@ class RuntimeConfig:
             "scrub_specs": self.scrub_specs,
             "notify_specs": self.notify_specs,
             "smb_mounts": self.smb_mounts,
+            "storage_mounts": self.storage_mounts,
             "notification_level": self.notification_level,
             "notification_strict_https": self.notification_strict_https,
         }

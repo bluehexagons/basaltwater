@@ -8,47 +8,60 @@ import os
 import subprocess
 import re
 import select
-import time
+import codecs
+from collections import deque
 from logging import ERROR, WARNING
 from datetime import datetime
-from typing import IO
 
 # Add lib directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 from lib.logging_utils import get_service_logger, log_event
-from lib.progress_utils import ProgressTracker, ProgressMessage, format_bytes
+from lib.progress_utils import ProgressTracker, ProgressMessage
+from lib.task_utils import validate_sync_paths
 
 # Conversion constants
 BYTES_TO_MB = 1024 * 1024
-BYTES_TO_GB = 1024 * 1024 * 1024
 
 # Progress logging interval (seconds)
 PROGRESS_LOG_INTERVAL = 30
 
 
-def _parse_size(size_str: str) -> int:
-    """Parse rsync size string (e.g., '1.23G', '456.78M', '789K') to bytes."""
-    size_str = size_str.strip()
-    multipliers = {
-        'K': 1024,
-        'M': 1024 * 1024,
-        'G': 1024 * 1024 * 1024,
-        'T': 1024 * 1024 * 1024 * 1024,
-    }
-    
-    # Match pattern like "1.23G" or "456.78M"
-    match = re.match(r'([\d.]+)([KMGT]?)', size_str)
-    if match:
-        value, unit = match.groups()
-        try:
-            num = float(value)
-            if unit:
-                return int(num * multipliers.get(unit, 1))
-            return int(num)
-        except ValueError:
-            pass
-    return 0
+def _output_lines(process):
+    """Drain both pipes without waiting for a newline on either pipe."""
+    streams = {process.stdout: True, process.stderr: False}
+    decoders = {stream: codecs.getincrementaldecoder("utf-8")(errors="replace") for stream in streams}
+    pending = {stream: "" for stream in streams}
+    try:
+        while streams:
+            readable, _, _ = select.select(list(streams), [], [], 0.5)
+            if not readable:
+                yield True, ""
+            for stream in readable:
+                chunk = os.read(stream.fileno(), 65536)
+                text = pending[stream] + decoders[stream].decode(chunk, final=not chunk)
+                # rsync progress updates can use carriage returns instead of LF.
+                lines = text.replace("\r", "\n").split("\n")
+                pending[stream] = lines.pop()
+                for line in lines:
+                    yield streams[stream], line
+                if not chunk or len(pending[stream]) >= 65536:
+                    if pending[stream]:
+                        yield streams[stream], pending[stream]
+                    pending[stream] = ""
+                if not chunk:
+                    del streams[stream]
+        process.wait()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+        process.stdout.close()
+        process.stderr.close()
 
 
 def run_rsync_with_notifications(source: str, destination: str, suppress_notifications: bool = False) -> int:
@@ -105,6 +118,9 @@ def run_rsync_with_notifications(source: str, destination: str, suppress_notific
     percent_done = 0
     
     try:
+        validate_sync_paths(source, destination)
+        if not os.path.isdir(source):
+            raise ValueError(f"Sync source is not an existing directory: {source}")
         # Run rsync with progress information
         process = subprocess.Popen(
             [
@@ -117,6 +133,7 @@ def run_rsync_with_notifications(source: str, destination: str, suppress_notific
                 '--exclude=.git',
                 '--info=progress2',  # Overall progress without per-file output
                 '--stats',
+                '--',
                 f'{source}/',
                 f'{destination}/'
             ],
@@ -127,35 +144,13 @@ def run_rsync_with_notifications(source: str, destination: str, suppress_notific
         )
         
         # Collect output for stats parsing
-        stdout_lines = []
-        stderr_lines = []
-        
-        # Type guard for stdout/stderr
-        stdout: IO[str] = process.stdout  # type: ignore
-        stderr: IO[str] = process.stderr  # type: ignore
+        stdout_lines = deque(maxlen=4096)
+        stderr_lines = deque(maxlen=256)
         
         # Read output in real-time and log progress periodically
-        while True:
-            # Check if process has finished
-            if process.poll() is not None:
-                # Read any remaining output
-                remaining_stdout = stdout.read()
-                remaining_stderr = stderr.read()
-                if remaining_stdout:
-                    stdout_lines.extend(remaining_stdout.split('\n'))
-                if remaining_stderr:
-                    stderr_lines.extend(remaining_stderr.split('\n'))
-                break
-            
-            # Use select to read available output without blocking
-            readable, _, _ = select.select([stdout, stderr], [], [], 0.5)
-            
-            for stream in readable:
-                line = stream.readline()
-                if not line:
-                    continue
-                
-                if stream == stdout:
+        for is_stdout, line in _output_lines(process):
+            if line:
+                if is_stdout:
                     stdout_lines.append(line.rstrip('\n'))
                     
                     # Parse progress2 format:
@@ -228,7 +223,7 @@ def run_rsync_with_notifications(source: str, destination: str, suppress_notific
         total_size = 0
         
         for line in stdout_lines:
-            if 'Number of files transferred:' in line:
+            if 'Number of files transferred:' in line or 'Number of regular files transferred:' in line:
                 try:
                     files_transferred = int(line.split(':')[1].strip().replace(',', ''))
                 except (IndexError, ValueError):

@@ -21,6 +21,7 @@ from lib.task_utils import (
     check_path_on_smb_mount,
     ensure_directory
 )
+from lib.task_utils import validate_configured_storage_mounts
 
 
 def install_par2(config: SetupConfig) -> None:
@@ -83,6 +84,8 @@ def create_scrub_service(config: SetupConfig, scrub_spec: Optional[list[str]] = 
         logger.log_step("validation", "started", "Validating scrub paths, mounts, and redundancy")
         validate_filesystem_path(directory, must_exist=True, check_writable=False)
         validate_database_path(database_path)
+        for path in (directory, database_path):
+            validate_configured_storage_mounts(path, config)
         if not validate_mount_for_sync(directory, "directory"):
             raise RuntimeError(f"Required source mount is unavailable: {directory}")
         if not validate_mount_for_sync(database_path, "database"):

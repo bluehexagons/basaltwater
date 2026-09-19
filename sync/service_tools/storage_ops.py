@@ -35,7 +35,7 @@ from lib.notifications import (
 )
 from lib.machine_state import load_setup_config
 from lib.mount_utils import get_mount_ancestor
-from lib.task_utils import needs_mount_check
+from lib.task_utils import needs_mount_check, validate_configured_storage_mounts
 from lib.runtime_config import RuntimeConfig
 from lib.validation import validate_filesystem_path
 
@@ -205,6 +205,10 @@ def validate_mounts_for_operation(paths: list[str], config: RuntimeConfig, opera
     directory on a mounted filesystem.
     """
     for path in paths:
+        try:
+            validate_configured_storage_mounts(path, config)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return False, str(exc)
         if needs_mount_check(path, config):
             # Check if path exists
             path_exists = os.path.exists(path)
@@ -274,7 +278,7 @@ def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logg
         redundancy_int = int(redundancy.rstrip('%'))
         scrub_result = scrub_directory(directory, database, redundancy_int, log_file, verify, suppress_notifications=True)
         unrepairable = scrub_result.get("files_unrepairable", []) if isinstance(scrub_result, dict) else []
-        ok = bool(scrub_result.get("ok", True)) if isinstance(scrub_result, dict) else True
+        ok = isinstance(scrub_result, dict) and scrub_result.get("ok") is True
         if unrepairable:
             sample = ", ".join(unrepairable[:5])
             extra = f" (and {len(unrepairable) - 5} more)" if len(unrepairable) > 5 else ""
@@ -341,6 +345,7 @@ def execute_storage_operations() -> dict:
     last_run = load_last_run()
     new_state = last_run.copy()
     baseline_time = time.time()
+    full_scrubs_attempted: set[tuple[str, str]] = set()
     for spec in config.scrub_specs:
         if len(spec) == 4:
             scrub_op_id = get_scrub_op_id(spec[0], spec[1])
@@ -453,6 +458,7 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
+        full_scrubs_attempted.add((directory, resolved_database))
         success, message = run_scrub(directory, resolved_database, redundancy, verify=True, logger=logger)
         results["scrubs"].append({
             "directory": directory,
@@ -464,6 +470,7 @@ def execute_storage_operations() -> dict:
         
         if success:
             new_state[op_id] = time.time()
+            new_state[get_parity_op_id(directory, database)] = new_state[op_id]
         else:
             results["success"] = False
     
@@ -475,6 +482,11 @@ def execute_storage_operations() -> dict:
         directory, database, redundancy, interval = spec
         parity_op_id = get_parity_op_id(directory, database)
         resolved_database = resolve_scrub_database_path(directory, database)
+
+        if (directory, resolved_database) in full_scrubs_attempted:
+            # A full scrub already updates parity; do not retry a failed one
+            # in a mode that skips verification.
+            continue
         
         if not is_operation_due(last_run, parity_op_id, "daily"):
             # Not due yet - log for visibility

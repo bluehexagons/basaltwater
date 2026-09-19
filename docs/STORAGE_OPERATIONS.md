@@ -23,14 +23,15 @@ uses the same rsync service and mount checks as `--sync` but is kept distinct
 in saved configuration and summaries. It is not tied to Samba; see
 [BACKUPS.md](BACKUPS.md) for mounted VM storage and consistency guidance.
 
-Setup validates the paths and mounts, creates missing destination/metadata
-directories, and performs an initial sync. Initial parity files are created in
-fast mode; the first full verify-and-repair scrub waits until the configured
-scrub interval is due. Parity updates run daily thereafter so changed files are
-protected between full scrubs.
+Normal setup installs the tools and hourly timer and requests an initial run
+about two minutes later. That run creates mirror destinations and initial
+parity. The first full verify-and-repair scrub waits until the configured scrub
+interval is due. Parity updates run daily thereafter. The explicit custom
+`create_sync_service` and `create_scrub_service` steps instead perform their
+initial work inline and fail setup if it fails.
 
-Initial setup fails before directory creation or sync/parity work when a required
-mount is missing. Failed SMB connectivity checks also abort initial work. Mount
+The inline custom steps fail before directory creation or sync/parity work when
+a required mount is missing. Failed SMB connectivity checks also abort their work. Mount
 status inspection is read-only; explicit SMB write probes use unique temporary
 files and remove only their own probe.
 Sync source checks require only read access. SMB subdirectories are checked
@@ -47,7 +48,13 @@ is a mirror: files removed from the source are removed from the destination.
 Do not use `--sync` for an append-only backup unless that deletion behavior is
 acceptable.
 
-Operations validate mount ancestors before running. Declared VM data disks are
+Equal or nested sync paths are rejected, including aliases through symlinks.
+The source must be an existing directory. Output from both rsync pipes is
+drained without waiting for newlines, and retained output is bounded to prevent
+large runs from exhausting memory.
+
+Operations require the exact configured SMB or VM mount before running;
+a mounted parent does not satisfy a missing child mount. Declared VM data disks are
 also protected by a systemd mount guard on the storage service. If an expected
 SMB, VM, or other mounted filesystem is unavailable, the operation is skipped
 or prevented from starting instead of writing to an underlying local directory.
@@ -58,11 +65,16 @@ or prevented from starting instead of writing to an underlying local directory.
 redundancy files, verify protected files, repair corruption when possible, and
 remove parity for data files that no longer exist. `REDUNDANCY` is an integer
 percentage from `1%` through `100%`. Empty files are skipped because par2 cannot
-create useful parity for them.
+create useful parity for them. An empty file with existing parity is still
+verified during a full scrub, so truncation is not silently treated as healthy.
+A file supplied as the source directory is rejected before orphan cleanup.
 
 Full scrubs report repaired files as warnings and unrepairable files as errors.
 Parity metadata lives under the configured database path; keep it on reliable
 storage separate from the data when possible.
+A full scrub already performs parity maintenance, so it is not followed by a
+second fast pass. If it fails, its last-success timestamp stays unchanged and
+the next scheduled run retries verification rather than bypassing it.
 
 Scrub rejects symlinks in source and database paths, including parent components.
 Both trees must be fully readable before parity changes begin; an incomplete

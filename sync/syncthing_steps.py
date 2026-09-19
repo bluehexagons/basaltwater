@@ -402,6 +402,22 @@ def _stop_before_configuration() -> None:
             raise RuntimeError("Could not stop managed Syncthing service")
 
 
+def _prepare_state_home(username: str, uid: int, gid: int) -> None:
+    """Restore account access after staging locks down the shared state parent."""
+    parent = os.path.dirname(SYNCTHING_HOME)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    if not is_package_installed("acl"):
+        run(["apt-get", "-o", "DPkg::Lock::Timeout=60", "install", "-y", "-qq", "acl"])
+    # Keep the shared directory private: this account can traverse, not list
+    # or write it. Reapply after every runtime staging chmod (which masks ACLs).
+    run(["setfacl", "-m", f"u:{uid}:--x", "--", parent])
+    os.makedirs(SYNCTHING_HOME, mode=0o700, exist_ok=True)
+    os.chmod(SYNCTHING_HOME, 0o700)
+    os.chown(SYNCTHING_HOME, uid, gid)
+    for permission in ("-x", "-w"):
+        run(["runuser", "-u", username, "--", "/usr/bin/test", permission, SYNCTHING_HOME])
+
+
 def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
     """Install and reconcile one unprivileged, relay-capable Syncthing endpoint."""
     if not config.enable_syncthing and not config.disable_syncthing:
@@ -471,11 +487,9 @@ def setup_syncthing(config: SetupConfig, **_kwargs: Any) -> None:
             raise RuntimeError("Syncthing package installation did not verify")
 
     share_root = _share_root(config)
-    _preflight_existing_folders(config.username, share_root)
     uid, gid, group_name = _account(config.username)
-    os.makedirs(SYNCTHING_HOME, mode=0o700, exist_ok=True)
-    os.chmod(SYNCTHING_HOME, 0o700)
-    os.chown(SYNCTHING_HOME, uid, gid)
+    _prepare_state_home(config.username, uid, gid)
+    _preflight_existing_folders(config.username, share_root)
     _prepare_share_root(config, group_name)
 
     _stop_before_configuration()

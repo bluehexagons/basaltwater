@@ -57,6 +57,16 @@ class TestOperationLock(unittest.TestCase):
 
 
 class TestValidateMountsForOperation(unittest.TestCase):
+    @patch("sync.service_tools.storage_ops.os.path.ismount", side_effect=lambda path: path == "/srv")
+    @patch("sync.service_tools.storage_ops.get_mount_ancestor", return_value="/srv")
+    def test_declared_mount_cannot_fall_back_to_mounted_parent(self, _ancestor, _ismount):
+        for declaration in ({"storage_mounts": [["data", "/srv/data"]]}, {"smb_mounts": [["/srv/data", "host", "creds", "share"]]}):
+            with self.subTest(declaration=declaration):
+                config = RuntimeConfig.from_dict(declaration)
+                valid, message = validate_mounts_for_operation(["/srv/data/files"], config, "sync")
+                self.assertFalse(valid)
+                self.assertIn("Required configured mount", message)
+
     @patch("sync.service_tools.storage_ops.get_mount_ancestor", return_value=None)
     @patch("sync.service_tools.storage_ops.os.path.exists", return_value=True)
     def test_rejects_missing_mount_ancestor(self, _exists, _ancestor):
@@ -377,6 +387,18 @@ class TestOpIdStability(unittest.TestCase):
 
 
 class TestParityCadence(unittest.TestCase):
+    def test_full_scrub_is_not_followed_by_fast_parity_run(self):
+        from sync.service_tools import storage_ops
+
+        for success in (True, False):
+            with self.subTest(success=success), patch.object(storage_ops, "get_service_logger"), patch.object(storage_ops, "load_setup_config", return_value={"scrub_specs": [["/data", ".db", "10%", "weekly"]]}), patch.object(storage_ops, "parse_notification_args", return_value=[]), patch.object(storage_ops, "load_last_run", return_value={"scrub:/data:.db": 1}), patch.object(storage_ops, "save_last_run") as save, patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")), patch.object(storage_ops, "run_scrub", return_value=(success, "result")) as scrub:
+                result = storage_ops.execute_storage_operations()
+                scrub.assert_called_once()
+                self.assertTrue(scrub.call_args.kwargs["verify"])
+                self.assertEqual(result["success"], success)
+                self.assertEqual(result["parity_updates"], [])
+                self.assertEqual("parity:/data:.db" in save.call_args.args[0], success)
+
     @patch("sync.service_tools.storage_ops.send_operation_notification")
     @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK"))
     @patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, ""))

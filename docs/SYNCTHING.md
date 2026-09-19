@@ -164,6 +164,11 @@ Reruns reject symlinked state directories, identity files, and service paths
 before changing ownership or generating configuration. Setup verifies that
 the managed daemon stopped before updating its offline configuration; a failed
 stop aborts instead of racing the running service.
+Runtime staging makes `/var/lib/basaltwater` private to root. Syncthing setup
+reapplies a traverse-only ACL for the service user on that parent before
+checking the existing endpoint, then verifies access as that user. Its own
+state directory remains mode `0700`; device keys and configuration are retained.
+This also repairs reruns that previously failed with `mkdir ... permission denied`.
 
 On a combined Samba/Gogs/Syncthing server, use separate sibling roots, such as
 `/srv/shares`, `/srv/gogs`, and `/srv/syncthing`. Do not synchronize or export

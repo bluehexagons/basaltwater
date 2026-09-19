@@ -6,6 +6,8 @@ import logging
 import os
 import sys
 import unittest
+import tempfile
+import subprocess
 from datetime import datetime
 from unittest.mock import patch
 
@@ -46,6 +48,16 @@ class TestSyncRsyncLogging(unittest.TestCase):
         self.logger = logging.getLogger(f"test.sync_rsync.{self._testMethodName}")
         self.logger.handlers.clear()
         self.logger.propagate = True
+        source_check = patch.object(sync_rsync.os.path, "isdir", return_value=True)
+        source_check.start()
+        self.addCleanup(source_check.stop)
+        def fake_lines(process):
+            for stream, is_stdout in ((process.stdout, True), (process.stderr, False)):
+                for line in stream.read().splitlines():
+                    yield is_stdout, line
+        output = patch.object(sync_rsync, "_output_lines", side_effect=fake_lines)
+        output.start()
+        self.addCleanup(output.stop)
 
     @patch("sync.service_tools.sync_rsync.datetime")
     @patch("sync.service_tools.sync_rsync.subprocess.Popen")
@@ -124,6 +136,48 @@ class TestSyncRsyncLogging(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertIn("Failed to send success notification | error='notify boom'", "\n".join(logs.output))
+
+
+class TestSyncPathSafety(unittest.TestCase):
+    def test_output_reader_drains_stderr_while_stdout_has_no_newline(self):
+        # A real local child is the pipe fixture; no rsync or host mutations.
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import os; os.write(1, b'partial'); os.write(2, b'x' * 262144); os.write(1, b' done\\n')"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            lines = list(sync_rsync._output_lines(process))
+            self.assertEqual(process.returncode, 0)
+            self.assertIn((True, "partial done"), lines)
+            self.assertEqual(sum(len(line) for stdout, line in lines if not stdout), 262144)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+
+    def test_overlap_and_symlink_aliases_never_launch_rsync(self):
+        from sync.sync_steps import parse_sync_spec
+
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "source")
+            os.mkdir(source)
+            alias = os.path.join(root, "alias")
+            os.symlink(source, alias)
+            for destination in (source, root, os.path.join(source, "mirror"), alias):
+                with self.subTest(destination=destination), patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
+                    self.assertEqual(sync_rsync.run_rsync_with_notifications(source, destination, True), 1)
+                    popen.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "equal or nested"):
+                parse_sync_spec([source, source + "/../source/mirror", "daily"])
+
+    def test_file_source_is_rejected_before_rsync(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "file")
+            with open(source, "w") as stream:
+                stream.write("data")
+            with patch.object(sync_rsync.subprocess, "Popen") as popen, patch.object(sync_rsync, "get_service_logger"):
+                self.assertEqual(sync_rsync.run_rsync_with_notifications(source, root + "-dest", True), 1)
+                popen.assert_not_called()
 
 
 if __name__ == "__main__":

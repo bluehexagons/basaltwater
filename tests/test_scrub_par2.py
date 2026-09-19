@@ -155,6 +155,36 @@ class TestSetupFailurePropagation(unittest.TestCase):
 
 
 class TestScrubResultFailures(unittest.TestCase):
+    def test_file_source_preserves_orphan_parity(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, database = os.path.join(root, "file"), os.path.join(root, "db")
+            os.mkdir(database)
+            with open(source, "w") as stream:
+                stream.write("data")
+            parity = os.path.join(database, "keep.par2")
+            with open(parity, "w") as stream:
+                stream.write("parity")
+            with patch.object(scrub_par2, "log"), patch.object(scrub_par2, "create_operation_logger"):
+                with self.assertRaisesRegex(ValueError, "not an existing directory"):
+                    scrub_par2.scrub_directory(source, database, 10, "unused", suppress_notifications=True)
+            self.assertTrue(os.path.exists(parity))
+
+    def test_truncated_file_is_verified_against_existing_parity(self):
+        with tempfile.TemporaryDirectory() as root:
+            source, database = os.path.join(root, "data"), os.path.join(root, "db")
+            os.mkdir(source)
+            os.mkdir(database)
+            for path in (os.path.join(source, "data.bin"), os.path.join(database, "data.bin.par2")):
+                with open(path, "w") as stream:
+                    stream.write("")
+            with patch.object(scrub_par2, "log"), patch.object(scrub_par2, "create_operation_logger"), patch.object(scrub_par2, "create_par2") as create, patch.object(scrub_par2, "verify_repair", return_value=scrub_par2.VERIFY_UNREPAIRABLE) as verify:
+                result = scrub_par2.scrub_directory(source, database, 10, "unused", suppress_notifications=True)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["files_unrepairable"], ["data.bin"])
+                self.assertEqual(result["files_verified"], 1)
+                verify.assert_called_once()
+                create.assert_not_called()
+
     def test_stale_volume_only_parity_is_recreated_and_counted_as_update(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, 'source')

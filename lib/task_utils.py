@@ -6,6 +6,7 @@ import shlex
 from typing import Optional, Any, TYPE_CHECKING
 from lib.remote_utils import run
 from lib.mount_utils import is_path_under_mnt, get_mount_ancestor
+from lib.validation import validate_filesystem_path
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -16,6 +17,30 @@ if TYPE_CHECKING:
 
 
 VALID_FREQUENCIES = ['hourly', 'daily', 'weekly', 'biweekly', 'monthly', 'bimonthly']
+
+
+def validate_sync_paths(source: str, destination: str, *, resolve: bool = True) -> None:
+    """Reject mirrors whose deletion or recursion could affect their source."""
+    for path in (source, destination):
+        validate_filesystem_path(path)
+        if not os.path.isabs(path):
+            raise ValueError(f"Sync path must be absolute: {path}")
+    normalize = os.path.realpath if resolve else os.path.abspath
+    source_root, destination_root = normalize(source), normalize(destination)
+    if os.path.commonpath([source_root, destination_root]) in {source_root, destination_root}:
+        raise ValueError("Sync source and destination must not be equal or nested")
+
+
+def validate_configured_storage_mounts(path: str, config: Any) -> None:
+    """Require the exact declared mount, not merely any mounted ancestor."""
+    path = os.path.abspath(path)
+    roots = [spec[0] for spec in getattr(config, "smb_mounts", None) or [] if spec]
+    roots += [spec[1] for spec in getattr(config, "storage_mounts", None) or [] if len(spec) >= 2]
+    for root in roots:
+        root = os.path.abspath(root)
+        if path == root or path.startswith(root.rstrip(os.sep) + os.sep):
+            if os.path.realpath(root) != root or not os.path.ismount(root):
+                raise RuntimeError(f"Required configured mount is unavailable: {root}")
 
 
 def validate_frequency(frequency: str, label: str = "frequency") -> None:

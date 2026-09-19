@@ -16,6 +16,7 @@ from lib.task_utils import (
     check_path_on_smb_mount,
     ensure_directory
 )
+from lib.task_utils import validate_sync_paths, validate_configured_storage_mounts
 
 
 def install_rsync(config: SetupConfig) -> None:
@@ -39,6 +40,7 @@ def parse_sync_spec(sync_spec: list[str]) -> dict[str, Any]:
         raise ValueError(f"Destination path must be absolute: {destination}")
     
     validate_frequency(interval, "interval")
+    validate_sync_paths(source, destination, resolve=False)
     
     return {
         'source': source,
@@ -62,6 +64,9 @@ def create_sync_service(config: SetupConfig, sync_spec: Optional[list[str]] = No
         logger.log_step("validation", "started", "Validating sync paths and mounts")
         validate_filesystem_path(source, must_exist=True, check_writable=False)
         validate_filesystem_path(destination, check_writable=True)
+        validate_sync_paths(source, destination)
+        for path in (source, destination):
+            validate_configured_storage_mounts(path, config)
         if not validate_mount_for_sync(source, "source"):
             raise RuntimeError(f"Required source mount is unavailable: {source}")
         if not validate_mount_for_sync(destination, "destination"):
