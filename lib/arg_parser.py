@@ -1129,18 +1129,16 @@ def add_setup_arguments(
             metavar="PATH",
             help="Seed missing GitHub CLI credentials from a controller-local file",
         )
-        agent_auth_group = parser.add_mutually_exclusive_group()
-        agent_auth_group.add_argument(
+        parser.add_argument(
             "--agent-auth",
             dest="agent_auth_source",
-            choices=("login", "active", "none"),
+            choices=("login", "none"),
             help=(
                 "Authorize Codex on the target with a ChatGPT device code (login), "
-                "import active controller credentials (active), or disable profile "
-                "defaults (none); agent_code_vm defaults to login"
+                "or disable profile defaults (none); agent VM profiles default to login"
             ),
         )
-        agent_auth_group.add_argument(
+        parser.add_argument(
             "--agent-auth-file",
             dest="agent_auth_files",
             action="append",

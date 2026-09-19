@@ -1382,10 +1382,8 @@ def validate_agent_git_settings(config: Any) -> None:
         or getattr(config, "git_auth_file", None)
         or getattr(config, "git_auth_token", None)
     )
-    github_agent_auth_requested = bool(
-        getattr(config, "agent_auth_source", None) == "active"
-        and "gh" in set(config.selected_agent_tools())
-    ) or any(
+    agent_auth_source = getattr(config, "agent_auth_source", None)
+    github_agent_auth_requested = any(
         isinstance(spec, (list, tuple))
         and len(spec) == 2
         and spec[0] == "gh"
@@ -1418,6 +1416,10 @@ def validate_agent_git_settings(config: Any) -> None:
         )
 
     seen_auth_tools: set[str] = set()
+    if agent_auth_source not in {None, "login", "check"}:
+        raise ValueError("--agent-auth accepts login or none; active agent credential copying was removed")
+    if agent_auth_source and "codex" not in selected_tools:
+        raise ValueError("--agent-auth login requires --agent-tool codex")
     for spec in getattr(config, "agent_auth_files", None) or []:
         if (
             not isinstance(spec, (list, tuple))
@@ -1431,6 +1433,8 @@ def validate_agent_git_settings(config: Any) -> None:
                 "and a file PATH"
             )
         tool = spec[0]
+        if tool == "codex" and agent_auth_source in {"login", "check"}:
+            raise ValueError("Codex credentials must use either --agent-auth login or --agent-auth-file codex, not both")
         if tool in seen_auth_tools:
             raise ValueError(f"Duplicate --agent-auth-file for tool: {tool}")
         seen_auth_tools.add(tool)

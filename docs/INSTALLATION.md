@@ -413,7 +413,7 @@ basaltw credentials remove admin
 
 Passwords are excluded from saved setup state and reconstructed commands.
 
-For agent VM authentication, active/file sources, per-VM isolation, and remote
+For agent VM authentication, provider-specific login/file/GitHub sources, per-VM isolation, and remote
 rotation, see [Agent authentication](AGENT_AUTHENTICATION.md). For repository
 policy and HTTPS credentials, see [Git access](GIT_ACCESS.md).
 

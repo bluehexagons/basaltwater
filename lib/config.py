@@ -245,6 +245,14 @@ def _normalize_nested_specs(value: NestedStrList | list[str] | None) -> Optional
     return None
 
 
+def _has_agent_auth_file(specs: Optional[NestedStrList], tool: str) -> bool:
+    """Resolve a provider override without accepting malformed file specs."""
+    return any(
+        isinstance(spec, (list, tuple)) and len(spec) == 2 and spec[0] == tool
+        for spec in specs or []
+    )
+
+
 def _vm_disk_setting_args(value: Optional[NestedStrList]) -> StrList:
     """Return per-device disk setting flags for a reconstructed setup."""
 
@@ -2124,13 +2132,15 @@ class SetupConfig:
         if (
             not data.get('disable_git_auth')
             and not data.get('git_auth_file')
+            and not _has_agent_auth_file(data.get('agent_auth_files'), 'gh')
             and 'gh' in (data.get('agent_tools') or system_defaults.default_agent_tools)
         ):
             data['git_auth_source'] = system_defaults.default_git_auth_source
         if (
             not data.get('disable_agent_auth')
-            and not data.get('agent_auth_files')
-            and data.get('agent_tools')
+            and not _has_agent_auth_file(data.get('agent_auth_files'), 'codex')
+            and 'codex' in (data.get('agent_tools') or [])
+            and 'codex' not in (data.get('agent_tools_removed') or [])
         ):
             data['agent_auth_source'] = system_defaults.default_agent_auth_source
         if 'auto_restart' not in data or data.get('auto_restart') is None:
@@ -2347,7 +2357,7 @@ class SetupConfig:
                 raw_git_auth_source
                 or (
                     system_type_definition.default_git_auth_source
-                    if "gh" in (agent_tools or [])
+                    if "gh" in (agent_tools or []) and not _has_agent_auth_file(agent_auth_files, 'gh')
                     else None
                 )
             )
@@ -2356,12 +2366,12 @@ class SetupConfig:
         disable_agent_auth = raw_agent_auth_source == 'none'
         agent_auth_source = (
             None
-            if disable_agent_auth or agent_auth_files
+            if disable_agent_auth
             else (
                 raw_agent_auth_source
                 or (
                     system_type_definition.default_agent_auth_source
-                    if agent_tools
+                    if "codex" in (agent_tools or []) and not _has_agent_auth_file(agent_auth_files, 'codex')
                     else None
                 )
             )
@@ -2594,7 +2604,6 @@ class SetupConfig:
                 git_auth_source
                 or git_auth_file
                 or git_auth_token
-                or agent_auth_source
                 or agent_auth_files
             ),
             copy_agent_config=bool(agent_config_source),

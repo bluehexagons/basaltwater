@@ -24,6 +24,12 @@ Firefox but not the T3 Code/RDP/pairing defaults of `agent_code_vm`. See
 [Agentic coding security](AGENT_SECURITY.md) for the exact security boundaries
 of each privilege posture.
 
+All three profiles default to target-owned Codex subscription login. GitHub
+authentication is separate: `agent_code_vm` defaults to `--git-auth active`,
+while the other two require an explicit GitHub source. Claude and OpenCode
+credentials are never copied implicitly. See [provider authentication
+defaults](AGENT_AUTHENTICATION.md#credential-sources) for independent overrides.
+
 ## A headless coding VM with browser-approved privileged actions
 
 This is a good default for a terminal-only agent. It gives the coding account

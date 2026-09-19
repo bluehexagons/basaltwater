@@ -280,7 +280,7 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         "--active",
         dest="agent_auth_active",
         action="store_true",
-        help="Use the active controller user's credential file",
+        help="Use active controller GitHub credentials (only --tool gh)",
     )
     auth_source.add_argument(
         "--interactive",

@@ -134,7 +134,11 @@ class TestAgentPayloadPreparation(unittest.TestCase):
                 install_claude=True,
                 install_opencode=True,
                 git_auth_source='active',
-                agent_auth_source='active',
+                agent_auth_files=[
+                    ['codex', os.path.join(codex_dir, 'auth.json')],
+                    ['claude', os.path.join(claude_dir, '.credentials.json')],
+                    ['opencode', os.path.join(opencode_auth_dir, 'auth.json')],
+                ],
                 copy_agent_config=True,
                 copy_agent_keys=True,
             )

@@ -198,12 +198,13 @@ def run_interactive_setup(args: Any) -> None:
     if non_gh_tools:
         agent_auth_choice = _prompt_choice(
             "Agent authentication (login authorizes Codex on the target)",
-            ("login", "none", "active", "files") if "codex" in selected_tools else ("none", "active", "files"),
+            ("login", "none", "files") if "codex" in selected_tools else ("none", "files"),
             "login" if "codex" in selected_tools else "none",
         )
-        if agent_auth_choice in {"login", "active", "none"}:
+        if agent_auth_choice in {"login", "none"}:
             args.agent_auth_source = agent_auth_choice
         elif agent_auth_choice == "files":
+            args.agent_auth_source = None
             args.agent_auth_files = []
             for tool in non_gh_tools:
                 path = _prompt(f"{tool} credential file (blank to skip)")

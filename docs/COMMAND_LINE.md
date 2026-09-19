@@ -541,7 +541,7 @@ rm -f "$HOME/.basaltwater-install.sh"
 | `--no-git-credentials` | Remove all Basaltwater-managed Git HTTPS credentials, helper configuration, and private CA files from the target user |
 | `--git-auth active\|none` | Seed missing active GitHub CLI host credentials, or disable a profile auth default |
 | `--git-auth-file PATH` | Seed a missing selected-host `hosts.yml` entry or one-line GitHub token from a controller-local file |
-| `--agent-auth login\|active\|none` | Authorize Codex on the target (default for `agent_code_vm`), explicitly import controller credentials, or disable the profile auth default |
+| `--agent-auth login\|none` | Authorize Codex on the target (default for `agent_vm`, `agent_workstation`, and `agent_code_vm`), or disable Codex login; independent of GitHub auth and other providers' explicit files |
 | `--agent-auth-file TOOL PATH` | Stage one selected agent credential from a controller-local file at its canonical target path; `gh` accepts a hosts file or one-line token; setup otherwise preserves existing credentials, except for safe stale-Codex refresh; repeatable |
 | `--agent-config active` | Copy known non-secret config from the active controller; does not copy auth files |
 | `--interactive` | Prompt for tools, HTTPS repositories, Git policy, and credential sources |
@@ -639,7 +639,7 @@ Credential seeding and config copy are intentionally tool-scoped and transient:
 
 - `--git-auth`/`--git-auth-file` seed only a missing selected GitHub host entry, preserve target-managed credentials on rerun, and run `gh auth setup-git`.
 - `--agent-auth login` retains or renews target Codex auth and starts device authorization when needed in a terminal. Unattended setup fails clearly when authorization is required.
-- Explicit `--agent-auth active`/`--agent-auth-file` seed missing Codex, Claude Code, or OpenCode credentials without requiring those tools on the controller. They also replace refresh-required Codex auth when the staged source is unambiguously current; active `gh` requires controller `gh` only when its token is keyring-backed.
+- Explicit `--agent-auth-file TOOL PATH` seeds that provider's missing credentials without requiring the tool on the controller; other providers retain their defaults. A Codex file also replaces refresh-required auth when the staged source is unambiguously current. Coding-agent active copying is removed; `--git-auth active` remains GitHub-specific and requires controller `gh` only when its token is keyring-backed.
 - `--agent-config active` copies known non-secret configuration from the active controller user.
 - Codex and OpenCode receive only non-secret managed workflow skills; T3 Code
   adds its focused service and HTTPS-gateway guidance. Basaltwater does not copy
@@ -858,10 +858,10 @@ basaltw agent auth status 10.0.0.10 agent --json
 python3 basaltwater.py agent auth login 10.0.0.10 agent --method api-key
 ```
 
-`auth set` accepts an active-user source, a controller-local file, or
-interactive source selection. Active `gh` rotation can retrieve a keyring-backed
-token through the controller's `gh auth token`; active Codex, Claude Code, and
-OpenCode rotation still requires their file-backed credential paths. GitHub
+`auth set` accepts a controller-local file or interactive source selection.
+Only `--tool gh` accepts `--active`; it can retrieve a keyring-backed
+token through the controller's `gh auth token`. Codex, Claude Code, and
+OpenCode active credential copying has been removed. GitHub
 input is filtered to `github.com` and is installed with an atomic mode-`0600`
 replacement. Status reports only tool
 installation, credential presence/metadata, safe Codex refresh and cached-token

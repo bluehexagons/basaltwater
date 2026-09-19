@@ -265,7 +265,7 @@ class TestHostedFlagParsing(unittest.TestCase):
             "--web-interface", "t3code",
             "--git-access", "read-write",
             "--git-auth", "active",
-            "--agent-auth", "active",
+            "--agent-auth", "login",
             "--agent-config", "active",
             "--repo", "https://github.com/user/one.git",
             "--repo", "https://gitlab.com/user/two.git",
@@ -274,7 +274,7 @@ class TestHostedFlagParsing(unittest.TestCase):
         self.assertEqual(args.web_interfaces, ["t3code"])
         self.assertEqual(args.git_access, "read-write")
         self.assertEqual(args.git_auth_source, "active")
-        self.assertEqual(args.agent_auth_source, "active")
+        self.assertEqual(args.agent_auth_source, "login")
         self.assertEqual(args.agent_config_source, "active")
         self.assertEqual(args.agent_repos, [
             "https://github.com/user/one.git",

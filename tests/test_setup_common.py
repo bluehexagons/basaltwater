@@ -673,21 +673,19 @@ class TestAgentCredentialStaging(unittest.TestCase):
             ) as file_obj:
                 self.assertIn("per-vm-token", file_obj.read())
 
-    def test_missing_active_codex_file_mentions_file_backend(self):
+    def test_login_does_not_require_controller_codex_credentials(self):
         from lib import setup_common
 
         config = _make_config(
             agent_tools=["codex"],
             copy_agent_keys=True,
-            agent_auth_source="active",
+            agent_auth_source="login",
         )
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(setup_common, "_local_user_home", return_value=directory):
-                with self.assertRaisesRegex(ValueError, "cli_auth_credentials_store"):
-                    setup_common.prepare_agent_payload(
-                        config,
-                        os.path.join(directory, "payload"),
-                    )
+                payload = os.path.join(directory, "payload")
+                setup_common.prepare_agent_payload(config, payload)
+                self.assertFalse(os.path.exists(os.path.join(payload, "secrets")))
 
 
 class TestCloneRepository(unittest.TestCase):

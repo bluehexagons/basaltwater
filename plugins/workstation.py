@@ -58,6 +58,7 @@ PLUGIN = PluginDefinition(
             include_workstation_dev_apps=True,
             default_browser="firefox",
             default_agent_tools=("gh", "codex"),
+            default_agent_auth_source="login",
             step_builder="plugins.workstation:build_workstation_steps",
         ),
         SystemTypeDefinition(

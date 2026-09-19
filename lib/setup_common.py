@@ -501,15 +501,10 @@ def _copy_existing_path(source: str, destination: str) -> bool:
     return True
 
 
-_AGENT_AUTH_PATHS = {
-    "codex": os.path.join(".codex", "auth.json"),
-    "claude": os.path.join(".claude", ".credentials.json"),
-    "opencode": os.path.join(".local", "share", "opencode", "auth.json"),
-}
-
 _AGENT_AUTH_FILENAMES = {
-    tool: os.path.basename(relative_path)
-    for tool, relative_path in _AGENT_AUTH_PATHS.items()
+    "codex": "auth.json",
+    "claude": ".credentials.json",
+    "opencode": "auth.json",
 }
 
 
@@ -786,45 +781,6 @@ def _github_host_entry_from_validated_path(hosts_path: str, host: str) -> Option
         return _github_host_entry_from_lines(file_obj.readlines(), host)
 
 
-def _active_agent_credential_error(tool: str, source: str) -> str:
-    if tool == "codex":
-        return (
-            f"Codex active credentials are not present at {source}. "
-            "cli_auth_credentials_store may select an OS credential store; "
-            "use --agent-auth login to authorize "
-            "the target independently without a controller Codex installation, "
-            "or --agent-auth-file codex PATH for an explicit file import"
-        )
-    if tool == "claude":
-        return (
-            f"Claude Code active credentials are not present at {source}. They "
-            "may be stored in an OS keychain; use --agent-auth-file claude PATH "
-            "or authenticate on the target VM"
-        )
-    return (
-        f"OpenCode active credentials are not present at {source}; use "
-        "--agent-auth-file opencode PATH or authenticate on the target VM"
-    )
-
-
-def _stage_active_agent_credential(
-    tool: str,
-    local_home: str,
-    payload_dir: str,
-    relative_path: str,
-) -> None:
-    source = os.path.join(local_home, relative_path)
-    if not os.path.exists(source):
-        raise ValueError(_active_agent_credential_error(tool, source))
-    if tool == "codex":
-        _warn_for_codex_auth_source(source)
-    _stage_secret_file(
-        source,
-        os.path.join(payload_dir, "secrets", tool, os.path.basename(relative_path)),
-        f"{tool} credentials",
-    )
-
-
 def _stage_github_auth(config: SetupConfig, payload_dir: str, local_home: str) -> None:
     if config.git_auth_token:
         payload = _github_token_entry(config.git_auth_token, config.git_host).encode("utf-8")
@@ -943,15 +899,6 @@ def prepare_agent_payload(config: SetupConfig, payload_dir: str) -> None:
         if config.git_host != "github.com" or "gh" not in config.selected_agent_tools():
             raise ValueError("GitHub auth requires --agent-tool gh and --git-host github.com")
         _stage_github_auth(config, payload_dir, local_home)
-
-    if config.agent_auth_source == "active":
-        for tool, relative_path in _AGENT_AUTH_PATHS.items():
-            if tool in config.selected_agent_tools() and tool != "gh":
-                _stage_active_agent_credential(tool, local_home, payload_dir, relative_path)
-        if "gh" in config.selected_agent_tools() and not (
-            config.git_auth_source or config.git_auth_file or config.git_auth_token
-        ):
-            _stage_github_auth(config, payload_dir, local_home)
 
     for tool, source in config.agent_auth_files or []:
         if tool == "gh":

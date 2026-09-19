@@ -42,11 +42,11 @@ def _credential_source_path(path: str, label: str) -> str:
 
 
 def _active_source_path(tool: str) -> str:
-    from lib.setup_common import _AGENT_AUTH_PATHS, _local_user_home
+    from lib.setup_common import _local_user_home
 
-    if tool == "gh":
-        return os.path.join(_local_user_home(), ".config", "gh", "hosts.yml")
-    return os.path.join(_local_user_home(), _AGENT_AUTH_PATHS[tool])
+    if tool != "gh":
+        raise ValueError("Active credential copying is supported only for gh; use agent auth login for Codex")
+    return os.path.join(_local_user_home(), ".config", "gh", "hosts.yml")
 
 
 def _read_credential(
@@ -325,15 +325,16 @@ def run_agent_auth_set(args: Any) -> int:
     use_active = bool(getattr(args, "agent_auth_active", False))
     token: Optional[str] = None
     if getattr(args, "agent_auth_interactive", False):
-        choice = input("Credential source (active/file/token): ").strip().lower()
-        if choice == "active":
+        choices = "active/file/token" if args.agent_auth_tool == "gh" else "file"
+        choice = input(f"Credential source ({choices}): ").strip().lower()
+        if choice == "active" and args.agent_auth_tool == "gh":
             use_active = True
         elif choice == "file":
             source = input("Credential file: ").strip()
         elif choice == "token" and args.agent_auth_tool == "gh":
             token = getpass.getpass("GitHub token (hidden): ").strip()
         else:
-            raise ValueError("choose active, file, or token (token is gh-only)")
+            raise ValueError(f"choose {choices}")
     return set_agent_credential(
         host=args.agent_auth_host,
         username=args.agent_auth_username,

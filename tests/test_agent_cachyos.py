@@ -42,7 +42,7 @@ class CachyOSSetupTests(unittest.TestCase):
             ["--browser-automation", "playwright"], ["--provision-on", "pve"],
             ["--machine", "vm"], ["--node", "--auto-restart"],
             ["--steps", "install_desktop"], ["--apt", "vim"],
-            ["--agent-auth", "active"], ["--t3code-ready"],
+            ["--agent-auth", "login"], ["--t3code-ready"],
             ["--web-interface", "t3code", "--web-interface-host", "0.0.0.0"],
         ]
         parser, _, _ = basaltwater.create_basaltwater_parser()

@@ -303,6 +303,62 @@ class ControllerLoginTests(unittest.TestCase):
 
 
 class SetupLoginTests(unittest.TestCase):
+    def test_active_coding_credentials_are_rejected_before_read_or_upload(self):
+        from lib import agent_auth
+        parser = create_setup_argument_parser('test')
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(['vm.example', 'agent', '--agent-auth', 'active'])
+        for tool in ('codex', 'claude', 'opencode'):
+            with self.subTest(tool=tool), patch.object(agent_auth, '_read_credential') as read, patch.object(agent_auth, '_run_remote_script') as remote:
+                with self.assertRaisesRegex(ValueError, 'only for gh'):
+                    agent_auth.set_agent_credential(host='vm.example', username='agent', tool=tool,
+                                                   ssh_key=None, source=None, use_active=True)
+                read.assert_not_called()
+                remote.assert_not_called()
+
+    def test_provider_file_overrides_do_not_disable_other_provider_defaults(self):
+        parser = create_setup_argument_parser('test')
+        for tool in ('gh', 'claude', 'opencode', 'codex'):
+            with self.subTest(tool=tool):
+                args = parser.parse_args(['vm.example', 'agent', '--agent-tool', tool,
+                                          '--agent-auth-file', tool, '/fake/credential'])
+                config = SetupConfig.from_args(args, 'agent_code_vm')
+                validate_agent_git_settings(config)
+                self.assertEqual(config.agent_auth_source, None if tool == 'codex' else 'login')
+                self.assertEqual(config.git_auth_source, None if tool == 'gh' else 'active')
+
+    def test_explicit_login_combines_with_other_provider_files_only(self):
+        parser = create_setup_argument_parser('test')
+        for tool in ('claude', 'codex'):
+            args = parser.parse_args(['vm.example', 'agent', '--agent-tool', tool,
+                                      '--agent-auth', 'login', '--agent-auth-file', tool, '/fake/credential'])
+            config = SetupConfig.from_args(args, 'agent_vm')
+            self.assertEqual(config.agent_auth_source, 'login')
+            if tool == 'codex':
+                with self.assertRaisesRegex(ValueError, 'not both'):
+                    validate_agent_git_settings(config)
+            else:
+                validate_agent_git_settings(config)
+
+    def test_codex_opt_outs_preserve_github_default(self):
+        parser = create_setup_argument_parser('test')
+        for options in (['--agent-auth', 'none'], ['--no-agent-tool', 'codex', '--agent-tool', 'claude']):
+            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent', *options]), 'agent_code_vm')
+            validate_agent_git_settings(config)
+            self.assertIsNone(config.agent_auth_source)
+            self.assertEqual(config.git_auth_source, 'active')
+            restored = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+            self.assertIsNone(restored.agent_auth_source)
+
+    def test_login_only_profile_does_not_stage_or_read_controller_credentials(self):
+        parser = create_setup_argument_parser('test')
+        config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), 'agent_vm')
+        self.assertFalse(config.copy_agent_keys)
+        with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_local_user_home') as home:
+            setup_common.prepare_agent_payload(config, directory)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+        home.assert_not_called()
+
     def test_controller_propagates_login_only_when_input_and_output_are_terminals(self):
         for stdin_tty, stdout_tty, expected in ((True, True, 'login'), (False, True, 'check'), (True, False, 'check')):
             with self.subTest(stdin=stdin_tty, stdout=stdout_tty):
@@ -315,8 +371,11 @@ class SetupLoginTests(unittest.TestCase):
 
     def test_profile_is_subscription_first_and_remote_execution_is_noninteractive_by_default(self):
         parser = create_setup_argument_parser('test')
-        config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), 'agent_code_vm')
-        self.assertEqual(config.agent_auth_source, 'login')
+        for profile in ('agent_vm', 'agent_workstation', 'agent_code_vm'):
+            config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), profile)
+            self.assertEqual(config.agent_auth_source, 'login', profile)
+            restored = SetupConfig.from_dict(config.host, profile, config.to_dict())
+            self.assertEqual(restored.agent_auth_source, 'login', profile)
         remote = create_setup_argument_parser('remote', for_remote=True)
         args = remote.parse_args(['--system-type', 'agent_code_vm', '--username', 'agent'])
         args.host = 'vm.example'
@@ -326,7 +385,7 @@ class SetupLoginTests(unittest.TestCase):
         config = SetupConfig(system_type='agent_workstation', host='vm.example', username='agent',
                              agent_tools=['gh', 'codex'], agent_auth_source='login', copy_agent_keys=True)
         validate_agent_git_settings(config)
-        with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_stage_active_agent_credential') as stage, patch.object(setup_common, '_stage_github_auth') as github, redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_stage_secret_file') as stage, patch.object(setup_common, '_stage_github_auth') as github, redirect_stdout(io.StringIO()):
             setup_common.prepare_agent_payload(config, directory)
         stage.assert_not_called()
         github.assert_not_called()
