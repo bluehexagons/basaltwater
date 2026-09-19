@@ -230,15 +230,27 @@ def main() -> int:
         else:
             print(json.dumps(event), flush=True)
 
+    stopped = threading.Event()
+    watcher = None
     try:
         request = {"method": "subscription"} if args.setup else json.loads(sys.stdin.buffer.readline(20000))
         if not isinstance(request, dict):
             raise LoginError("invalid_login_request")
         if not args.setup:
+            descriptor = sys.stdin.fileno()
+
             def disconnected() -> None:
-                if not sys.stdin.buffer.read(1):
-                    os.kill(os.getpid(), signal.SIGTERM)
-            threading.Thread(target=disconnected, daemon=True).start()
+                # Never hold a Python buffered-stream lock across a blocking
+                # read: the controller keeps stdin open until we have exited.
+                while not stopped.is_set():
+                    if select.select([descriptor], [], [], 0.1)[0]:
+                        if not os.read(descriptor, 1):
+                            if not stopped.is_set():
+                                os.kill(os.getpid(), signal.SIGTERM)
+                            return
+
+            watcher = threading.Thread(target=disconnected)
+            watcher.start()
         login(pwd.getpwuid(os.getuid()).pw_dir, request.get("method", "subscription"), request.get("api_key"), emit)
         return 0
     except LoginError as exc:
@@ -247,6 +259,10 @@ def main() -> int:
         emit({"event": "error", "reason": "authorization_cancelled"})
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         emit({"event": "error", "reason": "login_process_failed"})
+    finally:
+        stopped.set()
+        if watcher is not None:
+            watcher.join()
     return 3
 
 

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -151,6 +152,67 @@ class TargetLoginTests(unittest.TestCase):
             self.login()
         self.assertEqual(self.events, [])
         self.assertEqual(self.auth.read_bytes(), b'old-credential')
+
+
+class HelperShutdownTests(unittest.TestCase):
+    def run_helper(self, outcome):
+        # Exercise actual interpreter shutdown with SSH-like pipes, while
+        # mocking login so no vendor process or account is touched.
+        script = '''
+import signal
+import sys
+import time
+from unittest.mock import patch
+from common.service_tools import codex_auth_login as target
+outcome = sys.argv.pop()
+def cancel(signum, frame):
+    raise KeyboardInterrupt
+signal.signal(signal.SIGTERM, cancel)
+def fake_login(home, method, key, emit):
+    emit({"event": "started"})
+    time.sleep(10 if outcome == "disconnect" else 0.2)
+    if outcome == "error":
+        raise target.LoginError("authorization_failed")
+    emit({"event": "complete", "method": method})
+with patch.object(target, "login", side_effect=fake_login):
+    raise SystemExit(target.main())
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.Popen(
+                [sys.executable, '-u', '-c', script, outcome],
+                cwd=directory, env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1])},
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            try:
+                process.stdin.write(b'{"method":"subscription"}\n')
+                process.stdin.flush()
+                protocol = target.Protocol(process, time.monotonic() + 5)
+                self.assertEqual(protocol.receive(lambda event: True), {'event': 'started'})
+                if outcome == 'disconnect':
+                    process.stdin.close()
+                # Keep stdin open through exit on success/failure, as SSH does.
+                self.assertEqual(process.wait(timeout=5), 0 if outcome == 'success' else 3)
+                event = protocol.receive(lambda event: True)
+                self.assertEqual(event['event'], 'complete' if outcome == 'success' else 'error')
+                if outcome == 'disconnect':
+                    self.assertEqual(event['reason'], 'authorization_cancelled')
+                self.assertEqual(process.stderr.read(), b'')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                process.stdin.close()
+                process.stdout.close()
+                process.stderr.close()
+
+    def test_success_exits_with_controller_stdin_open(self):
+        self.run_helper('success')
+
+    def test_rejection_exits_with_controller_stdin_open(self):
+        self.run_helper('error')
+
+    def test_controller_disconnect_cancels_and_exits(self):
+        self.run_helper('disconnect')
 
 
 class ProtocolTests(unittest.TestCase):

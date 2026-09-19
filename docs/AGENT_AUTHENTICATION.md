@@ -33,6 +33,10 @@ Cancellation, rejection, and timeout preserve the previous credential;
 concurrent changes to credentials or config stop replacement. The command
 waits at most 15 minutes for authorization and returns status 3 if it cannot
 complete. Subscription tokens never cross SSH to the controller.
+The controller sends its current login helper over SSH, so updating the
+controller checkout also updates this command's target-side login logic.
+An SSH disconnect cancels an incomplete authorization; normal completion stops
+the disconnect watcher before the helper exits.
 
 ### Setup and recovery
 
