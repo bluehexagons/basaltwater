@@ -75,7 +75,7 @@ from lib.vm_storage import (
     data_disks,
     disk_hardware,
     has_home_mount,
-    storage_disk_serial,
+    storage_disk_serials,
     storage_size_kib,
 )
 
@@ -249,9 +249,10 @@ def _existing_managed_disks(
     """Map declared logical disks to provider devices without adopting extras."""
 
     expected_serials = {
-        storage_disk_serial(name): name
+        serial: name
         for name in desired
         if name != "root"
+        for serial in storage_disk_serials(name)
     }
     managed: dict[str, tuple[str, str]] = {}
     for device, value in vm.scsi_disks:

@@ -171,7 +171,7 @@ def _validate_state_area(raw_area: object) -> dict[str, Any]:
             legacy_metadata = serial is None and size is None
             valid_metadata = (
                 isinstance(serial, str)
-                and re.fullmatch(r"it-[a-z][a-z0-9-]{0,16}", serial) is not None
+                and re.fullmatch(r"(?:bw|it)-[a-z][a-z0-9-]{0,16}", serial) is not None
                 and isinstance(size, str)
                 and _STATE_SIZE_PATTERN.fullmatch(size) is not None
             )
@@ -357,7 +357,7 @@ def _size_mib(value: str) -> int:
 
 
 def _swap_label(name: str) -> str:
-    return f"it-{name}"[:16]
+    return f"bw-{name}"[:16]
 
 
 def _assert_safe_swap_parent(path: str) -> None:
@@ -516,7 +516,7 @@ def _ensure_swap_device(
         declared = disks[area.source]
         record = _find_declared_disk(declared.serial, declared.size)
         path = _device_path(record)
-        provider_serial = declared.serial
+        provider_serial = str(record.get("serial") or declared.serial)
         provider_size = declared.size
     elif (
         prior
@@ -530,11 +530,18 @@ def _ensure_swap_device(
         provider_size = str(prior["size"])
         record = _find_declared_disk(provider_serial, provider_size)
         path = _device_path(record)
+        provider_serial = str(record.get("serial") or provider_serial)
     else:
         path = _resolve_direct_device(area.source)
         record = _find_device_by_path(path)
         if record is None:
             raise RuntimeError(f"Swap device is not visible to lsblk: {path}")
+
+    if prior and prior.get("provider_owned") and prior.get("serial"):
+        if provider_serial != prior["serial"]:
+            raise RuntimeError(f"Recorded swap disk identity changed for {area.name}")
+    if prior and prior.get("uuid") and _swap_uuid(path) != prior["uuid"]:
+        raise RuntimeError(f"Recorded swap UUID changed for {area.name}")
 
     if path.startswith(("/dev/zvol/", "/dev/zd")):
         print(

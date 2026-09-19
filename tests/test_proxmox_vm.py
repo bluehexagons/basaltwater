@@ -560,7 +560,7 @@ class TestVMDataDisks(unittest.TestCase):
                     "scsi0: local-lvm:vm-101-disk-0,iothread=1,discard=on,ssd=1\n"
                     "scsi1: bulk-lvm:vm-101-disk-1,iothread=1,"
                     "discard=on,"
-                    "serial=it-agent-data,size=128G\n"
+                    "serial=bw-agent-data,size=128G\n"
                 ),
                 stderr="",
             ),
@@ -601,7 +601,7 @@ class TestVMDataDisks(unittest.TestCase):
             commands[2],
         )
         self.assertIn(
-            "qm set 101 --scsi1 bulk-lvm:128,iothread=1,serial=it-agent-data,discard=on",
+            "qm set 101 --scsi1 bulk-lvm:128,iothread=1,serial=bw-agent-data,discard=on",
             commands,
         )
         self.assertNotIn("bulk-lvm:128G", "\n".join(commands))

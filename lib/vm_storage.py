@@ -69,11 +69,17 @@ def storage_disk_serial(name: str) -> str:
     """Return the stable serial reported by Proxmox to the guest.
 
     Proxmox limits drive serials to 20 bytes. Validation limits logical names
-    so the ``it-`` prefix plus the complete name always fits without a lossy
+    so the ``bw-`` prefix plus the complete name always fits without a lossy
     truncation or hash collision.
     """
 
-    return f"it-{name}"
+    return f"bw-{name}"
+
+
+def storage_disk_serials(name: str) -> tuple[str, str]:
+    """Recognize current and retained recent-install identities, never relabel."""
+
+    return storage_disk_serial(name), f"it-{name}"
 
 
 def data_disks(config: SetupConfig) -> list[VMDataDisk]:

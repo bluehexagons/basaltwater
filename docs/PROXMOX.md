@@ -228,7 +228,7 @@ Each non-root `--storage NAME [POOL] AMOUNT` requires exactly one matching
 cache media by `--storage-cache` or as swap by `--swap-device`. When `POOL` is omitted, the root-pool default
 is used. Provisioning checks that each selected pool is active, accepts VM
 images, and reports enough aggregate free capacity. It then attaches the disks
-as `scsi1`, `scsi2`, and so on with stable `it-NAME` serials.
+as `scsi1`, `scsi2`, and so on with stable `bw-NAME` serials.
 The example advertises only the SSD-backed root device as an SSD; the named
 data disk keeps the VM-wide default of SSD emulation disabled. Append a logical
 disk name to any disk flag for a device-specific override, such as
@@ -271,14 +271,16 @@ virtual disk, add an LVM cache declaration:
 ```
 
 Basaltwater verifies both whole disks are blank, creates a guest-side LVM
-volume group, consumes the entire SSD disk as cache media, and formats and
+volume group named `basaltwater_NAME` (hyphens become underscores), consumes
+the entire SSD disk as cache media, and formats and
 mounts the resulting cached logical volume. The cache disk is not mounted and
 must not have a `--storage-mount`. `writethrough` is the default and safer mode:
 a completed write has reached both the cache and the HDD origin. `writeback`
 can reduce write latency but accepts additional data-loss risk if the cache
 volume or SSD fails; use it only with an explicit power-loss and recovery
-plan. Cache creation is provisioning-only. Existing VGs, partitions,
-signatures, or filesystems are rejected rather than adopted.
+plan. Cache creation is provisioning-only. Reruns verify and retain an existing
+managed cache, including its volume group and both physical volumes. Unmanaged
+VGs, partitions, signatures, or filesystems are rejected for cache creation.
 Signature-scan failures also stop setup before partitioning or formatting.
 Repeated identical LVM mapper records are accepted when both backing disks
 report the same cached volume; conflicting records stop setup. If cache
@@ -301,11 +303,18 @@ stops setup. The mount does not use `nofail`, and a marker on the mounted
 filesystem prevents an empty root-disk directory from passing application
 checks. Gogs and agent repository setup verify the mount before writing.
 Observed mount and cache state is stored root-only in
-`/opt/basaltwater/state/vm-storage.json`; each mounted filesystem also carries
+`/var/lib/basaltwater/vm-storage.json`; each mounted filesystem also carries
 `.basaltwater-storage.json` for fail-closed verification. Gogs, Samba shares,
 and agent repositories verify a matching declared mount before writing, so a
 failed data mount cannot silently redirect application data to the SSD boot
 filesystem.
+
+Existing disks retain their `it-NAME` serials and `it_NAME` cache volume groups.
+No setup rerun or reboot is needed for this naming change. The next normal
+setup rerun records and verifies existing identities without relabeling or
+reformatting them. New disks added to an existing VM use `bw-NAME`. Ambiguous
+old/new serial pairs and changes to recorded serials or filesystem UUIDs stop
+setup before initializing the affected disk.
 
 Named mounted disks may also be added to an existing QEMU VM that has saved
 Basaltwater provisioning metadata. Start with its reconstructed setup command,
@@ -324,7 +333,7 @@ network defaults are merged automatically when omitted. Existing declarations
 may instead be repeated unchanged. Basaltwater verifies every old managed disk
 before mutation, checks capacity for only the additions, uses the first free
 SCSI slots without touching unrelated disks, and verifies each new stable
-`it-NAME` identity. All requested slots, storage capacity, and any accompanying
+`bw-NAME` identity. All requested slots, storage capacity, and any accompanying
 memory-floor policy are checked before the first attachment. Target setup then
 formats only a blank exact-identity disk and requires an empty mount path.
 Multiple new mounted disks may be declared in one command. The same concise
@@ -389,7 +398,7 @@ when its declaration matches saved local metadata. Setup reconciles and
 verifies the provider-side VM name, vCPU count, memory maximum, balloon
 minimum, balloon shares, CPU model, and managed hardware hints on every SCSI
 disk declared by logical name. Root is identified as `scsi0`; named data and
-cache disks are identified by their stable `it-NAME` serials. Unrelated
+cache disks are identified by stable `bw-NAME` or retained `it-NAME` serials. Unrelated
 manually attached SCSI disks are not modified. Disk reconciliation preserves
 the existing volume reference, size, serial, and unowned options. Before
 changing memory, setup repeats the host

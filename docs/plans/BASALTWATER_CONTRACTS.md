@@ -27,21 +27,29 @@ probe or change targets. Recent-source eligibility, conflicts, linked-worktree h
 custom paths and recovery are documented in the [migration guide](../BASALTWATER_MIGRATION.md).
 
 The implementation keeps old-name strings only where needed to recognize
-migration inputs, reject retired interfaces, preserve historical evidence, or
+migration inputs, retain durable storage identities, reject retired interfaces, preserve historical evidence, or
 address the current GitHub repository. Existing certificate/key bytes retain
 their trust identity. These are not runtime command or path aliases.
 
 The [release checklist](../BASALTWATER_RELEASE.md) separates automated repository
 verification from disposable live-host qualification and external publication.
 
-## Outstanding storage identity cutover
+## Persistent storage identities
 
-The full rename is not yet complete for abbreviated persistent storage IDs:
-`lib/vm_storage.py` still generates `it-<name>` disk serials, and
-`common/storage_steps.py` uses `it_<name>` LVM volume groups. These are
-on-disk/provider identities, not command aliases. Their replacement needs a
-coordinated provider and guest migration, including existing saved records,
-cache volumes, mapper paths, required mounts, and interruption recovery.
-A text substitution would make existing disks undiscoverable. Do not rename
-or reformat live volumes to satisfy a branding scan. Track this work before
-declaring the full-rename acceptance criteria complete.
+New named VM disks use `bw-<name>` serials, keeping the complete logical name
+within Proxmox's 20-byte limit. New cache volume groups use
+`basaltwater_<name>` with hyphens replaced by underscores.
+Existing `it-<name>` serials and `it_<name>` volume groups remain unchanged,
+including existing swap disks. New additions to existing VMs use the new names.
+
+Provider and guest discovery recognize both generations and reject duplicate
+identities for one logical disk. Setup records observed serials, filesystem
+UUIDs and cache volume groups, verifies recorded identities on later reruns,
+and refuses to initialize a missing recorded filesystem or cache. Mounts
+continue to use filesystem UUIDs. No disk relabeling or LVM rename is performed.
+
+Already-working systems need no setup rerun or reboot for this naming policy.
+Their next normal setup rerun verifies and records retained identities.
+This is durable-resource recognition, not support for operating old releases
+or retaining old command aliases. Live storage qualification remains on the
+release checklist.

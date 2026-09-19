@@ -327,7 +327,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
                     "scsi0: local-lvm:vm-112-disk-0,iothread=1,size=32G\n"
                     "scsi1: manual:vm-112-disk-1,size=8G\n"
                     "scsi2: bulk-lvm:vm-112-disk-2,iothread=1,"
-                    "serial=it-syncthing-data,size=512G\n"
+                    "serial=bw-syncthing-data,size=512G\n"
                     "ipconfig0: ip=10.0.0.50/24,gw=10.0.0.1\n"
                 ),
             ),
@@ -371,7 +371,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
         self.assertEqual(
             mock_run.call_args_list[4].args[3],
             "qm set 112 --scsi2 "
-            "bulk-lvm:512,iothread=1,serial=it-syncthing-data",
+            "bulk-lvm:512,iothread=1,serial=bw-syncthing-data",
         )
 
     @patch("lib.proxmox_vm._preflight_data_disk_capacity")

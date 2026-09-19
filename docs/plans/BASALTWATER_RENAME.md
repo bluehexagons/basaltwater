@@ -2,8 +2,8 @@
 
 Status: v2.0.0 core namespace delivered, including the package/CLI,
 active guides, bundled skills and [visual identity](../BRANDING.md).
-Abbreviated storage identity cutover, public release operations and live VM
-qualification remain. See
+New storage uses Basaltwater identities; existing disk serials and LVM names
+are intentionally retained. Public release operations and live VM qualification remain. See
 [cutover contracts](BASALTWATER_CONTRACTS.md) and
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.

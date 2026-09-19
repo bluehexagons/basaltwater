@@ -4,9 +4,9 @@ Basaltwater replaces the repository and runtime namespace. The distribution is
 `basaltwater`, the Python entry point is `basaltwater.py`, and the command is
 `basaltw`. Internal callers, install/staging paths, state directories, services,
 accounts, locks, skills, generated configuration, and deployment manifests use
-the new namespace. The gateway command is `basaltwater-web`. Abbreviated disk
-serial and LVM identities still need the coordinated cutover described in the
-[rename contracts](plans/BASALTWATER_CONTRACTS.md#outstanding-storage-identity-cutover).
+the new namespace. The gateway command is `basaltwater-web`. New disk serials
+and cache volume groups use Basaltwater names; existing storage retains its
+[durable identities](plans/BASALTWATER_CONTRACTS.md#persistent-storage-identities).
 
 Setup automatically performs the [one-time migration](BASALTWATER_MIGRATION.md)
 on recent infra-tools target installations before continuing. Standalone and
@@ -48,8 +48,8 @@ panel specimens do not certify live provisioning or migration.
 - [ ] Interrupt a migration on disposable systems and exercise journal-based
   recovery. Verify no duplicate scheduled jobs and no concurrently active
   old/new lock namespaces. Do not perform this qualification on production.
-- [ ] Complete the abbreviated disk-serial/LVM identity cutover and test
-  provider/guest reruns, reboot, missing disks, and interruption recovery.
+- [ ] Qualify retained and new disk/LVM identities on disposable hosts: test
+  mixed layouts, provider/guest reruns, reboot, missing disks, and interrupted setup.
 - [ ] Requalify migration and setup on multiple nodes of a disposable Proxmox
   cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm
   that a rerun on the first node and subsequent nodes preserves lock exclusion.

@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from common import storage_steps
 from lib.config import SetupConfig
 from lib.vm_storage import VMStorageCache, VMStorageMount
+from lib.vm_storage import storage_disk_serial
+from lib import proxmox_vm
+from common import swap_steps
 
 
 def _result(*, returncode: int = 0, stdout: str = "", stderr: str = ""):
@@ -22,6 +25,72 @@ def _result(*, returncode: int = 0, stdout: str = "", stderr: str = ""):
 
 
 class TestDiskIdentity(unittest.TestCase):
+    def test_swap_retains_legacy_identity_and_rejects_replacement(self):
+        from lib.swap_config import SwapDevice
+        config = SetupConfig(host="host", username="agent", system_type="server_web")
+        prior = {"provider_owned": True, "source": "swap", "serial": "it-swap",
+                 "size": "2G", "uuid": "12345678-abcd", "priority": 100}
+        disk = {"path": "/dev/sdc", "serial": "it-swap", "fstype": "swap"}
+        with (patch.object(swap_steps, "_find_declared_disk", return_value=disk),
+              patch.object(swap_steps, "_swap_uuid", return_value=prior["uuid"]) as uuid,
+              patch.object(swap_steps, "_wipefs_signatures", return_value=["swap"]),
+              patch.object(swap_steps, "_active_swap_inventory", return_value={"/dev/sdc": 100}),
+              patch.object(swap_steps, "run") as run):
+            record = swap_steps._ensure_swap_device(config, SwapDevice("swap", "swap"), prior)
+            self.assertEqual(record["serial"], "it-swap")
+            self.assertEqual(record["path"], "/dev/sdc")
+            uuid.return_value = "aaaaaaaa-bbbb"
+            with self.assertRaisesRegex(RuntimeError, "UUID changed"):
+                swap_steps._ensure_swap_device(config, SwapDevice("swap", "swap"), prior)
+            disk["serial"] = "bw-swap"
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                swap_steps._ensure_swap_device(config, SwapDevice("swap", "swap"), prior)
+            run.assert_not_called()
+
+    def test_new_serial_preserves_full_maximum_length_name(self):
+        self.assertEqual(storage_disk_serial("a" * 17), "bw-" + "a" * 17)
+        self.assertEqual(len(storage_disk_serial("a" * 17)), 20)
+
+    @patch("common.storage_steps._lsblk")
+    def test_old_and_new_serials_are_discovered_but_ambiguous_pair_is_rejected(self, lsblk):
+        for serial in ("it-data", "bw-data"):
+            lsblk.return_value = [{"type": "disk", "serial": serial, "size": 2 * 1024**3}]
+            self.assertEqual(storage_steps._find_declared_disk("bw-data", "2G")["serial"], serial)
+        lsblk.return_value.append({"type": "disk", "serial": "it-data", "size": 2 * 1024**3})
+        with self.assertRaisesRegex(RuntimeError, "found 2"):
+            storage_steps._find_declared_disk("bw-data", "2G")
+
+    def test_provider_mixed_generation_and_duplicate_identity(self):
+        hardware = {name: proxmox_vm.VMDiskHardware(name, True, False) for name in ("data", "new")}
+        vm = proxmox_vm._parse_existing_vm(123,
+            "scsi1: bulk:old,serial=it-data,size=2G\n"
+            "scsi2: bulk:new,serial=bw-new,size=2G\n")
+        managed = proxmox_vm._existing_managed_disks(vm, hardware)
+        self.assertIn("serial=it-data", managed["data"][1])
+        self.assertIn("serial=bw-new", managed["new"][1])
+        duplicate = proxmox_vm._parse_existing_vm(123,
+            "scsi1: bulk:old,serial=it-data,size=2G\n"
+            "scsi2: bulk:other,serial=bw-data,size=2G\n")
+        with self.assertRaisesRegex(proxmox_vm.ProvisionError, "multiple provider disks"):
+            proxmox_vm._existing_managed_disks(duplicate, hardware)
+
+    def test_state_reader_preserves_serial_and_rejects_corruption(self):
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "vm-storage.json"
+            with patch.object(storage_steps, "STORAGE_STATE_FILE", str(path)):
+                self.assertEqual(storage_steps._load_storage_state(), {})
+                state = {"schema_version": 2, "mounts": [{"name": "data", "serial": "it-data", "uuid": "12345678-abcd"}]}
+                path.write_text(json.dumps(state))
+                self.assertEqual(storage_steps._load_storage_state(), state)
+                state["mounts"].append(state["mounts"][0])
+                path.write_text(json.dumps(state))
+                with self.assertRaisesRegex(RuntimeError, "Duplicate"):
+                    storage_steps._load_storage_state()
+                path.write_text("broken")
+                with self.assertRaisesRegex(RuntimeError, "Could not read"):
+                    storage_steps._load_storage_state()
+
     @patch("common.storage_steps._lsblk")
     def test_shared_mapper_can_appear_under_multiple_backing_disks(self, mock_lsblk):
         mapper = {"path": "/dev/mapper/it_data-data", "type": "lvm", "fstype": "ext4"}
@@ -144,6 +213,31 @@ class TestDiskPreparationSafety(unittest.TestCase):
 
 class TestLVMCachePreparation(unittest.TestCase):
     @patch("common.storage_steps._find_device_by_path", return_value={"type": "lvm"})
+    @patch("common.storage_steps._run_capture")
+    def test_discovers_and_records_legacy_vg_without_relabeling(self, run, _find):
+        def result(command, **_kwargs):
+            return _result(stdout="it_data\n" if command.startswith("pvs ") else "writethrough\n")
+        run.side_effect = result
+        disks = {"data_disk": {"path": "/dev/sdb", "fstype": "LVM2_member", "serial": "it-data"},
+                 "cache_disk": {"path": "/dev/sdc", "fstype": "LVM2_member", "serial": "it-cache"}}
+        record = storage_steps._prepare_lvm_cache(VMStorageCache("data", "cache"), **disks)
+        self.assertEqual(record["volume_group"], "it_data")
+        self.assertEqual(record["data_serial"], "it-data")
+        self.assertEqual(record["device"], "/dev/mapper/it_data-data")
+        self.assertTrue(all(item.args[0].startswith(("pvs ", "lvs ")) for item in run.call_args_list))
+        run.reset_mock()
+        storage_steps._prepare_lvm_cache(VMStorageCache("data", "cache"), prior=record, **disks)
+        self.assertTrue(all(item.args[0].startswith(("pvs ", "lvs ")) for item in run.call_args_list))
+
+    @patch("common.storage_steps._run_capture", return_value=_result(returncode=5))
+    def test_missing_recorded_cache_never_initializes_disks(self, run):
+        with self.assertRaisesRegex(RuntimeError, "Recorded LVM cache is missing"):
+            storage_steps._prepare_lvm_cache(VMStorageCache("data", "cache"),
+                data_disk={"path": "/dev/sdb"}, cache_disk={"path": "/dev/sdc"},
+                prior={"volume_group": "it_data", "cache_name": "cache"})
+        self.assertEqual(run.call_count, 1)
+
+    @patch("common.storage_steps._find_device_by_path", return_value={"type": "lvm"})
     @patch("common.storage_steps._wipefs_signatures", return_value=[])
     @patch("common.storage_steps._run_capture")
     def test_creates_writethrough_cache_from_two_blank_disks(
@@ -170,11 +264,11 @@ class TestLVMCachePreparation(unittest.TestCase):
             commands,
         )
         self.assertIn(
-            "lvconvert --yes --type cache --cachevol it_data/cache "
-            "--cachemode writethrough it_data/data",
+            "lvconvert --yes --type cache --cachevol basaltwater_data/cache "
+            "--cachemode writethrough basaltwater_data/data",
             commands,
         )
-        self.assertEqual(record["device"], "/dev/mapper/it_data-data")
+        self.assertEqual(record["device"], "/dev/mapper/basaltwater_data-data")
 
     @patch("common.storage_steps._find_device_by_path", return_value={"type": "lvm"})
     @patch("common.storage_steps._wipefs_signatures", return_value=[])
@@ -202,7 +296,7 @@ class TestLVMCachePreparation(unittest.TestCase):
             )
 
         commands = [item.args[0] for item in mock_run.call_args_list]
-        self.assertIn("vgremove --yes --force it_data", commands)
+        self.assertIn("vgremove --yes --force basaltwater_data", commands)
         self.assertIn(
             "pvremove --yes -- /dev/sdb /dev/sdc",
             commands,
@@ -269,6 +363,35 @@ class TestLVMCachePreparation(unittest.TestCase):
 
 
 class TestPrepareMount(unittest.TestCase):
+    def test_recorded_identity_or_uuid_drift_never_formats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            disk = {"path": "/dev/sdc", "serial": "it-data", "pttype": "gpt", "children": [{"type": "part", "path": "/dev/sdc1"}]}
+            prior = {"serial": "it-data", "uuid": "12345678-abcd"}
+            with (patch.object(storage_steps, "_wait_for_declared_disk", return_value=disk),
+                  patch.object(storage_steps, "_mounted_info", return_value=None),
+                  patch.object(storage_steps, "_filesystem_uuid", return_value="aaaaaaaa-bbbb"),
+                  patch.object(storage_steps, "_ensure_filesystem") as format_disk):
+                for serial in ("it-data", "bw-data"):
+                    disk["serial"] = serial
+                    with self.assertRaisesRegex(RuntimeError, "Recorded VM"):
+                        storage_steps._prepare_mount(VMStorageMount("data", directory), "2G", "bw-data", "scsi1", prior=prior)
+                format_disk.assert_not_called()
+
+    def test_discovery_records_actual_legacy_serial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (patch.object(storage_steps, "_wait_for_declared_disk", return_value={"serial": "it-data"}),
+                  patch.object(storage_steps, "_mounted_info", return_value=None),
+                  patch.object(storage_steps, "_partition_for_mount", return_value="/dev/sdb1"),
+                  patch.object(storage_steps, "_ensure_filesystem", return_value="12345678-abcd"),
+                  patch.object(storage_steps, "_systemd_mount_unit", return_value="srv-data.mount"),
+                  patch.object(storage_steps, "_verify_active_mount", return_value=("/dev/sdb1", "ext4")),
+                  patch.object(storage_steps, "_run_capture"),
+                  patch.object(storage_steps, "write_text_atomic"),
+                  patch.object(storage_steps, "write_json_atomic") as write):
+                record = storage_steps._prepare_mount(VMStorageMount("data", directory), "2G", "bw-data", "scsi1")
+                self.assertEqual(record["serial"], "it-data")
+                self.assertEqual(write.call_args.args[1]["serial"], "it-data")
+
     def test_nonempty_mount_path_is_rejected_before_disk_mutation(self):
         with tempfile.TemporaryDirectory() as directory:
             with open(os.path.join(directory, "existing"), "w", encoding="utf-8") as file_obj:
@@ -402,8 +525,8 @@ class TestSetupVMStorage(unittest.TestCase):
             storage_caches=[["data", "data-cache"]],
         )
         disks = {
-            "it-data": {"path": "/dev/sdb"},
-            "it-data-cache": {"path": "/dev/sdc"},
+            "bw-data": {"path": "/dev/sdb", "serial": "it-data"},
+            "bw-data-cache": {"path": "/dev/sdc", "serial": "it-data-cache"},
         }
         cache_record = {
             "data_name": "data",
@@ -413,6 +536,7 @@ class TestSetupVMStorage(unittest.TestCase):
 
         with (
             patch("common.storage_steps.is_dry_run", return_value=False),
+            patch("common.storage_steps._load_storage_state", return_value={}),
             patch("common.storage_steps._run_capture", return_value=_result()),
             patch(
                 "common.storage_steps._find_declared_disk",

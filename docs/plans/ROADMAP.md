@@ -17,8 +17,8 @@ The rename's core namespace implementation is delivered in
 [PR #101](https://github.com/bluehexagons/infra_tools/pull/101): distribution
 `basaltwater`, entry point `basaltwater.py`, command `basaltw`, renamed runtime
 resources and skills, one-time migration from recent installations, and visual
-assets. Abbreviated disk serials and LVM names still require the
-[coordinated storage identity cutover](BASALTWATER_CONTRACTS.md#outstanding-storage-identity-cutover).
+assets. New storage uses Basaltwater names while existing disks retain their
+[persistent identities](BASALTWATER_CONTRACTS.md#persistent-storage-identities).
 Successful cutover leaves no old-name runtime aliases. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
 the [release checklist](../BASALTWATER_RELEASE.md) owns disposable-host
 qualification and external publication. Core namespace delivery does not mean

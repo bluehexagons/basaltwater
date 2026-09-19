@@ -12,6 +12,7 @@ from typing import Any
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import is_dry_run, run
+from lib.validation import validate_vm_storage_name
 from lib.vm_storage import (
     VMStorageCache,
     VMStorageMount,
@@ -19,16 +20,52 @@ from lib.vm_storage import (
     storage_caches,
     storage_mounts,
     storage_size_kib,
+    storage_disk_serials,
 )
 
 
-STORAGE_STATE_FILE = "/opt/basaltwater/state/vm-storage.json"
+STORAGE_STATE_FILE = "/var/lib/basaltwater/vm-storage.json"
 STORAGE_MARKER = ".basaltwater-storage.json"
 STORAGE_SCHEMA_VERSION = 2
 
 
 class _MissingDeclaredDisk(RuntimeError):
     """A managed hot-added disk is not visible in the guest yet."""
+
+
+def _load_storage_state() -> dict[str, Any]:
+    """Read retained identities; corrupt state must never authorize new storage."""
+
+    _reject_symlinked_mount_path(STORAGE_STATE_FILE)
+    try:
+        with open(STORAGE_STATE_FILE, encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Could not read managed VM storage state") from exc
+    if not isinstance(state, dict) or type(state.get("schema_version")) is not int or state["schema_version"] not in {1, 2}:
+        raise RuntimeError("Invalid managed VM storage schema")
+    for key, identity in (("mounts", "name"), ("caches", "data_name")):
+        records = state.get(key, [])
+        if not isinstance(records, list):
+            raise RuntimeError(f"Invalid managed VM storage {key}")
+        seen: set[str] = set()
+        for record in records:
+            try:
+                name = validate_vm_storage_name(record[identity])
+            except (ValueError, TypeError, KeyError) as exc:
+                raise RuntimeError(f"Invalid managed VM storage {key} identity") from exc
+            if name in seen:
+                raise RuntimeError(f"Duplicate managed VM storage identity: {name}")
+            seen.add(name)
+            if key == "mounts" and (
+                record.get("serial") not in storage_disk_serials(name)
+                or not isinstance(record.get("uuid"), str)
+                or not re.fullmatch(r"[A-Fa-f0-9-]{8,64}", record["uuid"])
+            ):
+                raise RuntimeError(f"Invalid recorded VM storage identity: {name}")
+    return state
 
 
 def _run_capture(command: str, *, check: bool = True):
@@ -91,10 +128,12 @@ def _has_mountpoint(device: dict[str, Any]) -> bool:
 
 
 def _find_declared_disk(serial: str, expected_size: str) -> dict[str, Any]:
+    # Both generations may coexist, but never for the same logical disk.
+    serials = storage_disk_serials(serial[3:]) if serial.startswith(("bw-", "it-")) else (serial,)
     matches = [
         device
         for device in _lsblk()
-        if device.get("type") == "disk" and device.get("serial") == serial
+        if device.get("type") == "disk" and device.get("serial") in serials
     ]
     if not matches:
         raise _MissingDeclaredDisk(
@@ -236,7 +275,7 @@ def _ensure_filesystem(device_path: str, filesystem: str) -> str:
 def _lvm_volume_group(data_name: str) -> str:
     """Return a collision-free LVM VG name for a validated disk name."""
 
-    return f"it_{data_name.replace('-', '_')}"
+    return f"basaltwater_{data_name.replace('-', '_')}"
 
 
 def _assert_blank_lvm_disk(disk: dict[str, Any], serial: str) -> str:
@@ -281,10 +320,26 @@ def _prepare_lvm_cache(
     *,
     data_disk: dict[str, Any],
     cache_disk: dict[str, Any],
+    prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create or verify one whole-disk LVM cache mapping."""
 
     volume_group = _lvm_volume_group(cache.data_name)
+    legacy_group = f"it_{cache.data_name.replace('-', '_')}"
+    if prior is not None:
+        if prior.get("cache_name") != cache.cache_name:
+            raise RuntimeError("Recorded VM cache device selection changed")
+        if prior.get("volume_group") not in {volume_group, legacy_group}:
+            raise RuntimeError("Invalid recorded VM cache volume group")
+        volume_group = prior["volume_group"]
+    elif data_disk.get("fstype") == "LVM2_member":
+        observed = _run_capture(
+            "pvs --noheadings --readonly --options vg_name -- "
+            f"{shlex.quote(_device_path(data_disk))}", check=False,
+        )
+        if observed.returncode != 0 or (observed.stdout or "").strip() not in {volume_group, legacy_group}:
+            raise RuntimeError("Could not identify the existing VM cache volume group")
+        volume_group = observed.stdout.strip()
     logical_volume = f"{volume_group}/data"
     mapped_path = f"/dev/mapper/{volume_group}-data"
     data_path = _device_path(data_disk)
@@ -305,8 +360,10 @@ def _prepare_lvm_cache(
         _verify_lvm_physical_volume(data_path, volume_group)
         _verify_lvm_physical_volume(cache_path, volume_group)
     else:
-        data_path = _assert_blank_lvm_disk(data_disk, f"it-{cache.data_name}")
-        cache_path = _assert_blank_lvm_disk(cache_disk, f"it-{cache.cache_name}")
+        if prior is not None:
+            raise RuntimeError(f"Recorded LVM cache is missing: {logical_volume}")
+        data_path = _assert_blank_lvm_disk(data_disk, str(data_disk.get("serial")))
+        cache_path = _assert_blank_lvm_disk(cache_disk, str(cache_disk.get("serial")))
         created_vg = False
         created_pvs = False
         try:
@@ -363,6 +420,8 @@ def _prepare_lvm_cache(
         "device": mapped_path,
         "data_device": data_path,
         "cache_device": cache_path,
+        "data_serial": data_disk.get("serial"),
+        "cache_serial": cache_disk.get("serial"),
     }
 
 
@@ -439,6 +498,7 @@ def _prepare_mount(
     bus_slot: str,
     prepared_device: str | None = None,
     cache_record: dict[str, Any] | None = None,
+    prior: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _reject_symlinked_mount_path(mount.path)
     mounted = _mounted_info(mount.path)
@@ -451,6 +511,17 @@ def _prepare_mount(
             )
 
     disk = _wait_for_declared_disk(serial, disk_size)
+    serial = str(disk.get("serial") or serial)
+    if prior is not None:
+        if prior.get("serial") != serial:
+            raise RuntimeError(f"Recorded VM disk identity changed for {mount.name}")
+        # A missing filesystem on a previously managed disk is not a blank-disk
+        # initialization request. Check before any partitioning or formatting.
+        if not disk.get("children"):
+            raise RuntimeError(f"Recorded VM disk is now blank: {mount.name}")
+        existing_path = prepared_device or _partition_for_mount(disk, serial, disk_size)
+        if _filesystem_uuid(existing_path) != prior.get("uuid"):
+            raise RuntimeError(f"Recorded VM filesystem changed for {mount.name}")
     if mounted is not None and not (disk.get("children") or []):
         raise RuntimeError(
             f"Refusing to prepare blank VM data disk {serial!r} while "
@@ -535,6 +606,24 @@ def setup_vm_storage(config: SetupConfig) -> None:
         return
 
     disk_by_name = {disk.name: disk for disk in data_disks(config)}
+    previous = _load_storage_state()
+    old_mounts = {record["name"]: record for record in previous.get("mounts", [])}
+    old_caches = {record["data_name"]: record for record in previous.get("caches", [])}
+    for name, record in old_mounts.items():
+        if name in disk_by_name:
+            disk = disk_by_name[name]
+            observed = _find_declared_disk(disk.serial, disk.size)
+            if observed.get("serial") != record["serial"]:
+                raise RuntimeError(f"Recorded VM disk identity changed for {name}")
+    for cache in caches:
+        prior = old_caches.get(cache.data_name)
+        if prior is None:
+            continue
+        for name, field in ((cache.data_name, "data_serial"), (cache.cache_name, "cache_serial")):
+            if prior.get(field) is not None:
+                disk = disk_by_name[name]
+                if _find_declared_disk(disk.serial, disk.size).get("serial") != prior[field]:
+                    raise RuntimeError(f"Recorded VM cache disk identity changed for {name}")
     disk_slots = {
         disk.name: f"scsi{index}"
         for index, disk in enumerate(data_disks(config), 1)
@@ -566,6 +655,7 @@ def setup_vm_storage(config: SetupConfig) -> None:
             cache,
             data_disk=_find_declared_disk(data_disk.serial, data_disk.size),
             cache_disk=_find_declared_disk(cache_disk.serial, cache_disk.size),
+            prior=old_caches.get(cache.data_name),
         )
         cache_record.update(
             {
@@ -599,6 +689,7 @@ def setup_vm_storage(config: SetupConfig) -> None:
                 else None
             ),
             cache_record=cache_record,
+            prior=old_mounts.get(mount.name),
         )
         records.append({**record, "pool": disk.pool, "requested_size": disk.size})
         print(f"  Mounted VM data disk {mount.name} at {mount.path}")
