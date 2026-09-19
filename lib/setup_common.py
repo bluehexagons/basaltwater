@@ -72,7 +72,6 @@ from lib.notifications import validate_notification_args
 from lib.proxmox_guest import resolve_guest_ssh_key
 from lib.ssh_utils import (
     build_ssh_command,
-    chain_remote_commands,
     ensure_remote_sudo,
     get_ssh_control_path,
     ssh_batch_mode,
@@ -388,33 +387,6 @@ def _install_local_runtime_state_link() -> None:
         else:
             os.unlink(legacy_state_dir)
     os.symlink(PERSISTENT_STATE_DIR, legacy_state_dir, target_is_directory=True)
-
-
-def _remote_state_migration_command() -> list[str]:
-    """Return a fixed shell command that preserves state before source replacement."""
-    legacy_state_dir = _runtime_state_path()
-    script = (
-        "set -eu; "
-        f"if [ -e {shlex.quote(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), 'infra_tools'))} ]; then "
-        "echo 'Run the Basaltwater one-time system migration on this target before setup' >&2; exit 1; fi; "
-        f"if [ -L {shlex.quote(PERSISTENT_STATE_DIR)} ]; then exit 1; fi; "
-        f"install -d -m 0700 {shlex.quote(PERSISTENT_STATE_DIR)}; "
-        f"if [ -L {shlex.quote(legacy_state_dir)} ]; then "
-        f"test \"$(readlink -f {shlex.quote(legacy_state_dir)})\" = "
-        f"{shlex.quote(PERSISTENT_STATE_DIR)}; "
-        f"elif [ -d {shlex.quote(legacy_state_dir)} ]; then "
-        f"cp -a {shlex.quote(legacy_state_dir)}/. "
-        f"{shlex.quote(PERSISTENT_STATE_DIR)}/; "
-        f"if [ -f {shlex.quote(PERSISTENT_STATE_DIR)}/setup-operation.json ] "
-        f"&& [ ! -e {shlex.quote(PERSISTENT_STATE_DIR)}/"
-        f"{shlex.quote(LEGACY_SETUP_OPERATION_FILENAME)} ]; then "
-        f"mv {shlex.quote(PERSISTENT_STATE_DIR)}/setup-operation.json "
-        f"{shlex.quote(PERSISTENT_STATE_DIR)}/"
-        f"{shlex.quote(LEGACY_SETUP_OPERATION_FILENAME)}; fi; "
-        f"elif [ -e {shlex.quote(legacy_state_dir)} ]; then exit 1; fi; "
-        f"chmod 0700 {shlex.quote(PERSISTENT_STATE_DIR)}"
-    )
-    return ["/bin/sh", "-c", script]
 
 
 def _activate_local_runtime(build_dir: str) -> None:
@@ -1388,6 +1360,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             else:
                 print(f"  Upload files to {config.host}:{REMOTE_INSTALL_DIR}")
                 print(f"  Run: {shlex.join(command_tokens)}")
+            print("  Automatically migrate any recent infra-tools installation before setup")
             if config.activate_network:
                 print("  Verify SSH on every requested address, then persist the network change")
             print("=" * 60)
@@ -1409,7 +1382,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             try:
                 with payload_workspace(setup_timeout) as payload:
                     move_payloads(build_dir, payload)
-                    _activate_local_runtime(build_dir)
+                    from lib.setup_upgrade import prepare_target_runtime
+                    prepare_target_runtime(build_dir, config.username)
                     link_payloads(payload, REMOTE_INSTALL_DIR)
                     command_tokens[-1] = os.path.join(payload, REMOTE_ARGS_FILENAME)
                     try:
@@ -1430,39 +1404,35 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             runtime_data = create_tar_from_dir(build_dir, exclude_payloads=True)
             tar_data = runtime_data + _create_payload_archive(build_dir)
             
-            def privileged(command: list[str]) -> list[str]:
-                if remote_user == "root":
-                    return command
-                return ["sudo", "-n", *command]
-
-            remote_cmd_args = ["env", "PYTHONDONTWRITEBYTECODE=1", "python3", "-u", "-m", "lib.setup_payloads", "--timeout", str(setup_timeout)]
-            remote_shell_cmd = chain_remote_commands(
-                [
-                    privileged(_remote_state_migration_command()),
-                    privileged(["rm", "-rf", REMOTE_INSTALL_DIR]),
-                    privileged(["mkdir", "-p", REMOTE_INSTALL_DIR]),
-                    privileged(["/bin/bash", "-o", "pipefail", "-c",
-                        f"head -c {len(runtime_data)} | tar xzf - -C {shlex.quote(REMOTE_INSTALL_DIR)} --no-same-owner"]),
-                    privileged(
-                        [
-                            "ln",
-                            "-s",
-                            PERSISTENT_STATE_DIR,
-                            _runtime_state_path(),
-                        ]
-                    ),
-                    privileged(["chmod", "0755", REMOTE_INSTALL_DIR]),
-                    ["cd", REMOTE_INSTALL_DIR],
-                    privileged(remote_cmd_args),
-                ]
+            # Receive code into a private staging tree before touching either
+            # installation. Only the bounded first archive is consumed here;
+            # the private payload archive remains on stdin for setup_payloads.
+            remote_shell_cmd = (
+                'set -eu; '
+                f'basaltwater_stage=$(mktemp -d {shlex.quote(os.path.dirname(REMOTE_INSTALL_DIR))}/.basaltwater-stage.XXXXXX); '
+                "trap 'rm -rf \"$basaltwater_stage\"' EXIT; "
+                f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner; '
+                'cd "$basaltwater_stage"; '
+                'export PYTHONDONTWRITEBYTECODE=1; '
+                'basaltwater_runtime_locked=0; '
+                f'if [ ! -e {shlex.quote(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools"))} ]; then '
+                'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; '
+                'basaltwater_runtime_locked=1; fi; '
+                f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}; '
+                f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
+                'if [ "$basaltwater_runtime_locked" = 0 ]; then '
+                'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; fi; '
+                f'python3 -u -m lib.setup_payloads --timeout {setup_timeout}'
             )
             locked_remote_shell_cmd = shlex.join(
                 [
                     "flock",
                     "--exclusive",
                     "--nonblock",
-                    "/run/lock/basaltwater-setup.lock",
-                    "/bin/sh",
+                    "/run/lock/basaltwater-setup-bootstrap.lock",
+                    "/bin/bash",
+                    "-o",
+                    "pipefail",
                     "-c",
                     remote_shell_cmd,
                 ]

@@ -189,7 +189,8 @@ basaltw --help
 
 The command is `basaltw`, backed by `basaltwater.py`. No old executable or
 module alias is installed. Existing recent infra-tools installations require
-an explicit [one-time migration](BASALTWATER_MIGRATION.md); afterward the new
+a [one-time migration](BASALTWATER_MIGRATION.md), performed automatically on
+setup targets and explicitly on the controller before installation; afterward the new
 paths and command names are the only supported interfaces. Bootstrap installs
 completion for `basaltw` in the configured shell.
 

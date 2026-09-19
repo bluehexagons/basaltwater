@@ -7,7 +7,7 @@ Public release operations and live VM qualification remain. See
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.
 The implementation renames the Python entry point and internal resources,
-with an explicit one-time migration from recent installations and no runtime
+with a one-time migration from recent installations and no runtime
 compatibility aliases after cutover. The [roadmap](ROADMAP.md)
 continues to own delivery priority.
 
@@ -146,8 +146,9 @@ entry is `basaltwater.py`, the package is `basaltwater`, and the CLI is `basaltw
 Runtime paths, owned configuration, environment settings, service/account names,
 managed skills and deployment manifests use the Basaltwater namespace.
 
-The only compatibility feature is an explicit one-time migration from recent
-infra-tools installations. It is isolated from ordinary runtime code and does
+The only compatibility feature is a one-time migration from recent
+infra-tools installations, run automatically on setup targets before setup
+steps and explicitly for standalone/controller migration. It does
 not create old-name aliases. Historical release support, old environment-variable
 fallbacks and mixed old/new operation after successful cutover are excluded.
 

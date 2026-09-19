@@ -6,7 +6,9 @@ Basaltwater is a complete repository and runtime rename. The distribution is
 accounts, locks, skills, generated configuration, and deployment manifests use
 the new namespace. The gateway command is `basaltwater-web`.
 
-Recent infra-tools installations have an explicit [one-time migration](BASALTWATER_MIGRATION.md).
+Setup automatically performs the [one-time migration](BASALTWATER_MIGRATION.md)
+on recent infra-tools target installations before continuing. Standalone and
+controller migrations retain the explicit `basaltw migrate` command.
 There are no persistent old-name aliases, environment fallbacks, or historical
 release support after cutover. The existing `bluehexagons/infra_tools` GitHub
 location remains authoritative until the owner renames the repository.

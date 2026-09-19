@@ -19,7 +19,9 @@ to retain internal names through v2.x.
 
 Default commands never migrate on read. `basaltw migrate` previews the operation;
 `--apply` explicitly cuts over a user installation, and `--system --apply` cuts
-over the host. Recent-source eligibility, conflicts, linked-worktree handling,
+over the host. Normal setup automatically migrates recent target installations,
+including existing login accounts, before running setup steps. Dry runs do not
+probe or change targets. Recent-source eligibility, conflicts, linked-worktree handling,
 custom paths and recovery are documented in the [migration guide](../BASALTWATER_MIGRATION.md).
 
 The implementation keeps old-name strings only where needed to recognize

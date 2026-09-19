@@ -290,7 +290,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertIn("-m lib.setup_payloads --timeout", remote_command)
         self.assertIn(
             "flock --exclusive --nonblock "
-            "/run/lock/basaltwater-setup.lock",
+            "/run/lock/basaltwater-setup-bootstrap.lock",
             remote_command,
         )
         self.assertNotIn("--verbose /run/lock/basaltwater-setup.lock", remote_command)
@@ -333,34 +333,13 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
 
         self.assertEqual(result, 0)
         remote_command = mock_build_ssh.call_args.kwargs["remote_command"]
-        self.assertIn("install -d -m 0700 /var/lib/basaltwater", remote_command)
-        self.assertIn(
-            "cp -a /opt/basaltwater/state/. /var/lib/basaltwater/",
-            remote_command,
-        )
-        self.assertIn(
-            "setup-operation.pre-persistence.json",
-            remote_command,
-        )
-        self.assertIn("rm -rf /opt/basaltwater && mkdir -p /opt/basaltwater", remote_command)
-        self.assertLess(
-            remote_command.index("cp -a /opt/basaltwater/state/."),
-            remote_command.index("rm -rf /opt/basaltwater"),
-        )
-        self.assertLess(remote_command.index("rm -rf"), remote_command.index("tar xzf -"))
-        self.assertIn(
-            "ln -s /var/lib/basaltwater /opt/basaltwater/state",
-            remote_command,
-        )
-        self.assertLess(
-            remote_command.index("tar xzf -"),
-            remote_command.index("ln -s /var/lib/basaltwater"),
-        )
-        self.assertIn("chmod 0755 /opt/basaltwater", remote_command)
-        self.assertLess(
-            remote_command.index("tar xzf -"),
-            remote_command.index("chmod 0755 /opt/basaltwater"),
-        )
+        self.assertIn("mktemp -d /opt/.basaltwater-stage.XXXXXX", remote_command)
+        self.assertNotIn("rm -rf /opt/basaltwater", remote_command)
+        self.assertIn("lib.setup_upgrade --username", remote_command)
+        self.assertLess(remote_command.index("tar xzf -"), remote_command.index("lib.setup_upgrade"))
+        self.assertLess(remote_command.index("lib.setup_upgrade"), remote_command.index("lib.setup_payloads"))
+        self.assertIn("basaltwater-setup-bootstrap.lock", remote_command)
+        self.assertIn("pipefail", remote_command)
 
     def test_remote_setup_finishes_verified_network_transition_after_ssh_exits(self):
         from lib import setup_common
@@ -401,8 +380,8 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             not sys.stdin.isatty(),
         )
         remote_command = mock_build.call_args.kwargs["remote_command"]
-        self.assertIn("rm -rf /opt/basaltwater", remote_command)
-        self.assertIn("tar xzf - -C /opt/basaltwater", remote_command)
+        self.assertIn("lib.setup_upgrade --username agent", remote_command)
+        self.assertIn('tar xzf - -C "$basaltwater_stage"', remote_command)
         self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 
@@ -423,7 +402,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(mock_build.call_args.args[1], "root")
         remote_command = mock_build.call_args.kwargs["remote_command"]
-        self.assertIn("rm -rf /opt/basaltwater", remote_command)
+        self.assertIn("lib.setup_upgrade --username agent", remote_command)
         self.assertIn("python3 -u -m lib.setup_payloads", remote_command)
         self.assertNotIn("sudo -n", remote_command)
 

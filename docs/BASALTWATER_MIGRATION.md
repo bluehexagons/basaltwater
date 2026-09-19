@@ -50,10 +50,24 @@ deliberately and configure `BASALTWATER_WORKSPACE` or `--workspace` afterward.
 
 ## Existing servers
 
-Copy the selected Basaltwater source checkout to a separate temporary directory
-on each target. Run the following there as root, then run the user pass above
-as each configured agent/desktop account. System migration must precede user
-migration when user launchers point to `/opt/infra_tools`.
+Run the normal `basaltw setup ...` command from the new controller checkout.
+Setup automatically detects a recent `/opt/infra_tools` installation and
+migrates it before running the requested setup steps. It stages the new code in
+a separate private directory, completes the system pass, then runs user passes
+as the existing login accounts with their own home directories and permissions.
+No separate migration command or opt-in flag is required on the target VM.
+The controller's own data still uses the explicit user migration above.
+
+`--dry-run` announces the automatic migration without connecting to or changing
+the target. A conflict or interrupted migration stops setup; the recovery
+instructions below apply. A later setup retries unfinished user passes after a
+successful system pass. The new setup payload is not executed until those
+passes succeed.
+
+For a standalone migration or a custom source path, copy the selected
+Basaltwater checkout to a separate directory on the target and run the explicit
+commands below. The system pass precedes user passes when user launchers point
+to `/opt/infra_tools`.
 
 ```sh
 sudo python3 basaltwater.py migrate --system
@@ -74,8 +88,8 @@ subjects are not reissued merely to change branding.
 
 The resulting runtime is a source snapshot with provenance. For future updates,
 use a Basaltwater controller to rerun setup, or use the installer to establish
-a managed Git installation. Installer and setup activation refuse an unmigrated
-recent installation instead of silently creating a parallel runtime.
+a managed Git installation. The installer requires migration first; ordinary
+setup performs that migration automatically on its target.
 
 After both passes, verify services, timers, agent diagnostics, saved setups,
 private file modes and application access before resuming automation. Update
