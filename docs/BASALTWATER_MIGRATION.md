@@ -24,7 +24,18 @@ contents. It does not change files or start/stop services.
 
 ## Controller and user data
 
-Run from the new checkout as the account that owns the old installation:
+Commands that load the default workspace automatically move recent
+`~/.config/infra_tools` and `~/.config/infra-tools` configuration into
+`~/.config/basaltwater` before looking up hosts. This includes saved setups,
+Proxmox hosts, credentials, SSH trust, and history. File bytes, ownership and
+modes are preserved. Empty or disjoint destination directories can merge;
+duplicate files and unsafe directory links stop the operation without replacing
+data. An interrupted merge resumes on the next command. Explicit custom
+workspaces remain unchanged. This local configuration migration also occurs
+when a setup dry run needs saved hosts; the target remains untouched.
+
+For the remaining user data, source installation, launchers and services,
+run from the new checkout as the account that owns the old installation:
 
 ```sh
 python3 basaltwater.py migrate
@@ -56,7 +67,8 @@ migrates it before running the requested setup steps. It stages the new code in
 a separate private directory, completes the system pass, then runs user passes
 as the existing login accounts with their own home directories and permissions.
 No separate migration command or opt-in flag is required on the target VM.
-The controller's own data still uses the explicit user migration above.
+The controller's default configuration migrates on lookup as described above;
+its remaining installation data uses the explicit user migration.
 
 `--dry-run` announces the automatic migration without connecting to or changing
 the target. A conflict or interrupted migration stops setup; the recovery
