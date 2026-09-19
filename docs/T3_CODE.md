@@ -329,6 +329,30 @@ by its setup manifest. Use `agent doctor --tool gh` to check GitHub credentials
 directly. The doctor does not send a model prompt or establish that a previous
 provider timeout was resolved by running diagnostics.
 
+### Codex provider status timeout
+
+T3 v0.0.42 limits its Codex app-server status probe to 10 seconds. The message
+`Timed out while checking Codex app-server provider status.` means that probe
+did not complete; it does not establish that the credentials are invalid.
+See the upstream [probe implementation](https://github.com/pingdotgg/t3code/blob/v0.0.42/apps/server/src/provider/Layers/CodexProvider.ts)
+and [timeout constant](https://github.com/pingdotgg/t3code/blob/v0.0.42/apps/server/src/provider/providerSnapshot.ts).
+
+An [upstream report](https://github.com/pingdotgg/t3code/issues/7230) describes
+timeouts being cached as provider errors, including across restarts. After
+setup finishes and the host is idle, open **Settings → Providers** in T3 and
+refresh the Codex provider status. Then try a prompt in T3. Successful direct
+CLI prompts alone do not validate T3's separate app-server probe.
+
+If refreshing still times out, record the T3 server and Codex versions, collect
+`basaltw agent doctor --capability t3code --capability host`, and inspect the
+service log around the refresh time. Remove sensitive content before sharing
+logs. Host contention is a possible trigger, not a diagnosis from this message
+alone. Do not replace credentials, delete T3 state, or restart active sessions
+solely because this status probe timed out. Basaltwater's service readiness
+check does not clear T3's provider cache or fix this upstream timeout behavior.
+
+### Doctor checks and repairs
+
 The doctor validates the upstream service-state protocol and selected immutable
 runtime, required native terminal module, active and boot-enabled user service,
 endpoint, pairing helper, Git identity, and managed agent skill. Add `--fix` to
