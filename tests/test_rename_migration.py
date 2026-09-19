@@ -10,6 +10,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from lib import rename_migration as migration
@@ -20,6 +21,9 @@ class RenameMigrationTests(unittest.TestCase):
         groups = patch('lib.rename_migration.grp.getgrnam', side_effect=KeyError)
         groups.start()
         self.addCleanup(groups.stop)
+        accounts = patch('lib.rename_migration.pwd.getpwall', return_value=[])
+        accounts.start()
+        self.addCleanup(accounts.stop)
 
     def write(self, root: Path, name: str, content: str, mode: int = 0o600) -> Path:
         path = root / name
@@ -264,6 +268,26 @@ class RenameMigrationTests(unittest.TestCase):
             self.assertIn('/usr/local/libexec/basaltwater-xrdp-Xorg', (root / 'etc/systemd/system/xrdp.service.d/basaltwater.conf').read_text())
             self.assertNotIn('infra-tools', (root / 'etc/fstab').read_text())
             self.assertEqual((root / 'usr/share/keyrings/basaltwater-microsoft.gpg').read_bytes(), b'\xff\x00infra-tools-opaque-key')
+
+    @patch('lib.rename_migration.subprocess.run')
+    def test_deployment_account_home_is_updated_and_recovered(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0, '', '')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = root / 'var/lib/infra_tools/build-users/app'
+            new = root / 'var/lib/basaltwater/build-users/app'
+            self.write(old, '.ssh/id_ed25519', 'private key')
+            account = SimpleNamespace(pw_name='build-app', pw_dir=str(old))
+            plan = migration.build_plan(root, system=True)
+            with patch.object(migration.pwd, 'getpwall', return_value=[account]), patch.object(migration.pwd, 'getpwnam', side_effect=KeyError), patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                with self.assertRaisesRegex(OSError, 'interrupted'):
+                    migration.apply_plan(plan)
+            self.assertIn(['usermod', '--home', str(new), 'build-app'], [call.args[0] for call in run.call_args_list])
+            account.pw_dir = str(new)
+            with patch.object(migration.pwd, 'getpwnam', return_value=account):
+                migration.recover(root, system=True)
+            self.assertIn(['usermod', '--home', str(old), 'build-app'], [call.args[0] for call in run.call_args_list])
+            self.assertEqual((old / '.ssh/id_ed25519').read_text(), 'private key')
 
 
 if __name__ == '__main__':

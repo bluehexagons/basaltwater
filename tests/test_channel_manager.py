@@ -94,7 +94,7 @@ class TestChannelManager(unittest.TestCase):
         _git(self.seed, "commit", "-m", "release")
         _git(self.seed, "tag", "v1.1.0")
 
-        _git(root, "init", "--bare", self.remote)
+        _git(root, "init", "--bare", "--initial-branch=main", self.remote)
         _git(self.seed, "remote", "add", "origin", self.remote)
         _git(self.seed, "push", "origin", "--all")
         _git(self.seed, "push", "origin", "--tags")

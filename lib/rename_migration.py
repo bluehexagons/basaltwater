@@ -450,7 +450,15 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
         unit["enabled"] = _systemctl(plan, "is-enabled", "--quiet", unit["old"], check=False).returncode == 0
     plan["accounts"] = []
     plan["groups"] = []
+    plan["homes"] = []
     if plan["system"]:
+        root = Path(plan["root"])
+        for account in pwd.getpwall():
+            home = Path(account.pw_dir)
+            if any(home.is_relative_to(root / parent / name) for parent in SYSTEM_DIRS for name in DATA_NAMES):
+                renamed = rename_text(account.pw_dir)
+                if renamed != account.pw_dir:
+                    plan["homes"].append({"user": dict(ACCOUNTS).get(account.pw_name, account.pw_name), "before": account.pw_dir, "after": renamed})
         for old, new in ACCOUNTS:
             try:
                 pwd.getpwnam(old)
@@ -516,6 +524,8 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
             subprocess.run(["groupmod", "--new-name", new, old], check=True)
     for old, new in plan["groups"]:
         subprocess.run(["groupmod", "--new-name", new, old], check=True)
+    for home in plan["homes"]:
+        subprocess.run(["usermod", "--home", home["after"], home["user"]], check=True)
     for index, action in enumerate(plan["actions"]):
         old = Path(action["old"])
         _safe(old)
@@ -626,6 +636,13 @@ def recover(root: Path, *, system: bool) -> None:
         plan["completed"] = index
         plan.pop("pending", None)
         _save(plan)
+    for home in reversed(plan.get("homes", [])):
+        try:
+            account = pwd.getpwnam(home["user"])
+        except KeyError:
+            continue
+        if account.pw_dir == home["after"]:
+            subprocess.run(["usermod", "--home", home["before"], home["user"]], check=True)
     for old, new in reversed(plan.get("accounts", [])):
         try:
             pwd.getpwnam(new)

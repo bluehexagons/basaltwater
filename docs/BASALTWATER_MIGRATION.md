@@ -67,7 +67,8 @@ Basaltwater runtime, preserves deployed repository sources and machine state,
 and updates owned systemd, Nginx, sudoers, security and gateway configuration.
 Affected units stop before paths change. Enabled and active states are recorded;
 only the corresponding new units are enabled or started. Service-account and
-desktop-group renames retain numeric ownership. Locks must be idle. Certificates
+desktop-group renames retain numeric ownership. Account home-directory records
+under the moved product paths are updated too. Locks must be idle. Certificates
 and private keys retain their bytes and trust identity; existing certificate
 subjects are not reissued merely to change branding.
 
