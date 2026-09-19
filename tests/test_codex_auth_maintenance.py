@@ -10,7 +10,7 @@ import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from common.agent_steps import (
     configure_codex_auth_maintenance,
@@ -36,6 +36,29 @@ def _metadata(
 
 
 class TestCodexAuthMaintenance(unittest.TestCase):
+    def test_refresh_failures_report_safe_categories(self) -> None:
+        cases = (
+            ({"error": {"code": -32000, "message": "secret-token"}}, "account_read_rpc_error", -32000),
+            ({"error": {"code": "secret-token"}}, "account_read_rpc_error", None),
+            ({"result": {"account": None}}, "no_account_returned", None),
+            ({"result": {}}, "invalid_account_response", None),
+            ({"result": {"account": {"type": "secret-token"}}}, "unexpected_account_type", None),
+        )
+        for response, reason, code in cases:
+            with self.subTest(reason=reason, code=code), tempfile.TemporaryDirectory() as home:
+                self._credential_home(home)
+                with (
+                    patch.object(codex_auth_maintenance.subprocess, "Popen", return_value=MagicMock()),
+                    patch.object(codex_auth_maintenance, "_read_response", side_effect=({"result": {}}, response)),
+                    patch.object(codex_auth_maintenance, "inspect_codex_auth_file", return_value=_metadata("refresh_due")),
+                    patch.object(codex_auth_maintenance, "log_event") as log,
+                ):
+                    result = codex_auth_maintenance.maintain_codex_auth(home=home, codex_path=sys.executable)
+                self.assertEqual(result, 1)
+                self.assertEqual(log.call_args.kwargs["reason"], reason)
+                self.assertEqual(log.call_args.kwargs["rpc_error_code"], code)
+                self.assertNotIn("secret-token", str(log.call_args_list))
+
     def _credential_home(self, directory: str) -> str:
         codex_home = os.path.join(directory, ".codex")
         os.mkdir(codex_home)

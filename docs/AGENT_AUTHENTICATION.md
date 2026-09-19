@@ -190,6 +190,14 @@ is invalid, lacks required refresh state, or remains stale after provider
 rejection, authenticate the VM independently or deliberately replace it with
 `agent auth set`.
 
+Maintenance distinguishes `account_read_rpc_error` (with a numeric JSON-RPC
+code when available), `no_account_returned`, `unexpected_account_type`, and
+`invalid_account_response`. These categories do not by themselves prove that
+the provider rejected a refresh token. Provider response messages and account
+contents are deliberately omitted from logs. A successful earlier timer run
+may simply have occurred before the local refresh threshold; an inactive
+oneshot service with exit status zero is normal.
+
 ## Security and lifecycle
 
 - Keep sources in protected directories outside repositories.

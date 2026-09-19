@@ -39,6 +39,26 @@ _INITIALIZE_REQUEST_ID = 1
 _ACCOUNT_REQUEST_ID = 2
 
 
+class AuthRefreshError(RuntimeError):
+    """A fixed diagnostic category, without provider response contents."""
+
+    def __init__(self, reason: str, error_code: int | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.error_code = error_code
+
+
+def _response_error(response: dict[str, Any], stage: str) -> AuthRefreshError:
+    """Extract only a numeric JSON-RPC code; messages may contain secrets."""
+
+    error = response.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    return AuthRefreshError(
+        stage + "_rpc_error",
+        code if type(code) is int and -(2**31) <= code < 2**31 else None,
+    )
+
+
 def _write_message(stream: BinaryIO, message: dict[str, Any]) -> None:
     payload = json.dumps(message, separators=(",", ":")).encode("utf-8")
     stream.write(payload + b"\n")
@@ -169,7 +189,7 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
             response_buffer,
         )
         if initialized.get("error") is not None:
-            raise RuntimeError("Codex app server initialization failed")
+            raise _response_error(initialized, "initialize")
 
         _write_message(process.stdin, {"method": "initialized"})
         _write_message(
@@ -186,13 +206,17 @@ def refresh_codex_auth(codex_path: str, home: str) -> bool:
             deadline,
             response_buffer,
         )
+        if account_response.get("error") is not None:
+            raise _response_error(account_response, "account_read")
         result = account_response.get("result")
-        account = result.get("account") if isinstance(result, dict) else None
-        return bool(
-            account_response.get("error") is None
-            and isinstance(account, dict)
-            and account.get("type") == "chatgpt"
-        )
+        if not isinstance(result, dict) or "account" not in result:
+            raise AuthRefreshError("invalid_account_response")
+        account = result["account"]
+        if account is None:
+            raise AuthRefreshError("no_account_returned")
+        if not isinstance(account, dict) or account.get("type") != "chatgpt":
+            raise AuthRefreshError("unexpected_account_type")
+        return True
     except (BrokenPipeError, OSError) as exc:
         raise RuntimeError("Codex app server communication failed") from exc
     finally:
@@ -298,6 +322,15 @@ def maintain_codex_auth(
     log_event(logger, "Refreshing Codex authentication", prior_status=status)
     try:
         refreshed = refresh_codex_auth(codex_path, home)
+    except AuthRefreshError as exc:
+        log_event(
+            logger,
+            "Codex authentication refresh failed",
+            level=ERROR,
+            reason=exc.reason,
+            rpc_error_code=exc.error_code,
+        )
+        return 1
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         log_event(
             logger,
@@ -307,7 +340,7 @@ def maintain_codex_auth(
         )
         return 1
     if not refreshed:
-        log_event(logger, "Codex rejected the authentication refresh request", level=ERROR)
+        log_event(logger, "Codex authentication refresh did not return a ChatGPT account", level=ERROR)
         return 1
 
     if not _credential_file_is_private(auth_path):
