@@ -54,6 +54,9 @@ credential bytes, ownership and modes, updates path-bearing saved JSON fields,
 replaces managed workflow skills with the current catalog, updates managed
 launchers and shell/agent configuration, and renames affected user units.
 Old paths and launchers are removed rather than retained as aliases.
+Codex project trust paths change only beneath directories moved by this pass.
+Independent repositories named `infra-tools` and `basaltwater` retain their
+separate trust entries; their names alone do not make them migration targets.
 
 For a recent source installation at a custom location, supply
 `--installation /absolute/path/to/old-source` on preview and apply. Its new
@@ -84,6 +87,13 @@ rerun setup from the updated controller after closing active workspace sessions.
 That preflight refusal did not create a user migration journal or move user
 data; the completed system pass is retained and setup retries the user pass.
 Do not remove worktrees or delete the completed system journal to work around it.
+
+If setup stopped with `Conflicting agent configuration tables` because Codex
+has trust entries for separate old- and new-named repositories, rerun setup
+from the updated controller checkout. That planning error did not modify user
+data or create a user journal. Keep both trust entries and the completed system
+journal; actual collisions for moved projects or managed MCP servers still
+require resolution before migration.
 
 Setup reruns also repair the encoded ownership comments on all recent managed
 UFW rule families: T3 Code, HTTPS forwards, Gogs, SSH, RDP, web TCP, mDNS,

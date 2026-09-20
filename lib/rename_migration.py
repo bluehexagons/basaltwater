@@ -282,6 +282,26 @@ def _owned_tree_edits(old: Path, new: Path) -> list[dict]:
     return actions
 
 
+def _project_table_line(line: str, moves: list[tuple[Path, Path]]) -> str | None:
+    """Relocate Codex project keys only when their containing directory moves."""
+    match = re.match(
+        r'''^\s*\[\s*(?:projects|"projects"|'projects')\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')''',
+        line,
+    )
+    if match is None:
+        return None
+    key = match[1]
+    for old, new in moves:
+        # Preserve quoting, comments and the descendant's spelling. A project
+        # called infra-tools outside these moves is an independent repository.
+        quote = key[0]
+        before = json.dumps(str(old), ensure_ascii=False) if quote == '"' else f"'{old}'"
+        after = json.dumps(str(new), ensure_ascii=False) if quote == '"' else f"'{new}'"
+        if key == before or key.startswith(before[:-1] + "/"):
+            return line[:match.start(1)] + after[:-1] + key[len(before) - 1:] + line[match.end(1):]
+    return line
+
+
 def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, installation: Path | None = None) -> dict:
     """Inspect a recent installation; the preview performs no system changes."""
     root = root.absolute()
@@ -289,6 +309,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
     actions: list[dict] = []
     edits: list[dict] = []
     occupied: dict[Path, Path] = {}
+    project_moves: list[tuple[Path, Path]] = []
     recovery = root / ("var/lib/basaltwater-migration" if system else ".local/state/basaltwater-migration")
     legacy_runtime = installation if installation is not None else (root / "opt/infra_tools" if system else root / ".local/share/infra_tools")
     _safe(legacy_runtime)
@@ -325,12 +346,14 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                 raise ValueError(f"Unexpected legacy data path: {old}")
             new = old.with_name(rename_text(old.name))
             if old.is_dir():
+                project_moves.append((old, new))
                 edits.extend(_worktree_edits(old, new, root))
             _move_plan(old, new, actions, occupied, provision_locks=parent == "run/lock")
             if old.is_dir():
                 edits.extend(_state_edits(old, new))
                 edits.extend(_owned_tree_edits(old, new))
     if has_runtime:
+        project_moves.append((legacy_runtime, legacy_runtime.with_name("basaltwater")))
         state = legacy_runtime / "state"
         if system and state.is_dir() and not state.is_symlink():
             destination_state = root / "var/lib/basaltwater"
@@ -545,7 +568,10 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                 continue
             lines = []
             for line in content.splitlines(keepends=True):
-                if not re.search(r"(?i)(password|secret|token|api[_-]?key)", line):
+                project_line = _project_table_line(line, project_moves)
+                if project_line is not None:
+                    line = project_line
+                elif not re.search(r"(?i)(password|secret|token|api[_-]?key)", line):
                     line = translate(line)
                 lines.append(line)
             updated = "".join(lines)

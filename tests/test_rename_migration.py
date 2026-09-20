@@ -496,6 +496,74 @@ class RenameMigrationTests(unittest.TestCase):
             self.assertEqual(server['command'], ['/usr/local/bin/basaltwater-playwright-mcp'])
             self.assertNotIn('infra-tools-playwright', data['mcp'])
 
+    def test_codex_external_project_trust_survives_user_setup_retry(self):
+        from lib import setup_upgrade
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            content = ('[projects."/home/agent/repos/infra-tools"]\ntrust_level = "untrusted"\n'
+                       '[projects."/home/agent/repos/basaltwater"]\ntrust_level = "trusted"\n')
+            config = self.write(root, '.codex/config.toml', content)
+            before = config.stat().st_ino, config.stat().st_mode
+            with patch.object(Path, 'home', return_value=root), \
+                 patch('sys.argv', ['setup_upgrade', '--user-migration']):
+                self.assertEqual(setup_upgrade.main(), 0)
+                self.assertEqual(setup_upgrade.main(), 0)
+            self.assertEqual(config.read_text(), content)
+            self.assertEqual((config.stat().st_ino, config.stat().st_mode), before)
+            self.assertFalse((root / '.local/state/basaltwater-migration').exists())
+
+    def test_codex_managed_registration_migrates_without_renaming_external_projects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            projects = ('[projects."/repos/infra-tools"]\ntrust_level = "untrusted"\n'
+                        "['projects'.'/repos/basaltwater'] # separate repository\ntrust_level = \"trusted\"\n")
+            config = self.write(root, '.codex/config.toml', projects +
+                                '[mcp_servers.infra-tools-playwright]\ncommand = "/usr/local/bin/infra-tools-playwright-mcp"\n')
+            migration.apply_plan(migration.build_plan(root, system=False))
+            self.assertTrue(config.read_text().startswith(projects))
+            self.assertIn('[mcp_servers.basaltwater-playwright]', config.read_text())
+            self.assertIn('/usr/local/bin/basaltwater-playwright-mcp', config.read_text())
+            self.assertEqual(migration.build_plan(root, system=False)['actions'], [])
+
+    def test_codex_project_trust_tracks_only_moved_directory_prefix_and_recovers(self):
+        for quote in ('"', "'"):
+            with self.subTest(quote=quote), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                old = root / '.local/share/infra_tools'
+                new = old.with_name('basaltwater')
+                self.write(old, 'worktrees/infra-tools/task/file.txt', 'keep')
+                # Existing destination exercises directory merging too.
+                self.write(new, 'other.txt', 'keep')
+                content = (f'[projects.{quote}{old}/worktrees/infra-tools/task{quote}] # keep comment\n'
+                           'trust_level = "trusted"\n'
+                           f'[projects.{quote}{old}-other{quote}]\ntrust_level = "untrusted"\n')
+                config = self.write(root, '.codex/config.toml', content)
+                with patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                    with self.assertRaises(OSError):
+                        migration.apply_plan(migration.build_plan(root, system=False))
+                self.assertEqual(config.read_text(), content.replace(f'{old}/worktrees/', f'{new}/worktrees/'))
+                migration.recover(root, system=False)
+                self.assertEqual(config.read_text(), content)
+
+    def test_codex_real_project_or_mcp_rename_collision_still_stops_before_changes(self):
+        for kind in ('project', 'mcp'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                old = root / '.local/share/infra_tools'
+                self.write(old, 'data.txt', 'keep')
+                if kind == 'project':
+                    content = (f'[projects."{old}"]\ntrust_level = "trusted"\n'
+                               f'[projects."{old.with_name("basaltwater")}"]\ntrust_level = "untrusted"\n')
+                else:
+                    content = '[mcp_servers.infra-tools-playwright]\n[mcp_servers.basaltwater-playwright]\n'
+                config = self.write(root, '.codex/config.toml', content)
+                with self.assertRaisesRegex(ValueError, 'Conflicting agent configuration tables'):
+                    migration.build_plan(root, system=False)
+                self.assertEqual(config.read_text(), content)
+                self.assertTrue(old.exists())
+                self.assertFalse((root / '.local/state/basaltwater-migration').exists())
+
     @patch('lib.rename_migration.pwd.getpwnam', side_effect=KeyError)
     @patch('lib.rename_migration.subprocess.run')
     def test_active_nested_operation_lock_refuses_data_changes(self, run, _accounts):
