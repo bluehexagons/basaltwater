@@ -58,6 +58,12 @@ release are separate states, tracked in the [release checklist](../BASALTWATER_R
 
 ## Unscheduled issue backlog
 
+The proposed [password manager sister project](PASSWORD_MANAGER_SISTER_PROJECT.md)
+has a separate repository boundary and no scheduled implementation or linked
+issue. Its plan covers vault-format evaluation, an extension-first client,
+encrypted synchronization, browser filling, Basaltwater deployment and recovery,
+and independent security review before a public release.
+
 These open issues have a documented disposition but no standalone delivery
 plan. Write or assign a project brief before implementation so they do not
 silently compete with P0/P1 work.
