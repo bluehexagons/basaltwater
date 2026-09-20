@@ -157,6 +157,58 @@ class AutomaticSetupMigrationTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o640)
         self.assertIn('# Managed by basaltwater coding-agent security policy.', policy.read_text())
 
+    def test_completed_cutover_repairs_omitted_systemd_settings_idempotently(self):
+        self.legacy()
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        for relative in ('journald.conf.d/infra-tools.conf', 'zram-generator.conf.d/90-infra-tools.conf'):
+            old = self.root / 'etc/systemd' / relative
+            old.parent.mkdir(parents=True)
+            old.write_text('[section]\nvalue=1\n')
+            old.chmod(0o640)
+        journal = self.root / 'etc/systemd/journald.conf.d/infra-tools.conf'
+        canonical = journal.with_name('basaltwater.conf')
+        canonical.write_bytes(journal.read_bytes())
+        inode = canonical.stat().st_ino
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        self.assertFalse(journal.exists())
+        self.assertEqual(canonical.stat().st_ino, inode)
+        backup = journal.with_name(journal.name + '.backup')
+        self.assertEqual(backup.read_bytes(), canonical.read_bytes())
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o640)
+        zram = self.root / 'etc/systemd/zram-generator.conf.d/90-basaltwater.conf'
+        self.assertEqual(zram.read_text(), '[section]\nvalue=1\n')
+        self.assertFalse(zram.with_name('90-infra-tools.conf').exists())
+
+    def test_systemd_settings_conflicts_and_links_block_before_runtime_replacement(self):
+        self.legacy()
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        old = self.root / 'etc/systemd/zram-generator.conf.d/90-infra-tools.conf'
+        old.parent.mkdir(parents=True)
+        old.write_text('[zram0]\nzram-size = 4096\n')
+        canonical = old.with_name('90-basaltwater.conf')
+        canonical.write_text('[zram0]\nzram-size = 2048\n')
+        with patch.object(setup_common, '_activate_local_runtime') as activate:
+            with self.assertRaisesRegex(ValueError, 'Conflicting systemd settings'):
+                setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+            canonical.unlink()
+            canonical.symlink_to(old)
+            with self.assertRaisesRegex(ValueError, 'Unsafe systemd settings'):
+                setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        activate.assert_not_called()
+        self.assertEqual(old.read_text(), '[zram0]\nzram-size = 4096\n')
+
+    def test_unfinished_unit_recovery_stops_even_an_already_migrated_setup(self):
+        self.legacy()
+        setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        marker = self.root / 'etc/systemd/system/.infra-tools-unit-operation.json'
+        marker.parent.mkdir(parents=True)
+        marker.write_text('{}')
+        with patch.object(setup_common, '_activate_local_runtime') as activate:
+            with self.assertRaisesRegex(ValueError, 'Unfinished systemd unit replacement'):
+                setup_upgrade.prepare_target_runtime(str(self.source), 'agent')
+        activate.assert_not_called()
+
     def test_initial_migration_preserves_unowned_firewall_rules_and_codex_policy(self):
         self.legacy()
         rules = self.root / 'etc/ufw/user.rules'

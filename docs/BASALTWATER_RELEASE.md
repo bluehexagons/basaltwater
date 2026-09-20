@@ -89,3 +89,28 @@ This is post-setup evidence for one agent VM, not full release qualification:
 pre-migration private-data checksums, live interruption/recovery, fresh installs,
 and the other platform combinations above remain outstanding. No package
 publication, repository rename or domain purchase was performed.
+
+### Follow-up after setup from `9b4230d`
+
+The installed source metadata identifies a clean snapshot of `9b4230d`.
+All-capability doctor checks pass for the host, managed browser smoke test,
+development toolchains, installed agent clients and T3. The user migration
+preview has no remaining actions; its completed journal and both independent
+repository trust entries are retained. Managed system services are healthy,
+the web-panel backend returns `ok`, and loopback HTTPS routes respond with
+success or the expected authentication challenge. These route probes do not
+certify client-side TLS trust or provider prompts.
+
+The audit found matching old and canonical journald drop-ins. The follow-up
+code includes journald and zram-generator settings in initial migration and
+archives matching legacy duplicates on setup retries after a completed
+migration. Different values stop setup before runtime replacement. Tests also
+verify that unfinished unit-replacement markers block migration and that
+hidden recovery backups remain unchanged. `make check` passes with 4,095 tests
+run and two skipped, including the new migration and retry regressions.
+
+The VM still needs a setup rerun with this follow-up code to archive its old
+journald file. Its idle old unit-operation lock is inert, and the previously
+reported XFCE notifier failure still reports no display. This audit did not
+restart the desktop or T3. Root-only configuration validation was unavailable
+through this session's sudo access. The broader release matrix remains open.

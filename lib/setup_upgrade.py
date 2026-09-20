@@ -126,7 +126,10 @@ def prepare_target_runtime(source: str, username: str) -> None:
     # The managed target layout is /opt/basaltwater. Deriving the root also
     # permits isolated filesystem fixtures without touching host state.
     root = runtime.parent.parent
+    rename_migration.check_unit_operation_markers(root)
     completed = _check_journal(root, system=True)
+    if completed:
+        rename_migration.repair_systemd_settings(root)
     legacy = runtime.with_name("infra_tools")
     migrated = False
     if os.path.lexists(legacy):

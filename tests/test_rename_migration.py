@@ -459,6 +459,48 @@ class RenameMigrationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Only recent'):
                 migration.build_plan(root, system=True)
 
+    @patch('lib.rename_migration.subprocess.run')
+    def test_systemd_settings_move_and_recover_without_changing_values(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configs = {
+                'etc/systemd/journald.conf.d/infra-tools.conf': '[Journal]\nSystemMaxUse=100M\n',
+                'etc/systemd/zram-generator.conf.d/90-infra-tools.conf': '[zram0]\nzram-size = 4096\n',
+            }
+            for relative, content in configs.items():
+                self.write(root, relative, content)
+            with patch.object(migration, '_reload_integrations', side_effect=OSError('interrupted')):
+                with self.assertRaises(OSError):
+                    migration.apply_plan(migration.build_plan(root, system=True))
+            for relative, content in configs.items():
+                old = root / relative
+                self.assertFalse(old.exists())
+                self.assertEqual(old.with_name(migration.rename_text(old.name)).read_text(), content)
+            migration.recover(root, system=True)
+            for relative, content in configs.items():
+                self.assertEqual((root / relative).read_text(), content)
+            run.assert_not_called()
+
+    def test_unfinished_unit_operations_block_migration_without_touching_backups(self):
+        for brand in ('infra-tools', 'basaltwater'):
+            with self.subTest(brand=brand), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.write(root, 'var/lib/infra_tools/setup.json', '{}')
+                marker = self.write(root, f'etc/systemd/system/.{brand}-unit-operation.json', '{}')
+                backup = self.write(root, f'etc/systemd/system/.{brand}-units-fixture/previous.json', 'opaque infra-tools recovery data')
+                with self.assertRaisesRegex(ValueError, 'Unfinished systemd unit replacement'):
+                    migration.build_plan(root, system=True)
+                self.assertEqual(marker.read_text(), '{}')
+                self.assertEqual(backup.read_text(), 'opaque infra-tools recovery data')
+                self.assertFalse((root / 'var/lib/basaltwater-migration').exists())
+
+    def test_hidden_unit_backups_and_idle_locks_are_opaque(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write(root, 'etc/systemd/system/.infra-tools-units-fixture/infra-tools-test.service', '[Service]\nExecStart=/opt/infra_tools/service\n')
+            self.write(root, 'etc/systemd/system/.infra-tools-unit-operation.json.lock', '')
+            self.assertEqual(migration.build_plan(root, system=True)['actions'], [])
+
     def test_interruption_after_rename_recovers_from_pending_journal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

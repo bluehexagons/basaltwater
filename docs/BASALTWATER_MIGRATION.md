@@ -95,6 +95,19 @@ data or create a user journal. Keep both trust entries and the completed system
 journal; actual collisions for moved projects or managed MCP servers still
 require resolution before migration.
 
+System migration includes journald and zram-generator drop-ins. Setup reruns
+after an older completed migration repair these two previously omitted files:
+an old file moves when its canonical path is absent; an identical duplicate is
+retained with a `.backup` suffix that systemd ignores. Different contents,
+unsafe links and existing backup destinations stop setup for inspection. This
+prevents an old zram file from overriding later swap changes. These filename
+repairs do not restart services or recreate active swap devices.
+
+An unfinished systemd unit-replacement marker in either namespace blocks setup
+and migration before runtime replacement. Resolve that operation using its
+existing marker and backups first. Hidden unit backups remain untouched; idle
+empty operation lock files can remain and do not represent active operations.
+
 Setup reruns also repair the encoded ownership comments on all recent managed
 UFW rule families: T3 Code, HTTPS forwards, Gogs, SSH, RDP, web TCP, mDNS,
 Proxmox access sources, and Samba. They also repair ownership markers on managed

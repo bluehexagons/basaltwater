@@ -39,6 +39,7 @@ RESOURCE_DIRS = (
     "etc/apt/preferences.d", "usr/share/pam-configs", "usr/share/keyrings",
     "usr/local/libexec", "usr/share/applications",
     "etc/initramfs-tools/conf.d",
+    "etc/systemd/journald.conf.d", "etc/systemd/zram-generator.conf.d",
 )
 ACCOUNTS = (("infra-web-panel", "basaltwater-web-panel"), ("infra-approval", "basaltwater-approval"))
 PREFIXES = ("infra_tools", "infra-tools", "infra-web", "infra-approval", "infra-syncthing", "infra-desktop", "infra-management", "infra-control-plane", "infra-guests", "infra-cluster-management", "infra-deny-control-plane")
@@ -115,6 +116,46 @@ def repair_managed_markers(root: Path) -> None:
     """
     for action in _managed_marker_edits(root):
         _write_bytes(action, "after")
+
+
+def repair_systemd_settings(root: Path) -> None:
+    """Finish settings omitted by earlier completed system migrations.
+
+    Equal duplicates are archived outside systemd's .conf filename filter.
+    Different contents require operator resolution before setup changes them.
+    """
+    moves = []
+    for relative in ("etc/systemd/journald.conf.d/infra-tools.conf",
+                     "etc/systemd/zram-generator.conf.d/90-infra-tools.conf"):
+        old = root / relative
+        _safe(old)
+        if not os.path.lexists(old):
+            continue
+        new = old.with_name(rename_text(old.name))
+        for path in (old, new):
+            if not os.path.lexists(path):
+                continue
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+                raise ValueError(f"Unsafe systemd settings: {path}")
+        if os.path.lexists(new):
+            if old.read_bytes() != new.read_bytes():
+                raise ValueError(f"Conflicting systemd settings; resolve before setup: {old} and {new}")
+            new = old.with_name(old.name + ".backup")
+            if os.path.lexists(new):
+                raise ValueError(f"Systemd settings backup already exists: {new}")
+        moves.append((old, new))
+    for old, new in moves:
+        old.rename(new)
+
+
+def check_unit_operation_markers(root: Path) -> None:
+    """Do not migrate or overwrite runtime used by unfinished unit recovery."""
+    for brand in ("infra-tools", "basaltwater"):
+        marker = root / "etc/systemd/system" / f".{brand}-unit-operation.json"
+        _safe(marker)
+        if os.path.lexists(marker):
+            raise ValueError(f"Unfinished systemd unit replacement; recover before setup or migration: {marker}")
 
 
 def _safe(path: Path) -> None:
@@ -306,6 +347,8 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
     """Inspect a recent installation; the preview performs no system changes."""
     root = root.absolute()
     _safe(root / "placeholder")
+    if system:
+        check_unit_operation_markers(root)
     actions: list[dict] = []
     edits: list[dict] = []
     occupied: dict[Path, Path] = {}
@@ -375,7 +418,10 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
         if not directory.is_dir():
             continue
         _safe(directory / "placeholder")
-        entries = sorted(directory.rglob("*") if "systemd" in directory.parts else directory.iterdir())
+        entries = sorted(
+            path for path in (directory.rglob("*") if "systemd" in directory.parts else directory.iterdir())
+            if not any(part.startswith(".") for part in path.relative_to(directory).parts)
+        )
         relocated_dropins: dict[Path, Path] = {}
         if "systemd" in directory.parts:
             for path in entries:
@@ -415,6 +461,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
                 or old.name.startswith(PREFIXES)
                 or any(marker in content for marker in PREFIXES)
                 or (relative == "etc/initramfs-tools/conf.d" and old.name == "99-infra-tools-resume")
+                or (relative == "etc/systemd/zram-generator.conf.d" and old.name == "90-infra-tools.conf")
             )
             if not managed:
                 continue
