@@ -389,8 +389,8 @@ class TestOpIdStability(unittest.TestCase):
 
         execute_storage_operations()
 
-        # Verify save_last_run was called
-        mock_save_last.assert_called_once()
+        # Completion is checkpointed immediately and again at run completion.
+        self.assertEqual(mock_save_last.call_count, 2)
         saved_state = mock_save_last.call_args[0][0]
 
         # The op_id must use the raw relative database path

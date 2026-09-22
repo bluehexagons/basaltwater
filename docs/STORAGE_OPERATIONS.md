@@ -54,6 +54,16 @@ The source must be an existing directory. Output from both rsync pipes is
 drained without waiting for newlines, and retained output is bounded to prevent
 large runs from exhausting memory.
 
+Scheduled syncs pause if either affected tree contains an open scrub finding,
+so known damage is not propagated and a suspect destination is not overwritten
+before inspection. An unreadable findings report also blocks the affected sync.
+Resolve the finding with `basaltw scrub` before retrying. This guard uses recorded
+findings; it does not verify every source file before each sync.
+Destinations that contain, are inside, or alias a configured parity database are
+rejected because rsync could delete recovery evidence. Place the database outside
+the mirror destination. These checks apply to the scheduled orchestrator;
+standalone rsync and custom inline setup steps do not consult findings.
+
 Operations require the exact configured SMB or VM mount before running;
 a mounted parent does not satisfy a missing child mount. Declared VM data disks are
 also protected by a systemd mount guard on the storage service. If an expected
@@ -63,8 +73,9 @@ or prevented from starting instead of writing to an underlying local directory.
 ## Parity and repair behavior
 
 `--scrub DIRECTORY DATABASE_PATH REDUNDANCY FREQUENCY` uses `par2` to create
-redundancy files, verify protected files, repair corruption when possible, and
-remove parity for data files that no longer exist. `REDUNDANCY` is an integer
+redundancy files, verify protected files, and repair corruption when possible.
+Missing protected files are recorded and their parity retained: absence alone
+does not prove an intentional deletion. `REDUNDANCY` is an integer
 percentage from `1%` through `100%`. Empty files are skipped because par2 cannot
 create useful parity for them. An empty file with existing parity is still
 verified during a full scrub, so truncation is not silently treated as healthy.
@@ -83,8 +94,9 @@ A full scrub already performs parity maintenance, so it is not followed by a
 second fast pass. A scan that finishes with unrepairable files records its
 completion timestamp and reports an error, then waits for the configured scrub
 interval before verifying again. Persistent damage does not trigger full scans
-and failure notifications every hour. Daily parity maintenance continues; its
-success does not mean previously reported damage has been repaired.
+and failure notifications every hour. Daily parity maintenance continues and
+reports unresolved findings without verifying those files again. Its completion
+does not resolve the findings.
 If validation, file access, parity creation, or cleanup prevents completion,
 the timestamp stays unchanged and the next hourly run retries the operation.
 
@@ -112,7 +124,8 @@ sudo cat /var/lib/storage-ops/last_run.json
 
 The service uses `/run/lock/storage-ops.lock` to prevent overlapping runs and
 writes its last-run timestamps atomically to
-`/var/lib/storage-ops/last_run.json`. Scrub timestamps represent completed scans,
+`/var/lib/storage-ops/last_run.json` after each completed operation, so a later
+failure cannot lose earlier completion timestamps. Scrub timestamps represent completed scans,
 including scans that found unrepairable files; sync timestamps represent success.
 Incomplete or skipped operations remain due for a later run. The timer itself is
 hourly; each specification's interval is enforced by the orchestrator.
@@ -138,6 +151,8 @@ the next service run uses the saved specification set.
 
 Notifications are shared with maintenance and security services. See
 [Notifications](./NOTIFICATIONS.md) for target types and delivery behavior.
+See [the storage review](STORAGE_REVIEW.md) for remaining automation and web panel
+integration work.
 
 ## Troubleshooting
 

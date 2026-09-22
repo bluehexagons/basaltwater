@@ -46,7 +46,7 @@ per finding and the last 20 record transitions. See the
 | `io_error` | Check mounts, permissions, and disk health, then retry. |
 | `changed_during_scan` | Verification was inconclusive because the file or parity changed; stop writers and retry. |
 | `changed_unverified` | A newer source timestamp or pending remediation needs verification; intent is unknown. |
-| `missing_file` | Targeted verification found the protected file absent. |
+| `missing_file` | Verification or the directory inventory found a protected file absent; its parity is retained. |
 | `tool_error` | PAR2 could not complete normally; inspect its evidence. |
 
 A timestamp cannot prove an intentional edit. Scheduled maintenance preserves
@@ -97,9 +97,9 @@ writes are checked, but these tools do not provide filesystem snapshots or
 protection from a hostile writer racing path checks.
 
 Findings survive daily parity maintenance and setup reruns. A successful fast
-maintenance pass does not resolve them. Orphan cleanup preserves parity for
-files with open findings and never deletes retained recovery copies. Ordinary
-deletions without an open finding retain the existing orphan-cleanup behavior.
+maintenance pass does not resolve them. Inventory checks preserve parity for
+all missing protected files and never delete retained recovery copies. Intentional
+deletions therefore also require review; there is no automatic parity pruning.
 
 Accepting a baseline updates a multi-file parity set, so it is not an atomic
 transaction. The original set and a persisted operation manifest are retained

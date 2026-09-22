@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from typing import Optional
 from logging import ERROR, WARNING
+from pathlib import Path
 
 # Add lib directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -259,6 +260,37 @@ def run_sync(source: str, destination: str, logger) -> tuple[bool, str]:
         return False, str(e)
 
 
+def validate_sync_integrity(source: str, destination: str, config: RuntimeConfig) -> tuple[bool, str]:
+    """Keep mirrors from overwriting recovery evidence or propagating known damage."""
+    from sync.service_tools.scrub_findings import Findings
+    from lib.validation import validate_scrub_specs
+
+    def overlaps(first: Path, second: Path) -> bool:
+        return first.is_relative_to(second) or second.is_relative_to(first)
+
+    try:
+        validate_scrub_specs(config.scrub_specs)
+        source_path, destination_path = Path(source).resolve(), Path(destination).resolve()
+        for directory, database, _redundancy, _interval in config.scrub_specs:
+            database = resolve_scrub_database_path(directory, database)
+            root, parity = Path(directory).resolve(), Path(database).resolve()
+            if overlaps(destination_path, parity):
+                return False, f"Sync destination overlaps scrub database {database}; move parity outside the mirror destination"
+            if not any(overlaps(endpoint, root) for endpoint in (source_path, destination_path)):
+                continue
+            valid, error = validate_mounts_for_operation([directory, database], config, "sync integrity check")
+            if not valid:
+                return False, error
+            report = Findings(directory, database)
+            for relative in report.data["files"]:
+                if report.active(relative) and any((root / relative).is_relative_to(endpoint)
+                                                   for endpoint in (source_path, destination_path)):
+                    return False, f"Sync paused for unresolved integrity finding: {root / relative}; inspect with basaltw scrub"
+        return True, ""
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, f"Cannot establish sync integrity safety: {exc}"
+
+
 def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str, bool]:
     """Return success, message, and completion independently of integrity findings."""
     from sync.service_tools.scrub_par2 import scrub_directory
@@ -398,6 +430,8 @@ def execute_storage_operations() -> dict:
         
         # Validate mounts
         valid, error_msg = validate_mounts_for_operation([source, destination], config, "sync")
+        if valid:
+            valid, error_msg = validate_sync_integrity(source, destination, config)
         if not valid:
             log_event(logger, "Skipping sync", level=WARNING, source=source, destination=destination, error=error_msg)
             results["syncs"].append({
@@ -420,6 +454,7 @@ def execute_storage_operations() -> dict:
         
         if success:
             new_state[op_id] = time.time()
+            save_last_run(new_state)
         else:
             results["success"] = False
     
@@ -474,6 +509,7 @@ def execute_storage_operations() -> dict:
         if completed:
             new_state[op_id] = time.time()
             new_state[get_parity_op_id(directory, database)] = new_state[op_id]
+            save_last_run(new_state)
         if not success:
             results["success"] = False
     
@@ -526,6 +562,7 @@ def execute_storage_operations() -> dict:
             results["success"] = False
         if completed:
             new_state[parity_op_id] = time.time()
+            save_last_run(new_state)
     
     # Save updated state
     save_last_run(new_state)

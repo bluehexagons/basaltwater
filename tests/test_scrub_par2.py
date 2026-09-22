@@ -204,7 +204,7 @@ class TestScrubResultFailures(unittest.TestCase):
             os.utime(data, (20, 20))
             with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.subprocess, 'run') as run:
                 result = scrub_par2.scrub_directory(source, database, 10, 'unused', verify=False, suppress_notifications=True)
-                self.assertTrue(result['ok'])
+                self.assertFalse(result['ok'])
                 self.assertTrue(result['completed'])
                 self.assertEqual(result['files_created'], 0)
                 run.assert_not_called()
@@ -222,7 +222,7 @@ class TestScrubResultFailures(unittest.TestCase):
             os.mkdir(database)
             with open(os.path.join(database, 'orphan.par2'), 'w') as stream:
                 stream.write('parity')
-            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.os, 'remove', side_effect=PermissionError('cannot remove')):
+            with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.Findings, 'save', side_effect=PermissionError('cannot save')):
                 with self.assertRaises(PermissionError):
                     scrub_par2.scrub_directory(source, database, 10, 'unused', suppress_notifications=True)
 
@@ -246,7 +246,7 @@ class TestScrubResultFailures(unittest.TestCase):
                 patch.object(scrub_par2, 'create_operation_logger'),
                 patch.object(scrub_par2, 'log'),
                 patch.object(scrub_par2, 'create_par2') as create,
-                patch.object(scrub_par2, '_cleanup_orphan_par2') as cleanup,
+                patch.object(scrub_par2, '_record_missing_files') as cleanup,
             ):
                 with self.assertRaisesRegex(ValueError, 'Symlinks'):
                     scrub_par2.scrub_directory(source, database, 10, 'unused', suppress_notifications=True)

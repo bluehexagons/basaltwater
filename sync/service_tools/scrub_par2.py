@@ -257,18 +257,15 @@ def _par2_base_from_parity_file(parity_path: str) -> str:
     return parity_path
 
 
-def _cleanup_orphan_par2(
+def _record_missing_files(
     directory: str,
     database: str,
     existing_files: set[str],
     log_file: str,
-    operation_logger: Optional[Any] = None
 ) -> None:
-    """Remove parity files for data files that no longer exist."""
+    """Record missing protected files without destroying their recovery parity."""
     checked_bases: set[str] = set()
     report = Findings(directory, database)
-    orphan_count = 0
-    total_orphan_size = 0
     
     for root, _, files in _scan_tree(database):
         if Path(root).is_relative_to(Path(database) / METADATA_DIR):
@@ -292,37 +289,10 @@ def _cleanup_orphan_par2(
                 log(f"Preserving parity for unresolved finding: {relative_data}", log_file)
                 continue
             
-            # Enhanced orphan validation
-            try:
-                # Calculate orphan size before removal
-                orphan_par2_files = _parity_files(par2_base)
-                orphan_size = sum(os.path.getsize(f) for f in orphan_par2_files if os.path.exists(f))
-                total_orphan_size += orphan_size
-                
-                log(f"Removing orphan par2 for deleted file: {relative_data} ({orphan_size // 1024}KB)", log_file)
-                if operation_logger:
-                    operation_logger.log_metric("orphan_file_removed", relative_data, "filename")
-                    operation_logger.log_metric("orphan_size_kb", orphan_size // 1024, "KB")
-                
-                def remove_orphan():
-                    _remove_par2_files(par2_base, log_file)
-                
-                remove_orphan()
-                
-                orphan_count += 1
-                
-            except OSError as e:
-                log(f"Error removing orphan par2 for {relative_data}: {e}", log_file)
-                if operation_logger:
-                    operation_logger.log_error("orphan_removal_failed", str(e), 
-                                          {"file": relative_data})
-                raise
-    
-    if orphan_count > 0:
-        log(f"Cleaned up {orphan_count} orphan par2 sets, freed {total_orphan_size // 1024 // 1024}MB", log_file)
-        if operation_logger:
-            operation_logger.log_metric("total_orphan_files_removed", orphan_count, "count")
-            operation_logger.log_metric("total_orphan_size_mb", total_orphan_size // 1024 // 1024, "MB")
+            # Absence cannot distinguish intentional deletion from data loss.
+            report.record(relative_data, {"category": "missing_file",
+                                         "evidence": "Absent from complete inventory; parity retained"})
+            log(f"Missing protected file; preserving parity: {relative_data}", log_file)
 
 
 # Verification outcomes returned by verify_repair.
@@ -585,17 +555,13 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
         
         log(f"Directory scan complete: {files_found} files in {dirs_found} directories", log_file)
         
-        # Enhanced orphan cleanup
-        log("Starting orphan cleanup...", log_file)
-        _cleanup_orphan_par2(directory, database, existing_files, log_file, 
-                           operation_logger=operation_logger)
-        if verify:
-            # A file disappearing or an older operational error must not turn
-            # an open finding into a healthy summary merely by being skipped.
-            report = Findings(directory, database)
-            files_unrepairable = sorted(set(files_unrepairable) | {
-                path for path in report.data["files"] if report.active(path)
-            })
+        log("Checking for missing protected files...", log_file)
+        _record_missing_files(directory, database, existing_files, log_file)
+        # Fast maintenance cannot imply health while known damage remains.
+        report = Findings(directory, database)
+        files_unrepairable = sorted(set(files_unrepairable) | {
+            path for path in report.data["files"] if report.active(path)
+        })
         
         # Final metrics
         operation_logger.log_metric("files_processed", files_processed, "count")
