@@ -41,6 +41,7 @@ basaltw migrate [--system] [--installation /path/to/old-source] [--apply | --rec
 basaltw setup <system_type> <host> [username] [options]
 basaltw patch <host> [username] [options]
 basaltw shares <host> [username] [options]
+basaltw scrub <status|inspect|verify|repair|restore|accept> HOST [options]
 basaltw recall <host> [username] [options]
 basaltw reconstruct [--compact]
 basaltw list [pattern] [--json]
@@ -1242,6 +1243,15 @@ automatic stable-release check through the recovery-aware update timer;
 Cloudflare ingress is not supported.
 
 ## Storage and data movement
+
+`basaltw scrub status HOST` lists persistent integrity findings. Use `inspect`
+or `verify` with `--file /absolute/target/path` to inspect one file or check its
+existing parity. `repair`, `restore --from /absolute/backup/path`, and `accept`
+require confirmation (`--yes` for scripts). Recovery retains originals and
+verifies staged content before publication; acceptance explicitly establishes
+a new baseline. All paths refer to the target. Commands support `--json`,
+`--directory`, and `--database`; SSH defaults to root and the saved key, with
+`--username` and `--key` overrides. See [Scrub recovery](SCRUB_RECOVERY.md).
 
 | Flag | Description |
 |------|-------------|
