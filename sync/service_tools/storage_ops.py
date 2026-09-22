@@ -283,7 +283,7 @@ def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logg
         if unrepairable:
             sample = ", ".join(unrepairable[:5])
             extra = f" (and {len(unrepairable) - 5} more)" if len(unrepairable) > 5 else ""
-            return False, f"Scrub found {len(unrepairable)} unrepairable file(s) in {directory}: {sample}{extra}", completed
+            return False, f"Scrub found {len(unrepairable)} unresolved integrity finding(s) in {directory}: {sample}{extra}. Inspect with basaltw scrub inspect HOST --file PATH", completed
         if not ok:
             return False, f"Scrub did not complete cleanly for {directory}", completed
         return True, f"Scrub completed for {directory}", completed

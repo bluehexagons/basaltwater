@@ -33,13 +33,15 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
             fh.write(b'')
         self.log_file = os.path.join(self.tmp.name, 'scrub.log')
 
-    def test_no_par2_returns_ok(self):
+    def test_no_par2_records_missing_baseline(self):
         os.remove(os.path.join(self.database, 'data.bin.par2'))
         result = scrub_par2.verify_repair(self.file_path, self.directory, self.database, self.log_file)
-        self.assertEqual(result, scrub_par2.VERIFY_OK)
+        self.assertEqual(result, scrub_par2.VERIFY_UNREPAIRABLE)
+        self.assertEqual(scrub_par2.Findings(self.directory, self.database).data["files"]["data.bin"]["category"], "missing_parity")
 
     @patch('sync.service_tools.scrub_par2.subprocess.run')
     def test_volume_only_parity_is_verified(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess([], 0)
         base = os.path.join(self.database, 'data.bin.par2')
         volume = os.path.join(self.database, 'data.bin.vol00+01.par2')
         os.rename(base, volume)
@@ -57,9 +59,10 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
 
     @patch('sync.service_tools.scrub_par2.subprocess.run')
     def test_repair_succeeds_returns_repaired(self, mock_run):
-        # First call (verify) raises, second call (repair) succeeds.
+        # Verify reports repairable; staged repair and independent verify pass.
         mock_run.side_effect = [
-            subprocess.CalledProcessError(1, 'par2 verify', output='corrupted'),
+            subprocess.CompletedProcess(args=[], returncode=1),
+            subprocess.CompletedProcess(args=[], returncode=0),
             subprocess.CompletedProcess(args=[], returncode=0, stdout='', stderr=''),
         ]
         result = scrub_par2.verify_repair(self.file_path, self.directory, self.database, self.log_file)
@@ -67,10 +70,10 @@ class TestVerifyRepairOutcomes(unittest.TestCase):
 
     @patch('sync.service_tools.scrub_par2.subprocess.run')
     def test_repair_fails_returns_unrepairable(self, mock_run):
-        # Both verify and repair raise.
+        # Verification is repairable, but staged repair still has damage.
         mock_run.side_effect = [
-            subprocess.CalledProcessError(1, 'par2 verify', output='corrupted'),
-            subprocess.CalledProcessError(1, 'par2 repair', output='unrecoverable'),
+            subprocess.CompletedProcess(args=[], returncode=1),
+            subprocess.CompletedProcess(args=[], returncode=5),
         ]
         result = scrub_par2.verify_repair(self.file_path, self.directory, self.database, self.log_file)
         self.assertEqual(result, scrub_par2.VERIFY_UNREPAIRABLE)
@@ -186,7 +189,7 @@ class TestScrubResultFailures(unittest.TestCase):
                 verify.assert_called_once()
                 create.assert_not_called()
 
-    def test_stale_volume_only_parity_is_recreated_and_counted_as_update(self):
+    def test_stale_volume_only_parity_is_preserved_pending_review(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, 'source')
             database = os.path.join(directory, 'parity')
@@ -203,16 +206,13 @@ class TestScrubResultFailures(unittest.TestCase):
                 result = scrub_par2.scrub_directory(source, database, 10, 'unused', verify=False, suppress_notifications=True)
                 self.assertTrue(result['ok'])
                 self.assertTrue(result['completed'])
-                self.assertEqual(result['files_updated'], 1)
                 self.assertEqual(result['files_created'], 0)
-                run.assert_called_once()
-                self.assertFalse(os.path.exists(volume))
-                # Direct callers must also recreate stale parity without force=True.
-                with open(volume, 'w') as stream:
-                    stream.write('old')
-                os.utime(volume, (10, 10))
+                run.assert_not_called()
+                self.assertTrue(os.path.exists(volume))
+                self.assertEqual(scrub_par2.Findings(source, database).data['files']['data']['category'], 'changed_unverified')
+                # Direct callers must also preserve existing parity.
                 self.assertTrue(scrub_par2.create_par2(data, source, database, 10, 'unused'))
-                self.assertEqual(run.call_count, 2)
+                run.assert_not_called()
 
     def test_cleanup_failure_is_not_reported_as_success(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -44,6 +44,7 @@ from lib.arg_parser import add_setup_arguments
 from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
+from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
 from lib.cache import get_cache_path_for_host, load_setup_command, merge_setup_configs, save_setup_command
 from lib.channel_manager import (
@@ -140,6 +141,7 @@ def _build_basaltwater_epilog() -> str:
     setup <type> <host> [args]   Run initial setup for a system type
     patch <host> [args]          Patch/update an existing system
     shares <host> [args]         Reconcile Samba shares without full setup
+    scrub <action> <host>       Inspect, verify, repair, restore, or accept individual files
     list [pattern]              List saved configurations
     info [pattern]              Show saved configuration details
     cmd [pattern]               Show reconstructed setup commands
@@ -594,6 +596,7 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     add_agent_subparser(subparsers)
     add_gogs_subparser(subparsers)
     add_homebox_subparser(subparsers)
+    add_scrub_subparser(subparsers)
     add_cicd_subparser(subparsers)
 
     shell_parser = subparsers.add_parser(
@@ -2348,6 +2351,8 @@ def main() -> int:
         return run_gogs_command(args)
     elif args.command == "homebox":
         return run_homebox_command(args)
+    elif args.command == "scrub":
+        return run_scrub_command(args)
     elif args.command == "cicd":
         return run_cicd_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:

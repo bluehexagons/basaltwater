@@ -26,7 +26,8 @@ in saved configuration and summaries. It is not tied to Samba; see
 Normal setup installs the tools and hourly timer and requests an initial run
 about two minutes later. That run creates mirror destinations and initial
 parity. The first full verify-and-repair scrub waits until the configured scrub
-interval is due. Parity updates run daily thereafter. The explicit custom
+interval is due. Parity maintenance runs daily thereafter, creating protection
+for new files while preserving existing recovery evidence. The explicit custom
 `create_sync_service` and `create_scrub_service` steps instead perform their
 initial work inline and fail setup if it fails.
 
@@ -69,7 +70,13 @@ create useful parity for them. An empty file with existing parity is still
 verified during a full scrub, so truncation is not silently treated as healthy.
 A file supplied as the source directory is rejected before orphan cleanup.
 
-Full scrubs report repaired files as warnings and unrepairable files as errors.
+Full scrubs report repaired files as warnings and unresolved integrity findings
+as errors. Findings are classified and retained in the parity database; use
+[`basaltw scrub`](SCRUB_RECOVERY.md) to inspect or remediate individual files.
+Existing parity is no longer regenerated just because a source timestamp is
+newer. Such changes are marked uncertain until verified or explicitly accepted.
+Automatic repairs use staged copies and retain original data and parity; a
+newer source file is never automatically reverted to the old parity baseline.
 Parity metadata lives under the configured database path; keep it on reliable
 storage separate from the data when possible.
 A full scrub already performs parity maintenance, so it is not followed by a
@@ -93,6 +100,9 @@ uses the same timestamp/update checks and counters as sets with an index file.
 ## Inspect and run operations
 
 ```bash
+basaltw scrub status fileserver
+basaltw scrub inspect fileserver --file /srv/data/example.bin
+basaltw scrub verify fileserver --file /srv/data/example.bin
 sudo systemctl status storage-ops.timer
 sudo systemctl start storage-ops.service
 sudo journalctl -u storage-ops.service -n 200 --no-pager
