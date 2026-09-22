@@ -25,6 +25,9 @@ This review separates the fixes shipped with them from proposed follow-up work.
   private recovery payloads and generation contents.
 - Recovery preflights free space and refuses to replace one name of a multiply
   hard-linked file. Acceptance remains available because it does not replace data.
+- Consecutive executed-operation failures back off from one hour to one day,
+  independently of completed cadence. A delayed full scrub is not bypassed by
+  a fast parity pass.
 
 ## Remaining gaps and automation priorities
 
@@ -33,7 +36,7 @@ This review separates the fixes shipped with them from proposed follow-up work.
 | High | Sync runs before scrub and only knows previously recorded findings. Undetected corruption can still propagate; mirrors propagate deletions. | Add opt-in snapshot/version retention and verify-before-sync policies for critical roots. Test restore against the original baseline before publication. |
 | High | Standalone scripts and custom inline setup calls can bypass the orchestrator's lock and integrity guards. | Consolidate all mutation entry points behind one runner, including setup. Preserve existing setup error propagation and add overlap tests. |
 | Medium | Interrupted manifests can remain pending even after a complete generation switch. | Add an explicit reconciliation command that verifies active content and presents retained staging for review. |
-| Medium | Incomplete scans restart from the beginning, and operational failures remain due hourly. | Persist attempt state and bounded retry backoff separately from completed cadence. Resume only when file/parity identities and configuration still match. |
+| Medium | Incomplete scans restart from the beginning. | Resume only when file/parity identities and configuration still match; retain the separate retry backoff. |
 | Medium | Notifications summarize the latest run, which is not the same as persistent data health. | Separate per-job execution events from per-root integrity incidents. Notify on finding transitions, with explicit reminders and resolution events. |
 | Medium | Recovery copies grow indefinitely; intentional deletions remain open. | Add retention reporting and an explicit archive/retire workflow with a preview. Never automatically accept or delete unresolved evidence. |
 | Medium | Large trees repeatedly load/write the findings JSON. | Introduce a transaction-scoped report cache or indexed store. Benchmark on realistic NAS trees. |

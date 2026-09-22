@@ -144,6 +144,41 @@ def save_last_run(state: dict) -> None:
     write_json_atomic(STATE_FILE, state, mode=0o600, sort_keys=True)
 
 
+def retry_delay_remaining(state: dict, op_id: str) -> float:
+    """Bound retries independently of the last successfully completed cadence."""
+    attempts = state.get('_attempts', {})
+    entry = attempts.get(op_id) if isinstance(attempts, dict) else None
+    if not isinstance(entry, dict):
+        return 0.0
+    try:
+        failed_at, retry_after = float(entry['failed_at']), float(entry['retry_after'])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return 0.0
+    now = time.time()
+    if not (math.isfinite(failed_at) and math.isfinite(retry_after)
+            and failed_at <= now < retry_after <= failed_at + 86400):
+        return 0.0
+    return retry_after - now
+
+
+def record_attempt(state: dict, op_id: str, completed: bool) -> None:
+    attempts = state.get('_attempts', {})
+    attempts = dict(attempts) if isinstance(attempts, dict) else {}
+    if completed:
+        attempts.pop(op_id, None)
+    else:
+        previous = attempts.get(op_id, {})
+        count = previous.get('failures', 0) if isinstance(previous, dict) else 0
+        count = min(count, 5) if type(count) is int and count >= 0 else 0
+        now = time.time()
+        attempts[op_id] = {'failures': count + 1, 'failed_at': now,
+                           'retry_after': now + min(3600 * (2 ** count), 86400)}
+    if attempts:
+        state['_attempts'] = attempts
+    else:
+        state.pop('_attempts', None)
+
+
 def is_operation_due(last_run: dict, op_id: str, interval: str, first_run_default: bool = True) -> bool:
     """Check if an operation is due based on its interval.
     
@@ -157,6 +192,8 @@ def is_operation_due(last_run: dict, op_id: str, interval: str, first_run_defaul
     Returns:
         True if operation should run now
     """
+    if retry_delay_remaining(last_run, op_id):
+        return False
     last_time = last_run.get(op_id)
     if last_time is None:
         return first_run_default
@@ -454,9 +491,10 @@ def execute_storage_operations() -> dict:
         
         if success:
             new_state[op_id] = time.time()
-            save_last_run(new_state)
         else:
             results["success"] = False
+        record_attempt(new_state, op_id, success)
+        save_last_run(new_state)
     
     # Execute full scrubs if due.  Long-running progress remains in the local
     # journal; the final summary contains the actionable result.
@@ -509,7 +547,9 @@ def execute_storage_operations() -> dict:
         if completed:
             new_state[op_id] = time.time()
             new_state[get_parity_op_id(directory, database)] = new_state[op_id]
-            save_last_run(new_state)
+            record_attempt(new_state, get_parity_op_id(directory, database), True)
+        record_attempt(new_state, op_id, completed)
+        save_last_run(new_state)
         if not success:
             results["success"] = False
     
@@ -522,7 +562,8 @@ def execute_storage_operations() -> dict:
         parity_op_id = get_parity_op_id(directory, database)
         resolved_database = resolve_scrub_database_path(directory, database)
 
-        if (directory, resolved_database) in full_scrubs_attempted:
+        if ((directory, resolved_database) in full_scrubs_attempted
+                or retry_delay_remaining(last_run, get_scrub_op_id(directory, database))):
             # A full scrub already updates parity; do not retry a failed one
             # in a mode that skips verification.
             continue
@@ -562,7 +603,8 @@ def execute_storage_operations() -> dict:
             results["success"] = False
         if completed:
             new_state[parity_op_id] = time.time()
-            save_last_run(new_state)
+        record_attempt(new_state, parity_op_id, completed)
+        save_last_run(new_state)
     
     # Save updated state
     save_last_run(new_state)

@@ -103,7 +103,11 @@ and failure notifications every hour. Daily parity maintenance continues and
 reports unresolved findings without verifying those files again. Its completion
 does not resolve the findings.
 If validation, file access, parity creation, or cleanup prevents completion,
-the timestamp stays unchanged and the next hourly run retries the operation.
+the completion timestamp stays unchanged. Executed operations that fail retry
+after one hour, then two, four, eight, sixteen, and at most twenty-four hours
+between consecutive failures. Completion clears the retry history. Full scrubs
+waiting for a retry are not replaced by an unverified fast parity pass.
+Mount and integrity preflight skips remain eligible for hourly rechecks.
 
 Scrub rejects symlinks in source and database paths, including parent components.
 Both trees must be fully readable before parity changes begin; an incomplete
@@ -140,6 +144,10 @@ failure cannot lose earlier completion timestamps. Scrub timestamps represent co
 including scans that found unrepairable files; sync timestamps represent success.
 Incomplete or skipped operations remain due for a later run. The timer itself is
 hourly; each specification's interval is enforced by the orchestrator.
+The `_attempts` mapping in that state file records consecutive operational
+failures and `retry_after` Unix timestamps separately from completed cadence.
+Starting the service manually still respects this backoff; targeted CLI verify
+and recovery remain available under the shared operation lock.
 
 After upgrading an installation affected by hourly retries, the old overdue
 timestamp is retained. Expect one more full scrub to record completion under
