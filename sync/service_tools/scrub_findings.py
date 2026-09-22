@@ -114,17 +114,17 @@ class Findings:
         self.save()
 
 
-def examine(file_path: str, directory: str, database: str, *, repair: bool = False) -> dict:
+def examine(file_path: str, directory: str, database: str, *, repair: bool = False, staged_base: str | None = None) -> dict:
     """Run one PAR2 operation, retaining its classification and bounded evidence."""
     from sync.service_tools.scrub_par2 import _confined_path, _parity_files
+    from sync.service_tools.parity_sets import locate
 
     relative = os.path.relpath(file_path, directory)
     if Path(relative).parts[0] == METADATA_DIR:
         raise ValueError(f"{METADATA_DIR} is reserved for scrub metadata")
-    base = os.path.join(database, relative + ".par2")
+    base, parity = locate(file_path, directory, database) if staged_base is None else (staged_base, _parity_files(staged_base))
     _confined_path(file_path, directory)
     _confined_path(base, database)
-    parity = _parity_files(base)
     for path in parity:
         _confined_path(path, database)
     if not parity:
@@ -177,7 +177,8 @@ def _copy_durable(source: str, destination: str) -> None:
 def remediate(file_path: str, directory: str, database: str, redundancy: int,
               action: str, *, backup: str | None = None) -> dict:
     """Retain originals, work in isolation, verify, then publish one candidate."""
-    from sync.service_tools.scrub_par2 import _confined_path, _parity_files, create_par2
+    from sync.service_tools.scrub_par2 import _confined_path, create_par2
+    from sync.service_tools.parity_sets import locate, publish
 
     if action not in {"repair", "restore", "accept"}:
         raise ValueError("Unknown scrub remediation")
@@ -187,10 +188,11 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
     relative = os.path.relpath(file_path, directory)
     if Path(relative).parts[0] == METADATA_DIR:
         raise ValueError(f"{METADATA_DIR} is reserved for scrub metadata")
-    base = os.path.join(database, relative + ".par2")
+    base, parity = locate(file_path, directory, database)
     _confined_path(base, database)
     before = file_identity(file_path)
-    parity = _parity_files(base)
+    if action != 'accept' and before is not None and os.stat(file_path).st_nlink > 1:
+        raise ValueError('Repair or restore of hard-linked content requires separating the link explicitly first')
     for path in parity:
         _confined_path(path, database)
     parity_before = [file_identity(path) for path in parity]
@@ -203,6 +205,16 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
         file_identity(backup)
     report = Findings(directory, database)
     os.makedirs(report.root, mode=0o700, exist_ok=True)
+    source_size = before[2] if before else 0
+    candidate_size = max(source_size, os.path.getsize(backup) if backup else 0)
+    parity_size = sum(os.path.getsize(path) for path in parity)
+    # Keep room for retained originals, work copies, the new generation, and
+    # the atomic publication copy. This is a preflight, not a reservation.
+    reserve = 1024 * 1024
+    needed = 3 * candidate_size + 3 * (parity_size + candidate_size * redundancy // 100) + reserve
+    if (shutil.disk_usage(report.root).free < needed
+            or (action != 'accept' and shutil.disk_usage(directory).free < candidate_size + reserve)):
+        raise OSError('Insufficient free space for retained recovery copies and atomic publication')
     recovery = tempfile.mkdtemp(prefix="recovery-", dir=report.root)
     source_tree = os.path.join(recovery, "original")
     original_db = os.path.join(recovery, "parity")
@@ -216,8 +228,8 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
         _copy_durable(file_path, candidate)
     for path in parity:
         _copy_durable(path, os.path.join(original_db, os.path.relpath(path, database)))
-        if action != "accept":
-            _copy_durable(path, os.path.join(work_db, os.path.relpath(path, database)))
+    if action != "accept":
+        publish(candidate, work, work_db, parity)
     for root, _, _ in os.walk(recovery, topdown=False):
         _fsync_directory(root)
     manifest = {"action": action, "file": file_path, "database": database,
@@ -244,25 +256,19 @@ def remediate(file_path: str, directory: str, database: str, redundancy: int,
     if outcome["category"] != "healthy":
         report.record(relative, outcome)
         return outcome
-    if (file_identity(file_path) != before or parity_before != [file_identity(path) for path in parity]):
+    if (file_identity(file_path) != before or parity_before != [file_identity(path) for path in parity]
+            or locate(file_path, directory, database)[1] != parity):
         raise RuntimeError(f"Live data or parity changed during remediation; originals retained at {recovery}")
     _confined_path(file_path, directory)
     _confined_path(base, database)
     if action == "accept":
-        new_parity = _parity_files(os.path.join(work_db, relative + ".par2"))
+        new_parity = locate(candidate, work, work_db)[1]
         if not new_parity:
             raise RuntimeError("PAR2 did not produce a parity set")
-        # Persist a recoverable intent before replacing the multi-file parity set.
+        # The verified generation becomes active with one atomic record swap.
         manifest["state"] = "publishing"
         write_json_atomic(manifest_path, manifest)
-        for path in parity:
-            os.unlink(path)
-        os.makedirs(os.path.dirname(base), exist_ok=True)
-        for path in new_parity:
-            with open(path, "rb") as stream:
-                os.fsync(stream.fileno())
-            os.replace(path, os.path.join(database, os.path.relpath(path, work_db)))
-        _fsync_directory(os.path.dirname(base))
+        publish(file_path, directory, database, new_parity)
     else:
         # Stage beside the target so publication is atomic across filesystems.
         os.makedirs(os.path.dirname(file_path), exist_ok=True)

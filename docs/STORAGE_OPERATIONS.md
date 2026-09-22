@@ -90,6 +90,11 @@ Automatic repairs use staged copies and retain original data and parity; a
 newer source file is never automatically reverted to the old parity baseline.
 Parity metadata lives under the configured database path; keep it on reliable
 storage separate from the data when possible.
+New parity is built in staging, independently verified against unchanged source
+content, and published by atomically selecting an immutable per-file generation.
+Creation subprocesses have a four-hour deadline. Failed builds retain their
+staging and manifest; previous generations and legacy parity are never removed
+automatically. Recovery payloads are excluded from directory inventory traversal.
 A full scrub already performs parity maintenance, so it is not followed by a
 second fast pass. A scan that finishes with unrepairable files records its
 completion timestamp and reports an error, then waits for the configured scrub

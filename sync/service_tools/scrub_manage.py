@@ -17,7 +17,8 @@ from lib.runtime_config import RuntimeConfig
 from lib.scrub_cli import ACTIONS, MUTATIONS, add_target_arguments
 from lib.validation import validate_filesystem_path, validate_scrub_specs
 from sync.service_tools.scrub_findings import Findings, examine, file_identity, remediate
-from sync.service_tools.scrub_par2 import _confined_path, _parity_files
+from sync.service_tools.scrub_par2 import _confined_path
+from sync.service_tools.parity_sets import locate
 from sync.service_tools.storage_ops import LOCK_FILE, OperationLock, resolve_scrub_database_path, validate_mounts_for_operation
 
 
@@ -75,7 +76,7 @@ def execute(args: argparse.Namespace, config: RuntimeConfig) -> tuple[dict, int]
     if args.action == "inspect":
         return {"file": path, "directory": directory, "database": database,
                 "file_identity": file_identity(path),
-                "parity": _parity_files(os.path.join(database, relative + ".par2")),
+                "parity": locate(path, directory, database)[1],
                 "finding": report.data["files"].get(relative)}, 0
     if args.action in MUTATIONS:
         if not args.yes:

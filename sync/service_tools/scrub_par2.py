@@ -14,6 +14,8 @@ import re
 import stat
 import subprocess
 import time
+import tempfile
+import shutil
 from glob import glob, escape
 from pathlib import Path
 from datetime import datetime
@@ -26,7 +28,9 @@ from lib.operation_log import create_operation_logger
 from lib.validation import validate_filesystem_path
 from lib.disk_utils import estimate_operation_duration
 from lib.progress_utils import ProgressTracker, ProgressMessage
-from sync.service_tools.scrub_findings import Findings, METADATA_DIR, examine, remediate
+from lib.atomic_io import _fsync_directory, write_json_atomic
+from sync.service_tools.scrub_findings import Findings, METADATA_DIR, examine, remediate, file_identity
+from sync.service_tools.parity_sets import locate, publish, protected_files
 
 PAR2_EXTENSION = ".par2"
 PAR2_MTIME_TOLERANCE_SECONDS = 1.0
@@ -51,7 +55,7 @@ def _confined_path(path: str, root: str) -> None:
         raise ValueError(f"Resolved path escapes scrub root: {path}")
 
 
-def _scan_tree(directory: str) -> list[tuple[str, list[str], list[str]]]:
+def _scan_tree(directory: str, excluded: tuple[str, ...] = ()) -> list[tuple[str, list[str], list[str]]]:
     """Finish a confined inventory before allowing parity mutations."""
     _confined_path(directory, directory)
     if not os.path.isdir(directory):
@@ -68,6 +72,7 @@ def _scan_tree(directory: str) -> list[tuple[str, list[str], list[str]]]:
                 _confined_path(path, directory)
                 if not expected_type(os.stat(path, follow_symlinks=False).st_mode):
                     raise ValueError(f'Scrub inventory contains a non-regular entry: {path}')
+        dirs[:] = [name for name in dirs if os.path.abspath(os.path.join(root, name)) not in excluded]
         entries.append((root, dirs, files))
     return entries
 
@@ -90,27 +95,6 @@ def log(message: str, log_file: str) -> None:
     log_message(logger, message)
     # Also print to stdout for systemd journal capture
     print(message, flush=True)
-
-
-def _remove_par2_files(par2_base: str, log_file: str) -> None:
-    """Remove par2 files for a base path (including volume files).
-    
-    Par2 can create either:
-    - Base file: filename.par2 (with -n2+)
-    - Volume files: filename.par2.vol00+01.par2 (when base exists)
-    - Volume-only: filename.vol00+01.par2 (with -n1, strips .par2 before adding .vol)
-    """
-    files_to_remove = _parity_files(par2_base)
-    
-    if files_to_remove:
-        log(f"Removing {len(files_to_remove)} existing par2 file(s)", log_file)
-    for par2_file in files_to_remove:
-        _confined_path(par2_file, os.path.dirname(par2_base))
-        try:
-            os.remove(par2_file)
-        except (IOError, OSError) as e:
-            log(f"Error removing par2 file {par2_file}: {e}", log_file)
-            raise
 
 
 def create_par2(
@@ -137,7 +121,7 @@ def create_par2(
     relative_path = os.path.relpath(file_path, directory)
     if Path(relative_path).parts[0] == METADATA_DIR:
         raise ValueError(f"{METADATA_DIR} is reserved for scrub metadata")
-    par2_base = os.path.join(database, f"{relative_path}{PAR2_EXTENSION}")
+    par2_base, par2_files = locate(file_path, directory, database)
     
     # Enhanced validation
     try:
@@ -163,7 +147,6 @@ def create_par2(
     # Par2 with -n2+ creates base file filename.par2 and volumes filename.par2.vol00+01.par2
     
     # Pattern 1: Base file and volumes that append to it
-    par2_files = _parity_files(par2_base)
     
     for parity_file in par2_files:
         _confined_path(parity_file, database)
@@ -201,47 +184,59 @@ def create_par2(
     except OSError:
         estimated_duration = 60  # Default 1 minute
     
-    os.makedirs(os.path.dirname(par2_base), exist_ok=True)
-    
-    def create_par2_atomic():
-        for attempt in range(PAR2_CREATE_RETRIES):
-            try:
-                start_time = time.time()
-                subprocess.run(
-                    ['par2', 'create', '-B', directory, f'-r{redundancy}', '-n1', par2_base, relative_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                    text=True,
-                    cwd=directory
-                )
-                
-                creation_time = time.time() - start_time
-                # Only log individual file creation if it took a long time (>5s) or failed
-                if creation_time > 5.0:
-                    log(f"✓ Created par2 for {relative_path} in {creation_time:.1f}s", log_file)
-                if operation_logger:
-                    operation_logger.log_metric("par2_creation_time_seconds", creation_time, "seconds")
-                    operation_logger.log_metric("par2_file_size_mb", os.path.getsize(file_path) // (1024 * 1024), "MB")
-                
-                return True
-                
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Error creating par2 for {relative_path} (attempt {attempt + 1}): {e.stdout}"
-                log(error_msg, log_file)
-                if operation_logger:
-                    operation_logger.log_error("par2_creation_failed", error_msg, 
-                                          {"file": relative_path, "attempt": attempt + 1})
-                
-                _remove_par2_files(par2_base, log_file)
-                if attempt < PAR2_CREATE_RETRIES - 1:
-                    delay = min(PAR2_CREATE_BACKOFF_SECONDS * (2 ** attempt), PAR2_CREATE_MAX_BACKOFF_SECONDS)
-                    log(f"Retrying par2 create for {relative_path} in {delay}s", log_file)
-                    time.sleep(delay)
-        
-        return False
-    
-    return create_par2_atomic()
+    report = Findings(directory, database)
+    os.makedirs(report.root, mode=0o700, exist_ok=True)
+    for attempt in range(PAR2_CREATE_RETRIES):
+        staging = tempfile.mkdtemp(prefix="build-", dir=report.root)
+        staged_database = os.path.join(staging, "parity")
+        staged_base = os.path.join(staged_database, 'set.par2')
+        os.makedirs(os.path.dirname(staged_base), mode=0o700, exist_ok=True)
+        manifest = {"file": file_path, "state": "building", "destination": par2_base}
+        manifest_path = os.path.join(staging, "operation.json")
+        write_json_atomic(manifest_path, manifest)
+        before = file_identity(file_path)
+        try:
+            start_time = time.time()
+            with tempfile.TemporaryFile() as output:
+                command = ['par2', 'create', '-B', directory, f'-r{redundancy}', '-n1', staged_base, relative_path]
+                process = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
+                                         check=False, cwd=directory, timeout=14400)
+                output.seek(0, os.SEEK_END)
+                output.seek(max(0, output.tell() - 8192))
+                evidence = output.read().decode('utf-8', errors='replace')
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, command, output=evidence)
+            generated = _parity_files(staged_base)
+            if not generated or before != file_identity(file_path):
+                raise RuntimeError("Source changed or PAR2 produced no recognized parity")
+            verified = examine(file_path, directory, staged_database, staged_base=staged_base)
+            if verified['category'] != 'healthy' or before != file_identity(file_path):
+                raise RuntimeError("New parity failed independent verification or source changed")
+            for path in generated:
+                _confined_path(path, staged_database)
+                with open(path, 'rb') as stream:
+                    os.fsync(stream.fileno())
+            _fsync_directory(os.path.dirname(staged_base))
+            _confined_path(par2_base, database)
+            if locate(file_path, directory, database)[1]:
+                raise RuntimeError("Parity appeared during creation; preserving both sets")
+            manifest['state'] = 'publishing'
+            write_json_atomic(manifest_path, manifest)
+            publish(file_path, directory, database, generated)
+            manifest['state'] = 'completed'
+            write_json_atomic(manifest_path, manifest)
+            shutil.rmtree(staging)
+            if operation_logger:
+                operation_logger.log_metric("par2_creation_time_seconds", time.time() - start_time, "seconds")
+            return True
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            log(f"Parity build failed for {relative_path}; staging retained at {staging}: {str(exc)[:8192]}", log_file)
+            # Only tool creation failures are retried; never retry publication
+            # failures or source changes against a possibly different baseline.
+            if not isinstance(exc, subprocess.CalledProcessError) or attempt == PAR2_CREATE_RETRIES - 1:
+                return False
+            time.sleep(min(PAR2_CREATE_BACKOFF_SECONDS * (2 ** attempt), PAR2_CREATE_MAX_BACKOFF_SECONDS))
+    return False
 
 
 def _par2_base_from_parity_file(parity_path: str) -> str:
@@ -266,8 +261,12 @@ def _record_missing_files(
     """Record missing protected files without destroying their recovery parity."""
     checked_bases: set[str] = set()
     report = Findings(directory, database)
+    for relative in protected_files(database):
+        locate(os.path.join(directory, relative), directory, database)
+        if relative not in existing_files and not report.active(relative):
+            report.record(relative, {"category": "missing_file", "evidence": "Protected source absent; generation retained"})
     
-    for root, _, files in _scan_tree(database):
+    for root, _, files in _scan_tree(database, (os.path.abspath(os.path.join(database, METADATA_DIR)),)):
         if Path(root).is_relative_to(Path(database) / METADATA_DIR):
             continue
         for filename in files:
@@ -445,12 +444,12 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
             result["ok"] = False
             return result
         
-        source_inventory = _scan_tree(directory)
+        source_inventory = _scan_tree(directory, (os.path.abspath(database),))
         _confined_path(database, database)
         if Path(directory).resolve().is_relative_to(Path(database).resolve()):
             raise ValueError('Scrub database must not contain the source directory')
         if os.path.isdir(database):
-            _scan_tree(database)
+            _scan_tree(database, (os.path.abspath(os.path.join(database, METADATA_DIR)),))
         os.makedirs(database, exist_ok=True)
         
         database_path = Path(database).resolve()
@@ -495,8 +494,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                 file_path = os.path.join(root, filename)
                 relative_path = os.path.relpath(file_path, directory)
                 existing_files.add(relative_path)
-                par2_base = os.path.join(database, f"{relative_path}{PAR2_EXTENSION}")
-                parity_files = _parity_files(par2_base)
+                parity_files = locate(file_path, directory, database)[1]
                 is_new_par2 = not parity_files
                 
                 try:
@@ -523,7 +521,7 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
                                       operation_logger=operation_logger)
                 if success:
                     files_processed += 1
-                    if is_new_par2 and _parity_files(par2_base):
+                    if is_new_par2 and locate(file_path, directory, database)[1]:
                         files_created += 1
                     else:
                         # Existing or suspect content retains its baseline.

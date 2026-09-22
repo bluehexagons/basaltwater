@@ -72,10 +72,14 @@ the supplied backup into that workspace and verifies it against existing parity.
 A rejected candidate leaves the live file intact. A successful candidate is
 published through a temporary file beside the live file and an atomic replace.
 Existing ownership and permissions are retained when replacing a file.
+Recovery checks available space for retained copies and publication before
+staging. Repair and restore reject multiply hard-linked targets because replacing
+one name would leave the other names pointing at the old contents; separate the
+link deliberately before recovering it. Acceptance does not replace source data.
 
 `accept` means **you have confirmed that the current content is the desired
 baseline**. It builds and verifies new parity in staging before replacing the
-active parity set. It does not prove that the current content is historically
+active parity generation. It does not prove that the current content is historically
 correct. It can also establish protection when parity is missing or invalid.
 Absent and empty files cannot be accepted as PAR2 baselines. Restore and repair
 require existing parity so a candidate cannot silently become a new baseline.
@@ -101,12 +105,25 @@ maintenance pass does not resolve them. Inventory checks preserve parity for
 all missing protected files and never delete retained recovery copies. Intentional
 deletions therefore also require review; there is no automatic parity pruning.
 
-Accepting a baseline updates a multi-file parity set, so it is not an atomic
-transaction. The original set and a persisted operation manifest are retained
-before publication. If interrupted, the finding stays open; inspect the
-`recovery-*` directory and rerun explicit acceptance only after checking the
-source. No command silently discards a corrupt report or rebuilds parity for
-an already flagged file whose parity is missing.
+New and accepted parity sets live in immutable generation directories under
+`DATABASE/.basaltwater-scrub/sets/FILE_ID`. `FILE_ID` is derived from the relative
+source path; PAR2 filenames inside each generation are independent of that source
+name. One atomic `active.json` replacement selects the complete verified set.
+Older generations and legacy parity are retained. Existing unambiguous legacy
+sets remain readable without rewriting them; acceptance migrates that file to
+the generation layout. Ambiguous legacy volume-like filenames fail closed and
+require reviewing the old evidence and using a separately configured empty
+database. New generation sets support `.par2` and volume-like source filenames.
+
+An interrupted switch leaves either the previous complete generation or the new
+complete generation active. Its recovery manifest/finding can still be pending
+if the process stopped after the switch; targeted `verify` checks the active set
+and resolves a healthy file. Unpublished generation directories are ignored and
+retained. Initial builds have a four-hour subprocess deadline, verify before
+publication, and retain failed `build-*` staging directories for inspection.
+No command silently discards a corrupt report or rebuilds parity for an already
+flagged file whose parity is missing. Do not edit active-generation metadata by
+hand or prune retained generations until recovery is confirmed.
 
 Old log-only errors are not imported. The next scheduled scan, or a targeted
 `verify`, creates findings. An absent report means no findings have been

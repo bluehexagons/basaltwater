@@ -16,6 +16,15 @@ This review separates the fixes shipped with them from proposed follow-up work.
 - Each completed operation checkpoints its schedule before the next job starts.
 - Scheduled jobs now includes read-only storage integrity snapshots, with bounded
   findings, scan history, and explicit unavailable/stale states.
+- New parity is staged and independently verified with a subprocess deadline.
+  Immutable per-file generations use one atomic active record; old generations
+  and legacy sets are retained. Missing generation members fail closed.
+- Generation filenames avoid source/volume-name collisions. Ambiguous legacy
+  cases fail closed pending a separately configured database and operator review.
+- Source inventories exclude the parity database, and database inventories omit
+  private recovery payloads and generation contents.
+- Recovery preflights free space and refuses to replace one name of a multiply
+  hard-linked file. Acceptance remains available because it does not replace data.
 
 ## Remaining gaps and automation priorities
 
@@ -23,13 +32,11 @@ This review separates the fixes shipped with them from proposed follow-up work.
 | --- | --- | --- |
 | High | Sync runs before scrub and only knows previously recorded findings. Undetected corruption can still propagate; mirrors propagate deletions. | Add opt-in snapshot/version retention and verify-before-sync policies for critical roots. Test restore against the original baseline before publication. |
 | High | Standalone scripts and custom inline setup calls can bypass the orchestrator's lock and integrity guards. | Consolidate all mutation entry points behind one runner, including setup. Preserve existing setup error propagation and add overlap tests. |
-| High | Initial parity creation writes into the active database; interruption can leave an incomplete set. Creation has no subprocess deadline. | Stage and verify every new set, bound execution/output, detect source changes, and publish with a recoverable manifest. |
-| High | Accept publishes multiple parity files; interruption is recoverable but not atomic. | Use generation directories and one atomic active-generation pointer, with migration for existing databases. Reconcile interrupted manifests at startup. |
-| High | PAR2 filename conventions can be ambiguous for source names ending in `.par2` or resembling volume names. | Introduce unambiguous per-file identities in the generation layout; reject collisions before migration or writes. |
+| Medium | Interrupted manifests can remain pending even after a complete generation switch. | Add an explicit reconciliation command that verifies active content and presents retained staging for review. |
 | Medium | Incomplete scans restart from the beginning, and operational failures remain due hourly. | Persist attempt state and bounded retry backoff separately from completed cadence. Resume only when file/parity identities and configuration still match. |
 | Medium | Notifications summarize the latest run, which is not the same as persistent data health. | Separate per-job execution events from per-root integrity incidents. Notify on finding transitions, with explicit reminders and resolution events. |
-| Medium | Recovery copies grow indefinitely; intentional deletions remain open. | Add disk-space preflight, retention reporting, and an explicit archive/retire workflow with a preview. Never automatically accept or delete unresolved evidence. |
-| Medium | Large trees repeatedly load/write the findings JSON; recovery trees are inventoried too. | Introduce a transaction-scoped report cache or indexed store and exclude recovery payloads from inventory traversal. Benchmark on realistic NAS trees. |
+| Medium | Recovery copies grow indefinitely; intentional deletions remain open. | Add retention reporting and an explicit archive/retire workflow with a preview. Never automatically accept or delete unresolved evidence. |
+| Medium | Large trees repeatedly load/write the findings JSON. | Introduce a transaction-scoped report cache or indexed store. Benchmark on realistic NAS trees. |
 | Medium | Live writers can invalidate checks and hard-linked names are not recovered as a group. | Prefer filesystem snapshots or a configured quiesce hook; detect multiple links and require an explicit policy. Test ownership, ACLs, and extended attributes on supported filesystems. |
 
 These are follow-up proposals, not enabled capabilities. In particular, no policy

@@ -37,6 +37,7 @@ class TestFindings(unittest.TestCase):
         patch.object(scrub_par2, "log").start()
         patch.object(scrub_par2, "create_operation_logger").start()
         patch.object(findings.os, "chown").start()
+        patch.object(findings.shutil, "disk_usage", return_value=Mock(free=10**12)).start()
 
     def report(self):
         return findings.Findings(str(self.source), str(self.database))
@@ -210,8 +211,8 @@ class TestFindings(unittest.TestCase):
         with patch.object(scrub_par2, "create_par2", side_effect=create), self.run_par2(0):
             result = findings.remediate(*self.args, 10, "accept")
         self.assertEqual(self.file.read_bytes(), b"damaged")
-        self.assertFalse(self.parity.exists())
-        self.assertEqual((self.database / "data.bin.vol00+01.par2").read_bytes(), b"new-parity")
+        self.assertEqual(self.parity.read_bytes(), b"old-parity")
+        self.assertEqual(Path(scrub_par2.locate(*self.args)[1][0]).read_bytes(), b"new-parity")
         self.assertEqual((Path(result["recovery"]) / "parity/data.bin.par2").read_bytes(), b"old-parity")
         self.assertEqual(self.report().data["files"]["data.bin"]["resolution"], "accepted")
 
@@ -239,6 +240,17 @@ class TestFindings(unittest.TestCase):
         self.parity.unlink()
         with self.assertRaisesRegex(ValueError, "Existing parity"):
             findings.remediate(*self.args, 10, "restore", backup=str(self.file))
+
+    def test_space_preflight_and_hard_links_prevent_recovery_mutation(self):
+        with patch.object(findings.shutil, "disk_usage", return_value=Mock(free=0)), patch.object(findings.subprocess, "run") as run:
+            with self.assertRaisesRegex(OSError, "Insufficient free space"):
+                findings.remediate(*self.args, 10, "repair")
+        run.assert_not_called()
+        os.link(self.file, self.source / 'second-name')
+        with self.assertRaisesRegex(ValueError, 'hard-linked'):
+            findings.remediate(*self.args, 10, 'repair')
+        self.assertEqual(self.file.read_bytes(), b'damaged')
+        self.assertEqual(list(Path(self.report().root).glob('recovery-*')), [])
 
     def test_cleanup_preserves_missing_file_with_open_finding(self):
         self.report().record("data.bin", {"category": "unrepairable", "evidence": "damage"})

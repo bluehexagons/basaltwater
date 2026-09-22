@@ -268,8 +268,9 @@ class TestScrubResultFailures(unittest.TestCase):
             for name in names:
                 with open(os.path.join(tmp, name), 'w') as stream:
                     stream.write('keep')
-            scrub_par2._remove_par2_files(os.path.join(tmp, 'a.par2'), 'unused')
-            self.assertEqual(sorted(os.listdir(tmp)), sorted(names[2:]))
+            found = scrub_par2._parity_files(os.path.join(tmp, 'a.par2'))
+            self.assertEqual(sorted(os.path.basename(path) for path in found), sorted(names[:2]))
+            self.assertEqual(sorted(os.listdir(tmp)), sorted(names))
 
     def test_cli_returns_failure_for_unsuccessful_result(self):
         with patch.object(sys, 'argv', ['scrub', '/data', '/db', '10', '/log']), patch.object(scrub_par2, 'scrub_directory', return_value={'ok': False}):
