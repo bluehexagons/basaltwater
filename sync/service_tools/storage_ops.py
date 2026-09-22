@@ -259,8 +259,8 @@ def run_sync(source: str, destination: str, logger) -> tuple[bool, str]:
         return False, str(e)
 
 
-def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str]:
-    """Execute scrub operation."""
+def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logger) -> tuple[bool, str, bool]:
+    """Return success, message, and completion independently of integrity findings."""
     from sync.service_tools.scrub_par2 import scrub_directory
     
     mode = "full verify+repair" if verify else "parity update only"
@@ -279,20 +279,21 @@ def run_scrub(directory: str, database: str, redundancy: str, verify: bool, logg
         scrub_result = scrub_directory(directory, database, redundancy_int, log_file, verify, suppress_notifications=True)
         unrepairable = scrub_result.get("files_unrepairable", []) if isinstance(scrub_result, dict) else []
         ok = isinstance(scrub_result, dict) and scrub_result.get("ok") is True
+        completed = isinstance(scrub_result, dict) and scrub_result.get("completed") is True
         if unrepairable:
             sample = ", ".join(unrepairable[:5])
             extra = f" (and {len(unrepairable) - 5} more)" if len(unrepairable) > 5 else ""
-            return False, f"Scrub completed with {len(unrepairable)} unrepairable file(s) in {directory}: {sample}{extra}"
+            return False, f"Scrub found {len(unrepairable)} unrepairable file(s) in {directory}: {sample}{extra}", completed
         if not ok:
-            return False, f"Scrub did not complete cleanly for {directory}"
-        return True, f"Scrub completed for {directory}"
+            return False, f"Scrub did not complete cleanly for {directory}", completed
+        return True, f"Scrub completed for {directory}", completed
     except ValueError as e:
         error_msg = f"Invalid redundancy value '{redundancy}': {e}"
         log_event(logger, "Invalid scrub redundancy", level=ERROR, directory=directory, redundancy=redundancy, error=str(e))
-        return False, error_msg
+        return False, error_msg, False
     except Exception as e:
         log_event(logger, "Scrub failed", level=ERROR, directory=directory, error=str(e))
-        return False, str(e)
+        return False, str(e), False
 
 
 def execute_storage_operations() -> dict:
@@ -459,7 +460,7 @@ def execute_storage_operations() -> dict:
             continue
         
         full_scrubs_attempted.add((directory, resolved_database))
-        success, message = run_scrub(directory, resolved_database, redundancy, verify=True, logger=logger)
+        success, message, completed = run_scrub(directory, resolved_database, redundancy, verify=True, logger=logger)
         results["scrubs"].append({
             "directory": directory,
             "database": resolved_database,
@@ -468,10 +469,12 @@ def execute_storage_operations() -> dict:
             "full": True
         })
         
-        if success:
+        # A completed scan with damage must observe the configured interval,
+        # while still reporting failure. Only incomplete scans need a retry.
+        if completed:
             new_state[op_id] = time.time()
             new_state[get_parity_op_id(directory, database)] = new_state[op_id]
-        else:
+        if not success:
             results["success"] = False
     
     # Execute parity updates daily for scrub specs (no start notification - fast operation)
@@ -511,7 +514,7 @@ def execute_storage_operations() -> dict:
             results["success"] = False
             continue
         
-        success, message = run_scrub(directory, resolved_database, redundancy, verify=False, logger=logger)
+        success, message, completed = run_scrub(directory, resolved_database, redundancy, verify=False, logger=logger)
         results["parity_updates"].append({
             "directory": directory,
             "database": resolved_database,
@@ -521,7 +524,7 @@ def execute_storage_operations() -> dict:
         
         if not success:
             results["success"] = False
-        else:
+        if completed:
             new_state[parity_op_id] = time.time()
     
     # Save updated state

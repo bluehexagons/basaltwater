@@ -180,6 +180,7 @@ class TestScrubResultFailures(unittest.TestCase):
             with patch.object(scrub_par2, "log"), patch.object(scrub_par2, "create_operation_logger"), patch.object(scrub_par2, "create_par2") as create, patch.object(scrub_par2, "verify_repair", return_value=scrub_par2.VERIFY_UNREPAIRABLE) as verify:
                 result = scrub_par2.scrub_directory(source, database, 10, "unused", suppress_notifications=True)
                 self.assertFalse(result["ok"])
+                self.assertTrue(result["completed"])
                 self.assertEqual(result["files_unrepairable"], ["data.bin"])
                 self.assertEqual(result["files_verified"], 1)
                 verify.assert_called_once()
@@ -201,6 +202,7 @@ class TestScrubResultFailures(unittest.TestCase):
             with patch.object(scrub_par2, 'log'), patch.object(scrub_par2, 'create_operation_logger'), patch.object(scrub_par2.subprocess, 'run') as run:
                 result = scrub_par2.scrub_directory(source, database, 10, 'unused', verify=False, suppress_notifications=True)
                 self.assertTrue(result['ok'])
+                self.assertTrue(result['completed'])
                 self.assertEqual(result['files_updated'], 1)
                 self.assertEqual(result['files_created'], 0)
                 run.assert_called_once()
@@ -298,6 +300,7 @@ class TestScrubResultFailures(unittest.TestCase):
                 )
 
         self.assertFalse(result['ok'])
+        self.assertFalse(result['completed'])
         self.assertEqual(result['files_failed'], ['source.bin'])
         self.assertEqual(operation_logger.complete.call_args.args[0], 'failed')
 

@@ -120,10 +120,36 @@ class TestValidateMountsForOperation(unittest.TestCase):
 
 class TestRunScrub(unittest.TestCase):
     @patch("sync.service_tools.storage_ops.os.makedirs")
+    def test_completion_is_independent_of_integrity_and_execution_failures(self, _makedirs):
+        cases = [
+            ({"ok": True, "completed": True}, True, True),
+            ({"ok": False, "completed": True, "files_unrepairable": ["damaged.bin"]}, False, True),
+            ({"ok": False, "completed": False, "files_unrepairable": ["damaged.bin"],
+              "files_failed": ["unreadable.bin"]}, False, False),
+            ({"ok": False, "completed": False}, False, False),
+            (None, False, False),
+        ]
+        for result, expected_success, expected_completed in cases:
+            with self.subTest(result=result), patch(
+                "sync.service_tools.scrub_par2.scrub_directory", return_value=result
+            ):
+                success, message, completed = run_scrub("/data", "/db", "10%", True, MagicMock())
+                self.assertEqual((success, completed), (expected_success, expected_completed))
+                if isinstance(result, dict) and result.get("files_unrepairable"):
+                    self.assertIn("damaged.bin", message)
+
+        with patch("sync.service_tools.scrub_par2.scrub_directory", side_effect=OSError("read failed")):
+            self.assertEqual(
+                run_scrub("/data", "/db", "10%", True, MagicMock()),
+                (False, "read failed", False),
+            )
+
+    @patch("sync.service_tools.storage_ops.os.makedirs")
     def test_invalid_redundancy_returns_failure_tuple(self, _makedirs):
         logger = MagicMock()
-        success, message = run_scrub("/mnt/data", "/mnt/data/.pardb", "abc%", True, logger)
+        success, message, completed = run_scrub("/mnt/data", "/mnt/data/.pardb", "abc%", True, logger)
         self.assertFalse(success)
+        self.assertFalse(completed)
         self.assertIn("Invalid redundancy value", message)
         log_calls = [call.args[1] for call in logger.log.call_args_list]
         self.assertTrue(
@@ -334,7 +360,7 @@ class TestOpIdStability(unittest.TestCase):
     """
 
     @patch("sync.service_tools.storage_ops.send_operation_notification")
-    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK"))
+    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK", True))
     @patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, ""))
     @patch("sync.service_tools.storage_ops.save_last_run")
     @patch("sync.service_tools.storage_ops.load_last_run")
@@ -391,7 +417,7 @@ class TestParityCadence(unittest.TestCase):
         from sync.service_tools import storage_ops
 
         for success in (True, False):
-            with self.subTest(success=success), patch.object(storage_ops, "get_service_logger"), patch.object(storage_ops, "load_setup_config", return_value={"scrub_specs": [["/data", ".db", "10%", "weekly"]]}), patch.object(storage_ops, "parse_notification_args", return_value=[]), patch.object(storage_ops, "load_last_run", return_value={"scrub:/data:.db": 1}), patch.object(storage_ops, "save_last_run") as save, patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")), patch.object(storage_ops, "run_scrub", return_value=(success, "result")) as scrub:
+            with self.subTest(success=success), patch.object(storage_ops, "get_service_logger"), patch.object(storage_ops, "load_setup_config", return_value={"scrub_specs": [["/data", ".db", "10%", "weekly"]]}), patch.object(storage_ops, "parse_notification_args", return_value=[]), patch.object(storage_ops, "load_last_run", return_value={"scrub:/data:.db": 1}), patch.object(storage_ops, "save_last_run") as save, patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")), patch.object(storage_ops, "run_scrub", return_value=(success, "result", success)) as scrub:
                 result = storage_ops.execute_storage_operations()
                 scrub.assert_called_once()
                 self.assertTrue(scrub.call_args.kwargs["verify"])
@@ -399,8 +425,62 @@ class TestParityCadence(unittest.TestCase):
                 self.assertEqual(result["parity_updates"], [])
                 self.assertEqual("parity:/data:.db" in save.call_args.args[0], success)
 
+    def test_damage_observes_interval_but_incomplete_scans_retry(self):
+        from sync.service_tools import storage_ops
+
+        for completed in (True, False):
+            with (
+                self.subTest(completed=completed),
+                tempfile.TemporaryDirectory() as root,
+                patch.object(storage_ops, "STATE_FILE", os.path.join(root, "last_run.json")),
+                patch.object(storage_ops, "LOG_DIR", root),
+                patch.object(storage_ops, "get_service_logger"),
+                patch.object(storage_ops, "load_setup_config", return_value={
+                    "scrub_specs": [["/data", ".db", "10%", "weekly"]],
+                }),
+                patch.object(storage_ops, "parse_notification_args", return_value=["cfg"]),
+                patch.object(storage_ops, "validate_mounts_for_operation", return_value=(True, "")),
+                patch.object(storage_ops, "send_notification_safe") as notify,
+                patch.object(storage_ops.time, "time", return_value=1_000_000.0) as clock,
+                patch("sync.service_tools.scrub_par2.scrub_directory", return_value={
+                    "ok": False, "completed": completed,
+                    "files_unrepairable": ["damaged.bin"],
+                    "files_failed": [] if completed else ["unreadable.bin"],
+                }) as scrub,
+            ):
+                storage_ops.save_last_run({"scrub:/data:.db": 1.0})
+                first = storage_ops.execute_storage_operations()
+                self.assertFalse(first["success"])
+                self.assertEqual(notify.call_args.kwargs["status"], "error")
+                self.assertIn("damaged.bin", notify.call_args.kwargs["details"])
+                self.assertEqual(first["parity_updates"], [])
+
+                clock.return_value += 3600
+                second = storage_ops.execute_storage_operations()
+                self.assertEqual(len(second["scrubs"]), 0 if completed else 1)
+                self.assertEqual(scrub.call_count, 1 if completed else 2)
+                self.assertEqual(notify.call_count, 1 if completed else 2)
+                self.assertEqual(second["parity_updates"], [])
+                state = storage_ops.load_last_run()
+                self.assertEqual(state["scrub:/data:.db"], 1_000_000.0 if completed else 1.0)
+
+                if completed:
+                    # Daily parity maintenance continues without full verification.
+                    clock.return_value = 1_000_000.0 + FREQUENCY_SECONDS["daily"]
+                    scrub.return_value = {"ok": True, "completed": True}
+                    daily = storage_ops.execute_storage_operations()
+                    self.assertEqual(daily["scrubs"], [])
+                    self.assertFalse(scrub.call_args.args[4])
+                    self.assertEqual(storage_ops.load_last_run()["scrub:/data:.db"], 1_000_000.0)
+
+                    clock.return_value = 1_000_000.0 + FREQUENCY_SECONDS["weekly"]
+                    weekly = storage_ops.execute_storage_operations()
+                    self.assertEqual(len(weekly["scrubs"]), 1)
+                    self.assertTrue(scrub.call_args.args[4])
+                    self.assertEqual(weekly["parity_updates"], [])
+
     @patch("sync.service_tools.storage_ops.send_operation_notification")
-    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK"))
+    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK", True))
     @patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, ""))
     @patch("sync.service_tools.storage_ops.save_last_run")
     @patch("sync.service_tools.storage_ops.load_last_run", return_value={})
@@ -430,7 +510,7 @@ class TestParityCadence(unittest.TestCase):
         self.assertIn("parity:/data:.pardatabase", saved_state)
 
     @patch("sync.service_tools.storage_ops.send_operation_notification")
-    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK"))
+    @patch("sync.service_tools.storage_ops.run_scrub", return_value=(True, "OK", True))
     @patch("sync.service_tools.storage_ops.validate_mounts_for_operation", return_value=(True, ""))
     @patch("sync.service_tools.storage_ops.save_last_run")
     @patch("sync.service_tools.storage_ops.load_last_run")

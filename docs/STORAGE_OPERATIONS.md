@@ -73,8 +73,13 @@ Full scrubs report repaired files as warnings and unrepairable files as errors.
 Parity metadata lives under the configured database path; keep it on reliable
 storage separate from the data when possible.
 A full scrub already performs parity maintenance, so it is not followed by a
-second fast pass. If it fails, its last-success timestamp stays unchanged and
-the next scheduled run retries verification rather than bypassing it.
+second fast pass. A scan that finishes with unrepairable files records its
+completion timestamp and reports an error, then waits for the configured scrub
+interval before verifying again. Persistent damage does not trigger full scans
+and failure notifications every hour. Daily parity maintenance continues; its
+success does not mean previously reported damage has been repaired.
+If validation, file access, parity creation, or cleanup prevents completion,
+the timestamp stays unchanged and the next hourly run retries the operation.
 
 Scrub rejects symlinks in source and database paths, including parent components.
 Both trees must be fully readable before parity changes begin; an incomplete
@@ -97,9 +102,15 @@ sudo cat /var/lib/storage-ops/last_run.json
 
 The service uses `/run/lock/storage-ops.lock` to prevent overlapping runs and
 writes its last-run timestamps atomically to
-`/var/lib/storage-ops/last_run.json`. A failed or skipped operation remains due
-for a later run. The timer itself is hourly; each specification's interval is
-enforced by the orchestrator.
+`/var/lib/storage-ops/last_run.json`. Scrub timestamps represent completed scans,
+including scans that found unrepairable files; sync timestamps represent success.
+Incomplete or skipped operations remain due for a later run. The timer itself is
+hourly; each specification's interval is enforced by the orchestrator.
+
+After upgrading an installation affected by hourly retries, the old overdue
+timestamp is retained. Expect one more full scrub to record completion under
+the new behavior; no manual state reset is needed. The scan still reports any
+unrepairable files, which require restoration from an independent copy.
 
 ## Change or remove storage work
 

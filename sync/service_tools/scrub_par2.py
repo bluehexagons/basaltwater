@@ -405,13 +405,16 @@ def scrub_directory(directory: str, database: str, redundancy: int, log_file: st
         suppress_notifications: If True, skip sending notifications (caller will handle)
 
     Returns:
-        Result dict with keys: ok (bool), files_processed, files_created,
+        Result dict with keys: ok (bool), completed (bool), files_processed, files_created,
         files_updated, files_verified, files_repaired, files_failed, and
         files_unrepairable (lists of relative paths). ``ok`` is False when
         validation or parity creation failed or any files could not be repaired.
+        ``completed`` is True only after scanning and cleanup without operational
+        failures; finding unrepairable files does not make a scan incomplete.
     """
     result: dict = {
         "ok": True,
+        "completed": False,
         "files_processed": 0,
         "files_created": 0,
         "files_updated": 0,
@@ -755,6 +758,7 @@ Redundancy: {redundancy}%
         result["files_failed"] = list(files_failed)
         result["files_unrepairable"] = list(files_unrepairable)
         result["ok"] = not files_failed and not files_unrepairable
+        result["completed"] = not files_failed
         return result
 
     except Exception as e:
