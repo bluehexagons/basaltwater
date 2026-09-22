@@ -75,6 +75,7 @@ from lib.ssh_utils import (
     ensure_remote_sudo,
     get_ssh_control_path,
     ssh_batch_mode,
+    ssh_process_timeout,
 )
 from lib.workspace import set_workspace_dir
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1389,6 +1390,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     remote_shell_cmd,
                 ]
             )
+            batch_mode = ssh_batch_mode()
             ssh_cmd = build_ssh_command(
                 config.host,
                 remote_user,
@@ -1397,7 +1399,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     "timeout", "--signal=TERM", "--kill-after=10s", str(setup_timeout),
                     "/bin/sh", "-c", locked_remote_shell_cmd,
                 ]),
-                batch_mode=ssh_batch_mode(),
+                batch_mode=batch_mode,
                 connect_timeout=30,
                 server_alive_interval=30,
                 control_path=control_path,
@@ -1408,8 +1410,11 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             
             try:
                 returncode = run_streamed(
-                    ssh_cmd, timeout=setup_timeout, on_output=_relay_setup_output,
+                    ssh_cmd,
+                    timeout=ssh_process_timeout(setup_timeout, batch_mode=batch_mode),
+                    on_output=_relay_setup_output,
                     input_data=tar_data, env=ssh_env,
+                    interactive=not batch_mode,
                 )
                 return finish_network_transition(config, returncode)
             except Exception as e:

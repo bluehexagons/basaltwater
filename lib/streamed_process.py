@@ -15,23 +15,27 @@ from lib.remote_utils import (
 
 
 def run_streamed(
-    command: list[str], *, timeout: float, on_output: Callable[[str], None],
+    command: list[str], *, timeout: float | None, on_output: Callable[[str], None],
     input_data: bytes | None = None, cwd: str | None = None,
     env: dict[str, str] | None = None,
+    interactive: bool = False,
 ) -> int:
     """Relay UTF-8 output while feeding stdin, without unbounded pipe waits.
 
     Long lines are emitted in chunks to bound memory. Callbacks must return
     promptly. The deadline includes input delivery and inherited output pipes.
+    Interactive children retain the controlling terminal (for SSH passphrase
+    prompts via /dev/tty), while stdin remains reserved for the payload. Only
+    interactive callers may omit the deadline to allow time for a prompt.
     """
     bound = _validate_timeout(timeout)
-    if bound is None:
+    if bound is None and not interactive:
         raise ValueError("Streaming requires a finite deadline")
-    deadline = time.monotonic() + bound
+    deadline = time.monotonic() + bound if bound is not None else None
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        bufsize=0, cwd=cwd, env=env, start_new_session=True,
+        bufsize=0, cwd=cwd, env=env, start_new_session=not interactive,
     )
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     pending = ""
@@ -45,8 +49,8 @@ def run_streamed(
                 os.set_blocking(process.stdin.fileno(), False)
                 selector.register(process.stdin, selectors.EVENT_WRITE)
             while selector.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                remaining = deadline - time.monotonic() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
                     raise CommandTimeoutError(_command_text(command), bound)
                 for key, event in selector.select(remaining):
                     if event & selectors.EVENT_WRITE:
@@ -71,15 +75,17 @@ def run_streamed(
                         if not chunk:
                             selector.unregister(key.fileobj)
                             key.fileobj.close()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
                 raise CommandTimeoutError(_command_text(command), bound)
             try:
                 return process.wait(timeout=remaining)
             except subprocess.TimeoutExpired as exc:
                 raise CommandTimeoutError(_command_text(command), bound) from exc
     except BaseException:
-        _terminate_timed_out_process(process)
+        # Interactive SSH shares the caller's process group. Never signal that
+        # group on cancellation or callback failure: it includes the caller.
+        _terminate_timed_out_process(process, isolated=not interactive)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:

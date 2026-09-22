@@ -21,6 +21,13 @@ prompt, setup opens one fresh connection so the operator can enter the key
 passphrase again. SSH connection establishment still has its own timeout, and
 the command remains interruptible with Ctrl-C.
 
+Streamed setup uploads also retain the controlling terminal in interactive
+runs. SSH reads the passphrase directly from that terminal while standard
+input carries the setup archive; no graphical `ssh-askpass` program or prior
+`ssh-add` is required. The remote setup timeout still applies once the remote
+command starts, but time spent entering the local key passphrase does not
+consume it. Non-interactive uploads retain their local deadline and batch mode.
+
 Commands started without a terminal—such as piped setup, automation, and
 parallel host checks—cannot safely ask several processes for a passphrase. In
 that case Basaltwater enables OpenSSH batch mode and retains bounded operation
