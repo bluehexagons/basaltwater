@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
+from common.service_tools.web_panel_storage import render_storage
 
 
 _PROPERTIES = (
@@ -167,6 +168,7 @@ def render_jobs(
 <dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a></section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
+        content += render_storage()
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Scheduled jobs</h1>
 <p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>

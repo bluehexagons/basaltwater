@@ -111,6 +111,12 @@ uses the same timestamp/update checks and counters as sets with an index file.
 
 ## Inspect and run operations
 
+In the web panel, open **Scheduled jobs → Load scheduled jobs** for a read-only
+Storage integrity section alongside timer/process status. Its private root-produced
+snapshot refreshes every five minutes and shows bounded findings and scan history.
+Stale or unavailable snapshots are explicit; loading the page never starts a scan.
+Use the CLI for the complete report and remediation.
+
 ```bash
 basaltw scrub status fileserver
 basaltw scrub inspect fileserver --file /srv/data/example.bin

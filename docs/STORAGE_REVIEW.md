@@ -14,6 +14,8 @@ This review separates the fixes shipped with them from proposed follow-up work.
 - Scheduled syncs block known suspect files in either affected tree and reject
   destinations overlapping a configured parity database, including aliases.
 - Each completed operation checkpoints its schedule before the next job starts.
+- Scheduled jobs now includes read-only storage integrity snapshots, with bounded
+  findings, scan history, and explicit unavailable/stale states.
 
 ## Remaining gaps and automation priorities
 
@@ -35,13 +37,23 @@ automatically treats a newer timestamp as proof that content is healthy.
 
 ## Web panel integration
 
-The panel already exposes `storage-ops.service` in Scheduled jobs and Service
-diagnostics. Those screens show timer/process state and readable journal entries;
-they cannot establish whether all protected files are healthy. The panel runs
-without root, while findings and recovery copies are private. Keep that boundary.
+The panel exposes `storage-ops.service` in Scheduled jobs and Service diagnostics.
+Scheduled jobs now also includes a **Storage integrity** section after selecting
+Load scheduled jobs. It shows up to eight configured scrub jobs and twenty open
+findings per job, including first detection and last check. Omitted counts are
+explicit. The existing root audit exporter writes a separate mode-0640
+`audit/storage.json` snapshot every five minutes, using a twenty-second bounded
+subprocess. The web account reads that export; private findings, recovery copies,
+tool evidence, and source contents remain inaccessible. Missing, malformed,
+unreadable, or more than fifteen-minute-old exports show unavailable. Jobs whose
+mounts/reports cannot be read show unavailable separately. Protected home paths
+remain unavailable under the exporter's existing systemd sandbox.
 
-The recommended first increment is a **read-only Storage page** backed by a small,
-root-produced snapshot, following the existing audit snapshot exporter pattern:
+Rerun setup to deploy the exporter and panel module. A CLI remediation becomes
+visible after the next export; opening or refreshing the page never runs PAR2.
+The snapshot is historical evidence, not a live guarantee of data health.
+
+Further read-only refinements can add a dedicated Storage page:
 
 1. Export only configured job identifiers, scan timestamps, completion state,
    open counts by category, a bounded list of affected paths, and recommended

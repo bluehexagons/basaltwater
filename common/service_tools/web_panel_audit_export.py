@@ -300,6 +300,19 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     validate_filesystem_path(args.output, must_exist=False)
+    # Isolate mount/report reads from the audit collector with a deadline and
+    # output cap. Failure replaces an old healthy snapshot with unavailable.
+    storage = _run_bounded([
+        sys.executable, os.path.join(SOURCE_ROOT, "common/service_tools/web_panel_storage.py"),
+        "--export",
+    ], timeout=20)
+    import json
+    try:
+        storage_snapshot = json.loads(storage[1]) if storage and storage[0] == 0 else {"available": False}
+    except ValueError:
+        storage_snapshot = {"available": False}
+    write_json_atomic(os.path.join(os.path.dirname(args.output), "storage.json"),
+                      storage_snapshot, mode=0o640)
     write_json_atomic(
         args.output,
         collect_audit_snapshot(),
