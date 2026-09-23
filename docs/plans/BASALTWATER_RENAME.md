@@ -17,7 +17,7 @@ continues to own delivery priority.
 | Context | Name | Convention |
 | --- | --- | --- |
 | Public display name | Basaltwater | Use in document titles, release announcements, and ordinary product references. |
-| Technical identity | `basaltwater` | Distribution name; the existing `bluehexagons/infra_tools` repository remains the source host. Publication clearance remains on the [release checklist](../BASALTWATER_RELEASE.md). |
+| Technical identity | `basaltwater` | Distribution name; `bluehexagons/basaltwater` is the source host. Publication clearance remains on the [release checklist](../BASALTWATER_RELEASE.md). |
 | Primary command | `basaltw` | Use consistently in installation instructions, examples, completion, and generated commands. |
 | Maintainer identity | bluehexagons | Retain attribution without requiring company knowledge to understand or use the project. |
 | Transitional description | Basaltwater, formerly infra-tools | Use where it helps existing users recognize the rename; retire after a defined transition period. |

@@ -14,8 +14,8 @@ controller migrations retain the explicit `basaltw migrate` command for the
 remaining user data; default controller configuration reads migrate recent
 default client files automatically, including saved hosts.
 There are no persistent old-name aliases, environment fallbacks, or historical
-release support after cutover. The existing `bluehexagons/infra_tools` GitHub
-location remains authoritative until the owner renames the repository.
+release support after cutover. The repository is hosted at
+`bluehexagons/basaltwater`.
 
 ## Repository verification
 

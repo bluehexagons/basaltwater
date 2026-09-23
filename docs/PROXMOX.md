@@ -21,7 +21,7 @@ Proxmox host does not need a checkout; setup uploads the installed source to
 `/opt/basaltwater`.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sh "$HOME/.basaltwater-install.sh"
 rm -f "$HOME/.basaltwater-install.sh"
 basaltw channel

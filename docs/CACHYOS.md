@@ -19,7 +19,7 @@ desktop session and run this as yourself (without `sudo`):
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
   --output "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
+  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
 sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
   --node --python --git-lfs
 ```
@@ -119,7 +119,7 @@ service:
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
   --output "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh &&
+  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
 sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
   --agent-tool gh --agent-tool codex --web-interface t3code \
   --web-interface-port 3773

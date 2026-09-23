@@ -2,7 +2,7 @@
 
 Status: native setup, recovery, recurring updates, and operator documentation
 implemented on 2026-09-07. Full disposable Debian VM qualification remains a
-release validation task. This record tracks [issue #99](https://github.com/bluehexagons/infra_tools/issues/99)
+release validation task. This record tracks [issue #99](https://github.com/bluehexagons/basaltwater/issues/99)
 under the [lightweight service project](LIGHTWEIGHT_SERVICE_CANDIDATES.md).
 
 The live operator contract is [HomeBox inventory](../HOMEBOX.md). This plan

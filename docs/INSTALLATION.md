@@ -34,7 +34,7 @@ installed, replace the download command with:
 ```bash
 curl --fail --location --connect-timeout 15 --max-time 120 \
   -o "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 ```
 
 If neither command is available, install one first with:
@@ -60,7 +60,7 @@ account.
 Use this when you want to choose the first setup later:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sh "$HOME/.basaltwater-install.sh"
 rm -f "$HOME/.basaltwater-install.sh"
 ```
@@ -69,7 +69,7 @@ The installer uses `sudo` for packages when needed. To install the source in
 `/opt/basaltwater` and expose a system launcher instead, use:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER"
 rm -f "$HOME/.basaltwater-install.sh"
 ```
@@ -80,7 +80,7 @@ This installs common administrator and Linux tools and configures the local
 machine to manage other VMs and containers:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
 rm -f "$HOME/.basaltwater-install.sh"
 ```
@@ -92,7 +92,7 @@ guest-agent package and starts and enables its systemd service during
 self-setup:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --qemu-guest-agent \
   --local-setup control_plane
 rm -f "$HOME/.basaltwater-install.sh"
@@ -116,7 +116,7 @@ See [XRDP migration and recovery](XRDP.md#migration-and-recovery) before convert
 a machine that currently relies on local graphical login.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
   --control-plane --desktop xfce --rdp --rdp-existing-password
 rm -f "$HOME/.basaltwater-install.sh"

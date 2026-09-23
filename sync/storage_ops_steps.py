@@ -90,7 +90,7 @@ def create_storage_ops_service(config: SetupConfig, **_kwargs: Any) -> None:
     service_content = f"""[Unit]
 Description=Unified storage operations (sync, scrub, parity)
 After=local-fs.target network.target
-Documentation=https://github.com/bluehexagons/infra_tools/blob/main/docs/STORAGE_OPERATIONS.md
+Documentation=https://github.com/bluehexagons/basaltwater/blob/main/docs/STORAGE_OPERATIONS.md
 
 [Service]
 Type=oneshot

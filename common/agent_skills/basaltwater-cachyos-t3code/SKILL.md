@@ -75,6 +75,6 @@ Omitting the web-interface flag on a later setup does not uninstall the service.
 
 This profile does not install the VM gateway, device-pairing helpers, managed
 Playwright, or KDE automation. Do not use VM-specific T3 repair/update commands
-for this service. Read the [CachyOS operator guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/CACHYOS.md)
+for this service. Read the [CachyOS operator guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md)
 for deliberate runtime updates (also in the installed checkout at
 `~/.local/share/basaltwater/docs/CACHYOS.md`).

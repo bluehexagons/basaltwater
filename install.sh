@@ -2,7 +2,7 @@
 
 set -eu
 
-REPOSITORY="bluehexagons/infra_tools"
+REPOSITORY="bluehexagons/basaltwater"
 # Explicit values, including empty settings, are validated below.
 REPOSITORY_URL="${BASALTWATER_REPOSITORY_URL-https://github.com/$REPOSITORY.git}"
 CHANNEL="${BASALTWATER_CHANNEL-dev}"
@@ -45,11 +45,11 @@ Options:
 
 Examples:
   Download with wget, then run the script (run each line in order):
-  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
   sh "$HOME/.basaltwater-install.sh"
   rm -f "$HOME/.basaltwater-install.sh"
   Download with wget and run a privileged setup:
-  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
   sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane \
     --agent-tool gh --agent-tool codex --agent-tool claude --agent-tool opencode
   rm -f "$HOME/.basaltwater-install.sh"
@@ -58,7 +58,7 @@ Examples:
   sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --qemu-guest-agent --local-setup control_plane
   rm -f "$HOME/.basaltwater-install.sh"
   Download with curl instead by replacing the wget command with:
-  curl --fail --location --connect-timeout 15 --max-time 120 -o "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+  curl --fail --location --connect-timeout 15 --max-time 120 -o "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 EOF
 }
 

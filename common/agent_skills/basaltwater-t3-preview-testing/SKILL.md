@@ -125,7 +125,7 @@ certificate over an existing trusted path and verify its fingerprint before
 installation. Never transfer the CA private key.
 
 For enrollment, read only the matching platform section of the
-[client CA trust guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/CLIENT_CA_TRUST.md)
+[client CA trust guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CLIENT_CA_TRUST.md)
 (or `docs/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
 this client security change. After enrollment, restart the client, recheck
 preview status, and retry the existing tab. If enrollment is declined or the

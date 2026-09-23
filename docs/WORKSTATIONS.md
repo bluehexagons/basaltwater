@@ -13,7 +13,7 @@ profile with `--control-plane` and select the agent tools you need (GitHub CLI
 and Codex CLI in this example):
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
   --control-plane --desktop xfce --rdp --rdp-existing-password
 rm -f "$HOME/.basaltwater-install.sh"

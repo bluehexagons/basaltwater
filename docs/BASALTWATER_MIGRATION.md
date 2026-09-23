@@ -3,8 +3,8 @@
 Basaltwater is a full rename: distribution `basaltwater`, entry module
 `basaltwater.py`, command `basaltw`, and Basaltwater paths, services, skills,
 environment variables, and generated configuration. Normal operation has no
-old-name aliases or fallback paths. The GitHub repository stays at
-`bluehexagons/infra_tools` until its owner performs the hosting rename.
+old-name aliases or fallback paths. The repository is hosted at
+`bluehexagons/basaltwater`.
 
 ## Supported starting point
 

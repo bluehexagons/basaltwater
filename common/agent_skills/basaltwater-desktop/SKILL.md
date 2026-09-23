@@ -113,7 +113,7 @@ on a running desktop. It uses a private test profile, verifies saved UTF-8 bytes
 and closes its own window and removes test files on success. On failure it
 reports the stage and retains the test instance/files for inspection; inspect
 and close that instance before rerunning. It never resumes paused control.
-See the [desktop automation guide](https://github.com/bluehexagons/infra_tools/blob/main/docs/DESKTOP_AUTOMATION.md)
+See the [desktop automation guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_AUTOMATION.md)
 for smoke-check details and manual steps when needed (or read that file in a
 Basaltwater checkout). Verify ordinary task outputs with file tools as well.
 

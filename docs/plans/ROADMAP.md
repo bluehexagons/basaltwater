@@ -14,7 +14,7 @@ issue-to-implementation evidence.
 ## Basaltwater release checkpoint (2026-09-19)
 
 The rename's core namespace implementation is delivered in
-[PR #101](https://github.com/bluehexagons/infra_tools/pull/101): distribution
+[PR #101](https://github.com/bluehexagons/basaltwater/pull/101): distribution
 `basaltwater`, entry point `basaltwater.py`, command `basaltw`, renamed runtime
 resources and skills, one-time migration from recent installations, and visual
 assets. New storage uses Basaltwater names while existing disks retain their

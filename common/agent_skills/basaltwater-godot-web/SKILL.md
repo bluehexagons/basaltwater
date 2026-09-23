@@ -82,7 +82,7 @@ handoff if physics callbacks run on a separate thread.
 Do not assume the canvas exposes Godot objects to JavaScript. Compare a fixed
 seed/input scenario with tolerances and retain the engine/backend, timestep,
 revision, and debug/release mode. Verify the normal release without tracing.
-The [physics testing recipe](https://github.com/bluehexagons/infra_tools/blob/main/docs/GODOT.md#browser-and-physics-testing)
+The [physics testing recipe](https://github.com/bluehexagons/basaltwater/blob/main/docs/GODOT.md#browser-and-physics-testing)
 has a bounded capture example and measurement guidance.
 
 ## Live previews

@@ -10,9 +10,9 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/bluehexagons/infra_tools"
-Documentation = "https://github.com/bluehexagons/infra_tools/blob/main/docs/README.md"
-Issues = "https://github.com/bluehexagons/infra_tools/issues"
+Repository = "https://github.com/bluehexagons/basaltwater"
+Documentation = "https://github.com/bluehexagons/basaltwater/blob/main/docs/README.md"
+Issues = "https://github.com/bluehexagons/basaltwater/issues"
 
 [project.optional-dependencies]
 completion = ["argcomplete>=3.0.0"]

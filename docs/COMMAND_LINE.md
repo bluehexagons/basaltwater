@@ -493,7 +493,7 @@ For the local machine, the installer can select the control-plane profile and
 run it immediately:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
 rm -f "$HOME/.basaltwater-install.sh"
 ```
@@ -503,7 +503,7 @@ graphical sessions and run from SSH or a text console. Console graphical login
 is disabled. Select the agent tools needed (GitHub CLI and Codex here):
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/infra_tools/main/install.sh
+wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
 sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup workstation_dev \
   --control-plane --agent-tool gh --agent-tool codex --desktop xfce --rdp --rdp-existing-password
 rm -f "$HOME/.basaltwater-install.sh"

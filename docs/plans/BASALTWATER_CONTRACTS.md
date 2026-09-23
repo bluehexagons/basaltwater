@@ -8,7 +8,7 @@ to retain internal names through v2.x.
 | Surface | Canonical contract | One-time cutover |
 | --- | --- | --- |
 | Distribution / Python / command | `basaltwater` / `basaltwater.py` / `basaltw` | Replace launchers; no old import shim or executable alias |
-| Source hosting | `bluehexagons/infra_tools` until the owner's repository rename | No premature URL changes |
+| Source hosting | `bluehexagons/basaltwater` | Update repository links and install examples to the renamed repository |
 | System runtime and data | `/opt/basaltwater`, `/etc/basaltwater`, `/var/lib/basaltwater`, `/var/log/basaltwater` | Move recent data, preserve private bytes/modes, stage current runtime |
 | User data | Basaltwater directories under `.config`, `.cache`, `.local/share`, `.local/state`, `Pictures` | Merge only disjoint entries; refuse conflicting data |
 | Services / accounts / resources | Basaltwater names and owned configuration | Stop old units; rename accounts without changing UIDs; restore recorded activity under new names |
