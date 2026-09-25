@@ -59,6 +59,23 @@ class RenameMigrationTests(unittest.TestCase):
             self.assertTrue((root / '.config/basaltwater/git/identity.json').exists())
             self.assertFalse((root / '.config/infra-tools').exists())
 
+    @patch('lib.setup_common.copy_project_files')
+    def test_runtime_merges_with_hyphenated_data_moved_to_same_destination(self, copy):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write(root, '.local/share/infra-tools/cache.json', '{}')
+            self.write(root, '.local/share/infra_tools/infra_tools.py', '# old CLI')
+            self.write(root, '.local/share/infra_tools/lib/installation_info.py', '# recent provenance')
+            copy.side_effect = lambda destination: self.write(Path(destination), 'basaltwater.py', '# new runtime')
+            source = Path(migration.__file__).resolve().parents[1]
+
+            migration.apply_plan(migration.build_plan(root, system=False, runtime_source=source))
+
+            destination = root / '.local/share/basaltwater'
+            self.assertEqual((destination / 'cache.json').read_text(), '{}')
+            self.assertEqual((destination / 'basaltwater.py').read_text(), '# new runtime')
+            self.assertFalse((root / '.local/share/infra_tools').exists())
+
     def worktree_fixture(self, root: Path) -> tuple[Path, Path]:
         tree = root / '.local/share/infra_tools/worktrees/project/task'
         metadata = root / 'repos/project/.git/worktrees/task'

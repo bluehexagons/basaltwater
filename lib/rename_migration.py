@@ -373,7 +373,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
         if runtime_source is None or not (runtime_source / "basaltwater.py").is_file():
             raise ValueError("A complete Basaltwater source tree is required for runtime cutover")
         destination = legacy_runtime.with_name("basaltwater")
-        if os.path.lexists(destination):
+        if os.path.lexists(destination) and destination not in occupied:
             raise ValueError(f"Runtime destination already exists: {destination}")
     for parent in SYSTEM_DIRS if system else USER_DIRS:
         directory = root / parent
@@ -407,6 +407,7 @@ def build_plan(root: Path, *, system: bool, runtime_source: Path | None = None, 
         elif not system and state.is_dir() and not state.is_symlink():
             edits.extend(_state_edits(state, legacy_runtime.with_name("basaltwater") / "state"))
         actions.append({"kind": "runtime", "old": str(legacy_runtime), "new": str(legacy_runtime.with_name("basaltwater")), "source": str(runtime_source),
+                        "merge": legacy_runtime.with_name("basaltwater") in occupied,
                         "archive": str(legacy_runtime.with_name(".basaltwater-migration-" + uuid.uuid4().hex))})
     resources = list(RESOURCE_DIRS if system else (".config/systemd/user", ".local/bin"))
     if system and (root / "etc/pve/nodes").is_dir():
@@ -777,6 +778,20 @@ def _action_archive(action: dict, recovery: Path, *, create: bool = False) -> Pa
     return archive
 
 
+def _merge_runtime_stage(stage: Path, destination: Path) -> None:
+    """Merge a freshly staged runtime into data moved to its destination."""
+    for source in sorted(stage.iterdir()):
+        target = destination / source.name
+        if os.path.lexists(target):
+            if source.is_dir() and not source.is_symlink() and target.is_dir() and not target.is_symlink():
+                _merge_runtime_stage(source, target)
+                source.rmdir()
+                continue
+            raise ValueError(f"Conflicting runtime destination: {target}")
+        source.rename(target)
+    stage.rmdir()
+
+
 def apply_plan(plan: dict) -> None:
     handles = []
     try:
@@ -949,7 +964,10 @@ def _apply_plan(plan: dict, lock_handles: list) -> None:
             (stage / ".basaltwater/managed-install").write_text("basaltwater-v1\n")
             old.rename(archive / "previous-runtime")
             new = Path(action["new"])
-            stage.rename(new)
+            if action.get("merge"):
+                _merge_runtime_stage(stage, new)
+            else:
+                stage.rename(new)
             if plan["system"]:
                 (new / "state").symlink_to(Path(plan["root"]) / "var/lib/basaltwater")
         plan["completed"] = index + 1
