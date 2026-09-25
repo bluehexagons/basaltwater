@@ -66,10 +66,19 @@ def _check_runtime(prefix: Path, home: Path) -> str:
     if not match:
         raise RuntimeError("T3 runtime did not report a valid version")
     version = match.group(1)
-    # Version output alone does not load the native terminal addon. Exercise a
-    # disposable shell without contacting providers or starting a T3 server.
+    # Version output alone does not load the native terminal addon. Older T3
+    # releases place node-pty under t3, while newer releases bundle it under
+    # the platform-specific CLI package. Exercise a disposable shell without
+    # contacting providers or starting a T3 server.
     script = (
-        "const pty = require(require.resolve('node-pty', {paths: [process.argv[1]]}));"
+        "const root = process.argv[1];"
+        "const paths = [root];"
+        "try {"
+        "  const platformPackage = '@t3code/t3-' + process.platform + '-' + process.arch;"
+        "  const packageJson = require.resolve(platformPackage + '/package.json', {paths: [root]});"
+        "  paths.push(require('node:path').dirname(packageJson));"
+        "} catch {}"
+        "const pty = require(require.resolve('node-pty', {paths}));"
         "const child = pty.spawn('/bin/sh', ['-c', 'exit 0'], {cwd: '/', env: {PATH: '/usr/bin:/bin'}});"
         "const timer = setTimeout(() => {child.kill(); process.exit(1)}, 5000);"
         "child.onExit(({exitCode}) => {clearTimeout(timer); process.exit(exitCode === 0 ? 0 : 1)});"
