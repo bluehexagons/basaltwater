@@ -616,7 +616,12 @@ if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.basaltwater/channel.json" ]; 
 fi
 
 if [ -e "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.git" ]; then
-    if [ -n "$(git -C "$INSTALL_DIR" status --porcelain)" ]; then
+    if [ -d "$INSTALL_DIR/cachyos-t3" ] && [ ! -L "$INSTALL_DIR/cachyos-t3" ]; then
+        existing_changes=$(git -C "$INSTALL_DIR" status --porcelain -- . ':(exclude)cachyos-t3')
+    else
+        existing_changes=$(git -C "$INSTALL_DIR" status --porcelain)
+    fi
+    if [ -n "$existing_changes" ]; then
         fail "existing install has local changes; commit or stash them before reinstalling"
     fi
 fi
