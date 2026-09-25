@@ -277,6 +277,24 @@ class TestInstallScript(unittest.TestCase):
                 ["setup", "server_dev", "10.0.0.50", "agent", "--dry-run"],
             )
 
+    def test_cachyos_installer_runs_migration_before_bootstrap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, log_path, environment = self._create_fixture(directory)
+            environment["BASALTWATER_TEST_OS_ID"] = "cachyos"
+            install_dir = os.path.join(directory, "home", ".local", "share", "basaltwater")
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(log_path, encoding="utf-8") as file_obj:
+                calls = [json.loads(line) for line in file_obj]
+            self.assertEqual(calls[0], ["migrate", "--apply"])
+            self.assertEqual(calls[1][0], "bootstrap")
+
 
     def test_empty_new_installer_settings_do_not_fall_back(self):
         for name in ("CHANNEL", "REPOSITORY_URL"):
@@ -382,7 +400,8 @@ class TestInstallScript(unittest.TestCase):
             self.assertFalse(os.path.exists(sudo_log))
             with open(log_path) as handle:
                 calls = [json.loads(line) for line in handle]
-            self.assertEqual(calls[1], ["setup", "agent_cachyos", "localhost", "testuser", "--node"])
+            self.assertEqual(calls[0], ["migrate", "--apply"])
+            self.assertEqual(calls[2], ["setup", "agent_cachyos", "localhost", "testuser", "--node"])
 
     def test_cachyos_rejects_other_local_profiles_before_installation(self):
         with tempfile.TemporaryDirectory() as directory:

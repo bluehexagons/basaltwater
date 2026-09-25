@@ -30,6 +30,11 @@ ripgrep, build tools, GitHub CLI, and Codex plus Node.js, Python, and Git LFS.
 The `dev` channel is required while this profile is new; older release tags do
 not contain it.
 
+When the installer finds recent `infra_tools` user data, it runs the one-time
+Basaltwater migration from the selected checkout before installing and starting
+the CachyOS setup. Migration conflicts stop the installer with the reported
+path or recovery instructions.
+
 No account, password, group, sudo, provider, or Git identity changes are made.
 Log in to providers through their normal commands when needed:
 

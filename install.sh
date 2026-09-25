@@ -586,12 +586,15 @@ for part in (target, *target.parents):
         refuse('symlink path component')
 if os.path.ismount(target):
     refuse('mount point')
-if target.name == 'basaltwater' and (target.parent / 'infra_tools' / 'infra_tools.py').exists():
-    refuse('recent infra-tools installation present; run the one-time Basaltwater migration first')
 if target.exists():
     marker = target / '.basaltwater' / 'managed-install'
     managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
-    if not managed:
+    migrated = (
+        target.name == 'basaltwater'
+        and (target / 'basaltwater.py').is_file()
+        and any(target.parent.glob('.basaltwater-migration-*'))
+    )
+    if not managed and not migrated:
         refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
 EOF
 
@@ -665,6 +668,48 @@ if ! git -C "$STAGED_DIR" checkout --detach "$TARGET_REF" >/dev/null; then
 fi
 
 [ -f "$STAGED_DIR/basaltwater.py" ] || fail "selected source predates Basaltwater; historical releases are unsupported"
+
+if [ "$HOST_OS_ID" = cachyos ]; then
+    printf '\nChecking for recent infra-tools data to migrate...\n'
+    if ! env HOME="$TARGET_HOME" USER="$TARGET_USER" \
+        python3 "$STAGED_DIR/basaltwater.py" migrate --apply; then
+        fail "CachyOS Basaltwater migration failed; preserve any migration journal and resolve its reported conflict before retrying"
+    fi
+fi
+
+python3 - "$INSTALL_DIR" "$TARGET_HOME" <<'EOF'
+from __future__ import annotations
+import os
+from pathlib import Path
+import sys
+
+target = Path(sys.argv[1])
+home = Path(sys.argv[2])
+def refuse(reason: str) -> None:
+    sys.exit(f"Basaltwater installer: refusing install directory {target}: {reason}")
+
+if str(target) != os.path.normpath(sys.argv[1]) or '..' in target.parts:
+    refuse('use a normalized absolute path')
+if target == home or target in home.parents:
+    refuse('home directory or its ancestor')
+if len(target.parts) < 3 or str(target) in ('/var/lib', '/usr/local', '/usr/share', '/var/cache'):
+    refuse('use a dedicated application directory')
+for part in (target, *target.parents):
+    if part.is_symlink():
+        refuse('symlink path component')
+if os.path.ismount(target):
+    refuse('mount point')
+if target.exists():
+    marker = target / '.basaltwater' / 'managed-install'
+    managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
+    migrated = (
+        target.name == 'basaltwater'
+        and (target / 'basaltwater.py').is_file()
+        and any(target.parent.glob('.basaltwater-migration-*'))
+    )
+    if not managed and not migrated:
+        refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
+EOF
 
 if [ -e "$INSTALL_DIR" ]; then
     BACKUP_DIR="${INSTALL_DIR}.backup.$(date +%s).$$"
