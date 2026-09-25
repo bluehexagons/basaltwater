@@ -589,12 +589,19 @@ if os.path.ismount(target):
 if target.exists():
     marker = target / '.basaltwater' / 'managed-install'
     managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
+    data_only = (
+        target == home / '.local/share/basaltwater'
+        and target.is_dir()
+        and (target / 'cachyos-t3').is_dir()
+        and not (target / 'basaltwater.py').exists()
+        and not (target / '.git').exists()
+    )
     migrated = (
         target.name == 'basaltwater'
         and (target / 'basaltwater.py').is_file()
         and any(target.parent.glob('.basaltwater-migration-*'))
     )
-    if not managed and not migrated:
+    if not managed and not data_only and not migrated:
         refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
 EOF
 
@@ -702,12 +709,19 @@ if os.path.ismount(target):
 if target.exists():
     marker = target / '.basaltwater' / 'managed-install'
     managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
+    data_only = (
+        target == home / '.local/share/basaltwater'
+        and target.is_dir()
+        and (target / 'cachyos-t3').is_dir()
+        and not (target / 'basaltwater.py').exists()
+        and not (target / '.git').exists()
+    )
     migrated = (
         target.name == 'basaltwater'
         and (target / 'basaltwater.py').is_file()
         and any(target.parent.glob('.basaltwater-migration-*'))
     )
-    if not managed and not migrated:
+    if not managed and not data_only and not migrated:
         refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
 EOF
 
@@ -731,6 +745,14 @@ fi
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/.basaltwater" ]; then
     if ! cp -a "$BACKUP_DIR/.basaltwater" "$INSTALL_DIR/.basaltwater"; then
         fail "could not preserve existing channel state"
+    fi
+fi
+if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR/cachyos-t3" ]; then
+    if [ -e "$INSTALL_DIR/cachyos-t3" ]; then
+        fail "could not preserve existing CachyOS T3 data"
+    fi
+    if ! cp -a "$BACKUP_DIR/cachyos-t3" "$INSTALL_DIR/cachyos-t3"; then
+        fail "could not preserve existing CachyOS T3 data"
     fi
 fi
 write_channel_state

@@ -295,6 +295,28 @@ class TestInstallScript(unittest.TestCase):
             self.assertEqual(calls[0], ["migrate", "--apply"])
             self.assertEqual(calls[1][0], "bootstrap")
 
+    def test_cachyos_installer_preserves_existing_t3_data_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_home, _log_path, environment = self._create_fixture(directory)
+            environment["BASALTWATER_TEST_OS_ID"] = "cachyos"
+            install_dir = os.path.join(fake_home, ".local", "share", "basaltwater")
+            t3_data = os.path.join(install_dir, "cachyos-t3", "state.json")
+            os.makedirs(os.path.dirname(t3_data))
+            with open(t3_data, "w", encoding="utf-8") as file_obj:
+                file_obj.write("preserve me")
+
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", install_dir],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(t3_data, encoding="utf-8") as file_obj:
+                self.assertEqual(file_obj.read(), "preserve me")
+
 
     def test_empty_new_installer_settings_do_not_fall_back(self):
         for name in ("CHANNEL", "REPOSITORY_URL"):
