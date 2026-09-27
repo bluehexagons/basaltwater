@@ -23,6 +23,7 @@ from security.security_steps import (
     configure_cleanup_maintenance,
     configure_fail2ban,
     configure_firewall,
+    configure_pam_lockout,
     configure_security_monitor,
     harden_kernel,
     harden_ssh,
@@ -438,6 +439,81 @@ class TestConfigureAuditd(unittest.TestCase):
             self.assertNotIn("systemctl restart auditd", commands)
 
 
+class TestConfigurePamLockout(unittest.TestCase):
+    @patch("security.security_steps.is_hardware", return_value=False)
+    @patch("security.security_steps.is_vm", return_value=True)
+    @patch("security.security_steps.run")
+    def test_reconciles_files_and_active_pam_stack(self, mock_run, _vm, _hardware):
+        config = SetupConfig(username="u", host="h", system_type="workstation_dev")
+        with tempfile.TemporaryDirectory() as temporary:
+            profile = os.path.join(temporary, "pam-configs", "faillock-basaltwater")
+            settings = os.path.join(temporary, "faillock.conf")
+            auth = os.path.join(temporary, "common-auth")
+            account = os.path.join(temporary, "common-account")
+
+            def activate(_command, **_kwargs):
+                with open(auth, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("auth [default=die] pam_faillock.so authfail\n")
+                with open(account, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("account required pam_faillock.so\n")
+                return SimpleNamespace(returncode=0)
+
+            mock_run.side_effect = activate
+            with patch.multiple(
+                "security.security_steps",
+                _PAM_FAILLOCK_PROFILE=profile,
+                _FAILLOCK_CONF=settings,
+                _PAM_COMMON_AUTH=auth,
+                _PAM_COMMON_ACCOUNT=account,
+            ):
+                configure_pam_lockout(config)
+                with open(profile, encoding="utf-8") as file_obj:
+                    self.assertIn("pam_faillock.so", file_obj.read())
+                with open(settings, encoding="utf-8") as file_obj:
+                    self.assertIn("deny = 5", file_obj.read())
+                mock_run.reset_mock()
+                configure_pam_lockout(config)
+                mock_run.assert_not_called()
+
+                with open(profile, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("stale profile\n")
+                configure_pam_lockout(config)
+                with open(profile, encoding="utf-8") as file_obj:
+                    self.assertIn("pam_faillock.so", file_obj.read())
+                mock_run.assert_called_once()
+                mock_run.reset_mock()
+
+                with open(auth, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# auth required pam_faillock.so\n")
+                configure_pam_lockout(config)
+                mock_run.assert_called_once_with(
+                    "pam-auth-update --enable faillock-basaltwater", check=False
+                )
+
+    @patch("security.security_steps.is_hardware", return_value=False)
+    @patch("security.security_steps.is_vm", return_value=True)
+    @patch("security.security_steps.run")
+    def test_fails_if_pam_activation_does_not_take_effect(
+        self, mock_run, _vm, _hardware
+    ):
+        config = SetupConfig(username="u", host="h", system_type="workstation_dev")
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.multiple(
+                "security.security_steps",
+                _PAM_FAILLOCK_PROFILE=os.path.join(temporary, "pam-configs", "faillock"),
+                _FAILLOCK_CONF=os.path.join(temporary, "faillock.conf"),
+                _PAM_COMMON_AUTH=os.path.join(temporary, "common-auth"),
+                _PAM_COMMON_ACCOUNT=os.path.join(temporary, "common-account"),
+            ):
+                mock_run.return_value = SimpleNamespace(returncode=1)
+                with self.assertRaisesRegex(RuntimeError, "could not be enabled"):
+                    configure_pam_lockout(config)
+
+                mock_run.return_value = SimpleNamespace(returncode=0)
+                with self.assertRaisesRegex(RuntimeError, "absent from the active"):
+                    configure_pam_lockout(config)
+
+
 class TestConfigureFirewall(unittest.TestCase):
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
@@ -465,6 +541,8 @@ class TestConfigureFirewall(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status numbered":
+                return SimpleNamespace(returncode=0, stdout="Status: active\n")
             return SimpleNamespace(returncode=0, stdout="")
 
         mock_run.side_effect = run_side_effect
@@ -549,6 +627,53 @@ class TestConfigureFirewall(unittest.TestCase):
         commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertNotIn("ufw delete allow 3389/tcp", commands)
         self.assertNotIn("ufw delete limit 3389/tcp", commands)
+
+    @patch("security.security_steps.is_container", return_value=False)
+    @patch("security.security_steps.run")
+    def test_restricted_firewall_rejects_remaining_broad_rules(self, mock_run, _ic):
+        config = SetupConfig(
+            username="u", host="h", system_type="workstation_dev",
+            access_sources=["192.168.1.0/24"], enable_rdp=True,
+            rdp_allowed_sources=["192.168.1.0/24"], web_ports=[8080],
+            default_web_ports=False,
+        )
+        for destination, service in (
+            ("22/tcp", "SSH"),
+            ("3389/tcp (v6)", "RDP"),
+            ("8080/tcp", "web TCP 8080"),
+        ):
+            with self.subTest(destination=destination):
+                def run_side_effect(command, **_kwargs):
+                    if command.startswith("ufw status 2>"):
+                        return SimpleNamespace(returncode=0, stdout="")
+                    if command == "ufw status numbered":
+                        return SimpleNamespace(
+                            returncode=0,
+                            stdout=f"Status: active\n[ 1] {destination} ALLOW IN Anywhere\n",
+                        )
+                    return SimpleNamespace(returncode=0, stdout="")
+
+                mock_run.side_effect = run_side_effect
+                with self.assertRaisesRegex(RuntimeError, f"Source-restricted {service}"):
+                    configure_firewall(config)
+
+    @patch("security.security_steps.is_container", return_value=False)
+    @patch("security.security_steps.run")
+    def test_restricted_firewall_requires_status_verification(self, mock_run, _ic):
+        def run_side_effect(command, **_kwargs):
+            if command.startswith("ufw status 2>"):
+                return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status numbered":
+                return SimpleNamespace(returncode=1, stdout="", stderr="query failed")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        mock_run.side_effect = run_side_effect
+        config = SetupConfig(
+            username="u", host="h", system_type="server_lite",
+            access_sources=["192.168.1.0/24"],
+        )
+        with self.assertRaisesRegex(RuntimeError, "Could not verify source-restricted"):
+            configure_firewall(config)
 
 
 class TestConfigureAutoUpdates(unittest.TestCase):

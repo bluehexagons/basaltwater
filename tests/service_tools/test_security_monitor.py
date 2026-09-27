@@ -250,9 +250,8 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertEqual(saved_state["rdp_certificate_fingerprint"], "aabbcc")
 
     @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
-    @patch("security.service_tools.security_monitor.subprocess.run")
+    @patch("security.service_tools.security_monitor._run_bounded", return_value=(1, ""))
     def test_ausearch_no_matches_is_not_a_collection_error(self, mock_run, mock_tool):
-        mock_run.return_value = SimpleNamespace(returncode=1, stdout="", stderr="")
 
         has_events, error = security_monitor._ausearch_has_events("identity", datetime.now())
 
@@ -260,6 +259,15 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertIsNone(error)
         mock_tool.assert_called_once_with("ausearch")
         self.assertEqual(mock_run.call_args.args[0][0], "/usr/sbin/ausearch")
+        self.assertEqual(mock_run.call_args.kwargs, {"timeout": 15})
+
+    @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
+    @patch("security.service_tools.security_monitor._run_bounded", return_value=None)
+    def test_ausearch_overflow_is_a_collection_error(self, _run, _tool):
+        events, error = security_monitor._ausearch_events("identity", datetime.now())
+
+        self.assertEqual(events, [])
+        self.assertIn("output limit", error)
 
     def test_audit_events_include_evidence_summary(self):
         output = """----
@@ -382,12 +390,11 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
         self.assertEqual(errors, ["auditd: Expected audit rules are not loaded: sudoers."])
         mock_events.assert_not_called()
 
-    @patch("security.service_tools.security_monitor.subprocess.run")
+    @patch("security.service_tools.security_monitor._run_bounded")
     def test_ssh_failures_are_aggregated_by_source_user_and_method(self, mock_run):
-        mock_run.return_value = SimpleNamespace(
-            returncode=0,
-            stderr="",
-            stdout="\n".join([
+        mock_run.return_value = (
+            0,
+            "\n".join([
                 json.dumps({
                     "MESSAGE": "Failed password for root from 192.0.2.4 port 22 ssh2",
                     "_SOURCE_REALTIME_TIMESTAMP": "1766400000000000",
@@ -412,6 +419,29 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
             {source["method"] for source in summary["sources"]},
             {"password", "publickey", "unknown"},
         )
+        self.assertEqual(mock_run.call_args.kwargs, {"timeout": 15})
+
+    @patch("security.service_tools.security_monitor._run_bounded", return_value=None)
+    def test_ssh_journal_overflow_is_a_collection_error(self, _run):
+        summary, error = security_monitor._check_ssh_failures(datetime.now())
+
+        self.assertEqual(summary["failure_count"], 0)
+        self.assertIn("output limit", error)
+
+    @patch("security.service_tools.security_monitor._run_bounded")
+    def test_ssh_journal_invalid_timestamp_keeps_failure(self, mock_run):
+        mock_run.return_value = (
+            0,
+            json.dumps({
+                "MESSAGE": "Failed password for root from 192.0.2.4 port 22 ssh2",
+                "_SOURCE_REALTIME_TIMESTAMP": "9" * 100,
+            }),
+        )
+
+        summary, error = security_monitor._check_ssh_failures(datetime.now())
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["failure_count"], 1)
 
     def test_ssh_account_lockout_is_structured(self):
         event = security_monitor._parse_ssh_lockout(

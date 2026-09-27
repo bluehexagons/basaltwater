@@ -38,6 +38,8 @@ _FAIL2BAN_XRDP_FILTER = "/etc/fail2ban/filter.d/xrdp.conf"
 _AUDIT_RULES_FILE = "/etc/audit/rules.d/99-basaltwater.rules"
 _FAILLOCK_CONF = "/etc/security/faillock.conf"
 _PAM_FAILLOCK_PROFILE = "/usr/share/pam-configs/faillock-basaltwater"
+_PAM_COMMON_AUTH = "/etc/pam.d/common-auth"
+_PAM_COMMON_ACCOUNT = "/etc/pam.d/common-account"
 _ISSUE_BANNER = "Authorized access only. All activity is monitored and logged.\n"
 _SECURITY_MONITOR_SCRIPT = "/opt/basaltwater/security/service_tools/security_monitor.py"
 _SSH_RULE_COMMENT_PREFIX = "basaltwater SSH"
@@ -46,6 +48,13 @@ _WEB_RULE_COMMENT_PREFIX = "basaltwater web TCP"
 _MDNS_RULE_COMMENT_PREFIX = "basaltwater mDNS UDP"
 _PROXMOX_MANAGEMENT_COMMENT_PREFIX = "basaltwater access source"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
+_UFW_BROAD_INBOUND_RE = re.compile(
+    r"^\[\s*\d+\]\s+(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+Anywhere\b"
+)
+_PAM_ACTIVE_LINES = (
+    re.compile(r"^\s*auth\s+\[default=die\]\s+pam_faillock\.so\s+authfail\b"),
+    re.compile(r"^\s*account\s+required\s+pam_faillock\.so\b"),
+)
 _APPARMOR_USERNS_PROFILE = "/etc/apparmor.d/unprivileged_userns"
 _APPARMOR_USERNS_RESTRICTION = (
     "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
@@ -314,6 +323,38 @@ def _configure_mdns_firewall(config: SetupConfig) -> None:
     _remove_stale_managed_rules(_MDNS_RULE_COMMENT_PREFIX, {comment})
 
 
+def _verify_source_restricted_firewall(
+    config: SetupConfig, *, web_ports: list[int], include_rdp: bool
+) -> None:
+    """Fail setup if an active UFW rule still opens a restricted port globally."""
+    restricted_ports: dict[str, str] = {}
+    if config.effective_access_sources():
+        restricted_ports.update({"22": "SSH", "OpenSSH": "SSH"})
+        restricted_ports.update({str(port): f"web TCP {port}" for port in web_ports})
+    if include_rdp and config.effective_rdp_sources():
+        restricted_ports["3389"] = "RDP"
+    if not restricted_ports:
+        return
+
+    result = run("ufw status numbered", check=False, capture_output=True)
+    stdout = getattr(result, "stdout", None)
+    if result.returncode != 0 or not isinstance(stdout, str) or "Status: active" not in stdout:
+        raise _ufw_failure("Could not verify source-restricted firewall policy", result)
+
+    for line in stdout.splitlines():
+        match = _UFW_BROAD_INBOUND_RE.match(line.strip())
+        if not match:
+            continue
+        destination = re.sub(r"\s+\(v6\)$", "", match.group(1))
+        destination = destination.removesuffix("/tcp")
+        service = restricted_ports.get(destination)
+        if service:
+            raise RuntimeError(
+                f"Source-restricted {service} firewall policy still has a broad UFW rule: "
+                f"{line.strip()}"
+            )
+
+
 def configure_firewall(config: SetupConfig) -> None:
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
@@ -332,6 +373,9 @@ def configure_firewall(config: SetupConfig) -> None:
     _configure_mdns_firewall(config)
 
     if firewall_active:
+        _verify_source_restricted_firewall(
+            config, web_ports=web_ports, include_rdp=config.enable_rdp
+        )
         if web_ports:
             print(
                 "  ✓ Firewall already active; web ports reconciled: "
@@ -349,6 +393,9 @@ def configure_firewall(config: SetupConfig) -> None:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
+    _verify_source_restricted_firewall(
+        config, web_ports=web_ports, include_rdp=config.enable_rdp
+    )
     ssh_policy = (
         "SSH source-restricted"
         if config.effective_access_sources()
@@ -785,6 +832,33 @@ def configure_auditd(config: SetupConfig) -> None:
         print("  ✓ auditd already configured; service and rules reconciled")
 
 
+def _managed_text_matches(path: str, expected: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as file_obj:
+            return file_obj.read() == expected
+    except OSError:
+        return False
+
+
+def _pam_lockout_active() -> bool:
+    """Confirm the generated PAM auth and account stacks use faillock."""
+
+    for path, pattern in zip(
+        (_PAM_COMMON_AUTH, _PAM_COMMON_ACCOUNT), _PAM_ACTIVE_LINES
+    ):
+        try:
+            with open(path, encoding="utf-8") as file_obj:
+                if not any(
+                    pattern.search(line)
+                    for line in file_obj
+                    if not line.lstrip().startswith("#")
+                ):
+                    return False
+        except OSError:
+            return False
+    return True
+
+
 def configure_pam_lockout(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure PAM account lockout")
@@ -813,27 +887,24 @@ Account:
 \trequired pam_faillock.so
 """
 
-    if os.path.exists(_FAILLOCK_CONF) and os.path.exists(_PAM_FAILLOCK_PROFILE):
-        try:
-            with open(_FAILLOCK_CONF) as f:
-                if f.read() == faillock_conf:
-                    print("  ✓ PAM lockout already configured")
-                    return
-        except OSError:
-            pass
+    profile_matches = _managed_text_matches(_PAM_FAILLOCK_PROFILE, pam_profile)
+    settings_match = _managed_text_matches(_FAILLOCK_CONF, faillock_conf)
+    if profile_matches and settings_match and _pam_lockout_active():
+        print("  ✓ PAM lockout already configured")
+        return
 
-    os.makedirs("/usr/share/pam-configs", exist_ok=True)
-    with open(_PAM_FAILLOCK_PROFILE, "w") as f:
-        f.write(pam_profile)
-
-    with open(_FAILLOCK_CONF, "w") as f:
-        f.write(faillock_conf)
+    os.makedirs(os.path.dirname(_PAM_FAILLOCK_PROFILE), exist_ok=True)
+    if not profile_matches:
+        write_text_atomic(_PAM_FAILLOCK_PROFILE, pam_profile, mode=0o644)
+    if not settings_match:
+        write_text_atomic(_FAILLOCK_CONF, faillock_conf, mode=0o644)
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     result = run("pam-auth-update --enable faillock-basaltwater", check=False)
     if result.returncode != 0:
-        print("  ⚠ PAM auth update failed; lockout config written but may not be active")
-        return
+        raise RuntimeError("PAM lockout profile could not be enabled")
+    if not _pam_lockout_active():
+        raise RuntimeError("PAM lockout is absent from the active auth or account stack")
 
     print("  ✓ PAM account lockout configured (5 failures in 15 min → 10 min lockout)")
 
@@ -932,6 +1003,9 @@ def configure_firewall_web(config: SetupConfig) -> None:
     _configure_mdns_firewall(config)
 
     if firewall_active:
+        _verify_source_restricted_firewall(
+            config, web_ports=web_ports, include_rdp=False
+        )
         print(
             "  ✓ Firewall already active; web ports reconciled: "
             + ", ".join(str(port) for port in web_ports)
@@ -945,6 +1019,9 @@ def configure_firewall_web(config: SetupConfig) -> None:
         else:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
+    _verify_source_restricted_firewall(
+        config, web_ports=web_ports, include_rdp=False
+    )
     
     print(
         "  ✓ Firewall configured (SSH; web TCP ports: "
@@ -969,6 +1046,7 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
     _configure_mdns_firewall(config)
 
     if firewall_active:
+        _verify_source_restricted_firewall(config, web_ports=[], include_rdp=False)
         print("  ✓ Firewall already configured")
         return
     
@@ -980,6 +1058,7 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
+    _verify_source_restricted_firewall(config, web_ports=[], include_rdp=False)
     ssh_policy = (
         "SSH source-restricted"
         if config.effective_access_sources()

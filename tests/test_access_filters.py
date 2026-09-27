@@ -309,6 +309,8 @@ class TestGenericUfwFiltering(unittest.TestCase):
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status numbered":
+                return SimpleNamespace(returncode=0, stdout="Status: active\n")
             return SimpleNamespace(returncode=0, stdout="")
 
         mock_run.side_effect = run_side_effect

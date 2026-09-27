@@ -31,7 +31,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 from datetime import datetime, timedelta
 from logging import ERROR, WARNING
@@ -45,7 +44,7 @@ from lib.security_activity import managed_setup_audit_window
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
-from common.service_tools.web_panel_audit_export import _audit_health
+from common.service_tools.web_panel_audit_export import _audit_health, _run_bounded
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
@@ -257,19 +256,18 @@ def _ausearch_events(
     ausearch = _audit_tool('ausearch')
     if not ausearch:
         return [], f'audit key {key}: ausearch command unavailable'
-    try:
-        result = subprocess.run(
-            [ausearch, '--start', since_date, since_time, '-k', key, '-i'],
-            capture_output=True, text=True, check=False, timeout=15,
-        )
-        if result.returncode == 0:
-            return _parse_audit_events(key, result.stdout, excluded_window), None
-        if result.returncode == 1:
-            return [], None
-        details = result.stderr.strip() or f'ausearch exited {result.returncode}'
-        return [], f'audit key {key}: {details}'
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return [], f'audit key {key}: {exc}'
+    result = _run_bounded(
+        [ausearch, '--start', since_date, since_time, '-k', key, '-i'],
+        timeout=15,
+    )
+    if result is None:
+        return [], f'audit key {key}: query failed or exceeded the output limit'
+    returncode, output = result
+    if returncode == 0:
+        return _parse_audit_events(key, output, excluded_window), None
+    if returncode == 1:
+        return [], None
+    return [], f'audit key {key}: ausearch exited {returncode}'
 
 
 def _ausearch_has_events(key: str, since: datetime) -> tuple[bool, str | None]:
@@ -424,82 +422,84 @@ def _normalise_ssh_summary(value: object) -> JSONDict:
 def _check_ssh_failures(since: datetime) -> tuple[JSONDict, str | None]:
     """Summarise SSH authentication failures and return collection errors."""
     since_str = since.strftime('%Y-%m-%d %H:%M:%S')
-    try:
-        result = subprocess.run(
-            ['journalctl', '-u', 'sshd', '-u', 'ssh',
-             '--since', since_str, '--no-pager', '-o', 'json'],
-            capture_output=True, text=True, check=False, timeout=15,
-        )
-        if result.returncode != 0:
-            details = result.stderr.strip() or f'journalctl exited {result.returncode}'
-            return _normalise_ssh_summary(0), f'SSH journal: {details}'
+    result = _run_bounded(
+        ['journalctl', '-u', 'sshd', '-u', 'ssh',
+         '--since', since_str, '--no-pager', '-o', 'json'],
+        timeout=15,
+    )
+    if result is None:
+        return _normalise_ssh_summary(0), 'SSH journal: query failed or exceeded the output limit'
+    returncode, output = result
+    if returncode != 0:
+        return _normalise_ssh_summary(0), f'SSH journal: journalctl exited {returncode}'
 
-        aggregate: dict[tuple[str, str, str], JSONDict] = {}
-        lockout_aggregate: dict[tuple[str, str], JSONDict] = {}
-        for line in result.stdout.splitlines():
-            message = line
-            timestamp: str | None = None
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                record = None
-            if isinstance(record, dict):
-                message_value = record.get('MESSAGE')
-                if not isinstance(message_value, str):
-                    continue
-                message = message_value
-                raw_timestamp = record.get('_SOURCE_REALTIME_TIMESTAMP')
-                if isinstance(raw_timestamp, str) and raw_timestamp.isdigit():
+    aggregate: dict[tuple[str, str, str], JSONDict] = {}
+    lockout_aggregate: dict[tuple[str, str], JSONDict] = {}
+    for line in output.splitlines():
+        message = line
+        timestamp: str | None = None
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            record = None
+        if isinstance(record, dict):
+            message_value = record.get('MESSAGE')
+            if not isinstance(message_value, str):
+                continue
+            message = message_value
+            raw_timestamp = record.get('_SOURCE_REALTIME_TIMESTAMP')
+            if isinstance(raw_timestamp, str) and raw_timestamp.isdigit():
+                try:
                     timestamp = datetime.fromtimestamp(
                         int(raw_timestamp) / 1_000_000
                     ).isoformat(timespec='seconds')
+                except (OSError, OverflowError, ValueError):
+                    timestamp = None
 
-            lockout = _parse_ssh_lockout(message, timestamp)
-            if lockout:
-                lockout_key = (str(lockout['source_ip']), str(lockout['username']))
-                current_lockout = lockout_aggregate.get(lockout_key)
-                if current_lockout is None:
-                    lockout_aggregate[lockout_key] = dict(lockout)
-                else:
-                    current_lockout['count'] = int(current_lockout.get('count', 0)) + 1
-                    if timestamp:
-                        current_lockout['last_seen'] = timestamp
+        lockout = _parse_ssh_lockout(message, timestamp)
+        if lockout:
+            lockout_key = (str(lockout['source_ip']), str(lockout['username']))
+            current_lockout = lockout_aggregate.get(lockout_key)
+            if current_lockout is None:
+                lockout_aggregate[lockout_key] = dict(lockout)
+            else:
+                current_lockout['count'] = int(current_lockout.get('count', 0)) + 1
+                if timestamp:
+                    current_lockout['last_seen'] = timestamp
 
-            event = _parse_ssh_failure(message, timestamp)
-            if event:
-                key = (
-                    str(event['source_ip']),
-                    str(event['username']),
-                    str(event['method']),
-                )
-                current = aggregate.get(key)
-                if current is None:
-                    aggregate[key] = dict(event)
-                else:
-                    current['count'] = int(current.get('count', 0)) + 1
-                    if timestamp:
-                        current['last_seen'] = timestamp
+        event = _parse_ssh_failure(message, timestamp)
+        if event:
+            key = (
+                str(event['source_ip']),
+                str(event['username']),
+                str(event['method']),
+            )
+            current = aggregate.get(key)
+            if current is None:
+                aggregate[key] = dict(event)
+            else:
+                current['count'] = int(current.get('count', 0)) + 1
+                if timestamp:
+                    current['last_seen'] = timestamp
 
-        sources = sorted(
-            aggregate.values(),
-            key=lambda entry: (-int(entry.get('count', 0)), str(entry.get('source_ip', ''))),
-        )
-        summary: JSONDict = {
-            'failure_count': sum(int(entry.get('count', 0)) for entry in sources),
-            'sources': sources[:_SSH_MAX_BREAKDOWN],
-            'lockouts': sorted(
-                lockout_aggregate.values(),
-                key=lambda entry: (
-                    -int(entry.get('count', 0)),
-                    str(entry.get('source_ip', '')),
-                ),
-            )[:_SSH_MAX_BREAKDOWN],
-        }
-        if len(sources) > _SSH_MAX_BREAKDOWN:
-            summary['suppressed_sources'] = len(sources) - _SSH_MAX_BREAKDOWN
-        return summary, None
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return _normalise_ssh_summary(0), f'SSH journal: {exc}'
+    sources = sorted(
+        aggregate.values(),
+        key=lambda entry: (-int(entry.get('count', 0)), str(entry.get('source_ip', ''))),
+    )
+    summary: JSONDict = {
+        'failure_count': sum(int(entry.get('count', 0)) for entry in sources),
+        'sources': sources[:_SSH_MAX_BREAKDOWN],
+        'lockouts': sorted(
+            lockout_aggregate.values(),
+            key=lambda entry: (
+                -int(entry.get('count', 0)),
+                str(entry.get('source_ip', '')),
+            ),
+        )[:_SSH_MAX_BREAKDOWN],
+    }
+    if len(sources) > _SSH_MAX_BREAKDOWN:
+        summary['suppressed_sources'] = len(sources) - _SSH_MAX_BREAKDOWN
+    return summary, None
 
 
 # ---------------------------------------------------------------------------

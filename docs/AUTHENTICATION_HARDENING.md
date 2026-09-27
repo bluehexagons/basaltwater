@@ -18,6 +18,20 @@ not make a reused or common password safe.
 | CI/CD webhook | Public HTTPS or Cloudflare ingress | HMAC verification and Nginx 10 requests/minute per client |
 | Proxmox GUI and SSH | Proxmox management source policy | Not published by a general web allow rule; use `--lan-access`, `--access-source`, or `--proxmox-source` to limit management clients |
 
+On VM and hardware profiles, setup reconciles the managed `pam_faillock`
+profile and checks that the generated common auth and account stacks use it.
+Setup fails if the lockout profile cannot be activated, so a matching settings
+file alone is not reported as active protection.
+
+The security monitor bounds `ausearch` and SSH journal output. If either query
+exceeds the limit, it reports a collection failure and retains its prior cursor
+for a later retry instead of reporting an incomplete scan as clean.
+
+When source filters are configured, setup checks the active UFW rules after
+reconciliation. It fails if SSH, RDP, or a managed web port still has an inbound
+allow or limit rule from anywhere, or if UFW status cannot be verified. Inspect
+`sudo ufw status numbered` and remove the broad rule before retrying setup.
+
 Gogs without a hostname remains loopback-only by default. Its optional direct
 listener is accepted only with private `--gogs-source` or generic access
 sources and active UFW; use the SSH-tunnel default when the private network is
