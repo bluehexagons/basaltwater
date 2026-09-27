@@ -1,10 +1,15 @@
 # CachyOS agentic desktop qualification record
 
-Status: **not run**. Debian unit tests do not satisfy this checklist. Copy the
-record for each disposable CachyOS installation; keep private evidence locally
+Status: **full qualification not run**. Unit tests do not satisfy this checklist.
+Copy the record for each disposable CachyOS installation; keep private evidence locally
 and commit only reviewed, redacted results. Do not record credentials, personal
 window content, or raw session environment. The owning
 [delivery plan](CACHYOS_AGENTIC_DESKTOP.md) defines the release gates.
+
+Read-only observations on 2026-09-27, through commit `555efff`, passed local
+CachyOS preflight, Codex login status, Arch package-name validation, and package
+cleanup preview. No setup, updates, or cleanup were applied. These observations
+do not pass the live acceptance cases below.
 
 ## Environment
 
@@ -45,7 +50,12 @@ marking a package query successful or by using unrestricted desktop tools.
 
 | Layer | Acceptance evidence | Result |
 | --- | --- | --- |
-| Setup/state | Fresh/rerun/interrupted setup, private validated selection records, disabled management preserves data | Not implemented |
+| Setup | Fresh/rerun/interrupted setup, existing workspace and credentials preserved, recovery after failure | Not run |
+| Selection persistence | Private validated selection records, omitted options stop future management without deleting data | Not implemented |
+| T3 desktop | Retain an installed t3code-bin, install when absent through paru/yay, discover Codex from KDE, complete a thread and terminal command | Not run |
+| T3 mode switching | Web → desktop disables only the owned service; desktop → web activates isolated data; preserve both environments and desktop package | Not run |
+| Codex lifecycle | Fresh standalone install, managed update and rollback, external-manager preservation, existing configuration and credentials retained | Not run |
+| Setup cleanup | Three cached package versions, installed version and recent archives retained; active-package lock defers deletion; user data and active agent resources preserved | Not run |
 | T3 access | Local pairing, private-LAN pairing from another device, T3 Connect link/status/unlink, service restart and logout behavior | Not run |
 | Browser | Pinned runtime pair, isolated local page interaction/capture, strict HTTPS, origin restrictions including redirects and subresources | Not implemented |
 | Browser recovery | Interrupted update retains old pair; bounded private artifacts and task profile cleanup | Not implemented |

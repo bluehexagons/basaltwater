@@ -3,8 +3,9 @@
 Status: initial native setup and T3 access slice implemented; live qualification
 pending. Portable contracts and read-only diagnostics can be implemented before
 qualification. Machine-use feature release remains gated on the P0 live pass.
-The development host is Debian, which cannot supply CachyOS/Plasma acceptance
-evidence. Do not mark this project complete from mocked or headless tests.
+Read-only checks have also run on an existing CachyOS workstation; they do not
+establish setup, provider-thread, or GPU acceptance. Do not mark this project
+complete from prerequisite observations, mocked tests, or headless tests.
 
 ## Objective
 
@@ -17,9 +18,11 @@ capabilities.
 
 The current profile covers native package installation for the coding, creative,
 media, gaming, remote desktop, and sysadmin bundles, user-managed Codex/OpenCode
-updates, workspaces, and an optional T3 Code service with loopback access,
-private-LAN pairing, and documented T3 Connect setup. The next work should add
-capability contracts and safe integrations around that foundation rather than
+updates, workspaces, T3 Code desktop integration, and an optional T3 Code service
+with loopback access, private-LAN pairing, and documented T3 Connect setup.
+Setup-time cleanup covers old package downloads and known user caches without
+installing a timer. The next work should add capability contracts and safe
+integrations around that foundation rather than
 replace it with a second desktop or provisioning system.
 
 The separate [shared Debian and CachyOS capability-contract plan]
@@ -32,11 +35,13 @@ authority for CachyOS desktop qualification and feature delivery.
 
 - Keep the existing human user, KDE Plasma session, GPU/driver setup, network
   policy, firewall, login manager, and OS update policy under user control.
-- Install system dependencies only from enabled CachyOS/Arch repositories. Do not
-  add AUR, Flatpak, opaque vendor installers, or an automatic full-system
-  upgrade to this profile. Existing user-managed coding agents and T3 retain
-  their documented upstream installation paths. The selected Playwright runtime
-  is a separate, explicit exception: pin its package and matching upstream
+- Install system dependencies from enabled CachyOS/Arch repositories. The
+  explicit `--t3code-desktop` exception installs the upstream-listed `t3code-bin`
+  AUR package through an existing paru/yay helper as the desktop user. Do not
+  broaden this to arbitrary AUR or Flatpak sources or automatic full-system
+  upgrades. Coding agents and T3 retain their documented upstream installation
+  paths. The proposed Playwright runtime is a separate, explicit exception:
+  pin its package and matching upstream
   Chromium revision under a private user-owned prefix. Never run Playwright's
   Debian-oriented `install-deps` or `--with-deps` on CachyOS.
 - Keep machine-use features disabled unless selected during setup. No default
@@ -279,9 +284,10 @@ Start with narrow, explicit options rather than a broad `--agentic` switch:
 - `--desktop-automation portal` / `--no-desktop-automation`;
 - a separate accessibility capability selection if AT-SPI proves useful before
   portal input is ready;
-- existing application bundle flags and `--web-interface t3code` remain
-  independent; T3 Connect authorization remains an interactive, post-setup CLI
-  flow using the managed runtime.
+- existing application bundle flags remain independent of T3 mode;
+  `--t3code-desktop` and `--web-interface t3code` are mutually exclusive.
+  Desktop connection settings stay in the app; web T3 Connect authorization
+  remains an interactive, post-setup CLI flow using the managed runtime.
 
 The CachyOS profile currently bypasses controller-side setup persistence.
 Introduce a private, versioned user-local selection record at the target-side
@@ -301,9 +307,9 @@ unsupported host without probing its unrelated desktop.
 
 ## Security and privacy requirements
 
-- Run under the existing user account and active session; package installation
-  is the only operation that may request `sudo`, and only for selected native
-  dependencies.
+- Run under the existing user account and active session. Package installation
+  and bounded cleanup of root-owned pacman downloads may request `sudo`;
+  AUR builds and user-cache maintenance run as the desktop user.
 - Bind local services to loopback by default. Direct T3 private-LAN binding is
   an explicit pairing option; T3 Connect uses the loopback origin expected by
   its managed relay. Do not expose portal or browser-control endpoints directly
@@ -370,15 +376,21 @@ desktop-control implementation.
   bounded streaming, local bus addressing, and no service activation.
 - Added mocked contract, parser, privacy, ownership, and probe-bound tests,
   operator documentation, and workstation skill guidance.
-- Live P0 qualification is pending; no CachyOS machine has been supplied.
+- Live P0 qualification is pending. Read-only preflight, package inventory,
+  Codex login status, and cleanup preview have passed on an existing CachyOS
+  workstation; setup and cleanup were not applied as part of those checks.
   Use the [qualification checklist](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
   to record evidence. No machine-use flag has been enabled.
 - The initial native package, workspace, user-service, private-LAN pairing, and
   T3 Connect guidance is implemented; live service and hardware qualification
   remain open.
+- Native T3 desktop installation/integration, reversible desktop/web selection
+  with isolated web data, standalone Codex update protection, and conservative
+  setup-time package/user-cache cleanup are implemented and covered by mocked
+  tests. Fresh setup, live mode switching, and provider tasks remain to qualify.
 - Browser runtime/isolation, selection persistence, full host/application
   diagnostics, AT-SPI operations, portal leases/input/capture, application
-  workflows, recovery, and web-panel integration remain unimplemented. This
+  workflows and their recovery, and web-panel integration remain unimplemented. This
   milestone is the P0 portable foundation, not completion of P0 or the project.
 
 ## Open decisions and issue slices

@@ -25,6 +25,27 @@ Remote setup requires root SSH key access and [host-key enrollment](SSH.md).
 The saved-host rows require a successful initial setup in the same workspace.
 Remove `--dry-run` from the patch example to apply it.
 
+## Existing CachyOS KDE workstation
+
+After [installing the launcher](CACHYOS.md#install-with-t3-code-desktop), run
+these from your local desktop terminal as yourself:
+
+```bash
+# Preview Codex and the native T3 Code desktop package
+basaltw setup agent_cachyos localhost --t3code-desktop --dry-run
+
+# Apply the selection; missing packages and cache pruning may request sudo
+basaltw setup agent_cachyos localhost --t3code-desktop
+
+# Inspect desktop prerequisites without launching applications
+basaltw local cachyos-doctor
+```
+
+Codex and GitHub CLI are the defaults; no other coding agent is selected.
+See [the CachyOS guide](CACHYOS.md) for optional project tools, cleanup, and
+switching between T3 desktop and web mode. This profile uses direct setup
+reruns; it does not populate the generic saved-host lifecycle above.
+
 ## Find a task
 
 | I need to… | Use |
@@ -43,6 +64,7 @@ Remove `--dry-run` from the patch example to apply it.
 | Configure CI/CD | [CI/CD webhook system](CICD.md) |
 | Configure shares, sync, parity, or backups | [Storage and data guides](README.md#services-deployments-and-data) |
 | Provision or operate a coding VM | [Agent systems](agents/README.md) |
+| Set up Codex and T3 Code desktop on CachyOS | [CachyOS desktop example](CACHYOS.md#install-with-t3-code-desktop) |
 | Choose a headless, full-capability, approval-panel, or hardened agent VM | [Agentic VMs](AGENTIC_VMS.md) |
 
 ## Safe operating habits

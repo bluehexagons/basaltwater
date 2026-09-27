@@ -1,7 +1,7 @@
 # Managed agent workflow skills
 
 Basaltwater installs concise operational skills for Codex and OpenCode under
-the shared `~/.agents/skills` directory. The skills describe VM-specific
+the shared `~/.agents/skills` directory. The skills describe profile-specific
 commands and boundaries that a general coding agent cannot infer reliably from
 the project alone.
 
@@ -18,9 +18,9 @@ scope and reruns.
 | --- | --- |
 | `basaltwater-cachyos-workstation` | Native package bundles, diagnostics, and desktop/session boundaries |
 | `basaltwater-cachyos-workspace` | User-owned repository workspaces and safe reruns |
-| `basaltwater-cachyos-t3code` | The local T3 service, pairing, and T3 Connect |
+| `basaltwater-cachyos-t3code` | T3 desktop or managed web mode, switching, pairing, and T3 Connect |
 
-A normal agent-enabled setup that selects Codex or OpenCode receives these
+A Debian agent-enabled setup that selects Codex or OpenCode receives these
 base skills:
 
 | Skill | Use it for |
@@ -86,7 +86,9 @@ An older VM receives the current base set when its saved setup is rerun from an
 updated Basaltwater control plane. The same setup rerun also updates selected
 Codex, Claude Code, and OpenCode executables through the verified user-scoped
 updater; `basaltw agent update` remains available for an agent-only update.
-Neither command refreshes Basaltwater or these skills.
+Setup refreshes the selected skills from its source checkout. The agent-only
+update refreshes neither Basaltwater nor skills; upgrade Basaltwater separately
+before rerunning setup to install newer guidance.
 
 Current skills invoke `basaltw`; their `basaltwater-*` IDs remain stable.
 Normal agent setup installs `basaltw` before refreshing skills. When

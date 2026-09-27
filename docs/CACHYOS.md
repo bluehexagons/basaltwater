@@ -65,6 +65,45 @@ The launcher is `~/.local/bin/basaltw`; open a new terminal if the
 installer's PATH change is not visible. Bash, Zsh, and Fish are supported.
 Other shells need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
+### Install with T3 Code desktop
+
+For Codex and the native T3 Code desktop app, run this complete installer
+example from your KDE terminal as your normal user, without `sudo`:
+
+```bash
+curl --fail --location --connect-timeout 15 --max-time 120 \
+  --output "$HOME/.basaltwater-install.sh" \
+  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
+sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
+  --t3code-desktop --node --python --git-lfs
+```
+
+This selects Codex and GitHub CLI, installs or retains `t3code-bin`, and prepares
+the workspace and managed skills. Claude and OpenCode are not selected.
+`--node --python --git-lfs` supplies optional project tools; omit those flags
+for just the default coding tools and T3 desktop. Add `--no-agent-tool gh`
+to omit GitHub CLI too. A missing `t3code-bin` requires an existing `paru` or
+`yay` helper and may prompt for package review or sudo; an installed package
+stays on its current version. Setup preserves existing Codex/T3 settings and
+credentials and runs the [bounded cleanup](#cleanup-during-setup).
+
+With the launcher already installed, preview and then apply the same selection:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --dry-run
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
+```
+
+The direct setup preview makes no changes. Adding `--dry-run` to the shell
+installer previews only its final setup phase; the installer still installs
+the launcher and prerequisites. Keep installer options such as `--channel dev`
+before `--local-setup`, and setup options such as `--t3code-desktop` after it.
+
+After setup, open T3 Code from KDE and verify a Codex thread and terminal.
+If the app cannot discover Codex, use the absolute provider binary path printed
+by setup. Use the desktop app's **Settings → Connections** for its connection
+settings. See [desktop mode and switching](#t3-code-desktop) for later reruns.
+
 ## Pick the options you need
 
 Append options to `--local-setup agent_cachyos` in the installer command, or to
@@ -407,6 +446,10 @@ for current provider, client, and T3 Connect requirements.
   option does not uninstall it; existing repositories are never pulled, reset,
   or recursively chowned. Selecting the T3 web interface on a rerun updates and
   restarts its service; selecting desktop mode retains its installed AUR version.
+- This local profile does not save a generic host configuration for `patch`,
+  `deploy`, or `cmd`. Keep your setup command and repeat the desired flags,
+  including workspace and optional tools, when rerunning. The T3 mode marker
+  does not replace that setup selection.
 - `basaltw upgrade` updates Basaltwater itself. If a CachyOS mirror or DNS
   lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
   workflow and rerun.

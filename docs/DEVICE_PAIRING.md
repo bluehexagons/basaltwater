@@ -21,9 +21,11 @@ resulting connection, owns the per-device session, and provides session
 revocation. Basaltwater does not create a permanent shared T3 token.
 
 This protected portal is for the managed Debian/VM profiles. The `agent_cachyos`
-profile intentionally does not install the portal or its gateway; use the
-native `t3 pair` and `t3 connect link` flows in the
-[CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
+profile does not install the portal or its gateway. For desktop mode, use
+the app's connection settings described in the
+[CachyOS desktop guide](CACHYOS.md#t3-code-desktop). For the managed web service,
+use the native `t3 pair` and `t3 connect link` flows in the
+[CachyOS web-service guide](CACHYOS.md#t3-code-web-service-host-locally-or-on-a-trusted-lan).
 
 ## Configure it
 

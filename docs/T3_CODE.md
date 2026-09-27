@@ -1,12 +1,15 @@
 # T3 Code server
 
-Basaltwater supports T3 Code as a server-side web interface. It does not install
-or manage the T3 Code desktop AppImage.
+This guide covers T3 Code's server-side web interface on managed Debian
+profiles. The retired desktop AppImage installation is not managed.
 
 For an existing CachyOS KDE workstation, use the limited local profile described
-in the [CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
-That path supports loopback access, direct private-LAN pairing, and optional
-T3 Connect setup; its options and copy/paste examples are documented there.
+in the [CachyOS guide](CACHYOS.md). Choose the native `t3code-bin` package with
+`--t3code-desktop` using the [desktop installer example](CACHYOS.md#install-with-t3-code-desktop),
+or the [managed web service](CACHYOS.md#t3-code-web-service-host-locally-or-on-a-trusted-lan)
+for loopback access, direct private-LAN pairing, and optional T3 Connect.
+The two setup flags are mutually exclusive and can be switched on later runs;
+each environment retains its own data.
 The VM/server options below do not apply to `agent_cachyos`.
 
 Use either the focused profile:
@@ -254,7 +257,7 @@ stops that service, starts and validates the upstream user service, and only
 then disables and removes the old unit and clears its retained failed state.
 The old service is restarted if the migration fails.
 
-Removing desktop support from Basaltwater does not delete an AppImage that an
+Retiring the old AppImage installer did not delete an AppImage that an
 older setup placed in a user's home. After confirming the files were not
 replaced with user-managed content, that retired installation can be removed
 manually:

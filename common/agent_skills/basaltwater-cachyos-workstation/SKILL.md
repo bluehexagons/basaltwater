@@ -17,14 +17,31 @@ desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
 `--kdenlive`, `--krita`, `--inkscape`, `--scribus`, `--audacity`, `--ardour`,
 `--lmms`, `--freecad`, `--kicad`, `--shotcut`, `--gimp`, `--remmina`, or
-`--sysadmin-tools`. Preview with `--dry-run`. User-managed agent executables are
-updated on rerun, while system-managed executables remain under their package
-manager. Authentication uses the provider's local login.
+`--sysadmin-tools`. Preview with `--dry-run`. Keep the desired flags on reruns;
+this profile does not populate the generic saved-host `patch`/`deploy` workflow.
+Codex and GitHub CLI are defaults; other coding agents require explicit flags.
+Recognized standalone Codex installations are updated on rerun; npm,
+version-manager, and system-package installations keep their original manager.
+Existing Codex configuration and credentials are retained; custom `CODEX_HOME`
+is unsupported when Codex is selected. Authentication uses local provider login.
 
 Packages use pacman, not APT. Basaltwater installs missing packages using the
 existing sync database. Leave full OS updates to the user's CachyOS workflow;
 never repair an installation failure with a partial `pacman -Sy` upgrade.
-Use the original installer for deliberate tool updates.
+Use the original manager for updates to externally managed tools.
+
+For a recognized standalone Codex installation, preview with
+`basaltw agent update --tool codex --dry-run`, then update with
+`basaltw agent update --tool codex --tools-only-readiness`. The latter avoids
+generic VM checks on this workstation. Complete package rollback snapshots are
+retained; restart provider sessions when convenient to use the new executable.
+
+Setup prunes old pacman downloads while retaining three cached versions, the
+installed version, and files accessed or modified within 30 days. It also
+reconciles known developer caches, Codex releases, and numbered T3 log rotations.
+No cleanup timer is installed. Preserve credentials, sessions, application data,
+and repositories; do not substitute blanket cache deletion or orphan-package
+removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md#cleanup-during-setup).
 
 Managed Playwright and KDE input/screenshot automation are not installed.
 For browser checks, use tools actually available in the session or the project's
@@ -59,9 +76,10 @@ Qt; it does not enable libvirt, grant packet-capture permissions, or change
 network policy. These options do not install AUR or Flatpak packages, graphics
 drivers, or application-specific configuration.
 
-This profile does not install machine-use automation. T3 Code's optional service
-supports same-machine access, direct pairing from a trusted private LAN, and
-T3 Connect; use the dedicated `basaltwater-cachyos-t3code` skill for its
-service, pairing, and Connect commands. Keep the profile's native package,
-agent, workspace, and readiness checks even when using the desktop app; they
-provide setup and repeatability that the client does not provision.
+T3 desktop is the explicit AUR exception: `--t3code-desktop` installs or retains
+`t3code-bin` through an existing paru/yay helper. It is mutually exclusive with
+`--web-interface t3code`, which selects a separate managed web environment.
+Use `basaltwater-cachyos-t3code` for switching, pairing, and Connect commands.
+This profile does not install machine-use automation. Keep its agent, workspace,
+and readiness checks when using the desktop app; verify a real provider thread
+and terminal in T3 after setup.

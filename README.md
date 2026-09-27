@@ -66,6 +66,14 @@ agent tooling to an existing bare-metal workstation through local self-setup.
 It preserves the human account and desktop, leaves OS updates to CachyOS/the
 user, and does not support CachyOS VM/container provisioning or server setup.
 
+For Codex with the native T3 Code desktop app, use the
+[complete CachyOS installer example](docs/CACHYOS.md#install-with-t3-code-desktop).
+With `basaltw` already installed, run as your desktop user:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop
+```
+
 The normal direct setup path uses `--machine auto`. Hosted Proxmox setup
 defaults to a VM; select `--machine unprivileged` for the supported LXC path.
 See [Machine types](docs/MACHINE_TYPES.md) for capability and compatibility
@@ -128,7 +136,7 @@ try features and keep a small VM usable.
 | Control planes | Local VM/container administration tools, SSH/rsync, diagnostics, and optional coding agents | [Installation](docs/INSTALLATION.md), [Agent systems](docs/agents/README.md), [Quick reference](docs/QUICK_REFERENCE.md) |
 | Servers | Security hardening, Nginx/SSL, Cloudflare tunnels, language runtimes, deployments, Gogs, and Antistatic | [CLI reference](docs/COMMAND_LINE.md), [Gogs](docs/GOGS.md), [Cloudflare tunnels](docs/CLOUDFLARE.md), [Antistatic](docs/ANTISTATIC.md) |
 | Workstations | XFCE, i3, LXQt, RDP, browsers, and desktop tooling | [Workstations](docs/WORKSTATIONS.md), [XRDP](docs/XRDP.md), [CLI reference](docs/COMMAND_LINE.md) |
-| CachyOS coding | Local agent tooling for an existing KDE workstation; optional local/LAN T3 and T3 Connect | [CachyOS](docs/CACHYOS.md) |
+| CachyOS coding | Codex on an existing KDE workstation; T3 desktop or a local/LAN web service, plus setup-time cache cleanup | [CachyOS](docs/CACHYOS.md) |
 | Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/SAMBA_SHARES.md), [Managed Syncthing](docs/SYNCTHING.md), [Storage operations](docs/STORAGE_OPERATIONS.md) |
 | Deployments | Single-service deployments and `basaltwater.json` multi-component manifests | [Deployments](docs/DEPLOYMENTS.md), [Deployment safety](docs/DEPLOYMENT_SAFETY.md), [CI/CD](docs/CICD.md) |
 | Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/PROXMOX.md) |
@@ -160,14 +168,17 @@ encryption, TCP 445 only, and validated configuration reloads. See the
 
 ### Conservative maintenance
 
-Automatic APT updates remain enabled, while language ecosystem upgrades and
-release selection use conservative freshness and opt-in policies. Cleanup uses
+On Debian profiles, automatic APT updates remain enabled, while language
+ecosystem upgrades and release selection use conservative freshness and opt-in
+policies. Cleanup uses
 bounded cache, log, journal, and temporary-artifact policies and purges packages
 APT marks unused, including superseded kernels. It expires recognized crash
 reports and returns unused filesystem blocks to supported physical, virtual,
 and Proxmox storage, then checks block and inode pressure across local mounts.
 See the
 [recurring maintenance guide](docs/MAINTENANCE.md).
+CachyOS uses [bounded cleanup during setup](docs/CACHYOS.md#cleanup-during-setup)
+and keeps system updates under the desktop user's control.
 
 ### Targeted updates
 
