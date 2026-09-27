@@ -364,6 +364,21 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
         self.assertFalse(critical)
         self.assertEqual(errors, ["auditd: ausearch command unavailable"])
 
+    @patch("security.service_tools.security_monitor._ausearch_events")
+    @patch("security.service_tools.security_monitor._audit_health")
+    @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
+    def test_required_audit_coverage_checks_daemon_and_rules_before_events(
+        self, _tool, mock_health, mock_events
+    ):
+        mock_health.return_value = ("degraded", ["Expected audit rules are not loaded: sudoers."])
+        with patch.dict(os.environ, {"BASALTWATER_AUDIT_REQUIRED": "1"}):
+            events, critical, errors = security_monitor._check_auditd(datetime.now())
+
+        self.assertEqual(events, [])
+        self.assertFalse(critical)
+        self.assertEqual(errors, ["auditd: Expected audit rules are not loaded: sudoers."])
+        mock_events.assert_not_called()
+
     @patch("security.service_tools.security_monitor.subprocess.run")
     def test_ssh_failures_are_aggregated_by_source_user_and_method(self, mock_run):
         mock_run.return_value = SimpleNamespace(

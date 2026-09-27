@@ -45,6 +45,7 @@ from lib.security_activity import managed_setup_audit_window
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
+from common.service_tools.web_panel_audit_export import _audit_health
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
@@ -293,6 +294,10 @@ def _check_auditd(
         ):
             return [], False, ['auditd: ausearch command unavailable']
         return [], False, []
+    if os.environ.get('BASALTWATER_AUDIT_REQUIRED') == '1':
+        health, issues = _audit_health()
+        if health != 'ok':
+            return [], False, [f'auditd: {issue}' for issue in issues]
     events: list[JSONDict] = []
     has_critical = False
     errors: list[str] = []

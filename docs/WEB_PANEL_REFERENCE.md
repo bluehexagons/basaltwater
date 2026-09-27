@@ -56,7 +56,8 @@ when a caller's PATH omits `/usr/sbin`.
 
 The security monitor also records missing audit tools as a source failure on
 profiles that require audit coverage; the dedicated Proxmox profile remains
-optional.
+optional. Required profiles check that auditd is active and managed rules are
+loaded before treating an empty event search as clean.
 
 The certificate panel verifies the live HTTPS endpoint against the configured
 CA before offering installation. Public trust requires a managed Let's Encrypt
