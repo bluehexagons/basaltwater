@@ -10,7 +10,10 @@ metadata:
 ## Desktop mode
 
 `basaltw setup agent_cachyos localhost --t3code-desktop` installs missing
-`t3code-bin` through an existing paru/yay helper and retains installed versions.
+`t3code-bin` through current CachyOS's default Shelly CLI
+(`shelly install aur t3code-bin`) and retains installed versions. Only when
+Shelly is absent does setup try paru, then yay. Preserve package-review prompts
+and Shelly's configured AUR policy; do not switch helpers to bypass a failure.
 Updates belong to the AUR workflow. It disables the Basaltwater web service;
 an inactive service is expected in this mode. Setup retains all application data.
 The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records

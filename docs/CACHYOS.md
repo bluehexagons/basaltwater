@@ -6,6 +6,17 @@ intended for bare metal machines, including workstations with dedicated GPUs.
 It does not provision CachyOS VMs or containers and does not extend the
 general server profiles. KDE automation and managed Playwright are deferred.
 
+Support targets the **latest fully updated CachyOS rolling release**, not older
+ISO defaults or generic Arch installations. Update through CachyOS's normal
+full-system update workflow before setup. The current KDE baseline uses Plasma
+Wayland and Plasma Login Manager; Shelly supplies the default package-manager
+GUI and CLI. Basaltwater uses that CLI for the optional T3 AUR installation and
+leaves the desktop, login manager, DNS, drivers, and distro update services under
+CachyOS management. See the upstream [January](https://blog.cachyos.org/blog/2601-january-release/),
+[June](https://cachyos.org/blog/2606-june-release/), and
+[August 2026 release notes](https://blog.cachyos.org/blog/2608-august-release/)
+for these defaults; do not infer current packages from an older installation ISO.
+
 The setup is experimental until it has been exercised on the target hardware.
 The repository has mocked setup tests; the hardware checks at the end of this
 page still need to be run on each workstation class.
@@ -82,8 +93,8 @@ This selects Codex and GitHub CLI, installs or retains `t3code-bin`, and prepare
 the workspace and managed skills. Claude and OpenCode are not selected.
 `--node --python --git-lfs` supplies optional project tools; omit those flags
 for just the default coding tools and T3 desktop. Add `--no-agent-tool gh`
-to omit GitHub CLI too. A missing `t3code-bin` requires an existing `paru` or
-`yay` helper and may prompt for package review or sudo; an installed package
+to omit GitHub CLI too. A missing `t3code-bin` is installed using CachyOS's
+default Shelly CLI and may prompt for package review or sudo; an installed package
 stays on its current version. Setup preserves existing Codex/T3 settings and
 credentials and runs the [bounded cleanup](#cleanup-during-setup).
 
@@ -221,11 +232,21 @@ basaltw setup agent_cachyos localhost --t3code-desktop
 ```
 
 The flag is currently supported only by `agent_cachyos`, not Debian profiles or
-generic Arch installations. If `t3code-bin` is missing, setup uses an existing
-`paru` or `yay` helper as the desktop user, with interactive build/sudo prompts.
-Install an AUR helper through CachyOS first if neither is available. An installed
-package is retained; update it through your normal AUR workflow. Setup checks
-package metadata and executable ownership without launching Electron.
+generic Arch installations. If `t3code-bin` is missing, setup runs
+`shelly install aur t3code-bin` as the desktop user, with interactive package
+review, build, and sudo prompts. Shelly is included in current CachyOS; installing
+`paru` or `yay` first is unnecessary. Only when Shelly is absent does setup look
+for `paru`, then `yay`. These are optional alternatives, not an older-CachyOS
+support target. If all three are absent, preflight explains how to restore Shelly
+with `sudo pacman -S --needed shelly` on an already updated system.
+
+Setup preserves Shelly's configured AUR source and review policy. A failed or
+cancelled installation stops setup before disabling the working web service;
+it does not retry through another helper or bypass Shelly's policy. An installed
+package is retained without requiring any AUR helper; update it through your
+normal AUR workflow. Setup checks package metadata and executable ownership
+without launching Electron. See [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/)
+for its native AUR commands.
 
 Basaltwater installs the selected provider CLIs, workspace, and T3 agent skill.
 It preserves T3 settings, history, login credentials, and desktop launchers.
@@ -462,6 +483,10 @@ for current provider, client, and T3 Connect requirements.
 Every setup run performs cleanup after tool readiness. It installs
 `pacman-contrib` for the distro's [paccache version selection](https://man.archlinux.org/man/paccache.8),
 but does not enable `paccache.timer` or install another scheduled service.
+Current CachyOS already offers cache cleanup in Shelly's Utilities page, and
+`paccache` is available through its repositories. This setup pass adds the
+conservative retention rules below; it does not replace or reconfigure existing
+distro cleanup or update tools. AUR build caches, including Shelly's, stay intact.
 
 - **Package downloads:** retain the newest three cached versions of each
   package, the currently installed version, and any archive accessed or

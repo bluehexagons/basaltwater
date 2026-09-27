@@ -154,7 +154,7 @@ def install_missing_packages(packages: list[str]) -> None:
         raise RuntimeError(
             "Package installation failed. If pacman reported 'Could not resolve host', "
             "check DNS and access to the configured mirror (for example, with "
-            "`resolvectl query archlinux.cachyos.org`). Resolve the pacman error, "
+            "`getent hosts archlinux.cachyos.org`). Resolve the pacman error, "
             "update CachyOS through its normal full-system update workflow if needed, "
             "then rerun setup. basaltwater does not change DNS, refresh repositories, "
             "or upgrade the OS."

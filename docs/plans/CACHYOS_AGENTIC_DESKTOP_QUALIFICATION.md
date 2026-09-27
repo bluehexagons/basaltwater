@@ -17,7 +17,10 @@ Record source commit, date, operator, bare metal versus VM, CachyOS/Plasma/KWin
 versions, CPU variant, GPU/driver/compositor combination, portal backend,
 PipeWire, AT-SPI/Python GObject, and tested applications. Record results for
 different GPU vendors separately. A VM may qualify session helpers, but cannot
-run the current bare-metal setup profile or qualify real GPU behavior.
+run the current bare-metal setup profile or qualify real GPU behavior. Qualify
+the latest fully updated rolling release, recording Shelly and Plasma Login
+Manager versions alongside the KDE Wayland stack; older ISO defaults are not
+a separate support target.
 
 ## P0 prerequisite gate
 
@@ -52,7 +55,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | --- | --- | --- |
 | Setup | Fresh/rerun/interrupted setup, existing workspace and credentials preserved, recovery after failure | Not run |
 | Selection persistence | Private validated selection records, omitted options stop future management without deleting data | Not implemented |
-| T3 desktop | Retain an installed t3code-bin, install when absent through paru/yay, discover Codex from KDE, complete a thread and terminal command | Not run |
+| T3 desktop | Retain an installed t3code-bin, install when absent through default Shelly with review prompts, check optional paru/yay fallbacks only when Shelly is absent, preserve web service on cancellation/failure, discover Codex from KDE, complete a thread and terminal command | Not run |
 | T3 mode switching | Web → desktop disables only the owned service; desktop → web activates isolated data; preserve both environments and desktop package | Not run |
 | Codex lifecycle | Fresh standalone install, managed update and rollback, external-manager preservation, existing configuration and credentials retained | Not run |
 | Setup cleanup | Three cached package versions, installed version and recent archives retained; active-package lock defers deletion; user data and active agent resources preserved | Not run |

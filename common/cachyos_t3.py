@@ -24,7 +24,7 @@ from common.cachyos_steps import (
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run
-from lib.validation import validate_filesystem_path, validate_package_name
+from lib.validation import validate_arch_package_name, validate_filesystem_path
 
 
 DESKTOP_PACKAGE = "t3code-bin"
@@ -32,7 +32,7 @@ DESKTOP_PACKAGE = "t3code-bin"
 
 def _desktop_version() -> str | None:
     """Query package metadata without launching Electron or touching T3 data."""
-    package = validate_package_name(DESKTOP_PACKAGE)
+    package = validate_arch_package_name(DESKTOP_PACKAGE)
     result = run(["pacman", "-Q", "--", package], capture_output=True, check=False, timeout=15)
     if result.returncode == 1:
         return None
@@ -42,13 +42,19 @@ def _desktop_version() -> str | None:
     return parts[1]
 
 
-def _aur_helper(home: Path) -> str:
+def _desktop_install_command(home: Path) -> list[str]:
+    """Prefer current CachyOS's Shelly CLI, preserving its review policy."""
+    package = validate_arch_package_name(DESKTOP_PACKAGE)
+    executable = shutil.which("shelly", path=_tool_path(home))
+    if executable:
+        return [executable, "install", "aur", package]
     for name in ("paru", "yay"):
         executable = shutil.which(name, path=_tool_path(home))
         if executable:
-            return executable
-    raise RuntimeError("Installing T3 desktop requires an existing paru or yay AUR helper; "
-                       "install one through your normal CachyOS workflow and rerun --t3code-desktop")
+            return [executable, "-S", "--aur", "--needed", "--", package]
+    raise RuntimeError("Installing T3 desktop requires Shelly, paru, or yay; "
+                       "restore CachyOS's default helper with sudo pacman -S --needed shelly "
+                       "and rerun --t3code-desktop")
 
 
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
@@ -103,7 +109,7 @@ def preflight(config: SetupConfig) -> None:
     _prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
     if config.t3code_desktop and _desktop_version() is None:
-        _aur_helper(home)
+        _desktop_install_command(home)
 
 
 def install_desktop(config: SetupConfig) -> None:
@@ -113,10 +119,10 @@ def install_desktop(config: SetupConfig) -> None:
     _check_service_ownership(unit)
     version = _desktop_version()
     if version is None:
-        helper = _aur_helper(home)
+        command = _desktop_install_command(home)
         # Run as the desktop user with a terminal for sudo/build prompts. No
         # database refresh, full-system upgrade, or root AUR build is requested.
-        run([helper, "-S", "--aur", "--needed", "--", DESKTOP_PACKAGE], interactive=True)
+        run(command, interactive=True)
         version = _desktop_version()
         if version is None:
             raise RuntimeError("AUR installation finished without t3code-bin")

@@ -11,6 +11,10 @@ This is an existing human-operated CachyOS KDE desktop. Use the current account
 and its existing credentials and project configuration. The `agent_cachyos`
 profile installs tooling; it does not manage the OS, graphics drivers, login
 manager, account groups, network, firewall, or power policy.
+Target the latest fully updated rolling release: Plasma Wayland, Plasma Login
+Manager, and Shelly are the current KDE baseline. Do not assume SDDM, X11,
+Octopi, or a preinstalled paru from older CachyOS images. Optional helper
+fallbacks do not extend support to outdated systems.
 
 To add supported tools, rerun `basaltw setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
@@ -39,7 +43,9 @@ retained; restart provider sessions when convenient to use the new executable.
 Setup prunes old pacman downloads while retaining three cached versions, the
 installed version, and files accessed or modified within 30 days. It also
 reconciles known developer caches, Codex releases, and numbered T3 log rotations.
-No cleanup timer is installed. Preserve credentials, sessions, application data,
+Current Shelly also offers cache cleanup; setup leaves its AUR build cache and
+existing distro maintenance configuration alone. No cleanup timer is installed.
+Preserve credentials, sessions, application data,
 and repositories; do not substitute blanket cache deletion or orphan-package
 removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md#cleanup-during-setup).
 
@@ -77,7 +83,9 @@ network policy. These options do not install AUR or Flatpak packages, graphics
 drivers, or application-specific configuration.
 
 T3 desktop is the explicit AUR exception: `--t3code-desktop` installs or retains
-`t3code-bin` through an existing paru/yay helper. It is mutually exclusive with
+`t3code-bin` through the default Shelly CLI, using paru or yay only if Shelly is
+absent. Preserve the selected helper's review prompts and source policy.
+It is mutually exclusive with
 `--web-interface t3code`, which selects a separate managed web environment.
 Use `basaltwater-cachyos-t3code` for switching, pairing, and Connect commands.
 This profile does not install machine-use automation. Keep its agent, workspace,

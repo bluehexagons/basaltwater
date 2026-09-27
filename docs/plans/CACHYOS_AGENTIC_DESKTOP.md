@@ -37,7 +37,9 @@ authority for CachyOS desktop qualification and feature delivery.
   policy, firewall, login manager, and OS update policy under user control.
 - Install system dependencies from enabled CachyOS/Arch repositories. The
   explicit `--t3code-desktop` exception installs the upstream-listed `t3code-bin`
-  AUR package through an existing paru/yay helper as the desktop user. Do not
+  AUR package through the latest CachyOS default Shelly CLI as the desktop user
+  (paru/yay only when Shelly is absent). Target the current fully updated rolling
+  release; optional helper fallbacks do not qualify older CachyOS versions. Do not
   broaden this to arbitrary AUR or Flatpak sources or automatic full-system
   upgrades. Coding agents and T3 retain their documented upstream installation
   paths. The proposed Playwright runtime is a separate, explicit exception:

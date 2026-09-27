@@ -520,7 +520,7 @@ rm -f "$HOME/.basaltwater-install.sh"
 | `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |
 | `--no-agent-tool TOOL[,TOOL...]` | Disable one or more profile-default provider tools |
 | `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
-| `--t3code-desktop` | CachyOS only: install missing `t3code-bin` through paru/yay or retain the existing desktop package; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
+| `--t3code-desktop` | Latest CachyOS only: install missing `t3code-bin` through the default Shelly CLI (paru/yay if absent) or retain the existing desktop package; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
 | `--web-interface-host IP` | Bind address for the selected web interface; managed VM/server defaults to loopback or `0.0.0.0` with a source, while CachyOS accepts loopback or an explicit private IPv4 |
 | `--web-interface-port PORT` | TCP port for the selected web interface; default `3773` |
 | `--web-interface-source IP_OR_CIDR` | Managed VM/server source restriction for direct web-interface access; repeatable; CachyOS uses `--web-interface-host` for direct LAN mode |

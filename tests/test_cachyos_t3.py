@@ -82,10 +82,11 @@ class T3InstallTests(unittest.TestCase):
                                                f"t3code-bin {self.desktop_version}\n" if self.desktop_version else "", "")
         if argv[:2] == ["pacman", "-Qqo"]:
             return subprocess.CompletedProcess(argv, 0, "t3code-bin\n", "")
-        if argv[0] in {"/usr/bin/paru", "/usr/bin/yay"}:
+        if argv[0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}:
             if self.failure == "aur":
                 raise RuntimeError("AUR fixture failure")
-            self.desktop_version = "0.0.42-1"
+            if self.failure != "aur-cancel":
+                self.desktop_version = "0.0.42-1"
         if argv[0] == "systemd-analyze" and self.failure == "verify":
             raise RuntimeError("unit fixture failure")
         code = 0
@@ -325,21 +326,49 @@ class T3InstallTests(unittest.TestCase):
         self.assertTrue((self.prefix / "desktop-mode").is_file())
         self.assertFalse(self.unit.exists())
         self.assertFalse(self.binary.exists())
-        self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/paru", "/usr/bin/t3code"} for _, cmd in self.events))
+        self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay",
+                                       "/usr/bin/t3code"} for _, cmd in self.events))
 
-    def test_missing_desktop_installs_with_user_aur_helper(self):
+    def test_missing_desktop_prefers_shelly_with_review_prompts(self):
         self.desktop_version = None
         t3.install_desktop(self.desktop_config())
-        calls = [call for call in self.system_run.call_args_list if call.args[0][0] == "/usr/bin/paru"]
+        calls = [call for call in self.system_run.call_args_list
+                 if call.args[0][0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}]
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].args[0], ["/usr/bin/paru", "-S", "--aur", "--needed", "--", "t3code-bin"])
+        self.assertEqual(calls[0].args[0], ["/usr/bin/shelly", "install", "aur", "t3code-bin"])
         self.assertTrue(calls[0].kwargs["interactive"])
+
+    def test_current_cachyos_with_only_shelly_passes_preflight_without_mutation(self):
+        self.desktop_version = None
+        self.which.side_effect = lambda name, **kw: "/usr/bin/shelly" if name == "shelly" else None
+        t3.preflight(self.desktop_config())
+        self.assertFalse(self.prefix.exists())
+        self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] or cmd[:3] == ["systemctl", "--user", "show"]
+                            for _, cmd in self.events))
+
+    def test_missing_shelly_uses_available_legacy_helper(self):
+        for available, expected in (({"paru", "yay"}, "paru"), ({"yay"}, "yay")):
+            with self.subTest(available=available):
+                self.desktop_version = None
+                self.events.clear()
+                self.which.side_effect = lambda name, **kw: (
+                    "/usr/bin/" + name if name in available | {"t3code", "codex"} else None
+                )
+                t3.install_desktop(self.desktop_config())
+                self.assertIn(("system", ["/usr/bin/" + expected, "-S", "--aur", "--needed", "--", "t3code-bin"]),
+                              self.events)
+
+    def test_installed_desktop_needs_no_aur_helper(self):
+        self.which.side_effect = lambda name, **kw: "/usr/bin/" + name if name in {"t3code", "codex"} else None
+        t3.preflight(self.desktop_config())
+        t3.install_desktop(self.desktop_config())
+        self.assertTrue((self.prefix / "desktop-mode").is_file())
 
     def test_missing_helper_fails_preflight_without_mutation(self):
         self.desktop_version = None
         self.which.return_value = None
         self.which.side_effect = None
-        with self.assertRaisesRegex(RuntimeError, "paru or yay"):
+        with self.assertRaisesRegex(RuntimeError, "sudo pacman -S --needed shelly"):
             t3.preflight(self.desktop_config())
         self.assertFalse(self.prefix.exists())
         self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] or cmd[:3] == ["systemctl", "--user", "show"]
@@ -350,6 +379,19 @@ class T3InstallTests(unittest.TestCase):
         self.desktop_version = None
         self.failure = "aur"
         with self.assertRaisesRegex(RuntimeError, "AUR fixture"):
+            t3.install_desktop(self.desktop_config())
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertFalse((self.prefix / "desktop-mode").exists())
+        self.assertFalse(any(cmd[0] in {"/usr/bin/paru", "/usr/bin/yay"} for _, cmd in self.events))
+
+    def test_cancelled_desktop_install_does_not_disable_web_service(self):
+        target, content = self.legacy()
+        self.desktop_version = None
+        self.failure = "aur-cancel"
+        with self.assertRaisesRegex(RuntimeError, "without t3code-bin"):
             t3.install_desktop(self.desktop_config())
         self.assertTrue(self.active)
         self.assertTrue(self.enabled)
