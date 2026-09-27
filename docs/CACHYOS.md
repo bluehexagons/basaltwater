@@ -248,6 +248,14 @@ normal AUR workflow. Setup checks package metadata and executable ownership
 without launching Electron. See [Shelly's CLI reference](https://www.seafoam-labs.org/shelly-alpm/docs/cli-reference/)
 for its native AUR commands.
 
+Before invoking Shelly, setup creates its missing AUR cache directories as your
+desktop user. This avoids a Shelly 3.1.6 first-install path that creates the cache
+after elevation, then runs Git as the unprivileged user. Preflight reports an
+existing inaccessible or incorrectly owned cache before package installation.
+Both `~/.cache/Shelly` and an absolute `$XDG_CACHE_HOME/Shelly` are checked,
+because privilege elevation may discard the XDG override. Existing cache contents
+and permissions are preserved; setup does not recursively repair ownership.
+
 Basaltwater installs the selected provider CLIs, workspace, and T3 agent skill.
 It preserves T3 settings, history, login credentials, and desktop launchers.
 Setup prints provider executable paths; if a KDE-launched T3 cannot find a
@@ -258,6 +266,56 @@ mode does not require the separate Node/npm runtime used by the web service.
 Use the app's **Settings → Connections** for desktop pairing or T3 Connect,
 when supported by the installed version. The managed web-service commands below
 target a separate environment and should not be used to configure the desktop.
+
+### AUR download failures
+
+Shelly's generic source-download failure can hide the underlying Git error:
+its [3.1.6 download implementation](https://github.com/Seafoam-Labs/Shelly-ALPM/blob/v3.1.6/Shelly.PackageManager/src/aur/manager.zig)
+discards failed clone/pull output. This message alone does not establish a
+network problem. Basaltwater now includes the helper's exit status, retry
+command, and diagnostic pointers when installation fails.
+
+First inspect the version, configured source, and cache ownership as your normal
+desktop user:
+
+```bash
+pacman -Q shelly
+shelly config get AurUrl
+ls -ld -- "$HOME/.cache" "$HOME/.cache/Shelly"
+# If you configured an absolute XDG_CACHE_HOME, inspect its Shelly directory too.
+```
+
+If the reported **Shelly directory itself** is root-owned, and it is your normal
+cache directory rather than a symlink or shared location, repair just that
+directory and retry setup:
+
+```bash
+sudo chown -- "$(id -u):$(id -g)" "$HOME/.cache/Shelly"
+```
+
+Use the actual path reported by preflight for a custom cache. Do not recursively
+chown your home or delete the AUR cache; existing checkouts may contain edits.
+If another parent directory or checkout has incorrect permissions, inspect it
+separately. Setup does not assume every download failure is an ownership issue.
+
+To expose Git's own network/TLS/proxy error without building or installing,
+clone into a new temporary directory as your normal user. The URL below is for
+the default Arch AUR: replace its base with your configured `AurUrl` if different,
+so the check tests the same service as Shelly.
+
+```bash
+aur_probe=$(mktemp -d) &&
+git clone -- https://aur.archlinux.org/t3code-bin.git "$aur_probe/t3code-bin"
+```
+
+This only downloads packaging files; do not execute them for diagnosis. A
+successful clone tests access as your user, but does not rule out a Shelly cache,
+elevation, dependency, or later application-download failure. Inspect Shelly's
+session log at `/var/log/shelly.log` (may require sudo) or its unprivileged
+fallback `${XDG_STATE_HOME:-$HOME/.local/state}/shelly/shelly.log`. The log may
+still omit Git's discarded error. Resolve the reported cause, then rerun the
+same full setup command. The existing managed web service stays running if
+desktop installation fails.
 
 ### Switch modes on a later setup
 

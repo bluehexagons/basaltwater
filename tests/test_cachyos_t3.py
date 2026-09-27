@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ class T3InstallTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        stack.enter_context(patch.dict(os.environ, {"XDG_CACHE_HOME": ""}))
         self.prefix = self.home / ".local/share/basaltwater/cachyos-t3"
         self.binary = self.prefix / "bin/t3"
         self.unit = self.home / ".config/systemd/user" / t3.T3_SERVICE
@@ -83,8 +85,12 @@ class T3InstallTests(unittest.TestCase):
         if argv[:2] == ["pacman", "-Qqo"]:
             return subprocess.CompletedProcess(argv, 0, "t3code-bin\n", "")
         if argv[0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}:
+            if argv[0] == "/usr/bin/shelly":
+                cache = self.home / ".cache/Shelly"
+                self.assertTrue(cache.is_dir(), "Cache must exist before Shelly elevates")
+                self.assertEqual(cache.stat().st_uid, os.getuid())
             if self.failure == "aur":
-                raise RuntimeError("AUR fixture failure")
+                raise t3.CommandExecutionError(" ".join(argv), 1, "AUR fixture failure")
             if self.failure != "aur-cancel":
                 self.desktop_version = "0.0.42-1"
         if argv[0] == "systemd-analyze" and self.failure == "verify":
@@ -343,8 +349,76 @@ class T3InstallTests(unittest.TestCase):
         self.which.side_effect = lambda name, **kw: "/usr/bin/shelly" if name == "shelly" else None
         t3.preflight(self.desktop_config())
         self.assertFalse(self.prefix.exists())
+        self.assertFalse((self.home / ".cache").exists())
         self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] or cmd[:3] == ["systemctl", "--user", "show"]
                             for _, cmd in self.events))
+
+    def test_shelly_cache_preserves_existing_files_and_permissions(self):
+        cache = self.home / ".cache/Shelly"
+        cache.mkdir(parents=True, mode=0o700)
+        keep = cache / "existing-build"
+        keep.write_text("keep")
+        self.desktop_version = None
+        t3.install_desktop(self.desktop_config())
+        self.assertEqual(keep.read_text(), "keep")
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+
+    def test_shelly_checks_and_prepares_xdg_and_default_cache(self):
+        configured = self.home / "custom-cache"
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(configured)}):
+            t3._shelly_cache(self.home)
+            self.assertFalse(configured.exists())
+            t3._shelly_cache(self.home, create=True)
+        self.assertTrue((configured / "Shelly").is_dir())
+        self.assertTrue((self.home / ".cache/Shelly").is_dir())
+
+    def test_shelly_ignores_relative_xdg_cache_like_upstream(self):
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": "relative-cache"}):
+            t3._shelly_cache(self.home, create=True)
+        self.assertTrue((self.home / ".cache/Shelly").is_dir())
+        self.assertFalse((self.home / "relative-cache").exists())
+
+    def test_bad_shelly_cache_stops_preflight_before_install_or_web_changes(self):
+        self.legacy()
+        self.desktop_version = None
+        cache = self.home / ".cache/Shelly"
+        cache.mkdir(parents=True)
+        # Model a cache owned by another UID without changing real ownership.
+        with patch.object(t3.os, "getuid", return_value=os.getuid() + 1), \
+                self.assertRaisesRegex(RuntimeError, "root-owned Shelly cache"):
+            t3.preflight(self.desktop_config())
+        with patch.object(t3.os, "access", return_value=False), \
+                self.assertRaisesRegex(RuntimeError, "ls -ld"):
+            t3.install_desktop(self.desktop_config())
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertFalse(any(cmd[0] == "/usr/bin/shelly" for _, cmd in self.events))
+
+    def test_shelly_cache_rejects_symlinks_and_files_without_replacing_them(self):
+        self.desktop_version = None
+        root = self.home / ".cache"
+        root.mkdir()
+        cache = root / "Shelly"
+        outside = self.home / "personal"
+        outside.mkdir()
+        cache.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "Unsafe Shelly"):
+            t3.preflight(self.desktop_config())
+        self.assertTrue(cache.is_symlink())
+        self.assertEqual(list(outside.iterdir()), [])
+        cache.unlink()
+        cache.write_text("keep")
+        with self.assertRaisesRegex(ValueError, "Unsafe Shelly"):
+            t3.install_desktop(self.desktop_config())
+        self.assertEqual(cache.read_text(), "keep")
+
+    def test_shelly_reports_unsearchable_parent_before_inspecting_children(self):
+        root = self.home / ".cache"
+        root.mkdir()
+        with patch.object(t3.os, "access", side_effect=lambda path, mode: path != root), \
+                self.assertRaisesRegex(RuntimeError, str(root)):
+            t3._shelly_cache(self.home, create=True)
+        self.assertFalse((root / "Shelly").exists())
 
     def test_missing_shelly_uses_available_legacy_helper(self):
         for available, expected in (({"paru", "yay"}, "paru"), ({"yay"}, "yay")):
@@ -357,12 +431,14 @@ class T3InstallTests(unittest.TestCase):
                 t3.install_desktop(self.desktop_config())
                 self.assertIn(("system", ["/usr/bin/" + expected, "-S", "--aur", "--needed", "--", "t3code-bin"]),
                               self.events)
+                self.assertFalse((self.home / ".cache/Shelly").exists())
 
     def test_installed_desktop_needs_no_aur_helper(self):
         self.which.side_effect = lambda name, **kw: "/usr/bin/" + name if name in {"t3code", "codex"} else None
         t3.preflight(self.desktop_config())
         t3.install_desktop(self.desktop_config())
         self.assertTrue((self.prefix / "desktop-mode").is_file())
+        self.assertFalse((self.home / ".cache/Shelly").exists())
 
     def test_missing_helper_fails_preflight_without_mutation(self):
         self.desktop_version = None
@@ -378,8 +454,12 @@ class T3InstallTests(unittest.TestCase):
         target, content = self.legacy()
         self.desktop_version = None
         self.failure = "aur"
-        with self.assertRaisesRegex(RuntimeError, "AUR fixture"):
+        with self.assertRaisesRegex(RuntimeError, "AUR fixture") as raised:
             t3.install_desktop(self.desktop_config())
+        self.assertIn("exit code 1", str(raised.exception))
+        self.assertIn("shelly config get AurUrl", str(raised.exception))
+        self.assertIn("shelly.log", str(raised.exception))
+        self.assertIsInstance(raised.exception.__cause__, t3.CommandExecutionError)
         self.assertTrue(self.active)
         self.assertTrue(self.enabled)
         self.assertEqual(self.unit.read_text(), content)
