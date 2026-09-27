@@ -1037,10 +1037,11 @@ def _node_baseline_is_usable(
     nvm_env: str,
 ) -> bool:
     """Return whether the nvm default Node, npm, and pnpm commands run."""
+    nvm_default_env = f"{nvm_env} && nvm use default"
     result = _run_as_login_user(
         username,
         user_home,
-        f"{nvm_env} && node --version >/dev/null 2>&1 && "
+        f"{nvm_default_env} && node --version >/dev/null 2>&1 && "
         "npm --version >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1",
         check=False,
     )
@@ -1070,6 +1071,7 @@ def install_node_for_user(
             f"export NVM_DIR={safe_nvm_dir} && "
             '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
         )
+        nvm_default_env = f"{nvm_env} && nvm use default"
         verify_result = _run_as_login_user(
             username,
             user_home,
@@ -1097,7 +1099,7 @@ def install_node_for_user(
             _run_as_login_user(
                 username,
                 user_home,
-                f"{nvm_env} && npm install -g pnpm{npm_freshness_suffix}",
+                f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
             )
             _chown_existing_paths(username, _user_tool_paths(user_home))
             if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1117,12 +1119,12 @@ def install_node_for_user(
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_env} && npm install -g npm@latest{npm_freshness_suffix}",
+            f"{nvm_default_env} && npm install -g npm@latest{npm_freshness_suffix}",
         )
         _run_as_login_user(
             username,
             user_home,
-            f"{nvm_env} && npm install -g pnpm{npm_freshness_suffix}",
+            f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
         )
         _chown_existing_paths(username, _user_tool_paths(user_home))
         if not _node_baseline_is_usable(username, user_home, nvm_env):
@@ -1150,6 +1152,7 @@ def install_node_for_user(
     
     # Install Node.js LTS
     nvm_env = f"export NVM_DIR={safe_nvm_dir} && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\""
+    nvm_default_env = f"{nvm_env} && nvm use default"
     _run_as_login_user(
         username,
         user_home,
@@ -1162,12 +1165,12 @@ def install_node_for_user(
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_env} && npm install -g npm@latest{npm_freshness_suffix}",
+        f"{nvm_default_env} && npm install -g npm@latest{npm_freshness_suffix}",
     )
     _run_as_login_user(
         username,
         user_home,
-        f"{nvm_env} && npm install -g pnpm{npm_freshness_suffix}",
+        f"{nvm_default_env} && npm install -g pnpm{npm_freshness_suffix}",
     )
     
     _ensure_nvm_shell_init(username, user_home)
