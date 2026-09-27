@@ -17,9 +17,9 @@ CachyOS management. See the upstream [January](https://blog.cachyos.org/blog/260
 [August 2026 release notes](https://blog.cachyos.org/blog/2608-august-release/)
 for these defaults; do not infer current packages from an older installation ISO.
 
-The setup is experimental until it has been exercised on the target hardware.
-The repository has mocked setup tests; the hardware checks at the end of this
-page still need to be run on each workstation class.
+The current workstation's running stack has been tested through daily use and
+the September 2026 audit. See the [qualification record](plans/CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
+for that evidence and the separate fresh-install/recovery cases.
 
 ## Quick start
 
@@ -28,18 +28,20 @@ and install the appropriate GPU driver. Then open a terminal in your normal
 desktop session and run this as yourself (without `sudo`):
 
 ```bash
-curl --fail --location --connect-timeout 15 --max-time 120 \
-  --output "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
-sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
-  --node --python --git-lfs
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sh "$installer" --local-setup agent_cachyos \
+    --node --python --git-lfs
+)
 ```
 
 The package step may ask for your desktop user's sudo password. Keep the
 terminal attached until setup finishes. This example installs the default Git,
 ripgrep, build tools, GitHub CLI, and Codex plus Node.js, Python, and Git LFS.
-The `dev` channel is required while this profile is new; older release tags do
-not contain it.
+The installer defaults to the `dev` channel while this profile is new.
+The temporary download is removed when the command exits, including on failure.
 
 When the installer finds recent `infra_tools` user data, it runs the one-time
 Basaltwater migration from the selected checkout before installing and starting
@@ -78,16 +80,9 @@ Other shells need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
 ### Install with T3 Code desktop
 
-For Codex and the native T3 Code desktop app, run this complete installer
-example from your KDE terminal as your normal user, without `sudo`:
-
-```bash
-curl --fail --location --connect-timeout 15 --max-time 120 \
-  --output "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
-sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
-  --t3code-desktop --node --python --git-lfs
-```
+For Codex and the native T3 Code desktop app, add `--t3code-desktop` to the
+[quick-start installer](#quick-start), or use the commands below once the
+launcher is installed. Run as your normal KDE user, without `sudo`.
 
 This selects Codex and GitHub CLI, installs or retains `t3code-bin`, and prepares
 the workspace and managed skills. Claude and OpenCode are not selected.
@@ -105,6 +100,8 @@ basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
 basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
 ```
 
+Add `--plan` before `--local-setup` for an installer-wide preview with no
+package installation, repository download, or launcher changes.
 The direct setup preview makes no changes. Adding `--dry-run` to the shell
 installer previews only its final setup phase; the installer still installs
 the launcher and prerequisites. Keep installer options such as `--channel dev`
@@ -134,6 +131,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Plan only | `--dry-run` |
+| Restrict inbound workstation access | `--lan-access`, or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access` closes managed access |
 
 Examples:
 
@@ -361,19 +359,8 @@ interface flag; desktop listeners are configured in the desktop app.
 
 ### Install the local service
 
-This complete block installs the launcher and configures the default loopback
-service:
-
-```bash
-curl --fail --location --connect-timeout 15 --max-time 120 \
-  --output "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh &&
-sh "$HOME/.basaltwater-install.sh" --channel dev --local-setup agent_cachyos \
-  --agent-tool gh --agent-tool codex --web-interface t3code \
-  --web-interface-port 3773
-```
-
-For an already installed launcher, the equivalent setup is:
+Add `--web-interface t3code` to the [quick-start installer](#quick-start),
+or configure the default loopback service with the installed launcher:
 
 ```bash
 basaltw setup agent_cachyos localhost --web-interface t3code
@@ -448,10 +435,51 @@ systemctl --user status basaltwater-cachyos-t3.service
 
 Open the generated URL on the other device, or paste it into its T3 desktop
 app. The URL will contain `192.168.1.50`; a loopback URL only works on the
-workstation itself. Allow TCP 3773 (or your selected port) from the trusted LAN
-in the workstation's firewall and use a static or reserved address. Basaltwater
-does not change firewall rules, provide the VM pairing broker, configure a
-gateway, or maintain a source allowlist.
+workstation itself. Add `--lan-access` or `--access-source` to manage restricted
+UFW access, and use a static or reserved address. Basaltwater does not provide
+the VM pairing broker or configure a gateway.
+
+### Optional workstation firewall
+
+Keep your full selection when enabling restricted LAN access:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --lan-access
+```
+
+This explicitly opts into UFW management. It installs UFW if missing, enables
+its service now and at boot, enables
+IPv4/IPv6 filtering, denies incoming and routed traffic by default, and allows
+outgoing traffic so normal browsing, downloads, provider access, and game clients
+continue working. Existing unrelated rules are retained; this is not a firewall
+reset. Active firewalld/nftables services or disabled UFW IPv6 support stop
+preflight with remediation instead of combining incompatible policies.
+
+`--lan-access` trusts the single private IPv4 subnet on the default-route
+interface. Ambiguous/VPN/multiple-network cases require `--access-source`, which
+overrides discovery. Explicit sources must be RFC1918 IPv4 addresses or subnets;
+public sources, IPv6 sources, and all-network wildcards are refused. Rerunning
+refresh re-evaluates the current LAN; use explicit device addresses when you do
+not want that behavior on a roaming workstation.
+
+Only selected T3 TCP and Sunshine streaming/pairing ports are allowed from those
+sources. Sunshine's administration port 47990, legacy RDP 3389, and T3 UDP remain
+blocked remotely. The default T3 port and standard Sunshine ports receive deny
+guards or replace equivalent broad allow rules, including IPv6 rules. Rule
+precedence is verified; an earlier overlapping unmanaged allow stops setup for
+manual review. Previous custom port guards are retained.
+New guards are installed before old managed allows are
+removed, so a failed update can leave access closed; rerun the same selection to
+recover. Existing established connections and custom UFW before-rules are not
+revoked. Unrelated ports (including old development-server rules) require review.
+
+`--no-lan-access` with no explicit sources closes these managed ports remotely.
+Omitting all access flags leaves the firewall alone. This does not change T3's
+bind address, start Sunshine, enable SSH/RDP, or open KDE Connect/Steam hosting
+ports. Desktop T3 uses port 3773 here; nonstandard desktop ports need manual
+firewall configuration. Sunshine with custom ports also needs manual rules.
+Managed T3 ports cannot overlap the protected RDP/Sunshine TCP ports.
+Inspect `sudo ufw status verbose` and verify access from the intended client.
 
 If a previous checkout produced `has a bad unit file setting`, update
 Basaltwater and rerun setup. Validate the generated unit with:
@@ -529,6 +557,10 @@ The dry run displays the saved command and setup plan without fetching source,
 upgrading, installing, or changing the saved selection.
 
 The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
+The adjacent private `last-report.json` records completion time, source commit
+and channel (when available), selected tool/package versions, and diagnostic
+observations including warnings. It is informational, not replay input. A
+receipt failure warns without discarding a successful saved selection.
 It saves supported setup options, including provider selections/exclusions,
 T3 mode, optional tools, repositories, workspace, and web bind/port. It does
 not copy authentication files or save provider credentials. The record is
@@ -651,9 +683,18 @@ successful report proves only the observations it lists; it does not prove GPU
 rendering, desktop input, provider authentication, or an end-to-end thread.
 The command runs without the Debian maintenance confirmation, including with
 `--json` in a noninteractive session. Browser observations recognize Chromium,
-Firefox, Brave, and Cachy Browser native packages. An absent optional browser
+Firefox, Brave, LibreWolf, and Cachy Browser native packages. An absent optional browser
 package does not mean there is no usable browser; custom installations are not
 inventoried, and the doctor does not launch a browser to test it.
+
+The doctor loads the validated saved selection: a missing selected T3 package,
+inactive selected web service, or broken selected CLI is reported as failed.
+Missing unselected browsers remain informational. It also reports failed units,
+root capacity, booted kernel module presence, firmware/encryption observations,
+non-loopback listeners, and potentially broad saved UFW rules. It never elevates
+privileges; saved firewall rules do not prove effective packet filtering.
+Update observations use existing pacman metadata, which may be stale. Setup
+prints the same host observations before installing packages.
 
 Before calling a workstation validated, record its CachyOS, Plasma, kernel,
 GPU/driver, and tool versions; repeat setup; authenticate an agent; complete a

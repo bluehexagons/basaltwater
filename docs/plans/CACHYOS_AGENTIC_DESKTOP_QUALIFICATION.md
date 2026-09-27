@@ -1,6 +1,8 @@
 # CachyOS agentic desktop qualification record
 
-Status: **full qualification not run**. Unit tests do not satisfy this checklist.
+Status: **current workstation's running stack tested and accepted by its owner**
+(2026-09-27). Fresh-install, interruption/recovery, and unimplemented automation
+cases below remain separate. Unit tests do not satisfy those live cases.
 Copy the record for each disposable CachyOS installation; keep private evidence locally
 and commit only reviewed, redacted results. Do not record credentials, personal
 window content, or raw session environment. The owning
@@ -10,6 +12,28 @@ Read-only observations on 2026-09-27, through commit `555efff`, passed local
 CachyOS preflight, Codex login status, Arch package-name validation, and package
 cleanup preview. No setup, updates, or cleanup were applied. These observations
 do not pass the live acceptance cases below.
+
+## Accepted workstation evidence — 2026-09-27
+
+The owner confirms that everything running on this workstation can be considered
+tested. This supersedes the earlier prerequisite-only assessment for the active
+stack. At source commit `5026fb12`, the audit observed CachyOS x86-64 bare metal,
+kernel `7.2.8-1-cachyos`, Plasma/KWin `6.7.5`, Wayland, PipeWire `1.6.9`,
+WirePlumber `0.5.17`, and the NVIDIA graphics stack. Daily operation covers the
+desktop, audio, gaming, Sunshine, native browsers, and T3 desktop.
+
+T3 `0.0.42-1` runs a real Codex provider thread and terminal. Git/Git LFS,
+GitHub CLI authentication, Codex `0.157.1` authentication, Node `26.10.0`, npm,
+pnpm, Python `3.14.7`, and uv work. The successful setup selection is private
+and `refresh --dry-run` reproduces it. No failed system/user units or package
+database errors were found; 136 focused tests passed at that commit.
+
+The audit also found broad T3/Sunshine listeners and unrestricted saved UFW
+allow rules. Their existence is recorded, not treated as a security acceptance
+of arbitrary network exposure. The new opt-in firewall policy needs its own
+apply/client-connectivity test. No fresh reinstall, forced interruption,
+web/desktop switch, or automated portal/input qualification is implied by
+acceptance of the currently running stack.
 
 ## Environment
 

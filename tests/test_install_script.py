@@ -791,11 +791,64 @@ class TestInstallScript(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--setup", help_result.stdout)
         self.assertIn("--qemu-guest-agent", help_result.stdout)
-        self.assertIn('--timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh"', help_result.stdout)
-        self.assertIn('-O "$HOME/.basaltwater-install.sh"', help_result.stdout)
-        self.assertNotIn("|", help_result.stdout)
+        self.assertIn('installer=$(mktemp)', help_result.stdout)
+        self.assertIn("trap 'rm -f --", help_result.stdout)
+        self.assertNotIn("| sh", help_result.stdout)
         self.assertNotIn("sudo sh -s", help_result.stdout)
         self.assertNotIn("wget -qO-", help_result.stdout)
+
+    def test_plan_does_not_download_bootstrap_or_create_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, log, environment = self._create_fixture(directory)
+            target = os.path.join(directory, "installed")
+            result = subprocess.run([
+                "sh", INSTALL_SCRIPT, "--plan", "--install-dir", target,
+                "--local-setup", "control_plane",
+            ], env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("No packages, source, launcher, or setup changed", result.stdout)
+            self.assertFalse(os.path.exists(target))
+            self.assertFalse(os.path.exists(log))
+            self.assertEqual(os.listdir(home), [])
+
+    def test_documented_installer_blocks_have_valid_shell_syntax(self):
+        import re
+        from pathlib import Path
+
+        for filename in ("README.md", "docs/INSTALLATION.md", "docs/CACHYOS.md"):
+            document = Path(PROJECT_ROOT, filename).read_text()
+            for example in re.findall(r"```bash\n(.*?)```", document, re.S):
+                if "installer=$(mktemp)" not in example:
+                    continue
+                with self.subTest(filename=filename, example=example):
+                    result = subprocess.run(["sh", "-n"], input=example, text=True,
+                                            capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_documented_download_cleans_up_and_preserves_failure_status(self):
+        import re
+        from pathlib import Path
+
+        readme = Path(PROJECT_ROOT, "README.md").read_text()
+        example = re.search(r"```bash\n(.*?)```", readme, re.S)[1]
+        for download_status, expected in ((0, 7), (22, 22)):
+            with self.subTest(download_status=download_status), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "temp").mkdir()
+                payload = root / "payload"
+                payload.write_text('#!/bin/sh\nprintf ran > "$TEST_RAN"\nexit 7\n')
+                curl = root / "curl"
+                curl.write_text('#!/bin/sh\nfor arg do target=$arg; done\n'
+                                'cp "$TEST_PAYLOAD" "$target"\nexit "$TEST_DOWNLOAD_STATUS"\n')
+                curl.chmod(0o755)
+                result = subprocess.run(["sh", "-c", example], text=True, capture_output=True, env={
+                    **os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                    "TMPDIR": str(root / "temp"), "TEST_PAYLOAD": str(payload),
+                    "TEST_RAN": str(root / "ran"), "TEST_DOWNLOAD_STATUS": str(download_status),
+                }, timeout=10)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertEqual(list((root / "temp").iterdir()), [])
+                self.assertEqual((root / "ran").exists(), download_status == 0)
 
 
 if __name__ == "__main__":

@@ -16,14 +16,11 @@ explicitly named Proxmox SDN bridges are supported alongside conventional
 
 ## Quick setup: Proxmox host to coding VM
 
-Install Basaltwater on a trusted Linux orchestration machine first. The
+[Install Basaltwater](INSTALLATION.md) on a trusted Linux orchestration machine first. The
 Proxmox host does not need a checkout; setup uploads the installed source to
 `/opt/basaltwater`.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sh "$HOME/.basaltwater-install.sh"
-rm -f "$HOME/.basaltwater-install.sh"
 basaltw channel
 ```
 

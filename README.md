@@ -31,13 +31,16 @@ and checks that show whether each step worked.
 Install the launcher on the machine that will manage your hosts:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sh "$HOME/.basaltwater-install.sh"
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sh "$installer"
+)
 ```
 
-Run each line in order and continue only if the previous command succeeds.
-If `wget` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
+Copy the whole block; the temporary script is removed on exit.
+If `curl` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
 Installing the launcher does not configure a target. Use `basaltw setup ...` for
 remote hosts and `basaltw upgrade` to update the selected channel. The
 [`basaltw refresh` command](docs/COMMAND_LINE.md#refresh-this-machine) upgrades

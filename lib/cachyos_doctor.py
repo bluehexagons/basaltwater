@@ -13,6 +13,7 @@ import pwd
 import re
 import stat
 import subprocess
+import shutil
 
 from lib.cachyos import is_cachyos
 from lib.streamed_process import run_streamed
@@ -23,7 +24,7 @@ from lib.validators import validate_username
 SCHEMA_VERSION = 1
 PROBE_TIMEOUT = 3.0
 OUTPUT_LIMIT = 16384
-BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser")
+BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser", "librewolf-bin")
 PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
     "xdg-desktop-portal", "xdg-desktop-portal-kde", "at-spi2-core",
@@ -149,7 +150,16 @@ def _owned_socket(path: Path, uid: int) -> bool:
         return False
 
 
-def collect_cachyos_doctor() -> dict[str, object]:
+def saved_selection():
+    from lib.cachyos_refresh import load_saved_setup
+
+    try:
+        return load_saved_setup()[1]
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
     """Observe this account only, without reading UI contents or starting services."""
     uid = os.getuid()
     owner = pwd.getpwuid(uid).pw_name
@@ -168,7 +178,43 @@ def collect_cachyos_doctor() -> dict[str, object]:
         record("host", "deferred",
                "Run as the existing desktop user on CachyOS x86_64; no desktop probes ran.")
     else:
-        record("host", "available", "CachyOS x86_64 detected; hardware qualification remains pending.")
+        config = config if config is not None else saved_selection()
+        selected_packages = {"t3code-bin": config.t3code_desktop} if config is not None else {}
+        selected_packages.update({package: False for package in BROWSER_PACKAGES})
+        if config is not None:
+            from common.cachyos_steps import CACHYOS_DESKTOP_PACKAGES, CACHYOS_SYSADMIN_PACKAGES
+
+            for field, _command, package in CACHYOS_DESKTOP_PACKAGES:
+                if getattr(config, field):
+                    selected_packages[package] = True
+            if config.install_sysadmin_tools:
+                selected_packages.update({package: True for _, package in CACHYOS_SYSADMIN_PACKAGES})
+            for enabled, packages in (
+                (config.install_sunshine, ("sunshine",)),
+                (config.install_moonlight, ("moonlight-qt",)),
+                (config.install_gaming, ("cachyos-gaming-meta", "cachyos-gaming-applications")),
+            ):
+                if enabled:
+                    selected_packages.update({package: True for package in packages})
+            commands = config.selected_agent_tools() + ["git", "rg"]
+            if config.install_node:
+                commands += ["node", "npm", "pnpm"]
+            if config.install_python:
+                commands += ["python", "uv"]
+            if config.install_git_lfs:
+                commands.append("git-lfs")
+            if config.install_go:
+                commands.append("go")
+            for command in commands:
+                executable = shutil.which(command)
+                status, output = _probe([executable, "version" if command == "go" else "--version"], uid) if executable else ("missing", "")
+                match = re.search(r"(?<![0-9.])\d+\.\d+(?:\.\d+)?[a-zA-Z0-9.+_-]*", output[:512])
+                version = match[0] if match and _VERSION.fullmatch(match[0]) else None
+                record("tool." + command, "available" if status == "ok" else "failed",
+                       "Selected executable passed its version check." if status == "ok"
+                       else "Selected executable missing or version check failed; rerun setup or inspect its original manager.",
+                       selected=True, version=version)
+        record("host", "available", "CachyOS x86_64 detected; live qualification is recorded separately.")
         runtime = Path(f"/run/user/{uid}")
         bus_ready = _owned_socket(runtime / "bus", uid)
         record("session.bus", "available" if bus_ready else "deferred",
@@ -184,16 +230,19 @@ def collect_cachyos_doctor() -> dict[str, object]:
                "Run from a KDE Wayland terminal with its owned Wayland socket.")
 
         installed_browsers = []
-        for package in PACKAGES:
+        for package in dict.fromkeys((*PACKAGES, *selected_packages)):
             validate_package_name(package)
             status, output = _probe(["/usr/bin/pacman", "-Q", "--", package], uid)
             parts = output.split()
             version = (parts[1] if status == "ok" and len(parts) == 2
                        and parts[0] == package and _VERSION.fullmatch(parts[1]) else None)
-            record(f"package.{package}", "available" if version else "deferred",
+            selected = selected_packages.get(package)
+            record(f"package.{package}", "available" if version else "failed" if selected else "deferred",
                    "Native package installed; this does not verify application behavior." if version else
-                   "Package unavailable or query inconclusive; inspect pacman locally and install native dependencies if needed.",
-                   version=version)
+                   "Not selected by setup; package absent or query inconclusive." if selected is False else
+                   "Selected package missing or query inconclusive; inspect pacman locally." if selected else
+                   "Package unavailable or query inconclusive; inspect pacman locally if needed.",
+                   version=version, selected=selected)
             if version and package in BROWSER_PACKAGES:
                 installed_browsers.append(package)
 
@@ -232,11 +281,20 @@ def collect_cachyos_doctor() -> dict[str, object]:
                     "/usr/bin/systemctl", "--user", "--no-pager", "is-active", unit,
                 ], uid)
             active = status == "ok" and output.strip() == "active"
-            record(name, "available" if active else "deferred",
+            selected = bool(config.web_interfaces) if config is not None and name == "service.t3code" else None
+            record(name, "available" if active else "failed" if selected else "deferred",
                    "User unit active; functional readiness is not verified." if active else
-                   ("Managed web service inactive; expected for --t3code-desktop. Desktop health is checked in the app."
-                    if name == "service.t3code" else
-                    "User unit not observed active; inspect with systemctl --user. Optional selection is unknown."))
+                   ("Selected web service inactive; inspect systemctl --user status basaltwater-cachyos-t3."
+                    if selected else "Managed web service inactive; expected for --t3code-desktop. Desktop health is checked in the app."
+                    if config is not None and config.t3code_desktop and name == "service.t3code" else
+                    "User unit not observed active; inspect with systemctl --user. Selection may be unknown."), selected=selected)
+
+        from lib.cachyos_health import collect_host_health, collect_network_health
+
+        for name, state, reason in collect_host_health(_probe, uid) + collect_network_health(
+            _probe, uid, config.web_interface_port if config is not None else 3773,
+        ):
+            record(name, state, reason)
 
     for name, origin in (("browser.playwright", "user-session"),
                          ("desktop.accessibility", "user-session"),

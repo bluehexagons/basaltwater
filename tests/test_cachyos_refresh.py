@@ -41,6 +41,8 @@ class CachyOSRefreshTests(unittest.TestCase):
             "commit": "abcdef0123456789", "channel": "dev", "updated": True,
         }))
         self.execute = stack.enter_context(patch.object(refresh.os, "execv"))
+        stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
+        stack.enter_context(patch("lib.cachyos_health.source_metadata", return_value={"commit": "abc123", "channel": "dev"}))
         self.parser, _, _ = basaltwater.create_basaltwater_parser()
         self.record = self.home / ".local/state/basaltwater/cachyos/last-setup.json"
 
@@ -84,6 +86,18 @@ class CachyOSRefreshTests(unittest.TestCase):
     def test_no_selected_agents_stays_empty(self):
         refresh.save_successful_setup(self.config("--no-agent-tool", "gh,codex"))
         self.assertEqual(refresh.load_saved_setup()[1].selected_agent_tools(), [])
+
+    def test_receipt_is_private_and_firewall_selection_replays(self):
+        refresh.save_successful_setup(self.config("--t3code-desktop", "--lan-access", "--access-source", "10.2.3.4"))
+        _, restored = refresh.load_saved_setup()
+        self.assertTrue(restored.lan_access)
+        self.assertEqual(restored.access_sources, ["10.2.3.4"])
+        receipt = self.record.with_name("last-report.json")
+        data = json.loads(receipt.read_text())
+        self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(data["source"]["channel"], "dev")
+        self.assertIn("completed_at", data)
+        self.assertEqual(data["observations"], [])
 
     def test_saved_agents_survive_changed_profile_defaults(self):
         for options, expected in (

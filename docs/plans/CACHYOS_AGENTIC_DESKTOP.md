@@ -1,11 +1,10 @@
 # CachyOS agentic desktop capabilities
 
-Status: initial native setup and T3 access slice implemented; live qualification
-pending. Portable contracts and read-only diagnostics can be implemented before
-qualification. Machine-use feature release remains gated on the P0 live pass.
-Read-only checks have also run on an existing CachyOS workstation; they do not
-establish setup, provider-thread, or GPU acceptance. Do not mark this project
-complete from prerequisite observations, mocked tests, or headless tests.
+Status: native setup and the current workstation's running desktop/tool stack
+are tested and accepted by its owner as of 2026-09-27. The
+[qualification record](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md) distinguishes
+that live evidence from pending fresh-install and interruption/recovery cases.
+Machine-use features still require their own implementation and qualification.
 
 ## Objective
 
@@ -34,7 +33,8 @@ authority for CachyOS desktop qualification and feature delivery.
 ## Boundaries and non-goals
 
 - Keep the existing human user, KDE Plasma session, GPU/driver setup, network
-  policy, firewall, login manager, and OS update policy under user control.
+  addressing, login manager, and OS update policy under user control. Explicit
+  access flags opt into the bounded desktop UFW policy in the operator guide.
 - Install system dependencies from enabled CachyOS/Arch repositories. The
   explicit `--t3code-desktop` exception installs the upstream-listed `t3code-bin`
   AUR package through the latest CachyOS default Shelly CLI as the desktop user
@@ -381,9 +381,9 @@ desktop-control implementation.
   bounded streaming, local bus addressing, and no service activation.
 - Added mocked contract, parser, privacy, ownership, and probe-bound tests,
   operator documentation, and workstation skill guidance.
-- Live P0 qualification is pending. Read-only preflight, package inventory,
-  Codex login status, and cleanup preview have passed on an existing CachyOS
-  workstation; setup and cleanup were not applied as part of those checks.
+- The current workstation's running stack is accepted through owner-confirmed
+  daily use, supplemented by the live audit and a real T3/Codex thread/terminal.
+  Fresh-install, failure/recovery, and new firewall acceptance remain separate.
   Use the [qualification checklist](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
   to record evidence. No machine-use flag has been enabled.
 - The initial native package, workspace, user-service, private-LAN pairing, and
@@ -392,7 +392,8 @@ desktop-control implementation.
 - Native T3 desktop installation/integration, reversible desktop/web selection
   with isolated web data, standalone Codex update protection, and conservative
   setup-time package/user-cache cleanup are implemented and covered by mocked
-  tests. Fresh setup, live mode switching, and provider tasks remain to qualify.
+  tests. Provider tasks are accepted on the current workstation; fresh setup
+  and live mode switching remain to qualify.
 - Browser runtime/isolation, selection persistence, full host/application
   diagnostics, AT-SPI operations, portal leases/input/capture, application
   workflows and their recovery, and web-panel integration remain unimplemented. This

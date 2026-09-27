@@ -36,10 +36,12 @@ _OPTIONS = {
     "install_gimp", "install_remmina", "install_sysadmin_tools",
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port", "t3code_desktop",
+    "lan_access", "access_sources", "clear_access_sources",
 }
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
     "agent_tools_removed", "install_gh", "install_codex", "install_claude",
     "install_opencode",
+    "clear_lan_access",
 }
 
 
@@ -77,6 +79,10 @@ def cachyos_config_from_args(
             setattr(copied, name, getattr(args, name))
     copied.host = getattr(args, "host", "localhost")
     copied.username = getattr(args, "username", None) or pwd.getpwuid(os.getuid()).pw_name
+    # Server profiles infer a wildcard bind from access flags. Desktop access
+    # policy must not widen the listener: require an explicit private bind.
+    if copied.web_interfaces and copied.web_interface_host is None:
+        copied.web_interface_host = "127.0.0.1"
     config = SetupConfig.from_args(copied, PROFILE)
     validate_cachyos_config(config)
     return config
@@ -129,6 +135,14 @@ def validate_cachyos_config(config: SetupConfig) -> None:
     ):
         raise ValueError("CachyOS T3 Code requires an unprivileged port (1024-65535)")
     validate_agent_repositories(config.agent_repos)
+    from common.cachyos_firewall import firewall_requested, validate_sources
+
+    validate_sources(config.access_sources or [])
+    if firewall_requested(config) and config.web_interfaces and (
+        config.web_interface_port in (3389, 48010)
+        or 47984 <= config.web_interface_port <= 47990
+    ):
+        raise ValueError("Choose a T3 port outside the protected RDP/Sunshine ports for managed firewall access")
     if config.agent_workspace:
         validate_filesystem_path(config.agent_workspace)
         if not os.path.isabs(config.agent_workspace):
@@ -175,6 +189,10 @@ def preflight_cachyos(config: SetupConfig) -> None:
         from common.cachyos_t3 import preflight
 
         preflight(config)
+    from common.cachyos_firewall import firewall_requested, preflight_firewall
+
+    if firewall_requested(config):
+        preflight_firewall(config)
 
 
 def run_cachyos_command(args: argparse.Namespace) -> int:

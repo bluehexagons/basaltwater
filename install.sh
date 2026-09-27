@@ -18,6 +18,7 @@ LOCAL_SETUP_REQUESTED=0
 INSTALL_QEMU_GUEST_AGENT=0
 HOST_OS_SUPPORTED=1
 HOST_OS_ID=""
+PLAN_ONLY=0
 
 usage() {
     cat <<'EOF'
@@ -36,6 +37,7 @@ Options:
                        otherwise ~/.local/share/basaltwater)
   --user USER          User receiving local tools and completions
   --shell SHELL        bash, zsh, fish, or tcsh (default: target user's shell)
+  --plan               Print the installer plan without downloads or changes
   --qemu-guest-agent   Install, start, and enable Proxmox's qemu-guest-agent
                        during self-setup (must appear before --setup/--local-setup)
   --setup ...          Run `basaltw setup ...` after installation
@@ -44,21 +46,17 @@ Options:
   -h, --help           Show this help
 
 Examples:
-  Download with wget, then run the script (run each line in order):
-  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-  sh "$HOME/.basaltwater-install.sh"
-  rm -f "$HOME/.basaltwater-install.sh"
-  Download with wget and run a privileged setup:
-  wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-  sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane \
-    --agent-tool gh --agent-tool codex --agent-tool claude --agent-tool opencode
-  rm -f "$HOME/.basaltwater-install.sh"
-  Add qemu-guest-agent when the orchestration host is a Proxmox VM by placing
-  --qemu-guest-agent before --local-setup:
-  sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --qemu-guest-agent --local-setup control_plane
-  rm -f "$HOME/.basaltwater-install.sh"
-  Download with curl instead by replacing the wget command with:
-  curl --fail --location --connect-timeout 15 --max-time 120 -o "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
+  sh install.sh --plan --local-setup agent_cachyos --t3code-desktop
+  sh install.sh --local-setup agent_cachyos --t3code-desktop --node --python
+  sudo sh install.sh --user "$USER" --local-setup control_plane --agent-tool gh
+
+Download and run without leaving a script behind (copy the whole block):
+  (
+    installer=$(mktemp) || exit
+    trap 'rm -f -- "$installer"' EXIT
+    curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+    sh "$installer"
+  )
 EOF
 }
 
@@ -169,7 +167,7 @@ validate_host_os() {
             ;;
         *)
             HOST_OS_SUPPORTED=0
-            if ! confirm_unsupported_host; then
+            if [ "$PLAN_ONLY" -eq 0 ] && ! confirm_unsupported_host; then
                 fail "unsupported host confirmation declined"
             fi
             ;;
@@ -243,6 +241,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --qemu-guest-agent)
             INSTALL_QEMU_GUEST_AGENT=1
+            shift
+            ;;
+        --plan)
+            PLAN_ONLY=1
             shift
             ;;
         --setup)
@@ -386,6 +388,19 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
         missing_prerequisites="$missing_prerequisites, "
     fi
     missing_prerequisites="${missing_prerequisites}curl or wget"
+fi
+
+if [ "$PLAN_ONLY" -eq 1 ]; then
+    printf 'Installer plan for %s (%s):\n' "$TARGET_USER" "$HOST_OS_ID"
+    printf '  Source destination: %s\n  Requested channel: %s\n' "$INSTALL_DIR" "$CHANNEL"
+    printf '  Missing prerequisites: %s\n' "${missing_prerequisites:-none}"
+    printf '  Would download source, validate it, preserve managed data, and install the launcher.\n'
+    if [ "$RUN_SETUP" -eq 1 ]; then
+        printf '  Would run setup with arguments:\n'
+        printf '    %s\n' "$@"
+    fi
+    printf 'No packages, source, launcher, or setup changed. Channel resolution and target checks occur on apply.\n'
+    exit 0
 fi
 
 ensure_debian_bootstrap_sources() {

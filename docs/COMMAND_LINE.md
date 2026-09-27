@@ -230,6 +230,13 @@ tools, not for an LXC container.
 
 ### Common Setup Flags
 
+On CachyOS, `--lan-access` uses the actual private IPv4 prefix of the single
+default-route interface. `--access-source` overrides discovery, and either
+option opts into desktop UFW management for selected T3/Sunshine services.
+`--no-lan-access` without explicit sources closes that managed access. See
+[workstation firewall policy](CACHYOS.md#optional-workstation-firewall).
+The target-address inference and server-service scope below apply to Debian.
+
 | Flag | Description |
 |------|-------------|
 | `--lan-access` / `--no-lan-access` | Infer or remove target-adjacent LAN access: a private IPv4 target uses its `/24`, a ULA IPv6 target uses `/64`, and an explicit static prefix is honored |
@@ -536,13 +543,10 @@ an empty pairing password reuses the target account password. Use
 `--git-access none --git-auth none --agent-auth none` or the `--no-*` switches
 when a deployment needs a narrower posture.
 
-For the local machine, the installer can select the control-plane profile and
-run it immediately:
+After [installing the launcher](INSTALLATION.md), configure the local control plane:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
-rm -f "$HOME/.basaltwater-install.sh"
+sudo basaltw setup control_plane localhost "$USER"
 ```
 
 To convert a Debian desktop to one shared XFCE/XRDP session, first log out
@@ -550,10 +554,8 @@ graphical sessions and run from SSH or a text console. Console graphical login
 is disabled. Select the agent tools needed (GitHub CLI and Codex here):
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup workstation_dev \
+sudo basaltw setup workstation_dev localhost "$USER" \
   --control-plane --agent-tool gh --agent-tool codex --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 | Flag | Description |

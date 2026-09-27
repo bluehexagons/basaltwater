@@ -40,15 +40,20 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         report_cachyos_readiness,
         reconcile_cachyos_user_cache,
         save_cachyos_setup,
+        report_cachyos_host_health,
     )
     from lib.cachyos import validate_cachyos_config
+    from common.cachyos_firewall import configure_firewall, firewall_requested
 
     validate_cachyos_config(config)
     steps = [
+        ("Observing workstation health (read-only)", report_cachyos_host_health),
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
         ("Installing or updating coding agents for the current user", install_cachyos_agents),
         ("Preparing the local coding workspace", prepare_cachyos_workspace),
     ]
+    if firewall_requested(config):
+        steps.insert(2, ("Restricting workstation inbound access with UFW", configure_firewall))
     if config.t3code_desktop:
         steps.append(("Installing or integrating T3 Code desktop (disables managed web service)", install_cachyos_t3_desktop))
     if config.web_interfaces:

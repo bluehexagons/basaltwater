@@ -119,6 +119,9 @@ class DoctorTests(unittest.TestCase):
         stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
         self.socket = stack.enter_context(patch.object(doctor, "_owned_socket", return_value=True))
         self.probe = stack.enter_context(patch.object(doctor, "_probe", side_effect=self.healthy_probe))
+        stack.enter_context(patch.object(doctor, "saved_selection", return_value=None))
+        stack.enter_context(patch("lib.cachyos_health.collect_host_health", return_value=[]))
+        stack.enter_context(patch("lib.cachyos_health.collect_network_health", return_value=[]))
         stack.enter_context(patch.dict("os.environ", {
             "XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "wayland-0",
             "TOKEN": "secret-value", "DISPLAY": "secret-display",
@@ -169,7 +172,7 @@ class DoctorTests(unittest.TestCase):
         records = {item["name"]: item for item in doctor.collect_cachyos_doctor()["capabilities"]}
         self.assertEqual(records["package.t3code-bin"]["state"], "available")
         self.assertEqual(records["service.t3code"]["state"], "deferred")
-        self.assertIn("expected for --t3code-desktop", records["service.t3code"]["reason"])
+        self.assertIn("Selection may be unknown", records["service.t3code"]["reason"])
 
     def test_unsupported_host_and_root_do_not_probe(self):
         self.supported.return_value = False

@@ -36,8 +36,8 @@ its processes, or delete history as part of switching.
 The `agent_cachyos --web-interface t3code` setup uses the current desktop account
 and a dedicated user unit, `basaltwater-cachyos-t3.service`. It binds to
 `127.0.0.1:3773` by default, or to the explicitly selected private IPv4 address
-and port. It runs with the user session; setup does not enable lingering or
-configure firewall rules.
+and port. It runs with the user session; setup does not enable lingering.
+Firewall management requires an explicit access flag; see the workstation skill.
 
 Inspect service state and recent logs as the user:
 
@@ -63,8 +63,8 @@ To connect a browser or desktop client, run:
 Open the printed `Pairing URL` in the browser, or paste it into the desktop
 client. Opening the bare localhost address redirects to T3's pairing page. This
 profile binds to loopback by default. Pass `--web-interface-host` a private
-IPv4 address during setup to allow clients on the trusted LAN; firewall policy
-and address stability remain the workstation owner's responsibility.
+IPv4 address during setup to allow clients on the trusted LAN. Add `--lan-access`
+or `--access-source` to restrict UFW access, and arrange address stability.
 
 For cloud access through T3 Connect, keep the default loopback bind and run the
 following as the desktop user. Complete the browser sign-in, restart the

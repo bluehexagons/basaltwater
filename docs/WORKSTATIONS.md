@@ -10,13 +10,11 @@ override the desktop, browser, or application choices with flags.
 
 To use a Debian desktop as the local control plane, combine the workstation
 profile with `--control-plane` and select the agent tools you need (GitHub CLI
-and Codex CLI in this example):
+and Codex CLI in this example). [Install the launcher](INSTALLATION.md) first:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
+sudo basaltw setup agent_workstation localhost "$USER" \
   --control-plane --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.basaltwater-install.sh"
 ```
 
 This keeps the graphical workstation setup while adding the SSH, rsync,

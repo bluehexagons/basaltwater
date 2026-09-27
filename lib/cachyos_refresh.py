@@ -10,6 +10,7 @@ import pwd
 import shlex
 import stat
 import sys
+from datetime import datetime, timezone
 
 from lib.arg_parser import add_setup_arguments
 from lib.atomic_io import read_json_file, write_json_atomic
@@ -87,6 +88,26 @@ def save_successful_setup(config: SetupConfig) -> None:
     path = _record_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     write_json_atomic(str(path), {"schema_version": 1, "arguments": arguments}, mode=0o600)
+    # Keep the replay contract compatible with older launchers. The private
+    # receipt is informational and never used as executable setup arguments.
+    from lib.cachyos_doctor import collect_cachyos_doctor, _probe
+    from lib.cachyos_health import source_metadata
+
+    try:
+        report = collect_cachyos_doctor(config=config)
+        receipt = {
+            "schema_version": 1,
+            "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "source": source_metadata(_probe, os.getuid()),
+            "arguments": arguments,
+            "observations": report["capabilities"],
+        }
+        receipt_path = path.with_name("last-report.json")
+        if receipt_path.is_symlink() or (receipt_path.exists() and not receipt_path.is_file()):
+            raise ValueError("Unsafe setup receipt")
+        write_json_atomic(str(receipt_path), receipt, mode=0o600)
+    except (OSError, ValueError, KeyError):
+        print("  WARNING: Setup saved, but its diagnostic receipt could not be recorded")
     print("  Saved successful local setup; use `basaltw refresh` to upgrade and repeat it")
 
 

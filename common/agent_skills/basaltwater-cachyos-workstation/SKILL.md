@@ -10,7 +10,8 @@ metadata:
 This is an existing human-operated CachyOS KDE desktop. Use the current account
 and its existing credentials and project configuration. The `agent_cachyos`
 profile installs tooling; it does not manage the OS, graphics drivers, login
-manager, account groups, network, firewall, or power policy.
+manager, account groups, network addressing, or power policy. Firewall management
+is opt-in through `--lan-access`, `--access-source`, or `--no-lan-access`.
 Target the latest fully updated rolling release: Plasma Wayland, Plasma Login
 Manager, and Shelly are the current KDE baseline. Do not assume SDDM, X11,
 Octopi, or a preinstalled paru from older CachyOS images. Optional helper
@@ -69,6 +70,21 @@ as the desktop user. It does not activate services or capture content.
 An available package, socket, or bus owner is only a prerequisite observation;
 it does not verify automation or permission. Treat null selection/permission
 fields as unknown and keep live qualification separate from observation time.
+The doctor also checks saved selections, selected CLIs, host health, listeners,
+and saved UFW rules. Effective firewall rules require privileged verification;
+local update metadata may be stale. Successful setup writes a private diagnostic
+receipt at `~/.local/state/basaltwater/cachyos/last-report.json`.
+
+For explicitly requested firewall management, retain the full setup selection
+and add `--lan-access` for the single private default-route LAN, or
+`--access-source PRIVATE_IP_OR_CIDR` for fixed sources. UFW allows outgoing
+traffic and limits selected T3/Sunshine inbound ports to those sources; old
+broad rules are overridden by earlier guards. Remote Sunshine administration,
+T3 UDP, and legacy RDP stay blocked. Other rules are retained. A rerun can change
+the inferred LAN; prefer explicit sources on roaming desktops. No access flags
+leaves policy unchanged; `--no-lan-access` without explicit sources closes managed
+inbound ports. Inspect the documented limitations and effective rules in the
+[firewall guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md#optional-workstation-firewall).
 
 Additional read-only diagnostics include `command -v`, tool version checks,
 `pacman -Q`, and user service logs. Graphics diagnostics may use `vulkaninfo`

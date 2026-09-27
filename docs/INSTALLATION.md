@@ -31,27 +31,20 @@ account password and grants administrator privileges to that command. If the
 account cannot use it, ask the machine's administrator to provide access before
 following system-installation examples.
 
-The installer needs either `wget` or `curl`. The examples below use wget,
-which is commonly present on minimal Debian systems. If only `curl` is
-installed, replace the download command with:
+The examples use `curl` and a temporary download that is removed on exit.
+They execute only after a successful complete download. If curl is missing,
+install it through your distribution's package manager; on Debian:
 
 ```bash
-curl --fail --location --connect-timeout 15 --max-time 120 \
-  -o "$HOME/.basaltwater-install.sh" \
-  https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-```
-
-If neither command is available, install one first with:
-
-```bash
-sudo apt-get update && sudo apt-get install -y wget ca-certificates
+sudo apt-get update && sudo apt-get install -y curl ca-certificates
 ```
 
 The fetch command leaves DNS and connection diagnostics visible and limits
-retries, so a VM with no network path fails clearly instead of appearing idle.
-Every example downloads to a user-owned file before invoking the installer.
-Run each command in order and confirm the download succeeds before running the
-installer command; remove the file afterward.
+download time. Copy the complete block for your chosen setup; it preserves the
+installer's exit status and cleans up the temporary script even after failure.
+Add `--plan` before `--setup` or `--local-setup` for a preview that does not
+install packages, download the repository, or change the launcher. A setup
+`--dry-run` alone previews only the final setup phase.
 
 ## Choose an installation path
 
@@ -64,18 +57,24 @@ account.
 Use this when you want to choose the first setup later:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sh "$HOME/.basaltwater-install.sh"
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sh "$installer"
+)
 ```
 
 The installer uses `sudo` for packages when needed. To install the source in
 `/opt/basaltwater` and expose a system launcher instead, use:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER"
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sudo sh "$installer" --user "$USER"
+)
 ```
 
 ### Set up a minimal Debian control plane
@@ -84,9 +83,12 @@ This installs common administrator and Linux tools and configures the local
 machine to manage other VMs and containers:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup control_plane
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sudo sh "$installer" --user "$USER" --local-setup control_plane
+)
 ```
 
 Coding agents are optional; append `--agent-tool codex`, for example, only
@@ -96,10 +98,13 @@ guest-agent package and starts and enables its systemd service during
 self-setup:
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --qemu-guest-agent \
-  --local-setup control_plane
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sudo sh "$installer" --user "$USER" --qemu-guest-agent \
+    --local-setup control_plane
+)
 ```
 
 For an already installed orchestration host, run the equivalent command:
@@ -120,10 +125,13 @@ See [XRDP migration and recovery](XRDP.md#migration-and-recovery) before convert
 a machine that currently relies on local graphical login.
 
 ```bash
-wget --timeout=20 --tries=2 -O "$HOME/.basaltwater-install.sh" https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh
-sudo sh "$HOME/.basaltwater-install.sh" --user "$USER" --local-setup agent_workstation \
-  --control-plane --desktop xfce --rdp --rdp-existing-password
-rm -f "$HOME/.basaltwater-install.sh"
+(
+  installer=$(mktemp) || exit
+  trap 'rm -f -- "$installer"' EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sudo sh "$installer" --user "$USER" --local-setup agent_workstation \
+    --control-plane --desktop xfce --rdp --rdp-existing-password
+)
 ```
 
 This expects `$USER` to be an existing non-root account with an unlocked
