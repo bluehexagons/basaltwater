@@ -54,6 +54,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | Layer | Acceptance evidence | Result |
 | --- | --- | --- |
 | Setup | Fresh/rerun/interrupted setup, existing workspace and credentials preserved, recovery after failure | Not run |
+| Refresh | Successful selection saved privately; source upgraded before a fresh CLI replays the same flags; missing state and source failure stop before setup; failed/preview runs retain prior selection | Not run |
 | Selection persistence | Private validated selection records, omitted options stop future management without deleting data | Not implemented |
 | T3 desktop | Retain an installed t3code-bin, install when absent through default Shelly with review prompts, check optional paru/yay fallbacks only when Shelly is absent, preserve web service on cancellation/failure, discover Codex from KDE, complete a thread and terminal command | Not run |
 | T3 mode switching | Web → desktop disables only the owned service; desktop → web activates isolated data; preserve both environments and desktop package | Not run |

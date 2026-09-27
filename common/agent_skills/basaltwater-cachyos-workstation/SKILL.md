@@ -23,6 +23,15 @@ desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`
 `--lmms`, `--freecad`, `--kicad`, `--shotcut`, `--gimp`, `--remmina`, or
 `--sysadmin-tools`. Preview with `--dry-run`. Keep the desired flags on reruns;
 this profile does not populate the generic saved-host `patch`/`deploy` workflow.
+For the same selection, use `basaltw refresh --dry-run`, then `basaltw refresh`
+to upgrade Basaltwater on its selected channel and repeat the last successful
+local setup with the updated code. The private record is
+`~/.local/state/basaltwater/cachyos/last-setup.json`. Failed runs and previews
+preserve it. Older setups need one explicit successful setup to create it;
+never infer missing options from installed packages. Changing options requires
+a full explicit setup command; its successful selection replaces the record.
+Refresh can update agent CLIs and restart the selected web service; finish
+active work first. It leaves OS and installed T3 desktop updates to CachyOS.
 Codex and GitHub CLI are defaults; other coding agents require explicit flags.
 Recognized standalone Codex installations are updated on rerun; npm,
 version-manager, and system-package installations keep their original manager.

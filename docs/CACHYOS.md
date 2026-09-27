@@ -453,6 +453,56 @@ for current provider, client, and T3 Connect requirements.
 
 ## Reruns, updates, and repositories
 
+### Upgrade and repeat your last setup
+
+After a successful `agent_cachyos` setup, use this from your KDE terminal as
+the same user, without `sudo`:
+
+```bash
+basaltw refresh --dry-run
+basaltw refresh
+```
+
+`refresh` upgrades Basaltwater to the latest source on the selected channel
+(`dev` follows `main`), then starts the updated code with the last successful
+setup selection. Version/commit channels remain pinned, just as with
+`basaltw upgrade`. Setup runs even if Basaltwater was already up to date.
+The dry run displays the saved command and setup plan without fetching source,
+upgrading, installing, or changing the saved selection.
+
+The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
+It saves supported setup options, including provider selections/exclusions,
+T3 mode, optional tools, repositories, workspace, and web bind/port. It does
+not copy authentication files or save provider credentials. The record is
+written only after all setup steps, including cleanup, succeed. A failed or
+interrupted run and a dry run leave the previous successful selection intact.
+
+**First use after upgrading from an older checkout:** run `basaltw upgrade`,
+then run your usual full setup command once. Older CachyOS runs did not save
+their options, so refresh cannot recover them from installed packages. For
+example, to establish the desktop selection:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
+```
+
+To change the selection later, rerun `setup` with all desired options. That
+successful run replaces the record; it does not merge with earlier selections.
+Refresh follows the same update behavior as setup: managed agent CLIs update,
+web mode updates/restarts its service, and an installed T3 desktop package is
+retained for your normal AUR update workflow. Finish active work first.
+
+Missing or invalid saved options stop refresh before the source upgrade.
+An upgrade failure prevents setup. If setup fails after a successful upgrade,
+Basaltwater stays upgraded and returns setup's failure status; resolve the
+error and repeat `refresh`, or run an explicit setup to change the selection.
+On CachyOS this repeats only the local `agent_cachyos` profile. It does not
+upgrade CachyOS itself or redeploy saved remote hosts. Debian also supports
+refresh, using its existing target-side record and root setup runner; see
+[refresh on Debian](COMMAND_LINE.md#refresh-this-machine).
+
+### Package and repository behavior
+
 - Package state is checked with `pacman -Q`; missing packages use
   `pacman -S --needed`. Setup does not refresh package databases or perform a
   system upgrade. Use CachyOS's normal update workflow first, and never use
@@ -468,9 +518,9 @@ for current provider, client, and T3 Connect requirements.
   or recursively chowned. Selecting the T3 web interface on a rerun updates and
   restarts its service; selecting desktop mode retains its installed AUR version.
 - This local profile does not save a generic host configuration for `patch`,
-  `deploy`, or `cmd`. Keep your setup command and repeat the desired flags,
-  including workspace and optional tools, when rerunning. The T3 mode marker
-  does not replace that setup selection.
+  `deploy`, or `cmd`. Use `refresh` to repeat its private successful selection,
+  or repeat all desired flags when running `setup` explicitly. The T3 mode
+  marker does not replace the saved setup selection.
 - `basaltw upgrade` updates Basaltwater itself. If a CachyOS mirror or DNS
   lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
   workflow and rerun.

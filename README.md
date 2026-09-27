@@ -40,6 +40,9 @@ Run each line in order and continue only if the previous command succeeds.
 If `wget` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
 Installing the launcher does not configure a target. Use `basaltw setup ...` for
 remote hosts and `basaltw upgrade` to update the selected channel. The
+[`basaltw refresh` command](docs/COMMAND_LINE.md#refresh-this-machine) upgrades
+Basaltwater and repeats this machine's last successful setup: use sudo on
+Debian and the desktop account without sudo on CachyOS. The
 [installation guide](docs/INSTALLATION.md) covers prerequisites, verification,
 alternate download commands, local control-plane and desktop/RDP profiles,
 channels, credentials, and recovery. The [documentation index](docs/README.md)
@@ -73,6 +76,11 @@ With `basaltw` already installed, run as your desktop user:
 ```bash
 basaltw setup agent_cachyos localhost --t3code-desktop
 ```
+
+After a successful setup, `basaltw refresh` upgrades Basaltwater on its selected
+channel and repeats that local setup with the updated code. Preview with
+`basaltw refresh --dry-run`. See [saved CachyOS setup](docs/CACHYOS.md#upgrade-and-repeat-your-last-setup)
+for first-use and recovery details.
 
 The normal direct setup path uses `--machine auto`. Hosted Proxmox setup
 defaults to a VM; select `--machine unprivileged` for the supported LXC path.

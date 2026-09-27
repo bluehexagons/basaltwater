@@ -66,6 +66,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_atomic_io.py",
         "tests/test_cache.py",
         "tests/test_channel_manager.py",
+        "tests/test_refresh.py",
         "tests/test_config*.py",
         "tests/test_completions.py",
         "tests/test_concurrent_operations.py",

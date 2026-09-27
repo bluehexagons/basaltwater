@@ -291,12 +291,15 @@ Start with narrow, explicit options rather than a broad `--agentic` switch:
   Desktop connection settings stay in the app; web T3 Connect authorization
   remains an interactive, post-setup CLI flow using the managed runtime.
 
-The CachyOS profile currently bypasses controller-side setup persistence.
-Introduce a private, versioned user-local selection record at the target-side
-setup boundary; do not assume the generic saved-host cache exists. Separate
-requested selection from the last successful reconciliation and preserve the
-last known-good runtime on failure. Validate schema, ownership, and symlinks;
-serialize no credentials. Omission stops management without deleting data.
+The CachyOS profile bypasses controller-side setup persistence. Its final setup
+step now saves a private, versioned last-successful selection for `basaltw refresh`
+under `~/.local/state/basaltwater/cachyos/last-setup.json`. Refresh upgrades source
+and starts the updated CLI with those options; failed runs and previews preserve
+the record. This is not the generic saved-host cache or desired-state management.
+Future capability selection still needs to separate requested selection from
+successful reconciliation and preserve the last known-good runtime on failure.
+Validate schema, ownership, and symlinks; serialize no credentials. Omission for
+those future capabilities should stop management without deleting data.
 
 Add doctor fields for selection (nullable until known), state, observation
 time, and last successful live verification. Every command and web-panel

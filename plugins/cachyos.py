@@ -39,6 +39,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         install_cachyos_t3_desktop,
         report_cachyos_readiness,
         reconcile_cachyos_user_cache,
+        save_cachyos_setup,
     )
     from lib.cachyos import validate_cachyos_config
 
@@ -56,4 +57,5 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     steps.append(("Pruning old CachyOS package downloads (keeps three versions and 30 days)", cleanup_cachyos_packages))
     steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))
+    steps.append(("Saving successful local setup for basaltw refresh", save_cachyos_setup))
     return steps

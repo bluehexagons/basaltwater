@@ -442,3 +442,10 @@ def reconcile_cachyos_user_cache(config: SetupConfig) -> None:
     if logs.errors:
         raise RuntimeError("Managed T3 web log cleanup incomplete: " + "; ".join(logs.errors))
     print(f"  Managed T3 web logs: removed {len(logs.removed)} numbered rotations; current logs and data retained")
+
+
+def save_cachyos_setup(config: SetupConfig) -> None:
+    """Record the selection only after every preceding setup step succeeds."""
+    from lib.cachyos_refresh import save_successful_setup
+
+    save_successful_setup(config)

@@ -155,6 +155,7 @@ def _build_basaltwater_epilog() -> str:
     bootstrap                   Install packages, launcher, and completions (alias: self-setup)
     channel [CHANNEL]           Show or switch the installed source channel
     upgrade                     Upgrade the installed source on its selected channel
+    refresh                     Upgrade basaltwater and repeat this machine's last successful setup
     agent doctor|update|auth   Check, update, or rotate agent credentials
     maintenance github ...      Audit/prune GitHub releases, artifacts, and caches
     network [subcommand]        Manage generic network inventory profiles
@@ -559,6 +560,13 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         "channel_name",
         nargs="?",
         help="Channel to select; omit to show the current channel",
+    )
+
+    refresh_parser = subparsers.add_parser(
+        "refresh", help="Upgrade basaltwater and repeat the last successful local Debian or CachyOS setup",
+    )
+    refresh_parser.add_argument(
+        "--dry-run", action="store_true", help="Show the saved setup without upgrading or applying it",
     )
 
     credentials_parser = subparsers.add_parser(
@@ -2324,6 +2332,10 @@ def main() -> int:
         )
     elif args.command == "channel":
         return run_channel_command(args)
+    elif args.command == "refresh":
+        from lib.refresh import run_refresh_command
+
+        return run_refresh_command(args)
     elif args.command == "upgrade" and not getattr(args, "hosts", None):
         if getattr(args, "check", False):
             print("Error: --check requires at least one remote host")

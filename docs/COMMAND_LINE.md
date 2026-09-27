@@ -62,6 +62,7 @@ basaltw desktop <command> ...
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
 basaltw upgrade
+basaltw refresh [--dry-run]
 basaltw user rename <host> <new_username> [options]
 basaltw agent doctor [HOST USER] [options]
 basaltw agent update [HOST USER] [options]
@@ -91,6 +92,11 @@ basaltw ssh-key enroll <host> [--port PORT] [--yes]
 `basaltw --version` prints one stable line containing the installed project
 version, suitable for feedback and support records.
 
+`basaltw refresh` upgrades the installed source on its selected channel and
+repeats this machine's last successful setup using the updated code. It supports
+Debian and CachyOS. See [refresh behavior](#refresh-this-machine) below and
+[CachyOS first use](CACHYOS.md#upgrade-and-repeat-your-last-setup).
+
 For the desktop command catalog, including accessibility, window operations,
 waits, and live smoke checks, see [Desktop automation](DESKTOP_AUTOMATION.md).
 
@@ -99,6 +105,47 @@ service, native runtime, provider authentication, Git identity, pairing helper,
 endpoint, and agent skill. Add `--fix` to rebuild missing native dependencies,
 configure the GitHub HTTPS credential helper after a successful login, enable
 the service at boot, and restart it when inactive.
+
+### Refresh this machine
+
+On Debian, run:
+
+```bash
+sudo basaltw refresh --dry-run
+sudo basaltw refresh
+```
+
+Refresh reads the successful target configuration from
+`/opt/basaltwater/state/setup.json` (the standard path may link to durable state).
+Existing Debian setups already have this record. It validates the saved options,
+upgrades source on the selected channel, and starts the upgraded target setup
+runner in a fresh process. The target account, packages, services, and other
+saved settings are reused; it does not infer a replacement profile or
+re-provision the machine. The normal selected setup steps still apply, including
+Debian's package updates and service reconciliation. Existing staged deployment
+sources are reused; refreshing does not fetch new application repositories from
+a controller. Provider credentials and existing local account passwords are
+retained; transient credential-copy, network-activation, and swap-initialization
+requests are not replayed.
+
+On CachyOS, run `basaltw refresh` **without sudo** as the original desktop user.
+Its private successful selection is saved by new `agent_cachyos` setup runs.
+After upgrading an older checkout, run your full setup command once to create
+that record. See the [CachyOS guide](CACHYOS.md#upgrade-and-repeat-your-last-setup).
+
+On both systems, `--dry-run` shows the saved setup plan without fetching or
+changing source or applying setup. `dev` follows `main`, `stable` follows the
+latest release, and version/commit channels stay pinned. Setup runs even when
+source was already current. Upgrade failure stops before setup; setup failure
+returns nonzero and leaves Basaltwater upgraded and the previous successful
+record available for retry. Finish active work before applying a full setup.
+
+Refresh requires a managed Git installation, as does `basaltw upgrade`.
+Controller-deployed source snapshots continue to receive source upgrades from
+their controller; update its Basaltwater checkout and redeploy the saved host.
+The command accepts no remote host argument and never guesses which saved
+remote host to deploy. To change the saved selection, run an explicit setup
+with your desired options.
 
 ### Bootstrap and self-setup flags
 
