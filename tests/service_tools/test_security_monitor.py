@@ -249,14 +249,17 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertEqual(saved_state["rdp_certificate_status"], "error")
         self.assertEqual(saved_state["rdp_certificate_fingerprint"], "aabbcc")
 
+    @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
     @patch("security.service_tools.security_monitor.subprocess.run")
-    def test_ausearch_no_matches_is_not_a_collection_error(self, mock_run):
+    def test_ausearch_no_matches_is_not_a_collection_error(self, mock_run, mock_tool):
         mock_run.return_value = SimpleNamespace(returncode=1, stdout="", stderr="")
 
         has_events, error = security_monitor._ausearch_has_events("identity", datetime.now())
 
         self.assertFalse(has_events)
         self.assertIsNone(error)
+        mock_tool.assert_called_once_with("ausearch")
+        self.assertEqual(mock_run.call_args.args[0][0], "/usr/sbin/ausearch")
 
     def test_audit_events_include_evidence_summary(self):
         output = """----
