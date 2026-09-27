@@ -108,6 +108,8 @@ def _validate_codex_release(entry: os.DirEntry[str], uid: int) -> CodexRelease:
     with open(manifest_path, encoding="utf-8") as manifest_file:
         manifest = json.load(manifest_file)
 
+    if not isinstance(manifest, dict):
+        raise ValueError("release manifest is not an object")
     version = manifest.get("version")
     target = manifest.get("target")
     if (
@@ -160,6 +162,73 @@ def _resolve_current_release(
     if release is None or os.path.realpath(release.path) != resolved:
         raise ValueError("Codex current link does not target a validated release")
     return current_name
+
+
+def codex_package_for_executable(home: str, executable: str) -> str | None:
+    """Recognize a validated standalone package, including our rollback copy."""
+    resolved = os.path.realpath(executable)
+    package = os.path.dirname(os.path.dirname(resolved))
+    if resolved != os.path.join(package, "bin", "codex"):
+        return None
+    releases = os.path.join(home, ".codex", "packages", "standalone", "releases")
+    backups = os.path.join(home, ".local", "state", "basaltwater", "agent-backups")
+    parent = os.path.dirname(package)
+    if parent != releases and not (
+        os.path.dirname(parent) == backups
+        and os.path.basename(parent).startswith("codex-package-")
+    ):
+        return None
+    try:
+        uid = os.stat(home).st_uid
+        _validate_user_directory_chain(home, package, uid)
+        with os.scandir(parent) as entries:
+            for entry in entries:
+                if entry.path == package:
+                    return _validate_codex_release(entry, uid).path
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def codex_update_supported(home: str, executable: str) -> bool:
+    """Keep package-manager links and version-manager shims with their owner."""
+    launcher = os.path.join(home, ".local", "bin", "codex")
+    if os.path.abspath(executable) != launcher:
+        return False
+    if codex_package_for_executable(home, executable) is not None:
+        return True
+    # Legacy installations used a single file at the canonical user launcher.
+    # Also accept the legacy rollback file produced by Basaltwater.
+    return os.path.realpath(executable) in (
+        launcher,
+        os.path.join(home, ".local", "state", "basaltwater", "agent-backups", "codex.previous"),
+    )
+
+
+def prune_codex_update_backups(home: str, keep: str, *, proc_root: str = "/proc") -> None:
+    """Retain the latest package snapshot, the selected CLI, and running copies."""
+    root = os.path.join(home, ".local", "state", "basaltwater", "agent-backups")
+    uid = os.stat(home).st_uid
+    _validate_user_directory_chain(home, root, uid)
+    selected = os.path.realpath(os.path.join(home, ".local", "bin", "codex"))
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if not entry.name.startswith("codex-package-") or entry.is_symlink():
+                continue
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            with os.scandir(entry.path) as contents:
+                children = list(contents)
+            if len(children) != 1:
+                continue
+            binary = os.path.join(children[0].path, "bin", "codex")
+            package = codex_package_for_executable(home, binary)
+            if package is None or package == os.path.dirname(os.path.dirname(keep)) or selected == binary:
+                continue
+            release = _validate_codex_release(children[0], uid)
+            if _active_codex_releases({release.name: release}, uid, proc_root):
+                continue
+            shutil.rmtree(entry.path)
 
 
 def _active_codex_releases(

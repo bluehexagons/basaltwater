@@ -117,6 +117,60 @@ companion tool makes setup incomplete even if the main runtime works.
 On CachyOS, `--av-tools` includes FFmpeg, ImageMagick, and ExifTool;
 `--gl-tools` includes Mesa/Vulkan diagnostics and apitrace.
 
+## Codex-only agent setup
+
+Codex is the only coding agent installed by default. GitHub CLI (`gh`) is also
+selected for GitHub operations; Claude and OpenCode require explicit flags.
+For Codex with T3 desktop, use:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop
+```
+
+Add `--no-agent-tool gh` if you also want to omit GitHub CLI. Codex and T3
+desktop do not require `--node`. Development projects may still need it.
+
+Missing Codex installations use the [official standalone installer](https://learn.chatgpt.com/docs/codex/cli).
+Reruns update recognized standalone installations at `~/.local/bin/codex`.
+System packages, npm links, and version-manager paths remain with their existing
+manager; setup reports the executable it retains. First installs and updates
+use the same desktop-account environment, ignoring inherited installer target,
+daemon-selection, and release-pin variables.
+
+Existing `~/.codex/config.toml`, models, permissions, MCP servers, plugins, and
+credentials are preserved. Setup does not create a replacement Codex config or
+copy credentials from another account. A custom `CODEX_HOME` is rejected before
+setup changes anything because this profile manages the standard `~/.codex`
+location. An explicit choice of another provider with `--no-agent-tool codex`
+leaves that custom Codex installation unmanaged.
+
+Readiness runs `codex login status` without printing its output. A failed check
+produces an actionable warning without prompting or replacing credentials.
+Inspect `codex login status` locally and use `codex login` if needed. Codex
+supports file and OS credential stores and refreshes ChatGPT tokens during
+normal use; this profile installs no separate authentication refresher.
+See [Codex authentication](https://learn.chatgpt.com/docs/auth).
+
+For deliberate standalone updates outside setup:
+
+```bash
+basaltw agent update --tool codex --dry-run
+basaltw agent update --tool codex --tools-only-readiness
+```
+
+The update checks successful version/help commands and keeps a complete package
+snapshot for rollback, including adjacent sandbox and other runtime resources.
+It retains the latest snapshot plus any selected or running snapshots; older
+validated snapshots are pruned. Update records and backups are private under
+`~/.local/state/basaltwater`. Concurrent Basaltwater updates are refused until
+the current update finishes. `--tools-only-readiness` avoids gating CLI updates
+on the generic VM host/T3 checks, which do not qualify this desktop profile.
+Restart Codex/T3 provider sessions when convenient to use the new executable.
+Verify a real Codex task in T3 after setup; local login status does not test API
+access or the GUI's provider environment. If needed, set T3's Codex **Binary
+path** to the absolute launcher path printed by setup, typically
+`/home/USER/.local/bin/codex`; keep that stable path across updates.
+
 ## T3 Code desktop
 
 Use this for an existing desktop installation or to install the

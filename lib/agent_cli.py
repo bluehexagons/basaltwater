@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import pwd
@@ -26,6 +27,11 @@ from lib.agent_maintenance import (
     inspect_agent_maintenance,
 )
 from lib.agent_auth import AGENT_AUTH_TOOLS
+from lib.agent_storage import (
+    codex_package_for_executable,
+    codex_update_supported,
+    prune_codex_update_backups,
+)
 from lib.agent_credentials import (
     codex_auth_is_healthy,
     codex_auth_warning,
@@ -459,7 +465,7 @@ def _tool_version(tool: str, path: str) -> Optional[str]:
     except (OSError, subprocess.TimeoutExpired):
         return None
     output = (result.stdout or result.stderr).strip()
-    return output.splitlines()[0] if output else None
+    return output.splitlines()[0] if result.returncode == 0 and output else None
 
 
 def _tool_smoke_test(path: str) -> bool:
@@ -529,6 +535,7 @@ def _default_user_managed_update_tools(home: str) -> list[str]:
         for tool in DEFAULT_UPDATE_TOOLS
         if (path := _tool_path(tool, home)) is not None
         and _within_home(path, home)
+        and (tool != "codex" or codex_update_supported(home, path))
     ]
 
 
@@ -570,6 +577,8 @@ def _agent_update_environment(home: str, owner: pwd.struct_passwd) -> dict[str, 
             environment.pop(key, None)
         elif normalized in _UPDATE_ENVIRONMENT_REDIRECTS:
             environment.pop(key, None)
+        elif normalized.startswith(("codex_install", "codex_update")) or normalized == "codex_release":
+            environment.pop(key, None)
         elif normalized in {
             "npm_config_userconfig",
             "npm_config_prefix",
@@ -610,6 +619,11 @@ def _agent_update_environment(home: str, owner: pwd.struct_passwd) -> dict[str, 
     return environment
 
 
+def agent_install_environment(home: str) -> dict[str, str]:
+    """Use the same account-scoped environment for first installs and updates."""
+    return _agent_update_environment(home, _validate_update_identity(home))
+
+
 def _backup_executable(tool: str, path: str, home: str) -> str:
     backup_dir = os.path.join(
         home,
@@ -621,6 +635,16 @@ def _backup_executable(tool: str, path: str, home: str) -> str:
     validate_filesystem_path(backup_dir, must_exist=False)
     os.makedirs(backup_dir, mode=0o700, exist_ok=True)
     os.chmod(backup_dir, 0o700)
+    package = codex_package_for_executable(home, path) if tool == "codex" else None
+    if package is not None:
+        snapshot = tempfile.mkdtemp(dir=backup_dir, prefix="codex-package-")
+        destination = os.path.join(snapshot, os.path.basename(package))
+        try:
+            shutil.copytree(package, destination, symlinks=True)
+        except BaseException:
+            shutil.rmtree(snapshot)
+            raise
+        return os.path.join(destination, "bin", "codex")
     backup_path = os.path.join(backup_dir, f"{tool}.previous")
     descriptor, temporary_path = tempfile.mkstemp(
         dir=backup_dir,
@@ -729,17 +753,58 @@ def _update_method(tool: str) -> str:
     return f"{tool} {'update' if tool == 'claude' else 'upgrade'}"
 
 
+@contextmanager
+def _agent_update_lock(home: str) -> Iterator[None]:
+    """Serialize backup, activation, and pruning across setup/update runs."""
+    directory = os.path.dirname(_state_path(home))
+    current = home
+    for component in os.path.relpath(directory, home).split(os.sep):
+        current = os.path.join(current, component)
+        if os.path.islink(current):
+            raise ValueError("Unsafe agent update state directory")
+        os.makedirs(current, mode=0o700, exist_ok=True)
+        if os.stat(current).st_uid != os.geteuid():
+            raise ValueError("Agent update state must belong to the invoking user")
+    descriptor = os.open(os.path.join(directory, "agent-update.lock"),
+                         os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise ValueError("Unsafe agent update lock")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Another agent update is running; retry after it finishes") from exc
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def update_agent_tools(
     tools: StrList,
     *,
     home: Optional[str] = None,
     dry_run: bool = False,
 ) -> list[JSONDict]:
-    """Update user-installed agents and persist non-secret verification records."""
+    """Update user-installed agents under one account-scoped transaction lock."""
     _validate_update_tools(tools)
     user_home = os.path.abspath(home or os.path.expanduser("~"))
     validate_filesystem_path(user_home, must_exist=True)
     _validate_update_identity(user_home)
+    if dry_run:
+        return _update_agent_tools_locked(tools, home=user_home, dry_run=True)
+    with _agent_update_lock(user_home):
+        return _update_agent_tools_locked(tools, home=user_home)
+
+
+def _update_agent_tools_locked(
+    tools: StrList,
+    *,
+    home: str,
+    dry_run: bool = False,
+) -> list[JSONDict]:
+    """Update user-installed agents and persist non-secret verification records."""
+    user_home = home
     state_path = _state_path(user_home)
     state = _load_update_state(state_path) if not dry_run else None
     results: list[JSONDict] = []
@@ -762,7 +827,9 @@ def update_agent_tools(
             record["status"] = "failed"
             results.append(record)
             continue
-        if not _within_home(path, user_home):
+        if not _within_home(path, user_home) or (
+            tool == "codex" and not codex_update_supported(user_home, path)
+        ):
             record["failure"] = "not_user_managed"
             record["status"] = "failed"
             results.append(record)
@@ -781,7 +848,7 @@ def update_agent_tools(
         record["attempted_at"] = attempted_at
         try:
             backup_path = _backup_executable(tool, path, user_home)
-        except OSError:
+        except (OSError, ValueError):
             record["failure"] = "backup_error"
             state["tools"][tool] = record
             _save_update_state(state_path, state)
@@ -807,7 +874,10 @@ def update_agent_tools(
         record["path"] = current_path
         record["after_version"] = after_version
 
-        if invocation.get("returncode") == 0 and after_version and smoke_ok:
+        owned_codex = tool != "codex" or bool(
+            current_path and codex_update_supported(user_home, current_path)
+        )
+        if invocation.get("returncode") == 0 and after_version and smoke_ok and owned_codex:
             record["status"] = "updated" if after_version != before_version else "current"
         else:
             record["status"] = "failed"
@@ -815,7 +885,9 @@ def update_agent_tools(
                 record["failure"] = (
                     "updater_exit" if invocation.get("returncode") != 0 else "post_update_verification"
                 )
-            if after_version != before_version or not smoke_ok:
+            if after_version != before_version or not smoke_ok or (
+                tool == "codex" and codex_package_for_executable(user_home, backup_path) is not None
+            ):
                 restored = _restore_executable(path, backup_path)
                 restored_version = _tool_version(tool, path) if restored else None
                 restored_smoke = restored and _tool_smoke_test(path)
@@ -831,6 +903,11 @@ def update_agent_tools(
                     record["rollback_failure"] = "verification"
 
         state["tools"][tool] = record
+        if tool == "codex":
+            try:
+                prune_codex_update_backups(user_home, backup_path)
+            except (OSError, ValueError):
+                record["backup_cleanup_deferred"] = True
         _save_update_state(state_path, state)
         results.append(record)
 

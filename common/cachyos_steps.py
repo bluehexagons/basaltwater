@@ -18,6 +18,7 @@ from common.agent_steps import (
     BASE_AGENT_SKILL_NAMES, BROWSER_AGENT_SKILL_NAMES, install_managed_agent_skills,
 )
 from lib.atomic_io import write_text_atomic
+from lib.agent_storage import codex_update_supported
 from lib.config import SetupConfig
 from lib.remote_utils import run
 from lib.validation import validate_filesystem_path, validate_package_name
@@ -235,7 +236,7 @@ def configure_cachyos_git_lfs(config: SetupConfig) -> None:
 
 def install_cachyos_agents(config: SetupConfig) -> None:
     home = _home(config)
-    from lib.agent_cli import update_agent_tools
+    from lib.agent_cli import agent_install_environment, update_agent_tools
 
     for tool in config.selected_agent_tools():
         if tool == "gh":
@@ -247,6 +248,8 @@ def install_cachyos_agents(config: SetupConfig) -> None:
                     (os.path.realpath(executable), os.path.realpath(home))
                 ) == os.path.realpath(home)
             except ValueError:
+                managed = False
+            if tool == "codex" and not codex_update_supported(str(home), executable):
                 managed = False
             if not managed:
                 print(f"  Keeping externally managed {tool} ({executable})")
@@ -262,6 +265,7 @@ def install_cachyos_agents(config: SetupConfig) -> None:
             tool,
             accept_vendor_channel=True,
             non_interactive=True,
+            environment=agent_install_environment(str(home)),
         ) != 0:
             raise RuntimeError(f"{tool} installer failed")
         if not shutil.which(tool, path=_tool_path(home)):
@@ -401,6 +405,15 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
             "  Sysadmin tools do not enable libvirt, grant packet-capture access, "
             "or change network policy"
         )
+    if config.install_codex:
+        codex = shutil.which("codex", path=_tool_path(home))
+        status = _user_run([codex, "login", "status"], home,
+                           cwd=str(home), capture_output=True, check=False, timeout=30)
+        if status.returncode == 0:
+            print("  Codex: local login available; provider access still requires a real task")
+        else:
+            print("  WARNING: Codex login/configuration check failed; run `codex login status` locally, "
+                  "then `codex login` if needed. Existing credentials were retained.")
     print("  Provider authentication: use each provider's local login; existing credentials retained")
     print("  KDE automation and managed Playwright: not installed")
 

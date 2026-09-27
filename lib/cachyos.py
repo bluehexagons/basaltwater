@@ -159,6 +159,12 @@ def preflight_cachyos(config: SetupConfig) -> None:
     validate_filesystem_path(account.pw_dir, must_exist=True, check_writable=True)
     if os.path.realpath(os.path.expanduser("~")) != os.path.realpath(account.pw_dir):
         raise ValueError("HOME must belong to the invoking desktop user")
+    if config.install_codex and os.environ.get("CODEX_HOME"):
+        codex_home = os.environ["CODEX_HOME"]
+        validate_filesystem_path(codex_home)
+        if os.path.realpath(codex_home) != os.path.realpath(os.path.join(account.pw_dir, ".codex")):
+            raise ValueError("agent_cachyos manages Codex in ~/.codex; a custom CODEX_HOME is not supported. "
+                             "Use --no-agent-tool codex to leave that installation unmanaged.")
     if config.web_interfaces or config.t3code_desktop:
         from lib.remote_utils import run
 

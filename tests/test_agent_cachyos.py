@@ -306,10 +306,12 @@ class CachyOSSetupTests(unittest.TestCase):
              patch.object(steps.shutil, "which", side_effect=[
                  None, "/home/human/.local/bin/codex",
              ]), \
-             patch.object(steps, "install_vendor_tool", return_value=0) as install:
+             patch.object(steps, "install_vendor_tool", return_value=0) as install, \
+             patch("lib.agent_cli.agent_install_environment", return_value={"HOME": "/home/human"}):
             steps.install_cachyos_agents(self.config())
         install.assert_called_once_with(
             "codex", accept_vendor_channel=True, non_interactive=True,
+            environment={"HOME": "/home/human"},
         )
 
     def test_setup_reconciles_user_cache(self):

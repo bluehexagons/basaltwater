@@ -112,6 +112,7 @@ def install(
     *,
     accept_vendor_channel: bool = False,
     non_interactive: bool = False,
+    environment: dict[str, str] | None = None,
 ) -> int:
     if not accept_vendor_channel or tool not in POLICIES:
         raise ValueError("Explicit vendor-channel acceptance is required")
@@ -119,7 +120,7 @@ def install(
     print(f"  Installing {tool} under {policy} policy from {source}")
     with tempfile.TemporaryDirectory(prefix="installer-", dir=_state_directory()) as directory:
         path, state_path, record = download_installer(tool, directory)
-        environment = dict(os.environ)
+        environment = dict(os.environ if environment is None else environment)
         environment["CODEX_NON_INTERACTIVE"] = "1"
         if non_interactive:
             environment.update({
