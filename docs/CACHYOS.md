@@ -80,7 +80,8 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Audio, CAD, or electronics | `--audacity`, `--lmms`, `--ardour`, `--freecad`, `--kicad` |
 | Remote desktop or diagnostics | `--remmina`, `--sysadmin-tools` |
 | Repository workspace | `--repo HTTPS_URL` (repeatable), `--agent-workspace /absolute/path` (default `~/repos`) |
-| T3 Code or T3 Connect | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
+| T3 Code desktop | `--t3code-desktop`: install or retain the upstream-listed `t3code-bin` AUR package; mutually exclusive with `--web-interface` |
+| T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Plan only | `--dry-run` |
 
@@ -99,21 +100,78 @@ basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight
 basaltw setup agent_cachyos localhost --node --python --dry-run
 ```
 
-All application options install native packages from the configured CachyOS
-repositories. They do not install AUR or Flatpak packages, graphics drivers, or
+Except for `--t3code-desktop`, application options install native packages from
+the configured CachyOS repositories. They do not install AUR or Flatpak packages, graphics drivers, or
 application configuration. `--gaming` selects CachyOS's gaming meta-packages;
 `--sunshine` and `--moonlight` install native host and client packages but do
 not open firewall ports or create credentials. Configure and pair Sunshine in
 its own web UI on a trusted network.
 
-T3 selects Node automatically and requires Codex, Claude, or OpenCode. Python
+The T3 web service selects Node automatically; both T3 modes require Codex,
+Claude, or OpenCode. Python
 is also installed when needed for native Node module builds. Existing
 version-manager runtimes are retained when their commands are on PATH.
 Readiness runs version checks for all selected language commands: Node, npm,
 and pnpm for `--node`, and Python and uv for `--python`. A missing or broken
 companion tool makes setup incomplete even if the main runtime works.
 
-## T3 Code: host locally or on a trusted LAN
+## T3 Code desktop
+
+Use this for an existing desktop installation or to install the upstream-listed
+Arch package on this CachyOS workstation:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop
+```
+
+The flag is currently supported only by `agent_cachyos`, not Debian profiles or
+generic Arch installations. If `t3code-bin` is missing, setup uses an existing
+`paru` or `yay` helper as the desktop user, with interactive build/sudo prompts.
+Install an AUR helper through CachyOS first if neither is available. An installed
+package is retained; update it through your normal AUR workflow. Setup checks
+package metadata and executable ownership without launching Electron.
+
+Basaltwater installs the selected provider CLIs, workspace, and T3 agent skill.
+It preserves T3 settings, history, login credentials, and desktop launchers.
+Setup prints provider executable paths; if a KDE-launched T3 cannot find a
+provider, use its **Binary path** setting. Verify a thread and terminal in the
+app; a terminal CLI check does not establish GUI provider discovery. Desktop
+mode does not require the separate Node/npm runtime used by the web service.
+
+Use the app's **Settings → Connections** for desktop pairing or T3 Connect,
+when supported by the installed version. The managed web-service commands below
+target a separate environment and should not be used to configure the desktop.
+
+### Switch modes on a later setup
+
+`--t3code-desktop` and `--web-interface t3code` cannot be selected together.
+Finish active work before switching:
+
+```bash
+# Web → desktop: install/verify the package, then disable the managed web service
+basaltw setup agent_cachyos localhost --t3code-desktop
+
+# Desktop → web: quit the desktop app first to free its listening port
+basaltw setup agent_cachyos localhost --web-interface t3code
+```
+
+Desktop mode disables only the Basaltwater-owned user service and retains its
+unit, runtime, and data. Web mode stages and starts the managed service again;
+the desktop package stays installed. Omitting both flags leaves the current
+mode alone. Setup never kills the desktop app or takes over an upstream service.
+
+The web service uses `~/.local/share/basaltwater/cachyos-t3/data` explicitly,
+separate from the desktop's default `~/.t3`. Switching modes does not copy,
+delete, or merge their databases, projects, pairing identities, or Connect
+credentials. Repositories can be opened in either environment.
+Older Basaltwater web units used `~/.t3`: their next web setup starts a separate
+environment in the new directory and reports this change. The old data remains
+untouched in `~/.t3`; back it up and plan any history migration separately.
+This separation also prevents database contention if the desktop is later opened
+while the web service is running. A port conflict still requires quitting the
+desktop or choosing another web port.
+
+## T3 Code web service: host locally or on a trusted LAN
 
 T3 is an optional, user-owned systemd service. It runs as the logged-in desktop
 user with provider credentials from that account. By default it listens only on
@@ -162,9 +220,9 @@ a second upstream `t3code.service`, while Basaltwater already owns this unit.
 Run:
 
 ```bash
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 systemctl --user restart basaltwater-cachyos-t3.service
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
 Follow the browser sign-in flow printed by `connect link`. Then sign in to the
@@ -188,7 +246,7 @@ the installed T3 release documents support for combining the two binds.
 Generate a fresh native T3 pairing link with the managed runtime:
 
 ```bash
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
 The command prints a QR code, a `Pairing URL`, and a token. Treat the URL and
@@ -205,7 +263,7 @@ replace the example below and rerun setup:
 basaltw setup agent_cachyos localhost --web-interface t3code \
   --web-interface-host 192.168.1.50 --web-interface-port 3773
 systemctl --user status basaltwater-cachyos-t3.service
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
 Open the generated URL on the other device, or paste it into its T3 desktop
@@ -282,7 +340,8 @@ for current provider, client, and T3 Connect requirements.
   the cleanup error and rerun setup. This profile has no automatic cache retry.
 - Reruns retain installed software, credentials, and repositories. Omitting an
   option does not uninstall it; existing repositories are never pulled, reset,
-  or recursively chowned. Selecting T3 on a rerun updates and restarts its service.
+  or recursively chowned. Selecting the T3 web interface on a rerun updates and
+  restarts its service; selecting desktop mode retains its installed AUR version.
 - `basaltw upgrade` updates Basaltwater itself. If a CachyOS mirror or DNS
   lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
   workflow and rerun.
@@ -298,7 +357,8 @@ browser-automation, and Godot-web skills are not installed. Personal skills are
 preserved. KDE automation remains a future, separately selected capability.
 
 The read-only desktop doctor reports package versions, user-bus sockets, and
-PipeWire, WirePlumber, and optional T3 unit state:
+PipeWire, WirePlumber, the `t3code-bin` package, and managed/upstream T3 unit state.
+An inactive managed T3 service is expected in desktop mode:
 
 ```bash
 basaltw local cachyos-doctor

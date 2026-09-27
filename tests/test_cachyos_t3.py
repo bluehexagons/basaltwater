@@ -29,10 +29,12 @@ class T3InstallTests(unittest.TestCase):
         self.active = False
         self.enabled = False
         self.failure = None
+        self.desktop_version = "0.0.42-1"
         stack.enter_context(patch.object(t3, "_home", return_value=self.home))
         self.user_run = stack.enter_context(patch.object(t3, "_user_run", side_effect=self.user_command))
         self.system_run = stack.enter_context(patch.object(t3, "run", side_effect=self.system_command))
         self.ui = stack.enter_context(patch.object(t3, "_wait_for_ui"))
+        self.which = stack.enter_context(patch.object(t3.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name))
 
     @staticmethod
     def runtime(prefix):
@@ -69,6 +71,15 @@ class T3InstallTests(unittest.TestCase):
 
     def system_command(self, argv, **kwargs):
         self.events.append(("system", argv))
+        if argv[:2] == ["pacman", "-Q"]:
+            return subprocess.CompletedProcess(argv, 0 if self.desktop_version else 1,
+                                               f"t3code-bin {self.desktop_version}\n" if self.desktop_version else "", "")
+        if argv[:2] == ["pacman", "-Qqo"]:
+            return subprocess.CompletedProcess(argv, 0, "t3code-bin\n", "")
+        if argv[0] in {"/usr/bin/paru", "/usr/bin/yay"}:
+            if self.failure == "aur":
+                raise RuntimeError("AUR fixture failure")
+            self.desktop_version = "0.0.42-1"
         if argv[0] == "systemd-analyze" and self.failure == "verify":
             raise RuntimeError("unit fixture failure")
         code = 0
@@ -84,7 +95,10 @@ class T3InstallTests(unittest.TestCase):
             self.enabled = True
         elif "disable" in argv:
             self.enabled = False
-        return subprocess.CompletedProcess(argv, code, "", "")
+            if "--now" in argv:
+                self.active = False
+        output = ("active\n" if self.active else "inactive\n") if "is-active" in argv else ""
+        return subprocess.CompletedProcess(argv, code, output, "")
 
     def test_initial_install_validates_before_activation_and_keeps_cli_path(self):
         t3.install(self.config)
@@ -94,6 +108,8 @@ class T3InstallTests(unittest.TestCase):
         self.assertIn("WorkingDirectory=" + str(self.home / "repos"), content)
         self.assertNotIn('WorkingDirectory="', content)
         self.assertIn("--host 127.0.0.1 --port 3773", content)
+        self.assertIn('--base-dir "' + str(self.prefix / "data") + '"', content)
+        self.assertIn("UnsetEnvironment=T3CODE_STATE_DIR", content)
         self.ui.assert_called_once_with("http://127.0.0.1:3773/")
         verify = next(i for i, (_, cmd) in enumerate(self.events) if cmd[0] == "systemd-analyze")
         start = next(i for i, (_, cmd) in enumerate(self.events) if "start" in cmd)
@@ -291,6 +307,87 @@ class T3InstallTests(unittest.TestCase):
         with t3._setup_lock(self.prefix), self.assertRaisesRegex(RuntimeError, "Another CachyOS T3"):
             t3.install(self.config)
         self.assertFalse(any(cmd[:2] == ["npm", "install"] for _, cmd in self.events))
+
+    def desktop_config(self):
+        return SetupConfig(host="localhost", username="human", system_type="agent_cachyos",
+                           agent_tools=["codex"], t3code_desktop=True)
+
+    def test_desktop_retains_installed_package_without_launching_or_downloading(self):
+        t3.install_desktop(self.desktop_config())
+        self.assertTrue((self.prefix / "desktop-mode").is_file())
+        self.assertFalse(self.unit.exists())
+        self.assertFalse(self.binary.exists())
+        self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/paru", "/usr/bin/t3code"} for _, cmd in self.events))
+
+    def test_missing_desktop_installs_with_user_aur_helper(self):
+        self.desktop_version = None
+        t3.install_desktop(self.desktop_config())
+        calls = [call for call in self.system_run.call_args_list if call.args[0][0] == "/usr/bin/paru"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].args[0], ["/usr/bin/paru", "-S", "--aur", "--needed", "--", "t3code-bin"])
+        self.assertTrue(calls[0].kwargs["interactive"])
+
+    def test_missing_helper_fails_preflight_without_mutation(self):
+        self.desktop_version = None
+        self.which.return_value = None
+        self.which.side_effect = None
+        with self.assertRaisesRegex(RuntimeError, "paru or yay"):
+            t3.preflight(self.desktop_config())
+        self.assertFalse(self.prefix.exists())
+        self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] for _, cmd in self.events))
+
+    def test_failed_desktop_install_leaves_web_service_and_data_untouched(self):
+        target, content = self.legacy()
+        self.desktop_version = None
+        self.failure = "aur"
+        with self.assertRaisesRegex(RuntimeError, "AUR fixture"):
+            t3.install_desktop(self.desktop_config())
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertFalse((self.prefix / "desktop-mode").exists())
+
+    def test_web_desktop_web_switches_preserve_both_data_directories(self):
+        desktop_data = self.home / ".t3/userdata/state.sqlite"
+        desktop_data.parent.mkdir(parents=True)
+        desktop_data.write_text("desktop data")
+        t3.install(self.config)
+        web_data = self.prefix / "data/userdata/state.sqlite"
+        web_data.parent.mkdir(parents=True)
+        web_data.write_text("web data")
+        t3.install_desktop(self.desktop_config())
+        self.assertFalse(self.active)
+        self.assertFalse(self.enabled)
+        t3.install_desktop(self.desktop_config())
+        self.assertFalse(self.active)
+        t3.install(self.config)
+        self.assertTrue(self.active)
+        self.assertTrue(self.enabled)
+        self.assertFalse((self.prefix / "desktop-mode").exists())
+        self.assertEqual(desktop_data.read_text(), "desktop data")
+        self.assertEqual(web_data.read_text(), "web data")
+
+    def test_failed_web_switch_restores_desktop_selection(self):
+        t3.install(self.config)
+        t3.install_desktop(self.desktop_config())
+        self.ui.side_effect = RuntimeError("startup failure")
+        with self.assertRaisesRegex(RuntimeError, "startup failure"):
+            t3.install(self.config)
+        self.assertFalse(self.active)
+        self.assertFalse(self.enabled)
+        self.assertTrue((self.prefix / "desktop-mode").is_file())
+
+    def test_desktop_preserves_unmanaged_unit_and_marker(self):
+        for path in (self.unit, self.prefix / "desktop-mode"):
+            with self.subTest(path=path):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("personal content")
+                with self.assertRaisesRegex(ValueError, "unmanaged"):
+                    t3.install_desktop(self.desktop_config())
+                self.assertEqual(path.read_text(), "personal content")
+                path.unlink()
+        self.system_run.assert_not_called()
 
 
 class T3UITests(unittest.TestCase):

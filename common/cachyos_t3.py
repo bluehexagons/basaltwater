@@ -24,7 +24,97 @@ from common.cachyos_steps import (
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_package_name
+
+
+DESKTOP_PACKAGE = "t3code-bin"
+
+
+def _desktop_version() -> str | None:
+    """Query package metadata without launching Electron or touching T3 data."""
+    package = validate_package_name(DESKTOP_PACKAGE)
+    result = run(["pacman", "-Q", "--", package], capture_output=True, check=False, timeout=15)
+    if result.returncode == 1:
+        return None
+    parts = (result.stdout or "").split()
+    if result.returncode or len(parts) != 2 or parts[0] != package or not re.fullmatch(r"[0-9A-Za-z.+_:~-]+", parts[1]):
+        raise RuntimeError("Cannot determine t3code-bin package state; inspect pacman before retrying")
+    return parts[1]
+
+
+def _aur_helper(home: Path) -> str:
+    for name in ("paru", "yay"):
+        executable = shutil.which(name, path=_tool_path(home))
+        if executable:
+            return executable
+    raise RuntimeError("Installing T3 desktop requires an existing paru or yay AUR helper; "
+                       "install one through your normal CachyOS workflow and rerun --t3code-desktop")
+
+
+def _check_managed_paths(home: Path) -> tuple[Path, Path]:
+    prefix = home / ".local/share/basaltwater/cachyos-t3"
+    unit = home / ".config/systemd/user" / T3_SERVICE
+    marker = prefix / "desktop-mode"
+    for path in (prefix, unit.parent):
+        validate_filesystem_path(str(path))
+        for parent in (path, *path.parents):
+            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+                raise ValueError(f"Unsafe T3 directory: {parent}")
+    for path in (unit, marker):
+        if path.is_symlink() or (path.exists() and (
+            not path.is_file() or _MARKER not in path.read_text()
+        )):
+            raise ValueError(f"Refusing unmanaged T3 file: {path}")
+    upstream = unit.with_name("t3code.service")
+    if upstream.exists() or upstream.is_symlink():
+        raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
+    return prefix, unit
+
+
+def preflight(config: SetupConfig) -> None:
+    """Check T3 prerequisites before the setup runner installs any packages."""
+    home = _home(config)
+    _check_managed_paths(home)
+    if config.t3code_desktop and _desktop_version() is None:
+        _aur_helper(home)
+
+
+def install_desktop(config: SetupConfig) -> None:
+    """Retain AUR ownership and retire only the Basaltwater web service."""
+    home = _home(config)
+    prefix, unit = _check_managed_paths(home)
+    version = _desktop_version()
+    if version is None:
+        helper = _aur_helper(home)
+        # Run as the desktop user with a terminal for sudo/build prompts. No
+        # database refresh, full-system upgrade, or root AUR build is requested.
+        run([helper, "-S", "--aur", "--needed", "--", DESKTOP_PACKAGE], interactive=True)
+        version = _desktop_version()
+        if version is None:
+            raise RuntimeError("AUR installation finished without t3code-bin")
+    executable = shutil.which("t3code", path="/usr/bin:/bin")
+    if not executable:
+        raise RuntimeError("t3code-bin is installed but its desktop executable is missing; repair it with your AUR helper")
+    owner = run(["pacman", "-Qqo", "--", executable], capture_output=True, check=False, timeout=15)
+    if owner.returncode or owner.stdout.strip() != DESKTOP_PACKAGE:
+        raise RuntimeError("T3 desktop executable is not owned by t3code-bin; inspect the package installation")
+    _directory(prefix)
+    with _setup_lock(prefix):
+        _recover_activation(prefix, unit)
+        if unit.exists():
+            run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
+            active = run(["systemctl", "--user", "is-active", T3_SERVICE], capture_output=True, check=False)
+            if active.stdout.strip() not in {"inactive", "failed"}:
+                raise RuntimeError("Could not verify that the managed T3 web service stopped; inspect systemctl --user")
+        _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
+    print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; updates remain with your AUR helper")
+    print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
+    print("  Open T3 Code from KDE and verify a provider thread and terminal")
+    for tool in config.selected_agent_tools():
+        if tool != "gh":
+            binary = shutil.which(tool, path=_tool_path(home))
+            if binary:
+                print(f"  {tool} provider binary: {binary} (use in T3 provider settings if discovery fails)")
 
 
 def _unit_quote(value: str) -> str:
@@ -141,6 +231,7 @@ def _prune_releases(releases: Path, keep: set[Path]) -> None:
 
 def install(config: SetupConfig) -> None:
     home = _home(config)
+    prefix, unit = _check_managed_paths(home)
     version = _user_run(["node", "--version"], home, capture_output=True, timeout=30).stdout.strip()
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
     if not match:
@@ -150,18 +241,12 @@ def install(config: SetupConfig) -> None:
             or (major == 24 and minor >= 10) or major > 24):
         raise RuntimeError("T3 requires Node 22.16+, 23.11+, or 24.10+; update your Node runtime and rerun")
 
-    prefix = home / ".local/share/basaltwater/cachyos-t3"
-    unit = home / ".config/systemd/user" / T3_SERVICE
-    upstream = unit.with_name("t3code.service")
-    if upstream.exists() or upstream.is_symlink():
-        raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
     _directory(unit.parent)
-    if unit.is_symlink() or (unit.exists() and (not unit.is_file() or _MARKER not in unit.read_text())):
-        raise ValueError(f"Refusing to overwrite unmanaged file: {unit}")
     _directory(prefix)
     with _setup_lock(prefix):
         _recover_activation(prefix, unit)
         _install_locked(config, home, prefix, unit)
+        (prefix / "desktop-mode").unlink(missing_ok=True)
 
 
 def _copy_entry(source: Path, destination: Path) -> None:
@@ -307,13 +392,18 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
         _directory(Path(workspace))
         validate_filesystem_path(workspace, must_exist=True, check_writable=True)
         host = config.web_interface_host or "127.0.0.1"
+        data = prefix / "data"
+        _directory(data)
+        if unit.exists() and "--base-dir" not in unit.read_text():
+            print("  Moving the managed web service to isolated data; previous ~/.t3 data is retained, not migrated")
         content = (
             f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
             "\n[Service]\nType=simple\nUMask=0077\n"
             f"WorkingDirectory={_unit_path(workspace)}\n"
             f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
+            "UnsetEnvironment=T3CODE_STATE_DIR T3CODE_BASE_DIR T3CODE_HOME\n"
             f"ExecStart={_unit_quote(str(candidate / 'bin/t3'))} serve --host {host} "
-            f"--port {config.web_interface_port} --no-browser\n"
+            f"--port {config.web_interface_port} --base-dir {_unit_quote(str(data))} --no-browser\n"
             "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
         )
         _activate(prefix, unit, candidate, content, f"http://{host}:{config.web_interface_port}/")

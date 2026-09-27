@@ -1,11 +1,34 @@
 ---
 name: basaltwater-cachyos-t3code
-description: Operate the optional local or private-LAN T3 Code user service and T3 Connect installed by the CachyOS coding profile.
+description: Operate T3 Code desktop or the managed web service and T3 Connect on a Basaltwater CachyOS coding workstation.
 metadata:
   managed-by: basaltwater
 ---
 
 # Local T3 Code and T3 Connect
+
+## Desktop mode
+
+`basaltw setup agent_cachyos localhost --t3code-desktop` installs missing
+`t3code-bin` through an existing paru/yay helper and retains installed versions.
+Updates belong to the AUR workflow. It disables the Basaltwater web service;
+an inactive service is expected in this mode. Setup retains all application data.
+The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
+the selection. Do not launch another backend to repair a working desktop.
+
+Use the app's provider settings, local provider login, and absolute provider
+binary paths if KDE's PATH differs from the shell. Verify a thread and terminal
+in the app. Use desktop Settings → Connections for pairing or T3 Connect when
+supported by that version. The web CLI commands below configure a separate
+environment, not the desktop's default `~/.t3` data.
+
+The desktop flag and `--web-interface t3code` are mutually exclusive. To switch
+to web mode, finish active work, quit the desktop to free its port, and rerun
+setup with the web flag. To switch back, rerun with the desktop flag. Omission
+does not change the selected mode. Never uninstall the desktop package, kill
+its processes, or delete history as part of switching.
+
+## Managed web service
 
 The `agent_cachyos --web-interface t3code` setup uses the current desktop account
 and a dedicated user unit, `basaltwater-cachyos-t3.service`. It binds to
@@ -21,14 +44,17 @@ journalctl --user -u basaltwater-cachyos-t3.service -n 100
 ```
 
 The runtime is installed under `~/.local/share/basaltwater/cachyos-t3`, separate
-from an existing T3 desktop installation. Provider CLIs must work in this account
+from an existing T3 desktop installation. Its data is explicitly under that
+runtime root's `data` directory. Older units used `~/.t3`; rerunning web setup
+starts a separate environment and leaves the old data untouched. There is no
+automatic history or credential migration. Provider CLIs must work in this account
 and be authenticated through their normal local login. If provider discovery
 fails, inspect the unit's PATH and the provider binary path in T3 settings.
 
 To connect a browser or desktop client, run:
 
 ```bash
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
 Open the printed `Pairing URL` in the browser, or paste it into the desktop
@@ -42,9 +68,9 @@ following as the desktop user. Complete the browser sign-in, restart the
 managed service, and check the saved link:
 
 ```bash
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 systemctl --user restart basaltwater-cachyos-t3.service
-"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.t3"
+"$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
 T3 Connect is separate from direct LAN pairing and does not require port

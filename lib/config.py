@@ -422,6 +422,7 @@ class SetupConfig:
     agent_tools_removed: Optional[StrList] = None
     web_interfaces: Optional[StrList] = None
     t3code_ready: bool = False
+    t3code_desktop: bool = False
     disable_web_interface: bool = False
     web_interface_host: MaybeStr = None
     web_interface_port: int = 3773
@@ -613,6 +614,12 @@ class SetupConfig:
         if self.enable_syncthing and self.syncthing_admin is None:
             self.syncthing_admin = "syncthing-admin"
 
+        if self.t3code_desktop:
+            if self.system_type != "agent_cachyos":
+                raise ValueError("--t3code-desktop requires the agent_cachyos profile")
+            if self.web_interfaces or self.t3code_ready:
+                raise ValueError("--t3code-desktop cannot be combined with --web-interface or --t3code-ready")
+
         if self.t3code_ready:
             if self.disable_web_interface:
                 raise ValueError("--t3code-ready cannot be combined with --no-web-interface")
@@ -751,7 +758,7 @@ class SetupConfig:
             and not self.device_pairing_auth_username
         ):
             self.device_pairing_auth_username = self.username
-        if self.web_interfaces:
+        if self.web_interfaces or self.t3code_desktop:
             if not self.install_codex and not self.install_claude and not self.install_opencode:
                 raise ValueError(
                     "T3 Code requires at least one provider CLI: "
@@ -947,6 +954,8 @@ class SetupConfig:
 
         if self.t3code_ready:
             args.append("--t3code-ready")
+        if self.t3code_desktop:
+            args.append("--t3code-desktop")
         
         args.append(f"--system-type {shlex.quote(self.system_type)}")
         args.append(f"--username {shlex.quote(self.username)}")
@@ -962,7 +971,8 @@ class SetupConfig:
         for cache_spec in _normalize_nested_specs(self.storage_caches) or []:
             escaped_spec = " ".join(shlex.quote(str(part)) for part in cache_spec)
             args.append(f"--storage-cache {escaped_spec}")
-        args.extend(self._swap_args(include_initialize=True))
+        if self.system_type != "agent_cachyos":
+            args.extend(self._swap_args(include_initialize=True))
         if self.include_control_plane_tools:
             args.append("--control-plane")
         
@@ -975,7 +985,7 @@ class SetupConfig:
         elif self.harden_agent:
             args.append("--harden-agent")
         
-        if self.timezone:
+        if self.timezone and self.system_type != "agent_cachyos":
             args.append(f"--timezone {shlex.quote(self.timezone)}")
 
         if self.system_hostname:
@@ -1372,6 +1382,8 @@ class SetupConfig:
 
         if self.t3code_ready:
             cmd_parts.append("--t3code-ready")
+        if self.t3code_desktop:
+            cmd_parts.append("--t3code-desktop")
         
         # Add username if different from current user or if requested
         if include_username:
@@ -1447,7 +1459,8 @@ class SetupConfig:
                     f"--image-storage {shlex.quote(self.vm_image_storage)}"
                 )
 
-        cmd_parts.extend(self._swap_args())
+        if self.system_type != "agent_cachyos":
+            cmd_parts.extend(self._swap_args())
 
         if self.proxmox_balloon_target is not None:
             cmd_parts.append(
@@ -1459,7 +1472,7 @@ class SetupConfig:
         # mechanism instead of as a command-line argument.
         
         # Timezone
-        if self.timezone and self.timezone != "UTC":
+        if self.timezone and self.timezone != "UTC" and self.system_type != "agent_cachyos":
             cmd_parts.append(f"-t {shlex.quote(self.timezone)}")
 
         if self.system_hostname:
@@ -2561,6 +2574,7 @@ class SetupConfig:
             agent_tools_removed=removed_agent_tools or None,
             web_interfaces=web_interfaces,
             t3code_ready=_optional_bool_arg(args, 't3code_ready') is True,
+            t3code_desktop=_optional_bool_arg(args, 't3code_desktop') is True,
             disable_web_interface=disable_web_interface,
             web_interface_host=getattr(args, 'web_interface_host', None),
             web_interface_port=getattr(args, 'web_interface_port', 3773),

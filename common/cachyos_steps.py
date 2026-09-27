@@ -296,9 +296,14 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
 
 
 def install_cachyos_skills(config: SetupConfig) -> None:
-    unit = _home(config) / ".config/systemd/user" / T3_SERVICE
+    home = _home(config)
+    unit = home / ".config/systemd/user" / T3_SERVICE
     existing_t3 = unit.is_file() and not unit.is_symlink() and _MARKER in unit.read_text()
-    names = CACHYOS_SKILLS + ((CACHYOS_T3_SKILL,) if config.web_interfaces or existing_t3 else ())
+    desktop = home / ".local/share/basaltwater/cachyos-t3/desktop-mode"
+    existing_desktop = desktop.is_file() and not desktop.is_symlink() and desktop.read_text() == _MARKER + "\n"
+    names = CACHYOS_SKILLS + ((CACHYOS_T3_SKILL,) if (
+        config.web_interfaces or config.t3code_desktop or existing_t3 or existing_desktop
+    ) else ())
     install_managed_agent_skills(
         config.username, config.selected_agent_tools(), names,
         reconcile_skill_names=(
@@ -313,6 +318,12 @@ def install_cachyos_t3(config: SetupConfig) -> None:
     from common.cachyos_t3 import install
 
     install(config)
+
+
+def install_cachyos_t3_desktop(config: SetupConfig) -> None:
+    from common.cachyos_t3 import install_desktop
+
+    install_desktop(config)
 
 
 def report_cachyos_readiness(config: SetupConfig) -> None:

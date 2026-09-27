@@ -35,6 +35,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         install_cachyos_skills,
         prepare_cachyos_workspace,
         install_cachyos_t3,
+        install_cachyos_t3_desktop,
         report_cachyos_readiness,
         reconcile_cachyos_user_cache,
     )
@@ -45,10 +46,12 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
         ("Installing or updating coding agents for the current user", install_cachyos_agents),
         ("Preparing the local coding workspace", prepare_cachyos_workspace),
-        ("Installing CachyOS workstation skills", install_cachyos_skills),
     ]
+    if config.t3code_desktop:
+        steps.append(("Installing or integrating T3 Code desktop (disables managed web service)", install_cachyos_t3_desktop))
     if config.web_interfaces:
         steps.append(("Installing or updating CachyOS T3 Code user service", install_cachyos_t3))
+    steps.append(("Installing CachyOS workstation skills", install_cachyos_skills))
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))
     return steps

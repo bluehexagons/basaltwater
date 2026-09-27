@@ -32,7 +32,7 @@ _OPTIONS = {
     "install_lmms", "install_freecad", "install_kicad", "install_shotcut",
     "install_gimp", "install_remmina", "install_sysadmin_tools",
     "agent_workspace", "agent_repos", "web_interfaces",
-    "web_interface_host", "web_interface_port",
+    "web_interface_host", "web_interface_port", "t3code_desktop",
 }
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
     "agent_tools_removed", "install_gh", "install_codex", "install_claude",
@@ -153,13 +153,16 @@ def preflight_cachyos(config: SetupConfig) -> None:
     validate_filesystem_path(account.pw_dir, must_exist=True, check_writable=True)
     if os.path.realpath(os.path.expanduser("~")) != os.path.realpath(account.pw_dir):
         raise ValueError("HOME must belong to the invoking desktop user")
-    if config.web_interfaces:
+    if config.web_interfaces or config.t3code_desktop:
         from lib.remote_utils import run
 
         result = run(["systemctl", "--user", "show-environment"],
                      capture_output=True, check=False)
         if result.returncode:
             raise ValueError("T3 Code requires an active systemd user session; log into KDE first")
+        from common.cachyos_t3 import preflight
+
+        preflight(config)
 
 
 def run_cachyos_command(args: argparse.Namespace) -> int:

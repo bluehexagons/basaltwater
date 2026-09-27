@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import io
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -71,6 +72,38 @@ class CachyOSSetupTests(unittest.TestCase):
         args = parser.parse_args(["setup", "agent_cachyos", "example.com", "human"])
         with self.assertRaisesRegex(ValueError, "local setup only"):
             cachyos_config_from_args(args)
+
+    def test_desktop_selection_roundtrips_without_headless_dependencies(self):
+        config = self.config("--t3code-desktop")
+        self.assertTrue(config.t3code_desktop)
+        self.assertFalse(config.install_node)
+        self.assertIsNone(config.web_interfaces)
+        self.assertIn("--t3code-desktop", config.to_remote_args())
+        self.assertTrue(SetupConfig.from_dict("localhost", "agent_cachyos", config.to_dict()).t3code_desktop)
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        restored = cachyos_config_from_args(parser.parse_args(shlex.split(" ".join(config.to_setup_command()))[1:]))
+        self.assertTrue(restored.t3code_desktop)
+        functions = [function for _, function in get_steps_for_system_type(config)]
+        self.assertIn(steps.install_cachyos_t3_desktop, functions)
+        self.assertNotIn(steps.install_cachyos_t3, functions)
+        self.assertLess(functions.index(steps.install_cachyos_t3_desktop), functions.index(steps.install_cachyos_skills))
+
+    def test_desktop_rejects_web_mode_other_profiles_and_missing_provider(self):
+        with patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+            self.config("--t3code-desktop", "--web-interface", "t3code")
+        for extra in ({"web_interfaces": ["t3code"]}, {"t3code_ready": True}):
+            with self.assertRaisesRegex(ValueError, "cannot be combined"):
+                SetupConfig(host="localhost", username="human", system_type="agent_cachyos", t3code_desktop=True, **extra)
+        with self.assertRaisesRegex(ValueError, "requires the agent_cachyos"):
+            SetupConfig(host="localhost", username="human", system_type="pc_dev", t3code_desktop=True)
+        with self.assertRaisesRegex(ValueError, "provider CLI"):
+            self.config("--t3code-desktop", "--no-agent-tool", "codex")
+
+    def test_desktop_dry_run_does_not_probe_or_install(self):
+        with patch("common.cachyos_t3.run") as run, patch("lib.cachyos.is_cachyos") as detect:
+            self.assertEqual(remote_setup.run_cachyos_setup(self.config("--t3code-desktop", "--dry-run")), 0)
+        run.assert_not_called()
+        detect.assert_not_called()
 
     def test_remote_parser_has_same_defaults(self):
         from lib.arg_parser import create_setup_argument_parser

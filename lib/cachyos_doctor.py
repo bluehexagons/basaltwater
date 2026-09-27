@@ -27,7 +27,7 @@ BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser")
 PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
     "xdg-desktop-portal", "xdg-desktop-portal-kde", "at-spi2-core",
-    "python-gobject", *BROWSER_PACKAGES,
+    "python-gobject", "t3code-bin", *BROWSER_PACKAGES,
 )
 _NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}", re.ASCII)
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:+_~\-]{0,127}", re.ASCII)
@@ -224,6 +224,7 @@ def collect_cachyos_doctor() -> dict[str, object]:
             ("session.pipewire", "pipewire.service"),
             ("session.wireplumber", "wireplumber.service"),
             ("service.t3code", "basaltwater-cachyos-t3.service"),
+            ("service.t3code-upstream", "t3code.service"),
         ):
             status, output = ("missing", "")
             if bus_ready:
@@ -233,7 +234,9 @@ def collect_cachyos_doctor() -> dict[str, object]:
             active = status == "ok" and output.strip() == "active"
             record(name, "available" if active else "deferred",
                    "User unit active; functional readiness is not verified." if active else
-                   "User unit not observed active; inspect with systemctl --user. Optional selection is unknown.")
+                   ("Managed web service inactive; expected for --t3code-desktop. Desktop health is checked in the app."
+                    if name == "service.t3code" else
+                    "User unit not observed active; inspect with systemctl --user. Optional selection is unknown."))
 
     for name, origin in (("browser.playwright", "user-session"),
                          ("desktop.accessibility", "user-session"),

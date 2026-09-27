@@ -279,9 +279,12 @@ class DevicePairingPayloadTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             agent_payload = os.path.join(temporary, "agent")
             pairing_payload = os.path.join(temporary, "pairing")
+            web_payload = os.path.join(temporary, "web")
             os.makedirs(agent_payload)
             os.makedirs(pairing_payload)
+            os.makedirs(web_payload)
             with (
+                patch("lib.cachyos.is_cachyos", return_value=False),
                 patch.object(
                     remote_setup, "REMOTE_AGENT_PAYLOAD_DIR", agent_payload
                 ),
@@ -291,11 +294,13 @@ class DevicePairingPayloadTest(unittest.TestCase):
                     pairing_payload,
                 ),
                 patch.object(remote_setup, "is_dry_run", return_value=False),
+                patch.object(remote_setup, "REMOTE_WEB_PANEL_PAYLOAD_DIR", web_payload),
             ):
                 remote_setup._remove_secret_payloads()
 
             self.assertFalse(os.path.exists(agent_payload))
             self.assertFalse(os.path.exists(pairing_payload))
+            self.assertFalse(os.path.exists(web_payload))
 
 
 class PairingBrokerTest(unittest.TestCase):

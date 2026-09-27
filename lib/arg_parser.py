@@ -854,6 +854,11 @@ def add_setup_arguments(
     )
     web_interface_group = parser.add_mutually_exclusive_group()
     web_interface_group.add_argument(
+        "--t3code-desktop",
+        action="store_true",
+        help="Install or integrate the upstream-listed t3code-bin AUR desktop package (agent_cachyos only); replaces the managed T3 web service",
+    )
+    web_interface_group.add_argument(
         "--web-interface",
         dest="web_interfaces",
         action="append",

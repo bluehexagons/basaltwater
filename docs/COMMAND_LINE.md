@@ -520,6 +520,7 @@ rm -f "$HOME/.basaltwater-install.sh"
 | `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |
 | `--no-agent-tool TOOL[,TOOL...]` | Disable one or more profile-default provider tools |
 | `--web-interface INTERFACE` | Install an explicit headless web interface; currently `t3code`; CachyOS uses its local user service |
+| `--t3code-desktop` | CachyOS only: install missing `t3code-bin` through paru/yay or retain the existing desktop package; disable the Basaltwater web service and preserve data; mutually exclusive with `--web-interface` |
 | `--web-interface-host IP` | Bind address for the selected web interface; managed VM/server defaults to loopback or `0.0.0.0` with a source, while CachyOS accepts loopback or an explicit private IPv4 |
 | `--web-interface-port PORT` | TCP port for the selected web interface; default `3773` |
 | `--web-interface-source IP_OR_CIDR` | Managed VM/server source restriction for direct web-interface access; repeatable; CachyOS uses `--web-interface-host` for direct LAN mode |
@@ -602,8 +603,11 @@ workflow skills under `~/.agents/skills`. T3 Code and Godot web setup add their
 capability-specific skills. See [Managed agent workflow
 skills](AGENT_SKILLS.md) for the catalog and reconciliation rules.
 
-T3 Code is selected with `--web-interface t3code`; it is not an `--agent-tool`
-provider, and Basaltwater no longer installs the desktop AppImage. The server
+T3 Code hosting is selected with `--web-interface t3code`; it is not an `--agent-tool`
+provider. On CachyOS, `--t3code-desktop` instead installs or integrates the
+upstream-listed AUR desktop package. Rerun with the other flag to switch modes;
+desktop and managed web data remain separate and are never deleted or merged.
+See [CachyOS desktop setup](CACHYOS.md#t3-code-desktop). The Debian server
 path installs Node and T3 Code's upstream per-user background service; see
 [T3_CODE.md](T3_CODE.md) for updates, LAN access, pairing, client choices, and
 the loopback/HTTPS boundary. The optional
@@ -618,7 +622,7 @@ resulting app session includes T3's `access:write` scope for pairing-link and
 client-session management. Opening the bare service address is expected to show
 T3's pairing-key form; it is not an authenticated session. The local CachyOS
 profile does not use this controller-side command; generate its native pairing
-link and configure T3 Connect from the [CachyOS guide](CACHYOS.md#t3-code-host-locally-or-on-a-trusted-lan).
+link and configure T3 Connect from the [CachyOS guide](CACHYOS.md#t3-code-web-service-host-locally-or-on-a-trusted-lan).
 
 When the protected portal is selected, open the printed **T3 Code pairing
 HTTPS endpoint**, answer the Basic Auth challenge, and pair the current browser

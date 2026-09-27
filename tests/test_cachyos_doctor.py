@@ -160,6 +160,17 @@ class DoctorTests(unittest.TestCase):
             else:
                 self.assertEqual(command[:4], ["/usr/bin/systemctl", "--user", "--no-pager", "is-active"])
 
+    def test_desktop_package_does_not_require_managed_web_service(self):
+        def probe(command, uid):
+            if command[-1] == "basaltwater-cachyos-t3.service":
+                return "error", ""
+            return self.healthy_probe(command, uid)
+        self.probe.side_effect = probe
+        records = {item["name"]: item for item in doctor.collect_cachyos_doctor()["capabilities"]}
+        self.assertEqual(records["package.t3code-bin"]["state"], "available")
+        self.assertEqual(records["service.t3code"]["state"], "deferred")
+        self.assertIn("expected for --t3code-desktop", records["service.t3code"]["reason"])
+
     def test_unsupported_host_and_root_do_not_probe(self):
         self.supported.return_value = False
         report = doctor.collect_cachyos_doctor()
