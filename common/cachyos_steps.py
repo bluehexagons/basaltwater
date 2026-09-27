@@ -21,7 +21,7 @@ from lib.atomic_io import write_text_atomic
 from lib.agent_storage import codex_update_supported
 from lib.config import SetupConfig
 from lib.remote_utils import run
-from lib.validation import validate_filesystem_path, validate_package_name
+from lib.validation import validate_arch_package_name, validate_filesystem_path
 from lib.vendor_installer import install as install_vendor_tool
 
 
@@ -135,7 +135,7 @@ def configure_cachyos_shell(home: str, shell: str) -> None:
 
 def install_missing_packages(packages: list[str]) -> None:
     """Use the current pacman database; never translate apt update to pacman -Sy."""
-    packages = list(dict.fromkeys(validate_package_name(name) for name in packages))
+    packages = list(dict.fromkeys(validate_arch_package_name(name) for name in packages))
     missing = []
     for package in packages:
         result = run(["pacman", "-Q", "--", package], check=False, capture_output=True)
@@ -163,7 +163,7 @@ def install_missing_packages(packages: list[str]) -> None:
 
 def cachyos_packages(config: SetupConfig) -> list[str]:
     home = _home(config)
-    packages = ["ca-certificates", "curl", "git", "ripgrep", "base-devel"]
+    packages = ["ca-certificates", "curl", "git", "ripgrep", "base-devel", "pacman-contrib"]
     commands = [("gh", "github-cli")] if config.install_gh else []
     if config.install_node:
         commands += [("node", "nodejs"), ("npm", "npm"), ("pnpm", "pnpm")]
@@ -421,8 +421,24 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
 def reconcile_cachyos_user_cache(config: SetupConfig) -> None:
     """Run target-user cache maintenance during setup on hosts without timers."""
     from common.setup_maintenance import run_user_cache_maintenance
+    from lib.agent_storage import cleanup_t3_rotated_logs
+    from lib.maintenance_defaults import T3_ROTATED_LOG_MAX_BYTES, T3_ROTATED_LOG_MAX_AGE_DAYS
+    from lib.remote_utils import is_dry_run
+
+    if config.dry_run or is_dry_run():
+        print("  [DRY-RUN] Would reconcile developer caches and rotated T3 logs")
+        return
 
     if not run_user_cache_maintenance(config):
         raise RuntimeError("Coding tools were installed, but user cache maintenance is incomplete. "
                            "Resolve the reported cleanup error and rerun setup; "
                            "this profile has no automatic cache retry timer.")
+    home = _home(config)
+    logs = cleanup_t3_rotated_logs(
+        str(home), os.getuid(), dry_run=False,
+        max_bytes=T3_ROTATED_LOG_MAX_BYTES, max_age_days=T3_ROTATED_LOG_MAX_AGE_DAYS,
+        base_dir=str(home / ".local/share/basaltwater/cachyos-t3/data"),
+    )
+    if logs.errors:
+        raise RuntimeError("Managed T3 web log cleanup incomplete: " + "; ".join(logs.errors))
+    print(f"  Managed T3 web logs: removed {len(logs.removed)} numbered rotations; current logs and data retained")

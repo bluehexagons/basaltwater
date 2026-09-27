@@ -373,9 +373,9 @@ def cleanup_codex_standalone_releases(
     )
 
 
-def _inventory_t3_rotated_logs(home: str, uid: int) -> list[RotatedLog]:
+def _inventory_t3_rotated_logs(home: str, uid: int, base_dir: str | None) -> list[RotatedLog]:
     """Inventory only user-owned, regular numbered rotations without links."""
-    log_root = os.path.join(home, ".t3", "userdata", "logs")
+    log_root = os.path.join(base_dir or os.path.join(home, ".t3"), "userdata", "logs")
     if not os.path.lexists(log_root):
         return []
     _validate_user_directory_chain(home, log_root, uid)
@@ -417,10 +417,11 @@ def cleanup_t3_rotated_logs(
     dry_run: bool,
     max_bytes: int,
     max_age_days: int,
+    base_dir: str | None = None,
 ) -> T3LogCleanupResult:
     """Prune only numbered T3 rotations by age and total retained size."""
     try:
-        logs = _inventory_t3_rotated_logs(home, uid)
+        logs = _inventory_t3_rotated_logs(home, uid, base_dir)
     except (OSError, ValueError) as exc:
         return T3LogCleanupResult(errors=(f"T3 rotated log inventory: {exc}",))
     if not logs:

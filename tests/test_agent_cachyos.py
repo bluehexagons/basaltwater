@@ -34,7 +34,8 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertIsNone(config.browser_automation)
         self.assertIsNone(config.web_interfaces)
         functions = [function for _, function in get_steps_for_system_type(config)]
-        self.assertTrue(all(function.__module__ == "common.cachyos_steps" for function in functions))
+        self.assertTrue(all(function.__module__ in {"common.cachyos_steps", "common.cachyos_cleanup"}
+                            for function in functions))
         self.assertNotIn(steps.install_cachyos_t3, functions)
 
     def test_rejects_unsupported_options_before_target_execution(self):
@@ -316,9 +317,9 @@ class CachyOSSetupTests(unittest.TestCase):
 
     def test_setup_reconciles_user_cache(self):
         config = self.config()
-        with patch(
-            "common.setup_maintenance.run_user_cache_maintenance"
-        ) as reconcile:
+        with tempfile.TemporaryDirectory() as home, \
+                patch.object(steps, "_home", return_value=Path(home)), \
+                patch("common.setup_maintenance.run_user_cache_maintenance") as reconcile:
             steps.reconcile_cachyos_user_cache(config)
         reconcile.assert_called_once_with(config)
 

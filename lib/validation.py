@@ -1088,6 +1088,7 @@ _MEMORY_UNIT_TO_KIB = {
     "T": 1024 * 1024 * 1024,
 }
 _PACKAGE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9+.-]*$")
+_ARCH_PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9@_+][A-Za-z0-9@_+.-]*")
 _ENVIRONMENT_VARIABLE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NETWORK_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _NETWORK_PROVIDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$")
@@ -1213,6 +1214,13 @@ def validate_package_name(value: str, name: str = "package") -> str:
         raise ValueError(f"Invalid {name} name: {value}")
 
     return normalized_value
+
+
+def validate_arch_package_name(value: str) -> str:
+    """Validate a literal Arch pkgname, including underscores and '@'."""
+    if not isinstance(value, str) or not _ARCH_PACKAGE_NAME_PATTERN.fullmatch(value):
+        raise ValueError(f"Invalid Arch package name: {value}")
+    return value
 
 
 _DEBIAN_CODENAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")

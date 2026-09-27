@@ -397,9 +397,9 @@ for current provider, client, and T3 Connect requirements.
   `pacman -S --needed`. Setup does not refresh package databases or perform a
   system upgrade. Use CachyOS's normal update workflow first, and never use
   `pacman -Sy` as a repair for a partial upgrade.
-- A package install may prompt for sudo. Agent CLIs, the T3 runtime, cache
-  cleanup, and repository checks are otherwise noninteractive. No update timers
-  are installed.
+- Package installation and pruning old pacman downloads may prompt for sudo.
+  Agent CLIs, the T3 runtime, user-cache cleanup, and repository checks are
+  otherwise noninteractive. No update or cleanup timers are installed.
 - Cache cleanup runs after tool readiness. If cleanup fails, setup reports an
   incomplete result and returns nonzero; installed tools are retained. Resolve
   the cleanup error and rerun setup. This profile has no automatic cache retry.
@@ -413,6 +413,42 @@ for current provider, client, and T3 Connect requirements.
 - `--repo` clones only a missing repository. An existing destination must be a
   Git repository with the requested origin and must be writable by you; setup
   does not delete or repair conflicting directories.
+
+## Cleanup during setup
+
+Every setup run performs cleanup after tool readiness. It installs
+`pacman-contrib` for the distro's [paccache version selection](https://man.archlinux.org/man/paccache.8),
+but does not enable `paccache.timer` or install another scheduled service.
+
+- **Package downloads:** retain the newest three cached versions of each
+  package, the currently installed version, and any archive accessed or
+  modified within 30 days. Only recognized, root-owned regular archives and
+  their signatures directly in `/var/cache/pacman/pkg` are eligible. Setup
+  previews without sudo, then rechecks candidates before removal if needed.
+  Package transaction locks defer cleanup. Private download directories,
+  partial downloads, symlinks, custom cache locations, and AUR build trees are
+  preserved. Packages are never uninstalled, including orphaned packages.
+- **Developer caches:** reuse the shared user-cache policies for npm/npx, pip,
+  uv, Go, Codex, and Electron downloads. Only known rebuildable caches are
+  pruned; size/age limits and free-space checks control larger evictions.
+  Active tool/process checks defer cleanup where applicable. Codex temporary
+  files expire after seven days when Codex is idle; configuration, login files,
+  sessions, databases, plugins, and repositories are preserved.
+- **Agent releases and logs:** retain the current, rollback, and running Codex
+  releases. T3 numbered log rotations are bounded to 14 days and 256 MiB per
+  environment, covering both desktop `~/.t3` and the isolated managed web
+  directory. Current logs and T3 databases are preserved.
+
+For a read-only package-cache inventory from this checkout:
+
+```bash
+python3 common/cachyos_cleanup.py --dry-run
+```
+
+The helper reports candidate archive/signature counts. Setup's `--dry-run`
+shows the cleanup steps without inventorying or changing the machine. Cleanup
+errors make setup incomplete and request a rerun; installed tools remain in
+place. Deferred cleanup can run on a later setup invocation.
 
 ## Skills, diagnostics, and boundaries
 
@@ -449,7 +485,10 @@ results separately.
 
 For contributors, `plugins/cachyos.py` owns composition, `lib/cachyos.py` owns
 the local support boundary, and `common/cachyos_steps.py` owns target-side
-operations; `common/cachyos_t3.py` owns staged T3 activation and recovery. The
+operations; `common/cachyos_t3.py` owns staged T3 activation and recovery.
+`common/cachyos_cleanup.py` owns package-cache pruning. Arch package inputs use
+`lib.validation.validate_arch_package_name`, which accepts the distro's
+underscore and `@` characters without loosening APT validation. The
 CLI routes directly to the CachyOS runner rather than the SSH
 host lifecycle. Keep additions explicitly allowed and independently tested;
 mock pacman, sudo, downloads, service operations, and hardware probes.

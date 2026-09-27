@@ -29,6 +29,7 @@ PLUGIN = PluginDefinition(
 
 
 def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
+    from common.cachyos_cleanup import cleanup_cachyos_packages
     from common.cachyos_steps import (
         install_cachyos_packages,
         install_cachyos_agents,
@@ -53,5 +54,6 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         steps.append(("Installing or updating CachyOS T3 Code user service", install_cachyos_t3))
     steps.append(("Installing CachyOS workstation skills", install_cachyos_skills))
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
+    steps.append(("Pruning old CachyOS package downloads (keeps three versions and 30 days)", cleanup_cachyos_packages))
     steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))
     return steps
