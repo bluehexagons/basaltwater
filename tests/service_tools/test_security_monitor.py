@@ -332,9 +332,33 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
 
     @patch("security.service_tools.security_monitor.shutil.which")
     def test_missing_ausearch_is_reported_when_auditd_is_installed(self, mock_which):
-        mock_which.side_effect = lambda command: "/usr/sbin/auditd" if command == "auditd" else None
+        mock_which.side_effect = lambda command, **_kwargs: "/usr/sbin/auditd" if command == "auditd" else None
 
         events, critical, errors = security_monitor._check_auditd(datetime.now())
+
+        self.assertEqual(events, [])
+        self.assertFalse(critical)
+        self.assertEqual(errors, ["auditd: ausearch command unavailable"])
+        self.assertEqual(
+            security_monitor._collection_error_event(errors[0])["source"],
+            "auditd",
+        )
+
+    @patch("security.service_tools.security_monitor.shutil.which")
+    def test_audit_tools_use_system_path(self, mock_which):
+        mock_which.return_value = "/usr/sbin/ausearch"
+
+        self.assertEqual(security_monitor._audit_tool("ausearch"), "/usr/sbin/ausearch")
+        mock_which.assert_called_once_with(
+            "ausearch", path="/usr/sbin:/sbin:/usr/bin:/bin"
+        )
+
+    @patch("security.service_tools.security_monitor.shutil.which", return_value=None)
+    def test_required_audit_coverage_does_not_report_clean_when_tools_are_missing(
+        self, _which
+    ):
+        with patch.dict(os.environ, {"BASALTWATER_AUDIT_REQUIRED": "1"}):
+            events, critical, errors = security_monitor._check_auditd(datetime.now())
 
         self.assertEqual(events, [])
         self.assertFalse(critical)

@@ -1104,30 +1104,71 @@ def _doctor(name: str, as_json: bool) -> int:
 
 def _print_ca(as_json: bool) -> int:
     policy = _load_policy()
-    path = policy.get("ca_certificate")
-    if not isinstance(path, str) or not os.path.isfile(path):
-        result = {"ca_certificate": None, "publicly_trusted": True}
-    else:
-        digest = hashlib.sha256()
-        with open(path, "rb") as file_obj:
-            while chunk := file_obj.read(1024 * 1024):
-                digest.update(chunk)
-        result = {
-            "ca_certificate": path,
-            "publicly_trusted": False,
-            "sha256": digest.hexdigest(),
-            "url": f"{str(policy['base_url']).rstrip('/')}/basaltwater-ca.crt",
-        }
+    result = _certificate_trust(policy)
     if as_json:
         print(json.dumps(result, sort_keys=True))
-    elif result["publicly_trusted"]:
+    elif result["status"] == "public":
         print("The internal-web endpoint uses a publicly trusted certificate")
-    else:
+    elif result["status"] == "local_ca":
         print(
             f"{result['ca_certificate']}\n{result['url']}\n"
             f"SHA-256 {result['sha256']}"
         )
+    else:
+        print(f"Certificate trust could not be verified: {result['reason']}")
     return 0
+
+
+def _certificate_trust(policy: dict[str, object]) -> dict[str, object]:
+    """Classify the live endpoint using the CA selected by the policy."""
+
+    certificate = str(policy["certificate"])
+    ca_path = policy.get("ca_certificate")
+    if isinstance(ca_path, str) and not os.path.isfile(ca_path):
+        return {"status": "unknown", "reason": "configured CA certificate is missing"}
+    if ca_path is None and not certificate.startswith("/etc/letsencrypt/live/"):
+        return {
+            "status": "unknown",
+            "reason": "no managed public certificate or local CA is configured",
+        }
+
+    try:
+        parsed = urllib.parse.urlsplit(str(policy["base_url"]))
+        hostname = parsed.hostname
+        if not hostname:
+            raise ValueError("invalid endpoint hostname")
+        _verify_live_tls(hostname, parsed.port or 443, ca_path if isinstance(ca_path, str) else None)
+        if isinstance(ca_path, str):
+            digest = hashlib.sha256()
+            with open(ca_path, "rb") as file_obj:
+                while chunk := file_obj.read(1024 * 1024):
+                    digest.update(chunk)
+            return {
+                "status": "local_ca",
+                "ca_certificate": ca_path,
+                "sha256": digest.hexdigest(),
+                "url": f"{str(policy['base_url']).rstrip('/')}/basaltwater-ca.crt",
+            }
+        local_ca = "/srv/basaltwater/web/basaltwater-ca.crt"
+        if os.path.isfile(local_ca):
+            try:
+                _verify_live_tls(hostname, parsed.port or 443, local_ca)
+            except (OSError, ValueError, ssl.SSLError):
+                pass
+            else:
+                return {"status": "unknown", "reason": "live endpoint uses the VM-local CA"}
+        return {"status": "public", "publicly_trusted": True}
+    except (OSError, ValueError, ssl.SSLError) as exc:
+        return {"status": "unknown", "reason": f"live TLS verification failed ({type(exc).__name__})"}
+
+
+def _verify_live_tls(hostname: str, port: int, ca_path: str | None) -> None:
+    """Require a valid chain and matching hostname at the configured endpoint."""
+
+    context = ssl.create_default_context(cafile=ca_path)
+    with socket.create_connection((hostname, port), timeout=3) as connection:
+        with context.wrap_socket(connection, server_hostname=hostname):
+            pass
 
 
 @_serialized_mutation

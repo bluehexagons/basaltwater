@@ -775,12 +775,11 @@ def configure_auditd(config: SetupConfig) -> None:
     service_result = run("systemctl start auditd", check=False)
     load_result = run("augenrules --load", check=False)
 
-    if service_result.returncode != 0 or load_result.returncode != 0:
-        print(
-            "  ⚠ auditd configuration is present but its service or loaded "
-            "rules could not be verified"
-        )
-    elif rules_changed:
+    if service_result.returncode != 0:
+        raise RuntimeError("auditd is required on this host but its service did not start")
+    if load_result.returncode != 0:
+        raise RuntimeError("auditd is required on this host but its rules did not load")
+    if rules_changed:
         print("  ✓ auditd configured (monitoring identity, sudoers, SSH config, modules)")
     else:
         print("  ✓ auditd already configured; service and rules reconciled")
@@ -860,6 +859,11 @@ def configure_security_monitor(config: SetupConfig) -> None:
         randomized_delay="2min",
         timeout="10min",
         purpose="monitor",
+        environment={
+            "BASALTWATER_AUDIT_REQUIRED": (
+                "0" if config.system_type == "server_proxmox" else "1"
+            ),
+        },
     )
     if not configured:
         raise RuntimeError("Security event monitor timer failed verification")

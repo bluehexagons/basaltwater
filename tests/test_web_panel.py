@@ -32,7 +32,7 @@ from common.web_panel_steps import (
     remove_web_panel,
     render_web_panel_nginx,
 )
-from common.service_tools.web_panel_audit_export import collect_audit_snapshot
+from common.service_tools.web_panel_audit_export import _audit_tool, collect_audit_snapshot
 from common.service_tools.web_panel_service import (
     WebPanelState,
     WebPanelHandler,
@@ -1329,11 +1329,20 @@ class WebPanelEventTest(unittest.TestCase):
             self.assertFalse(os.path.exists(notification_path))
 
     @patch("common.service_tools.web_panel_audit_export.shutil.which")
+    def test_audit_export_uses_system_path(self, mock_which: unittest.mock.MagicMock) -> None:
+        mock_which.return_value = "/usr/sbin/ausearch"
+
+        self.assertEqual(_audit_tool("ausearch"), "/usr/sbin/ausearch")
+        mock_which.assert_called_once_with(
+            "ausearch", path="/usr/sbin:/sbin:/usr/bin:/bin"
+        )
+
+    @patch("common.service_tools.web_panel_audit_export.shutil.which")
     @patch("common.service_tools.web_panel_audit_export.subprocess.run")
     def test_audit_export_is_sanitized_and_bounded(
         self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
     ) -> None:
-        mock_which.side_effect = lambda name: f"/usr/sbin/{name}"
+        mock_which.side_effect = lambda name, **_kwargs: f"/usr/sbin/{name}"
         record = (
             "type=SYSCALL msg=audit(1788361200.0:42): "
             'syscall=openat auid=agent exe="/usr/bin/sudo" proctitle=SECRET\n'
@@ -1341,9 +1350,9 @@ class WebPanelEventTest(unittest.TestCase):
         )
 
         def run_audit(command: list[str], **kwargs: object) -> SimpleNamespace:
-            if command == ["auditctl", "-s"]:
+            if command == ["/usr/sbin/auditctl", "-s"]:
                 output = "enabled 1\npid 123\n"
-            elif command == ["auditctl", "-l"]:
+            elif command == ["/usr/sbin/auditctl", "-l"]:
                 output = "\n".join(
                     f"-w /example/{key} -p wa -k {key}"
                     for key in (
@@ -1374,7 +1383,7 @@ class WebPanelEventTest(unittest.TestCase):
     def test_audit_export_suppresses_managed_setup_activity(
         self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
     ) -> None:
-        mock_which.side_effect = lambda name: f"/usr/sbin/{name}"
+        mock_which.side_effect = lambda name, **_kwargs: f"/usr/sbin/{name}"
         now = datetime(2026, 9, 14, 12, 30, tzinfo=timezone.utc)
         inside = int((now - timedelta(minutes=10)).timestamp())
         outside = int((now - timedelta(minutes=2)).timestamp())
@@ -1388,9 +1397,9 @@ class WebPanelEventTest(unittest.TestCase):
         output = audit_record(inside, 1) + "----" + audit_record(outside, 2)
 
         def run_audit(command: list[str], **kwargs: object) -> SimpleNamespace:
-            if command == ["auditctl", "-s"]:
+            if command == ["/usr/sbin/auditctl", "-s"]:
                 result = "enabled 1\npid 123\n"
-            elif command == ["auditctl", "-l"]:
+            elif command == ["/usr/sbin/auditctl", "-l"]:
                 result = "\n".join(
                     f"-w /example/{key} -p wa -k {key}"
                     for key in (
@@ -1437,10 +1446,10 @@ class WebPanelEventTest(unittest.TestCase):
     def test_audit_export_reports_disabled_kernel_auditing(
         self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
     ) -> None:
-        mock_which.side_effect = lambda name: f"/usr/sbin/{name}"
+        mock_which.side_effect = lambda name, **_kwargs: f"/usr/sbin/{name}"
 
         def run_audit(command: list[str], **kwargs: object) -> SimpleNamespace:
-            self.assertEqual(command, ["auditctl", "-s"])
+            self.assertEqual(command, ["/usr/sbin/auditctl", "-s"])
             kwargs["stdout"].write(b"enabled 0\npid 0\n")
             return SimpleNamespace(returncode=0)
 
@@ -1457,13 +1466,13 @@ class WebPanelEventTest(unittest.TestCase):
     def test_audit_export_reports_missing_managed_rules(
         self, mock_run: unittest.mock.MagicMock, mock_which: unittest.mock.MagicMock
     ) -> None:
-        mock_which.side_effect = lambda name: f"/usr/sbin/{name}"
+        mock_which.side_effect = lambda name, **_kwargs: f"/usr/sbin/{name}"
 
         def run_audit(command: list[str], **kwargs: object) -> SimpleNamespace:
-            if command == ["auditctl", "-s"]:
+            if command == ["/usr/sbin/auditctl", "-s"]:
                 kwargs["stdout"].write(b"enabled 1\npid 123\n")
                 return SimpleNamespace(returncode=0)
-            if command == ["auditctl", "-l"]:
+            if command == ["/usr/sbin/auditctl", "-l"]:
                 kwargs["stdout"].write(b"-w /etc/passwd -p wa -k identity\n")
                 return SimpleNamespace(returncode=0)
             return SimpleNamespace(returncode=1)
@@ -1733,7 +1742,7 @@ class WebPanelEventTest(unittest.TestCase):
         ):
             trust = discover_certificate_trust()
 
-        self.assertIsNone(trust)
+        self.assertEqual(trust, {"status": "unknown"})
 
     def test_discovers_publicly_trusted_certificate(self) -> None:
         with (

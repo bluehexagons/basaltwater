@@ -53,6 +53,12 @@ _FAIL2BAN_LOG = '/var/log/fail2ban.log'
 _SSH_FAILURE_THRESHOLD = 5
 _SSH_WARNING_THRESHOLD = 25
 _SSH_MAX_BREAKDOWN = 10
+_AUDIT_PATH = '/usr/sbin:/sbin:/usr/bin:/bin'
+
+
+def _audit_tool(name: str) -> str | None:
+    """Resolve packaged audit commands without depending on the caller PATH."""
+    return shutil.which(name, path=_AUDIT_PATH)
 
 # fail2ban log line pattern — local-time timestamp + jail + action + IP.
 # Jail names may contain hyphens (e.g. nginx-http-auth), so [^\]]+ is used.
@@ -247,9 +253,12 @@ def _ausearch_events(
     """Return summarised auditd events for a key and any collection error."""
     since_date = since.strftime('%m/%d/%Y')
     since_time = since.strftime('%H:%M:%S')
+    ausearch = _audit_tool('ausearch')
+    if not ausearch:
+        return [], f'audit key {key}: ausearch command unavailable'
     try:
         result = subprocess.run(
-            ['ausearch', '--start', since_date, since_time, '-k', key, '-i'],
+            [ausearch, '--start', since_date, since_time, '-k', key, '-i'],
             capture_output=True, text=True, check=False, timeout=15,
         )
         if result.returncode == 0:
@@ -273,11 +282,15 @@ def _check_auditd(
     excluded_window: tuple[datetime, datetime] | None = None,
 ) -> tuple[list[JSONDict], bool, list[str]]:
     """Return triggered keys, critical status, and collection errors."""
-    if not shutil.which('ausearch'):
+    if not _audit_tool('ausearch'):
         # auditd is deliberately optional on the dedicated Proxmox flow and
         # in containers.  If it is installed but ausearch disappeared, report
         # that the monitor cannot observe it instead of reporting a clean scan.
-        if shutil.which('auditd') or os.path.exists('/var/log/audit'):
+        if (
+            os.environ.get('BASALTWATER_AUDIT_REQUIRED') == '1'
+            or _audit_tool('auditd')
+            or os.path.exists('/var/log/audit')
+        ):
             return [], False, ['auditd: ausearch command unavailable']
         return [], False, []
     events: list[JSONDict] = []
@@ -597,7 +610,7 @@ def _audit_event_keys(events: list[JSONDict]) -> list[str]:
 def _collection_error_event(error: str) -> JSONDict:
     """Turn a human collection error into a routable source-health event."""
     source = 'unknown'
-    if error.startswith('audit key '):
+    if error.startswith(('audit key ', 'auditd:')):
         source = 'auditd'
     elif error.startswith('SSH journal:'):
         source = 'ssh_journal'

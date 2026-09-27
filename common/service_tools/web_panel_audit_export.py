@@ -41,6 +41,13 @@ _MAX_COMMAND_OUTPUT_BYTES = 2 * 1024 * 1024
 _MAX_EVENTS = 100
 _MAX_PRIVILEGED_EVENTS = 25
 _MAX_VALUES = 10
+_AUDIT_PATH = "/usr/sbin:/sbin:/usr/bin:/bin"
+
+
+def _audit_tool(name: str) -> str | None:
+    """Find packaged audit commands even when the service PATH omits sbin."""
+
+    return shutil.which(name, path=_AUDIT_PATH)
 
 
 def _limit_output_file_size() -> None:
@@ -78,12 +85,13 @@ def _run_bounded(command: list[str], *, timeout: int) -> tuple[int, str] | None:
 def _audit_health() -> tuple[str, list[str]]:
     """Verify that auditd and every rule used by the panel are active."""
 
-    if not shutil.which("auditctl"):
+    auditctl = _audit_tool("auditctl")
+    if not auditctl:
         return (
             "unavailable",
             ["auditctl is unavailable, so kernel audit coverage cannot be verified."],
         )
-    status_result = _run_bounded(["auditctl", "-s"], timeout=10)
+    status_result = _run_bounded([auditctl, "-s"], timeout=10)
     if status_result is None or status_result[0] != 0:
         return (
             "unavailable",
@@ -103,7 +111,7 @@ def _audit_health() -> tuple[str, list[str]]:
     if daemon_pid <= 0:
         return "unavailable", ["auditd is not running."]
 
-    rules_result = _run_bounded(["auditctl", "-l"], timeout=10)
+    rules_result = _run_bounded([auditctl, "-l"], timeout=10)
     if rules_result is None or rules_result[0] != 0:
         return "degraded", ["The loaded audit rules could not be verified."]
     loaded_keys = set(
@@ -222,7 +230,8 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         "events": [],
         "suppressed_setup_events": 0,
     }
-    if not shutil.which("ausearch"):
+    ausearch = _audit_tool("ausearch")
+    if not ausearch:
         snapshot["status"] = "unavailable"
         snapshot["issues"] = [
             "ausearch is unavailable, so audit events cannot be queried."
@@ -243,7 +252,7 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
     for key in _AUDIT_KEYS:
         query_result = _run_bounded(
             [
-                "ausearch",
+                ausearch,
                 "--start",
                 since.strftime("%m/%d/%Y"),
                 since.strftime("%H:%M:%S"),

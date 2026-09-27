@@ -27,7 +27,10 @@ basaltwater-web ca
 ```
 
 If the command says that the endpoint uses a publicly trusted certificate,
-client enrollment is not required. Otherwise it prints three values:
+client enrollment is not required. If it says trust could not be verified,
+check the gateway certificate, CA file, and live HTTPS endpoint on the VM;
+do not install a CA based on that result. For a verified VM-local CA, it
+prints three values:
 
 ```text
 /srv/basaltwater/web/basaltwater-ca.crt

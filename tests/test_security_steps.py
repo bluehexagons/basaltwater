@@ -375,6 +375,30 @@ class TestConfigureAuditd(unittest.TestCase):
     @patch("security.security_steps.is_vm", return_value=True)
     @patch("security.security_steps.os.makedirs")
     @patch("security.security_steps.run")
+    def test_required_audit_coverage_fails_setup_when_activation_fails(
+        self, mock_run, _makedirs, _vm, _hardware
+    ):
+        config = SetupConfig(username="u", host="h", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch(
+                "security.security_steps._AUDIT_RULES_FILE",
+                os.path.join(temporary, "audit.rules"),
+            ):
+                for failed_command, message in (
+                    ("systemctl start auditd", "service did not start"),
+                    ("augenrules --load", "rules did not load"),
+                ):
+                    with self.subTest(command=failed_command):
+                        mock_run.side_effect = lambda command, **_kwargs: SimpleNamespace(
+                            returncode=1 if command == failed_command else 0
+                        )
+                        with self.assertRaisesRegex(RuntimeError, message):
+                            configure_auditd(config)
+
+    @patch("security.security_steps.is_hardware", return_value=False)
+    @patch("security.security_steps.is_vm", return_value=True)
+    @patch("security.security_steps.os.makedirs")
+    @patch("security.security_steps.run")
     def test_rules_are_loaded_without_restarting_the_debian_service(
         self, mock_run, _makedirs, _vm, _hardware
     ):
@@ -617,6 +641,15 @@ class TestConfigureMaintenanceTimers(unittest.TestCase):
             randomized_delay="2min",
             timeout="10min",
             purpose="monitor",
+            environment={"BASALTWATER_AUDIT_REQUIRED": "1"},
+        )
+        mock_configure.reset_mock()
+        configure_security_monitor(
+            SetupConfig(username="u", host="h", system_type="server_proxmox")
+        )
+        self.assertEqual(
+            mock_configure.call_args.kwargs["environment"],
+            {"BASALTWATER_AUDIT_REQUIRED": "0"},
         )
 
     @patch("security.security_steps.configure_maintenance_timer")

@@ -49,7 +49,20 @@ cannot read raw audit logs.
 
 Setup activity is omitted and counted in the page notice. Missing audit
 coverage and failed collection are warnings, not a clean result. A setup rerun
-reloads managed audit rules even if their file has not changed.
+reloads managed audit rules even if their file has not changed. VM and hardware
+setup fails when the required auditd service cannot start or its rules cannot
+load. Audit collection resolves packaged commands from system directories even
+when a caller's PATH omits `/usr/sbin`.
+
+The security monitor also records missing audit tools as a source failure on
+profiles that require audit coverage; the dedicated Proxmox profile remains
+optional.
+
+The certificate panel verifies the live HTTPS endpoint against the configured
+CA before offering installation. Public trust requires a managed Let's Encrypt
+certificate policy and a successful TLS probe. A missing CA, failed TLS probe,
+or live endpoint that still chains to the VM-local CA is shown as unverified
+trust instead of publicly trusted.
 
 ## On-demand views
 

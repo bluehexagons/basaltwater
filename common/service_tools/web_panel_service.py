@@ -275,6 +275,8 @@ def discover_certificate_trust() -> dict[str, str | bool] | None:
     payload = _run_json([utility, "ca", "--json"])
     if payload.get("publicly_trusted") is True:
         return {"publicly_trusted": True}
+    if payload.get("status") == "unknown":
+        return {"status": "unknown"}
     url = _safe_url(payload.get("url"))
     fingerprint = payload.get("sha256")
     parsed = urllib.parse.urlsplit(url) if url else None
@@ -289,7 +291,7 @@ def discover_certificate_trust() -> dict[str, str | bool] | None:
         or len(fingerprint) != 64
         or any(character not in "0123456789abcdefABCDEF" for character in fingerprint)
     ):
-        return None
+        return {"status": "unknown"}
     return {
         "publicly_trusted": False,
         "url": url,
@@ -1300,6 +1302,12 @@ def _render_certificate_trust(
 <h2 id="trust-heading">Certificate trust</h2></div></div>
 <div class="trust-panel-public"><strong>No certificate installation required</strong>
 <p>The shared web-hosting certificate is issued by a publicly trusted authority.</p></div></section>'''
+    if trust.get("status") == "unknown":
+        return '''<section aria-labelledby="trust-heading">
+<div class="section-heading"><div><p class="section-kicker">Secure connection</p>
+<h2 id="trust-heading">Certificate trust</h2></div></div>
+<div class="trust-panel-public"><strong>Certificate trust could not be verified</strong>
+<p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code> before installing a certificate on this device.</p></div></section>'''
 
     download_url = str(trust["url"])
     trust_url = html.escape(download_url, quote=True)
