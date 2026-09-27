@@ -42,6 +42,11 @@ class TestResolveBootstrapUser(unittest.TestCase):
 
 class TestInstallSystemPackages(unittest.TestCase):
 
+    def setUp(self):
+        apt = patch("lib.orchestrator_bootstrap.shutil.which", return_value="/usr/bin/apt-get")
+        apt.start()
+        self.addCleanup(apt.stop)
+
     @patch("lib.orchestrator_bootstrap.ensure_debian_package_sources")
     @patch("lib.orchestrator_bootstrap._run_apt_command")
     @patch("lib.orchestrator_bootstrap.os.geteuid", return_value=0)

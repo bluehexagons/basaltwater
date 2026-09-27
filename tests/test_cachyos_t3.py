@@ -71,6 +71,12 @@ class T3InstallTests(unittest.TestCase):
 
     def system_command(self, argv, **kwargs):
         self.events.append(("system", argv))
+        if argv[:3] == ["systemctl", "--user", "show"]:
+            present = argv[3] == t3.T3_SERVICE and self.unit.exists()
+            output = ("LoadState=loaded\nFragmentPath=" + str(self.unit) + "\n" if present else
+                      "LoadState=not-found\nFragmentPath=\n")
+            output += "DropInPaths=\nActiveState=" + ("active" if present and self.active else "inactive") + "\n"
+            return subprocess.CompletedProcess(argv, 0, output, "")
         if argv[:2] == ["pacman", "-Q"]:
             return subprocess.CompletedProcess(argv, 0 if self.desktop_version else 1,
                                                f"t3code-bin {self.desktop_version}\n" if self.desktop_version else "", "")
@@ -98,6 +104,8 @@ class T3InstallTests(unittest.TestCase):
             if "--now" in argv:
                 self.active = False
         output = ("active\n" if self.active else "inactive\n") if "is-active" in argv else ""
+        if "is-enabled" in argv:
+            output = "enabled\n" if self.enabled else "disabled\n"
         return subprocess.CompletedProcess(argv, code, output, "")
 
     def test_initial_install_validates_before_activation_and_keeps_cli_path(self):
@@ -334,7 +342,8 @@ class T3InstallTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "paru or yay"):
             t3.preflight(self.desktop_config())
         self.assertFalse(self.prefix.exists())
-        self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] for _, cmd in self.events))
+        self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] or cmd[:3] == ["systemctl", "--user", "show"]
+                            for _, cmd in self.events))
 
     def test_failed_desktop_install_leaves_web_service_and_data_untouched(self):
         target, content = self.legacy()
@@ -378,6 +387,29 @@ class T3InstallTests(unittest.TestCase):
         self.assertFalse(self.enabled)
         self.assertTrue((self.prefix / "desktop-mode").is_file())
 
+    def test_desktop_recovers_interrupted_web_activation_without_restarting_it(self):
+        target, content = self.legacy()
+        self.ui.side_effect = RuntimeError("UI fixture failure")
+        actual_recover = t3._recover_activation
+
+        def interrupt_recovery(prefix, unit):
+            if (prefix / ".activation").exists():
+                raise RuntimeError("interrupted recovery")
+            return actual_recover(prefix, unit)
+
+        with patch.object(t3, "_recover_activation", side_effect=interrupt_recovery), \
+                self.assertRaisesRegex(RuntimeError, "recovery is incomplete"):
+            t3.install(self.config)
+        self.events.clear()
+        t3.install_desktop(self.desktop_config())
+        self.assertEqual(self.binary.resolve(), target)
+        self.assertEqual(self.unit.read_text(), content)
+        self.assertFalse(self.active)
+        self.assertFalse(self.enabled)
+        self.assertFalse(any("start" in cmd for _, cmd in self.events))
+        self.assertFalse((self.prefix / ".activation").exists())
+        self.assertTrue((self.prefix / "desktop-mode").is_file())
+
     def test_desktop_preserves_unmanaged_unit_and_marker(self):
         for path in (self.unit, self.prefix / "desktop-mode"):
             with self.subTest(path=path):
@@ -388,6 +420,58 @@ class T3InstallTests(unittest.TestCase):
                 self.assertEqual(path.read_text(), "personal content")
                 path.unlink()
         self.system_run.assert_not_called()
+
+    def test_effective_upstream_service_outside_home_is_never_adopted(self):
+        self.system_run.return_value = subprocess.CompletedProcess([], 0,
+            "LoadState=loaded\nFragmentPath=/usr/lib/systemd/user/t3code.service\nDropInPaths=\nActiveState=inactive\n", "")
+        self.system_run.side_effect = None
+        for config in (self.config, self.desktop_config()):
+            with self.assertRaisesRegex(RuntimeError, "original installer"):
+                t3.preflight(config)
+        self.assertFalse(self.prefix.exists())
+        self.assertTrue(all(call.args[0][:3] == ["systemctl", "--user", "show"]
+                            for call in self.system_run.call_args_list))
+
+    def test_unmanaged_overrides_fail_before_runtime_or_package_install(self):
+        self.legacy()
+        actual = self.system_command
+        for replacement in (
+            "LoadState=masked\nFragmentPath=/dev/null\nDropInPaths=\nActiveState=inactive\n",
+            f"LoadState=loaded\nFragmentPath={self.unit}\nDropInPaths=/etc/systemd/user/service.d/override.conf\nActiveState=active\n",
+        ):
+            def command(argv, **kwargs):
+                if argv[:4] == ["systemctl", "--user", "show", t3.T3_SERVICE]:
+                    return subprocess.CompletedProcess(argv, 0, replacement, "")
+                return actual(argv, **kwargs)
+            self.system_run.side_effect = command
+            for install, config in ((t3.install, self.config), (t3.install_desktop, self.desktop_config())):
+                with self.assertRaisesRegex(RuntimeError, "overridden"):
+                    install(config)
+            self.assertTrue(self.active)
+        self.user_run.assert_not_called()
+
+    def test_unloaded_local_dropin_is_preserved_and_rejected(self):
+        dropin = self.unit.with_name(t3.T3_SERVICE + ".d") / "override.conf"
+        dropin.parent.mkdir(parents=True)
+        dropin.write_text("[Service]\nEnvironment=T3CODE_STATE_DIR=/personal\n")
+        with self.assertRaisesRegex(RuntimeError, "drop-ins"):
+            t3.install(self.config)
+        self.assertTrue(dropin.is_file())
+        self.system_run.assert_not_called()
+
+    def test_desktop_does_not_record_success_if_service_did_not_stop(self):
+        self.legacy()
+        def command(argv, **kwargs):
+            if "disable" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            return self.system_command(argv, **kwargs)
+        self.system_run.side_effect = command
+        with self.assertRaisesRegex(RuntimeError, "service stopped"):
+            t3.install_desktop(self.desktop_config())
+        self.assertFalse((self.prefix / "desktop-mode").exists())
+
+    def test_exec_arguments_escape_systemd_environment_expansion(self):
+        self.assertEqual(t3._unit_exec_quote("/home/a$USER/%/t3"), '"/home/a$$USER/%%/t3"')
 
 
 class T3UITests(unittest.TestCase):

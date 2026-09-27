@@ -68,13 +68,40 @@ def _check_managed_paths(home: Path) -> tuple[Path, Path]:
     upstream = unit.with_name("t3code.service")
     if upstream.exists() or upstream.is_symlink():
         raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
+    dropins = unit.with_name(T3_SERVICE + ".d")
+    if dropins.is_symlink() or (dropins.exists() and (
+        not dropins.is_dir() or any(dropins.glob("*.conf"))
+    )):
+        raise RuntimeError("Unmanaged T3 service drop-ins are present; resolve them before switching or updating T3")
     return prefix, unit
+
+
+def _check_service_ownership(unit: Path) -> None:
+    """Inspect effective units, including global/runtime user-unit directories."""
+    for name in ("t3code.service", T3_SERVICE):
+        result = run([
+            "systemctl", "--user", "show", name,
+            "--property=LoadState", "--property=FragmentPath", "--property=DropInPaths",
+            "--property=ActiveState",
+        ], capture_output=True, check=False, timeout=15)
+        values = dict(line.split("=", 1) for line in (result.stdout or "").splitlines() if "=" in line)
+        if result.returncode or set(values) != {"LoadState", "FragmentPath", "DropInPaths", "ActiveState"}:
+            raise RuntimeError("Cannot inspect T3 user service ownership; check the local systemd user session")
+        if (values["LoadState"] == "not-found" and values["ActiveState"] == "inactive"
+                and not values["FragmentPath"] and not values["DropInPaths"]):
+            continue
+        if name == "t3code.service":
+            raise RuntimeError("An existing T3 user service is present; manage it with its original installer")
+        if (values["LoadState"] != "loaded" or values["FragmentPath"] != str(unit)
+                or values["DropInPaths"] or not unit.is_file()):
+            raise RuntimeError("Unmanaged or overridden Basaltwater T3 service; resolve it before switching or updating T3")
 
 
 def preflight(config: SetupConfig) -> None:
     """Check T3 prerequisites before the setup runner installs any packages."""
     home = _home(config)
-    _check_managed_paths(home)
+    _prefix, unit = _check_managed_paths(home)
+    _check_service_ownership(unit)
     if config.t3code_desktop and _desktop_version() is None:
         _aur_helper(home)
 
@@ -83,6 +110,7 @@ def install_desktop(config: SetupConfig) -> None:
     """Retain AUR ownership and retire only the Basaltwater web service."""
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
+    _check_service_ownership(unit)
     version = _desktop_version()
     if version is None:
         helper = _aur_helper(home)
@@ -100,12 +128,17 @@ def install_desktop(config: SetupConfig) -> None:
         raise RuntimeError("T3 desktop executable is not owned by t3code-bin; inspect the package installation")
     _directory(prefix)
     with _setup_lock(prefix):
-        _recover_activation(prefix, unit)
+        _check_managed_paths(home)
+        _check_service_ownership(unit)
+        _recover_activation(prefix, unit, start_previous=False)
         if unit.exists():
             run(["systemctl", "--user", "disable", "--now", T3_SERVICE])
             active = run(["systemctl", "--user", "is-active", T3_SERVICE], capture_output=True, check=False)
-            if active.stdout.strip() not in {"inactive", "failed"}:
+            if active.returncode != 3 or active.stdout.strip() not in {"inactive", "failed"}:
                 raise RuntimeError("Could not verify that the managed T3 web service stopped; inspect systemctl --user")
+            enabled = run(["systemctl", "--user", "is-enabled", T3_SERVICE], capture_output=True, check=False)
+            if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
+                raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
         _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
     print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; updates remain with your AUR helper")
     print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
@@ -119,6 +152,11 @@ def install_desktop(config: SetupConfig) -> None:
 
 def _unit_quote(value: str) -> str:
     return json.dumps(value.replace("%", "%%"), ensure_ascii=False)
+
+
+def _unit_exec_quote(value: str) -> str:
+    # systemd expands $ even inside quoted ExecStart arguments.
+    return _unit_quote(value.replace("$", "$$"))
 
 
 def _unit_path(value: str) -> str:
@@ -232,6 +270,7 @@ def _prune_releases(releases: Path, keep: set[Path]) -> None:
 def install(config: SetupConfig) -> None:
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
+    _check_service_ownership(unit)
     version = _user_run(["node", "--version"], home, capture_output=True, timeout=30).stdout.strip()
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", version)
     if not match:
@@ -244,6 +283,8 @@ def install(config: SetupConfig) -> None:
     _directory(unit.parent)
     _directory(prefix)
     with _setup_lock(prefix):
+        _check_managed_paths(home)
+        _check_service_ownership(unit)
         _recover_activation(prefix, unit)
         _install_locked(config, home, prefix, unit)
         (prefix / "desktop-mode").unlink(missing_ok=True)
@@ -265,7 +306,7 @@ def _same_entry(left: Path, right: Path) -> bool:
     return left.is_file() and right.is_file() and filecmp.cmp(left, right, shallow=False)
 
 
-def _recover_activation(prefix: Path, unit: Path) -> None:
+def _recover_activation(prefix: Path, unit: Path, *, start_previous: bool = True) -> None:
     transaction = prefix / ".activation"
     if not transaction.exists() and not transaction.is_symlink():
         return
@@ -317,7 +358,7 @@ def _recover_activation(prefix: Path, unit: Path) -> None:
     else:
         unit.unlink(missing_ok=True)
     run(["systemctl", "--user", "daemon-reload"])
-    if state["was_active"]:
+    if state["was_active"] and start_previous:
         run(["systemctl", "--user", "start", T3_SERVICE])
     shutil.rmtree(transaction)
     print("  Restored the previous T3 runtime and unit. Application data was not rolled back.")
@@ -402,8 +443,8 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
             f"WorkingDirectory={_unit_path(workspace)}\n"
             f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
             "UnsetEnvironment=T3CODE_STATE_DIR T3CODE_BASE_DIR T3CODE_HOME\n"
-            f"ExecStart={_unit_quote(str(candidate / 'bin/t3'))} serve --host {host} "
-            f"--port {config.web_interface_port} --base-dir {_unit_quote(str(data))} --no-browser\n"
+            f"ExecStart={_unit_exec_quote(str(candidate / 'bin/t3'))} serve --host {host} "
+            f"--port {config.web_interface_port} --base-dir {_unit_exec_quote(str(data))} --no-browser\n"
             "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
         )
         _activate(prefix, unit, candidate, content, f"http://{host}:{config.web_interface_port}/")

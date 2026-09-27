@@ -59,13 +59,21 @@ class CachyOSSetupTests(unittest.TestCase):
         )
         self.assertEqual(config.web_interface_host, "192.168.1.50")
         parser, _, _ = basaltwater.create_basaltwater_parser()
-        for host in ("8.8.8.8", "0.0.0.0", "2001:db8::10"):
+        for host in ("8.8.8.8", "0.0.0.0", "2001:db8::10", "192.0.2.1", "169.254.1.2",
+                     "198.51.100.1", "240.0.0.1", "127.0.0.2", "192.168.1.50/24"):
             with self.subTest(host=host):
                 with self.assertRaisesRegex(ValueError, "private IPv4"):
                     cachyos_config_from_args(parser.parse_args([
                         "setup", "agent_cachyos", "localhost", "human",
                         "--web-interface", "t3code", "--web-interface-host", host,
                     ]))
+
+    def test_t3_localhost_is_normalized_and_server_port_requires_web_mode(self):
+        config = self.config("--web-interface", "t3code", "--web-interface-host", "localhost")
+        self.assertEqual(config.web_interface_host, "127.0.0.1")
+        for options in ([], ["--t3code-desktop"]):
+            with self.assertRaisesRegex(ValueError, "port requires"):
+                self.config(*options, "--web-interface-port", "4000")
 
     def test_rejects_remote_target(self):
         parser, _, _ = basaltwater.create_basaltwater_parser()
@@ -191,6 +199,31 @@ class CachyOSSetupTests(unittest.TestCase):
             "virt-manager", "wireshark-qt",
         ):
             self.assertIn(package, packages)
+
+    def test_media_and_graphics_bundles_include_all_promised_commands(self):
+        config = self.config("--av-tools", "--gl-tools")
+        with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                patch.object(steps.shutil, "which", return_value=None):
+            packages = steps.cachyos_packages(config)
+        self.assertIn("perl-image-exiftool", packages)
+        self.assertIn("apitrace", packages)
+        for missing in ("exiftool", "apitrace"):
+            with patch.object(steps, "_home", return_value=Path("/home/human")), \
+                    patch.object(steps.shutil, "which", side_effect=lambda name, **kw: None if name == missing else "/usr/bin/" + name), \
+                    patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 0, "version\n", "")), \
+                    self.assertRaisesRegex(RuntimeError, missing):
+                steps.report_cachyos_readiness(config)
+
+    def test_desktop_skill_is_retained_when_mode_flags_are_omitted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            marker = home / ".local/share/basaltwater/cachyos-t3/desktop-mode"
+            marker.parent.mkdir(parents=True)
+            marker.write_text(steps._MARKER + "\n")
+            with patch.object(steps, "_home", return_value=home), \
+                    patch.object(steps, "install_managed_agent_skills") as install:
+                steps.install_cachyos_skills(self.config())
+            self.assertIn(steps.CACHYOS_T3_SKILL, install.call_args.args[2])
 
     def test_native_graphics_flags_round_trip_and_reject_other_profiles(self):
         config = self.config(

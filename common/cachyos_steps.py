@@ -175,9 +175,9 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     if config.install_godot:
         commands += [("godot", "godot")]
     if config.install_av_tools:
-        commands += [("ffmpeg", "ffmpeg"), ("magick", "imagemagick")]
+        commands += [("ffmpeg", "ffmpeg"), ("magick", "imagemagick"), ("exiftool", "perl-image-exiftool")]
     if config.install_gl_tools:
-        commands += [("glxinfo", "mesa-utils"), ("vulkaninfo", "vulkan-tools")]
+        commands += [("glxinfo", "mesa-utils"), ("vulkaninfo", "vulkan-tools"), ("apitrace", "apitrace")]
     if config.install_sunshine:
         packages.append("sunshine")
     if config.install_moonlight:
@@ -365,8 +365,8 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
                                    "and resolve empty overrides before rerunning --git-lfs")
         print("  Git LFS: filters present; custom filters and remote transfers require a project test")
     for enabled, commands in (
-        (config.install_av_tools, ("ffmpeg", "ffprobe", "magick")),
-        (config.install_gl_tools, ("glxinfo", "vulkaninfo")),
+        (config.install_av_tools, ("ffmpeg", "ffprobe", "magick", "exiftool")),
+        (config.install_gl_tools, ("glxinfo", "vulkaninfo", "apitrace")),
     ):
         if enabled:
             for command in commands:

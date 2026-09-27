@@ -114,11 +114,14 @@ version-manager runtimes are retained when their commands are on PATH.
 Readiness runs version checks for all selected language commands: Node, npm,
 and pnpm for `--node`, and Python and uv for `--python`. A missing or broken
 companion tool makes setup incomplete even if the main runtime works.
+On CachyOS, `--av-tools` includes FFmpeg, ImageMagick, and ExifTool;
+`--gl-tools` includes Mesa/Vulkan diagnostics and apitrace.
 
 ## T3 Code desktop
 
-Use this for an existing desktop installation or to install the upstream-listed
-Arch package on this CachyOS workstation:
+Use this for an existing desktop installation or to install the
+[upstream-listed Arch package](https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md)
+on this CachyOS workstation:
 
 ```bash
 basaltw setup agent_cachyos localhost --t3code-desktop
@@ -168,8 +171,9 @@ Older Basaltwater web units used `~/.t3`: their next web setup starts a separate
 environment in the new directory and reports this change. The old data remains
 untouched in `~/.t3`; back it up and plan any history migration separately.
 This separation also prevents database contention if the desktop is later opened
-while the web service is running. A port conflict still requires quitting the
-desktop or choosing another web port.
+while the web service is running; see the
+[upstream duplicate-backend report](https://github.com/pingdotgg/t3code/issues/6097).
+A port conflict still requires quitting the desktop or choosing another web port.
 
 ## T3 Code web service: host locally or on a trusted LAN
 
@@ -178,6 +182,10 @@ user with provider credentials from that account. By default it listens only on
 `127.0.0.1:3773`; selecting a specific private IPv4 address enables clients on
 that LAN. Public, wildcard, and IPv6 bind addresses are rejected by this
 profile.
+Private LAN binds must be in RFC 1918 space (`10/8`, `172.16/12`, or
+`192.168/16`); reserved/documentation and link-local addresses are rejected.
+`localhost` is normalized to `127.0.0.1`. A custom web port requires the web
+interface flag; desktop listeners are configured in the desktop app.
 
 ### Install the local service
 
@@ -282,7 +290,10 @@ systemd-analyze verify "$HOME/.config/systemd/user/basaltwater-cachyos-t3.servic
 
 The service follows the user session; lingering is not enabled. An existing
 upstream `t3code.service` is refused without being stopped or adopted. Manage
-that unit with its original installer before selecting this service. To stop this managed
+that unit with its original installer before selecting either T3 mode. Preflight
+checks effective systemd units in all user-unit search locations, as well as
+local files, and refuses masks or unmanaged drop-ins on the Basaltwater unit.
+Resolve those overrides before switching or updating. To stop this managed
 service persistently:
 
 ```bash

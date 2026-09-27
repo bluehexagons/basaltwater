@@ -22,6 +22,9 @@ from lib.validators import validate_host, validate_username
 
 PROFILE = "agent_cachyos"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LAN_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+))
 _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
@@ -96,7 +99,7 @@ def validate_cachyos_config(config: SetupConfig) -> None:
     if not validate_username(config.username) or config.username == "root":
         raise ValueError("Run agent_cachyos as your existing non-root desktop user")
     if config.web_interfaces:
-        host = config.web_interface_host or "127.0.0.1"
+        host = config.web_interface_host if config.web_interface_host is not None else "127.0.0.1"
         if not isinstance(host, str) or not host:
             raise ValueError(
                 "CachyOS T3 Code bind must be 127.0.0.1 or a private IPv4 address"
@@ -112,15 +115,18 @@ def validate_cachyos_config(config: SetupConfig) -> None:
             raise ValueError(
                 "CachyOS T3 Code bind must be 127.0.0.1 or a private IPv4 address"
             ) from exc
-        if bind_address.version != 4 or bind_address.is_unspecified or (
-            not bind_address.is_loopback and not bind_address.is_private
-        ):
+        if host != "127.0.0.1" and not any(bind_address in network for network in _LAN_NETWORKS):
             raise ValueError(
                 "CachyOS T3 Code bind must be 127.0.0.1 or a private IPv4 address"
             )
+        config.web_interface_host = str(bind_address)
     elif config.web_interface_host is not None:
         raise ValueError("--web-interface-host requires --web-interface t3code")
-    if config.web_interfaces and config.web_interface_port < 1024:
+    elif config.web_interface_port != 3773:
+        raise ValueError("--web-interface-port requires --web-interface t3code")
+    if config.web_interfaces and (
+        type(config.web_interface_port) is not int or not 1024 <= config.web_interface_port <= 65535
+    ):
         raise ValueError("CachyOS T3 Code requires an unprivileged port (1024-65535)")
     validate_agent_repositories(config.agent_repos)
     if config.agent_workspace:
