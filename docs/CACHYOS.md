@@ -10,7 +10,7 @@ Support targets the **latest fully updated CachyOS rolling release**, not older
 ISO defaults or generic Arch installations. Update through CachyOS's normal
 full-system update workflow before setup. The current KDE baseline uses Plasma
 Wayland and Plasma Login Manager; Shelly supplies the default package-manager
-GUI and CLI. Basaltwater uses that CLI for the optional T3 AUR installation and
+GUI and CLI. Basaltwater uses that CLI for explicitly selected AUR software and
 leaves the desktop, login manager, DNS, drivers, and distro update services under
 CachyOS management. See the upstream [January](https://blog.cachyos.org/blog/2601-january-release/),
 [June](https://cachyos.org/blog/2606-june-release/), and
@@ -126,6 +126,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Creative applications | `--obs`, `--blender`, `--kdenlive`, `--krita`, `--gimp`, `--inkscape`, `--scribus`, `--shotcut` |
 | Audio, CAD, or electronics | `--audacity`, `--lmms`, `--ardour`, `--freecad`, `--kicad` |
 | Remote desktop or diagnostics | `--remmina`, `--sysadmin-tools` |
+| Materials, removable media, publishing | `--material-maker`, `--etcher`, `--butler`, `--steamcmd` ([packages and post-install checks](CACHYOS_SOFTWARE.md)) |
 | Repository workspace | `--repo HTTPS_URL` (repeatable), `--agent-workspace /absolute/path` (default `~/repos`) |
 | T3 Code desktop | `--t3code-desktop`: install or retain the upstream-listed `t3code-bin` AUR package; mutually exclusive with `--web-interface` |
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
@@ -148,9 +149,13 @@ basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight
 basaltw setup agent_cachyos localhost --node --python --dry-run
 ```
 
-Except for `--t3code-desktop`, application options install native packages from
-the configured CachyOS repositories. They do not install AUR or Flatpak packages, graphics drivers, or
-application configuration. `--gaming` selects CachyOS's gaming meta-packages;
+Application options install native packages from the configured CachyOS
+repositories, except the explicit AUR options `--t3code-desktop`,
+`--material-maker`, `--butler`, and `--steamcmd`. No Flatpak packages, graphics
+drivers, or application configuration are installed. See the
+[creative and publishing software guide](CACHYOS_SOFTWARE.md) for all issue #106
+software, source policies, and post-install checks.
+`--gaming` selects CachyOS's gaming meta-packages;
 `--sunshine` and `--moonlight` install native host and client packages but do
 not open firewall ports or create credentials. Configure and pair Sunshine in
 its own web UI on a trusted network.
@@ -580,8 +585,29 @@ example, to establish the desktop selection:
 basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
 ```
 
-To change the selection later, rerun `setup` with all desired options. That
-successful run replaces the record; it does not merge with earlier selections.
+To add software without repeating your saved flags, use:
+
+```bash
+basaltw refresh --material-maker --etcher --butler --steamcmd --dry-run
+basaltw refresh --material-maker --etcher --butler --steamcmd
+```
+
+Refresh accepts the supported CachyOS setup flags (`refresh --help` lists them).
+Unspecified options are preserved. Boolean and single-value options override
+saved values; repeatable repositories and access sources are added without
+duplicates. Agent selections/exclusions override their saved opposite for that
+provider. `--no-access-source` clears saved explicit sources; combine it with
+`--no-lan-access` to close managed remote access. Selecting a T3 mode replaces
+the saved mode; switching to desktop clears the old web bind/port.
+Conflicting or invalid new options stop before upgrade. A successful setup
+saves the combined selection; after a failed attempt, repeat the added flags
+when retrying. Omitting an option does not remove it; software `--no-*` flags
+stop managing a selection, without uninstalling it.
+
+An older installed CLI cannot recognize newly added flags. Run `basaltw upgrade`
+once first to acquire this refresh interface and any new options.
+Alternatively, rerun `setup` with all desired options. That successful run
+replaces the record rather than merging with earlier selections.
 Refresh follows the same update behavior as setup: managed agent CLIs update,
 web mode updates/restarts its service, and an installed T3 desktop package is
 retained for your normal AUR update workflow. Finish active work first.

@@ -53,6 +53,8 @@ def run_refresh_command(args: argparse.Namespace) -> int:
 
         return refresh_cachyos(args)
     try:
+        if getattr(args, "setup_overrides", None):
+            raise ValueError("Additional refresh setup flags currently require CachyOS; use explicit setup on Debian")
         if read_os_release().get("ID") != "debian":
             raise ValueError("refresh supports local Debian and CachyOS setups")
         if os.geteuid() != 0:

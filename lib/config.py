@@ -413,6 +413,10 @@ class SetupConfig:
     install_gimp: bool = False
     install_remmina: bool = False
     install_sysadmin_tools: bool = False
+    install_material_maker: bool = False
+    install_etcher: bool = False
+    install_butler: bool = False
+    install_steamcmd: bool = False
     godot_bundles: Optional[StrList] = None
     install_gh: bool = False
     install_codex: bool = False
@@ -602,13 +606,18 @@ class SetupConfig:
             self.install_gimp,
             self.install_remmina,
             self.install_sysadmin_tools,
+            self.install_material_maker,
+            self.install_etcher,
+            self.install_butler,
+            self.install_steamcmd,
         )
         if self.system_type != "agent_cachyos" and any(cachyos_native_software):
             raise ValueError(
                 "--gaming, --sunshine, --moonlight, --obs, --blender, "
                 "--kdenlive, --krita, --inkscape, --scribus, --audacity, "
                 "--ardour, --lmms, --freecad, --kicad, --shotcut, --gimp, "
-                "--remmina, and --sysadmin-tools require the agent_cachyos profile"
+                "--remmina, --sysadmin-tools, --material-maker, --etcher, "
+                "--butler, and --steamcmd require the agent_cachyos profile"
             )
 
         if self.enable_syncthing and self.syncthing_admin is None:
@@ -1144,6 +1153,14 @@ class SetupConfig:
             args.append("--remmina")
         if self.install_sysadmin_tools:
             args.append("--sysadmin-tools")
+        if self.install_material_maker:
+            args.append("--material-maker")
+        if self.install_etcher:
+            args.append("--etcher")
+        if self.install_butler:
+            args.append("--butler")
+        if self.install_steamcmd:
+            args.append("--steamcmd")
         for bundle in self.godot_bundles or []:
             args.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -1654,6 +1671,14 @@ class SetupConfig:
             cmd_parts.append("--remmina")
         if self.install_sysadmin_tools:
             cmd_parts.append("--sysadmin-tools")
+        if self.install_material_maker:
+            cmd_parts.append("--material-maker")
+        if self.install_etcher:
+            cmd_parts.append("--etcher")
+        if self.install_butler:
+            cmd_parts.append("--butler")
+        if self.install_steamcmd:
+            cmd_parts.append("--steamcmd")
         for bundle in self.godot_bundles or []:
             cmd_parts.append(f"--godot-bundle {shlex.quote(bundle)}")
 
@@ -2035,6 +2060,10 @@ class SetupConfig:
         data['install_gimp'] = bool(self.install_gimp)
         data['install_remmina'] = bool(self.install_remmina)
         data['install_sysadmin_tools'] = bool(self.install_sysadmin_tools)
+        data['install_material_maker'] = bool(self.install_material_maker)
+        data['install_etcher'] = bool(self.install_etcher)
+        data['install_butler'] = bool(self.install_butler)
+        data['install_steamcmd'] = bool(self.install_steamcmd)
         data['harden_agent'] = bool(self.harden_agent)
         data['harden_user'] = bool(self.harden_user)
         data['enable_syncthing'] = bool(self.enable_syncthing)
@@ -2562,6 +2591,10 @@ class SetupConfig:
             install_shotcut=getattr(args, 'install_shotcut', False) is True,
             install_gimp=getattr(args, 'install_gimp', False) is True,
             install_remmina=getattr(args, 'install_remmina', False) is True,
+            install_material_maker=getattr(args, 'install_material_maker', False) is True,
+            install_etcher=getattr(args, 'install_etcher', False) is True,
+            install_butler=getattr(args, 'install_butler', False) is True,
+            install_steamcmd=getattr(args, 'install_steamcmd', False) is True,
             install_sysadmin_tools=(
                 getattr(args, 'install_sysadmin_tools', False) is True
             ),

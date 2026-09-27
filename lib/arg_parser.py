@@ -801,6 +801,10 @@ def add_setup_arguments(
         ("--gimp", "install_gimp", "Install the native CachyOS GIMP package"),
         ("--remmina", "install_remmina", "Install native CachyOS Remmina and common desktop plugins"),
         ("--sysadmin-tools", "install_sysadmin_tools", "Install native CachyOS sysadmin desktop and network tools"),
+        ("--material-maker", "install_material_maker", "Install Material Maker via reviewed AUR package (agent_cachyos only)"),
+        ("--etcher", "install_etcher", "Install Balena Etcher from the CachyOS repository (agent_cachyos only)"),
+        ("--butler", "install_butler", "Install itch.io butler via reviewed AUR package (agent_cachyos only)"),
+        ("--steamcmd", "install_steamcmd", "Install SteamCMD via reviewed AUR package; no login or publishing (agent_cachyos only)"),
     ):
         parser.add_argument(
             option,

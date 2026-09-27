@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from lib.arg_parser import add_setup_arguments
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.cachyos import cachyos_config_from_args, is_cachyos, preflight_cachyos, validate_cachyos_config
+from lib.cachyos import _OPTIONS, cachyos_config_from_args, is_cachyos, preflight_cachyos, validate_cachyos_config
 from lib.channel_manager import ChannelError, get_channel_info, managed_repository_path, upgrade_channel
 from lib.config import AGENT_TOOLS, SetupConfig
 from lib.remote_utils import is_dry_run
@@ -24,6 +24,82 @@ from lib.validation import validate_filesystem_path
 class _SavedSetupParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise ValueError(f"Invalid saved CachyOS setup: {message}")
+
+
+class _RefreshOption(argparse.Action):
+    """Retain explicit setup tokens, without introducing setup defaults."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        overrides = dict(getattr(namespace, "setup_overrides", None) or {})
+        tokens = list(overrides.get(self.dest, []))
+        tokens.append(option_string)
+        if isinstance(values, list):
+            tokens.extend(values)
+        elif values is not None:
+            tokens.append(values)
+        overrides[self.dest] = tokens
+        namespace.setup_overrides = overrides
+
+
+def add_refresh_arguments(parser: argparse.ArgumentParser, setup_parser: argparse.ArgumentParser) -> None:
+    """Expose only supported local options, using setup's argument shapes."""
+    for action in setup_parser._actions:
+        if not action.option_strings or action.dest not in _OPTIONS - {"dry_run", "host", "username", "system_type"}:
+            continue
+        parser.add_argument(*action.option_strings, dest=action.dest, action=_RefreshOption,
+                            nargs=action.nargs, default=argparse.SUPPRESS,
+                            metavar=action.metavar, help="CachyOS refresh: " + (action.help or ""))
+
+
+def _replay_arguments(config: SetupConfig) -> list[str]:
+    selected = config.selected_agent_tools()
+    replay = replace(config, agent_tools=selected,
+                     agent_tools_removed=[tool for tool in AGENT_TOOLS if tool not in selected])
+    arguments = shlex.split(" ".join(replay.to_setup_command()))[1:]
+    existing_options = set(zip(arguments, arguments[1:]))
+    for tool in AGENT_TOOLS:
+        option = "--agent-tool" if tool in selected else "--no-agent-tool"
+        if (option, tool) not in existing_options:
+            arguments.extend([option, tool])
+    return arguments
+
+
+def _merge_overrides(arguments: list[str], overrides: dict[str, list[str]]) -> tuple[list[str], SetupConfig]:
+    parser = _SavedSetupParser(add_help=False, allow_abbrev=False)
+    add_setup_arguments(parser, allow_steps=True, include_system_type=True)
+    saved = parser.parse_args(arguments[1:])
+    tokens = [token for values in overrides.values() for token in values]
+    additions = parser.parse_args(["agent_cachyos", "localhost", _account().pw_name, *tokens])
+    if set(additions.agent_tools or []) & set(additions.no_agent_tools or []):
+        raise ValueError("Do not both select and exclude the same agent in refresh")
+    if "t3code_desktop" in overrides and {"web_interface_host", "web_interface_port"} & overrides.keys():
+        raise ValueError("Web bind/port options cannot be combined with --t3code-desktop")
+    for name in overrides:
+        if name not in _OPTIONS - {"dry_run", "host", "username", "system_type"}:
+            raise ValueError(f"Unsupported refresh override: {name}")
+        value = getattr(additions, name)
+        if isinstance(value, list):
+            value = list(dict.fromkeys([*(getattr(saved, name) or []), *value]))
+        setattr(saved, name, value)
+    # Saved provider exclusions are explicit. A new selection must override
+    # its old opposite, without losing exclusions for the other providers.
+    for name, opposite in (("agent_tools", "no_agent_tools"), ("no_agent_tools", "agent_tools")):
+        if name in overrides:
+            setattr(saved, opposite, [tool for tool in getattr(saved, opposite) or []
+                                      if tool not in (getattr(additions, name) or [])])
+    if "t3code_desktop" in overrides:
+        saved.web_interfaces = None
+        saved.web_interface_host = None
+        saved.web_interface_port = parser.get_default("web_interface_port")
+    elif "web_interfaces" in overrides:
+        saved.t3code_desktop = False
+    if getattr(additions, "clear_access_sources", False):
+        saved.access_sources = additions.access_sources
+    elif "access_sources" in overrides:
+        saved.clear_access_sources = False
+    config = cachyos_config_from_args(saved)
+    arguments = _replay_arguments(config)
+    return arguments, _parse_saved_arguments(arguments)
 
 
 def _account() -> pwd.struct_passwd:
@@ -73,17 +149,7 @@ def save_successful_setup(config: SetupConfig) -> None:
     validate_cachyos_config(config)
     # Make provider exclusions explicit so a profile-default change cannot
     # silently opt the user into another currently supported coding agent.
-    selected = config.selected_agent_tools()
-    replay = replace(config, agent_tools=selected,
-                     agent_tools_removed=[tool for tool in AGENT_TOOLS if tool not in selected])
-    arguments = shlex.split(" ".join(replay.to_setup_command()))[1:]
-    # The generic reconstructor omits default selections and nondefault
-    # exclusions. Persist both so later profile defaults cannot change them.
-    existing_options = set(zip(arguments, arguments[1:]))
-    for tool in AGENT_TOOLS:
-        option = "--agent-tool" if tool in selected else "--no-agent-tool"
-        if (option, tool) not in existing_options:
-            arguments.extend([option, tool])
+    arguments = _replay_arguments(config)
     _parse_saved_arguments(arguments)
     path = _record_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -132,6 +198,9 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         if not is_cachyos():
             raise ValueError("refresh currently supports only a saved local agent_cachyos setup")
         arguments, config = load_saved_setup()
+        overrides = getattr(args, "setup_overrides", None)
+        if overrides:
+            arguments, config = _merge_overrides(arguments, overrides)
         repository = managed_repository_path()
         if args.dry_run:
             info = get_channel_info(repository)

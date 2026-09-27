@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from contextlib import ExitStack
 from dataclasses import replace
 import io
@@ -51,8 +50,107 @@ class CachyOSRefreshTests(unittest.TestCase):
             "setup", "agent_cachyos", "localhost", "human", *options,
         ]))
 
-    def run_refresh(self, *, dry_run=False):
-        return refresh.run_refresh_command(argparse.Namespace(dry_run=dry_run))
+    def run_refresh(self, *options, dry_run=False):
+        args = self.parser.parse_args(["refresh", *options, *(["--dry-run"] if dry_run else [])])
+        return refresh.run_refresh_command(args)
+
+    def test_refresh_merges_new_flags_and_preserves_unspecified_selection(self):
+        refresh.save_successful_setup(self.config("--t3code-desktop", "--node", "--python",
+            "--agent-workspace", str(self.home / "projects with spaces")))
+        before = self.record.read_bytes()
+        self.assertEqual(self.run_refresh("--material-maker", "--etcher", "--butler", "--steamcmd", "--no-node"), 0)
+        arguments = self.execute.call_args.args[1][2:]
+        merged = refresh._parse_saved_arguments(arguments)
+        for field in ("install_material_maker", "install_etcher", "install_butler", "install_steamcmd",
+                      "install_python", "t3code_desktop"):
+            self.assertTrue(getattr(merged, field), field)
+        self.assertFalse(merged.install_node)
+        self.assertEqual(merged.agent_workspace, str(self.home / "projects with spaces"))
+        self.assertEqual(self.preflight.call_args.args[0], merged)
+        self.assertEqual(self.record.read_bytes(), before)
+        refresh.save_successful_setup(merged)
+        self.assertTrue(refresh.load_saved_setup()[1].install_butler)
+
+    def test_provider_overrides_replace_old_opposite_and_preserve_other_exclusions(self):
+        refresh.save_successful_setup(self.config("--no-agent-tool", "gh,codex"))
+        self.assertEqual(self.run_refresh("--agent-tool", "codex,claude"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertEqual(merged.selected_agent_tools(), ["codex", "claude"])
+        refresh.save_successful_setup(merged)
+        self.assertEqual(self.run_refresh("--no-agent-tool", "claude", "--agent-tool", "gh"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertEqual(merged.selected_agent_tools(), ["gh", "codex"])
+
+    def test_repeatable_options_add_and_scalar_options_replace(self):
+        refresh.save_successful_setup(self.config("--web-interface", "t3code", "--web-interface-port", "4000",
+            "--repo", "https://github.com/example/first.git", "--access-source", "10.0.0.1"))
+        self.assertEqual(self.run_refresh("--web-interface-port=4001", "--repo", "https://github.com/example/second.git",
+                                         "--access-source", "10.0.0.2"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertEqual(merged.web_interface_port, 4001)
+        self.assertEqual(merged.agent_repos, ["https://github.com/example/first.git", "https://github.com/example/second.git"])
+        self.assertEqual(merged.access_sources, ["10.0.0.1", "10.0.0.2"])
+
+    def test_clear_access_sources_and_no_lan_access_close_saved_selection(self):
+        refresh.save_successful_setup(self.config("--lan-access", "--access-source", "10.0.0.1"))
+        self.assertEqual(self.run_refresh("--no-access-source", "--no-lan-access"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertFalse(merged.access_sources)
+        self.assertFalse(merged.lan_access)
+        self.assertTrue(merged.clear_lan_access)
+
+    def test_explicit_t3_mode_switch_clears_saved_opposite_mode(self):
+        refresh.save_successful_setup(self.config("--web-interface", "t3code",
+            "--web-interface-host", "10.0.0.1", "--web-interface-port", "4001"))
+        self.assertEqual(self.run_refresh("--t3code-desktop"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertTrue(merged.t3code_desktop)
+        self.assertFalse(merged.web_interfaces)
+        self.assertIsNone(merged.web_interface_host)
+        refresh.save_successful_setup(merged)
+        self.assertEqual(self.run_refresh("--web-interface", "t3code"), 0)
+        merged = refresh._parse_saved_arguments(self.execute.call_args.args[1][2:])
+        self.assertFalse(merged.t3code_desktop)
+        self.assertEqual(merged.web_interfaces, ["t3code"])
+        self.assertEqual(merged.web_interface_host, "127.0.0.1")
+
+    def test_override_preview_and_failure_never_save_selection(self):
+        refresh.save_successful_setup(self.config("--node"))
+        before = self.record.read_bytes()
+        with patch.object(refresh, "get_channel_info", return_value={"channel": "dev"}), \
+                patch("remote_setup.run_cachyos_setup", return_value=0) as setup:
+            self.assertEqual(self.run_refresh("--butler", dry_run=True), 0)
+        self.assertTrue(setup.call_args.args[0].install_butler)
+        self.assertTrue(setup.call_args.args[0].install_node)
+        self.assertTrue(setup.call_args.args[0].dry_run)
+        self.upgrade.assert_not_called()
+        self.preflight.assert_not_called()
+        self.upgrade.side_effect = ChannelError("fixture failure")
+        self.assertEqual(self.run_refresh("--butler"), 1)
+        self.execute.assert_not_called()
+        self.assertEqual(self.record.read_bytes(), before)
+
+    def test_invalid_overrides_fail_before_upgrade(self):
+        refresh.save_successful_setup(self.config())
+        for options in (("--web-interface-port", "not-a-port"), ("--machine", "vm"),
+                        ("--t3code-desktop", "--web-interface-port", "4001"),
+                        ("--agent-tool", "codex", "--no-agent-tool", "codex"),
+                        ("--access-source", "0.0.0.0/0")):
+            with self.subTest(options=options):
+                self.assertEqual(self.run_refresh(*options), 1)
+        for options in (("remote.example",), ("--steps", "anything"), ("--unknown",), ("--butl",)):
+            with self.subTest(options=options), patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit):
+                self.parser.parse_args(["refresh", *options])
+        self.upgrade.assert_not_called()
+        self.execute.assert_not_called()
+
+    def test_debian_rejects_overrides_instead_of_ignoring_them(self):
+        from lib import refresh as dispatch
+
+        with patch.object(dispatch, "is_cachyos", return_value=False), \
+                patch.object(dispatch, "upgrade_channel") as upgrade:
+            self.assertEqual(dispatch.run_refresh_command(self.parser.parse_args(["refresh", "--butler"])), 1)
+        upgrade.assert_not_called()
 
     def test_desktop_selection_roundtrips_project_paths_tools_and_exclusions(self):
         original = self.config(
@@ -118,7 +216,8 @@ class CachyOSRefreshTests(unittest.TestCase):
         flags = ("--node", "--python", "--go", "--git-lfs", "--av-tools", "--gl-tools",
                  "--godot", "--sunshine", "--moonlight", "--gaming", "--obs", "--blender",
                  "--kdenlive", "--krita", "--inkscape", "--scribus", "--audacity", "--ardour",
-                 "--lmms", "--freecad", "--kicad", "--shotcut", "--gimp", "--remmina", "--sysadmin-tools")
+                 "--lmms", "--freecad", "--kicad", "--shotcut", "--gimp", "--remmina", "--sysadmin-tools",
+                 "--material-maker", "--etcher", "--butler", "--steamcmd")
         original = self.config(*flags, "--machine", "hardware")
         refresh.save_successful_setup(original)
         _, restored = refresh.load_saved_setup()

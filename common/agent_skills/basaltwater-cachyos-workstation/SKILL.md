@@ -22,7 +22,8 @@ desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
 `--kdenlive`, `--krita`, `--inkscape`, `--scribus`, `--audacity`, `--ardour`,
 `--lmms`, `--freecad`, `--kicad`, `--shotcut`, `--gimp`, `--remmina`, or
-`--sysadmin-tools`. Preview with `--dry-run`. Keep the desired flags on reruns;
+`--sysadmin-tools`. Material/publishing options are `--material-maker`, `--etcher`,
+`--butler`, and `--steamcmd`. Preview with `--dry-run`. Keep the desired flags on reruns;
 this profile does not populate the generic saved-host `patch`/`deploy` workflow.
 For the same selection, use `basaltw refresh --dry-run`, then `basaltw refresh`
 to upgrade Basaltwater on its selected channel and repeat the last successful
@@ -97,17 +98,26 @@ libraries, launchers, and tools bundle; `--sunshine` installs the game-stream
 host; and `--moonlight` installs the Qt client. The setup does not install
 graphics drivers, enable Sunshine, or change firewall policy. After reviewing
 network exposure, the desktop owner can start the user service with
-`systemctl --user --now enable sunshine` and complete pairing in Sunshine's web
+`systemctl --user enable --now app-dev.lizardbyte.app.Sunshine.service` and complete pairing in Sunshine's web
 UI.
 
-The application flags install only selected native repository packages. The
+Most application flags install only selected native repository packages. The
 Remmina flag includes common native RDP, VNC, SPICE, and secret plugins. The
 sysadmin bundle includes Nmap, tcpdump, DNS tools, virt-manager, and Wireshark
 Qt; it does not enable libvirt, grant packet-capture permissions, or change
-network policy. These options do not install AUR or Flatpak packages, graphics
+network policy. These native options do not install AUR or Flatpak packages, graphics
 drivers, or application-specific configuration.
 
-T3 desktop is the explicit AUR exception: `--t3code-desktop` installs or retains
+Material Maker, butler, and SteamCMD are explicit AUR exceptions, sharing T3's
+reviewed helper/cache path. Existing packages stay with their package manager;
+unmanaged executables require an explicit migration or omitting the flag. Etcher
+uses repository `etcher-bin`. Do not launch SteamCMD as a readiness/version probe:
+even `+quit` can download updates and initialize personal Steam state. Setup does
+not log in, publish, flash media, grant disk/input access, or disable Electron's
+sandbox. See the [software guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_SOFTWARE.md)
+for package mappings, Godot export-template requirements, and manual checks.
+
+T3 desktop is another explicit AUR exception: `--t3code-desktop` installs or retains
 `t3code-bin` through the default Shelly CLI, using paru or yay only if Shelly is
 absent. Preserve the selected helper's review prompts and source policy.
 It is mutually exclusive with

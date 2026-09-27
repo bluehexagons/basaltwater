@@ -62,7 +62,7 @@ basaltw desktop <command> ...
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
 basaltw upgrade
-basaltw refresh [--dry-run]
+basaltw refresh [--dry-run] [CACHYOS_SETUP_FLAGS...]
 basaltw user rename <host> <new_username> [options]
 basaltw agent doctor [HOST USER] [options]
 basaltw agent update [HOST USER] [options]
@@ -132,6 +132,13 @@ On CachyOS, run `basaltw refresh` **without sudo** as the original desktop user.
 Its private successful selection is saved by new `agent_cachyos` setup runs.
 After upgrading an older checkout, run your full setup command once to create
 that record. See the [CachyOS guide](CACHYOS.md#upgrade-and-repeat-your-last-setup).
+Additional supported CachyOS setup flags merge into the saved selection, for
+example `basaltw refresh --material-maker --etcher --butler --steamcmd --dry-run`.
+Unspecified settings are preserved; scalar/boolean values override saved values,
+repeatable repositories/sources add to them, and agent selections override their
+saved exclusions. Only a successful setup saves the combined selection. Upgrade
+an older CLI first with `basaltw upgrade` to obtain these new flags. Debian does
+not accept refresh overrides; use its explicit setup workflow instead.
 
 On both systems, `--dry-run` shows the saved setup plan without fetching or
 changing source or applying setup. `dev` follows `main`, `stable` follows the
@@ -144,8 +151,8 @@ Refresh requires a managed Git installation, as does `basaltw upgrade`.
 Controller-deployed source snapshots continue to receive source upgrades from
 their controller; update its Basaltwater checkout and redeploy the saved host.
 The command accepts no remote host argument and never guesses which saved
-remote host to deploy. To change the saved selection, run an explicit setup
-with your desired options.
+remote host to deploy. An explicit setup with your full desired selection
+replaces the saved options; CachyOS refresh flags instead merge into them.
 
 ### Bootstrap and self-setup flags
 
@@ -436,15 +443,23 @@ list. Neither preview is a completed live setup.
 | `--gimp` | CachyOS `agent_cachyos` only: install native GIMP |
 | `--remmina` | CachyOS `agent_cachyos` only: install native Remmina and common desktop plugins |
 | `--sysadmin-tools` | CachyOS `agent_cachyos` only: install native desktop and network sysadmin tools |
+| `--material-maker` | CachyOS only: reviewed AUR Material Maker binary package; retain an installed source package |
+| `--etcher` | CachyOS only: repository Balena Etcher; no flashing or blanket disk permissions |
+| `--butler` | CachyOS only: reviewed AUR itch.io publishing CLI; no login/upload |
+| `--steamcmd` | CachyOS only: reviewed AUR SteamCMD plus 32-bit runtime libraries; no startup/login/upload |
 
 The CachyOS-only gaming and desktop application flags use packages in the
-workstation's configured repositories. They do not install AUR or Flatpak
-packages, graphics drivers, open firewall ports, or configure application
+workstation's configured repositories, except the explicit AUR selections noted
+above. They do not install Flatpak packages, graphics drivers, open firewall ports, or configure application
 credentials. The sysadmin bundle also leaves libvirt service access and packet
 capture permissions to the user. See the [CachyOS workstation guide](CACHYOS.md)
 for the post-install Sunshine service and pairing steps.
 
-Selecting a managed runtime also installs its update timer. Godot is fetched
+On CachyOS, `--godot` uses the native package or retains an existing executable;
+there are no managed Godot update timers or `--godot-bundle` options. Use the
+independent publishing flags and see [CachyOS software](CACHYOS_SOFTWARE.md).
+
+On Debian, selecting a managed runtime also installs its update timer. Godot is fetched
 from the official release channel rather than Debian's package version and is
 placed on the system `PATH` as `godot` and `godot4`, including for agent users.
 The `web` bundle adds verified, version-matched web export templates for the

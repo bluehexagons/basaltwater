@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from common import cachyos_t3 as t3
+from common import cachyos_aur as aur
 from lib.config import SetupConfig
 
 
@@ -35,6 +36,7 @@ class T3InstallTests(unittest.TestCase):
         stack.enter_context(patch.object(t3, "_home", return_value=self.home))
         self.user_run = stack.enter_context(patch.object(t3, "_user_run", side_effect=self.user_command))
         self.system_run = stack.enter_context(patch.object(t3, "run", side_effect=self.system_command))
+        stack.enter_context(patch.object(aur, "run", self.system_run))
         self.ui = stack.enter_context(patch.object(t3, "_wait_for_ui"))
         self.which = stack.enter_context(patch.object(t3.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name))
 
@@ -90,7 +92,7 @@ class T3InstallTests(unittest.TestCase):
                 self.assertTrue(cache.is_dir(), "Cache must exist before Shelly elevates")
                 self.assertEqual(cache.stat().st_uid, os.getuid())
             if self.failure == "aur":
-                raise t3.CommandExecutionError(" ".join(argv), 1, "AUR fixture failure")
+                raise aur.CommandExecutionError(" ".join(argv), 1, "AUR fixture failure")
             if self.failure != "aur-cancel":
                 self.desktop_version = "0.0.42-1"
         if argv[0] == "systemd-analyze" and self.failure == "verify":
@@ -366,15 +368,15 @@ class T3InstallTests(unittest.TestCase):
     def test_shelly_checks_and_prepares_xdg_and_default_cache(self):
         configured = self.home / "custom-cache"
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(configured)}):
-            t3._shelly_cache(self.home)
+            aur.prepare_cache(self.home)
             self.assertFalse(configured.exists())
-            t3._shelly_cache(self.home, create=True)
+            aur.prepare_cache(self.home, create=True)
         self.assertTrue((configured / "Shelly").is_dir())
         self.assertTrue((self.home / ".cache/Shelly").is_dir())
 
     def test_shelly_ignores_relative_xdg_cache_like_upstream(self):
         with patch.dict(os.environ, {"XDG_CACHE_HOME": "relative-cache"}):
-            t3._shelly_cache(self.home, create=True)
+            aur.prepare_cache(self.home, create=True)
         self.assertTrue((self.home / ".cache/Shelly").is_dir())
         self.assertFalse((self.home / "relative-cache").exists())
 
@@ -417,7 +419,7 @@ class T3InstallTests(unittest.TestCase):
         root.mkdir()
         with patch.object(t3.os, "access", side_effect=lambda path, mode: path != root), \
                 self.assertRaisesRegex(RuntimeError, str(root)):
-            t3._shelly_cache(self.home, create=True)
+            aur.prepare_cache(self.home, create=True)
         self.assertFalse((root / "Shelly").exists())
 
     def test_missing_shelly_uses_available_legacy_helper(self):
@@ -459,7 +461,7 @@ class T3InstallTests(unittest.TestCase):
         self.assertIn("exit code 1", str(raised.exception))
         self.assertIn("shelly config get AurUrl", str(raised.exception))
         self.assertIn("shelly.log", str(raised.exception))
-        self.assertIsInstance(raised.exception.__cause__, t3.CommandExecutionError)
+        self.assertIsInstance(raised.exception.__cause__, aur.CommandExecutionError)
         self.assertTrue(self.active)
         self.assertTrue(self.enabled)
         self.assertEqual(self.unit.read_text(), content)

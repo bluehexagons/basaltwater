@@ -564,10 +564,14 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
 
     refresh_parser = subparsers.add_parser(
         "refresh", help="Upgrade basaltwater and repeat the last successful local Debian or CachyOS setup",
+        allow_abbrev=False,
     )
     refresh_parser.add_argument(
         "--dry-run", action="store_true", help="Show the saved setup without upgrading or applying it",
     )
+    from lib.cachyos_refresh import add_refresh_arguments
+
+    add_refresh_arguments(refresh_parser, setup_parser)
 
     credentials_parser = subparsers.add_parser(
         "credentials",

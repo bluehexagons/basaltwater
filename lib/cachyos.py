@@ -34,6 +34,7 @@ _OPTIONS = {
     "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
     "install_lmms", "install_freecad", "install_kicad", "install_shotcut",
     "install_gimp", "install_remmina", "install_sysadmin_tools",
+    "install_material_maker", "install_etcher", "install_butler", "install_steamcmd",
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
@@ -193,6 +194,9 @@ def preflight_cachyos(config: SetupConfig) -> None:
 
     if firewall_requested(config):
         preflight_firewall(config)
+    from common.cachyos_software import preflight_software
+
+    preflight_software(config)
 
 
 def run_cachyos_command(args: argparse.Namespace) -> int:

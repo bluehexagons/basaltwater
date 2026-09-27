@@ -45,6 +45,7 @@ CACHYOS_DESKTOP_PACKAGES = (
     ("install_shotcut", "shotcut", "shotcut"),
     ("install_gimp", "gimp", "gimp"),
     ("install_remmina", "remmina", "remmina"),
+    ("install_etcher", "etcher", "etcher-bin"),
 )
 CACHYOS_SYSADMIN_PACKAGES = (
     ("nmap", "nmap"),
@@ -190,6 +191,10 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
             packages.append(package)
     if config.install_remmina:
         packages.extend(("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret"))
+    if config.install_blender:
+        packages.append("libdecor")  # Native Wayland window decorations.
+    if config.install_steamcmd:
+        packages.extend(("lib32-glibc", "lib32-gcc-libs"))
     if config.install_sysadmin_tools:
         packages.extend(package for _command, package in CACHYOS_SYSADMIN_PACKAGES)
     for command, package in commands:
@@ -341,6 +346,9 @@ def install_cachyos_t3_desktop(config: SetupConfig) -> None:
 
 
 def report_cachyos_readiness(config: SetupConfig) -> None:
+    from common.cachyos_software import report_software_readiness
+
+    report_software_readiness(config)
     home = _home(config)
     commands = ["git", "rg", *config.selected_agent_tools()]
     for enabled, selected_commands in (

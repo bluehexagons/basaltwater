@@ -183,6 +183,21 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         selected_packages.update({package: False for package in BROWSER_PACKAGES})
         if config is not None:
             from common.cachyos_steps import CACHYOS_DESKTOP_PACKAGES, CACHYOS_SYSADMIN_PACKAGES
+            from common.cachyos_software import selected_software
+
+            for command, packages in selected_software(config):
+                version = None
+                for package in packages:
+                    validate_package_name(package)
+                    status, output = _probe(["/usr/bin/pacman", "-Q", "--", package], uid)
+                    parts = output.split()
+                    if status == "ok" and len(parts) == 2 and parts[0] == package and _VERSION.fullmatch(parts[1]):
+                        version = parts[1]
+                        break
+                record("software." + command, "available" if version else "failed",
+                       "Selected package installed; application and publishing behavior not tested."
+                       if version else "Selected package missing or query inconclusive; inspect its original package manager.",
+                       selected=True, version=version)
 
             for field, _command, package in CACHYOS_DESKTOP_PACKAGES:
                 if getattr(config, field):
@@ -193,6 +208,8 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 (config.install_sunshine, ("sunshine",)),
                 (config.install_moonlight, ("moonlight-qt",)),
                 (config.install_gaming, ("cachyos-gaming-meta", "cachyos-gaming-applications")),
+                (config.install_blender, ("libdecor",)),
+                (config.install_steamcmd, ("lib32-glibc", "lib32-gcc-libs")),
             ):
                 if enabled:
                     selected_packages.update({package: True for package in packages})
@@ -205,6 +222,8 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 commands.append("git-lfs")
             if config.install_go:
                 commands.append("go")
+            if config.install_godot:
+                commands.append("godot")
             for command in commands:
                 executable = shutil.which(command)
                 status, output = _probe([executable, "version" if command == "go" else "--version"], uid) if executable else ("missing", "")
