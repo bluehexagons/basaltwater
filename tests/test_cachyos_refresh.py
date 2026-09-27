@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from dataclasses import replace
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,7 @@ from common import cachyos_steps
 from lib import cachyos_refresh as refresh
 from lib.cachyos import cachyos_config_from_args
 from lib.channel_manager import ChannelError
+from lib.plugin_registry import get_system_type_definition
 from lib.system_types import get_steps_for_system_type
 
 
@@ -82,6 +84,21 @@ class CachyOSRefreshTests(unittest.TestCase):
     def test_no_selected_agents_stays_empty(self):
         refresh.save_successful_setup(self.config("--no-agent-tool", "gh,codex"))
         self.assertEqual(refresh.load_saved_setup()[1].selected_agent_tools(), [])
+
+    def test_saved_agents_survive_changed_profile_defaults(self):
+        for options, expected in (
+            ((), ["gh", "codex"]),
+            (("--no-agent-tool", "gh,codex"), []),
+            (("--agent-tool", "claude", "--no-agent-tool", "codex"), ["gh", "claude"]),
+        ):
+            with self.subTest(options=options):
+                refresh.save_successful_setup(self.config(*options))
+                definition = get_system_type_definition("agent_cachyos")
+                for defaults in (("gh", "codex", "claude", "opencode"), ()):
+                    with patch("lib.config.get_system_type_definition", return_value=replace(
+                        definition, default_agent_tools=defaults,
+                    )):
+                        self.assertEqual(refresh.load_saved_setup()[1].selected_agent_tools(), expected)
 
     def test_all_optional_tool_flags_roundtrip(self):
         flags = ("--node", "--python", "--go", "--git-lfs", "--av-tools", "--gl-tools",

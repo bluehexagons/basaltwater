@@ -534,6 +534,10 @@ T3 mode, optional tools, repositories, workspace, and web bind/port. It does
 not copy authentication files or save provider credentials. The record is
 written only after all setup steps, including cleanup, succeed. A failed or
 interrupted run and a dry run leave the previous successful selection intact.
+Saved commands explicitly include or exclude every currently supported agent,
+so changes to profile defaults do not select an unwanted agent during refresh.
+Records written by older versions may omit optional-agent exclusions; repeat
+your full setup command with the updated code to save those exclusions.
 
 **First use after upgrading from an older checkout:** run `basaltw upgrade`,
 then run your usual full setup command once. Older CachyOS runs did not save

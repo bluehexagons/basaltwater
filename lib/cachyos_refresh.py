@@ -76,9 +76,13 @@ def save_successful_setup(config: SetupConfig) -> None:
     replay = replace(config, agent_tools=selected,
                      agent_tools_removed=[tool for tool in AGENT_TOOLS if tool not in selected])
     arguments = shlex.split(" ".join(replay.to_setup_command()))[1:]
-    # The generic reconstructor omits default providers; freeze those too.
-    for tool in selected:
-        arguments.extend(["--agent-tool", tool])
+    # The generic reconstructor omits default selections and nondefault
+    # exclusions. Persist both so later profile defaults cannot change them.
+    existing_options = set(zip(arguments, arguments[1:]))
+    for tool in AGENT_TOOLS:
+        option = "--agent-tool" if tool in selected else "--no-agent-tool"
+        if (option, tool) not in existing_options:
+            arguments.extend([option, tool])
     _parse_saved_arguments(arguments)
     path = _record_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
