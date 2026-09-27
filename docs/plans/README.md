@@ -52,6 +52,7 @@ release are separate states, tracked in the [release checklist](../BASALTWATER_R
 | Godot workflow bundles | Web and publishing delivered; .NET, Android, GDExtension, and asset authoring queued | P3 | No dedicated issue | [Godot guide](../GODOT.md) and [roadmap](ROADMAP.md): retain repeatable bundle selection and add later bundles only with compatibility, verification, and update contracts. |
 | Generic VM management, agent interfaces, and lightweight Git hosting | Active; provider/schema-tagged Proxmox host records, the initial VM data-disk/mount slice, explicit Gogs LFS paths, and the server-only T3 Code lifecycle implemented; mutation/recovery slices dependency-gated | Unscheduled | No dedicated issue | [VM management, agent interfaces, and lightweight Git hosting](VM_MANAGEMENT_AND_LIGHTWEIGHT_GIT_HOSTING.md): next validate the storage slice on live Proxmox, then sequence provider-neutral VM observation and Gogs safety/health. T3 Code desktop AppImage support is no longer in scope. |
 | Lightweight service monitoring and application candidates | Monitoring proposed; HomeBox native support delivered | Unscheduled | [#99](https://github.com/bluehexagons/basaltwater/issues/99) for HomeBox | [Lightweight service and monitoring candidates](LIGHTWEIGHT_SERVICE_CANDIDATES.md): support Gatus first for service checks, Beszel second for VM telemetry, and consider Memos as the first team application; exclude PHP and gate mandatory PostgreSQL dependencies. [HomeBox support](HOMEBOX_SUPPORT.md) records delivered setup, recovery, recurring updates, and full VM qualification still to run. |
+| Background agent capabilities | Proposed project brief; implementation not started | Unscheduled | Scheduling scope relates to [#28](https://github.com/bluehexagons/basaltwater/issues/28); audit/recovery dependencies retain their existing owners | [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md): start with a daily operations brief and a bounded task runner independent of T3, then evidence-backed incident investigation, recovery rehearsals, and drift review; extend existing scheduling owners for later coordination. |
 | Recovery workflows | Queued behind transaction and deployment state | P2 | Recovery portion of [#97](https://github.com/bluehexagons/basaltwater/issues/97) | [Roadmap](ROADMAP.md), with Proxmox backup and restore details in the [Proxmox audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md). |
 | Safe network apply and rollback | Address handoff delivered; firewall apply remains | P2 | No dedicated open issue | [Roadmap](ROADMAP.md): extend the verified host/guest address handoff model to reviewed Proxmox firewall artifacts with timed rollback and connectivity confirmation. |
 | Extensibility and release quality | Queued | P3 | No dedicated open issue | [Roadmap](ROADMAP.md): plugin isolation, retained packaging smoke tests, lint/type/coverage gates, and a documented provider contract. |
@@ -64,14 +65,14 @@ issue. Its plan covers vault-format evaluation, an extension-first client,
 encrypted synchronization, browser filling, Basaltwater deployment and recovery,
 and independent security review before a public release.
 
-These open issues have a documented disposition but no standalone delivery
-plan. Write or assign a project brief before implementation so they do not
-silently compete with P0/P1 work.
+These open issues have a documented disposition but no scheduled implementation.
+Write or assign a project brief and a roadmap slot before implementation so
+they do not silently compete with P0/P1 work.
 
 | Issue | Disposition | Planning boundary |
 | --- | --- | --- |
 | [#85 — Improve RAM over-provisioning behavior](https://github.com/bluehexagons/basaltwater/issues/85) | Backlog | Define an explicit saved cluster/workload policy; do not infer cache pressure from VM labels. |
-| [#28 — Scheduling system](https://github.com/bluehexagons/basaltwater/issues/28) | Backlog | Extend the storage orchestrator with maintenance windows, coordination, and resource-aware ordering. |
+| [#28 — Scheduling system](https://github.com/bluehexagons/basaltwater/issues/28) | Backlog; proposed direction documented | [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) scopes independent task runs and later maintenance coordination; extend the storage orchestrator for its existing jobs without competing timers. |
 | [#83 — Apt cache support](https://github.com/bluehexagons/basaltwater/issues/83) | Backlog | Specify server ownership, validated client configuration, failure behavior, and rollback first. |
 | [#87 — More default config options](https://github.com/bluehexagons/basaltwater/issues/87) | Backlog | Add a versioned preferences contract only when a supported desktop profile can own it. |
 | [#25 — Multimedia packages](https://github.com/bluehexagons/basaltwater/issues/25) | Deferred | Reconsider after the transactional, audit, and recovery priorities are substantially complete. |
