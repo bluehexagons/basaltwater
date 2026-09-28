@@ -35,7 +35,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, None))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch("security.service_tools.security_monitor._load_state", return_value={})
     @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=[])
     def test_collects_and_advances_cursor_without_notification_targets(
@@ -58,7 +58,7 @@ class TestSecurityMonitor(unittest.TestCase):
 
         def check_fail2ban(start, end):
             observed_windows.append((start, end))
-            return [], [], None
+            return security_monitor.Fail2banScan()
 
         def save(next_state):
             state.clear()
@@ -104,7 +104,7 @@ class TestSecurityMonitor(unittest.TestCase):
         _certificate,
     ):
         mock_state.return_value = {"last_run": (datetime.now() + timedelta(days=1)).isoformat()}
-        mock_fail2ban.return_value = ([], [], None)
+        mock_fail2ban.return_value = security_monitor.Fail2banScan()
 
         self.assertEqual(security_monitor.main(), 0)
 
@@ -128,7 +128,7 @@ class TestSecurityMonitor(unittest.TestCase):
         ), patch.object(
             security_monitor, "managed_setup_audit_window", return_value=window
         ), patch.object(
-            security_monitor, "_check_fail2ban", return_value=([], [], None)
+            security_monitor, "_check_fail2ban", return_value=security_monitor.Fail2banScan()
         ) as fail2ban, patch.object(
             security_monitor, "_check_auditd", return_value=([], False, [])
         ) as auditd, patch.object(
@@ -150,7 +150,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, "SSH journal: denied"))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch("security.service_tools.security_monitor._load_state", return_value={})
     @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=["cfg"])
     def test_collection_failure_notifies_once_and_retains_cursor(
@@ -179,7 +179,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, "SSH journal: denied"))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch(
         "security.service_tools.security_monitor._load_state",
         return_value={"last_run": "2026-08-22T06:00:00", "collection_errors": ["SSH journal: denied"]},
@@ -205,7 +205,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, None))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch(
         "security.service_tools.security_monitor._load_state",
         return_value={"last_run": "2026-08-22T06:00:00", "collection_errors": ["SSH journal: denied"]},
@@ -232,7 +232,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, None))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=(['privileged'], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch("security.service_tools.security_monitor._load_state", return_value={})
     @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=["cfg"])
     def test_routine_privileged_audit_event_does_not_notify(
@@ -254,7 +254,10 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
     @patch(
         "security.service_tools.security_monitor._check_fail2ban",
-        return_value=([], [{"type": "fail2ban", "action": "unban", "jail": "sshd", "source_ip": "192.0.2.4"}], None),
+        return_value=security_monitor.Fail2banScan(
+            unbans=[{"type": "fail2ban", "action": "unban", "jail": "sshd", "source_ip": "192.0.2.4"}],
+            unban_count=1,
+        ),
     )
     @patch("security.service_tools.security_monitor._load_state", return_value={})
     @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=["cfg"])
@@ -281,7 +284,7 @@ class TestSecurityMonitor(unittest.TestCase):
     @patch("security.service_tools.security_monitor.send_notification_safe")
     @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, None))
     @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
-    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=([], [], None))
+    @patch("security.service_tools.security_monitor._check_fail2ban", return_value=security_monitor.Fail2banScan())
     @patch("security.service_tools.security_monitor._load_state", return_value={})
     @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=["cfg"])
     def test_new_certificate_failure_is_reported_and_persisted(
@@ -403,6 +406,8 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
             status="warning",
             bans=[],
             unbans=[],
+            ban_count=0,
+            unban_count=0,
             audit_keys=["sudoers"],
             ssh_failures=0,
             certificate_event=None,
@@ -623,22 +628,106 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
                 )
 
             with patch("security.service_tools.security_monitor._FAIL2BAN_LOG", log_path):
-                bans, unbans, error = security_monitor._check_fail2ban(
+                scan = security_monitor._check_fail2ban(
                     datetime(2026, 8, 22, 12, 0, 0),
                     datetime(2026, 8, 22, 12, 15, 0),
                 )
-                first_bans, first_unbans, first_error = security_monitor._check_fail2ban(
+                first_scan = security_monitor._check_fail2ban(
                     datetime(2026, 8, 22, 12, 0, 0),
                     datetime(2026, 8, 22, 12, 1, 59),
                 )
 
-        self.assertIsNone(error)
-        self.assertEqual(bans[0]["jail"], "nginx-http-auth")
-        self.assertEqual(bans[0]["source_ip"], "192.0.2.4")
-        self.assertEqual(unbans[0]["action"], "unban")
-        self.assertIsNone(first_error)
-        self.assertEqual(len(first_bans), 1)
-        self.assertEqual(first_unbans, [])
+        self.assertIsNone(scan.error)
+        self.assertEqual(scan.ban_count, 1)
+        self.assertEqual(scan.unban_count, 1)
+        self.assertEqual(scan.bans[0]["jail"], "nginx-http-auth")
+        self.assertEqual(scan.bans[0]["source_ip"], "192.0.2.4")
+        self.assertEqual(scan.unbans[0]["action"], "unban")
+        self.assertIsNone(first_scan.error)
+        self.assertEqual(first_scan.ban_count, 1)
+        self.assertEqual(first_scan.unbans, [])
+
+    def test_fail2ban_volume_keeps_exact_counts_and_bounded_examples(self):
+        with tempfile.TemporaryDirectory() as log_dir:
+            log_path = os.path.join(log_dir, "fail2ban.log")
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                for index in range(1200):
+                    action = "Ban" if index < 1000 else "Unban"
+                    log_file.write(
+                        f"2026-08-22 12:01:02,123 fail2ban.actions [1]: "
+                        f"WARNING [sshd] {action} 192.0.2.4\n"
+                    )
+
+            with patch("security.service_tools.security_monitor._FAIL2BAN_LOG", log_path):
+                scan = security_monitor._check_fail2ban(
+                    datetime(2026, 8, 22, 12),
+                    datetime(2026, 8, 22, 12, 14, 59),
+                )
+
+        self.assertIsNone(scan.error)
+        self.assertEqual((scan.ban_count, scan.unban_count), (1000, 200))
+        self.assertEqual(len(scan.bans), 50)
+        self.assertEqual(len(scan.unbans), 50)
+        data = security_monitor._build_security_data(
+            since=datetime(2026, 8, 22, 12),
+            now=datetime(2026, 8, 22, 12, 14, 59),
+            status="warning",
+            bans=scan.bans,
+            unbans=scan.unbans,
+            ban_count=scan.ban_count,
+            unban_count=scan.unban_count,
+            audit_keys=[],
+            ssh_failures=0,
+            certificate_event=None,
+        )
+        self.assertEqual(data["counts"]["fail2ban_bans"], 1000)
+        self.assertEqual(data["counts"]["fail2ban_unbans"], 200)
+        self.assertEqual(data["counts"]["fail2ban_bans_omitted"], 950)
+        self.assertEqual(len(data["events"]), 100)
+
+    @patch(
+        "security.service_tools.security_monitor.inspect_xrdp_certificate",
+        return_value=XrdpCertificateHealth("not_configured", "", ""),
+    )
+    @patch("security.service_tools.security_monitor._save_state")
+    @patch("security.service_tools.security_monitor.send_notification_safe")
+    @patch("security.service_tools.security_monitor._check_ssh_failures", return_value=(0, None))
+    @patch("security.service_tools.security_monitor._check_auditd", return_value=([], False, []))
+    @patch(
+        "security.service_tools.security_monitor._check_fail2ban",
+        return_value=security_monitor.Fail2banScan(
+            bans=[{"type": "fail2ban", "action": "ban", "jail": "sshd", "source_ip": "192.0.2.4"}],
+            ban_count=100,
+        ),
+    )
+    @patch("security.service_tools.security_monitor._load_state", return_value={})
+    @patch("security.service_tools.security_monitor.load_notification_configs_from_state", return_value=["cfg"])
+    def test_fail2ban_notification_uses_exact_count_and_marks_omissions(
+        self, _configs, _state, _fail2ban, _audit, _ssh, mock_notify, _save,
+        _certificate,
+    ):
+        self.assertEqual(security_monitor.main(), 0)
+
+        notification = mock_notify.call_args.kwargs
+        self.assertIn("100 fail2ban bans", notification["subject"])
+        self.assertIn("Fail2ban bans: 100", notification["details"])
+        self.assertIn("99 more fail2ban event(s) omitted", notification["details"])
+        self.assertEqual(notification["data"]["counts"]["fail2ban_bans"], 100)
+        self.assertEqual(len(notification["data"]["events"]), 1)
+
+    def test_fail2ban_oversized_line_is_collection_error(self):
+        with tempfile.TemporaryDirectory() as log_dir:
+            log_path = os.path.join(log_dir, "fail2ban.log")
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                log_file.write("x" * (security_monitor._MAX_SOURCE_LINE_BYTES + 1))
+
+            with patch("security.service_tools.security_monitor._FAIL2BAN_LOG", log_path):
+                scan = security_monitor._check_fail2ban(
+                    datetime(2026, 8, 22, 12),
+                    datetime(2026, 8, 22, 12, 14, 59),
+                )
+
+        self.assertIn("size limit", scan.error)
 
     def test_state_roundtrip_uses_atomic_writer(self):
         with tempfile.TemporaryDirectory() as state_dir:

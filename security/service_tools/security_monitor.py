@@ -32,6 +32,7 @@ import os
 import re
 import shutil
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from logging import ERROR, WARNING
 
@@ -43,7 +44,7 @@ from lib.notifications import load_notification_configs_from_state, send_notific
 from lib.security_activity import managed_setup_audit_window
 from lib.streamed_process import run_streamed
 from lib.types import JSONDict
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_network_ip
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
 from common.service_tools.web_panel_audit_export import _audit_health
 
@@ -55,6 +56,7 @@ _SSH_FAILURE_THRESHOLD = 5
 _SSH_WARNING_THRESHOLD = 25
 _SSH_MAX_BREAKDOWN = 10
 _SSH_MAX_GROUPS = 1000
+_MAX_FAIL2BAN_EVENTS = 50
 _MAX_AUDIT_RECORD_BYTES = 256 * 1024
 _MAX_SOURCE_LINE_BYTES = 64 * 1024
 _SCAN_WINDOW = timedelta(minutes=15)
@@ -111,22 +113,35 @@ def _save_state(state: dict[str, object]) -> None:
 # fail2ban
 # ---------------------------------------------------------------------------
 
+@dataclass
+class Fail2banScan:
+    """Exact fail2ban totals with a bounded sample for notifications."""
+
+    bans: list[JSONDict] = field(default_factory=list)
+    unbans: list[JSONDict] = field(default_factory=list)
+    ban_count: int = 0
+    unban_count: int = 0
+    error: str | None = None
+
+
 def _check_fail2ban(
     since: datetime, until: datetime
-) -> tuple[list[JSONDict], list[JSONDict], str | None]:
-    """Return structured ban/unban events and any collection error."""
-    bans: list[JSONDict] = []
-    unbans: list[JSONDict] = []
+) -> Fail2banScan:
+    """Count all ban/unban events while retaining bounded examples."""
+    scan = Fail2banScan()
     if not os.path.exists(_FAIL2BAN_LOG):
         # fail2ban is optional on some supported machine types.  Once its
         # client is installed, however, a missing log means this source is no
         # longer observable (including when the service switched log targets).
         if shutil.which('fail2ban-client'):
-            return bans, unbans, f'fail2ban: log file unavailable: {_FAIL2BAN_LOG}'
-        return bans, unbans, None
+            scan.error = f'fail2ban: log file unavailable: {_FAIL2BAN_LOG}'
+        return scan
     try:
-        with open(_FAIL2BAN_LOG) as f:
-            for line in f:
+        with open(_FAIL2BAN_LOG, encoding='utf-8') as f:
+            while line := f.readline(_MAX_SOURCE_LINE_BYTES + 1):
+                if len(line.encode('utf-8')) > _MAX_SOURCE_LINE_BYTES:
+                    scan.error = 'fail2ban log: line exceeded the size limit'
+                    return scan
                 m = _BAN_RE.match(line)
                 if not m:
                     continue
@@ -137,6 +152,12 @@ def _check_fail2ban(
                 if ts < since or ts > until:
                     continue
                 jail, action, ip = m.group(2), m.group(3), m.group(4)
+                if len(jail) > 128 or not re.fullmatch(r'[A-Za-z0-9_.-]+', jail):
+                    jail = 'unknown'
+                try:
+                    ip = validate_network_ip(ip, 'fail2ban source')
+                except ValueError:
+                    ip = 'unknown'
                 entry: JSONDict = {
                     "type": "fail2ban",
                     "action": action.lower(),
@@ -146,12 +167,16 @@ def _check_fail2ban(
                     "source_ip": ip,
                 }
                 if action == 'Ban':
-                    bans.append(entry)
+                    scan.ban_count += 1
+                    if len(scan.bans) < _MAX_FAIL2BAN_EVENTS:
+                        scan.bans.append(entry)
                 else:
-                    unbans.append(entry)
-    except OSError as exc:
-        return bans, unbans, f'fail2ban log: {exc}'
-    return bans, unbans, None
+                    scan.unban_count += 1
+                    if len(scan.unbans) < _MAX_FAIL2BAN_EVENTS:
+                        scan.unbans.append(entry)
+    except (OSError, UnicodeError) as exc:
+        scan.error = f'fail2ban log: {exc}'
+    return scan
 
 
 # ---------------------------------------------------------------------------
@@ -675,13 +700,6 @@ def _normalise_collection_errors(errors: list[str | None]) -> list[str]:
     return normalised
 
 
-def _normalise_fail2ban_event(event: object) -> JSONDict:
-    """Keep notification construction tolerant of legacy test/state values."""
-    if isinstance(event, dict):
-        return dict(event)
-    return {"type": "fail2ban", "summary": str(event)}
-
-
 def _normalise_audit_event(event: object) -> JSONDict:
     """Keep notification construction tolerant of legacy key-only results."""
     if isinstance(event, dict):
@@ -763,6 +781,8 @@ def _build_security_data(
     status: str,
     bans: list[JSONDict],
     unbans: list[JSONDict],
+    ban_count: int,
+    unban_count: int,
     audit_keys: list[str],
     ssh_failures: int,
     certificate_event: tuple[str, str, str] | None,
@@ -842,8 +862,10 @@ def _build_security_data(
         "window": {"since": since.isoformat(), "until": now.isoformat()},
         "status": status,
         "counts": {
-            "fail2ban_bans": len(bans),
-            "fail2ban_unbans": len(unbans),
+            "fail2ban_bans": ban_count,
+            "fail2ban_unbans": unban_count,
+            "fail2ban_bans_omitted": ban_count - len(bans),
+            "fail2ban_unbans_omitted": unban_count - len(unbans),
             "auditd_critical": len(critical_audit_keys),
             "auditd_total": sum(
                 int(event.get('event_count', 1))
@@ -865,6 +887,8 @@ def _format_security_details(
     status: str,
     bans: list[JSONDict],
     unbans: list[JSONDict],
+    ban_count: int,
+    unban_count: int,
     audit_keys: list[str],
     ssh_failures: int,
     certificate_event: tuple[str, str, str] | None,
@@ -891,10 +915,10 @@ def _format_security_details(
         return "\n".join(lines)
 
     lines.extend(["", "Summary:"])
-    if bans:
-        lines.append(f"  - Fail2ban bans: {len(bans)}")
-    if unbans:
-        lines.append(f"  - Fail2ban unbans: {len(unbans)}")
+    if ban_count:
+        lines.append(f"  - Fail2ban bans: {ban_count}")
+    if unban_count:
+        lines.append(f"  - Fail2ban unbans: {unban_count}")
     if audit_keys:
         descriptions = [_AUDIT_KEY_LABELS.get(key, key) for key in audit_keys]
         lines.append(f"  - Protected changes: {', '.join(descriptions)}")
@@ -914,6 +938,9 @@ def _format_security_details(
     if bans or unbans:
         lines.extend(["", "Fail2ban events:"])
         lines.extend(_format_fail2ban_event(event) for event in (*bans, *unbans))
+        omitted = ban_count + unban_count - len(bans) - len(unbans)
+        if omitted:
+            lines.append(f"  - {omitted} more fail2ban event(s) omitted from details")
     if audit_keys:
         lines.extend([
             "",
@@ -1063,9 +1090,9 @@ def main() -> int:
         return 0
     next_cursor = now + timedelta(seconds=1)
 
-    bans, unbans, fail2ban_error = _check_fail2ban(since, now)
-    bans = [_normalise_fail2ban_event(event) for event in bans]
-    unbans = [_normalise_fail2ban_event(event) for event in unbans]
+    fail2ban_scan = _check_fail2ban(since, now)
+    bans, unbans = fail2ban_scan.bans, fail2ban_scan.unbans
+    ban_count, unban_count = fail2ban_scan.ban_count, fail2ban_scan.unban_count
     audit_exclusion = managed_setup_audit_window(since, now)
     if audit_exclusion:
         log_event(
@@ -1086,7 +1113,7 @@ def main() -> int:
     ssh_failures = int(ssh_summary.get('failure_count', 0))
     certificate_health = inspect_xrdp_certificate()
     collection_errors = _normalise_collection_errors(
-        [fail2ban_error, *audit_errors, ssh_error]
+        [fail2ban_scan.error, *audit_errors, ssh_error]
     )
     previous_collection_errors = _state_collection_errors(state)
     if collection_errors:
@@ -1096,6 +1123,8 @@ def main() -> int:
             status="error",
             bans=[],
             unbans=[],
+            ban_count=0,
+            unban_count=0,
             audit_keys=[],
             ssh_failures=0,
             certificate_event=None,
@@ -1126,6 +1155,8 @@ def main() -> int:
                     status='error',
                     bans=[],
                     unbans=[],
+                    ban_count=0,
+                    unban_count=0,
                     audit_keys=[],
                     ssh_failures=0,
                     certificate_event=None,
@@ -1158,7 +1189,7 @@ def main() -> int:
         log_event(
             logger,
             "Fail2ban ban expiry observed; external notification suppressed",
-            unban_count=len(unbans),
+            unban_count=unban_count,
         )
     has_noteworthy = (
         bans
@@ -1203,7 +1234,7 @@ def main() -> int:
     summary_parts: list[str] = []
     if bans:
         summary_parts.append(
-            f"{len(bans)} fail2ban ban{'s' if len(bans) != 1 else ''}"
+            f"{ban_count} fail2ban ban{'s' if ban_count != 1 else ''}"
         )
     if critical_audit_keys:
         summary_parts.extend(
@@ -1226,6 +1257,8 @@ def main() -> int:
         status=status,
         bans=bans,
         unbans=unbans,
+        ban_count=ban_count,
+        unban_count=unban_count,
         audit_keys=audit_keys,
         ssh_failures=ssh_failures,
         certificate_event=certificate_event,
@@ -1239,6 +1272,8 @@ def main() -> int:
         status=status,
         bans=bans,
         unbans=unbans,
+        ban_count=ban_count,
+        unban_count=unban_count,
         audit_keys=audit_keys,
         ssh_failures=ssh_failures,
         certificate_event=certificate_event,

@@ -24,9 +24,10 @@ Setup fails if the lockout profile cannot be activated, so a matching settings
 file alone is not reported as active protection.
 
 The security monitor reads `ausearch` and SSH journal results as a stream, with
-bounded audit and SSH record and summary sizes. It scans one complete 15-minute
-interval per run when catching up after an outage, then saves the next
-interval's cursor.
+bounded audit and SSH record and summary sizes. It counts all fail2ban bans and
+unbans in the interval, but includes at most 50 examples of each in a
+notification. It scans one complete 15-minute interval per run when catching
+up after an outage, then saves the next interval's cursor.
 A source timeout, oversized record, or failed query leaves the cursor at the
 start of that interval and reports a collection failure. A high-cardinality SSH
 attack still contributes to the failure count even after the source breakdown
