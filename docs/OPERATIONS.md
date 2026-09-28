@@ -18,7 +18,9 @@ basaltw cmd production
 `list` filters by host, friendly name, or tag. `info` shows configuration and
 last-run status. `cmd` reconstructs a safe, redacted setup command; webhook
 targets and credential-bearing Git URLs from older saved configurations become
-placeholders in terminal output.
+placeholders in terminal output. `list --json` emits recognized metadata and
+sanitized setup arguments, including the same placeholders. Invalid cache
+records stop the inventory with an error.
 
 Saved setup caches, machine/setup state, and deployment-target readers reject
 malformed JSON, wrong record shapes, unsafe file types, and unreadable files.

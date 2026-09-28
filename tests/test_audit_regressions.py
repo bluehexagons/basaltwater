@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
+import json
 import os
 import shutil
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+import basaltwater
 from lib.config import SetupConfig
 from lib.command_display import redacted_setup_parts
 from lib.deployment import DeploymentOrchestrator
 from lib.deploy_utils import repository_stage_name, validate_repository_source_tree
 from lib.project_manifest import Component, Manifest, _parse_component
 from lib.setup_common import prepare_deployments
+from lib.state_read import StateReadError
 from lib.validation import validate_agent_repositories, validate_deploy_specs
 from lib import setup_common, sysadmin_svc
 import remote_setup
@@ -378,6 +383,54 @@ class SysadminSafetyTests(unittest.TestCase):
         command = build.call_args.kwargs["remote_command"]
         self.assertIn("action_rc=$?", command)
         self.assertIn('exit "$action_rc"', command)
+
+
+class SavedConfigurationDisplayTests(unittest.TestCase):
+    def test_inventory_outputs_redact_legacy_urls_without_changing_cache(self) -> None:
+        config = SetupConfig(
+            host="host", username="person", system_type="server_web",
+            deploy_specs=[["example.com", "https://user:secret@example.com/site.git"]],
+            agent_repos=["https://example.com/agent.git?token=secret"],
+            notify_specs=[["webhook", "https://example.com/hook?token=secret"]],
+        )
+        record = {
+            "host": config.host, "system_type": config.system_type,
+            "command": "basaltw setup --notify webhook https://example.com/hook?token=secret",
+            "args": {**config.to_dict(), "git_auth_token": "secret"},
+        }
+
+        with patch.object(basaltwater, "get_all_configs", return_value=[record]):
+            json_output = io.StringIO()
+            with redirect_stdout(json_output):
+                self.assertEqual(basaltwater.list_configurations(json_output=True), 0)
+            listed = json.loads(json_output.getvalue())
+            info_output = io.StringIO()
+            with redirect_stdout(info_output):
+                self.assertEqual(basaltwater.show_info(), 0)
+
+        self.assertNotIn("secret", json_output.getvalue())
+        self.assertNotIn("secret", info_output.getvalue())
+        self.assertNotIn("command", listed[0])
+        self.assertNotIn("git_auth_token", listed[0]["args"])
+        self.assertEqual(listed[0]["args"]["deploy_specs"][0][1], "https://REPLACE_WITH_GIT_URL")
+        self.assertEqual(listed[0]["args"]["agent_repos"][0], "https://REPLACE_WITH_GIT_URL")
+        self.assertEqual(listed[0]["args"]["notify_specs"][0][1], "https://REPLACE_WITH_WEBHOOK_URL")
+        self.assertIn("https://REPLACE_WITH_GIT_URL", info_output.getvalue())
+        self.assertIn("user:secret", record["args"]["deploy_specs"][0][1])
+
+    def test_malformed_cache_fails_inventory_instead_of_disappearing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with open(os.path.join(directory, "broken.json"), "w", encoding="utf-8") as handle:
+                handle.write("{broken")
+            with patch("lib.cache.get_setup_cache_dir", return_value=directory):
+                with self.assertRaises(StateReadError):
+                    basaltwater.get_all_configs()
+                output = io.StringIO()
+                errors = io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    self.assertEqual(basaltwater.list_configurations(json_output=True), 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("broken.json", errors.getvalue())
 
 
 if __name__ == "__main__":

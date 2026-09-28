@@ -46,7 +46,8 @@ from lib.gogs_cli import add_gogs_subparser, run_gogs_command
 from lib.homebox_cli import add_homebox_subparser, run_homebox_command
 from lib.scrub_cli import add_scrub_subparser, run_scrub_command
 from lib.homebox_config import validate_homebox_settings
-from lib.cache import get_cache_path_for_host, load_setup_command, merge_setup_configs, save_setup_command
+from lib.cache import get_cache_path_for_host, load_all_setup_cache_records, load_setup_command, merge_setup_configs, save_setup_command
+from lib.command_display import redacted_git_url, redacted_saved_args
 from lib.channel_manager import (
     ChannelError,
     get_channel_info,
@@ -106,6 +107,7 @@ from lib.setup_common import (
     remove_replaced_setup_cache,
     run_remote_setup,
 )
+from lib.state_read import StateReadError
 from lib.interactive_setup import prompt_for_missing_passwords
 from lib.system_utils import get_current_username
 from lib.types import Deployments, JSONDict, JSONList, NestedStrList, StrList
@@ -133,7 +135,7 @@ from lib.validation import (
     validate_timezone_name,
     validate_workspace_dir,
 )
-from lib.workspace import get_setup_cache_dir, get_workspace_dir, set_workspace_dir
+from lib.workspace import get_workspace_dir, set_workspace_dir
 
 
 def _build_basaltwater_epilog() -> str:
@@ -623,26 +625,7 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     return parser, setup_parser, patch_parser
 
 def get_all_configs(pattern: Optional[str] = None) -> Deployments:
-    cache_dir = get_setup_cache_dir()
-    if not os.path.exists(cache_dir):
-        return []
-
-    configs: Deployments = []
-    try:
-        for filename in os.listdir(cache_dir):
-            if not filename.endswith(".json"):
-                continue
-
-            filepath = os.path.join(cache_dir, filename)
-            try:
-                with open(filepath, "r", encoding="utf-8") as file_obj:
-                    data = cast(JSONDict, json.load(file_obj))
-                    configs.append(data)
-            except Exception:
-                continue
-    except Exception as exc:
-        print(f"Error reading configurations: {exc}")
-        return []
+    configs = cast(Deployments, load_all_setup_cache_records())
 
     if pattern:
         needle = pattern.lower()
@@ -665,6 +648,32 @@ def get_all_configs(pattern: Optional[str] = None) -> Deployments:
     return configs
 
 
+def _available_configs(pattern: Optional[str]) -> Optional[Deployments]:
+    try:
+        return get_all_configs(pattern)
+    except StateReadError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return None
+
+
+def _public_cache_record(record: JSONDict) -> JSONDict:
+    """Expose only recognized metadata and scrubbed setup arguments in JSON."""
+    host = cast(str, record["host"])
+    system_type = cast(str, record["system_type"])
+    args = cast(JSONDict, record["args"])
+    config = SetupConfig.from_dict(host, system_type, args)
+    public: JSONDict = {
+        key: record[key]
+        for key in (
+            "host", "system_type", "name", "tags",
+            "last_start_time", "last_end_time", "last_success",
+        )
+        if key in record
+    }
+    public["args"] = redacted_saved_args(config.to_dict())
+    return public
+
+
 def reconstruct_command(config: SetupConfig) -> str:
     """Reconstruct the user-facing setup command from cached configuration."""
     from lib.command_display import redacted_setup_parts
@@ -677,7 +686,9 @@ def list_configurations(
 ) -> int:
     from datetime import datetime
 
-    configs = get_all_configs(pattern)
+    configs = _available_configs(pattern)
+    if configs is None:
+        return 1
     if not configs:
         if json_output:
             print("[]")
@@ -689,7 +700,7 @@ def list_configurations(
         return 1
 
     if json_output:
-        print(json.dumps(list(configs), indent=2, default=str))
+        print(json.dumps([_public_cache_record(config) for config in configs], indent=2, default=str))
         return 0
 
     host_width = 30
@@ -746,7 +757,9 @@ def list_configurations(
 def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
     from datetime import datetime
 
-    configs = get_all_configs(pattern)
+    configs = _available_configs(pattern)
+    if configs is None:
+        return 1
     if not configs:
         if pattern:
             print(f"No configurations found matching '{pattern}'")
@@ -788,11 +801,12 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
             for spec in deploy_specs:
                 if isinstance(spec, list):
                     try:
-                        print(f"  - {spec[1]} -> {spec[0]}")
+                        git_url = redacted_git_url(str(spec[1]))
+                        print(f"  - {git_url} -> {spec[0]}")
                     except Exception:
-                        print(f"  - {spec}")
+                        print("  - [invalid deployment record]")
                 else:
-                    print(f"  - {spec}")
+                    print("  - [invalid deployment record]")
         else:
             print("Deployments: None")
 
@@ -913,7 +927,9 @@ def show_info(pattern: Optional[str] = None, *, compact: bool = False) -> int:
 
 
 def show_command(pattern: Optional[str] = None) -> int:
-    configs = get_all_configs(pattern)
+    configs = _available_configs(pattern)
+    if configs is None:
+        return 1
     if not configs:
         if pattern:
             print(f"No configurations found matching '{pattern}'")
@@ -942,7 +958,9 @@ def show_command(pattern: Optional[str] = None) -> int:
 
 
 def remove_configurations(pattern: str, force: bool) -> int:
-    configs = get_all_configs(pattern)
+    configs = _available_configs(pattern)
+    if configs is None:
+        return 1
     if not configs:
         print(f"No configurations found matching '{pattern}'")
         return 1
@@ -1744,7 +1762,9 @@ def run_deploy_command(args: argparse.Namespace) -> int:
 
 
 def deploy_configurations(pattern: str, force: bool, deploy_latest: bool = False) -> int:
-    configs = get_all_configs(pattern)
+    configs = _available_configs(pattern)
+    if configs is None:
+        return 1
     if not configs:
         print(f"No configurations found matching '{pattern}'")
         return 1

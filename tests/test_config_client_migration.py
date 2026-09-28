@@ -67,8 +67,7 @@ class ClientMigrationTests(unittest.TestCase):
     def test_cli_list_finds_saved_hosts_and_preserves_credentials(self):
         self.host.write_text(json.dumps({
             'host': 'node.example', 'system_type': 'server_lite',
-            'args': {'host': 'node.example', 'username': 'agent',
-                     'system_type': 'server_lite', 'friendly_name': 'my-node'},
+            'args': {'username': 'agent', 'friendly_name': 'my-node'},
         }))
         secret = self.old / 'credentials.json'
         secret.write_bytes(b'{"agent":"infra_tools-secret"}')

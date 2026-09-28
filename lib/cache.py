@@ -298,6 +298,27 @@ def load_all_setup_commands(workspace: Optional[str] = None) -> list[SetupConfig
     return sorted(configs, key=lambda config: (config.friendly_name or config.host).lower())
 
 
+def load_all_setup_cache_records(workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    """Return validated raw records for inventory, display, and replay."""
+    cache_dir = get_setup_cache_dir(workspace)
+    if not os.path.exists(cache_dir):
+        return []
+    try:
+        filenames = sorted(os.listdir(cache_dir))
+    except OSError as exc:
+        raise StateReadError(cache_dir, "unreadable setup cache directory") from exc
+    records: list[dict[str, Any]] = []
+    for filename in filenames:
+        if not filename.endswith(".json"):
+            continue
+        path = os.path.join(cache_dir, filename)
+        record = _cache_record(path)
+        if record is None or _load_cache_file(path, record["host"]) is None:
+            raise StateReadError(path, "cache disappeared during inventory")
+        records.append(record)
+    return records
+
+
 def merge_setup_configs(
     cached_config: SetupConfig,
     new_config: SetupConfig,
