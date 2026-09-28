@@ -141,6 +141,15 @@ class SoftwareTests(unittest.TestCase):
             software.preflight_software(self.config("--steamcmd"))
         self.assertEqual(list(self.home.iterdir()), [])
 
+    def test_unowned_aur_helper_stops_preflight_before_install(self):
+        self.which.side_effect = lambda name, **kw: "/personal/bin/shelly" if name == "shelly" else None
+        self.run.side_effect = lambda argv, **kw: (CompletedProcess(argv, 1, "")
+            if argv[:2] == ["pacman", "-Qqo"] else self.command(argv, **kw))
+        with self.assertRaisesRegex(RuntimeError, "not owned"):
+            software.preflight_software(self.config("--butler"))
+        self.assertEqual(list(self.home.iterdir()), [])
+        self.assertFalse(any(command[0] == "/personal/bin/shelly" for command, _ in self.events))
+
     def test_installed_package_missing_or_shadowed_command_fails_preflight(self):
         self.installed["butler"] = "15.31.0-1"
         self.which.side_effect = None

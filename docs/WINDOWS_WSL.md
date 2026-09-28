@@ -55,7 +55,8 @@ exact 40-character commit revision and rejects untracked or modified scripts.
 It uploads one artifact only after a successful job. The upload destination must
 use HTTPS, accept bearer authentication in an HTTP PUT, and echo the received
 SHA-256 digest in `X-Artifact-SHA256`. The receiver should verify that digest
-before acknowledging it.
+before acknowledging it. The runner refuses URL credentials and redirects, and
+requires a successful HTTP status as well as the matching digest.
 
 First save the upload token using Windows user-bound DPAPI encryption:
 

@@ -40,6 +40,7 @@ function Resolve-JobPath([string]$root, [string]$relative) {
 }
 
 if ($UploadUri.Scheme -ne "https") { throw "Artifact upload requires HTTPS" }
+if ($UploadUri.UserInfo) { throw "Artifact upload URL must not contain credentials" }
 $source = (Resolve-Path -LiteralPath $SourceDirectory).Path
 if ((Get-Item -LiteralPath $source).Attributes -band [IO.FileAttributes]::ReparsePoint) {
     throw "Source directory must not be a reparse point"
@@ -136,7 +137,10 @@ try {
         $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
         $headers = @{ Authorization = "Bearer $token"; 'X-Artifact-SHA256' = $hash }
         $response = Invoke-WebRequest -UseBasicParsing -Method Put -Uri $UploadUri -InFile $artifactPath `
-            -ContentType 'application/octet-stream' -Headers $headers -TimeoutSec 300
+            -ContentType 'application/octet-stream' -Headers $headers -TimeoutSec 300 -MaximumRedirection 0
+        if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+            throw "Upload destination returned a non-success status"
+        }
         if ($response.Headers['X-Artifact-SHA256'] -ne $hash) {
             throw "Upload destination did not confirm the artifact SHA-256 digest"
         }

@@ -85,7 +85,8 @@ class T3InstallTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0 if self.desktop_version else 1,
                                                f"t3code-bin {self.desktop_version}\n" if self.desktop_version else "", "")
         if argv[:2] == ["pacman", "-Qqo"]:
-            return subprocess.CompletedProcess(argv, 0, "t3code-bin\n", "")
+            package = Path(argv[-1]).name if Path(argv[-1]).name in {"shelly", "paru", "yay"} else "t3code-bin"
+            return subprocess.CompletedProcess(argv, 0, package + "\n", "")
         if argv[0] in {"/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay"}:
             if argv[0] == "/usr/bin/shelly":
                 cache = self.home / ".cache/Shelly"
@@ -352,7 +353,8 @@ class T3InstallTests(unittest.TestCase):
         t3.preflight(self.desktop_config())
         self.assertFalse(self.prefix.exists())
         self.assertFalse((self.home / ".cache").exists())
-        self.assertTrue(all(cmd[:2] == ["pacman", "-Q"] or cmd[:3] == ["systemctl", "--user", "show"]
+        self.assertTrue(all(cmd[:2] in (["pacman", "-Q"], ["pacman", "-Qqo"])
+                            or cmd[:3] == ["systemctl", "--user", "show"]
                             for _, cmd in self.events))
 
     def test_shelly_cache_preserves_existing_files_and_permissions(self):

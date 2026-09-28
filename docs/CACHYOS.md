@@ -242,6 +242,9 @@ review, build, and sudo prompts. Shelly is included in current CachyOS; installi
 for `paru`, then `yay`. These are optional alternatives, not an older-CachyOS
 support target. If all three are absent, preflight explains how to restore Shelly
 with `sudo pacman -S --needed shelly` on an already updated system.
+Preflight also verifies that the selected helper executable belongs to an
+installed pacman package. Remove or rename an unowned executable shadowing
+Shelly, paru, or yay in your PATH before retrying.
 
 Setup preserves Shelly's configured AUR source and review policy. A failed or
 cancelled installation stops setup before disabling the working web service;

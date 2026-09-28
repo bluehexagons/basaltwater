@@ -98,17 +98,22 @@ try {
 
     $global:BasaltwaterUploadCount = 0
     $global:BasaltwaterBadDigest = $false
+    $global:BasaltwaterUploadStatus = 200
     function global:Invoke-WebRequest {
         param([switch]$UseBasicParsing, [string]$Method, [uri]$Uri,
               [string]$InFile, [string]$ContentType, [hashtable]$Headers,
-              [int]$TimeoutSec)
+              [int]$TimeoutSec, [int]$MaximumRedirection)
         if ($Method -ne 'Put' -or $Uri.Scheme -ne 'https') { throw 'Unexpected upload request' }
+        if (-not $PSBoundParameters.ContainsKey('MaximumRedirection') -or $MaximumRedirection -ne 0) {
+            throw 'Upload redirects must be disabled'
+        }
         if ($Headers.Authorization -ne 'Bearer ci-only-token') { throw 'Upload authentication was lost' }
         $hash = (Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($Headers['X-Artifact-SHA256'] -ne $hash) { throw 'Upload digest did not match artifact' }
         $global:BasaltwaterUploadCount++
         $acknowledged = if ($global:BasaltwaterBadDigest) { '0' * 64 } else { $hash }
-        return [pscustomobject]@{ Headers = @{ 'X-Artifact-SHA256' = $acknowledged } }
+        return [pscustomobject]@{ StatusCode = $global:BasaltwaterUploadStatus;
+            Headers = @{ 'X-Artifact-SHA256' = $acknowledged } }
     }
     try {
         $before = @(Get-Receipts).Count
@@ -164,6 +169,25 @@ try {
         $global:BasaltwaterBadDigest = $false
         Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
+        $global:BasaltwaterUploadStatus = 302
+        $before = @(Get-Receipts).Count
+        Assert-Throws {
+            & $runner -SourceDirectory $checkout -Revision $revision `
+                -Script 'windows\examples\Smoke-Artifact.ps1' -Artifact 'out\wsl-smoke.txt' `
+                -UploadUri $uri -CredentialFile $credential
+        } 'non-success status'
+        Assert-NewReceipt $before 'failed' | Out-Null
+        $global:BasaltwaterUploadStatus = 200
+        Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
+
+        $before = @(Get-Receipts).Count
+        Assert-Throws {
+            & $runner -SourceDirectory $checkout -Revision $revision `
+                -Script 'windows\examples\Smoke-Artifact.ps1' -Artifact 'out\wsl-smoke.txt' `
+                -UploadUri 'https://user:secret@upload.invalid/artifact' -CredentialFile $credential
+        } 'must not contain credentials'
+        Assert-True (@(Get-Receipts).Count -eq $before) 'Credential-bearing URL created a job receipt'
+
         $before = @(Get-Receipts).Count
         Assert-Throws {
             & $runner -SourceDirectory $checkout -Revision $revision -Script '..\outside.ps1' `
@@ -178,7 +202,7 @@ try {
                 -TimeoutSeconds 1
         } 'exceeded 1 seconds'
         Assert-NewReceipt $before 'timed-out' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Timeout attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Timeout attempted upload'
 
         $before = @(Get-Receipts).Count
         Assert-Throws {
@@ -186,10 +210,10 @@ try {
                 -Artifact 'out\large-log.txt' -UploadUri $uri -CredentialFile $credential
         } 'exceeded 50 MiB of logs'
         Assert-NewReceipt $before 'failed' | Out-Null
-        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Oversized log attempted upload'
+        Assert-True ($global:BasaltwaterUploadCount -eq 3) 'Oversized log attempted upload'
     } finally {
         Remove-Item Function:\Invoke-WebRequest
-        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest -Scope Global -ErrorAction SilentlyContinue
+        Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest, BasaltwaterUploadStatus -Scope Global -ErrorAction SilentlyContinue
     }
 
     Write-Host 'Native Windows qualification passed.'

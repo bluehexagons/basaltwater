@@ -30,14 +30,31 @@ def install_command(home: Path, package: str) -> list[str]:
     package = validate_arch_package_name(package)
     executable = shutil.which("shelly", path=_tool_path(home))
     if executable:
-        return [executable, "install", "aur", package]
+        return [_package_owned_helper(executable), "install", "aur", package]
     for name in ("paru", "yay"):
         executable = shutil.which(name, path=_tool_path(home))
         if executable:
-            return [executable, "-S", "--aur", "--needed", "--", package]
+            return [_package_owned_helper(executable), "-S", "--aur", "--needed", "--", package]
     raise RuntimeError("Installing AUR packages requires Shelly, paru, or yay; "
                        "restore CachyOS's default helper with sudo pacman -S --needed shelly "
                        "and rerun your setup selection")
+
+
+def _package_owned_helper(executable: str) -> str:
+    """Do not run an unowned helper that shadows a package-managed AUR tool."""
+    validate_filesystem_path(executable)
+    if not os.path.isabs(executable):
+        raise RuntimeError(f"AUR helper path must be absolute: {executable}")
+    result = run(["pacman", "-Qqo", "--", executable], capture_output=True,
+                 check=False, timeout=15)
+    owners = (result.stdout or "").splitlines()
+    if result.returncode or len(owners) != 1:
+        raise RuntimeError(f"AUR helper is not owned by an installed pacman package: {executable}")
+    try:
+        validate_arch_package_name(owners[0].strip())
+    except ValueError as exc:
+        raise RuntimeError(f"AUR helper has invalid package ownership: {executable}") from exc
+    return executable
 
 
 def prepare_cache(home: Path, *, create: bool = False) -> None:
