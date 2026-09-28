@@ -102,7 +102,7 @@ try {
     if ($logBytes -gt 50MB) { throw "Native job exceeded 50 MiB of logs" }
     if ($process.ExitCode -ne 0) {
         $result.State = 'failed'
-        throw "Native job exited with code $($process.ExitCode); logs: $jobDirectory"
+        throw "Native job exited with code '$($process.ExitCode)' (type $($process.GetType().FullName), exited $($process.HasExited)); logs: $jobDirectory"
     }
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Job produced no artifact" }
     $artifactItem = Get-Item -LiteralPath $artifactPath -Force
