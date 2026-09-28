@@ -14,6 +14,10 @@ Repositories with the same final name (for example, two different `site.git`
 URLs) receive distinct upload paths based on their complete URLs. Deployment
 source trees must not contain symlinks or special files; the controller checks
 this before reading the manifest or uploading the source.
+Git URLs must not contain embedded HTTP credentials, query strings, or fragments.
+Use the controller's Git credential helper or SSH key for private repositories.
+Displayed commands also replace sensitive URLs from older saved configurations
+with a placeholder that must be filled in before replay.
 
 ## Basic deployment
 

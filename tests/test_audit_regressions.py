@@ -14,6 +14,7 @@ from lib.deployment import DeploymentOrchestrator
 from lib.deploy_utils import repository_stage_name, validate_repository_source_tree
 from lib.project_manifest import Component, Manifest, _parse_component
 from lib.setup_common import prepare_deployments
+from lib.validation import validate_agent_repositories, validate_deploy_specs
 from lib import setup_common, sysadmin_svc
 import remote_setup
 from plugins.post_setup import build_post_setup_steps
@@ -108,13 +109,50 @@ class SetupSafetyTests(unittest.TestCase):
             self.assertEqual(os.stat(secret).st_mode & 0o777, 0o600)
             self.assertFalse(os.path.exists(os.path.join(destination, "lib", "linked-secret")))
 
-    def test_git_clone_separates_url_from_options(self) -> None:
+    def test_git_clone_rejects_option_like_url_before_subprocess(self) -> None:
         with tempfile.TemporaryDirectory() as directory, \
-             patch.object(setup_common.subprocess, "run", return_value=MagicMock(returncode=0)) as run, \
-             patch("lib.deploy_utils.get_git_commit_hash", return_value="abc123"):
+             patch.object(setup_common.subprocess, "run") as run:
             result = setup_common.clone_repository("-cunsafe.git", directory)
-        self.assertIsNotNone(result)
-        self.assertEqual(run.call_args.args[0][2:4], ["--", "-cunsafe.git"])
+        self.assertIsNone(result)
+        run.assert_not_called()
+
+    def test_git_clone_rejects_inline_secret_without_logging_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(setup_common.subprocess, "run") as run, \
+             patch("builtins.print") as printed:
+            result = setup_common.clone_repository(
+                "https://user:secret@example.com/site.git", directory,
+            )
+        self.assertIsNone(result)
+        run.assert_not_called()
+        self.assertNotIn(
+            "secret", "\n".join(str(call.args[0]) for call in printed.call_args_list),
+        )
+
+    def test_deploy_url_rejects_inline_credentials_and_query_tokens(self) -> None:
+        for git_url in (
+            "https://user:secret@example.com/site.git",
+            "git+https://user:secret@example.com/site.git",
+            "https://example.com/site.git?token=secret",
+            "https://example.com/site.git#secret",
+        ):
+            with self.subTest(git_url=git_url):
+                with self.assertRaisesRegex(ValueError, "credentials|query or fragment"):
+                    validate_deploy_specs([["example.com", git_url]])
+        validate_deploy_specs([["example.com", "git@example.com:owner/site.git"]])
+        with self.assertRaisesRegex(ValueError, "query or fragment"):
+            validate_agent_repositories(["https://example.com/site.git?token=secret"])
+
+    def test_display_redacts_legacy_git_url_credentials(self) -> None:
+        parts = [
+            "--deploy example.com 'https://user:secret@example.com/site.git'",
+            "--repo 'https://example.com/agent.git?token=secret'",
+            "--deploy public.example.com https://example.com/public.git",
+        ]
+        visible = " ".join(redacted_setup_parts(parts))
+        self.assertNotIn("secret", visible)
+        self.assertEqual(visible.count("REPLACE_WITH_GIT_URL"), 2)
+        self.assertIn("https://example.com/public.git", visible)
 
     def test_repository_link_is_rejected_before_manifest_inspection(self) -> None:
         config = SetupConfig(

@@ -23,6 +23,10 @@ Public repositories need no credential:
 --repo https://git.example.net/public/tools.git
 ```
 
+`--repo` accepts an HTTPS repository URL without embedded credentials, a
+query string, or a fragment. Use the authentication flows below for private
+repositories; tokens in URLs can be exposed through command history and logs.
+
 ## GitHub
 
 A private GitHub repository needs all of these:

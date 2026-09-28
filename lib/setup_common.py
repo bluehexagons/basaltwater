@@ -44,6 +44,7 @@ from lib.validation import (
     validate_browser_automation_settings,
     validate_antistatic_settings,
     validate_deploy_specs,
+    validate_deploy_git_url,
     validate_deploy_targets,
     validate_gogs_settings,
     validate_hosted_flags,
@@ -211,9 +212,10 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
     from lib.deploy_utils import extract_repo_name, repository_stage_name
 
     try:
+        validate_deploy_git_url(git_url)
         stage_name = repository_stage_name(git_url)
-    except ValueError:
-        print(f"  Error: unsafe repository name derived from {git_url}")
+    except ValueError as exc:
+        print(f"  Error: {exc}")
         return None
     repo_name = extract_repo_name(git_url)
     
@@ -531,13 +533,13 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
     print(f"{'='*60}")
     
     staged_urls: set[str] = set()
-    for _deploy_spec, git_url in config.deploy_specs:
+    for position, (_deploy_spec, git_url) in enumerate(config.deploy_specs, 1):
         if git_url in staged_urls:
             continue
         result = clone_repository(git_url, target_dir, cache_dir=GIT_CACHE_DIR, dry_run=config.dry_run)
         if result is None:
             raise RuntimeError(
-                f"Failed to stage {git_url}; no target changes were started"
+                f"Failed to stage repository {position}; no target changes were started"
             )
         clone_path, commit_hash = result
         staged_urls.add(git_url)

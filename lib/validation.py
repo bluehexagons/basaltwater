@@ -545,6 +545,30 @@ def validate_antistatic_settings(config: "SetupConfig") -> None:
         raise ValueError("Antistatic admin password must not contain control characters")
 
 
+def validate_deploy_git_url(git_url: str) -> None:
+    """Keep credentials and option-like values out of deployment Git URLs."""
+    if not isinstance(git_url, str) or not git_url or not git_url.strip():
+        raise ValueError("Deploy git URL must be a non-empty string")
+    if git_url != git_url.strip():
+        raise ValueError("Deploy git URL must be trimmed")
+    validate_no_control_characters(git_url, "Deploy git URL")
+    if git_url.startswith("-"):
+        raise ValueError("Deploy git URL must not start with an option")
+    parsed = urlparse(git_url)
+    if parsed.query or parsed.fragment:
+        raise ValueError("Deploy git URL must not contain a query or fragment")
+    if parsed.scheme != "ssh" and "@" in parsed.netloc:
+        raise ValueError("Deploy git URL must not contain embedded credentials")
+    if parsed.scheme == "ssh" and parsed.password is not None:
+        raise ValueError("Deploy SSH URL must not contain an embedded password")
+    from lib.deploy_utils import repository_stage_name
+
+    try:
+        repository_stage_name(git_url)
+    except ValueError as exc:
+        raise ValueError("Deploy git URL has an unsafe repository name") from exc
+
+
 def validate_deploy_specs(deploy_specs: Optional[list[list[str]]]) -> None:
     """Validate deploy specs before setup or patch execution."""
 
@@ -561,8 +585,7 @@ def validate_deploy_specs(deploy_specs: Optional[list[list[str]]]) -> None:
         deploy_specs_str, git_url = deploy_spec_entry
         if not deploy_specs_str or not str(deploy_specs_str).strip():
             raise ValueError("Deploy target spec must be a non-empty string")
-        if not git_url or not str(git_url).strip():
-            raise ValueError("Deploy git URL must be a non-empty string")
+        validate_deploy_git_url(git_url)
 
         for raw_deploy_spec in str(deploy_specs_str).split(","):
             deploy_spec = raw_deploy_spec.strip()
@@ -1284,6 +1307,8 @@ def validate_agent_repositories(repositories: Optional[list[str]]) -> None:
             )
         if parsed.password is not None or parsed.username is not None:
             raise ValueError("--repo URLs must not contain embedded credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("--repo URLs must not contain a query or fragment")
 
         repo_name = _repo_name_from_git_url(git_url)
         if not repo_name or not _SAFE_REPO_NAME_PATTERN.match(repo_name):
