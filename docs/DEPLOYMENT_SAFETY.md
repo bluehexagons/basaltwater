@@ -13,7 +13,10 @@ know.
   leaves existing legacy Rails units and their generated Nginx routes alone.
 - Legacy automatic static and Node builds run beside the active release and
   switch directories atomically only after a successful build. A failed build
-  leaves the previous release active.
+  leaves the previous release active. Node install and build commands run as a
+  dedicated non-root build account.
+- Repository symlinks and special files are rejected on the controller before
+  manifest inspection or upload. Target-side source copying also refuses links.
 - Manifest service components get dedicated runtime users and writable state
   only under `.basaltwater_shared/<app>/<component>/data`; the component root
   and deployment backups remain root-controlled and outside the systemd unit's
@@ -22,6 +25,8 @@ know.
   a deployment lock. Existing services continue running during the build.
 - A manifest release is rolled back when service activation or a declared 2xx
   health check fails. Previous systemd units are restored with the release.
+  Failure to remove an old backup after successful activation leaves that
+  backup for later cleanup without undoing the new release.
 - Manifest activation writes a versioned operation marker before staging or
   service interruption. A clean deployment or verified rollback removes it;
   interrupted and incomplete-recovery markers block another deployment.

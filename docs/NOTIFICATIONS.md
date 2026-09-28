@@ -21,7 +21,10 @@ basaltw setup server_lite fileserver admin \
 | `mailbox` | Email address | Target machine's `mail` command and local mail transport |
 
 Use `basaltw info HOST` to check the saved target count and delivery level.
-Use `basaltw cmd HOST` to inspect the reconstructed setup command.
+Use `basaltw cmd HOST` to inspect the reconstructed setup command. Displayed
+commands replace webhook URLs with `https://REPLACE_WITH_WEBHOOK_URL`; insert
+the real target before replaying a command. The saved target remains available
+to scheduled notification jobs.
 
 HTTPS webhook delivery accepts self-signed certificates by default so a sender
 can notify a Basaltwater panel that uses its VM-local CA. This keeps the

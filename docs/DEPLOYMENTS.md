@@ -10,6 +10,10 @@ falling back to automatic detection.
 the repository type and `basaltwater.json` without updating the persistent Git cache
 before target setup begins. It does not execute repository build commands;
 projects should run those commands in CI as a separate build preflight.
+Repositories with the same final name (for example, two different `site.git`
+URLs) receive distinct upload paths based on their complete URLs. Deployment
+source trees must not contain symlinks or special files; the controller checks
+this before reading the manifest or uploading the source.
 
 ## Basic deployment
 
@@ -75,7 +79,9 @@ unique within the file.
 ```
 
 `output` is relative to the repository and is served by Nginx after the build.
-It must not be absolute or escape the repository. `build` may be one command,
+It must not be absolute, escape the repository, or contain characters that can
+change an Nginx directive. Component URL paths have the same Nginx-safe syntax.
+`build` may be one command,
 an array of commands, or omitted when the checked-in output is ready to serve.
 Build commands run from the repository root, and `env` values are available to
 those commands only. Environment variable names must be shell identifiers: a

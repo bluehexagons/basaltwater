@@ -48,13 +48,14 @@ class TestPluginRegistry(unittest.TestCase):
         registry = get_plugin_registry()
         self.assertEqual(
             [plugin.name for plugin in registry.plugins],
-            ["core", "cachyos", "common", "desktop", "security", "smb", "sync", "web", "proxmox", "server", "workstation", "wsl"],
+            ["core", "cachyos", "common", "desktop", "post_setup", "security", "smb", "sync", "web", "proxmox", "server", "workstation", "wsl"],
         )
         self.assertEqual(
             [plugin.plugin_kind for plugin in registry.plugins],
             [
                 "base",
                 "composition",
+                "capability",
                 "capability",
                 "capability",
                 "capability",

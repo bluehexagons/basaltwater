@@ -398,6 +398,39 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
         create_service.assert_called_once_with(config)
         schedule_update.assert_called_once_with()
 
+    def test_post_profile_failure_records_named_step_and_sends_failure(self):
+        args = SimpleNamespace(
+            deploy_latest=False, dry_run=False, custom_steps=None,
+            system_type="server_lite",
+        )
+        config = SetupConfig(
+            host="localhost", username="root", system_type="server_lite",
+            backup_specs=[["/srv/projects", "/srv/backups/projects", "daily"]],
+            notify_specs=[["webhook", "https://example.test/hook"]],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            marker = os.path.join(directory, "setup-operation.json")
+            with patch.object(remote_setup, "SETUP_OPERATION_FILE", marker), \
+                 patch.object(remote_setup, "create_setup_argument_parser") as parser, \
+                 patch.object(remote_setup, "config_from_remote_args", return_value=config), \
+                 patch.object(remote_setup, "detect_os", return_value="Debian"), \
+                 patch.object(remote_setup, "print_setup_summary"), \
+                 patch.object(remote_setup, "get_steps_for_system_type", return_value=[]), \
+                 patch.object(remote_setup, "record_setup_activity"), \
+                 patch.object(remote_setup, "send_setup_notification", return_value=True) as notify, \
+                 patch.object(remote_setup, "save_machine_state") as save_machine, \
+                 patch.object(remote_setup, "_remove_secret_payloads"), \
+                 patch("sync.sync_steps.install_rsync", side_effect=RuntimeError("apt failed")):
+                parser.return_value.parse_args.return_value = args
+                with self.assertRaisesRegex(RuntimeError, "apt failed"):
+                    remote_setup.main()
+            record = OperationStateStore(marker).load()
+            self.assertIsNotNone(record)
+            self.assertEqual(record.status, "recovery_required")
+            self.assertEqual(record.context["step"], "Configuring storage operations service")
+            save_machine.assert_not_called()
+            self.assertTrue(notify.call_args.kwargs["success"] is False)
+
     def test_resolve_cli_args_loads_and_removes_args_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             args_path = os.path.join(tmpdir, "args.json")
@@ -453,8 +486,10 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
 
 class TestRepositorySourcePath(unittest.TestCase):
     def test_default_mode_uses_uploaded_repository_without_remote_clone(self):
+        from lib.deploy_utils import repository_stage_name
+
         git_url = "git@github.com:owner/private-repo.git"
-        repo_path = "/opt/basaltwater/deployments/private-repo"
+        repo_path = f"/opt/basaltwater/deployments/{repository_stage_name(git_url)}"
 
         def exists(path: str) -> bool:
             return path == repo_path
@@ -465,8 +500,10 @@ class TestRepositorySourcePath(unittest.TestCase):
         self.assertEqual(result, (repo_path, ""))
 
     def test_full_mode_uses_uploaded_repository_commit(self):
+        from lib.deploy_utils import repository_stage_name
+
         git_url = "https://github.com/owner/app.git"
-        repo_path = "/opt/basaltwater/deployments/app"
+        repo_path = f"/opt/basaltwater/deployments/{repository_stage_name(git_url)}"
         commit_path = f"{repo_path}.commit"
 
         def exists(path: str) -> bool:

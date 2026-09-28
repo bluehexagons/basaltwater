@@ -37,7 +37,7 @@ managed coding VM or workstation, use the sibling
 | Boundary | Responsibility |
 | --- | --- |
 | `basaltw setup` | Parses and validates user-facing configuration, then stages source for the target |
-| `remote_setup.py` | Performs target-side mutations using steps selected by the plugin registry |
+| `remote_setup.py` | Runs one target-side step plan, including optional post-profile work composed by `plugins/post_setup.py` |
 | `plugins/` | Owns setup composition through builders and capability extensions |
 | `bootstrap` / `self-setup` | Configures the local orchestration host through `lib/orchestrator_bootstrap.py` |
 

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import ipaddress
 import io
@@ -143,7 +145,7 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
         print(f"  Caching {git_url}...")
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         result = subprocess.run(
-            ["git", "clone", git_url, cache_path],
+            ["git", "clone", "--", git_url, cache_path],
             capture_output=True,
             text=True,
             timeout=300,
@@ -206,15 +208,16 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
 
 
 def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, Optional[str]]]:
-    repo_name = git_url.rstrip('/').split('/')[-1]
-    if repo_name.endswith('.git'):
-        repo_name = repo_name[:-4]
+    from lib.deploy_utils import extract_repo_name, repository_stage_name
 
-    if repo_name in {"", ".", ".."}:
+    try:
+        stage_name = repository_stage_name(git_url)
+    except ValueError:
         print(f"  Error: unsafe repository name derived from {git_url}")
         return None
+    repo_name = extract_repo_name(git_url)
     
-    clone_path = os.path.join(temp_dir, repo_name)
+    clone_path = os.path.join(temp_dir, stage_name)
 
     # A deployment dry run still needs real source files to validate basaltwater.json
     # and project support. Clone only into the disposable setup staging tree;
@@ -223,7 +226,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
         print(f"  [DRY RUN] Cloning {git_url} for deployment preflight...")
         try:
             result = subprocess.run(
-                ["git", "clone", "--depth", "1", git_url, clone_path],
+                ["git", "clone", "--depth", "1", "--", git_url, clone_path],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -261,7 +264,7 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
         
         try:
             result = subprocess.run(
-                ["git", "clone", git_url, clone_path],
+                ["git", "clone", "--", git_url, clone_path],
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -284,6 +287,15 @@ def copy_project_files(dest_dir: str) -> None:
     """Stage runtime code with permissions suitable for root-owned services."""
     validate_filesystem_path(dest_dir)
     project_root = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
+    ignore_noise = shutil.ignore_patterns('__pycache__', '*.pyc', '.git')
+
+    def reject_links(directory: str, names: list[str]) -> set[str]:
+        for name in names:
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                raise ValueError(f"Refusing symlinked runtime source: {path}")
+        return ignore_noise(directory, names)
+
     items_to_copy = [
         "basaltwater.py",
         "remote_setup.py",
@@ -302,18 +314,27 @@ def copy_project_files(dest_dir: str) -> None:
     for item in items_to_copy:
         src = os.path.join(project_root, item)
         dst = os.path.join(dest_dir, item)
-        if os.path.exists(src):
+        if os.path.lexists(src):
+            if os.path.islink(src):
+                raise ValueError(f"Refusing symlinked runtime source: {src}")
             if os.path.isdir(src):
-                shutil.copytree(src, dst, ignore=shutil.ignore_patterns('__pycache__', '*.pyc', '.git'))
-            else:
+                shutil.copytree(src, dst, symlinks=True, ignore=reject_links)
+            elif os.path.isfile(src):
                 shutil.copy2(src, dst)
+            else:
+                raise ValueError(f"Runtime source must be a regular file or directory: {src}")
     # A shared controller checkout can be group-writable. Those modes must not
     # cross into the privileged runtime. Payloads are staged separately later.
     for directory, directories, files in os.walk(dest_dir):
         for name in directories:
-            os.chmod(os.path.join(directory, name), 0o755)
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                raise ValueError(f"Refusing symlinked runtime source: {path}")
+            os.chmod(path, 0o755)
         for name in files:
             path = os.path.join(directory, name)
+            if os.path.islink(path):
+                raise ValueError(f"Refusing symlinked runtime source: {path}")
             os.chmod(path, 0o755 if os.stat(path).st_mode & 0o111 else 0o644)
     write_setup_snapshot_metadata(project_root, dest_dir)
 
@@ -394,36 +415,111 @@ def _activate_local_runtime(build_dir: str) -> None:
     """Stage local setup payloads without destroying a managed Git worktree."""
     if os.path.lexists(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools")):
         raise RuntimeError("Run basaltw migrate --system --apply before replacing a recent infra-tools installation")
+    if os.path.islink(REMOTE_INSTALL_DIR):
+        raise RuntimeError(f"Refusing symlinked runtime directory: {REMOTE_INSTALL_DIR}")
     _migrate_local_runtime_state()
     if not _is_managed_local_install(REMOTE_INSTALL_DIR):
-        if os.path.exists(REMOTE_INSTALL_DIR):
-            shutil.rmtree(REMOTE_INSTALL_DIR)
-        shutil.copytree(build_dir, REMOTE_INSTALL_DIR, symlinks=True)
-        _install_local_runtime_state_link()
-        os.chmod(REMOTE_INSTALL_DIR, 0o755)
+        parent_dir = os.path.dirname(REMOTE_INSTALL_DIR)
+        os.makedirs(parent_dir, exist_ok=True)
+        stage_dir = tempfile.mkdtemp(prefix=".basaltwater-stage-", dir=parent_dir)
+        backup_dir: Optional[str] = None
+        activated = False
+        try:
+            shutil.copytree(build_dir, stage_dir, dirs_exist_ok=True, symlinks=True)
+            os.chmod(stage_dir, 0o755)
+            if os.path.lexists(REMOTE_INSTALL_DIR):
+                backup_dir = tempfile.mkdtemp(
+                    prefix=".basaltwater-previous-", dir=parent_dir,
+                )
+                os.rmdir(backup_dir)
+                os.rename(REMOTE_INSTALL_DIR, backup_dir)
+            try:
+                os.rename(stage_dir, REMOTE_INSTALL_DIR)
+                stage_dir = ""
+                activated = True
+                _install_local_runtime_state_link()
+            except Exception:
+                if activated:
+                    shutil.rmtree(REMOTE_INSTALL_DIR)
+                if backup_dir and os.path.lexists(backup_dir):
+                    os.rename(backup_dir, REMOTE_INSTALL_DIR)
+                    backup_dir = None
+                raise
+            if backup_dir:
+                try:
+                    shutil.rmtree(backup_dir)
+                except OSError as exc:
+                    print(f"  ⚠ Previous runtime cleanup failed at {backup_dir}: {exc}")
+        finally:
+            if stage_dir and os.path.exists(stage_dir):
+                shutil.rmtree(stage_dir)
         return
 
-    for item in (
+    managed_items = (
         "deployments",
         AGENT_PAYLOAD_DIRNAME,
         DEVICE_PAIRING_PAYLOAD_DIRNAME,
         WEB_PANEL_PAYLOAD_DIRNAME,
         REMOTE_ARGS_FILENAME,
-    ):
-        destination = os.path.join(REMOTE_INSTALL_DIR, item)
-        if os.path.isdir(destination) and not os.path.islink(destination):
-            shutil.rmtree(destination)
-        elif os.path.lexists(destination):
-            os.unlink(destination)
+    )
+    parent_dir = os.path.dirname(REMOTE_INSTALL_DIR)
+    stage_dir = tempfile.mkdtemp(prefix=".basaltwater-managed-stage-", dir=parent_dir)
+    backup_dir = ""
+    replaced: list[tuple[str, bool]] = []
+    rollback_errors: list[str] = []
+    try:
+        backup_dir = tempfile.mkdtemp(prefix=".basaltwater-managed-previous-", dir=parent_dir)
+        for item in managed_items:
+            source = os.path.join(build_dir, item)
+            candidate = os.path.join(stage_dir, item)
+            if os.path.isdir(source) and not os.path.islink(source):
+                shutil.copytree(source, candidate, symlinks=True)
+            elif os.path.isfile(source) and not os.path.islink(source):
+                shutil.copy2(source, candidate)
+            elif os.path.lexists(source):
+                raise RuntimeError(f"Refusing unexpected managed payload: {source}")
 
-        source = os.path.join(build_dir, item)
-        if os.path.isdir(source):
-            shutil.copytree(source, destination, symlinks=True)
-        elif os.path.exists(source):
-            shutil.copy2(source, destination)
-
-    _install_local_runtime_state_link()
-    os.chmod(REMOTE_INSTALL_DIR, 0o755)
+        _install_local_runtime_state_link()
+        os.chmod(REMOTE_INSTALL_DIR, 0o755)
+        for item in managed_items:
+            destination = os.path.join(REMOTE_INSTALL_DIR, item)
+            previous = os.path.join(backup_dir, item)
+            candidate = os.path.join(stage_dir, item)
+            had_previous = os.path.lexists(destination)
+            if had_previous:
+                os.rename(destination, previous)
+            replaced.append((item, had_previous))
+            if os.path.lexists(candidate):
+                os.rename(candidate, destination)
+    except Exception:
+        for item, had_previous in reversed(replaced):
+            destination = os.path.join(REMOTE_INSTALL_DIR, item)
+            previous = os.path.join(backup_dir, item)
+            try:
+                if os.path.isdir(destination) and not os.path.islink(destination):
+                    shutil.rmtree(destination)
+                elif os.path.lexists(destination):
+                    os.unlink(destination)
+                if had_previous:
+                    os.rename(previous, destination)
+            except OSError as exc:
+                rollback_errors.append(f"{item}: {exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                f"Managed runtime payload recovery is incomplete; backups at {backup_dir}: "
+                + "; ".join(rollback_errors)
+            )
+        raise
+    finally:
+        try:
+            shutil.rmtree(stage_dir)
+        except OSError as exc:
+            print(f"  ⚠ Managed payload staging cleanup failed at {stage_dir}: {exc}")
+        if backup_dir and not rollback_errors:
+            try:
+                shutil.rmtree(backup_dir)
+            except OSError as exc:
+                print(f"  ⚠ Previous managed payload cleanup failed at {backup_dir}: {exc}")
 
 
 def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
@@ -434,16 +530,21 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
     print("Cloning repositories locally...")
     print(f"{'='*60}")
     
+    staged_urls: set[str] = set()
     for _deploy_spec, git_url in config.deploy_specs:
+        if git_url in staged_urls:
+            continue
         result = clone_repository(git_url, target_dir, cache_dir=GIT_CACHE_DIR, dry_run=config.dry_run)
         if result is None:
             raise RuntimeError(
                 f"Failed to stage {git_url}; no target changes were started"
             )
         clone_path, commit_hash = result
-        from lib.deploy_utils import is_ruby_project
+        staged_urls.add(git_url)
+        from lib.deploy_utils import is_ruby_project, validate_repository_source_tree
         from lib.project_manifest import load_manifest
 
+        validate_repository_source_tree(clone_path)
         if is_ruby_project(clone_path):
             raise RuntimeError(
                 f"Ruby/Rails repository {git_url} is unsupported by this "
@@ -1232,6 +1333,22 @@ def run_remote_setup(config: SetupConfig) -> int:
         return 1
 
 
+@contextmanager
+def _target_setup_lock():
+    """Share the target-side locks used by SSH-driven setup."""
+    with open("/run/lock/basaltwater-setup-bootstrap.lock", "a+", encoding="utf-8") as bootstrap, \
+         open("/run/lock/basaltwater-setup.lock", "a+", encoding="utf-8") as runtime:
+        fcntl.flock(bootstrap.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(runtime.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                yield
+            finally:
+                fcntl.flock(runtime.fileno(), fcntl.LOCK_UN)
+        finally:
+            fcntl.flock(bootstrap.fileno(), fcntl.LOCK_UN)
+
+
 def _run_remote_setup_locked(config: SetupConfig) -> int:
     setup_timeout = validate_positive_integer(
         os.environ.get("BASALTWATER_SETUP_TIMEOUT", "14400"), "Setup timeout",
@@ -1333,7 +1450,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             env["PYTHONDONTWRITEBYTECODE"] = "1"
             
             try:
-                with payload_workspace(setup_timeout) as payload:
+                with _target_setup_lock(), payload_workspace(setup_timeout) as payload:
                     move_payloads(build_dir, payload)
                     from lib.setup_upgrade import prepare_target_runtime
                     prepare_target_runtime(build_dir, config.username)

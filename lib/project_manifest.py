@@ -279,9 +279,8 @@ def _parse_component(entry: object, index: int) -> Component:
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError(f"{where}: path must be a string starting with '/'")
     validate_no_control_characters(path, f"{where} path")
-    if comp_type == "godot-web":
-        from lib.cicd_deploy_policy import validate_nginx_path
-        validate_nginx_path(path)
+    from lib.cicd_deploy_policy import validate_nginx_path
+    validate_nginx_path(path)
 
     build = _parse_build(entry.get("build"), where)
     env = _parse_env(entry.get("env"), where)
@@ -298,7 +297,7 @@ def _parse_component(entry: object, index: int) -> Component:
     if comp_type in ("static", "godot-web"):
         output = _require_str(entry, "output", where)
         _require_repo_relative(output, "output", where)
-        if comp_type == "godot-web" and not re.fullmatch(r"[A-Za-z0-9_./-]+", output):
+        if not re.fullmatch(r"[A-Za-z0-9_./-]+", output):
             raise ValueError(f"{where}: output must use safe Nginx path characters")
         return Component(output=output, **common)
 

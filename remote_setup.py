@@ -47,8 +47,9 @@ from lib.validation import (
 from lib.validators import validate_username
 from lib.progress import progress_bar
 from lib.system_types import get_steps_for_system_type
+from lib.deploy_utils import extract_repo_name, repository_stage_name
 from typing import Optional
-from lib.types import Deployments, StepFunc
+from lib.types import StepFunc
 
 
 REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
@@ -217,13 +218,6 @@ def _send_setup_notification(
     return delivered
 
 
-def extract_repo_name(git_url: str) -> str:
-    repo_name = git_url.rstrip('/').split('/')[-1]
-    if repo_name.endswith('.git'):
-        repo_name = repo_name[:-4]
-    return repo_name
-
-
 def get_repository_source_path(
     git_url: str,
     deployment_mode: str,
@@ -241,7 +235,7 @@ def get_repository_source_path(
     continuing would make Nginx reconciliation remove otherwise-live routes.
     """
     repo_name = extract_repo_name(git_url)
-    cache_path = f'/opt/basaltwater/deployments/{repo_name}'
+    cache_path = os.path.join('/opt/basaltwater/deployments', repository_stage_name(git_url))
 
     if not os.path.exists(cache_path):
         raise RuntimeError(
@@ -278,7 +272,7 @@ def enable_detected_build_runtimes(config: SetupConfig) -> None:
     required_versions: list[tuple[int, int, int]] = []
     for _deploy_spec, git_url in config.deploy_specs:
         repo_name = extract_repo_name(git_url)
-        repo_path = os.path.join("/opt/basaltwater/deployments", repo_name)
+        repo_path = os.path.join("/opt/basaltwater/deployments", repository_stage_name(git_url))
         project_files = _find_project_runtime_files(repo_path)
         if project_files["node"] and not config.install_node:
             config.install_node = True
@@ -371,6 +365,21 @@ def _print_dry_run_plan(steps: list[tuple[str, StepFunc]]) -> None:
     for index, (name, _function) in enumerate(steps, 1):
         print(f"  {index:02d}. {name}")
     print("\n[DRY-RUN] No setup steps were executed and no target files were changed.")
+
+
+def _save_setup_state(config: SetupConfig) -> None:
+    """Record a completed setup as the final item in the executable plan."""
+    context = dict(_active_setup_operation[1].context) if _active_setup_operation else {}
+    _transition_setup_operation("finalizing", context)
+    save_machine_state(
+        machine_type=config.machine_type,
+        system_type=config.system_type,
+        username=config.username,
+    )
+    config_dict = config.to_dict()
+    config_dict["system_type"] = config.system_type
+    save_setup_config(config_dict)
+    _complete_setup_operation()
 
 
 def config_from_remote_args(args: argparse.Namespace) -> SetupConfig:
@@ -481,6 +490,10 @@ def _run_main() -> int:
     
     with machine_type_context(config.machine_type):
         steps = get_steps_for_system_type(config)
+    from plugins.post_setup import build_post_setup_steps
+
+    steps.extend(build_post_setup_steps(config, get_repository_source_path))
+    steps.append(("Saving machine state and setup configuration", _save_setup_state))
 
     if args.dry_run:
         _print_dry_run_plan(steps)
@@ -551,198 +564,6 @@ def _run_main() -> int:
     
     bar = progress_bar(total_steps, total_steps)
     print(f"\n{bar} Complete!")
-    
-    if config.enable_cloudflare:
-        from web.cloudflare_steps import (
-            create_cloudflared_config_directory,
-            configure_nginx_for_cloudflare,
-            install_cloudflared_service_helper
-        )
-        
-        print("\n" + "=" * 60)
-        print("Configuring Cloudflare tunnel support...")
-        print("=" * 60)
-        
-        print("\n[1/3] Creating cloudflared configuration directory")
-        create_cloudflared_config_directory(config)
-        
-        print("\n[2/3] Configuring nginx for Cloudflare")
-        configure_nginx_for_cloudflare(config)
-        
-        print("\n[3/3] Installing cloudflared setup helper")
-        install_cloudflared_service_helper(config)
-        
-        print("\n✓ Cloudflare tunnel preconfiguration complete")
-        print("  Public HTTP/HTTPS remain open until cloudflared is verified active")
-        print("  Run 'sudo setup-cloudflare-tunnel' to create a tunnel")
-    
-    if config.deploy_specs:
-        from deploy.deploy_steps import deploy_repository
-        
-        print("\n" + "=" * 60)
-        print("Deploying repositories...")
-        print("=" * 60)
-        
-        deployments: Deployments = []
-        
-        for deploy_specs_str, git_url in config.deploy_specs:
-            repo_result = get_repository_source_path(git_url, config.deployment_mode, config.dry_run)
-            source_path, commit_hash = repo_result
-            
-            for deploy_spec in deploy_specs_str.split(','):
-                deploy_spec = deploy_spec.strip()
-                if not deploy_spec:
-                    continue
-
-                infos = deploy_repository(
-                    source_path=source_path,
-                    deploy_spec=deploy_spec,
-                    git_url=git_url,
-                    commit_hash=commit_hash,
-                    full_deploy=config.full_deploy,
-                    keep_source=True,
-                )
-                if infos:
-                    deployments.extend(infos)
-        
-        if deployments:
-            print("\n" + "=" * 60)
-            print("Configuring Nginx...")
-            print("=" * 60)
-            
-            from lib.nginx_config import create_nginx_sites_for_groups
-            
-            grouped_deployments: dict[Optional[str], Deployments] = {}
-            for dep in deployments:
-                key = dep.get('domain')
-                grouped_deployments.setdefault(key, []).append(dep)
-            
-            create_nginx_sites_for_groups(
-                grouped_deployments,
-                enable_https_redirect=not config.enable_cloudflare,
-            )
-            
-            if config.enable_ssl:
-                from web.ssl_steps import install_certbot, setup_ssl_for_deployments
-                
-                print("\n" + "=" * 60)
-                print("Installing certbot...")
-                print("=" * 60)
-                install_certbot(config)
-                
-                setup_ssl_for_deployments(
-                    deployments,
-                    config.ssl_email,
-                    enable_https_redirect=not config.enable_cloudflare,
-                )
-            
-    if config.enable_cloudflare:
-        from web.cloudflare_steps import (
-            configure_cloudflare_firewall,
-            run_cloudflare_tunnel_setup,
-        )
-
-        print("\n" + "=" * 60)
-        print("Verifying Cloudflare tunnel activation...")
-        print("=" * 60)
-        if run_cloudflare_tunnel_setup(config):
-            configure_cloudflare_firewall(config)
-        else:
-            print("  ℹ Direct HTTP/HTTPS access retained until a tunnel is configured")
-    
-    if config.enable_samba:
-        from smb.samba_steps import (
-            install_samba,
-            configure_samba_firewall,
-            configure_samba_global_settings,
-            configure_samba_fail2ban,
-            reconcile_samba_shares
-        )
-        
-        print("\n" + "=" * 60)
-        print("Configuring Samba...")
-        print("=" * 60)
-        
-        print("\n[1/4] Installing Samba")
-        install_samba(config)
-        
-        print("\n[2/4] Configuring global Samba settings with security hardening")
-        configure_samba_global_settings(config)
-        
-        print("\n[3/4] Configuring firewall for Samba")
-        configure_samba_firewall(config)
-        
-        print("\n[4/4] Configuring fail2ban for Samba brute-force protection")
-        configure_samba_fail2ban(config)
-        
-        print("\n" + "=" * 60)
-        print(f"Reconciling {len(config.samba_shares or [])} Samba share(s)...")
-        print("=" * 60)
-        reconcile_samba_shares(config)
-        
-        print("\n✓ Samba configuration complete")
-    
-    if config.smb_mounts:
-        from smb.smb_mount_steps import configure_smb_mount
-        
-        print("\n" + "=" * 60)
-        print("Configuring SMB mounts...")
-        print("=" * 60)
-        
-        for i, mount_spec in enumerate(config.smb_mounts, 1):
-            print(f"\n[{i}/{len(config.smb_mounts)}] Mounting {mount_spec[0]}")
-            configure_smb_mount(config, mount_spec=mount_spec)
-        
-        print("\n✓ SMB mount configuration complete")
-    
-    if config.sync_specs or config.backup_specs or config.scrub_specs:
-        from sync.sync_steps import install_rsync
-        from sync.scrub_steps import install_par2
-        from sync.storage_ops_steps import (
-            create_storage_ops_service,
-            schedule_storage_ops_update,
-        )
-
-        print("\n" + "=" * 60)
-        print("Configuring storage operations service...")
-        print("=" * 60)
-
-        if config.sync_specs or config.backup_specs:
-            storage_job_count = len(config.sync_specs or []) + len(config.backup_specs or [])
-            print(
-                f"\nPreparing {storage_job_count} "
-                "sync/backup job(s)..."
-            )
-            install_rsync(config)
-
-        if config.scrub_specs:
-            print(f"\nPreparing {len(config.scrub_specs)} scrub job(s)...")
-            install_par2(config)
-        
-        # Create unified storage operations service and timer
-        if args.dry_run:
-            print("  [DRY-RUN] Skipping storage-ops systemd service/timer creation")
-        else:
-            create_storage_ops_service(config)
-            schedule_storage_ops_update()
-
-    _transition_setup_operation(
-        "finalizing",
-        {
-            "machine_type": config.machine_type,
-            "system_type": config.system_type,
-            "username": config.username,
-        },
-    )
-    save_machine_state(
-        machine_type=config.machine_type,
-        system_type=config.system_type,
-        username=config.username,
-    )
-    config_dict = config.to_dict()
-    config_dict["system_type"] = config.system_type
-    save_setup_config(config_dict)
-    _complete_setup_operation()
     
     print("\n" + "=" * 60)
     print("✓ Remote setup complete!")

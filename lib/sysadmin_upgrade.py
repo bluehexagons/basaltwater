@@ -14,9 +14,7 @@ _UPGRADE_COMMAND = (
     " && ([ -f /run/reboot-required ] && echo 'REBOOT_REQUIRED' || echo 'no reboot needed')"
 )
 
-_CHECK_COMMAND = (
-    "apt-get -qq --just-print upgrade 2>/dev/null | grep -c '^Inst' || echo 0"
-)
+_CHECK_COMMAND = "apt-get -qq --just-print upgrade"
 
 
 def run_upgrade(
@@ -53,10 +51,7 @@ def run_upgrade(
 
         out = stdout.strip()
         if check_only:
-            try:
-                count = int(out.splitlines()[-1])
-            except (ValueError, IndexError):
-                count = "?"
+            count = sum(line.startswith("Inst ") for line in out.splitlines())
             print(f"  {host}: {count} package(s) pending")
         else:
             if "REBOOT_REQUIRED" in out:

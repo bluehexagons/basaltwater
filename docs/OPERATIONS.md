@@ -16,7 +16,8 @@ basaltw cmd production
 ```
 
 `list` filters by host, friendly name, or tag. `info` shows configuration and
-last-run status. `cmd` reconstructs a safe, redacted setup command.
+last-run status. `cmd` reconstructs a safe, redacted setup command; webhook
+targets are placeholders in terminal output.
 
 Saved setup caches, machine/setup state, and deployment-target readers reject
 malformed JSON, wrong record shapes, unsafe file types, and unreadable files.
@@ -55,6 +56,14 @@ Normal exit removes it; reboot clears `/run`. Each lease records its owner,
 process ID and expiry (setup deadline plus one minute). Startup removes expired
 leases only after acquiring their lock, leaving active setup untouched. Uploads
 reject links, traversal, more than 10,000 entries, or over 64 MiB of payload data.
+Local and SSH setup share target-side locks while replacing the runtime and
+running setup. Local runtime code is copied beside the current installation
+and activated by rename, preserving the old tree if staging fails. For managed
+Git worktrees, uploaded deployment sources and setup payloads are staged beside
+the installation and replaced with per-item backups. A failed activation
+restores the previous items; incomplete recovery leaves the backup directory
+named in the error for inspection. Runtime staging rejects links in the
+controller source tree before changing permissions or uploading code.
 
 Deployment and gateway readiness requests use literal loopback addresses,
 ignore proxy environment variables, and never follow redirects. Deployment
@@ -166,7 +175,10 @@ Setup command echoes are also quiet by default because each setup step already
 reports progress. Set `BASALTWATER_VERBOSE=1` to echo every command, and use a
 setup dry run to validate the configuration and preview its handoff without
 applying the target setup. It does not execute or enumerate every target-side
-command.
+command. The dry-run plan and live progress use the same step sequence,
+including deployment, Cloudflare, Samba, SMB mounts, storage operations, and
+final state saving. A failure in any of these phases names its step in the
+setup operation marker and failure notification.
 
 Live Proxmox and other expensive tests are opt-in. See
 [`tests/expensive_support.py`](../tests/expensive_support.py) and

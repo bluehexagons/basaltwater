@@ -49,7 +49,10 @@ def run_svc(
 
     # After non-status actions, append a status check so the user sees current state
     if action != "status":
-        remote += f" && systemctl status {shlex.quote(unit)} --no-pager"
+        remote += (
+            f"; action_rc=$?; systemctl status {shlex.quote(unit)} --no-pager || true; "
+            'exit "$action_rc"'
+        )
 
     cmd = build_ssh_command(host, username, ssh_key, batch_mode=False, remote_command=remote)
     result = run_command(cmd)

@@ -667,7 +667,9 @@ def get_all_configs(pattern: Optional[str] = None) -> Deployments:
 
 def reconstruct_command(config: SetupConfig) -> str:
     """Reconstruct the user-facing setup command from cached configuration."""
-    return " ".join(config.to_setup_command())
+    from lib.command_display import redacted_setup_parts
+
+    return " ".join(redacted_setup_parts(config.to_setup_command()))
 
 
 def list_configurations(

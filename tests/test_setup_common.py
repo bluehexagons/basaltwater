@@ -441,6 +441,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                  patch.object(setup_common, "PERSISTENT_STATE_DIR", state_dir), \
                  patch.object(setup_common, "copy_project_files"), \
                  patch.object(setup_common.os, "geteuid", return_value=0), \
+                 patch.object(setup_common, "_target_setup_lock"), \
                  patch.object(setup_common, "run_streamed", return_value=0) as mock_stream:
                 result = setup_common.run_remote_setup(config)
 
@@ -691,11 +692,12 @@ class TestAgentCredentialStaging(unittest.TestCase):
 class TestCloneRepository(unittest.TestCase):
     def test_dry_run_clones_into_disposable_staging_for_preflight(self):
         from lib import setup_common
+        from lib.deploy_utils import repository_stage_name
 
         with tempfile.TemporaryDirectory() as tmpdir:
             work_dir = os.path.join(tmpdir, "work")
             os.makedirs(work_dir)
-            clone_path = os.path.join(work_dir, "repo")
+            clone_path = os.path.join(work_dir, repository_stage_name("https://git.example.com/repo.git"))
 
             def clone_result(command, **_kwargs):
                 os.makedirs(clone_path)
@@ -718,6 +720,7 @@ class TestCloneRepository(unittest.TestCase):
                 "clone",
                 "--depth",
                 "1",
+                "--",
                 "https://git.example.com/repo.git",
                 clone_path,
             ],
@@ -745,6 +748,7 @@ class TestCloneRepository(unittest.TestCase):
 
     def test_existing_cache_is_cleaned_after_reset(self):
         from lib import setup_common
+        from lib.deploy_utils import repository_stage_name
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_dir = os.path.join(tmpdir, "cache")
@@ -772,7 +776,7 @@ class TestCloneRepository(unittest.TestCase):
                     cache_dir=cache_dir,
                 )
 
-        self.assertEqual(result, (os.path.join(work_dir, "repo"), "abc123"))
+        self.assertEqual(result, (os.path.join(work_dir, repository_stage_name(git_url)), "abc123"))
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertIn(["git", "-C", cache_repo, "reset", "--hard", "origin/main"], commands)
         self.assertIn(["git", "-C", cache_repo, "clean", "-fdx"], commands)

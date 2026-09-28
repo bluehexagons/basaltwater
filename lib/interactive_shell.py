@@ -599,7 +599,9 @@ class InteractiveShell:
             f"Saved setup for {config.friendly_name or config.host} ({config.host})."
         )
         self._output("Command:")
-        self._output("  " + " ".join(config.to_setup_command()))
+        from lib.command_display import redacted_setup_parts
+
+        self._output("  " + " ".join(redacted_setup_parts(config.to_setup_command())))
 
         if self._prompt_yes_no("Deploy now?", default=False):
             from basaltwater import deploy_configurations

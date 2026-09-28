@@ -45,6 +45,8 @@ class TestAtomicLegacyDeployment(unittest.TestCase):
 
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="", stderr=""),
+                MagicMock(returncode=0, stdout="", stderr=""),
+                MagicMock(returncode=0, stdout="", stderr=""),
                 MagicMock(returncode=1, stdout="", stderr="build failed"),
             ]
             with self.assertRaisesRegex(RuntimeError, "Node build failed"):
@@ -58,6 +60,7 @@ class TestAtomicLegacyDeployment(unittest.TestCase):
 
             with open(marker, "r", encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "current release")
+            self.assertIn("runuser -u build-example_com", mock_run.call_args.args[0])
 
     @patch("lib.deployment.run")
     def test_node_without_build_script_does_not_run_npm(self, mock_run) -> None:

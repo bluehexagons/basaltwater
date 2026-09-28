@@ -295,19 +295,22 @@ class TestSysadminUpgrade(unittest.TestCase):
         self.assertIn("Reboot required: good", stdout.getvalue())
         self.assertIn("[FAIL] bad: apt failed", stderr.getvalue())
 
-    def test_upgrade_check_parses_pending_count_and_unknown_output(self) -> None:
+    def test_upgrade_check_counts_apt_records_and_reports_failure(self) -> None:
         def run_remote(host: str, command: str, username: str | None, ssh_key: str | None):
             del command, username, ssh_key
-            return host, 0, "7\n" if host == "good" else "not-a-count\n", ""
+            if host == "good":
+                return host, 0, "Inst foo [1] (2)\nInst bar [3] (4)\n", ""
+            return host, 100, "", "apt failed"
 
         stdout = io.StringIO()
+        stderr = io.StringIO()
         with patch.object(sysadmin_upgrade, "_run_remote", side_effect=run_remote):
-            with redirect_stdout(stdout):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 result = sysadmin_upgrade.run_upgrade(["good", "unknown"], check_only=True, max_workers=2)
 
-        self.assertEqual(result, 0)
-        self.assertIn("good: 7 package(s) pending", stdout.getvalue())
-        self.assertIn("unknown: ? package(s) pending", stdout.getvalue())
+        self.assertEqual(result, 1)
+        self.assertIn("good: 2 package(s) pending", stdout.getvalue())
+        self.assertIn("[FAIL] unknown: apt failed", stderr.getvalue())
 
 
 if __name__ == "__main__":

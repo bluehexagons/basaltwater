@@ -9,6 +9,7 @@ import tempfile
 from typing import Any, Optional
 
 from lib.config import SetupConfig
+from lib.command_display import redacted_setup_parts
 from lib.setup_common import copy_project_files, create_tar_from_dir
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command as _build_ssh_command, shell_join
@@ -157,7 +158,7 @@ def run_recall_command(host: str, username: str, ssh_key: Optional[str]) -> int:
         print("Suggested command:")
         print("=" * 60)
         print()
-        print(" \\\n  ".join(stored_config.to_setup_command(include_username=True)))
+        print(" \\\n  ".join(redacted_setup_parts(stored_config.to_setup_command(include_username=True))))
         print()
         return 0
 
@@ -179,7 +180,7 @@ def run_recall_command(host: str, username: str, ssh_key: Optional[str]) -> int:
 
     current_user = os.getenv("USER", "")
     include_username = username != current_user
-    print(" \\\n  ".join(config.to_setup_command(include_username=include_username)))
+    print(" \\\n  ".join(redacted_setup_parts(config.to_setup_command(include_username=include_username))))
 
     if extras:
         notes: list[str] = []

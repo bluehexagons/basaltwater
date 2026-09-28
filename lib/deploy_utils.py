@@ -1,12 +1,52 @@
 """Shared deployment utilities for both local and remote environments."""
 
 from __future__ import annotations
+import hashlib
 import json
 import os
+import re
+import stat
 import subprocess
 from typing import Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.validation import validate_filesystem_path
+
+
+def extract_repo_name(git_url: str) -> str:
+    """Return the human-readable final repository name from a Git URL."""
+    repo_name = git_url.rstrip('/').split('/')[-1]
+    return repo_name.removesuffix('.git')
+
+
+def repository_stage_name(git_url: str) -> str:
+    """Return a stable upload directory unique to the full repository URL."""
+    repo_name = extract_repo_name(git_url)
+    if repo_name in {"", ".", ".."}:
+        raise ValueError(f"Unsafe repository name derived from {git_url}")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "-", repo_name).strip(".-")
+    if not safe_name:
+        raise ValueError(f"Unsafe repository name derived from {git_url}")
+    digest = hashlib.sha256(git_url.encode("utf-8")).hexdigest()[:16]
+    return f"{safe_name[:180]}-{digest}"
+
+
+def validate_repository_source_tree(source_path: str) -> None:
+    """Reject links and special files before inspecting or uploading a checkout."""
+    validate_filesystem_path(source_path, must_exist=True)
+    if os.path.islink(source_path) or not os.path.isdir(source_path):
+        raise ValueError(f"Repository source must be a directory: {source_path}")
+    pending = [source_path]
+    while pending:
+        with os.scandir(pending.pop()) as entries:
+            for entry in entries:
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode):
+                    pending.append(entry.path)
+                elif not stat.S_ISREG(mode):
+                    raise ValueError(
+                        f"Repository source contains a link or special file: {entry.path}"
+                    )
 
 
 def parse_deploy_spec(deploy_spec: str) -> tuple[Optional[str], str]:

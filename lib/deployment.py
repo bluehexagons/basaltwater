@@ -45,6 +45,18 @@ class DeploymentOrchestrator:
     def _ensure_dir(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
 
+    @staticmethod
+    def _copy_deployment_source(source_path: str, staging_path: str) -> None:
+        """Copy repository files without following links out of the source tree."""
+        if os.path.islink(source_path):
+            raise ValueError(f"Deployment source is a symlink: {source_path}")
+        shutil.copytree(source_path, staging_path, dirs_exist_ok=True, symlinks=True)
+        for current, directories, files in os.walk(staging_path, followlinks=False):
+            for name in (*directories, *files):
+                candidate = os.path.join(current, name)
+                if os.path.islink(candidate):
+                    raise ValueError(f"Deployment source contains a symlink: {candidate}")
+
     def _get_command_error(self, result: Any, fallback: str) -> str:
         """Extract a concise error message from a command result."""
         stderr = getattr(result, 'stderr', '') or ''
@@ -161,7 +173,7 @@ class DeploymentOrchestrator:
         )
         backup_path: Optional[str] = None
         try:
-            shutil.copytree(source_path, staging_path, dirs_exist_ok=True)
+            self._copy_deployment_source(source_path, staging_path)
             project_type = detect_project_type(staging_path)
             print(f"Deploying {project_type} project to {dest_path}...")
 
@@ -170,7 +182,19 @@ class DeploymentOrchestrator:
                 site_root = f"/{site_root}"
             if not site_root.endswith("/"):
                 site_root = f"{site_root}/"
-            self.build_project(staging_path, project_type, site_root=site_root)
+            build_user = None
+            if project_type == "node":
+                build_user = self._build_identity(dest_path)
+                self._ensure_build_user(build_user)
+                result = run(
+                    f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} "
+                    f"{shlex.quote(staging_path)}",
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
+            self.build_project(staging_path, project_type, site_root=site_root,
+                               build_user=build_user)
 
             result = run(
                 f"chown -R {shlex.quote(self.deploy_user)}:{shlex.quote(self.deploy_group)} "
@@ -642,12 +666,8 @@ class DeploymentOrchestrator:
                     "staging_path": staging_path,
                 },
             )
-            if keep_source:
-                shutil.copytree(source_path, staging_path, dirs_exist_ok=True)
-                print(f"  ✓ Copied source to staging path {staging_path}")
-            else:
-                shutil.copytree(source_path, staging_path, dirs_exist_ok=True)
-                print(f"  ✓ Copied source to staging path {staging_path}")
+            self._copy_deployment_source(source_path, staging_path)
+            print(f"  ✓ Copied source to staging path {staging_path}")
 
             # Build as an application-specific non-root identity.
             result = run(
@@ -763,7 +783,10 @@ class DeploymentOrchestrator:
             operation_store.complete(operation.operation_id)
             operation = None
             if backup_path:
-                shutil.rmtree(backup_path)
+                try:
+                    shutil.rmtree(backup_path)
+                except OSError as exc:
+                    print(f"  ⚠ Previous release cleanup failed at {backup_path}: {exc}")
                 backup_path = None
             print(f"  ✓ Manifest deployed to {dest_path}")
             return deps
@@ -1152,16 +1175,19 @@ class DeploymentOrchestrator:
         )
 
     def build_project(self, project_path: str, project_type: str,
-                      site_root: Optional[str] = None) -> None:
+                      site_root: Optional[str] = None,
+                      build_user: Optional[str] = None) -> None:
         if project_type == "node":
-            self._build_node_project(project_path, site_root=site_root)
+            self._build_node_project(project_path, site_root=site_root,
+                                     build_user=build_user)
         elif project_type == "static":
             self._build_static_project(project_path)
         else:
             print(f"  ⚠ Unknown project type, no build performed")
     
     def _build_node_project(self, project_path: str,
-                            site_root: Optional[str] = None) -> bool:
+                            site_root: Optional[str] = None,
+                            build_user: Optional[str] = None) -> bool:
         print(f"  Building Node.js project at {project_path}")
 
         # Check if a build script is defined in package.json before running it
@@ -1184,8 +1210,19 @@ class DeploymentOrchestrator:
         npm_install_command = "npm ci" if os.path.exists(package_lock) else "npm install"
         freshness_args = shlex.join(npm_freshness_args())
         freshness_suffix = f" {freshness_args}" if freshness_args else ""
+        if build_user is None:
+            raise RuntimeError("Node builds require a dedicated build user")
+        build_home = self._build_home(build_user)
+
+        def as_build_user(command: str) -> str:
+            script = f"cd {shlex.quote(project_path)} && {command}"
+            return (
+                f"runuser -u {shlex.quote(build_user)} -- "
+                f"env HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(script)}"
+            )
+
         install_result = run(
-            f"cd {shlex.quote(project_path)} && TMPDIR=/var/tmp {npm_install_command}{freshness_suffix}",
+            as_build_user(f"TMPDIR=/var/tmp {npm_install_command}{freshness_suffix}"),
             check=False,
             capture_output=True,
         )
@@ -1207,7 +1244,7 @@ class DeploymentOrchestrator:
             build_cmd = f"{' '.join(env_prefix)} {build_cmd}"
         
         result = run(
-            f"cd {shlex.quote(project_path)} && {build_cmd}",
+            as_build_user(build_cmd),
             check=False,
             capture_output=True,
         )

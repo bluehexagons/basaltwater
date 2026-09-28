@@ -152,7 +152,12 @@ def save_successful_setup(config: SetupConfig) -> None:
     arguments = _replay_arguments(config)
     _parse_saved_arguments(arguments)
     path = _record_path()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    home = Path(_account().pw_dir)
+    for parent in reversed(path.parent.parents):
+        if parent == home or parent.is_relative_to(home):
+            parent.mkdir(mode=0o700, exist_ok=True)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    _record_path()
     write_json_atomic(str(path), {"schema_version": 1, "arguments": arguments}, mode=0o600)
     # Keep the replay contract compatible with older launchers. The private
     # receipt is informational and never used as executable setup arguments.

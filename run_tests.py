@@ -69,7 +69,6 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_refresh.py",
         "tests/test_config*.py",
         "tests/test_completions.py",
-        "tests/test_concurrent_operations.py",
         "tests/test_credentials.py",
         "tests/test_display.py",
         "tests/test_expensive_support.py",
@@ -111,6 +110,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_xrdp*.py",
     ),
     "deployment": (
+        "tests/test_audit_regressions.py",
         "tests/test_cicd*.py",
         "tests/test_common_steps.py",
         "tests/test_deploy*.py",

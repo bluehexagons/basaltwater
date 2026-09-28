@@ -450,6 +450,8 @@ def generate_merged_nginx_config(
     disable_symlinks: bool = False,
 ) -> str:
     """Generate a merged nginx configuration for multiple deployments on the same domain."""
+    from lib.cicd_deploy_policy import validate_nginx_path
+
     cert_file, key_file = get_ssl_cert_path(domain)
     server_name_directive = f"server_name {domain};" if domain else "server_name _;"
     default_server = " default_server" if is_default else ""
@@ -470,6 +472,7 @@ def generate_merged_nginx_config(
     
     for dep in sorted_deployments:
         path = dep['path']
+        validate_nginx_path(path)
         location_path = path.rstrip('/') if path != '/' else '/'
         
         if dep['needs_proxy']:
@@ -483,6 +486,7 @@ def generate_merged_nginx_config(
             ))
         else:
             serve_path = dep['serve_path']
+            validate_nginx_path(serve_path)
             if dep.get('project_type') == 'godot-web':
                 locations.append(_make_godot_location(location_path, serve_path))
                 continue
