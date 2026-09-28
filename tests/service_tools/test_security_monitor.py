@@ -17,6 +17,15 @@ from security.service_tools import security_monitor
 from lib.xrdp_certificate import XrdpCertificateHealth
 
 
+def _stream_output(output: str, returncode: int = 0):
+    def run(_command, *, on_output, **_kwargs):
+        for line in output.splitlines(keepends=True):
+            on_output(line)
+        return returncode
+
+    return run
+
+
 class TestSecurityMonitor(unittest.TestCase):
     @patch(
         "security.service_tools.security_monitor.inspect_xrdp_certificate",
@@ -40,6 +49,44 @@ class TestSecurityMonitor(unittest.TestCase):
         mock_ssh.assert_called_once()
         mock_notify.assert_not_called()
         mock_save.assert_called_once()
+
+    def test_catchup_advances_one_complete_window_per_run(self):
+        since = (datetime.now() - timedelta(minutes=45)).replace(microsecond=0)
+        state = {"last_run": since.isoformat()}
+        observed_windows = []
+        certificate = XrdpCertificateHealth("not_configured", "", "")
+
+        def check_fail2ban(start, end):
+            observed_windows.append((start, end))
+            return [], [], None
+
+        def save(next_state):
+            state.clear()
+            state.update(next_state)
+
+        with patch.object(
+            security_monitor, "load_notification_configs_from_state", return_value=[]
+        ), patch.object(
+            security_monitor, "_load_state", side_effect=lambda: dict(state)
+        ), patch.object(
+            security_monitor, "_check_fail2ban", side_effect=check_fail2ban
+        ), patch.object(
+            security_monitor, "_check_auditd", return_value=([], False, [])
+        ), patch.object(
+            security_monitor, "_check_ssh_failures", return_value=(0, None)
+        ), patch.object(
+            security_monitor, "inspect_xrdp_certificate", return_value=certificate
+        ), patch.object(security_monitor, "_save_state", side_effect=save):
+            self.assertEqual(security_monitor.main(), 0)
+            first_cursor = datetime.fromisoformat(state["last_run"])
+            self.assertEqual(security_monitor.main(), 0)
+
+        self.assertEqual(observed_windows[0], (since, since + timedelta(minutes=15, seconds=-1)))
+        self.assertEqual(first_cursor, since + timedelta(minutes=15))
+        self.assertEqual(observed_windows[1][0], first_cursor)
+        self.assertEqual(
+            observed_windows[1][1], first_cursor + timedelta(minutes=15, seconds=-1)
+        )
 
     @patch(
         "security.service_tools.security_monitor.inspect_xrdp_certificate",
@@ -250,24 +297,57 @@ class TestSecurityMonitor(unittest.TestCase):
         self.assertEqual(saved_state["rdp_certificate_fingerprint"], "aabbcc")
 
     @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
-    @patch("security.service_tools.security_monitor._run_bounded", return_value=(1, ""))
+    @patch("security.service_tools.security_monitor.run_streamed", return_value=1)
     def test_ausearch_no_matches_is_not_a_collection_error(self, mock_run, mock_tool):
+        since = datetime(2026, 8, 22, 12)
+        events, error = security_monitor._ausearch_events(
+            "identity", since, since + timedelta(minutes=15)
+        )
 
-        has_events, error = security_monitor._ausearch_has_events("identity", datetime.now())
-
-        self.assertFalse(has_events)
+        self.assertEqual(events, [])
         self.assertIsNone(error)
         mock_tool.assert_called_once_with("ausearch")
         self.assertEqual(mock_run.call_args.args[0][0], "/usr/sbin/ausearch")
-        self.assertEqual(mock_run.call_args.kwargs, {"timeout": 15})
+        self.assertIn("--end", mock_run.call_args.args[0])
+        self.assertEqual(mock_run.call_args.kwargs["timeout"], 60)
 
     @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
-    @patch("security.service_tools.security_monitor._run_bounded", return_value=None)
-    def test_ausearch_overflow_is_a_collection_error(self, _run, _tool):
-        events, error = security_monitor._ausearch_events("identity", datetime.now())
+    @patch("security.service_tools.security_monitor.run_streamed")
+    def test_ausearch_oversized_record_is_a_collection_error(self, mock_run, _tool):
+        def stream(_command, *, on_output, **_kwargs):
+            on_output("x" * (security_monitor._MAX_SOURCE_LINE_BYTES + 1))
+            return 0
+
+        mock_run.side_effect = stream
+        since = datetime(2026, 8, 22, 12)
+        events, error = security_monitor._ausearch_events(
+            "identity", since, since + timedelta(minutes=15)
+        )
 
         self.assertEqual(events, [])
-        self.assertIn("output limit", error)
+        self.assertIn("oversized record", error)
+
+    @patch("security.service_tools.security_monitor._audit_tool", return_value="/usr/sbin/ausearch")
+    @patch("security.service_tools.security_monitor.run_streamed")
+    def test_ausearch_streams_more_than_two_megabytes(self, mock_run, _tool):
+        def stream(_command, *, on_output, **_kwargs):
+            for _ in range(3000):
+                on_output("----\n")
+                on_output(
+                    'type=PATH msg=audit(1766400000.100:1): '
+                    'name="/etc/passwd" extra=' + 'x' * 700 + '\n'
+                )
+            return 0
+
+        mock_run.side_effect = stream
+        since = datetime(2026, 8, 22, 12)
+        events, error = security_monitor._ausearch_events(
+            "identity", since, since + timedelta(minutes=15)
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(events[0]["event_count"], 3000)
+        self.assertEqual(events[0]["paths"], ["/etc/passwd"])
 
     def test_audit_events_include_evidence_summary(self):
         output = """----
@@ -345,7 +425,10 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
     def test_missing_ausearch_is_reported_when_auditd_is_installed(self, mock_which):
         mock_which.side_effect = lambda command, **_kwargs: "/usr/sbin/auditd" if command == "auditd" else None
 
-        events, critical, errors = security_monitor._check_auditd(datetime.now())
+        since = datetime.now()
+        events, critical, errors = security_monitor._check_auditd(
+            since, since + timedelta(minutes=15)
+        )
 
         self.assertEqual(events, [])
         self.assertFalse(critical)
@@ -369,7 +452,10 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
         self, _which
     ):
         with patch.dict(os.environ, {"BASALTWATER_AUDIT_REQUIRED": "1"}):
-            events, critical, errors = security_monitor._check_auditd(datetime.now())
+            since = datetime.now()
+            events, critical, errors = security_monitor._check_auditd(
+                since, since + timedelta(minutes=15)
+            )
 
         self.assertEqual(events, [])
         self.assertFalse(critical)
@@ -383,17 +469,19 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
     ):
         mock_health.return_value = ("degraded", ["Expected audit rules are not loaded: sudoers."])
         with patch.dict(os.environ, {"BASALTWATER_AUDIT_REQUIRED": "1"}):
-            events, critical, errors = security_monitor._check_auditd(datetime.now())
+            since = datetime.now()
+            events, critical, errors = security_monitor._check_auditd(
+                since, since + timedelta(minutes=15)
+            )
 
         self.assertEqual(events, [])
         self.assertFalse(critical)
         self.assertEqual(errors, ["auditd: Expected audit rules are not loaded: sudoers."])
         mock_events.assert_not_called()
 
-    @patch("security.service_tools.security_monitor._run_bounded")
+    @patch("security.service_tools.security_monitor.run_streamed")
     def test_ssh_failures_are_aggregated_by_source_user_and_method(self, mock_run):
-        mock_run.return_value = (
-            0,
+        mock_run.side_effect = _stream_output(
             "\n".join([
                 json.dumps({
                     "MESSAGE": "Failed password for root from 192.0.2.4 port 22 ssh2",
@@ -409,7 +497,10 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
             ]),
         )
 
-        summary, error = security_monitor._check_ssh_failures(datetime.now())
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
 
         self.assertIsNone(error)
         self.assertEqual(summary["failure_count"], 3)
@@ -419,29 +510,95 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
             {source["method"] for source in summary["sources"]},
             {"password", "publickey", "unknown"},
         )
-        self.assertEqual(mock_run.call_args.kwargs, {"timeout": 15})
+        self.assertEqual(mock_run.call_args.kwargs["timeout"], 60)
+        self.assertIn("--until", mock_run.call_args.args[0])
 
-    @patch("security.service_tools.security_monitor._run_bounded", return_value=None)
-    def test_ssh_journal_overflow_is_a_collection_error(self, _run):
-        summary, error = security_monitor._check_ssh_failures(datetime.now())
+    @patch("security.service_tools.security_monitor.run_streamed", side_effect=TimeoutError)
+    def test_ssh_journal_timeout_is_a_collection_error(self, _run):
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
 
         self.assertEqual(summary["failure_count"], 0)
-        self.assertIn("output limit", error)
+        self.assertIn("timed out", error)
 
-    @patch("security.service_tools.security_monitor._run_bounded")
+    @patch("security.service_tools.security_monitor.run_streamed")
     def test_ssh_journal_invalid_timestamp_keeps_failure(self, mock_run):
-        mock_run.return_value = (
-            0,
+        mock_run.side_effect = _stream_output(
             json.dumps({
                 "MESSAGE": "Failed password for root from 192.0.2.4 port 22 ssh2",
                 "_SOURCE_REALTIME_TIMESTAMP": "9" * 100,
             }),
         )
 
-        summary, error = security_monitor._check_ssh_failures(datetime.now())
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
 
         self.assertIsNone(error)
         self.assertEqual(summary["failure_count"], 1)
+
+    @patch("security.service_tools.security_monitor.run_streamed")
+    def test_ssh_journal_streams_large_output_with_bounded_breakdown(self, mock_run):
+        def stream(_command, *, on_output, **_kwargs):
+            for index in range(3000):
+                on_output(json.dumps({
+                    "MESSAGE": f"Failed password for root from 192.0.2.{index % 256} port 22 ssh2",
+                    "PADDING": "x" * 700,
+                }) + "\n")
+            return 0
+
+        mock_run.side_effect = stream
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["failure_count"], 3000)
+        self.assertEqual(len(summary["sources"]), 10)
+
+    @patch("security.service_tools.security_monitor.run_streamed")
+    def test_ssh_journal_discards_partial_scan_after_failure(self, mock_run):
+        def stream(_command, *, on_output, **_kwargs):
+            on_output(json.dumps({
+                "MESSAGE": "Failed password for root from 192.0.2.4 port 22 ssh2",
+            }) + "\n")
+            raise TimeoutError("journal stalled")
+
+        mock_run.side_effect = stream
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
+
+        self.assertEqual(summary["failure_count"], 0)
+        self.assertIn("timed out", error)
+
+    @patch("security.service_tools.security_monitor.run_streamed")
+    def test_ssh_source_cardinality_does_not_expand_breakdown_without_limit(self, mock_run):
+        def stream(_command, *, on_output, **_kwargs):
+            for index in range(1200):
+                on_output(json.dumps({
+                    "MESSAGE": (
+                        f"Failed password for user{index} from "
+                        "192.0.2.4 port 22 ssh2"
+                    ),
+                }) + "\n")
+            return 0
+
+        mock_run.side_effect = stream
+        since = datetime(2026, 8, 22, 12)
+        summary, error = security_monitor._check_ssh_failures(
+            since, since + timedelta(minutes=15)
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["failure_count"], 1200)
+        self.assertEqual(summary["unattributed_failures"], 200)
+        self.assertEqual(len(summary["sources"]), 10)
 
     def test_ssh_account_lockout_is_structured(self):
         event = security_monitor._parse_ssh_lockout(
@@ -467,13 +624,21 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
 
             with patch("security.service_tools.security_monitor._FAIL2BAN_LOG", log_path):
                 bans, unbans, error = security_monitor._check_fail2ban(
-                    datetime(2026, 8, 22, 12, 0, 0)
+                    datetime(2026, 8, 22, 12, 0, 0),
+                    datetime(2026, 8, 22, 12, 15, 0),
+                )
+                first_bans, first_unbans, first_error = security_monitor._check_fail2ban(
+                    datetime(2026, 8, 22, 12, 0, 0),
+                    datetime(2026, 8, 22, 12, 1, 59),
                 )
 
         self.assertIsNone(error)
         self.assertEqual(bans[0]["jail"], "nginx-http-auth")
         self.assertEqual(bans[0]["source_ip"], "192.0.2.4")
         self.assertEqual(unbans[0]["action"], "unban")
+        self.assertIsNone(first_error)
+        self.assertEqual(len(first_bans), 1)
+        self.assertEqual(first_unbans, [])
 
     def test_state_roundtrip_uses_atomic_writer(self):
         with tempfile.TemporaryDirectory() as state_dir:

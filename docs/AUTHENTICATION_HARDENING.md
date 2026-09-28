@@ -23,9 +23,14 @@ profile and checks that the generated common auth and account stacks use it.
 Setup fails if the lockout profile cannot be activated, so a matching settings
 file alone is not reported as active protection.
 
-The security monitor bounds `ausearch` and SSH journal output. If either query
-exceeds the limit, it reports a collection failure and retains its prior cursor
-for a later retry instead of reporting an incomplete scan as clean.
+The security monitor reads `ausearch` and SSH journal results as a stream, with
+bounded audit and SSH record and summary sizes. It scans one complete 15-minute
+interval per run when catching up after an outage, then saves the next
+interval's cursor.
+A source timeout, oversized record, or failed query leaves the cursor at the
+start of that interval and reports a collection failure. A high-cardinality SSH
+attack still contributes to the failure count even after the source breakdown
+reaches its limit.
 
 When source filters are configured, setup checks the active UFW rules after
 reconciliation. It fails if SSH, RDP, or a managed web port still has an inbound

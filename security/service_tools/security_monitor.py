@@ -41,10 +41,11 @@ from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.security_activity import managed_setup_audit_window
+from lib.streamed_process import run_streamed
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.xrdp_certificate import XrdpCertificateHealth, inspect_xrdp_certificate
-from common.service_tools.web_panel_audit_export import _audit_health, _run_bounded
+from common.service_tools.web_panel_audit_export import _audit_health
 
 logger = get_service_logger('security_monitor', 'security', use_syslog=True)
 
@@ -53,6 +54,11 @@ _FAIL2BAN_LOG = '/var/log/fail2ban.log'
 _SSH_FAILURE_THRESHOLD = 5
 _SSH_WARNING_THRESHOLD = 25
 _SSH_MAX_BREAKDOWN = 10
+_SSH_MAX_GROUPS = 1000
+_MAX_AUDIT_RECORD_BYTES = 256 * 1024
+_MAX_SOURCE_LINE_BYTES = 64 * 1024
+_SCAN_WINDOW = timedelta(minutes=15)
+_SOURCE_TIMEOUT_SECONDS = 60
 _AUDIT_PATH = '/usr/sbin:/sbin:/usr/bin:/bin'
 
 
@@ -105,7 +111,9 @@ def _save_state(state: dict[str, object]) -> None:
 # fail2ban
 # ---------------------------------------------------------------------------
 
-def _check_fail2ban(since: datetime) -> tuple[list[JSONDict], list[JSONDict], str | None]:
+def _check_fail2ban(
+    since: datetime, until: datetime
+) -> tuple[list[JSONDict], list[JSONDict], str | None]:
     """Return structured ban/unban events and any collection error."""
     bans: list[JSONDict] = []
     unbans: list[JSONDict] = []
@@ -126,7 +134,7 @@ def _check_fail2ban(since: datetime) -> tuple[list[JSONDict], list[JSONDict], st
                     ts = datetime.strptime(m.group(1), '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     continue
-                if ts < since:
+                if ts < since or ts > until:
                     continue
                 jail, action, ip = m.group(2), m.group(3), m.group(4)
                 entry: JSONDict = {
@@ -156,7 +164,7 @@ def _audit_field_values(record: str, field_name: str) -> list[str]:
     values: list[str] = []
     for match in pattern.finditer(record):
         value = match.group(1) or match.group(2)
-        if value and value not in values:
+        if value and len(value) <= 512 and value not in values:
             values.append(value)
     return values
 
@@ -245,39 +253,104 @@ def _parse_audit_events(
     return [event]
 
 
+def _merge_audit_event(current: JSONDict | None, event: JSONDict) -> JSONDict:
+    """Combine one bounded audit record into a bounded key summary."""
+    if current is None:
+        return event
+    current['event_count'] = int(current['event_count']) + int(event['event_count'])
+    for field in ('paths', 'operations', 'actors', 'executables'):
+        incoming = event.get(field)
+        if not isinstance(incoming, list) or not incoming:
+            continue
+        values = current.setdefault(field, [])
+        if not isinstance(values, list):
+            continue
+        for value in incoming:
+            if value not in values and len(values) < _SSH_MAX_BREAKDOWN:
+                values.append(value)
+    first_seen = event.get('first_seen')
+    prior_first = current.get('first_seen')
+    if isinstance(first_seen, str) and (
+        not isinstance(prior_first, str) or first_seen < prior_first
+    ):
+        current['first_seen'] = first_seen
+    last_seen = event.get('last_seen')
+    prior_last = current.get('last_seen')
+    if isinstance(last_seen, str) and (
+        not isinstance(prior_last, str) or last_seen > prior_last
+    ):
+        current['last_seen'] = last_seen
+    return current
+
+
+def _stream_source_query(command: list[str], on_output) -> tuple[int | None, str | None]:
+    """Process source output with a deadline and bounded callback records."""
+    try:
+        return run_streamed(
+            command, timeout=_SOURCE_TIMEOUT_SECONDS, on_output=on_output
+        ), None
+    except TimeoutError:
+        return None, 'query timed out'
+    except (OSError, ValueError):
+        return None, 'query failed or contained an oversized record'
+
+
 def _ausearch_events(
     key: str,
     since: datetime,
+    until: datetime,
     excluded_window: tuple[datetime, datetime] | None = None,
 ) -> tuple[list[JSONDict], str | None]:
     """Return summarised auditd events for a key and any collection error."""
-    since_date = since.strftime('%m/%d/%Y')
-    since_time = since.strftime('%H:%M:%S')
     ausearch = _audit_tool('ausearch')
     if not ausearch:
         return [], f'audit key {key}: ausearch command unavailable'
-    result = _run_bounded(
-        [ausearch, '--start', since_date, since_time, '-k', key, '-i'],
-        timeout=15,
+    summary: JSONDict | None = None
+    record_lines: list[str] = []
+    record_bytes = 0
+
+    def finish_record() -> None:
+        nonlocal summary, record_bytes
+        if record_lines:
+            events = _parse_audit_events(key, ''.join(record_lines), excluded_window)
+            if events:
+                summary = _merge_audit_event(summary, events[0])
+        record_lines.clear()
+        record_bytes = 0
+
+    def consume(line: str) -> None:
+        nonlocal record_bytes
+        if len(line.encode('utf-8')) > _MAX_SOURCE_LINE_BYTES:
+            raise ValueError('audit line too large')
+        if line.strip() == '----':
+            finish_record()
+            return
+        record_bytes += len(line.encode('utf-8'))
+        if record_bytes > _MAX_AUDIT_RECORD_BYTES:
+            raise ValueError('audit record too large')
+        record_lines.append(line)
+
+    returncode, error = _stream_source_query(
+        [
+            ausearch, '--start', since.strftime('%m/%d/%Y'),
+            since.strftime('%H:%M:%S'), '--end', until.strftime('%m/%d/%Y'),
+            until.strftime('%H:%M:%S'), '-k', key, '-i',
+        ],
+        consume,
     )
-    if result is None:
-        return [], f'audit key {key}: query failed or exceeded the output limit'
-    returncode, output = result
+    if error:
+        return [], f'audit key {key}: {error}'
     if returncode == 0:
-        return _parse_audit_events(key, output, excluded_window), None
+        finish_record()
+        return [summary] if summary else [], None
     if returncode == 1:
         return [], None
     return [], f'audit key {key}: ausearch exited {returncode}'
 
 
-def _ausearch_has_events(key: str, since: datetime) -> tuple[bool, str | None]:
-    """Return whether auditd has matching events and any collection error."""
-    events, error = _ausearch_events(key, since)
-    return bool(events), error
-
-
 def _check_auditd(
     since: datetime,
+    until: datetime,
     excluded_window: tuple[datetime, datetime] | None = None,
 ) -> tuple[list[JSONDict], bool, list[str]]:
     """Return triggered keys, critical status, and collection errors."""
@@ -300,7 +373,7 @@ def _check_auditd(
     has_critical = False
     errors: list[str] = []
     for key in _CRITICAL_KEYS + _INFO_KEYS:
-        key_events, error = _ausearch_events(key, since, excluded_window)
+        key_events, error = _ausearch_events(key, since, until, excluded_window)
         if error:
             errors.append(error)
         if key_events:
@@ -351,6 +424,8 @@ def _parse_ssh_failure(message: str, timestamp: str | None) -> JSONDict | None:
             source_ip = generic_source.group('source').rstrip(';,')
         if generic_user:
             user = generic_user.group('user').rstrip(';,')
+    user = user[:128]
+    source_ip = source_ip[:128]
 
     lower_message = message.lower()
     if 'publickey' in lower_message:
@@ -391,6 +466,8 @@ def _parse_ssh_lockout(message: str, timestamp: str | None) -> JSONDict | None:
     source_match = re.search(r'\b(?:rhost|from)[= ](?P<source>\S+)', message, re.IGNORECASE)
     if source_match:
         source_ip = source_match.group('source').rstrip(';,')
+    user = user[:128]
+    source_ip = source_ip[:128]
 
     event: JSONDict = {
         'source_ip': source_ip,
@@ -419,49 +496,46 @@ def _normalise_ssh_summary(value: object) -> JSONDict:
     return {'failure_count': 0, 'sources': [], 'lockouts': []}
 
 
-def _check_ssh_failures(since: datetime) -> tuple[JSONDict, str | None]:
+def _check_ssh_failures(since: datetime, until: datetime) -> tuple[JSONDict, str | None]:
     """Summarise SSH authentication failures and return collection errors."""
-    since_str = since.strftime('%Y-%m-%d %H:%M:%S')
-    result = _run_bounded(
-        ['journalctl', '-u', 'sshd', '-u', 'ssh',
-         '--since', since_str, '--no-pager', '-o', 'json'],
-        timeout=15,
-    )
-    if result is None:
-        return _normalise_ssh_summary(0), 'SSH journal: query failed or exceeded the output limit'
-    returncode, output = result
-    if returncode != 0:
-        return _normalise_ssh_summary(0), f'SSH journal: journalctl exited {returncode}'
-
     aggregate: dict[tuple[str, str, str], JSONDict] = {}
     lockout_aggregate: dict[tuple[str, str], JSONDict] = {}
-    for line in output.splitlines():
-        message = line
+    failure_count = 0
+    unattributed_failures = 0
+    unattributed_lockouts = 0
+
+    def consume(line: str) -> None:
+        nonlocal failure_count, unattributed_failures, unattributed_lockouts
+        if len(line.encode('utf-8')) > _MAX_SOURCE_LINE_BYTES:
+            raise ValueError('SSH journal record too large')
         timestamp: str | None = None
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
-            record = None
-        if isinstance(record, dict):
-            message_value = record.get('MESSAGE')
-            if not isinstance(message_value, str):
-                continue
-            message = message_value
-            raw_timestamp = record.get('_SOURCE_REALTIME_TIMESTAMP')
-            if isinstance(raw_timestamp, str) and raw_timestamp.isdigit():
-                try:
-                    timestamp = datetime.fromtimestamp(
-                        int(raw_timestamp) / 1_000_000
-                    ).isoformat(timespec='seconds')
-                except (OSError, OverflowError, ValueError):
-                    timestamp = None
+            return
+        if not isinstance(record, dict):
+            return
+        message = record.get('MESSAGE')
+        if not isinstance(message, str):
+            return
+        raw_timestamp = record.get('_SOURCE_REALTIME_TIMESTAMP')
+        if isinstance(raw_timestamp, str) and raw_timestamp.isdigit():
+            try:
+                timestamp = datetime.fromtimestamp(
+                    int(raw_timestamp) / 1_000_000
+                ).isoformat(timespec='seconds')
+            except (OSError, OverflowError, ValueError):
+                timestamp = None
 
         lockout = _parse_ssh_lockout(message, timestamp)
         if lockout:
             lockout_key = (str(lockout['source_ip']), str(lockout['username']))
             current_lockout = lockout_aggregate.get(lockout_key)
             if current_lockout is None:
-                lockout_aggregate[lockout_key] = dict(lockout)
+                if len(lockout_aggregate) < _SSH_MAX_GROUPS:
+                    lockout_aggregate[lockout_key] = dict(lockout)
+                else:
+                    unattributed_lockouts += 1
             else:
                 current_lockout['count'] = int(current_lockout.get('count', 0)) + 1
                 if timestamp:
@@ -469,6 +543,7 @@ def _check_ssh_failures(since: datetime) -> tuple[JSONDict, str | None]:
 
         event = _parse_ssh_failure(message, timestamp)
         if event:
+            failure_count += 1
             key = (
                 str(event['source_ip']),
                 str(event['username']),
@@ -476,18 +551,33 @@ def _check_ssh_failures(since: datetime) -> tuple[JSONDict, str | None]:
             )
             current = aggregate.get(key)
             if current is None:
-                aggregate[key] = dict(event)
+                if len(aggregate) < _SSH_MAX_GROUPS:
+                    aggregate[key] = dict(event)
+                else:
+                    unattributed_failures += 1
             else:
                 current['count'] = int(current.get('count', 0)) + 1
                 if timestamp:
                     current['last_seen'] = timestamp
+
+    returncode, error = _stream_source_query(
+        ['journalctl', '-u', 'sshd', '-u', 'ssh',
+         '--since', since.strftime('%Y-%m-%d %H:%M:%S'),
+         '--until', until.strftime('%Y-%m-%d %H:%M:%S'),
+         '--no-pager', '-o', 'json'],
+        consume,
+    )
+    if error:
+        return _normalise_ssh_summary(0), f'SSH journal: {error}'
+    if returncode != 0:
+        return _normalise_ssh_summary(0), f'SSH journal: journalctl exited {returncode}'
 
     sources = sorted(
         aggregate.values(),
         key=lambda entry: (-int(entry.get('count', 0)), str(entry.get('source_ip', ''))),
     )
     summary: JSONDict = {
-        'failure_count': sum(int(entry.get('count', 0)) for entry in sources),
+        'failure_count': failure_count,
         'sources': sources[:_SSH_MAX_BREAKDOWN],
         'lockouts': sorted(
             lockout_aggregate.values(),
@@ -499,6 +589,10 @@ def _check_ssh_failures(since: datetime) -> tuple[JSONDict, str | None]:
     }
     if len(sources) > _SSH_MAX_BREAKDOWN:
         summary['suppressed_sources'] = len(sources) - _SSH_MAX_BREAKDOWN
+    if unattributed_failures:
+        summary['unattributed_failures'] = unattributed_failures
+    if unattributed_lockouts:
+        summary['unattributed_lockouts'] = unattributed_lockouts
     return summary, None
 
 
@@ -708,6 +802,8 @@ def _build_security_data(
             ssh_event['sources'] = list(ssh_summary.get('sources', []))
             if 'suppressed_sources' in ssh_summary:
                 ssh_event['suppressed_sources'] = ssh_summary['suppressed_sources']
+            if 'unattributed_failures' in ssh_summary:
+                ssh_event['unattributed_failures'] = ssh_summary['unattributed_failures']
         events.append(ssh_event)
     lockouts = ssh_summary.get('lockouts', []) if ssh_summary else []
     if isinstance(lockouts, list):
@@ -856,7 +952,12 @@ def _format_security_details(
                 )
             suppressed = ssh_summary.get('suppressed_sources', 0)
             if suppressed:
-                lines.append(f"  - {suppressed} lower-volume source(s) omitted")
+                lines.append(f"  - {suppressed} additional source group(s) omitted")
+            unattributed = ssh_summary.get('unattributed_failures', 0)
+            if unattributed:
+                lines.append(
+                    f"  - {unattributed} failure(s) counted without a source breakdown"
+                )
     if isinstance(lockouts, list) and lockouts:
         lines.extend([
             "",
@@ -936,7 +1037,7 @@ def main() -> int:
         )
 
     state = _load_state()
-    now = datetime.now()
+    wall_now = datetime.now()
 
     if 'last_run' in state:
         try:
@@ -947,13 +1048,22 @@ def main() -> int:
             if since.tzinfo is not None:
                 since = since.astimezone().replace(tzinfo=None)
         except (TypeError, ValueError):
-            since = now - timedelta(minutes=15)
+            since = wall_now - _SCAN_WINDOW
     else:
-        since = now - timedelta(minutes=15)
-    if since > now:
-        since = now - timedelta(minutes=15)
+        since = wall_now - _SCAN_WINDOW
+    if since > wall_now:
+        since = wall_now - _SCAN_WINDOW
+    since = since.replace(microsecond=0)
+    now = min(
+        wall_now.replace(microsecond=0) - timedelta(seconds=1),
+        since + _SCAN_WINDOW - timedelta(seconds=1),
+    )
+    if now < since:
+        log_event(logger, 'No complete second of security events to scan yet')
+        return 0
+    next_cursor = now + timedelta(seconds=1)
 
-    bans, unbans, fail2ban_error = _check_fail2ban(since)
+    bans, unbans, fail2ban_error = _check_fail2ban(since, now)
     bans = [_normalise_fail2ban_event(event) for event in bans]
     unbans = [_normalise_fail2ban_event(event) for event in unbans]
     audit_exclusion = managed_setup_audit_window(since, now)
@@ -966,11 +1076,12 @@ def main() -> int:
         )
     audit_results, audit_critical, audit_errors = _check_auditd(
         since,
+        now,
         excluded_window=audit_exclusion,
     )
     audit_events = [_normalise_audit_event(event) for event in audit_results]
     audit_keys = _audit_event_keys(audit_events)
-    ssh_result, ssh_error = _check_ssh_failures(since)
+    ssh_result, ssh_error = _check_ssh_failures(since, now)
     ssh_summary = _normalise_ssh_summary(ssh_result)
     ssh_failures = int(ssh_summary.get('failure_count', 0))
     certificate_health = inspect_xrdp_certificate()
@@ -1032,11 +1143,7 @@ def main() -> int:
                 level=WARNING,
                 errors='; '.join(collection_errors),
             )
-        cursor = state.get('last_run')
-        if not isinstance(cursor, str) or not cursor:
-            cursor = since.isoformat()
-        next_state = _next_state(now, certificate_health)
-        next_state['last_run'] = cursor
+        next_state = _next_state(since, certificate_health)
         next_state['collection_errors'] = collection_errors
         _save_state(next_state)
         return 1
@@ -1069,10 +1176,10 @@ def main() -> int:
                 level=ERROR,
                 errors=certificate_health.issue or "unknown certificate error",
             )
-            _save_state(_next_state(now, certificate_health))
+            _save_state(_next_state(next_cursor, certificate_health))
             return 1
         log_event(logger, "No noteworthy security events")
-        _save_state(_next_state(now, certificate_health))
+        _save_state(_next_state(next_cursor, certificate_health))
         return 0
 
     # Determine notification severity.
@@ -1191,7 +1298,7 @@ def main() -> int:
     log_event(logger, "Security monitor check complete",
               status=status, events=', '.join(summary_parts),
               window=f"{since_str} → {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    _save_state(_next_state(now, certificate_health))
+    _save_state(_next_state(next_cursor, certificate_health))
     return 1 if certificate_failed else 0
 
 
