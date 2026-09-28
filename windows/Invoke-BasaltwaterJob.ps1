@@ -129,7 +129,7 @@ try {
         throw "Artifact is a reparse point or exceeds 1 GiB"
     }
     $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $saved = Get-Content -LiteralPath $CredentialFile -Raw
+    $saved = (Get-Content -LiteralPath $CredentialFile -Raw).Trim()
     $secure = ConvertTo-SecureString $saved
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try {
