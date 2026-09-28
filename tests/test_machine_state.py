@@ -74,6 +74,16 @@ class TestMachineStateHelpers(unittest.TestCase):
             self.assertTrue(ms.can_manage_firewall())
             self.assertTrue(ms.can_manage_time_sync())
 
+    def test_wsl_has_service_but_not_host_kernel_capabilities(self):
+        with self._patch_machine_type('wsl'):
+            self.assertFalse(ms.is_vm())
+            self.assertFalse(ms.can_modify_kernel())
+            self.assertFalse(ms.can_manage_swap())
+            self.assertFalse(ms.can_manage_firewall())
+            self.assertFalse(ms.can_manage_time_sync())
+            self.assertFalse(ms.can_restart_system())
+            self.assertTrue(ms.can_manage_system_services())
+
     def test_is_privileged(self):
         with self._patch_machine_type('privileged'):
             self.assertTrue(ms.is_privileged_container())
@@ -139,8 +149,16 @@ class TestMachineTypeDetection(unittest.TestCase):
             self.assertEqual(ms.detect_machine_type(), 'oci')
 
     def test_detects_virtual_machines(self):
-        with patch.object(ms, '_systemd_detect_virt', return_value='kvm'):
+        with patch.object(ms, '_systemd_detect_virt', return_value='kvm'), \
+             patch.object(ms, '_read_text', return_value=None), \
+             patch.object(ms.os.path, 'exists', return_value=False):
             self.assertEqual(ms.detect_machine_type(), 'vm')
+
+    def test_detects_wsl_before_generic_vm(self):
+        with patch.object(ms, '_systemd_detect_virt', return_value='microsoft'), \
+             patch.object(ms, '_read_text', side_effect=[None, None, '5.15.0-microsoft-standard-wsl2']), \
+             patch.object(ms.os.path, 'exists', return_value=False):
+            self.assertEqual(ms.detect_machine_type(), 'wsl')
 
     def test_falls_back_to_bare_metal(self):
         with patch.object(ms, '_systemd_detect_virt', return_value='none'), \

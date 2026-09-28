@@ -24,6 +24,7 @@ overview.
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
 | Add coding tools to an existing CachyOS KDE workstation | [CachyOS local setup](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md) |
+| Prepare a Windows 11 Ubuntu WSL build machine | [Ubuntu WSL](WINDOWS_WSL.md) | [Machine types](MACHINE_TYPES.md) |
 | Deploy an application or publish an internal site | [Deployments](DEPLOYMENTS.md) | [Internal web](INTERNAL_WEB.md), [CI/CD](CICD.md) |
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |
 | Configure alerts, audit visibility, or the panel | [Notifications](NOTIFICATIONS.md) | [Minimal web panel](WEB_PANEL.md), [Authentication hardening](AUTHENTICATION_HARDENING.md) |
@@ -39,6 +40,7 @@ overview.
 | [Command-line reference](COMMAND_LINE.md) | Complete option and command reference |
 | [Saved configuration operations](OPERATIONS.md) | `list`, `info`, `cmd`, `deploy`, `recall`, the shell, and testing |
 | [Machine types](MACHINE_TYPES.md) | Debian bare metal, VM, LXC, OCI, and capability differences |
+| [Ubuntu WSL](WINDOWS_WSL.md) | Windows bootstrap, Ubuntu tools, native jobs, and management |
 | [Local system maintenance](LOCAL_MAINTENANCE.md) | Focused package, desktop, browser, hostname, IP, and DNS changes |
 | [Recurring maintenance](MAINTENANCE.md) | Timers, update policy, cleanup, and troubleshooting |
 | [Firmware auditing and updates](FIRMWARE.md) | Local fwupd inventory, dependency installation, and guarded updates |

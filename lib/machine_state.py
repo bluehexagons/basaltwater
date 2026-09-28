@@ -82,8 +82,6 @@ def detect_machine_type() -> str:
         return "unprivileged"
     if virtualization in _OCI_VIRTUALIZATIONS:
         return "oci"
-    if virtualization and virtualization != "none":
-        return "vm"
 
     container_marker = _read_text(("/run/systemd/container",))
     if container_marker in _LXC_VIRTUALIZATIONS:
@@ -99,6 +97,12 @@ def detect_machine_type() -> str:
 
     if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
         return "oci"
+
+    kernel_release = _read_text(("/proc/sys/kernel/osrelease",)) or ""
+    if virtualization == "wsl" or "microsoft" in kernel_release or "wsl" in kernel_release:
+        return "wsl"
+    if virtualization and virtualization != "none":
+        return "vm"
 
     product_name = _read_text(("/sys/class/dmi/id/product_name",)) or ""
     if any(
@@ -303,7 +307,7 @@ def can_restart_system() -> bool:
     
     LXC containers can restart themselves. OCI containers cannot.
     """
-    return get_machine_type() != "oci"
+    return get_machine_type() not in ("oci", "wsl")
 
 
 def save_setup_config(config_dict: dict[str, Any]) -> None:

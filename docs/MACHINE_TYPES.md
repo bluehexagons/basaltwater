@@ -17,6 +17,9 @@ basaltwater officially supports Debian in these configurations:
 The setup preflight also accepts Ubuntu and Linux Mint as Debian-compatible
 best-effort distributions. Distribution-specific behavior outside the shared
 APT and systemd interfaces is not part of the official support guarantee.
+The separate [Ubuntu WSL profile](WINDOWS_WSL.md) is scoped to Windows 11 and
+uses `server_wsl` with `--machine wsl`; it does not extend the general Debian
+host support guarantee to other Ubuntu environments.
 
 The detection is deliberately conservative. Use an explicit `--machine` value
 when the runtime cannot identify itself reliably or when an existing setup has
@@ -33,17 +36,18 @@ compatibility labels, but they are not part of the official support target.
 | `hardware` | Bare metal | Physical server |
 | `privileged` | Privileged LXC container (compatibility label) | Proxmox LXC with passthrough |
 | `oci` | OCI container | Docker, Podman |
+| `wsl` | Ubuntu on Windows Subsystem for Linux 2 | Windows 11 build machine |
 
 ## Capability Matrix
 
-| Capability | unprivileged | vm | privileged | hardware | oci |
-|------------|--------------|-----|------------|----------|-----|
-| GPU/DRI device access | Explicit passthrough only | Device-dependent | Explicit passthrough only | Device-dependent | Explicit passthrough only |
-| Kernel parameters | ❌ | ✅ | ✅ | ✅ | ❌ |
-| Firewall (UFW) | ❌ | ✅ | ✅ | ✅ | ❌ |
-| Swap configuration | ❌ | ✅ | ✅ | ✅ | ❌ |
-| Time sync (chrony) | ❌ | ✅ | ✅ | ✅ | ❌ |
-| System restart | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Capability | unprivileged | vm | privileged | hardware | oci | wsl |
+|------------|--------------|-----|------------|----------|-----|-----|
+| GPU/DRI device access | Explicit passthrough only | Device-dependent | Explicit passthrough only | Device-dependent | Explicit passthrough only | Windows-managed |
+| Kernel parameters | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Firewall (UFW) | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Swap configuration | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Time sync (chrony) | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| System restart | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
 
 ## Behavior
 
@@ -75,7 +79,8 @@ compatibility labels, but they are not part of the official support target.
   though durable state is not finalized until setup succeeds. Runtime services
   outside setup continue to use the last successfully saved type.
 - `auto` resolves to `hardware`, `vm`, or `unprivileged` for the officially
-  supported configurations, and to `oci` when an OCI runtime is detected.
+  supported configurations, to `oci` when an OCI runtime is detected, and to
+  `wsl` inside WSL when no nested container is detected.
 - Proxmox provisioning defaults to a VM because the guest does not exist
   yet; use `--machine unprivileged` to provision an LXC instead.
 - `server_proxmox` also uses `auto` and normally resolves to `hardware` on the
@@ -113,6 +118,9 @@ basaltw setup server_web 192.168.1.20 --machine hardware
 
 # OCI container (limited features)
 basaltw setup server_lite 192.168.1.30 --machine oci
+
+# Ubuntu WSL setup is launched by the Windows installer in the selected distro
+python3 remote_setup.py --system-type server_wsl --username agent --machine wsl --dry-run
 ```
 
 ## Provisioning a Proxmox VM

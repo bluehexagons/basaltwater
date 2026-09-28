@@ -1,5 +1,10 @@
 # CI/CD Webhook System
 
+For Ubuntu WSL build machines and locally submitted native PowerShell jobs,
+use the [Windows and WSL guide](WINDOWS_WSL.md). The webhook receiver and
+`--build-server` flow in this guide are for Debian hosts; `server_wsl` uses a
+separate Windows job runner.
+
 Use `--cicd` during `setup` or `patch` to install the webhook receiver and
 executor. Repository-specific scripts live in
 `/etc/basaltwater/cicd/webhook_config.json`.
