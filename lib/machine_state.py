@@ -82,6 +82,8 @@ def detect_machine_type() -> str:
         return "unprivileged"
     if virtualization in _OCI_VIRTUALIZATIONS:
         return "oci"
+    if virtualization and virtualization not in ("none", "microsoft", "wsl"):
+        return "vm"
 
     container_marker = _read_text(("/run/systemd/container",))
     if container_marker in _LXC_VIRTUALIZATIONS:

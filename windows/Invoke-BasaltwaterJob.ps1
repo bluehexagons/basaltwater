@@ -57,6 +57,13 @@ $actualRevision = (& $git.Source -C $source rev-parse HEAD | Select-Object -Last
 if ($LASTEXITCODE -ne 0 -or $actualRevision -ne $Revision) {
     throw "Source checkout does not match the requested revision"
 }
+$gitScript = $Script.Replace('\', '/')
+$trackedScript = @(& $git.Source -C $source --literal-pathspecs ls-files -- $gitScript)
+if ($LASTEXITCODE -ne 0 -or $trackedScript.Count -ne 1) {
+    throw "Job script is not tracked by the requested revision"
+}
+& $git.Source -C $source --literal-pathspecs diff --quiet HEAD -- $gitScript
+if ($LASTEXITCODE -ne 0) { throw "Job script differs from the requested revision" }
 $jobDirectory = Join-Path $env:LOCALAPPDATA ("Basaltwater\jobs\" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $jobDirectory -Force | Out-Null
 $stdout = Join-Path $jobDirectory "stdout.log"
@@ -85,6 +92,11 @@ try {
             throw "Native job exceeded 50 MiB of logs"
         }
     }
+    $logBytes = 0
+    foreach ($log in @($stdout, $stderr)) {
+        if (Test-Path -LiteralPath $log) { $logBytes += (Get-Item -LiteralPath $log).Length }
+    }
+    if ($logBytes -gt 50MB) { throw "Native job exceeded 50 MiB of logs" }
     if ($process.ExitCode -ne 0) {
         $result.State = 'failed'
         throw "Native job exited with code $($process.ExitCode); logs: $jobDirectory"

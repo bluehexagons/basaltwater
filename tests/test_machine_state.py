@@ -154,11 +154,33 @@ class TestMachineTypeDetection(unittest.TestCase):
              patch.object(ms.os.path, 'exists', return_value=False):
             self.assertEqual(ms.detect_machine_type(), 'vm')
 
+    def test_other_virtual_machines_keep_detection_priority(self):
+        with patch.object(ms, '_systemd_detect_virt', return_value='kvm'), \
+             patch.object(ms, '_read_text', return_value='0::/docker/123'):
+            self.assertEqual(ms.detect_machine_type(), 'vm')
+
     def test_detects_wsl_before_generic_vm(self):
         with patch.object(ms, '_systemd_detect_virt', return_value='microsoft'), \
              patch.object(ms, '_read_text', side_effect=[None, None, '5.15.0-microsoft-standard-wsl2']), \
              patch.object(ms.os.path, 'exists', return_value=False):
             self.assertEqual(ms.detect_machine_type(), 'wsl')
+
+    def test_detects_wsl_without_virtualization_helper(self):
+        with patch.object(ms, '_systemd_detect_virt', return_value=None), \
+             patch.object(ms, '_read_text', side_effect=[None, None, '5.15.0-microsoft-standard-wsl2']), \
+             patch.object(ms.os.path, 'exists', return_value=False):
+            self.assertEqual(ms.detect_machine_type(), 'wsl')
+
+    def test_generic_microsoft_vm_stays_vm(self):
+        with patch.object(ms, '_systemd_detect_virt', return_value='microsoft'), \
+             patch.object(ms, '_read_text', return_value=None), \
+             patch.object(ms.os.path, 'exists', return_value=False):
+            self.assertEqual(ms.detect_machine_type(), 'vm')
+
+    def test_nested_container_takes_priority_over_wsl_kernel(self):
+        with patch.object(ms, '_systemd_detect_virt', return_value='docker'), \
+             patch.object(ms, '_read_text', return_value='5.15.0-microsoft-standard-wsl2'):
+            self.assertEqual(ms.detect_machine_type(), 'oci')
 
     def test_falls_back_to_bare_metal(self):
         with patch.object(ms, '_systemd_detect_virt', return_value='none'), \

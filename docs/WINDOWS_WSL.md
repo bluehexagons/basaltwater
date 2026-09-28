@@ -49,8 +49,9 @@ Settings > Connections.
 
 Native jobs are submitted locally by the logged-in Windows owner. Prepare a
 Git checkout on an NTFS volume, with the job script and its output path inside
-that checkout. The runner checks its exact 40-character commit revision and
-uploads one artifact only after a successful job. The upload destination must
+that checkout. Commit the job script before running it: the runner checks its
+exact 40-character commit revision and rejects untracked or modified scripts.
+It uploads one artifact only after a successful job. The upload destination must
 use HTTPS, accept bearer authentication in an HTTP PUT, and echo the received
 SHA-256 digest in `X-Artifact-SHA256`. The receiver should verify that digest
 before acknowledging it.
@@ -109,10 +110,10 @@ gh workflow run windows-manual.yml --ref feature/wsl-support -f suite=wsl
 ```
 
 `native` uses a GitHub-hosted x64 Windows Server runner to parse the PowerShell
-files and test installer planning and native job success, failure, timeout, and
-digest rejection. Upload is replaced by a local test function; no artifact
-token or external receiver is needed. A hosted Server runner cannot qualify
-the Windows 11 bootstrap or T3 desktop.
+files and test installer planning and native job success, script changes,
+timeout, log limits, and digest rejection. Upload is replaced by a local test
+function; no artifact token or external receiver is needed. A hosted Server
+runner cannot qualify the Windows 11 bootstrap or T3 desktop.
 
 `wsl` runs the native tests first, then uses a self-hosted runner labeled
 `self-hosted`, `Windows`, `X64`, and `basaltwater-wsl`. Configure that runner on

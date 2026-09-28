@@ -71,6 +71,16 @@ try {
 
     & git.exe clone --quiet --no-local $repo $checkout
     Assert-True ($LASTEXITCODE -eq 0) 'Could not create the temporary Git checkout'
+    New-Item -ItemType Directory -Path (Join-Path $checkout 'ci') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\fail.ps1') -Value 'exit 23'
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\slow.ps1') -Value 'Start-Sleep -Seconds 6'
+    Set-Content -LiteralPath (Join-Path $checkout 'ci\large-log.ps1') -Value "[Console]::Out.Write('x' * (50MB + 1))"
+    & git.exe -C $checkout add -- ci
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not stage native job fixtures'
+    & git.exe -C $checkout -c user.name=BasaltwaterCI -c user.email=ci@example.invalid `
+        commit --quiet -m 'Add native job fixtures'
+    Assert-True ($LASTEXITCODE -eq 0) 'Could not commit native job fixtures'
     $revision = (& git.exe -C $checkout rev-parse HEAD | Select-Object -Last 1).Trim()
     $secure = ConvertTo-SecureString 'ci-only-token' -AsPlainText -Force
     ConvertFrom-SecureString $secure | Set-Content -LiteralPath $credential -Encoding ASCII
@@ -100,8 +110,24 @@ try {
         Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Successful job did not upload'
         Remove-Item -LiteralPath (Join-Path $checkout 'out\wsl-smoke.txt')
 
-        New-Item -ItemType Directory -Path (Join-Path $checkout 'ci') -Force | Out-Null
-        Set-Content -LiteralPath (Join-Path $checkout 'ci\fail.ps1') -Value 'exit 23'
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\untracked.ps1') -Value 'exit 0'
+        $before = @(Get-Receipts).Count
+        Assert-Throws {
+            & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\untracked.ps1' `
+                -Artifact 'out\untracked.txt' -UploadUri $uri -CredentialFile $credential
+        } 'not tracked by the requested revision'
+        Assert-True (@(Get-Receipts).Count -eq $before) 'Untracked script created a job receipt'
+
+        Set-Content -LiteralPath (Join-Path $checkout 'ci\fail.ps1') -Value 'exit 24'
+        $before = @(Get-Receipts).Count
+        Assert-Throws {
+            & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\fail.ps1' `
+                -Artifact 'out\changed.txt' -UploadUri $uri -CredentialFile $credential
+        } 'differs from the requested revision'
+        Assert-True (@(Get-Receipts).Count -eq $before) 'Modified script created a job receipt'
+        & git.exe -C $checkout restore -- ci/fail.ps1
+        Assert-True ($LASTEXITCODE -eq 0) 'Could not restore native job fixture'
+
         $before = @(Get-Receipts).Count
         Assert-Throws {
             & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\fail.ps1' `
@@ -110,7 +136,6 @@ try {
         Assert-NewReceipt $before 'failed' | Out-Null
         Assert-True ($global:BasaltwaterUploadCount -eq 1) 'Failed job attempted upload'
 
-        Set-Content -LiteralPath (Join-Path $checkout 'ci\missing.ps1') -Value 'Write-Output no-artifact'
         $before = @(Get-Receipts).Count
         Assert-Throws {
             & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\missing.ps1' `
@@ -137,7 +162,6 @@ try {
         } 'Invalid job-relative path'
         Assert-True (@(Get-Receipts).Count -eq $before) 'Invalid path created a job receipt'
 
-        Set-Content -LiteralPath (Join-Path $checkout 'ci\slow.ps1') -Value 'Start-Sleep -Seconds 6'
         $before = @(Get-Receipts).Count
         Assert-Throws {
             & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\slow.ps1' `
@@ -146,6 +170,14 @@ try {
         } 'exceeded 1 seconds'
         Assert-NewReceipt $before 'timed-out' | Out-Null
         Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Timeout attempted upload'
+
+        $before = @(Get-Receipts).Count
+        Assert-Throws {
+            & $runner -SourceDirectory $checkout -Revision $revision -Script 'ci\large-log.ps1' `
+                -Artifact 'out\large-log.txt' -UploadUri $uri -CredentialFile $credential
+        } 'exceeded 50 MiB of logs'
+        Assert-NewReceipt $before 'failed' | Out-Null
+        Assert-True ($global:BasaltwaterUploadCount -eq 2) 'Oversized log attempted upload'
     } finally {
         Remove-Item Function:\Invoke-WebRequest
         Remove-Variable BasaltwaterUploadCount, BasaltwaterBadDigest -Scope Global -ErrorAction SilentlyContinue
