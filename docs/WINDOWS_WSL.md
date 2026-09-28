@@ -95,6 +95,35 @@ work. The optional login worker keeps WSL available after its terminal closes;
 logout, sleep, reboot, or `wsl --shutdown` can still interrupt jobs. Use
 `-Resume` after fixing an interrupted installation.
 
+## Run manual Windows CI
+
+The [Windows qualification workflow](../.github/workflows/windows-manual.yml)
+has only a manual `workflow_dispatch` trigger. From GitHub Actions, choose
+**Windows qualification (manual)**, select the branch to test, then choose
+`native` or `wsl`. The same choices are available from a checkout after the
+workflow is present on the repository's default branch:
+
+```bash
+gh workflow run windows-manual.yml --ref feature/wsl-support -f suite=native
+gh workflow run windows-manual.yml --ref feature/wsl-support -f suite=wsl
+```
+
+`native` uses a GitHub-hosted x64 Windows Server runner to parse the PowerShell
+files and test installer planning and native job success, failure, timeout, and
+digest rejection. Upload is replaced by a local test function; no artifact
+token or external receiver is needed. A hosted Server runner cannot qualify
+the Windows 11 bootstrap or T3 desktop.
+
+`wsl` runs the native tests first, then uses a self-hosted runner labeled
+`self-hosted`, `Windows`, `X64`, and `basaltwater-wsl`. Configure that runner on
+an isolated, already prepared Windows 11 x86-64 machine. Start the runner
+interactively as the same Windows account that owns the completed Ubuntu WSL
+setup; WSL distributions are account-scoped. The WSL job checks Windows 11,
+WSL, systemd, the installer plan, the Ubuntu setup dry run, and focused Python
+tests. Its `distribution` input can name the selected distro explicitly; if
+omitted, the job uses the saved setup state. The job does not install, update,
+restart, or shut down WSL.
+
 The first release must be qualified on a Windows machine before declaring
 Windows support production ready. Exercise fresh install and restart, WinGet
 repair, a deliberate failing job, successful PowerShell artifact upload with a
