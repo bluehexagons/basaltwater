@@ -72,10 +72,25 @@ $receipt = Join-Path $jobDirectory "receipt.json"
 $result = [ordered]@{ Revision = $Revision; Script = $Script; Artifact = $Artifact;
     StartedUtc = [DateTime]::UtcNow.ToString('o'); CompletedUtc = $null;
     State = 'running'; Sha256 = $null }
+$process = $null
+$stdoutStream = $null
+$stderrStream = $null
 try {
-    $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
-        -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $scriptPath + '"')) `
-        -WorkingDirectory $source -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $startInfo.Arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $scriptPath + '"'
+    $startInfo.WorkingDirectory = $source
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $stdoutStream = [IO.File]::Open($stdout, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+    $stderrStream = [IO.File]::Open($stderr, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+    if (-not $process.Start()) { throw "Could not start native job" }
+    $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
+    $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not $process.WaitForExit(1000)) {
         if ([DateTime]::UtcNow -ge $deadline) {
@@ -92,19 +107,21 @@ try {
             throw "Native job exceeded 50 MiB of logs"
         }
     }
-    # Complete redirected stream handling and refresh the exit status after a timed wait.
+    # Complete redirected output before checking its final size and process status.
     $process.WaitForExit()
-    $process.Refresh()
-    # Windows PowerShell 5.1 can surface a blank adapted ExitCode after Start-Process.
-    $exitCode = [System.Diagnostics.Process].GetProperty('ExitCode').GetValue($process, $null)
+    if (-not $stdoutCopy.Wait(30000) -or -not $stderrCopy.Wait(30000)) {
+        throw "Native job output streams did not close"
+    }
+    $stdoutStream.Flush()
+    $stderrStream.Flush()
     $logBytes = 0
     foreach ($log in @($stdout, $stderr)) {
         if (Test-Path -LiteralPath $log) { $logBytes += (Get-Item -LiteralPath $log).Length }
     }
     if ($logBytes -gt 50MB) { throw "Native job exceeded 50 MiB of logs" }
-    if ($exitCode -ne 0) {
+    if ($process.ExitCode -ne 0) {
         $result.State = 'failed'
-        throw "Native job exited with code $exitCode; logs: $jobDirectory"
+        throw "Native job exited with code $($process.ExitCode); logs: $jobDirectory"
     }
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Job produced no artifact" }
     $artifactItem = Get-Item -LiteralPath $artifactPath -Force
@@ -135,6 +152,9 @@ try {
     if ($result.State -eq 'running') { $result.State = 'failed' }
     throw
 } finally {
+    if ($stdoutStream) { $stdoutStream.Dispose() }
+    if ($stderrStream) { $stderrStream.Dispose() }
+    if ($process) { $process.Dispose() }
     $result.CompletedUtc = [DateTime]::UtcNow.ToString('o')
     $result | ConvertTo-Json | Set-Content -LiteralPath $receipt -Encoding UTF8
 }
