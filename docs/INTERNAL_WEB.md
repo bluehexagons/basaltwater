@@ -161,7 +161,7 @@ required:
 
 ```bash
 cd ~/repos/my-vite-project
-sudo basaltwater-web preview start my-project --project .
+basaltwater-web preview start my-project --project .
 ```
 
 For Vite projects, Basaltwater detects the `dev` or `preview` package script,
@@ -179,10 +179,10 @@ Override automatic Vite detection with an explicit argv command after `--`.
 Use `{host}` and `{port}` placeholders without shell interpolation:
 
 ```bash
-sudo basaltwater-web preview start my-project --project . -- \
+basaltwater-web preview start my-project --project . -- \
   ./serve-preview --host '{host}' --port '{port}'
 
-sudo basaltwater-web preview start my-game --project . --profile godot -- \
+basaltwater-web preview start my-game --project . --profile godot -- \
   ./preview-server --listen '{host}:{port}'
 ```
 
@@ -198,8 +198,8 @@ basaltwater-web preview list
 basaltwater-web preview url my-project
 basaltwater-web preview logs my-project
 basaltwater-web doctor my-project
-sudo basaltwater-web preview stop my-project
-sudo basaltwater-web preview prune --yes
+basaltwater-web preview stop my-project
+basaltwater-web preview prune --yes
 ```
 
 Use `--replace` to deliberately replace an existing same-named preview. A
@@ -213,7 +213,7 @@ Keep `forward` as the low-level path when another service manager already owns
 the upstream process:
 
 ```bash
-sudo basaltwater-web forward add api-preview \
+basaltwater-web forward add api-preview \
   --to 127.0.0.1:3000 \
   --wait 30 \
   --health /health
@@ -221,18 +221,18 @@ sudo basaltwater-web forward add api-preview \
 basaltwater-web forward list
 basaltwater-web forward url api-preview
 basaltwater-web doctor api-preview
-sudo basaltwater-web forward remove api-preview
+basaltwater-web forward remove api-preview
 ```
 
 The forward list reports whether each upstream TCP port is ready. Use
-`sudo basaltwater-web forward prune --yes` only for unmanaged dead forwards; managed
+`basaltwater-web forward prune --yes` only for unmanaged dead forwards; managed
 preview services should be cleaned up through `preview prune`.
 
 Nginx retains its 1 MiB request-body default unless the upstream service has a
 larger documented limit. Set a bounded per-route limit when needed:
 
 ```bash
-sudo basaltwater-web forward add upload-api \
+basaltwater-web forward add upload-api \
   --to 127.0.0.1:3000 \
   --max-body-size 50m
 ```
@@ -265,6 +265,14 @@ confirms that the protected endpoint is reachable; other error responses still
 fail the check.
 
 ## Security and state
+
+The configured account can publish and manage its own live routes without
+`sudo`. A root-owned local control service authenticates live mutations with
+the caller's Unix socket UID, checks the saved gateway users, and retains the
+existing per-route ownership checks. If a live command says the control service
+is unavailable, rerun saved VM setup and check
+`systemctl status basaltwater-web-control.service`. The administrator-only
+`forward reconcile` command still requires root.
 
 Forward and preview mutations share a root-owned nonblocking lock at
 `/etc/basaltwater/internal-web/mutation.lock`. A competing command fails before

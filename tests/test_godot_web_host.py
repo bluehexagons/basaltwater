@@ -111,6 +111,7 @@ class TestGodotWebHost(unittest.TestCase):
                 patch.object(godot_web_steps, "_install_publisher_links", return_value=True),
                 patch.object(godot_web_steps, "_configure_nginx_site", return_value=True) as nginx,
                 patch.object(godot_web_steps, "_configure_web_policy", return_value=True),
+                patch.object(godot_web_steps, "_configure_web_control_service", return_value=True),
                 patch.object(godot_web_steps.pwd, "getpwnam", return_value=account),
             ):
                 changed = godot_web_steps.configure_godot_web_host(
@@ -165,6 +166,28 @@ class TestGodotWebHost(unittest.TestCase):
             with open(policy_file, encoding="utf-8") as file_obj:
                 policy = json.load(file_obj)
             self.assertEqual(policy["ca_certificate"], ca_download)
+
+    def test_control_service_is_installed_for_owner_scoped_gateway_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            helper = os.path.join(directory, "basaltwater_web_control.py")
+            unit = os.path.join(directory, "basaltwater-web-control.service")
+            with open(helper, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# managed helper\n")
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
+                patch.object(godot_web_steps, "run") as run,
+                patch.object(godot_web_steps, "is_service_active", return_value=True),
+            ):
+                self.assertTrue(godot_web_steps._configure_web_control_service())
+                self.assertFalse(godot_web_steps._configure_web_control_service())
+            with open(unit, encoding="utf-8") as file_obj:
+                content = file_obj.read()
+            self.assertIn("RuntimeDirectory=basaltwater-web", content)
+            self.assertIn(f"ExecStart=/usr/bin/python3 {helper} serve", content)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(commands.count("systemctl daemon-reload"), 1)
+            self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 2)
 
     def test_installs_local_ca_in_managed_users_chromium_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:

@@ -121,12 +121,12 @@ Static game exports share port 8443 and do not consume one port per game. For a
 live development server, use the supervised preview lifecycle:
 
 ```bash
-sudo basaltwater-web preview start my-preview --project . --profile godot -- \
+basaltwater-web preview start my-preview --project . --profile godot -- \
   my-preview-server --host '{host}' --port '{port}'
 
 basaltwater-web preview list
 basaltwater-web doctor my-preview
-sudo basaltwater-web preview stop my-preview
+basaltwater-web preview stop my-preview
 ```
 
 When another process manager already owns the service, bind it to a loopback
@@ -137,24 +137,24 @@ address and register a low-level managed HTTPS listener:
 my-preview-server --host 127.0.0.1 --port 3000
 
 # In another shell, allocate HTTPS and apply Godot's required headers.
-sudo basaltwater-web forward add my-preview \
+basaltwater-web forward add my-preview \
   --listen auto \
   --to 127.0.0.1:3000 \
   --profile godot
 
 basaltwater-web forward list
 basaltwater-web doctor my-preview
-sudo basaltwater-web forward remove my-preview
+basaltwater-web forward remove my-preview
 ```
 
 See [Internal HTTPS sites and live previews](INTERNAL_WEB.md) for static-site
 publishing, automatic Vite previews, service lifecycle, health waits, logs,
 cleanup, and certificate trust.
 
-The configured account already has the VM setup's non-interactive sudo access;
-preview and forward mutations require it, while publication and inspection do
-not. `basaltwater-web` allocates TCP 8444–8999 by default, restricts upstreams to
-unprivileged loopback ports, reuses the managed certificate, enables WebSocket
+The configured account manages its own previews and forwards without `sudo`.
+The local gateway control service checks its Unix socket identity and saved
+owner policy. `basaltwater-web` allocates TCP 8444–8999 by default, restricts
+upstreams to unprivileged loopback ports, reuses the managed certificate, enables WebSocket
 proxying, inherits the saved `--access-source` policy, and reconciles
 comment-tagged UFW rules. It validates Nginx before a reload and restores the
 previous generated configuration and state when a mutation fails. Raw Nginx

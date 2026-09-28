@@ -20,7 +20,7 @@ ad hoc Nginx or firewall changes. Never bind a development service to
 - For a Godot web export, use `basaltwater-web publish godot` and the
   `basaltwater-godot-web` skill. Nginx serves all static games on the shared
   HTTPS port 8443; static games do not need dedicated ports.
-- For an explicitly requested live project preview, use `sudo basaltwater-web
+- For an explicitly requested live project preview, use `basaltwater-web
   preview start NAME --project PATH`. It supervises the process as the
   requesting user, allocates its loopback and HTTPS ports, waits for readiness,
   and rolls back on failure.
@@ -87,14 +87,14 @@ remove NAME --yes`.
 For Vite, project and command detection is automatic:
 
 ```bash
-sudo basaltwater-web preview start NAME --project .
+basaltwater-web preview start NAME --project .
 ```
 
 For another server, pass an argv command after `--`; `{host}` and `{port}` are
 replaced without shell evaluation:
 
 ```bash
-sudo basaltwater-web preview start NAME --project . -- \
+basaltwater-web preview start NAME --project . -- \
   ./server --host '{host}' --port '{port}'
 ```
 
@@ -102,7 +102,7 @@ Use `basaltwater-web preview list`, `basaltwater-web preview logs NAME`, and `ba
 doctor NAME` for inspection. Stop a preview only when explicitly requested:
 
 ```bash
-sudo basaltwater-web preview stop NAME
+basaltwater-web preview stop NAME
 ```
 
 ## Live forwards
@@ -110,7 +110,7 @@ sudo basaltwater-web preview stop NAME
 Create a forward after its loopback service is ready:
 
 ```bash
-sudo basaltwater-web forward add NAME --listen auto --to 127.0.0.1:PORT
+basaltwater-web forward add NAME --listen auto --to 127.0.0.1:PORT
 ```
 
 Add `--profile godot` for a Godot preview that needs secure-context and
@@ -130,9 +130,18 @@ inspection. Remove a route when the associated service is no longer intended
 to be reachable:
 
 ```bash
-sudo basaltwater-web forward remove NAME
+basaltwater-web forward remove NAME
 ```
 
 Do not proxy databases, SSH, metadata endpoints, or another user's service.
 Treat adding or removing a forward as an external exposure change and keep it
 within the user's requested scope.
+
+The configured owner runs these commands without `sudo`. The local control
+service checks the caller's Unix socket UID against the saved gateway policy;
+it cannot accept another user's claimed identity. If a live mutation reports
+that the control service is unavailable, check
+`systemctl status basaltwater-web-control.service` and ask the operator to rerun
+saved VM setup. Do not work around this with a broad sudo grant. The
+administrator-only `forward reconcile` command is not available through the
+owner-scoped control socket.

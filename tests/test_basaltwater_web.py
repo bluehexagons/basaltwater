@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 import os
+import socket
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from common.service_tools import basaltwater_web
+from common.service_tools import basaltwater_web, basaltwater_web_control
 
 
 def _policy() -> dict[str, object]:
@@ -30,6 +31,7 @@ def _policy() -> dict[str, object]:
 class TestInfraWebForwarding(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext))
+        self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
 
     def test_rejects_non_loopback_upstream(self) -> None:
         with self.assertRaisesRegex(ValueError, "loopback"):
@@ -252,6 +254,7 @@ class TestInfraWebForwarding(unittest.TestCase):
 class TestInfraWebPreviews(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext))
+        self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
 
     def test_automatic_vite_command_is_loopback_only_and_strict(self) -> None:
         with tempfile.TemporaryDirectory() as project:
@@ -445,6 +448,73 @@ class TestInfraWebPreviews(unittest.TestCase):
         apply_forwards.assert_called_once_with([], _policy())
         remove_service.assert_called_once_with(record)
         write_state.assert_called_once_with([])
+
+
+class TestInfraWebControl(unittest.TestCase):
+    def test_unprivileged_preview_delegates_absolute_project_and_command(self) -> None:
+        with (
+            patch.object(basaltwater_web.os, "geteuid", return_value=1000),
+            patch.object(basaltwater_web_control, "request", return_value=0) as request,
+        ):
+            result = basaltwater_web.main(
+                ["preview", "start", "demo", "--project", ".", "--", "./serve", "{port}"]
+            )
+        self.assertEqual(result, 0)
+        self.assertEqual(request.call_args.args[0][-5:], ["--project", os.getcwd(), "--", "./serve", "{port}"])
+
+    def test_unprivileged_forward_delegates_without_sudo(self) -> None:
+        argv = ["forward", "add", "demo", "--to", "127.0.0.1:3000"]
+        with (
+            patch.object(basaltwater_web.os, "geteuid", return_value=1000),
+            patch.object(basaltwater_web_control, "request", return_value=0) as request,
+        ):
+            self.assertEqual(basaltwater_web.main(argv), 0)
+        request.assert_called_once_with(argv)
+
+    def test_control_rejects_commands_outside_owner_scoped_mutations(self) -> None:
+        for argv in (["forward", "reconcile"], ["publish", "site"], ["preview", "logs"]):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                basaltwater_web_control._validate_argv(argv)
+
+    def test_control_uses_socket_uid_and_policy_before_execution(self) -> None:
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        client.sendall(b'{"argv":["forward","remove","demo"]}\n')
+        account = SimpleNamespace(pw_name="agent")
+        with (
+            patch.object(basaltwater_web_control.pwd, "getpwuid", return_value=account),
+            patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+            patch.object(basaltwater_web_control, "_execute", return_value={"status": 0, "stdout": "ok\n", "stderr": ""}) as execute,
+        ):
+            basaltwater_web_control._handle(server)
+        response = json.loads(client.recv(4096))
+        self.assertEqual(response["status"], 0)
+        execute.assert_called_once_with(["forward", "remove", "demo"], "agent")
+
+    def test_control_denies_uid_missing_from_policy(self) -> None:
+        client, server = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(server.close)
+        client.sendall(b'{"argv":["forward","remove","demo"]}\n')
+        account = SimpleNamespace(pw_name="other")
+        with (
+            patch.object(basaltwater_web_control.pwd, "getpwuid", return_value=account),
+            patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+            patch.object(basaltwater_web_control, "_execute") as execute,
+        ):
+            basaltwater_web_control._handle(server)
+        self.assertEqual(json.loads(client.recv(4096))["status"], 1)
+        execute.assert_not_called()
+
+    def test_control_executes_fixed_gateway_with_verified_user_environment(self) -> None:
+        with patch.object(basaltwater_web_control.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            result = basaltwater_web_control._execute(["forward", "remove", "demo"], "agent")
+        self.assertEqual(result["status"], 0)
+        self.assertEqual(run.call_args.args[0][1], basaltwater_web_control.UTILITY_PATH)
+        self.assertEqual(run.call_args.kwargs["env"]["SUDO_USER"], "agent")
+        self.assertEqual(run.call_args.kwargs["cwd"], "/")
+        self.assertEqual(run.call_args.kwargs["stdin"], basaltwater_web_control.subprocess.DEVNULL)
 
 
 class TestInfraWebMutationLock(unittest.TestCase):

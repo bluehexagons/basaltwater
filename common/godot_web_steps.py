@@ -41,6 +41,8 @@ GODOT_WEB_PUBLISHER = "/opt/basaltwater/common/service_tools/godot_web_publish.p
 GODOT_WEB_PUBLISHER_LINK = "/usr/local/bin/godot-web-publish"
 GODOT_WEB_UTILITY = "/opt/basaltwater/common/service_tools/basaltwater_web.py"
 GODOT_WEB_UTILITY_LINK = "/usr/local/bin/basaltwater-web"
+GODOT_WEB_CONTROL = "/opt/basaltwater/common/service_tools/basaltwater_web_control.py"
+GODOT_WEB_CONTROL_UNIT = "/etc/systemd/system/basaltwater-web-control.service"
 GODOT_WEB_POLICY_FILE = "/etc/basaltwater/internal-web/policy.json"
 GODOT_WEB_FORWARD_PORT_MIN = 8444
 GODOT_WEB_FORWARD_PORT_MAX = 8999
@@ -690,6 +692,42 @@ def _install_basaltwater_web_link() -> bool:
     )
 
 
+def _configure_web_control_service() -> bool:
+    """Run a local root helper for policy-checked, owner-scoped mutations."""
+
+    if not os.path.isfile(GODOT_WEB_CONTROL):
+        raise RuntimeError(f"HTTPS gateway control helper is missing: {GODOT_WEB_CONTROL}")
+    content = f"""[Unit]
+Description=Basaltwater local HTTPS gateway control
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {GODOT_WEB_CONTROL} serve
+RuntimeDirectory=basaltwater-web
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
+"""
+    changed = _write_if_changed(GODOT_WEB_CONTROL_UNIT, content, 0o644)
+    if changed:
+        run("systemctl daemon-reload", check=True)
+    run("systemctl enable basaltwater-web-control.service", check=True)
+    run("systemctl restart basaltwater-web-control.service", check=True)
+    if not is_service_active("basaltwater-web-control.service"):
+        raise RuntimeError("HTTPS gateway control service did not start")
+    return changed
+
+
 def _configure_web_policy(
     base_url: str,
     cert_path: str,
@@ -837,6 +875,7 @@ def configure_godot_web_host(
         normalized_users,
         normalized_sources,
     ) or changed
+    changed = _configure_web_control_service() or changed
     fingerprint = hashlib.sha256()
     if local_ca:
         with open(GODOT_WEB_CA_CERT, "rb") as cert_file:
@@ -903,6 +942,8 @@ def configure_internal_web_host(
         normalized_users,
         normalized_sources,
     )
+    if install_utility:
+        _configure_web_control_service()
     return base_url, local_ca, cert_path, key_path, certificate_changed
 
 

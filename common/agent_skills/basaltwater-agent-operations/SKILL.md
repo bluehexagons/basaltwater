@@ -64,6 +64,27 @@ basaltw agent maintenance release
 Release it when the protected work ends. Holds expire after at most 72 hours
 and do not override the host's forced-restart deadline.
 
+## One-time privileged actions
+
+On a VM configured with `--privilege-broker`, request a supported root action
+through `basaltw agent privilege request` instead of trying `sudo`:
+
+```bash
+basaltw agent privilege request command.run \
+  --reason "Refresh package metadata" --command /usr/bin/apt-get update
+basaltw agent privilege wait REQUEST_ID --timeout 300 --json
+```
+
+The request returns a `review_url` for the separate HTTPS approval portal,
+normally on the VM's port 9444. Give that URL to the operator; the coding
+account cannot approve the request or receive the approval password. The
+portal displays the exact arguments and allows one approved attempt. Do not
+put a shell, `sudo`, environment assignments, or secrets in `--command`.
+Managed `basaltwater-web` publication and owner-scoped live gateway actions
+already work without this approval flow. See
+[Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/PRIVILEGE_APPROVALS.md)
+for the supported actions and portal setup.
+
 ## Credential rotation
 
 Inspect credential status from the controller. Start a login only when the

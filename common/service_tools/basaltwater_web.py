@@ -66,7 +66,7 @@ _PREVIEW_INSTALL_TIMEOUT_SECONDS = 30 * 60
 def _gateway_lock():
     """Hold one root-owned lock through planning, activation, and rollback."""
     if os.geteuid() != 0:
-        raise RuntimeError("Run HTTPS forward and preview mutations with sudo")
+        raise RuntimeError("HTTPS gateway mutations require the control service")
     descriptor = os.open(
         MUTATION_LOCK_FILE,
         os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
@@ -1773,7 +1773,7 @@ def _stop_preview_record(
 @_serialized_mutation
 def _preview_start(args: argparse.Namespace) -> int:
     if os.geteuid() != 0:
-        raise RuntimeError("Run live-preview mutations with sudo")
+        raise RuntimeError("Live-preview mutations require the control service")
     name = _validate_name(args.name, "preview name")
     policy = _load_policy()
     owner = _requesting_username(policy)
@@ -1882,7 +1882,7 @@ def _preview_start(args: argparse.Namespace) -> int:
 @_serialized_mutation
 def _preview_stop(name: str, as_json: bool) -> int:
     if os.geteuid() != 0:
-        raise RuntimeError("Run live-preview mutations with sudo")
+        raise RuntimeError("Live-preview mutations require the control service")
     policy = _load_policy()
     owner = _requesting_username(policy)
     routes = _load_forwards(policy)
@@ -1956,7 +1956,7 @@ def _preview_logs(name: str, lines: int) -> int:
 @_serialized_mutation
 def _preview_prune(confirmed: bool, as_json: bool) -> int:
     if os.geteuid() != 0:
-        raise RuntimeError("Run live-preview mutations with sudo")
+        raise RuntimeError("Live-preview mutations require the control service")
     if not confirmed:
         raise ValueError("Pruning stopped live previews requires --yes")
     policy = _load_policy()
@@ -2021,6 +2021,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "preview" and args.preview_command == "start":
         args.preview_argv = preview_argv
     try:
+        if os.geteuid() != 0:
+            from common.service_tools import basaltwater_web_control
+
+            if basaltwater_web_control.is_delegated_mutation(raw_args):
+                delegated_args = list(raw_args)
+                if args.command == "preview" and args.preview_command == "start":
+                    project = args.project
+                    if not project.startswith("~"):
+                        project = os.path.abspath(project)
+                    delegated_args.extend(["--project", project])
+                    if preview_argv:
+                        delegated_args.extend(["--", *preview_argv])
+                return basaltwater_web_control.request(delegated_args)
         if args.command == "publish":
             if args.publish_kind == "godot":
                 return _publish_godot(args)
