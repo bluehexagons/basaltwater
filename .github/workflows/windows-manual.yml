@@ -1,0 +1,55 @@
+name: Windows qualification (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Hosted native tests, or hosted plus Windows 11 WSL checks
+        required: true
+        type: choice
+        default: native
+        options:
+          - native
+          - wsl
+      distribution:
+        description: Existing Ubuntu WSL distro on the Windows 11 runner (optional)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-qualification
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Native PowerShell (hosted Windows Server)
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Test Windows PowerShell setup and native jobs
+        shell: powershell
+        run: .\windows\tests\Run-NativeTests.ps1
+
+  wsl:
+    name: Ubuntu WSL (self-hosted Windows 11)
+    if: ${{ inputs.suite == 'wsl' }}
+    needs: native
+    runs-on: [self-hosted, Windows, X64, basaltwater-wsl]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Check Windows 11, Ubuntu WSL, and the setup profile
+        shell: powershell
+        env:
+          BASALTWATER_TEST_DISTRIBUTION: ${{ inputs.distribution }}
+        run: .\windows\tests\Run-WslTests.ps1 -Distribution $env:BASALTWATER_TEST_DISTRIBUTION

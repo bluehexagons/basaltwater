@@ -17,7 +17,7 @@ from lib.types import StrList, NestedStrList, JSONDict, MaybeStr
 SYSTEM_TYPES = get_system_type_names()
 
 AUTO_MACHINE_TYPE = "auto"
-MACHINE_TYPES = [AUTO_MACHINE_TYPE, "unprivileged", "vm", "privileged", "hardware", "oci"]
+MACHINE_TYPES = [AUTO_MACHINE_TYPE, "unprivileged", "vm", "privileged", "hardware", "oci", "wsl"]
 DEFAULT_MACHINE_TYPE = AUTO_MACHINE_TYPE
 
 DESKTOP_SYSTEMS = [
