@@ -95,14 +95,16 @@ try {
     # Complete redirected stream handling and refresh the exit status after a timed wait.
     $process.WaitForExit()
     $process.Refresh()
+    # Windows PowerShell 5.1 can surface a blank adapted ExitCode after Start-Process.
+    $exitCode = [System.Diagnostics.Process].GetProperty('ExitCode').GetValue($process, $null)
     $logBytes = 0
     foreach ($log in @($stdout, $stderr)) {
         if (Test-Path -LiteralPath $log) { $logBytes += (Get-Item -LiteralPath $log).Length }
     }
     if ($logBytes -gt 50MB) { throw "Native job exceeded 50 MiB of logs" }
-    if ($process.ExitCode -ne 0) {
+    if ($exitCode -ne 0) {
         $result.State = 'failed'
-        throw "Native job exited with code '$($process.ExitCode)' (type $($process.GetType().FullName), exited $($process.HasExited)); logs: $jobDirectory"
+        throw "Native job exited with code $exitCode; logs: $jobDirectory"
     }
     if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Job produced no artifact" }
     $artifactItem = Get-Item -LiteralPath $artifactPath -Force
