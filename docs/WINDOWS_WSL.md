@@ -26,10 +26,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TE
 ```
 
 Use `-Plan` to check the intended options without installing. `-LinuxUser`,
-`-DistroName`, and `-DistroLocation` select the Ubuntu account, official WSL
-distribution, and absolute Windows installation directory for a new distro. Without a distro
-name, setup selects the newest versioned stable Ubuntu listed by WSL. Only an
-explicitly selected existing distro is reused; setup preserves other distros.
+`-DistroName`, and `-DistroLocation` select the Ubuntu account, official stable
+Ubuntu WSL distribution, and absolute Windows drive directory for a new
+distro. Without a distro name, setup selects the newest versioned stable Ubuntu
+listed by WSL. Only an explicitly selected existing distro is reused; setup
+preserves other distros.
 `-Channel main|dev` or `-Version REF` pins the source revision. `-Go`, `-Node`,
 `-Python`, and `-AgentTool gh,codex,claude,opencode` select Ubuntu tools.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create
@@ -105,8 +106,8 @@ has only a manual `workflow_dispatch` trigger. From GitHub Actions, choose
 workflow is present on the repository's default branch:
 
 ```bash
-gh workflow run windows-manual.yml --ref feature/wsl-support -f suite=native
-gh workflow run windows-manual.yml --ref feature/wsl-support -f suite=wsl
+gh workflow run windows-manual.yml --ref main -f suite=native
+gh workflow run windows-manual.yml --ref main -f suite=wsl
 ```
 
 `native` uses a GitHub-hosted x64 Windows Server runner to parse the PowerShell
@@ -120,10 +121,10 @@ runner cannot qualify the Windows 11 bootstrap or T3 desktop.
 an isolated, already prepared Windows 11 x86-64 machine. Start the runner
 interactively as the same Windows account that owns the completed Ubuntu WSL
 setup; WSL distributions are account-scoped. The WSL job checks Windows 11,
-WSL, systemd, the installer plan, the Ubuntu setup dry run, and focused Python
-tests. Its `distribution` input can name the selected distro explicitly; if
-omitted, the job uses the saved setup state. The job does not install, update,
-restart, or shut down WSL.
+WSL, the Ubuntu distribution, systemd, the installer plan, the Ubuntu setup dry
+run, and focused Python tests. Its `distribution` input can name the selected
+distro explicitly; if omitted, the job uses the saved setup state. The job does
+not install, update, restart, or shut down WSL.
 
 The first release must be qualified on a Windows machine before declaring
 Windows support production ready. Exercise fresh install and restart, WinGet

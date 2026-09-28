@@ -7,7 +7,7 @@ param(
     [switch]$Node,
     [switch]$Python,
     [switch]$Go,
-    [string]$AgentTool = "",
+    [string[]]$AgentTool = @(),
     [string]$LinuxUser = "",
     [string]$DistroName = "",
     [string]$DistroLocation = "",
@@ -115,6 +115,18 @@ function Ensure-Winget {
     }
 }
 
+function Ensure-WingetPackage([string]$packageId, [string]$label) {
+    & winget.exe install --id $packageId --exact --source winget --accept-source-agreements --accept-package-agreements
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) { return }
+    # WinGet reports "no applicable update" as a failure when a package is already current.
+    if ($exitCode -eq -1978335189) {
+        & winget.exe list --id $packageId --exact --source winget | Out-Null
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+    throw "$label failed (exit code $exitCode)"
+}
+
 function Select-Distro {
     if ($state.Distro) { return }
     $available = & wsl.exe --list --online
@@ -162,6 +174,25 @@ function Ensure-WorkerTask {
 
 try {
     Check-Host
+    if ($LinuxUser -and ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root")) {
+        throw "Invalid Ubuntu username"
+    }
+    if ($DistroName -and $DistroName -notmatch '^Ubuntu(?:-[0-9]{2}\.[0-9]{2})?$') {
+        throw "Distribution name must be an official stable Ubuntu WSL name"
+    }
+    if ($DistroLocation -and $DistroLocation -notmatch '^[A-Za-z]:[\\/]') {
+        throw "Distribution location must be an absolute Windows drive path"
+    }
+    if ($Version -and $Version -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid release reference" }
+    $agentTools = @()
+    foreach ($selection in $AgentTool) {
+        foreach ($tool in $selection.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() }) {
+            if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) {
+                throw "Unsupported Ubuntu agent tool: $tool"
+            }
+            $agentTools += $tool
+        }
+    }
     if ($Plan) {
         Write-Host "Plan: install WinGet/WSL and stable Ubuntu, configure $Profile, selected runtimes/agents, and optional T3 desktop/worker."
         Write-Host "A reboot and interactive Ubuntu/provider login may be required."
@@ -186,19 +217,6 @@ try {
         if ($LinuxUser -notmatch '^[a-z_][a-z0-9_-]{0,31}$' -or $LinuxUser -eq "root") {
             throw "Invalid Ubuntu username"
         }
-        if ($DistroName -and $DistroName -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid distribution name" }
-        if ($DistroLocation -and -not [IO.Path]::IsPathRooted($DistroLocation)) {
-            throw "Distribution location must be an absolute Windows path"
-        }
-        $agentTools = @()
-        if ($AgentTool) {
-            $agentTools = @($AgentTool.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() })
-            foreach ($tool in $agentTools) {
-                if ($tool -notin @('gh', 'codex', 'claude', 'opencode')) {
-                    throw "Unsupported Ubuntu agent tool: $tool"
-                }
-            }
-        }
         $resolved = Resolve-Source $(if ($Version) { $Version } else { $Channel })
         $state = [pscustomobject]@{
             Version = 1
@@ -219,6 +237,7 @@ try {
         Save-State $state
         $stagedInstaller = Join-Path $state.Source "install.ps1"
         & $stagedInstaller -Resume
+        if (-not $?) { throw "Staged WSL setup failed; rerun the saved installer with -Resume" }
         return
     }
 
@@ -234,6 +253,10 @@ try {
     Invoke-Checked "WSL update" { & wsl.exe --update }
     Select-Distro
     Ensure-Distro
+    $osRelease = & wsl.exe --distribution $state.Distro --exec cat /etc/os-release
+    if ($LASTEXITCODE -ne 0 -or -not @($osRelease | Where-Object { $_ -match '^ID="?ubuntu"?\s*$' })) {
+        throw "Selected WSL distribution is not Ubuntu"
+    }
     Invoke-Checked "WSL 2 selection" { & wsl.exe --set-version $state.Distro 2 }
     $prepare = Wsl-Path (Join-Path $state.Source "windows\wsl_prepare.py")
     $sourcePath = Wsl-Path $state.Source
@@ -255,14 +278,10 @@ try {
         & wsl.exe --distribution $state.Distro --user root --exec python3 ($linuxSource + "/remote_setup.py") @setupArgs
     }
     if ($state.BuildServer) {
-        Invoke-Checked "Git for Windows installation" {
-            & winget.exe install --id Git.Git --exact --source winget --accept-source-agreements --accept-package-agreements
-        }
+        Ensure-WingetPackage 'Git.Git' 'Git for Windows installation'
     }
     if ($state.T3CodeDesktop) {
-        Invoke-Checked "T3 Code desktop installation" {
-            & winget.exe install --id T3Tools.T3Code --exact --source winget --accept-source-agreements --accept-package-agreements
-        }
+        Ensure-WingetPackage 'T3Tools.T3Code' 'T3 Code desktop installation'
     }
     Ensure-WorkerTask
     $state.Phase = "complete"

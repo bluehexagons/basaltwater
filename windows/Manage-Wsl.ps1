@@ -28,9 +28,7 @@ switch ($Action) {
     }
     'refresh' {
         & (Join-Path $state.Source 'install.ps1') -Resume
-        if ($LASTEXITCODE -ne 0) { throw 'WSL setup refresh failed' }
-        if ($state.BuildServer) { & winget.exe upgrade --id Git.Git --exact --source winget --accept-source-agreements --accept-package-agreements }
-        if ($state.T3CodeDesktop) { & winget.exe upgrade --id T3Tools.T3Code --exact --source winget --accept-source-agreements --accept-package-agreements }
+        if (-not $?) { throw 'WSL setup refresh failed' }
     }
     'logs' {
         $jobs = Join-Path $env:LOCALAPPDATA 'Basaltwater\jobs'

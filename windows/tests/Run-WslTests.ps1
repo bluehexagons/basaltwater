@@ -31,13 +31,18 @@ $kernel = (& wsl.exe --distribution $Distribution --exec uname -r | Select-Objec
 if ($LASTEXITCODE -ne 0 -or $kernel -notmatch '(?i)(microsoft|wsl2)') {
     throw 'Selected distribution is not running on the WSL kernel'
 }
+$osRelease = & wsl.exe --distribution $Distribution --exec cat /etc/os-release
+if ($LASTEXITCODE -ne 0 -or -not @($osRelease | Where-Object { $_ -match '^ID="?ubuntu"?\s*$' })) {
+    throw 'Selected distribution is not Ubuntu'
+}
 $init = (& wsl.exe --distribution $Distribution --exec cat /proc/1/comm | Select-Object -Last 1)
 if ($LASTEXITCODE -ne 0 -or $init -ne 'systemd') {
     throw 'Selected distribution is not running systemd'
 }
 
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-& (Join-Path $repo 'install.ps1') -Plan | Out-Host
+& (Join-Path $repo 'install.ps1') -Plan
+if (-not $?) { throw 'Installer plan failed' }
 $linuxRepo = (& wsl.exe --distribution $Distribution --exec wslpath -u $repo | Select-Object -Last 1).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $linuxRepo) { throw 'Could not translate checkout path into WSL' }
 & wsl.exe --distribution $Distribution --user root --exec python3 `

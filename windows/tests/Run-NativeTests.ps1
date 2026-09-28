@@ -62,8 +62,17 @@ try {
         return [pscustomobject]@{ Free = 100GB }
     }
     try {
-        $plan = & (Join-Path $repo 'install.ps1') -Plan -BuildServer -AgentTool 'gh,codex' 6>&1 | Out-String
+        $plan = & (Join-Path $repo 'install.ps1') -Plan -BuildServer -AgentTool gh,codex 6>&1 | Out-String
         Assert-True ($plan -match 'Plan: install WinGet/WSL') 'Installer plan did not complete'
+        Assert-Throws {
+            & (Join-Path $repo 'install.ps1') -Plan -DistroName Debian
+        } 'official stable Ubuntu WSL name'
+        Assert-Throws {
+            & (Join-Path $repo 'install.ps1') -Plan -AgentTool unsupported
+        } 'Unsupported Ubuntu agent tool'
+        Assert-Throws {
+            & (Join-Path $repo 'install.ps1') -Plan -DistroLocation 'C:relative'
+        } 'absolute Windows drive path'
     } finally {
         Remove-Item Function:\Get-CimInstance
         Remove-Item Function:\Get-PSDrive
