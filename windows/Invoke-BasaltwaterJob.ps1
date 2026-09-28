@@ -92,6 +92,9 @@ try {
             throw "Native job exceeded 50 MiB of logs"
         }
     }
+    # Complete redirected stream handling and refresh the exit status after a timed wait.
+    $process.WaitForExit()
+    $process.Refresh()
     $logBytes = 0
     foreach ($log in @($stdout, $stderr)) {
         if (Test-Path -LiteralPath $log) { $logBytes += (Get-Item -LiteralPath $log).Length }
