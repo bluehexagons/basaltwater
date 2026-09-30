@@ -543,7 +543,7 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
             )
         clone_path, commit_hash = result
         staged_urls.add(git_url)
-        from lib.deploy_utils import is_ruby_project, validate_repository_source_tree
+        from lib.deploy_utils import detect_project_type, is_ruby_project, validate_repository_source_tree
         from lib.project_manifest import load_manifest
 
         validate_repository_source_tree(clone_path)
@@ -553,6 +553,11 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
                 "basaltwater version; use its pinned legacy release"
             )
         manifest = load_manifest(clone_path)
+        if manifest is None and detect_project_type(clone_path) == "node":
+            raise RuntimeError(
+                f"Automatic Node deployment of {git_url} is no longer supported; "
+                "declare build commands and output in basaltwater.json"
+            )
         if manifest is not None:
             print(
                 f"  ✓ Validated basaltwater.json ({len(manifest.components)} component(s))"

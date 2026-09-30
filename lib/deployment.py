@@ -19,7 +19,6 @@ from typing import Any, Iterable, Optional
 from lib.remote_utils import run
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateStore
-from lib.update_policy import npm_freshness_args
 from lib.deploy_utils import (
     create_safe_directory_name,
     detect_project_type,
@@ -138,7 +137,7 @@ class DeploymentOrchestrator:
     def deploy_from_archive(self, source_path: str, domain: Optional[str], path: str,
                            git_url: str, commit_hash: Optional[str],
                            full_deploy: bool = True, keep_source: bool = False) -> dict[str, Any]:
-        """Deploy a non-manifest static/Node tree through an atomic release swap."""
+        """Deploy a ready-to-serve non-manifest tree through an atomic release swap."""
         del keep_source
         from lib.deploy_utils import is_ruby_project
 
@@ -149,6 +148,12 @@ class DeploymentOrchestrator:
             raise RuntimeError(
                 "Refusing to modify a Ruby/Rails deployment with this basaltwater "
                 "version; use its pinned legacy release"
+            )
+
+        if detect_project_type(source_path) == "node":
+            raise RuntimeError(
+                "Automatic Node deployments are no longer supported; declare "
+                "build commands and output in basaltwater.json"
             )
 
         if not should_redeploy(dest_path, git_url, commit_hash, full_deploy):
@@ -176,25 +181,6 @@ class DeploymentOrchestrator:
             self._copy_deployment_source(source_path, staging_path)
             project_type = detect_project_type(staging_path)
             print(f"Deploying {project_type} project to {dest_path}...")
-
-            site_root = path or "/"
-            if not site_root.startswith("/"):
-                site_root = f"/{site_root}"
-            if not site_root.endswith("/"):
-                site_root = f"{site_root}/"
-            build_user = None
-            if project_type == "node":
-                build_user = self._build_identity(dest_path)
-                self._ensure_build_user(build_user)
-                result = run(
-                    f"chown -R {shlex.quote(build_user)}:{shlex.quote(build_user)} "
-                    f"{shlex.quote(staging_path)}",
-                    check=False,
-                )
-                if result.returncode != 0:
-                    raise RuntimeError(f"Could not assign staging tree to build user {build_user}")
-            self.build_project(staging_path, project_type, site_root=site_root,
-                               build_user=build_user)
 
             result = run(
                 f"chown -R {shlex.quote(self.deploy_user)}:{shlex.quote(self.deploy_group)} "
@@ -229,7 +215,10 @@ class DeploymentOrchestrator:
 
             save_deployment_metadata(dest_path, git_url, commit_hash)
             if backup_path:
-                shutil.rmtree(backup_path)
+                try:
+                    shutil.rmtree(backup_path)
+                except OSError as exc:
+                    print(f"  ⚠ Previous release cleanup failed at {backup_path}: {exc}")
                 backup_path = None
             print(f"  ✓ Repository deployed to {dest_path}")
             return {
@@ -1173,90 +1162,3 @@ class DeploymentOrchestrator:
         raise RuntimeError(
             f"Health check for '{component.name}' did not pass within {timeout:g} seconds ({url})"
         )
-
-    def build_project(self, project_path: str, project_type: str,
-                      site_root: Optional[str] = None,
-                      build_user: Optional[str] = None) -> None:
-        if project_type == "node":
-            self._build_node_project(project_path, site_root=site_root,
-                                     build_user=build_user)
-        elif project_type == "static":
-            self._build_static_project(project_path)
-        else:
-            print(f"  ⚠ Unknown project type, no build performed")
-    
-    def _build_node_project(self, project_path: str,
-                            site_root: Optional[str] = None,
-                            build_user: Optional[str] = None) -> bool:
-        print(f"  Building Node.js project at {project_path}")
-
-        # Check if a build script is defined in package.json before running it
-        package_json = os.path.join(project_path, "package.json")
-        has_build_script = False
-        if os.path.exists(package_json):
-            try:
-                with open(package_json) as f:
-                    pkg = json.load(f)
-                has_build_script = "build" in pkg.get("scripts", {})
-            except Exception:
-                pass
-        
-        if not has_build_script:
-            message = "No build script in package.json"
-            print(f"  ℹ {message}, skipping build step")
-            return False
-
-        package_lock = os.path.join(project_path, "package-lock.json")
-        npm_install_command = "npm ci" if os.path.exists(package_lock) else "npm install"
-        freshness_args = shlex.join(npm_freshness_args())
-        freshness_suffix = f" {freshness_args}" if freshness_args else ""
-        if build_user is None:
-            raise RuntimeError("Node builds require a dedicated build user")
-        build_home = self._build_home(build_user)
-
-        def as_build_user(command: str) -> str:
-            script = f"cd {shlex.quote(project_path)} && {command}"
-            return (
-                f"runuser -u {shlex.quote(build_user)} -- "
-                f"env HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(script)}"
-            )
-
-        install_result = run(
-            as_build_user(f"TMPDIR=/var/tmp {npm_install_command}{freshness_suffix}"),
-            check=False,
-            capture_output=True,
-        )
-        if install_result.returncode != 0:
-            error = self._get_command_error(install_result, f"{npm_install_command} failed")
-            raise RuntimeError(f"Node dependency install failed: {error}")
-
-        build_cmd = "npm run build"
-        env_prefix = ["TMPDIR=/var/tmp"]
-
-        if site_root:
-            normalized_root = site_root if site_root.startswith('/') else f"/{site_root}"
-            if not normalized_root.endswith('/'):
-                normalized_root = f"{normalized_root}/"
-            env_prefix.append(f"VITE_SITE_ROOT={shlex.quote(normalized_root)}")
-            build_cmd = f"{build_cmd} -- --base {shlex.quote(normalized_root)}"
-
-        if env_prefix:
-            build_cmd = f"{' '.join(env_prefix)} {build_cmd}"
-        
-        result = run(
-            as_build_user(build_cmd),
-            check=False,
-            capture_output=True,
-        )
-        
-        if result.returncode != 0:
-            error = self._get_command_error(result, "npm run build failed")
-            raise RuntimeError(f"Node build failed: {error}")
-
-        print("  ✓ Node.js project built")
-
-        return True
-    
-    def _build_static_project(self, project_path: str):
-        print(f"  Static website at {project_path} - no build required")
-        print("  ✓ Static files ready")

@@ -43,15 +43,22 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
 
     A repo with an ``basaltwater.json`` manifest yields one descriptor per component
     (e.g. a static site plus a reverse-proxied API). Without a manifest the
-    legacy single-project detection path runs and yields one descriptor.
+    ready-to-serve static detection path runs and yields one descriptor.
     """
-    from lib.deploy_utils import is_ruby_project, parse_deploy_spec
+    from lib.deploy_utils import detect_project_type, is_ruby_project, parse_deploy_spec
     from lib.project_manifest import infer_manifest, load_manifest
 
     if is_ruby_project(source_path):
         raise RuntimeError(
             "Ruby/Rails deployments are no longer supported by this basaltwater "
             "version; use a pinned older release for this repository"
+        )
+
+    manifest = load_manifest(source_path)
+    if manifest is None and detect_project_type(source_path) == "node":
+        raise RuntimeError(
+            "Automatic Node deployments are no longer supported; declare "
+            "build commands and output in basaltwater.json"
         )
 
     ensure_deploy_user(deploy_user)
@@ -66,7 +73,6 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
         deploy_group=deploy_group,
     )
 
-    manifest = load_manifest(source_path)
     inferred_manifest = False
     if manifest is None:
         manifest = infer_manifest(source_path)

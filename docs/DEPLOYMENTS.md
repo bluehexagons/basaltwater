@@ -27,8 +27,11 @@ basaltw setup server_web web.example.com deploy \
   --deploy web.example.com https://github.com/example/web.git
 ```
 
-Without a manifest, the repository is classified as Node, static, or unknown
-by the automatic detection rules. A conventional Go module with
+Without a manifest, ready-to-serve static files are deployed directly.
+Automatic Node builds have been discontinued: repositories with `package.json`
+must declare build commands and output in `basaltwater.json`, using the static
+component example below. Rejection happens during controller preflight before
+target setup. A conventional Go module with
 `cmd/server/main.go` (or a root `main.go`) is also inferred as a service: it is
 built with `go build`, stored as `.basaltwater/bin/app`, and given a stable,
 automatically allocated internal port. Basaltwater supplies the conventional
@@ -244,9 +247,10 @@ units.
   service is stopped. A declared binary must exist and be executable.
 - Existing release files are replaced only after services are stopped. Static
   files are owned by the deployment user.
-- Legacy automatic static and Node deployments also build in a temporary
-  sibling directory and replace the active tree atomically. A fetch,
-  dependency, or build failure leaves the active release untouched.
+- Automatic static deployments stage in a temporary sibling directory and
+  replace the active tree atomically. A staging failure leaves the active
+  release untouched; failure to clean up the previous release retains it for
+  later cleanup without reporting a failed deployment.
 - Every requested repository must be staged successfully before remote setup
   begins; one failed fetch aborts the complete setup instead of silently
   dropping that route from the desired deployment set.

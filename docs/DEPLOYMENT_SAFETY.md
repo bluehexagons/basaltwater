@@ -11,10 +11,11 @@ know.
 - Refuses repositories or existing release trees with common Ruby/Rails markers.
   Ruby support belongs to pinned legacy basaltwater releases; current setup
   leaves existing legacy Rails units and their generated Nginx routes alone.
-- Legacy automatic static and Node builds run beside the active release and
-  switch directories atomically only after a successful build. A failed build
-  leaves the previous release active. Node install and build commands run as a
-  dedicated non-root build account.
+- Automatic Node builds are discontinued; repositories with `package.json`
+  require a manifest and are rejected before target setup when it is missing.
+  Ready-to-serve static deployments stage beside the active release and switch
+  directories atomically. A staging failure leaves the previous release active.
+  Old-release cleanup failures retain the backup without rejecting activation.
 - Repository symlinks and special files are rejected on the controller before
   manifest inspection or upload. Target-side source copying also refuses links.
 - Manifest service components get dedicated runtime users and writable state
