@@ -8,11 +8,10 @@ the new namespace. The gateway command is `basaltwater-web`. New disk serials
 and cache volume groups use Basaltwater names; existing storage retains its
 [durable identities](plans/BASALTWATER_CONTRACTS.md#persistent-storage-identities).
 
-Setup automatically performs the [one-time migration](BASALTWATER_MIGRATION.md)
-on recent infra-tools target installations before continuing. Standalone and
-controller migrations retain the explicit `basaltw migrate` command for the
-remaining user data; default controller configuration reads migrate recent
-default client files automatically, including saved hosts.
+The infra-tools cutover is complete for the managed fleet. Its migration engine
+and automatic client/target migrations are retired. Any remaining old
+installation or interrupted cutover requires the pinned
+[intermediate version](BASALTWATER_MIGRATION.md) before current setup.
 There are no persistent old-name aliases, environment fallbacks, or historical
 release support after cutover. The repository is hosted at
 `bluehexagons/basaltwater`.
@@ -21,12 +20,9 @@ release support after cutover. The repository is hosted at
 
 - The default suite exercises the renamed callers, setup plans, service
   configuration, authentication, agent integrations and state handling.
-- Migration fixtures cover read-only preview, private data preservation,
-  disjoint-directory merging, collision/symlink rejection, skill replacement,
-  service cutover, and recovery after a failed service start.
-- Migration regression tests also cover active provisioning locks, duplicate
-  legacy/canonical lock names, cross-filesystem lock retirement and recovery,
-  and automatic recovery of the narrowly identified interrupted lock cutover.
+- Retirement fixtures verify that old installations and incomplete journals
+  stop setup without mutations, while current runtime activation preserves
+  Syncthing traversal and respects unfinished systemd recovery.
 - Installer tests cover new root/user installations, Debian/CachyOS selection,
   custom destinations, source activation failure and interruption recovery.
 - The fresh wheel is built, installed and exercised outside the source tree.
@@ -39,18 +35,15 @@ release support after cutover. The repository is hosted at
 The maintainer owns these release checks. Mocked service operations and static
 panel specimens do not certify live provisioning or migration.
 
-- [ ] Qualify clean installation and migration from the recent pre-rename
-  development baseline on disposable Debian controller/server/agent VMs and a
+- [ ] Qualify clean installation and current-version upgrades on disposable
+  Debian controller/server/agent VMs and a
   CachyOS desktop. Record the exact source and OS versions.
 - [ ] Compare private data checksums and modes, validate application access,
-  service/timer health, agent configuration and completion after both system
-  and user passes. Confirm that old units, launchers and data paths are gone.
-- [ ] Interrupt a migration on disposable systems and exercise journal-based
-  recovery. Verify no duplicate scheduled jobs and no concurrently active
-  old/new lock namespaces. Do not perform this qualification on production.
+  service/timer health, agent configuration and completion after installation
+  and upgrade. Confirm that retired namespaces are not reintroduced.
 - [ ] Qualify retained and new disk/LVM identities on disposable hosts: test
   mixed layouts, provider/guest reruns, reboot, missing disks, and interrupted setup.
-- [ ] Requalify migration and setup on multiple nodes of a disposable Proxmox
+- [ ] Requalify setup and upgrades on multiple nodes of a disposable Proxmox
   cluster, including separate `/run/lock` and `/var/lib` filesystems. Confirm
   that a rerun on the first node and subsequent nodes preserves lock exclusion.
 - [ ] Qualify NAS and Samba + Gogs + Syncthing setup/reruns, boot ordering,

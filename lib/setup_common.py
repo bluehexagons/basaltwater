@@ -416,7 +416,10 @@ def _install_local_runtime_state_link() -> None:
 def _activate_local_runtime(build_dir: str) -> None:
     """Stage local setup payloads without destroying a managed Git worktree."""
     if os.path.lexists(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools")):
-        raise RuntimeError("Run basaltw migrate --system --apply before replacing a recent infra-tools installation")
+        raise RuntimeError(
+            "infra-tools runtime migration is retired; use the intermediate version "
+            "in docs/BASALTWATER_MIGRATION.md before replacing this installation"
+        )
     if os.path.islink(REMOTE_INSTALL_DIR):
         raise RuntimeError(f"Refusing symlinked runtime directory: {REMOTE_INSTALL_DIR}")
     _migrate_local_runtime_state()
@@ -1437,7 +1440,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             else:
                 print(f"  Upload files to {config.host}:{REMOTE_INSTALL_DIR}")
                 print(f"  Run: {shlex.join(command_tokens)}")
-            print("  Automatically migrate any recent infra-tools installation before setup")
+            print("  Refuse retired infra-tools installations; migrate with the documented intermediate version")
             if config.activate_network:
                 print("  Verify SSH on every requested address, then persist the network change")
             print("=" * 60)
@@ -1491,14 +1494,9 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner; '
                 'cd "$basaltwater_stage"; '
                 'export PYTHONDONTWRITEBYTECODE=1; '
-                'basaltwater_runtime_locked=0; '
-                f'if [ ! -e {shlex.quote(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools"))} ]; then '
                 'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; '
-                'basaltwater_runtime_locked=1; fi; '
                 f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}; '
                 f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
-                'if [ "$basaltwater_runtime_locked" = 0 ]; then '
-                'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; fi; '
                 f'python3 -u -m lib.setup_payloads --timeout {setup_timeout}'
             )
             locked_remote_shell_cmd = shlex.join(

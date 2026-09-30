@@ -203,8 +203,8 @@ basaltw --help
 
 The command is `basaltw`, backed by `basaltwater.py`. No old executable or
 module alias is installed. Existing recent infra-tools installations require
-a [one-time migration](BASALTWATER_MIGRATION.md), performed automatically on
-setup targets and explicitly on the controller before installation; afterward the new
+a [one-time migration through an intermediate version](BASALTWATER_MIGRATION.md)
+before current setup or installation; afterward the new
 paths and command names are the only supported interfaces. Bootstrap installs
 completion for `basaltw` in the configured shell.
 
@@ -313,7 +313,7 @@ remotes.
 refuses symlinks, mount points, home directories, broad system paths, and
 unmanaged existing directories. Successful installs record
 `.basaltwater/managed-install` for later reinstalls. Recent infra-tools
-installations require the [one-time cutover](BASALTWATER_MIGRATION.md) first;
+installations require the [intermediate-version cutover](BASALTWATER_MIGRATION.md) first;
 the installer refuses to create a parallel namespace beside an old installation.
 
 Activation failures and HUP/INT/TERM interruptions restore the previous source

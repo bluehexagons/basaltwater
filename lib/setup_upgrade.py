@@ -1,182 +1,147 @@
-"""Target-side runtime activation and automatic recent-install cutover."""
+"""Target-side activation for current Basaltwater installations."""
 
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
-import fcntl
-import json
 import os
 from pathlib import Path
-import pwd
 import re
 import shutil
 import stat
 import subprocess
-import uuid
 
-from lib import rename_migration
+from lib.state_read import read_state_object
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
-def _check_journal(root: Path, *, system: bool) -> bool:
-    directory = root / ("var/lib/basaltwater-migration" if system else ".local/state/basaltwater-migration")
+def _safe(path: Path) -> None:
+    """Validate privileged state paths without following parent symlinks."""
+    validate_filesystem_path(str(path))
+    if not path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"State path must be absolute and normalized: {path}")
+    for parent in path.parents:
+        if parent.is_symlink():
+            raise ValueError(f"Refusing symlinked state parent: {parent}")
+
+
+def _check_journal(root: Path) -> None:
+    """Preserve incomplete historical cutovers for the intermediate release."""
+    directory = root / "var/lib/basaltwater-migration"
     if not os.path.lexists(directory):
-        return False
+        return
     journal = directory / "journal.json"
-    rename_migration._safe(journal)
+    _safe(journal)
     for path in (directory, journal):
         info = path.lstat()
         if path.is_symlink() or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise ValueError(f"Unsafe migration journal: {path}")
-    plan = json.loads(journal.read_text())
-    if system and _recover_lock_retirement(root, directory, plan):
-        return False
-    if plan.get("status") != "complete":
-        raise ValueError(f"Interrupted migration requires recovery before setup: {journal}")
-    return True
+    plan = read_state_object(str(journal), versioned=False)
+    if plan is None or plan.get("status") != "complete":
+        raise ValueError(
+            f"Interrupted migration requires recovery with the intermediate version "
+            f"in docs/BASALTWATER_MIGRATION.md before setup: {journal}"
+        )
 
 
-def _recover_lock_retirement(root: Path, directory: Path, plan: dict) -> bool:
-    """Recover only the recognizable pre-unlink provisioning-lock failure."""
-    if plan.get("root") != str(root) or plan.get("recovery") != str(directory) or plan.get("system") is not True:
-        return False
-    recovered = plan.get("status") == "recovered" and plan.get("automatic_lock_recovery") is True
-    if not recovered:
-        index = plan.get("pending")
-        actions = plan.get("actions", [])
-        if plan.get("status") != "planned" or type(index) is not int or not 0 <= index < len(actions) or plan.get("completed") != index:
-            return False
-        action = actions[index]
-        old = Path(action.get("old", ""))
-        canonical = Path(action.get("preserve_lock", ""))
-        if action.get("kind") != "retire" or old.parent not in {root / "run/lock/infra-tools", root / "run/lock/infra_tools"} or canonical.parent != root / "run/lock/basaltwater" or old.name != canonical.name:
-            return False
-        if not re.fullmatch(r"provision-[0-9a-f]{64}\.lock", old.name):
-            return False
-        if not old.exists() or not canonical.exists() or os.path.lexists(directory / f"retired-{index}"):
-            return False
-        # All node-local lock inodes stay held while earlier journaled moves
-        # are reversed. The running setup's separate outer lock is untouched.
-        with ExitStack() as stack:
-            for brand in ("infra-tools", "infra_tools", "basaltwater"):
-                parent = root / "run/lock" / brand
-                rename_migration._safe(parent / "placeholder")
-                if not parent.exists():
-                    continue
-                for path in sorted(parent.rglob("*")):
-                    rename_migration._safe(path)
-                    info = path.lstat()
-                    if stat.S_ISDIR(info.st_mode):
-                        continue
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
-                        raise ValueError(f"Unsafe migration recovery lock: {path}")
-                    if path in (old, canonical) and info.st_size:
-                        raise ValueError(f"Nonempty provisioning lock during recovery: {path}")
-                    handle = stack.enter_context(os.fdopen(os.open(path, os.O_RDWR | os.O_NOFOLLOW), "r+"))
-                    opened = os.fstat(handle.fileno())
-                    if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                        raise ValueError(f"Migration recovery lock changed: {path}")
-                    try:
-                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except OSError as exc:
-                        raise ValueError(f"Active operation holds {path}; wait for it to finish") from exc
-            print("Recovering interrupted provisioning-lock migration", flush=True)
-            plan["automatic_lock_recovery"] = True
-            rename_migration._save(plan)
-            rename_migration.recover(root, system=True)
-    archive = directory.with_name(directory.name + "-recovered-" + uuid.uuid4().hex)
-    directory.rename(archive)
-    print(f"Preserved recovered migration journal: {archive}", flush=True)
-    return True
+def _check_unit_operation_markers(root: Path) -> None:
+    """Do not overwrite runtime used by unfinished systemd unit recovery."""
+    for brand in ("infra-tools", "basaltwater"):
+        marker = root / "etc/systemd/system" / f".{brand}-unit-operation.json"
+        _safe(marker)
+        if os.path.lexists(marker):
+            raise ValueError(f"Unfinished systemd unit replacement; recover before setup: {marker}")
 
 
-def _migrate_users(runtime: Path, username: str) -> None:
-    """Run each existing login account's cutover with its own permissions."""
-    accounts = [account for account in pwd.getpwall()
-                if account.pw_uid == 0 or account.pw_uid >= 1000 or account.pw_name == username]
-    for account in accounts:
-        if not Path(account.pw_dir).is_dir():
+def _traversal_acl(content: str, uid: int) -> str:
+    """Grant traversal without unmasking another account's latent ACL rights."""
+    entries = [line.split("#", 1)[0].strip() for line in content.splitlines()]
+    entries = [line for line in entries if line]
+    access = [line.split(":") for line in entries if not line.startswith("default:")]
+    if any(len(entry) != 3 or not re.fullmatch(r"[r-][w-][x-]", entry[2]) for entry in access):
+        raise ValueError("Invalid state directory ACL")
+    if not {("user", ""), ("group", ""), ("other", "")}.issubset({tuple(entry[:2]) for entry in access}):
+        raise ValueError("Incomplete state directory ACL")
+    mask = next((entry[2] for entry in access if entry[0] == "mask"), "rwx")
+    updated = []
+    found = False
+    effective_mask = set("x")
+    for kind, qualifier, permissions in access:
+        if kind == "mask":
             continue
-        if not validate_username(account.pw_name):
-            raise ValueError("Invalid migration account")
-        validate_filesystem_path(account.pw_dir, must_exist=True)
-        environment = [
-            "env", "-i", f"HOME={account.pw_dir}", f"USER={account.pw_name}",
-            f"LOGNAME={account.pw_name}", "PATH=/usr/local/bin:/usr/bin:/bin",
-            "PYTHONDONTWRITEBYTECODE=1",
-            f"XDG_RUNTIME_DIR=/run/user/{account.pw_uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{account.pw_uid}/bus",
-            "python3", "-B", "-m", "lib.setup_upgrade", "--user-migration",
-        ]
-        print(f"Checking existing user data for {account.pw_name}", flush=True)
-        subprocess.run(["runuser", "--user", account.pw_name, "--", *environment],
-                       cwd=str(runtime), stdin=subprocess.DEVNULL, check=True)
+        if kind == "group" or (kind == "user" and qualifier):
+            permissions = "".join(c if c in mask else "-" for c in permissions)
+            if kind == "user" and qualifier == str(uid):
+                permissions = permissions[:2] + "x"
+                found = True
+            effective_mask.update(permissions)
+        updated.append(f"{kind}:{qualifier}:{permissions}")
+    if not found:
+        updated.append(f"user:{uid}:--x")
+    updated.append("mask::" + "".join(c if c in effective_mask else "-" for c in "rwx"))
+    updated.extend(line for line in entries if line.startswith("default:"))
+    return "\n".join(updated) + "\n"
+
+
+def _ensure_acl_tools() -> None:
+    if not all(shutil.which(command) for command in ("getfacl", "setfacl")):
+        from lib.remote_utils import install_package
+
+        if not install_package("ACL tools", "acl", ["apt-get", "-o", "DPkg::Lock::Timeout=60", "install", "-y", "-qq", "acl"]):
+            raise ValueError("ACL tools are required to preserve Syncthing state access")
+
+
+def repair_syncthing_state_access(root: Path) -> None:
+    """Restore traversal after runtime staging masks the private parent's ACL."""
+    parent = root / "var/lib/basaltwater"
+    home = parent / "syncthing"
+    _safe(home)
+    if not os.path.lexists(home):
+        return
+    if home.is_symlink() or not home.is_dir():
+        raise ValueError(f"Unsafe Syncthing state directory: {home}")
+    uid = home.stat().st_uid
+    if uid == os.geteuid():
+        return
+    _ensure_acl_tools()
+    before = subprocess.run(
+        ["getfacl", "--omit-header", "--numeric", "--", str(parent)],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    subprocess.run(
+        ["setfacl", "--set-file=-", "--", str(parent)],
+        input=_traversal_acl(before, uid), text=True, check=True,
+    )
 
 
 def prepare_target_runtime(source: str, username: str) -> None:
-    """Migrate before replacement; refuse to continue through partial cutover."""
+    """Activate current runtime; leave retired installations untouched."""
     from lib import setup_common
 
     validate_filesystem_path(source, must_exist=True)
     if not validate_username(username):
         raise ValueError("Invalid setup username")
     runtime = Path(setup_common.REMOTE_INSTALL_DIR)
-    # The managed target layout is /opt/basaltwater. Deriving the root also
-    # permits isolated filesystem fixtures without touching host state.
     root = runtime.parent.parent
-    rename_migration.check_unit_operation_markers(root)
-    completed = _check_journal(root, system=True)
-    if completed:
-        rename_migration.repair_systemd_settings(root)
-    legacy = runtime.with_name("infra_tools")
-    migrated = False
-    if os.path.lexists(legacy):
-        if not (legacy / "infra_tools.py").is_file():
-            raise ValueError(f"Unrecognized legacy runtime; refusing replacement: {legacy}")
-        print("Migrating recent infra-tools installation to Basaltwater", flush=True)
-        plan = rename_migration.build_plan(root, system=True, runtime_source=Path(source))
-        rename_migration.apply_plan(plan)
-        migrated = True
-    if not migrated:
-        # A system cutover may have completed before a user pass failed. Keep
-        # migrated deployment sources when retrying without replacement input.
-        previous_deployments = runtime / "deployments"
-        incoming_deployments = Path(source) / "deployments"
-        if completed and previous_deployments.is_dir() and not incoming_deployments.exists():
-            if previous_deployments.is_symlink():
-                raise ValueError("Refusing symlinked deployment directory")
-            shutil.copytree(previous_deployments, incoming_deployments, symlinks=True)
-        setup_common._activate_local_runtime(source)
-        # Staging sets the shared state parent to 0700. Preserve access even
-        # when this setup selects no Syncthing steps or is retrying a cutover.
-        rename_migration.repair_syncthing_state_access(root)
-    else:
-        # Migration already installed this source while retaining the previous
-        # deployments. Explicitly supplied deployment sources take precedence.
-        deployments = Path(source) / "deployments"
-        if deployments.is_dir():
-            destination = runtime / "deployments"
-            if destination.is_symlink():
-                raise ValueError("Refusing symlinked deployment directory")
-            if destination.exists():
-                shutil.rmtree(destination)
-            shutil.copytree(deployments, destination, symlinks=True)
-    if migrated or completed:
-        rename_migration.repair_managed_markers(root)
-        _migrate_users(runtime, username)
+    _check_unit_operation_markers(root)
+    _check_journal(root)
+    for parent in ("opt", "var/lib"):
+        for name in ("infra_tools", "infra-tools"):
+            legacy = root / parent / name
+            if os.path.lexists(legacy):
+                raise ValueError(
+                    f"Retired infra-tools installation at {legacy}; use the intermediate "
+                    "version in docs/BASALTWATER_MIGRATION.md before setup"
+                )
+    setup_common._activate_local_runtime(source)
+    repair_syncthing_state_access(root)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--username")
-    parser.add_argument("--user-migration", action="store_true")
+    parser.add_argument("--username", required=True)
     args = parser.parse_args()
     try:
-        if args.user_migration:
-            _check_journal(Path.home(), system=False)
-            return rename_migration.migrate(system=False, apply=True)
         if os.geteuid() != 0:
             raise ValueError("Target runtime activation requires root")
         prepare_target_runtime(str(Path(__file__).resolve().parents[1]), args.username)

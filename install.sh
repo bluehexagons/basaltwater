@@ -601,6 +601,10 @@ for part in (target, *target.parents):
         refuse('symlink path component')
 if os.path.ismount(target):
     refuse('mount point')
+for parent in (home / '.config', home / '.cache', home / '.local/share', home / '.local/state', target.parent):
+    for name in ('infra_tools', 'infra-tools'):
+        if os.path.lexists(parent / name):
+            refuse('retired infra-tools data; use the intermediate version in docs/BASALTWATER_MIGRATION.md first')
 if target.exists():
     marker = target / '.basaltwater' / 'managed-install'
     managed = marker.is_file() and not marker.is_symlink() and marker.read_text() == 'basaltwater-v1\n'
@@ -618,7 +622,7 @@ if target.exists():
         and any(target.parent.glob('.basaltwater-migration-*'))
     )
     if not managed and not data_only and not migrated:
-        refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
+        refuse('unmanaged directory; infra-tools migration requires the intermediate version in docs/BASALTWATER_MIGRATION.md')
 EOF
 
 if [ "$CHANNEL_SET" -eq 0 ] && [ -f "$INSTALL_DIR/.basaltwater/channel.json" ]; then
@@ -700,14 +704,6 @@ fi
 
 [ -f "$STAGED_DIR/basaltwater.py" ] || fail "selected source predates Basaltwater; historical releases are unsupported"
 
-if [ "$HOST_OS_ID" = cachyos ]; then
-    printf '\nChecking for recent infra-tools data to migrate...\n'
-    if ! env HOME="$TARGET_HOME" USER="$TARGET_USER" \
-        python3 "$STAGED_DIR/basaltwater.py" migrate --apply; then
-        fail "CachyOS Basaltwater migration failed; preserve any migration journal and resolve its reported conflict before retrying"
-    fi
-fi
-
 python3 - "$INSTALL_DIR" "$TARGET_HOME" "$HOST_OS_ID" <<'EOF'
 from __future__ import annotations
 import os
@@ -747,7 +743,7 @@ if target.exists():
         and any(target.parent.glob('.basaltwater-migration-*'))
     )
     if not managed and not data_only and not migrated:
-        refuse('unmanaged directory; use basaltw migrate for recent infra-tools installations')
+        refuse('unmanaged directory; infra-tools migration requires the intermediate version in docs/BASALTWATER_MIGRATION.md')
 EOF
 
 if [ -e "$INSTALL_DIR" ]; then

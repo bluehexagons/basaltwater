@@ -277,7 +277,7 @@ class TestInstallScript(unittest.TestCase):
                 ["setup", "server_dev", "10.0.0.50", "agent", "--dry-run"],
             )
 
-    def test_cachyos_installer_runs_migration_before_bootstrap(self):
+    def test_cachyos_installer_bootstraps_without_retired_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             _, log_path, environment = self._create_fixture(directory)
             environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
@@ -292,8 +292,29 @@ class TestInstallScript(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             with open(log_path, encoding="utf-8") as file_obj:
                 calls = [json.loads(line) for line in file_obj]
-            self.assertEqual(calls[0], ["migrate", "--apply"])
-            self.assertEqual(calls[1][0], "bootstrap")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "bootstrap")
+
+    def test_installer_refuses_retired_data_without_replacing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home, log_path, environment = self._create_fixture(directory)
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos")
+            old = os.path.join(home, ".config", "infra_tools")
+            os.makedirs(old)
+            secret = os.path.join(old, "credentials.json")
+            with open(secret, "w") as stream:
+                stream.write("private")
+            target = os.path.join(directory, "installed")
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--install-dir", target],
+                env=environment, text=True, capture_output=True, timeout=20,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("intermediate version", result.stderr)
+            self.assertFalse(os.path.exists(target))
+            self.assertFalse(os.path.exists(log_path))
+            with open(secret) as stream:
+                self.assertEqual(stream.read(), "private")
 
     def test_cachyos_installer_preserves_existing_t3_data_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -455,8 +476,8 @@ class TestInstallScript(unittest.TestCase):
             self.assertFalse(os.path.exists(sudo_log))
             with open(log_path) as handle:
                 calls = [json.loads(line) for line in handle]
-            self.assertEqual(calls[0], ["migrate", "--apply"])
-            self.assertEqual(calls[2], ["setup", "agent_cachyos", "localhost", "testuser", "--node"])
+            self.assertEqual(calls[0][0], "bootstrap")
+            self.assertEqual(calls[1], ["setup", "agent_cachyos", "localhost", "testuser", "--node"])
 
     def test_cachyos_rejects_other_local_profiles_before_installation(self):
         with tempfile.TemporaryDirectory() as directory:

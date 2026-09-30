@@ -30,10 +30,9 @@ Related pages:
 
 ## Commands
 
-`migrate` previews a one-time cutover from recent infra-tools data and servers.
-`--apply` changes this user’s data; add `--system` for host resources.
-`--recover` reverses an interrupted cutover. See the
-[migration guide](BASALTWATER_MIGRATION.md) before applying.
+`migrate` is retired and exits with an intermediate-version instruction without
+changing files or services. Use the [migration guide](BASALTWATER_MIGRATION.md)
+for any remaining infra-tools installation or interrupted historical cutover.
 
 ```text
 basaltw --version

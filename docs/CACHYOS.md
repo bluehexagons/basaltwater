@@ -43,11 +43,10 @@ ripgrep, build tools, GitHub CLI, and Codex plus Node.js, Python, and Git LFS.
 The installer defaults to the `dev` channel while this profile is new.
 The temporary download is removed when the command exits, including on failure.
 
-When the installer finds recent `infra_tools` user data, it runs the one-time
-Basaltwater migration from the selected checkout before installing and starting
-the CachyOS setup. Migration conflicts stop the installer with the reported
-path or recovery instructions. An existing `cachyos-t3` data directory at the
-default Basaltwater install path is retained during migration and reinstall.
+The installer no longer migrates `infra_tools` user data. Any remaining old
+installation must first use the [intermediate version](BASALTWATER_MIGRATION.md).
+An existing `cachyos-t3` data directory at the default Basaltwater install path
+is retained during reinstall.
 Installer updates also carry forward managed `state`, `deployments`, and
 `worktrees` directories.
 If that path also contains other unmanaged files, move or resolve them before

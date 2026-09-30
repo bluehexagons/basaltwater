@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 
 
@@ -12,14 +11,18 @@ DEFAULT_WORKSPACE_DIR = "~/.config/basaltwater"
 
 
 def normalize_workspace_dir(path: str | None = None) -> str:
-    """Resolve the workspace, migrating recent default client data on access."""
+    """Resolve the workspace without modifying historical client data."""
     raw_path = path if path is not None else os.environ.get(WORKSPACE_ENV_VAR, DEFAULT_WORKSPACE_DIR)
     expanded_path = os.path.expanduser(raw_path)
     workspace = os.path.abspath(expanded_path)
     if workspace == os.path.abspath(os.path.expanduser(DEFAULT_WORKSPACE_DIR)):
-        from lib.client_migration import migrate_client_workspace
-
-        migrate_client_workspace(Path(workspace))
+        for name in ("infra_tools", "infra-tools"):
+            legacy = os.path.join(os.path.dirname(workspace), name)
+            if os.path.lexists(legacy):
+                raise ValueError(
+                    f"Retired infra-tools workspace at {legacy}; use the intermediate "
+                    "version in docs/BASALTWATER_MIGRATION.md before continuing"
+                )
     return workspace
 
 

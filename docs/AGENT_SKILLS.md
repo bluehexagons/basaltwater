@@ -97,8 +97,9 @@ upgrading an older VM with explicit `--steps`, include
 capability step that refreshes the catalog, for example
 `--steps 'install_agent_cli_launcher install_agent_workflow_skills'`.
 Capability-only runs must not publish new guidance while leaving an old-only
-launcher installation. On CachyOS, refresh the user bootstrap as described in
-the [migration guide](BASALTWATER_MIGRATION.md) before updating skills.
+launcher installation. On CachyOS, rerun the current installer to refresh the
+user bootstrap before updating skills. Remaining infra-tools installations
+require the [intermediate migration version](BASALTWATER_MIGRATION.md) first.
 
 ## Maintaining the catalog
 
