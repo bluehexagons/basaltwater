@@ -89,10 +89,12 @@ rollback. Basaltwater adds a systemd drop-in for the configured workspace,
 host, port, PATH, and GitHub CLI environment. The drop-in runs T3's current
 upstream `ExecStart` through a small output filter, resolving that command from
 the upstream unit on each start so launcher updates do not require a pinned
-Basaltwater command. It redacts credential fields and terminal QR rows from
-both output streams, then forwards the remaining diagnostics to T3's normal
-service log. A pre-start step also sanitizes an existing `boot-service.log`
-and its numbered rotations after the previous service process has stopped.
+Basaltwater command. It removes terminal color codes and hyperlink metadata,
+then redacts credential fields, complete authorization/cookie values, and
+terminal QR rows from both output streams. It forwards the remaining
+diagnostics to T3's normal service log. A pre-start step also sanitizes an
+existing `boot-service.log` and its numbered rotations after the previous
+service process has stopped.
 
 The service unit is:
 

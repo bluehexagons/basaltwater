@@ -48,6 +48,9 @@ class T3CodeLogFilterTests(unittest.TestCase):
         self.assertNotIn("fixture-bearer-token", safe)
         self.assertIn('"ready":true', safe)
         self.assertIn("Server health check passed", safe)
+        structured = safe.splitlines()[3]
+        self.assertTrue(json.loads(structured)["ready"])
+        self.assertEqual(log_filter.redact_line("Token: [redacted]\n"), "Token: [redacted]\n")
 
     def test_stream_filter_preserves_non_sensitive_diagnostics(self) -> None:
         output = io.BytesIO()
@@ -65,6 +68,47 @@ class T3CodeLogFilterTests(unittest.TestCase):
         self.assertIn("Token: [redacted]", safe)
         self.assertNotIn("fixture-token-value", safe)
         self.assertIn("service is listening", safe)
+
+    def test_formatted_credentials_and_complete_header_values_are_redacted(self) -> None:
+        lines = (
+            "\x1b[36mToken\x1b[0m: fixture-secret\n",
+            "Authorization=Basic fixture-secret\n",
+            "Cookie=session=fixture-secret; refresh=fixture-refresh\n",
+            "\x1b]8;;https://example.test/pair#fixture-secret\x1b\\"
+            "Pairing URL\x1b]8;;\x1b\\: https://example.test/pair#fixture-secret\n",
+            "\x1b]8;;https://example.test/pair#fixture-secret\x07"
+            "open pairing\x1b]8;;\x07\n",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                safe = log_filter.redact_line(line)
+                self.assertNotIn("fixture-", safe)
+                self.assertNotIn("https://example.test/pair", safe)
+                self.assertNotIn("\x1b", safe)
+
+        self.assertEqual(
+            log_filter.redact_line("\x1b[30;47m  █▀▄▀█  \x1b[0m\n"),
+            "",
+        )
+        self.assertEqual(
+            log_filter.redact_line("\x1b[32mServer healthy\x1b[0m\n"),
+            "Server healthy\n",
+        )
+
+    def test_live_and_saved_logs_use_the_same_formatted_output_filter(self) -> None:
+        source = (
+            b"\x1b[36mToken\x1b[0m: fixture-secret\n"
+            b"Authorization=Basic fixture-secret\n"
+            b"Cookie=session=fixture-secret; refresh=fixture-refresh\n"
+        )
+        output = io.BytesIO()
+        log_filter.filter_stream(io.BytesIO(source), output)
+        self.assertNotIn(b"fixture-", output.getvalue())
+        with tempfile.TemporaryDirectory() as temporary:
+            log_path = Path(temporary) / "boot-service.log"
+            log_path.write_bytes(source)
+            self.assertTrue(log_filter.sanitize_existing_log(log_path))
+            self.assertEqual(log_path.read_bytes(), output.getvalue())
 
     def test_log_scrubbing_is_in_place_idempotent_and_preserves_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -192,6 +236,8 @@ class T3CodeLogFilterTests(unittest.TestCase):
             "-c",
             "import sys; "
             "print('Token: fixture-token-value'); "
+            "print('\\x1b[36mToken\\x1b[0m: fixture-formatted-secret'); "
+            "print('Authorization=Basic fixture-header-secret', file=sys.stderr); "
             "print('Pairing URL: https://example.test/pair#token=fixture'); "
             "print('healthy diagnostic'); "
             "print('{\\\"pairingUrl\\\":\\\"https://example.test/pair\\\"}', file=sys.stderr); "
@@ -208,10 +254,12 @@ class T3CodeLogFilterTests(unittest.TestCase):
         safe_stdout = stdout.getvalue().decode()
         safe_stderr = stderr.getvalue().decode()
         self.assertNotIn("fixture-token-value", safe_stdout)
+        self.assertNotIn("fixture-formatted-secret", safe_stdout)
         self.assertNotIn("https://example.test/pair", safe_stdout)
         self.assertIn("Token: [redacted]", safe_stdout)
         self.assertIn("healthy diagnostic", safe_stdout)
         self.assertNotIn("https://example.test/pair", safe_stderr)
+        self.assertNotIn("fixture-header-secret", safe_stderr)
         self.assertIn('"pairingUrl":"[redacted]"', safe_stderr)
 
     def test_debian_dropin_scrubs_old_log_and_wraps_upstream_execstart(self) -> None:

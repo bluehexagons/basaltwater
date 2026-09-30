@@ -31,15 +31,18 @@ _LOG_RELATIVE_PATH = Path(".t3/userdata/logs/boot-service.log")
 # Bump this when redaction rules change so existing logs are rescanned once.
 _LOG_FILTER_MARKER = ".basaltwater-t3-log-filter"
 _SERVICE_LOG_ROTATION = re.compile(r"^boot-service\.log\.[1-9][0-9]*$")
+_TERMINAL_ESCAPE = re.compile(
+    r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~])"
+)
 _SENSITIVE_FIELD = re.compile(
     r"(?i)(?P<prefix>['\"]?[a-z0-9_-]*"
     r"(?:api[_-]?key|authorization|cookie|credential|pairing[_-]?url|"
     r"pairurl|password|secret|token)['\"]?\s*[:=]\s*)"
-    r"(?P<value>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|[^\s,;}\]]+)"
+    r"(?P<value>\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\[redacted\]|[^\s,;}\]]+)"
 )
 _PLAIN_SECRET_LABEL = re.compile(
     r"(?i)(?P<prefix>\b(?:access\s+token|authorization|cookie|credential|"
-    r"pairing\s+url|pairurl|password|refresh\s+token|token)\s*:\s*).*$"
+    r"pairing\s+url|pairurl|password|refresh\s+token|token)\s*[:=]\s*).*$"
 )
 _BEARER_TOKEN = re.compile(r"(?i)(\bbearer\s+)\S+")
 _QR_CHARACTERS = frozenset(" \t\r\n█▀▄")
@@ -55,10 +58,13 @@ class T3ServiceError(RuntimeError):
 def redact_line(line: str) -> str:
     """Redact credential fields and terminal QR rows from one output line."""
 
+    # Color codes can split a label from its delimiter, and OSC hyperlinks can
+    # contain a credential URL separate from the visible text. Persistent logs
+    # need neither form of terminal formatting.
+    line = _TERMINAL_ESCAPE.sub("", line)
     qr_characters = set(line.rstrip("\r\n"))
     if qr_characters <= _QR_CHARACTERS and qr_characters & _QR_MARKERS:
         return ""
-    redacted = _PLAIN_SECRET_LABEL.sub(lambda match: match["prefix"] + _REDACTED, line)
 
     def redact_field(match: re.Match[str]) -> str:
         value = match["value"]
@@ -72,8 +78,9 @@ def redact_line(line: str) -> str:
 
     redacted = _SENSITIVE_FIELD.sub(
         redact_field,
-        redacted,
+        line,
     )
+    redacted = _PLAIN_SECRET_LABEL.sub(lambda match: match["prefix"] + _REDACTED, redacted)
     return _BEARER_TOKEN.sub(lambda match: match[1] + _REDACTED, redacted)
 
 
