@@ -268,12 +268,54 @@ class TestSysadminTransfer(unittest.TestCase):
     def test_pull_defaults_to_remote_basename_and_rejects_invalid_remote(self) -> None:
         with patch.object(sysadmin_transfer.shutil, "which", return_value="/usr/bin/rsync"), patch.object(sysadmin_transfer, "build_rsync_ssh_transport", return_value="ssh"), patch.object(sysadmin_transfer, "run_command", return_value=completed()) as run:
             self.assertEqual(sysadmin_transfer.run_pull("server:/srv/data"), 0)
-        self.assertIn("data", run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][-1], os.path.abspath("data"))
         self.assertEqual(sysadmin_transfer.run_pull("server"), 1)
 
     def test_transfer_reports_missing_rsync(self) -> None:
         with patch.object(sysadmin_transfer.shutil, "which", return_value=None):
             self.assertEqual(sysadmin_transfer.run_pull("server:/srv/data"), 1)
+
+    def test_local_operands_cannot_become_rsync_options_or_remote_sources(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(sysadmin_transfer.os, 'getcwd', return_value=directory), \
+             patch.object(sysadmin_transfer, 'load_setup_command', return_value=None), \
+             patch.object(sysadmin_transfer.shutil, 'which', return_value='/usr/bin/rsync'), \
+             patch.object(sysadmin_transfer, 'build_rsync_ssh_transport', return_value='ssh'), \
+             patch.object(sysadmin_transfer, 'run_command', return_value=completed()) as run:
+            for name in ('--rsh=bad', 'other:source', 'contents/'):
+                with self.subTest(name=name):
+                    self.assertEqual(sysadmin_transfer.run_push(name, 'server:/srv'), 0)
+                    command = run.call_args.args[0]
+                    expected = os.path.join(directory, name)
+                    self.assertEqual(command[-3:], ['--', expected, 'root@server:/srv'])
+                    self.assertIn('--protect-args', command)
+                    self.assertEqual(sysadmin_transfer.run_pull('server:/srv', name), 0)
+                    self.assertEqual(run.call_args.args[0][-1], expected)
+
+    def test_transfer_validates_before_commands_or_delete_confirmation(self):
+        with patch.object(sysadmin_transfer, 'load_setup_command', return_value=None), \
+             patch.object(sysadmin_transfer, 'run_command') as run, patch('builtins.input') as prompt:
+            for remote in ('server:', 'server::module', '-oBad:/srv', 'user@server:/srv',
+                           'server:/bad\npath'):
+                with self.subTest(remote=remote):
+                    self.assertEqual(sysadmin_transfer.run_push('dist', remote, delete=True), 1)
+                    self.assertEqual(sysadmin_transfer.run_pull(remote), 1)
+            for kwargs in ({'username': '-oBad'}, {'port': 0}, {'port': True},
+                           {'ssh_key': 'bad\nkey'}):
+                with self.subTest(kwargs=kwargs):
+                    self.assertEqual(sysadmin_transfer.run_push('dist', 'server:/srv',
+                                                               delete=True, **kwargs), 1)
+                    self.assertEqual(sysadmin_transfer.run_pull('server:/srv', **kwargs), 1)
+        run.assert_not_called()
+        prompt.assert_not_called()
+
+    def test_pull_does_not_choose_parent_directory_from_remote_basename(self):
+        with patch.object(sysadmin_transfer, 'load_setup_command', return_value=None), \
+             patch.object(sysadmin_transfer.shutil, 'which', return_value='/usr/bin/rsync'), \
+             patch.object(sysadmin_transfer, 'build_rsync_ssh_transport', return_value='ssh'), \
+             patch.object(sysadmin_transfer, 'run_command', return_value=completed()) as run:
+            self.assertEqual(sysadmin_transfer.run_pull('server:/srv/../'), 0)
+        self.assertEqual(run.call_args.args[0][-1], os.path.abspath('server'))
 
 
 class TestSysadminUpgrade(unittest.TestCase):

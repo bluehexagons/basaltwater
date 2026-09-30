@@ -177,6 +177,12 @@ basaltw push ./data myserver:/backup/data --delete
 When `--delete` is specified without `--dry-run`, a confirmation prompt is
 shown before proceeding.
 
+Push and pull validate the host, username, SSH port, and paths before starting
+rsync. Local paths remain local operands, including names containing colons or
+starting with a dash. Remote arguments travel through rsync's protected argument
+protocol. A trailing slash on a local source retains rsync's usual meaning:
+copy the directory's contents instead of the directory itself.
+
 ---
 
 ## pull

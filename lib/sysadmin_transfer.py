@@ -10,6 +10,8 @@ from typing import Optional
 from lib.sysadmin_process import run_command
 from lib.cache import load_setup_command
 from lib.ssh_utils import build_rsync_ssh_transport, ssh_batch_mode
+from lib.validation import validate_filesystem_path
+from lib.validators import validate_host, validate_username
 
 
 def _resolve_credentials(
@@ -26,15 +28,35 @@ def _resolve_credentials(
             ssh_key = config.ssh_key
         if port is None:
             port = getattr(config, "port", None)
-    return username or "root", ssh_key, port
+    username = username or "root"
+    if not validate_username(username):
+        raise ValueError("Invalid transfer username")
+    if port is not None and (type(port) is not int or not 1 <= port <= 65535):
+        raise ValueError("Transfer SSH port must be an integer between 1 and 65535")
+    if ssh_key is not None:
+        validate_filesystem_path(ssh_key)
+    return username, ssh_key, port
 
 
 def _parse_remote(remote: str) -> tuple[str, str]:
     if ":" not in remote:
-        print(f"Error: remote must be host:path, got {remote!r}", file=sys.stderr)
-        raise ValueError(remote)
+        raise ValueError(f"remote must be host:path, got {remote!r}")
     host, path = remote.split(":", 1)
+    if not validate_host(host):
+        raise ValueError("Invalid transfer host")
+    validate_filesystem_path(path)
+    if path.startswith(":"):
+        raise ValueError("Rsync daemon destinations are unsupported; use host:path over SSH")
     return host, path
+
+
+def _local_operand(path: str) -> str:
+    """Keep local paths local while preserving rsync's trailing-slash semantics."""
+    validate_filesystem_path(path)
+    normalized = os.path.abspath(path)
+    if path.endswith("/") and not normalized.endswith("/"):
+        normalized += "/"
+    return normalized
 
 
 def _build_rsync_cmd(
@@ -53,11 +75,12 @@ def _build_rsync_cmd(
     transport = build_rsync_ssh_transport(
         ssh_key=ssh_key, port=port, batch_mode=ssh_batch_mode()
     )
-    cmd = ["rsync", "-avP", "-e", transport, src, dst]
+    cmd = ["rsync", "-avP", "--protect-args", "-e", transport]
     if delete:
         cmd.append("--delete")
     if dry_run:
         cmd.append("--dry-run")
+    cmd.extend(["--", src, dst])
     return cmd
 
 
@@ -72,10 +95,12 @@ def run_push(
 ) -> int:
     try:
         host, remote_path = _parse_remote(remote)
-    except ValueError:
+        local_path = _local_operand(local_path)
+        username, ssh_key, port = _resolve_credentials(host, username, ssh_key, port)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    username, ssh_key, port = _resolve_credentials(host, username, ssh_key, port)
     dst = f"{username}@{host}:{remote_path}"
 
     if delete and not dry_run:
@@ -112,14 +137,15 @@ def run_pull(
 ) -> int:
     try:
         host, remote_path = _parse_remote(remote)
-    except ValueError:
+        username, ssh_key, port = _resolve_credentials(host, username, ssh_key, port)
+        if local_path is None:
+            name = os.path.basename(remote_path.rstrip("/"))
+            local_path = name if name not in {"", ".", ".."} else host
+            print(f"Destination: ./{local_path}")
+        local_path = _local_operand(local_path)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
-
-    username, ssh_key, port = _resolve_credentials(host, username, ssh_key, port)
-
-    if local_path is None:
-        local_path = os.path.basename(remote_path.rstrip("/")) or host
-        print(f"Destination: ./{local_path}")
 
     src = f"{username}@{host}:{remote_path}"
 
