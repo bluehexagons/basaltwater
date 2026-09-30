@@ -1033,7 +1033,7 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
 
     runtime = _t3_runtime_path(home)
     content = (
-        "#!/bin/bash\n"
+        "#!/bin/sh\n"
         "set -eu\n"
         f"export HOME={shlex.quote(home)}\n"
         'export NVM_DIR="$HOME/.nvm"\n'
