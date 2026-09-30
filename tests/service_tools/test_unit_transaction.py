@@ -104,7 +104,7 @@ class TestUnitTransaction(unittest.TestCase):
         self.assertFalse(any(command[1] in {"enable", "restart", "daemon-reload"} for command in self.commands))
 
     def test_post_activation_verification_failure_restores_old_state(self):
-        original = units._state
+        original = units.inspect_unit_state
         calls = 0
 
         def state(name):
@@ -114,7 +114,7 @@ class TestUnitTransaction(unittest.TestCase):
                 return {"LoadState": "loaded", "ActiveState": "failed", "UnitFileState": "enabled"}
             return original(name)
 
-        with patch.object(units, "_state", side_effect=state), self.assertRaisesRegex(RuntimeError, "verification"):
+        with patch.object(units, "inspect_unit_state", side_effect=state), self.assertRaisesRegex(RuntimeError, "verification"):
             self.replace()
         self.assertEqual(self.path.read_text(), "old unit")
         self.assertEqual((self.active, self.enabled), ("active", "enabled"))
@@ -145,3 +145,17 @@ class TestUnitTransaction(unittest.TestCase):
             self.replace()
         self.assertFalse((self.root / "unrelated").exists())
         self.assertEqual(self.commands, [])
+
+    def test_cleanup_failure_does_not_reject_successful_activation(self):
+        with patch.object(units.shutil, "rmtree", side_effect=OSError("busy")):
+            self.replace()
+        self.assertEqual(self.path.read_text(), "new unit")
+        self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+        self.assertEqual(len(list(self.root.glob(".basaltwater-units-*"))), 1)
+
+    def test_cleanup_failure_does_not_mask_validation_failure(self):
+        self.failure = ["systemd-analyze", "verify"]
+        with patch.object(units.shutil, "rmtree", side_effect=OSError("busy")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.replace()
+        self.assertEqual(self.path.read_text(), "old unit")

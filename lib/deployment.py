@@ -3,7 +3,6 @@
 from __future__ import annotations
 import hashlib
 import fcntl
-import json
 import os
 import shlex
 import shutil
@@ -19,6 +18,9 @@ from typing import Any, Iterable, Optional
 from lib.remote_utils import run
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateStore
+from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.state_read import StateReadError, read_state_object
+from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.deploy_utils import (
     create_safe_directory_name,
     detect_project_type,
@@ -29,6 +31,9 @@ from lib.deploy_utils import (
 from lib.systemd_service import cleanup_service, create_managed_service
 from lib.project_manifest import Component, Manifest, has_placeholder, load_manifest, render_template
 from lib.validation import validate_filesystem_path
+
+
+SYSTEMD_UNIT_DIR = "/etc/systemd/system"
 
 
 class DeploymentOrchestrator:
@@ -329,18 +334,15 @@ class DeploymentOrchestrator:
         return os.path.join(self._get_persistent_root(app_name), "manifest-ports.json")
 
     def _load_manifest_ports(self, dest_path: str) -> dict[str, int]:
-        try:
-            with open(self._port_state_path(dest_path), "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except (OSError, json.JSONDecodeError):
+        state_path = self._port_state_path(dest_path)
+        payload = read_state_object(state_path, versioned=False)
+        if payload is None:
             return {}
-        if not isinstance(payload, dict):
-            return {}
-        return {
-            key: value
-            for key, value in payload.items()
-            if isinstance(key, str) and isinstance(value, int) and 1024 <= value <= 65535
-        }
+        if any(type(value) is not int or not 1024 <= value <= 65535 for value in payload.values()):
+            raise StateReadError(state_path, "invalid saved service port")
+        if len(set(payload.values())) != len(payload):
+            raise StateReadError(state_path, "duplicate saved service ports")
+        return payload
 
     def _save_manifest_ports(self, dest_path: str, manifest: Manifest) -> None:
         assignments = {
@@ -350,12 +352,7 @@ class DeploymentOrchestrator:
         }
         state_path = self._port_state_path(dest_path)
         self._ensure_dir(os.path.dirname(state_path))
-        temporary_path = f"{state_path}.tmp"
-        with open(temporary_path, "w", encoding="utf-8") as handle:
-            json.dump(assignments, handle, sort_keys=True)
-            handle.write("\n")
-        os.chmod(temporary_path, 0o600)
-        os.replace(temporary_path, state_path)
+        write_json_atomic(state_path, assignments, mode=0o600, sort_keys=True)
 
     def _resolve_manifest_ports(self, manifest: Manifest, dest_path: str) -> Manifest:
         stored = self._load_manifest_ports(dest_path)
@@ -386,36 +383,54 @@ class DeploymentOrchestrator:
             resolved.append(replace(component, port=port))
         return Manifest(version=manifest.version, components=resolved)
 
-    def _app_unit_snapshots(self, dest_path: str) -> dict[str, str]:
+    def _app_unit_names(self, dest_path: str) -> set[str]:
         app_fragment = self._sanitize_user_part(os.path.basename(dest_path.rstrip("/")))
         prefix = f"app-{app_fragment}-"
-        snapshots: dict[str, str] = {}
-        systemd_dir = "/etc/systemd/system"
-        if not os.path.isdir(systemd_dir):
-            return snapshots
-        for filename in os.listdir(systemd_dir):
-            if not filename.startswith(prefix) or not filename.endswith(".service"):
-                continue
+        if not os.path.isdir(SYSTEMD_UNIT_DIR):
+            return set()
+        return {
+            filename.removesuffix(".service")
+            for filename in os.listdir(SYSTEMD_UNIT_DIR)
+            if filename.startswith(prefix) and filename.endswith(".service")
+        }
+
+    def _app_unit_snapshots(self, dest_path: str) -> dict[str, dict[str, Any]]:
+        snapshots: dict[str, dict[str, Any]] = {}
+        for service_name in sorted(self._app_unit_names(dest_path)):
+            filename = f"{service_name}.service"
             try:
-                with open(os.path.join(systemd_dir, filename), "r", encoding="utf-8") as handle:
-                    snapshots[filename.removesuffix(".service")] = handle.read()
-            except OSError as exc:
+                previous = snapshot_unit_file(os.path.join(SYSTEMD_UNIT_DIR, filename))
+                if previous is None:
+                    raise RuntimeError("Unit disappeared during snapshot")
+                snapshots[service_name] = {"file": previous, "state": inspect_unit_state(filename)}
+            except (OSError, ValueError, RuntimeError) as exc:
                 raise RuntimeError(
                     f"Could not snapshot managed service unit {filename}: {exc}"
                 ) from exc
         return snapshots
 
-    def _restore_app_units(self, dest_path: str, snapshots: dict[str, str]) -> None:
-        current = self._app_unit_snapshots(dest_path)
+    def _restore_app_units(self, dest_path: str, snapshots: dict[str, dict[str, Any]]) -> None:
+        """Restore unit files, permissions, enablement and prior running state."""
+        current = self._app_unit_names(dest_path)
         for service_name in set(current) - set(snapshots):
             cleanup_service(service_name)
-        for service_name, content in snapshots.items():
-            with open(f"/etc/systemd/system/{service_name}.service", "w", encoding="utf-8") as handle:
-                handle.write(content)
+        for service_name, previous in snapshots.items():
+            write_text_atomic(os.path.join(SYSTEMD_UNIT_DIR, f"{service_name}.service"), **previous["file"])
         run("systemctl daemon-reload")
-        for service_name in snapshots:
-            run(f"systemctl enable {shlex.quote(service_name)}.service")
-        self._restart_app_units(snapshots)
+        for service_name, previous in snapshots.items():
+            state = previous["state"]
+            run(self._unit_command(service_name, "disable"))
+            if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+                action = "enable --runtime" if state["UnitFileState"] == "enabled-runtime" else "enable"
+                run(self._unit_command(service_name, action))
+            if state["ActiveState"] == "active":
+                self._restart_app_units([service_name])
+            else:
+                run(self._unit_command(service_name, "stop"))
+            actual = inspect_unit_state(f"{service_name}.service")
+            if ((actual["ActiveState"] == "active") != (state["ActiveState"] == "active")
+                    or actual["UnitFileState"] != state["UnitFileState"]):
+                raise RuntimeError(f"Restored unit state did not match: {service_name}.service")
 
     @staticmethod
     def _unit_command(unit_name: str, action: str) -> str:
@@ -612,8 +627,9 @@ class DeploymentOrchestrator:
         staging_path = ""
         backup_path: Optional[str] = None
         activated = False
+        release_displaced = False
         stopped_units: list[str] = []
-        unit_snapshots: dict[str, str] = {}
+        unit_snapshots: dict[str, dict[str, Any]] = {}
         desired_units: set[str] = set()
         operation_store = OperationStateStore(
             os.path.join(
@@ -635,6 +651,10 @@ class DeploymentOrchestrator:
             build_user = self._build_identity(dest_path)
             self._ensure_build_user(build_user)
             unit_snapshots = self._app_unit_snapshots(dest_path)
+            write_json_atomic(
+                os.path.join(os.path.dirname(operation_store.path), "manifest-units.previous.json"),
+                unit_snapshots, mode=0o600,
+            )
             desired_units = {
                 self._service_identity(dest_path, component)[0]
                 for component in manifest.components
@@ -712,12 +732,8 @@ class DeploymentOrchestrator:
             if os.path.exists(dest_path):
                 assert backup_path is not None
                 os.rename(dest_path, backup_path)
-            try:
-                os.rename(staging_path, dest_path)
-            except Exception:
-                if backup_path and os.path.exists(backup_path) and not os.path.exists(dest_path):
-                    os.rename(backup_path, dest_path)
-                raise
+                release_displaced = True
+            os.rename(staging_path, dest_path)
             staging_path = ""
             activated = True
             operation = operation_store.transition(
@@ -781,28 +797,30 @@ class DeploymentOrchestrator:
             return deps
         except Exception as deployment_error:
             rollback_errors: list[str] = []
-            if activated:
-                for unit_name in sorted(desired_units):
+            failed_path = ""
+            if activated or release_displaced:
+                for unit_name in sorted(desired_units if activated else set()):
                     try:
                         self._stop_app_unit(unit_name)
-                    except RuntimeError as exc:
+                    except Exception as exc:
                         rollback_errors.append(str(exc))
-                failed_path = tempfile.mkdtemp(
-                    prefix=f".{os.path.basename(dest_path)}.failed-",
-                    dir=parent_dir or None,
-                )
-                os.rmdir(failed_path)
-                if os.path.exists(dest_path):
-                    os.rename(dest_path, failed_path)
-                if backup_path and os.path.exists(backup_path):
-                    os.rename(backup_path, dest_path)
-                    backup_path = None
-                shutil.rmtree(failed_path, ignore_errors=True)
                 try:
+                    failed_path = tempfile.mkdtemp(
+                        prefix=f".{os.path.basename(dest_path)}.failed-",
+                        dir=parent_dir or None,
+                    )
+                    os.rmdir(failed_path)
+                    if os.path.exists(dest_path):
+                        os.rename(dest_path, failed_path)
+                    if backup_path and os.path.exists(backup_path):
+                        os.rename(backup_path, dest_path)
+                        backup_path = None
                     self._restore_app_units(dest_path, unit_snapshots)
-                except RuntimeError as exc:
+                except Exception as exc:
                     rollback_errors.append(str(exc))
                 if not rollback_errors:
+                    if failed_path:
+                        shutil.rmtree(failed_path, ignore_errors=True)
                     print("  ✓ Restored previous release after failed activation")
             elif stopped_units:
                 try:
@@ -817,6 +835,7 @@ class DeploymentOrchestrator:
                         status="recovery_required",
                         context={
                             "backup_path": backup_path or "",
+                            "failed_path": failed_path,
                             "errors": rollback_errors,
                             "units": sorted(set(unit_snapshots) | desired_units),
                         },
@@ -830,10 +849,16 @@ class DeploymentOrchestrator:
                 operation = None
             raise
         finally:
-            if staging_path and os.path.exists(staging_path):
-                shutil.rmtree(staging_path)
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-            lock_handle.close()
+            try:
+                if staging_path and os.path.exists(staging_path):
+                    try:
+                        shutil.rmtree(staging_path)
+                    except OSError as exc:
+                        print(f"  ⚠ Staging cleanup failed at {staging_path}: {exc}")
+            finally:
+                operation_store.close()
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                lock_handle.close()
 
     def _run_component_build(
         self,

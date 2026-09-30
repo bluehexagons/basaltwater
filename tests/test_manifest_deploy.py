@@ -27,6 +27,7 @@ from lib.local_http import open_loopback
 from lib.nginx_config import generate_merged_nginx_config
 from lib.operation_state import OperationStateError, OperationStateStore
 from lib.project_manifest import Component, Manifest, parse_manifest
+from lib.state_read import StateReadError
 from lib.systemd_service import generate_managed_service
 
 
@@ -53,6 +54,15 @@ def _service_component(**overrides: object) -> Component:
     }
     data.update(overrides)
     return parse_manifest({"version": 1, "components": [data]}).components[0]
+
+
+def _old_unit_snapshot() -> dict:
+    return {'app-example_com-api': {
+        'file': {'content': 'old unit', 'mode': 0o640,
+                 'uid': os.getuid(), 'gid': os.getgid()},
+        'state': {'LoadState': 'loaded', 'ActiveState': 'active',
+                  'UnitFileState': 'enabled'},
+    }}
 
 
 class TestLoopbackReadiness(unittest.TestCase):
@@ -253,6 +263,41 @@ class TestServiceContext(unittest.TestCase):
         with patch.object(self.orch, '_get_used_ports', return_value=set()):
             with self.assertRaisesRegex(RuntimeError, "already assigned"):
                 self.orch._resolve_manifest_ports(manifest, "/var/www/shop")
+
+    def test_invalid_saved_ports_block_assignment_and_preserve_state(self):
+        manifest = Manifest(version=1, components=[_service_component(port='auto')])
+        with tempfile.TemporaryDirectory() as base_dir:
+            orchestrator = DeploymentOrchestrator(base_dir=base_dir)
+            dest_path = os.path.join(base_dir, 'shop')
+            state_path = orchestrator._port_state_path(dest_path)
+            os.makedirs(os.path.dirname(state_path))
+            for content in ('invalid', '[]', '{"api":true}', '{"api":800}',
+                            '{"api":70000}', '{"api":8000,"other":8000}'):
+                with self.subTest(content=content):
+                    with open(state_path, 'w', encoding='utf-8') as handle:
+                        handle.write(content)
+                    with patch.object(orchestrator, '_find_free_port') as find_port:
+                        with self.assertRaises(StateReadError):
+                            orchestrator._resolve_manifest_ports(manifest, dest_path)
+                    find_port.assert_not_called()
+                    with open(state_path, encoding='utf-8') as handle:
+                        self.assertEqual(handle.read(), content)
+
+    def test_saved_ports_ignore_predictable_temporary_symlink(self):
+        manifest = Manifest(version=1, components=[_service_component(port=8123)])
+        with tempfile.TemporaryDirectory() as base_dir:
+            orchestrator = DeploymentOrchestrator(base_dir=base_dir)
+            dest_path = os.path.join(base_dir, 'shop')
+            state_path = orchestrator._port_state_path(dest_path)
+            os.makedirs(os.path.dirname(state_path))
+            unrelated = os.path.join(base_dir, 'unrelated')
+            with open(unrelated, 'w', encoding='utf-8') as handle:
+                handle.write('preserve')
+            os.symlink(unrelated, state_path + '.tmp')
+            orchestrator._save_manifest_ports(dest_path, manifest)
+            self.assertEqual(os.stat(state_path).st_mode & 0o777, 0o600)
+            with open(unrelated, encoding='utf-8') as handle:
+                self.assertEqual(handle.read(), 'preserve')
 
     def test_health_check_uses_wall_clock_deadline(self):
         component = _service_component(health="/health")
@@ -581,7 +626,7 @@ class TestDeployManifest(unittest.TestCase):
         with patch("lib.deployment.os.path.isdir", return_value=True), patch(
             "lib.deployment.os.listdir",
             return_value=["app-example_com-api.service"],
-        ), patch("builtins.open", side_effect=PermissionError("denied")):
+        ), patch("lib.deployment.snapshot_unit_file", side_effect=PermissionError("denied")):
             with self.assertRaisesRegex(RuntimeError, "Could not snapshot managed"):
                 self.orch._app_unit_snapshots(
                     os.path.join(self.base_dir, "example_com")
@@ -694,7 +739,7 @@ class TestDeployManifest(unittest.TestCase):
         with patch.object(
             self.orch,
             '_app_unit_snapshots',
-            return_value={'app-example_com-api': 'old unit'},
+            return_value=_old_unit_snapshot(),
         ), patch.object(
             self.orch,
             '_stop_app_unit',
@@ -924,7 +969,7 @@ class TestDeployManifest(unittest.TestCase):
     @patch.object(
         DeploymentOrchestrator,
         '_app_unit_snapshots',
-        return_value={'app-example_com-api': 'old unit'},
+        return_value=_old_unit_snapshot(),
     )
     @patch.object(DeploymentOrchestrator, '_poll_health')
     @patch('lib.deployment.create_managed_service')
@@ -1034,6 +1079,110 @@ class TestDeployManifest(unittest.TestCase):
         )
 
         self.assertEqual([dep["domain"] for dep in deps], ["example.com"])
+
+    @patch('lib.deployment.run')
+    def test_release_move_failures_preserve_previous_release_or_recovery_marker(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
+        manifest = Manifest(version=1, components=[self.manifest.components[0]])
+        real_rename = os.rename
+        with tempfile.TemporaryDirectory() as unit_dir:
+            for fail_restore in (False, True):
+                with self.subTest(fail_restore=fail_restore), tempfile.TemporaryDirectory() as base:
+                    orchestrator = DeploymentOrchestrator(base_dir=base)
+                    active = os.path.join(base, 'example_com')
+                    os.makedirs(active)
+                    with open(os.path.join(active, 'previous.txt'), 'w') as handle:
+                        handle.write('previous')
+
+                    def rename(source, target):
+                        name = os.path.basename(source)
+                        if '.build-' in name or (fail_restore and '.previous-' in name):
+                            raise OSError('release move failed')
+                        return real_rename(source, target)
+
+                    with patch('lib.deployment.SYSTEMD_UNIT_DIR', unit_dir), patch(
+                        'lib.deployment.os.rename', side_effect=rename,
+                    ):
+                        with self.assertRaisesRegex(
+                            RuntimeError if fail_restore else OSError,
+                            'recovery was incomplete' if fail_restore else 'release move failed',
+                        ):
+                            orchestrator.deploy_manifest(manifest, self.source, 'example.com',
+                                                         '/', 'url', 'hash', keep_source=True)
+                    marker_path = os.path.join(base, '.basaltwater_shared', 'example_com',
+                                               'manifest-operation.json')
+                    if fail_restore:
+                        record = OperationStateStore(marker_path).load()
+                        self.assertEqual(record.status, 'recovery_required')
+                        self.assertTrue(os.path.isfile(os.path.join(
+                            record.context['backup_path'], 'previous.txt',
+                        )))
+                    else:
+                        self.assertFalse(os.path.exists(marker_path))
+                        self.assertTrue(os.path.isfile(os.path.join(active, 'previous.txt')))
+
+    @patch('lib.deployment.run')
+    def test_failed_activation_restores_inactive_disabled_unit(self, mock_run):
+        mock_run.side_effect = lambda command, **kwargs: MagicMock(
+            returncode=3 if 'is-active --quiet' in command else 0,
+            stdout='', stderr='',
+        )
+        active = os.path.join(self.base_dir, 'example_com')
+        os.makedirs(active)
+        with open(os.path.join(active, 'previous.txt'), 'w') as handle:
+            handle.write('previous')
+        previous_state = {'LoadState': 'loaded', 'ActiveState': 'inactive',
+                          'UnitFileState': 'disabled'}
+        with tempfile.TemporaryDirectory() as unit_dir:
+            unit_path = os.path.join(unit_dir, 'app-example_com-api.service')
+            with open(unit_path, 'w') as handle:
+                handle.write('old unit')
+            os.chmod(unit_path, 0o640)
+
+            def fail_activation(*args, **kwargs):
+                with open(unit_path, 'w') as handle:
+                    handle.write('new unit')
+                os.chmod(unit_path, 0o644)
+                raise RuntimeError('activation failed')
+
+            with patch('lib.deployment.SYSTEMD_UNIT_DIR', unit_dir), patch(
+                'lib.deployment.inspect_unit_state', return_value=previous_state,
+            ), patch('lib.deployment.create_managed_service', side_effect=fail_activation):
+                with self.assertRaisesRegex(RuntimeError, 'activation failed'):
+                    self.orch.deploy_manifest(self.manifest, self.source, 'example.com',
+                                              '/', 'url', 'hash', keep_source=True)
+            with open(unit_path) as handle:
+                self.assertEqual(handle.read(), 'old unit')
+            self.assertEqual(os.stat(unit_path).st_mode & 0o777, 0o640)
+        commands = [call.args[0] for call in mock_run.call_args_list]
+        self.assertFalse(any('systemctl enable' in cmd or 'systemctl restart' in cmd
+                             for cmd in commands))
+        self.assertIn('systemctl disable app-example_com-api.service', commands)
+        self.assertFalse(os.path.exists(self._operation_marker_path()))
+        self.assertTrue(os.path.exists(os.path.join(active, 'previous.txt')))
+
+    @patch('lib.deployment.create_managed_service', side_effect=RuntimeError('activation failed'))
+    @patch('lib.deployment.run')
+    def test_unit_restore_io_failure_retains_recovery_state(self, mock_run, _mock_service):
+        mock_run.side_effect = lambda command, **kwargs: MagicMock(
+            returncode=3 if 'is-active --quiet' in command else 0,
+            stdout='', stderr='',
+        )
+        active = os.path.join(self.base_dir, 'example_com')
+        os.makedirs(active)
+        with open(os.path.join(active, 'previous.txt'), 'w') as handle:
+            handle.write('previous')
+        with patch.object(self.orch, '_restore_app_units', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(RuntimeError, 'recovery was incomplete'):
+                self.orch.deploy_manifest(self.manifest, self.source, 'example.com',
+                                          '/', 'url', 'hash', keep_source=True)
+        record = OperationStateStore(self._operation_marker_path()).load()
+        self.assertEqual(record.status, 'recovery_required')
+        self.assertTrue(os.path.isdir(record.context['failed_path']))
+        self.assertTrue(os.path.isfile(os.path.join(
+            os.path.dirname(self._operation_marker_path()), 'manifest-units.previous.json',
+        )))
+        self.assertTrue(os.path.exists(os.path.join(active, 'previous.txt')))
 
 
 if __name__ == "__main__":

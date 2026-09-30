@@ -114,6 +114,8 @@ def push_artifact(
         return False
 
     try:
+        validate_filesystem_path(local_path)
+        local_path = os.path.abspath(local_path)
         remote_path = _validate_deploy_path(remote_path, str(target.get('base_dir', '/var/www')))
     except ValueError as exc:
         print(f"  ✗ {exc}")
@@ -137,7 +139,7 @@ def push_artifact(
         local_path = local_path + '/'
     
     remote_target = f"{user}@{host}:{shlex.quote(remote_path)}"
-    rsync_cmd.extend([local_path, remote_target])
+    rsync_cmd.extend(['--', local_path, remote_target])
     
     try:
         result = run_command(

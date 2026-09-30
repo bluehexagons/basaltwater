@@ -18,6 +18,11 @@ know.
   Old-release cleanup failures retain the backup without rejecting activation.
 - Repository symlinks and special files are rejected on the controller before
   manifest inspection or upload. Target-side source copying also refuses links.
+- Artifact uploads validate and normalize local source paths and separate rsync
+  options from operands, including relative names resembling options or hosts.
+- Incremental deployment metadata and manifest port assignments use bounded,
+  non-symlink JSON reads. Invalid state blocks the decision and retains the
+  original file for recovery; only missing files use fresh defaults.
 - Manifest service components get dedicated runtime users and writable state
   only under `.basaltwater_shared/<app>/<component>/data`; the component root
   and deployment backups remain root-controlled and outside the systemd unit's
@@ -25,7 +30,8 @@ know.
 - Manifest builds use per-application build users, stable automatic ports, and
   a deployment lock. Existing services continue running during the build.
 - A manifest release is rolled back when service activation or a declared 2xx
-  health check fails. Previous systemd units are restored with the release.
+  health check fails. Previous systemd units are restored with their permissions,
+  ownership, enablement, and running state; previously stopped services stay stopped.
   Failure to remove an old backup after successful activation leaves that
   backup for later cleanup without undoing the new release.
 - Manifest activation writes a versioned operation marker before staging or
@@ -65,10 +71,16 @@ Interrupted manifest state is recorded at:
 ```
 
 If a later deployment reports an unfinished operation, inspect the marker and
-the `staging_path`, `backup_path`, `units`, and `errors` recorded in its
+the `staging_path`, `backup_path`, `failed_path`, `units`, and `errors` recorded in its
 `context`. Verify which release is active and reconcile the named services
 before moving the marker aside for audit. Do not remove or replace a
 `recovery_required` marker merely to make deployment proceed.
+
+The adjacent private `manifest-units.previous.json` records the previous unit
+contents, permissions, ownership, and service state before activation. Filesystem
+or service restoration failures retain the recovery marker and failed release
+for inspection. A later deployment replaces this snapshot under the application
+lock.
 
 Restore a manifest component's latest SQLite backup by resolving its generated
 service identity, stopping it, removing stale journal files, installing the

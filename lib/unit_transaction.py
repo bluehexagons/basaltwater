@@ -18,7 +18,7 @@ def _command(*args: str) -> str:
     return result.stdout or ""
 
 
-def _snapshot(path: str) -> dict | None:
+def snapshot_unit_file(path: str) -> dict | None:
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except FileNotFoundError:
@@ -33,7 +33,7 @@ def _snapshot(path: str) -> dict | None:
     return dict(content=content, mode=stat.S_IMODE(info.st_mode), uid=info.st_uid, gid=info.st_gid)
 
 
-def _state(unit: str) -> dict[str, str]:
+def inspect_unit_state(unit: str) -> dict[str, str]:
     output = _command("systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState", "--no-pager")
     state = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
     if state.get("LoadState") not in {"loaded", "not-found"} or state.get("ActiveState") not in {"active", "inactive", "failed"}:
@@ -72,8 +72,8 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
         modified = False
         touched: list[str] = []
         try:
-            snapshots = {name: _snapshot(os.path.join(unit_dir, name)) for name in units}
-            states = {name: _state(name) for name in activate}
+            snapshots = {name: snapshot_unit_file(os.path.join(unit_dir, name)) for name in units}
+            states = {name: inspect_unit_state(name) for name in activate}
             backup_dir = tempfile.mkdtemp(prefix=".basaltwater-units-", dir=unit_dir)
             write_json_atomic(os.path.join(backup_dir, "previous.json"), {"units": snapshots, "states": states})
             store.transition(record.operation_id, "validating", context={"units": list(units), "backup_dir": backup_dir})
@@ -92,7 +92,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                 touched.append(name)
                 _command("systemctl", "enable", name)
                 _command("systemctl", "restart", name)
-                state = _state(name)
+                state = inspect_unit_state(name)
                 if state["ActiveState"] != "active" or state["UnitFileState"] != "enabled":
                     raise RuntimeError(f"Unit activation failed verification: {name}")
             store.complete(record.operation_id)
@@ -125,7 +125,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                         attempt(lambda name=name: _command("systemctl", "restart", name))
                 for name in touched:
                     def verify(name=name):
-                        actual = _state(name)
+                        actual = inspect_unit_state(name)
                         previous = states[name]
                         if (actual["ActiveState"] == "active") != (previous["ActiveState"] == "active") or actual["UnitFileState"] != previous["UnitFileState"]:
                             raise RuntimeError("Restored unit state did not match")
@@ -139,4 +139,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
     finally:
         store.close()
         if backup_dir and not retain:
-            shutil.rmtree(backup_dir)
+            try:
+                shutil.rmtree(backup_dir)
+            except OSError as exc:
+                print(f"  ⚠ Systemd backup cleanup failed at {backup_dir}: {exc}")

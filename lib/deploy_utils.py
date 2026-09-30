@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import hashlib
-import json
 import os
 import re
 import stat
@@ -10,6 +9,7 @@ import subprocess
 from typing import Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
 
 
@@ -172,17 +172,20 @@ def save_deployment_metadata(deployment_path: str, git_url: str, commit_hash: Op
 
 
 def load_deployment_metadata(deployment_path: str) -> Optional[dict[str, str | None]]:
-    """Load deployment metadata if it exists."""
+    """Read bounded metadata; refuse invalid state instead of rebuilding blindly."""
     metadata_path = get_deployment_metadata_path(deployment_path)
     
-    if not os.path.exists(metadata_path):
+    metadata = read_state_object(metadata_path, versioned=False)
+    if metadata is None:
         return None
-    
-    try:
-        with open(metadata_path, 'r') as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
+    if (
+        not isinstance(metadata.get('git_url'), str)
+        or not metadata['git_url']
+        or 'commit_hash' not in metadata
+        or (metadata['commit_hash'] is not None and not isinstance(metadata['commit_hash'], str))
+    ):
+        raise StateReadError(metadata_path, "invalid deployment metadata fields")
+    return metadata
 
 
 def should_redeploy(deployment_path: str, git_url: str, new_commit_hash: Optional[str], full_deploy: bool) -> bool:

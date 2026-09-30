@@ -55,8 +55,27 @@ class TestPushArtifact(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[:5], ["rsync", "-avz", "--delete", "-e", "ssh -i /tmp/deploy-key"])
         self.assertEqual(command[5:9], ["--exclude", ".git", "--exclude", "*.tmp"])
+        self.assertEqual(command[-3], "--")
         self.assertTrue(command[-2].endswith("/build/"))
         self.assertEqual(command[-1], "deploy@app.example:/var/www/app")
+
+    def test_relative_option_and_remote_looking_sources_are_local_operands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for source in ("--server", "host:path"):
+                with self.subTest(source=source), patch.object(remote_deploy.os, "getcwd", return_value=directory), \
+                     patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), \
+                     patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), \
+                     patch.object(remote_deploy, "run_command", return_value=completed()) as run:
+                    self.assertTrue(remote_deploy.push_artifact(source, "app", "/var/www/app"))
+                    self.assertEqual(run.call_args.args[0][-3:], [
+                        "--", os.path.join(directory, source) + "/", "deploy@app.example:/var/www/app"
+                    ])
+
+    def test_invalid_source_path_is_rejected_before_rsync(self) -> None:
+        with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), \
+             patch.object(remote_deploy, "run_command") as run:
+            self.assertFalse(remote_deploy.push_artifact("bad\npath", "app", "/var/www/app"))
+        run.assert_not_called()
 
     def test_push_artifact_handles_rsync_failure_and_timeout(self) -> None:
         with patch.object(remote_deploy, "get_deploy_target", return_value=TARGET), patch.object(remote_deploy, "build_rsync_ssh_transport", return_value="ssh"), patch.object(remote_deploy, "run_command", return_value=completed(1, "permission denied")):

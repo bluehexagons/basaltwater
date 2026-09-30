@@ -20,6 +20,7 @@ from lib.deploy_utils import (
     load_deployment_metadata,
     should_redeploy,
 )
+from lib.state_read import StateReadError
 
 
 class TestParseDeploySpec(unittest.TestCase):
@@ -143,6 +144,37 @@ class TestDeploymentMetadata(unittest.TestCase):
     def test_metadata_path(self):
         path = get_deployment_metadata_path('/var/www/app')
         self.assertTrue(path.endswith('.deploy_metadata.json'))
+
+    def test_invalid_metadata_blocks_incremental_redeploy_and_preserves_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = get_deployment_metadata_path(directory)
+            for content in ('invalid', 'null', '[]', '{}', '{"git_url":1,"commit_hash":"abc"}', '{"git_url":"url","commit_hash":[]}'):
+                with self.subTest(content=content):
+                    with open(path, 'w') as stream:
+                        stream.write(content)
+                    with self.assertRaises(StateReadError):
+                        should_redeploy(directory, 'url', 'hash', full_deploy=False)
+                    with open(path) as stream:
+                        self.assertEqual(stream.read(), content)
+
+    def test_metadata_links_and_special_files_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = get_deployment_metadata_path(directory)
+            original = os.path.join(directory, 'original.json')
+            with open(original, 'w') as stream:
+                stream.write('{"git_url":"url","commit_hash":"hash"}')
+            os.symlink(original, path)
+            with self.assertRaises(StateReadError):
+                load_deployment_metadata(directory)
+            os.unlink(path)
+            os.mkfifo(path)
+            with self.assertRaises(StateReadError):
+                load_deployment_metadata(directory)
+
+    def test_null_commit_metadata_is_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            save_deployment_metadata(directory, 'url', None)
+            self.assertEqual(load_deployment_metadata(directory)['commit_hash'], None)
 
 
 class TestShouldRedeploy(unittest.TestCase):
