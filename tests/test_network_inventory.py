@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import json
 import os
 import sys
 import tempfile
@@ -17,7 +18,9 @@ from lib.network_inventory import (
     NetworkSubnet,
     add_network_host,
     load_network_profiles,
+    get_network_inventory_path,
     save_network_profile,
+    save_network_profiles,
     upsert_network_profile,
     validate_network_subnet,
 )
@@ -70,6 +73,47 @@ class TestNetworkInventory(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             upsert_network_profile(profile, self.workspace)
+
+    def test_invalid_inventory_blocks_updates_without_losing_records(self):
+        path = get_network_inventory_path(self.workspace)
+        payloads = [
+            {}, {'version': 2, 'profiles': []}, {'profiles': None}, {'profiles': [False]},
+            {'profiles': [{'name': 'lab', 'hosts': [False]}]},
+            {'profiles': [{'name': 'lab', 'subnets': [None]}]},
+            {'profiles': [{'name': 'lab', 'management_sources': False}]},
+            {'profiles': [{'name': 'lab', 'hosts': [{'name': 'host', 'address': '10.0.0.1', 'roles': [1]}]}]},
+            {'profiles': [{'name': 12}]},
+            {'profiles': [{'name': 'lab'}, {'name': 'LAB'}]},
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                content = json.dumps(payload)
+                with open(path, 'w') as stream:
+                    stream.write(content)
+                with self.assertRaises(ValueError):
+                    upsert_network_profile(NetworkProfile(name='new'), self.workspace)
+                with open(path) as stream:
+                    self.assertEqual(stream.read(), content)
+
+    def test_linked_and_special_inventory_files_block_updates(self):
+        path = get_network_inventory_path(self.workspace)
+        external = os.path.join(self.workspace, 'external.json')
+        with open(external, 'w') as stream:
+            stream.write('{"profiles":[]}')
+        os.symlink(external, path)
+        with self.assertRaises(ValueError):
+            upsert_network_profile(NetworkProfile(name='new'), self.workspace)
+        self.assertTrue(os.path.islink(path))
+        os.unlink(path)
+        os.mkfifo(path)
+        with self.assertRaises(ValueError):
+            load_network_profiles(self.workspace)
+
+    def test_duplicate_profiles_are_rejected_before_writing(self):
+        save_network_profile(NetworkProfile(name='original'), self.workspace)
+        with self.assertRaisesRegex(ValueError, 'Duplicate network profile'):
+            save_network_profiles([NetworkProfile(name='lab'), NetworkProfile(name='LAB')], self.workspace)
+        self.assertEqual(load_network_profiles(self.workspace)[0].name, 'original')
 
     def test_rejects_invalid_vlan(self) -> None:
         profile = NetworkProfile(

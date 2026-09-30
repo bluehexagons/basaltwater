@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Optional, Union, cast
 
 from lib.atomic_io import write_json_atomic
 from lib.concurrency import resource_lock
+from lib.state_read import StateReadError, read_state_object
 from lib.types import JSONDict
 from lib.validation import (
     validate_network_cidr,
@@ -23,6 +23,27 @@ from lib.workspace import ensure_workspace_dir, normalize_workspace_dir
 
 NETWORK_INVENTORY_FILENAME = "network_inventory.json"
 NetworkVlanId = Optional[Union[int, str]]
+
+
+def _string_field(data: JSONDict, name: str, default: str = "") -> str:
+    value = data.get(name, default)
+    if not isinstance(value, str):
+        raise ValueError(f"Network field {name} must be a string")
+    return value
+
+
+def _optional_string_field(data: JSONDict, name: str) -> str | None:
+    value = data.get(name)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"Network field {name} must be a string or null")
+    return value
+
+
+def _list_field(data: JSONDict, name: str, item_type: type) -> list:
+    value = data.get(name, [])
+    if not isinstance(value, list) or not all(isinstance(item, item_type) for item in value):
+        raise ValueError(f"Network field {name} must be a list of {item_type.__name__} records")
+    return list(value)
 
 
 @dataclass
@@ -44,16 +65,16 @@ class NetworkSubnet:
         vlan_id: NetworkVlanId
         if vlan_id_raw is None:
             vlan_id = None
-        elif isinstance(vlan_id_raw, (int, str)):
+        elif type(vlan_id_raw) in (int, str):
             vlan_id = vlan_id_raw
         else:
             raise ValueError("Network subnet vlan_id must be a string or integer")
         return cls(
-            name=str(data.get("name") or ""),
-            cidr=str(data.get("cidr") or ""),
-            zone=cast(Optional[str], data.get("zone")),
+            name=_string_field(data, "name"),
+            cidr=_string_field(data, "cidr"),
+            zone=_optional_string_field(data, "zone"),
             vlan_id=vlan_id,
-            gateway=cast(Optional[str], data.get("gateway")),
+            gateway=_optional_string_field(data, "gateway"),
         )
 
 
@@ -72,15 +93,12 @@ class NetworkHost:
 
     @classmethod
     def from_dict(cls, data: JSONDict) -> "NetworkHost":
-        roles_raw = data.get("roles") or []
-        if not isinstance(roles_raw, list):
-            raise ValueError("Network host roles must be a list")
         return cls(
-            name=str(data.get("name") or ""),
-            address=str(data.get("address") or ""),
-            provider=str(data.get("provider") or "generic"),
-            roles=[str(role) for role in roles_raw],
-            profile_ref=cast(Optional[str], data.get("profile_ref")),
+            name=_string_field(data, "name"),
+            address=_string_field(data, "address"),
+            provider=_string_field(data, "provider", "generic"),
+            roles=_list_field(data, "roles", str),
+            profile_ref=_optional_string_field(data, "profile_ref"),
         )
 
 
@@ -108,35 +126,23 @@ class NetworkProfile:
 
     @classmethod
     def from_dict(cls, data: JSONDict) -> "NetworkProfile":
-        management_raw = data.get("management_sources") or []
-        control_raw = data.get("control_plane") or []
-        guest_raw = data.get("guest_networks") or []
-        subnets_raw = data.get("subnets") or []
-        hosts_raw = data.get("hosts") or []
-        if not isinstance(management_raw, list):
-            raise ValueError("Network profile management_sources must be a list")
-        if not isinstance(control_raw, list):
-            raise ValueError("Network profile control_plane must be a list")
-        if not isinstance(guest_raw, list):
-            raise ValueError("Network profile guest_networks must be a list")
-        if not isinstance(subnets_raw, list):
-            raise ValueError("Network profile subnets must be a list")
-        if not isinstance(hosts_raw, list):
-            raise ValueError("Network profile hosts must be a list")
+        management_raw = _list_field(data, "management_sources", str)
+        control_raw = _list_field(data, "control_plane", str)
+        guest_raw = _list_field(data, "guest_networks", str)
+        subnets_raw = _list_field(data, "subnets", dict)
+        hosts_raw = _list_field(data, "hosts", dict)
         profile = cls(
-            name=str(data.get("name") or ""),
-            management_sources=[str(value) for value in management_raw],
-            control_plane=[str(value) for value in control_raw],
-            guest_networks=[str(value) for value in guest_raw],
+            name=_string_field(data, "name"),
+            management_sources=management_raw,
+            control_plane=control_raw,
+            guest_networks=guest_raw,
             subnets=[
                 NetworkSubnet.from_dict(cast(JSONDict, entry))
                 for entry in subnets_raw
-                if isinstance(entry, dict)
             ],
             hosts=[
                 NetworkHost.from_dict(cast(JSONDict, entry))
                 for entry in hosts_raw
-                if isinstance(entry, dict)
             ],
         )
         validate_network_profile(profile)
@@ -156,23 +162,17 @@ def _load_network_profiles_unlocked(
     workspace: Optional[str] = None,
 ) -> list[NetworkProfile]:
     path = get_network_inventory_path(workspace)
-    if not os.path.exists(path):
+    data = read_state_object(path)
+    if data is None:
         return []
     try:
-        with open(path, "r", encoding="utf-8") as file_obj:
-            data = json.load(file_obj)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Failed to read network inventory {path}: {exc}")
-    if not isinstance(data, dict):
-        raise ValueError(f"Network inventory {path} must contain a JSON object")
-    profiles_raw = data.get("profiles") or []
-    if not isinstance(profiles_raw, list):
-        raise ValueError(f"Network inventory {path} profiles must be a list")
-    return [
-        NetworkProfile.from_dict(cast(JSONDict, entry))
-        for entry in profiles_raw
-        if isinstance(entry, dict)
-    ]
+        if "profiles" not in data:
+            raise ValueError("Network inventory is missing profiles")
+        profiles = [NetworkProfile.from_dict(entry) for entry in _list_field(data, "profiles", dict)]
+        _validate_profiles(profiles)
+        return profiles
+    except ValueError as exc:
+        raise StateReadError(path, "invalid network inventory records") from exc
 
 
 def load_network_profiles(workspace: Optional[str] = None) -> list[NetworkProfile]:
@@ -188,10 +188,9 @@ def _save_network_profiles_unlocked(
     workspace: Optional[str] = None,
 ) -> str:
     ensure_workspace_dir(workspace)
-    for profile in profiles:
-        validate_network_profile(profile)
+    _validate_profiles(profiles)
     path = get_network_inventory_path(workspace)
-    payload = {"profiles": [profile.to_dict() for profile in profiles]}
+    payload = {"version": 1, "profiles": [profile.to_dict() for profile in profiles]}
     write_json_atomic(path, payload, mode=0o600, sort_keys=True)
     return path
 
@@ -306,6 +305,15 @@ def add_network_host(
             _save_network_profiles_unlocked(profiles, workspace)
             return profile
         raise ValueError(f"No network profile named '{profile_name}'")
+
+
+def _validate_profiles(profiles: list[NetworkProfile]) -> None:
+    seen: set[str] = set()
+    for profile in profiles:
+        validate_network_profile(profile)
+        if profile.name.lower() in seen:
+            raise ValueError(f"Duplicate network profile: {profile.name}")
+        seen.add(profile.name.lower())
 
 
 def validate_network_profile(profile: NetworkProfile) -> None:

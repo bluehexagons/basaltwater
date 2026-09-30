@@ -127,6 +127,9 @@ routers, or cloud providers, or discover infrastructure beyond the Proxmox
 registry and guest configuration import.
 
 Inventory is stored at `<workspace>/network_inventory.json` with mode `0600`.
+Reads are bounded and refuse symlinks, special files, invalid nested records,
+and duplicate profile names. Invalid inventory blocks updates and remains
+untouched for recovery; malformed records are never silently discarded.
 Like other workspace-scoped features, pass `--workspace PATH` after `network`
 to isolate data for a project or environment.
 
