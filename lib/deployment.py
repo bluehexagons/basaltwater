@@ -823,10 +823,14 @@ class DeploymentOrchestrator:
                         shutil.rmtree(failed_path, ignore_errors=True)
                     print("  ✓ Restored previous release after failed activation")
             elif stopped_units:
-                try:
-                    self._restart_app_units(stopped_units)
-                except RuntimeError as exc:
-                    rollback_errors.append(str(exc))
+                for unit_name in stopped_units:
+                    try:
+                        if unit_snapshots[unit_name]["state"]["ActiveState"] == "active":
+                            self._restart_app_units([unit_name])
+                        else:
+                            self._stop_app_unit(unit_name)
+                    except Exception as exc:
+                        rollback_errors.append(str(exc))
             if rollback_errors:
                 if operation is not None:
                     operation_store.transition(

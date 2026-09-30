@@ -1122,6 +1122,29 @@ class TestDeployManifest(unittest.TestCase):
                         self.assertTrue(os.path.isfile(os.path.join(active, 'previous.txt')))
 
     @patch('lib.deployment.run')
+    def test_pre_activation_status_failure_keeps_previous_inactive_unit_stopped(self, mock_run):
+        snapshots = _old_unit_snapshot()
+        snapshots['app-example_com-api']['state']['ActiveState'] = 'inactive'
+        status_checks = 0
+
+        def run(command, **kwargs):
+            nonlocal status_checks
+            if 'is-active --quiet' in command:
+                status_checks += 1
+                return MagicMock(returncode=1 if status_checks == 1 else 3,
+                                 stdout='', stderr='')
+            return MagicMock(returncode=0, stdout='', stderr='')
+
+        mock_run.side_effect = run
+        with patch.object(self.orch, '_app_unit_snapshots', return_value=snapshots):
+            with self.assertRaisesRegex(RuntimeError, 'Could not determine'):
+                self.orch.deploy_manifest(self.manifest, self.source, 'example.com',
+                                          '/', 'url', 'hash', keep_source=True)
+        self.assertFalse(any('systemctl restart' in call.args[0]
+                             for call in mock_run.call_args_list))
+        self.assertFalse(os.path.exists(self._operation_marker_path()))
+
+    @patch('lib.deployment.run')
     def test_failed_activation_restores_inactive_disabled_unit(self, mock_run):
         mock_run.side_effect = lambda command, **kwargs: MagicMock(
             returncode=3 if 'is-active --quiet' in command else 0,
