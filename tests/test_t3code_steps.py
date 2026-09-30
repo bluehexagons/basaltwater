@@ -211,7 +211,7 @@ class T3CodeWebTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unmanaged UFW allow rules"):
                 _configure_firewall(config, 3773, "0.0.0.0")
 
-    def test_active_binary_requires_upstream_protocol_and_exact_version(self) -> None:
+    def test_active_binary_accepts_forward_protocols_with_valid_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             binary = self._write_upstream_runtime(home)
             self.assertEqual(_active_t3_binary(home), binary)
@@ -232,6 +232,12 @@ class T3CodeWebTest(unittest.TestCase):
                     {"protocol": 4, "activeVersion": "0.0.42"},
                     file_obj,
                 )
+            self.assertEqual(_active_t3_binary(home), native_binary)
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump(
+                    {"protocol": 1, "activeVersion": "0.0.42"},
+                    file_obj,
+                )
             self.assertIsNone(_active_t3_binary(home))
             with open(state_file, "w", encoding="utf-8") as file_obj:
                 json.dump({"protocol": True, "activeVersion": "0.0.42"}, file_obj)
@@ -244,6 +250,9 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertEqual(_active_t3_binary(home), build_binary)
 
             self._write_upstream_runtime(home, "01.2.3")
+            self.assertIsNone(_active_t3_binary(home))
+
+            self._write_upstream_runtime(home, "1.2.3-01")
             self.assertIsNone(_active_t3_binary(home))
 
     def test_service_install_uses_latest_native_t3_runtime_and_managed_drop_in(self) -> None:
@@ -1038,12 +1047,15 @@ class T3CodeWebTest(unittest.TestCase):
             with open(wrapper, encoding="utf-8") as file_obj:
                 content = file_obj.read()
             self.assertIn("service-state.json", content)
-            self.assertIn("protocols=[2, 3]", content)
-            self.assertIn('value["protocol"] in protocols', content)
+            self.assertIn("minimum_protocol=2", content)
+            self.assertIn('value["protocol"] >= minimum_protocol', content)
             self.assertIn('NVM_DIR="$HOME/.nvm"', content)
             self.assertIn("versions", content)
-            self.assertIn('binary="$version_root/t3"', content)
-            self.assertIn('binary="$version_root/node_modules/t3/dist/bin.mjs"', content)
+            self.assertIn(
+                'paths=[["t3"], ["node_modules", "t3", "dist", "bin.mjs"]]',
+                content,
+            )
+            self.assertIn("binary=next(", content)
             self.assertIn('exec "$binary" "$@"', content)
             self.assertNotIn("npx", content)
 
@@ -1070,7 +1082,39 @@ class T3CodeWebTest(unittest.TestCase):
             with open(state_file, "w", encoding="utf-8") as file_obj:
                 json.dump({"protocol": 4, "activeVersion": "0.0.44"}, file_obj)
             result = subprocess.run(
-                [wrapper, "unknown-protocol"],
+                [wrapper, "protocol-four"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(), "protocol-four")
+
+            os.unlink(binary)
+            legacy_binary = os.path.join(
+                version,
+                "node_modules",
+                "t3",
+                "dist",
+                "bin.mjs",
+            )
+            os.makedirs(os.path.dirname(legacy_binary), exist_ok=True)
+            with open(legacy_binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write('#!/bin/sh\nprintf "%s\\n" "$1"\n')
+            os.chmod(legacy_binary, 0o755)
+            result = subprocess.run(
+                [wrapper, "legacy-layout"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(), "legacy-layout")
+
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump({"protocol": 1, "activeVersion": "0.0.44"}, file_obj)
+            result = subprocess.run(
+                [wrapper, "unsupported-protocol"],
                 check=False,
                 capture_output=True,
                 text=True,

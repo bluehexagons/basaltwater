@@ -32,8 +32,14 @@ from lib.config import SetupConfig
 from lib.local_http import open_loopback
 from lib.remote_utils import install_package, is_dry_run, run
 from lib.t3code_runtime import (
-    T3_SUPPORTED_SERVICE_PROTOCOLS,
-    is_supported_t3_service_protocol,
+    T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL,
+    T3_VERSION_EXECUTABLES,
+    T3_VERSION_PATTERN,
+    has_t3_active_runtime_contract,
+    is_known_t3_service_protocol,
+    is_t3_service_version,
+    t3_version_binary,
+    t3_version_root,
 )
 from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 from lib.validators import validate_username
@@ -88,15 +94,6 @@ DEVICE_PAIRING_AUTH_FAILURE_LOG = (
 )
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]\s+(.*)$")
 _T3_RUNTIME_RELATIVE_PATH = (".t3", "runtime")
-_T3_SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
-_T3_SEMVER_PRERELEASE = (
-    rf"(?:{_T3_SEMVER_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
-)
-_T3_VERSION_RE = re.compile(
-    rf"^{_T3_SEMVER_NUMBER}\.{_T3_SEMVER_NUMBER}\.{_T3_SEMVER_NUMBER}"
-    rf"(?:-{_T3_SEMVER_PRERELEASE}(?:\.{_T3_SEMVER_PRERELEASE})*)?"
-    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
-)
 _T3_GH_CONFIG_EXPORT = 'export GH_CONFIG_DIR="$HOME/.config/gh"'
 _T3_NATIVE_PACKAGES = ("node-pty", "msgpackr-extract")
 _T3_SERVICE_INSTALL_INNER_COMMAND = (
@@ -276,19 +273,6 @@ def _t3_service_drop_in(home: str) -> str:
     )
 
 
-def _t3_version_binary(version_root: str) -> str | None:
-    """Return T3's executable for a version in either supported layout."""
-
-    for relative_path in (
-        ("t3",),
-        ("node_modules", "t3", "dist", "bin.mjs"),
-    ):
-        binary = os.path.join(version_root, *relative_path)
-        if os.path.isfile(binary) and os.access(binary, os.X_OK):
-            return binary
-    return None
-
-
 def _active_t3_binary(home: str) -> str | None:
     """Resolve the immutable executable selected by T3's service manager."""
 
@@ -300,19 +284,19 @@ def _active_t3_binary(home: str) -> str | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+    if not isinstance(state, dict) or not has_t3_active_runtime_contract(
         state.get("protocol")
     ):
         return None
     version = state.get("activeVersion")
-    if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:
+    if not is_t3_service_version(version):
         return None
     version_root = os.path.join(
         _t3_runtime_path(home),
         "versions",
         version,
     )
-    return _t3_version_binary(version_root)
+    return t3_version_binary(version_root)
 
 
 def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
@@ -326,7 +310,7 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+    if not isinstance(state, dict) or not is_known_t3_service_protocol(
         state.get("protocol")
     ):
         return None
@@ -339,10 +323,8 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
     active_version = state.get("activeVersion")
     target_version = update.get("targetVersion")
     if (
-        not isinstance(active_version, str)
-        or _T3_VERSION_RE.fullmatch(active_version) is None
-        or not isinstance(target_version, str)
-        or _T3_VERSION_RE.fullmatch(target_version) is None
+        not is_t3_service_version(active_version)
+        or not is_t3_service_version(target_version)
         or target_version == active_version
     ):
         return None
@@ -351,7 +333,7 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
         "versions",
         target_version,
     )
-    binary = _t3_version_binary(version_root)
+    binary = t3_version_binary(version_root)
     if binary is None:
         return None
     return target_version, binary
@@ -360,14 +342,11 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
 def _t3_version_root(binary: str) -> str:
     """Return the immutable version root containing an active T3 executable."""
 
-    for parent_count in (1, 4):
-        version_root = binary
-        for _ in range(parent_count):
-            version_root = os.path.dirname(version_root)
-        if _t3_version_binary(version_root) == binary:
-            validate_filesystem_path(version_root, must_exist=True)
-            return version_root
-    raise RuntimeError(f"Invalid T3 Code runtime path: {binary}")
+    version_root = t3_version_root(binary)
+    if version_root is None:
+        raise RuntimeError(f"Invalid T3 Code runtime path: {binary}")
+    validate_filesystem_path(version_root, must_exist=True)
+    return version_root
 
 
 def _t3_native_runtime_healthy(
@@ -1032,6 +1011,24 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
     """Write a stable launcher that follows T3's selected service version."""
 
     runtime = _t3_runtime_path(home)
+    version_root = os.path.join(runtime, "versions")
+    python_command = (
+        "import json,os,re,sys; "
+        'value=json.load(open(sys.argv[1], encoding="utf-8")); '
+        f"minimum_protocol={T3_MINIMUM_ACTIVE_SERVICE_PROTOCOL}; "
+        'assert isinstance(value,dict) and type(value.get("protocol")) is int '
+        'and value["protocol"] >= minimum_protocol; '
+        'version=value.get("activeVersion"); '
+        "assert isinstance(version,str) and re.fullmatch("
+        f"{json.dumps(T3_VERSION_PATTERN.pattern)},version); "
+        'version_root=os.path.join(sys.argv[2],version); '
+        f"paths={json.dumps(T3_VERSION_EXECUTABLES)}; "
+        'binary=next((path for relative in paths '
+        'for path in (os.path.join(version_root,*relative),) '
+        'if os.path.isfile(path) and os.access(path,os.X_OK)),None); '
+        'assert binary is not None, "T3 Code runtime is unavailable"; '
+        'print(binary)'
+    )
     content = (
         "#!/bin/sh\n"
         "set -eu\n"
@@ -1040,17 +1037,9 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
         '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n'
         f"{_T3_GH_CONFIG_EXPORT}\n"
         f"state={shlex.quote(os.path.join(runtime, 'service-state.json'))}\n"
-        'version=$(python3 -c \'import json,re,sys; '
-        'value=json.load(open(sys.argv[1], encoding="utf-8")); '
-        f'protocols={json.dumps(sorted(T3_SUPPORTED_SERVICE_PROTOCOLS))}; '
-        'assert type(value.get("protocol")) is int and value["protocol"] in protocols; '
-        'version=value["activeVersion"]; '
-        f"assert re.fullmatch({json.dumps(_T3_VERSION_RE.pattern)}, version); "
-        'print(version)\' "$state")\n'
-        f'version_root={shlex.quote(os.path.join(runtime, "versions"))}/"$version"\n'
-        'binary="$version_root/t3"\n'
-        'test -x "$binary" || binary="$version_root/node_modules/t3/dist/bin.mjs"\n'
-        'test -x "$binary" || { echo "T3 Code runtime is unavailable" >&2; exit 1; }\n'
+        f"versions_root={shlex.quote(version_root)}\n"
+        f"binary=$(python3 -c {shlex.quote(python_command)} "
+        '"$state" "$versions_root")\n'
         'exec "$binary" "$@"\n'
     )
     return _write_executable_if_changed(path, content)

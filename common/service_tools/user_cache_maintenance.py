@@ -24,7 +24,10 @@ from lib.agent_storage import (
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
 from lib.logging_utils import get_service_logger, log_event
-from lib.t3code_runtime import is_supported_t3_service_protocol
+from lib.t3code_runtime import (
+    is_known_t3_service_protocol,
+    is_t3_stable_service_version,
+)
 from lib.maintenance_defaults import (
     CLEANUP_COMMAND_TIMEOUT_SECONDS,
     CODEX_CACHE_MAX_BYTES,
@@ -49,7 +52,6 @@ from lib.validation import validate_filesystem_path
 
 logger = get_service_logger("user_cache_maintenance", "common", use_syslog=True)
 _TOOL_NOT_FOUND_EXIT = 77
-_T3_VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
 
 @dataclass(frozen=True)
@@ -966,7 +968,7 @@ def cleanup_electron_downloads(context: UserContext, *, dry_run: bool) -> list[s
 
 
 def _t3_state(context: UserContext, path: str) -> JSONDict:
-    """Read a bounded T3 state file with a supported protocol and known versions."""
+    """Read T3 state conservatively before destructive runtime maintenance."""
     if not is_safe_managed_path(context, path, "T3 service state"):
         raise ValueError("unsafe T3 state path")
     info = os.lstat(path)
@@ -974,14 +976,11 @@ def _t3_state(context: UserContext, path: str) -> JSONDict:
         raise ValueError("unrecognized T3 state file")
     with open(path, encoding="utf-8") as handle:
         state = json.load(handle)
-    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+    if not isinstance(state, dict) or not is_known_t3_service_protocol(
         state.get("protocol")
     ):
         raise ValueError("unrecognized T3 state protocol")
-    if (
-        not isinstance(state.get("activeVersion"), str)
-        or not _T3_VERSION_PATTERN.fullmatch(state["activeVersion"])
-    ):
+    if not is_t3_stable_service_version(state.get("activeVersion")):
         raise ValueError("unrecognized T3 active version")
     if "update" in state:
         update = state["update"]
@@ -990,7 +989,7 @@ def _t3_state(context: UserContext, path: str) -> JSONDict:
         ):
             raise ValueError("unrecognized T3 update state")
         for key in ("fromVersion", "targetVersion"):
-            if not isinstance(update.get(key), str) or not _T3_VERSION_PATTERN.fullmatch(update[key]):
+            if not is_t3_stable_service_version(update.get(key)):
                 raise ValueError("unrecognized T3 update version")
         expected_active = update["targetVersion"] if update["status"] == "committed" else update["fromVersion"]
         if (
@@ -1093,7 +1092,7 @@ def cleanup_t3_runtimes(context: UserContext, *, dry_run: bool) -> list[str]:
         retained = {active, update.get("fromVersion"), update.get("targetVersion")}
         candidates: dict[str, os.stat_result] = {}
         for name in os.listdir(root):
-            if not _T3_VERSION_PATTERN.fullmatch(name):
+            if not is_t3_stable_service_version(name):
                 continue
             path = os.path.join(root, name)
             info = _validated_t3_runtime(context, path, name)

@@ -39,7 +39,12 @@ from lib.agent_credentials import (
 )
 from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
-from lib.t3code_runtime import is_supported_t3_service_protocol
+from lib.t3code_runtime import (
+    has_t3_active_runtime_contract,
+    is_t3_service_version,
+    t3_version_binary,
+    t3_version_root,
+)
 from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_host, validate_username
 from lib.remote_utils import CommandTimeoutError, run as run_command
@@ -78,15 +83,6 @@ _PLAYWRIGHT_BROWSER_AGENT_SKILL_NAMES = frozenset(
 _T3_SERVICE_NAME = "t3code.service"
 _T3_RUNTIME_RELATIVE = os.path.join(
     ".t3", "runtime"
-)
-_T3_SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
-_T3_SEMVER_PRERELEASE = (
-    rf"(?:{_T3_SEMVER_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
-)
-_T3_VERSION_RE = re.compile(
-    rf"^{_T3_SEMVER_NUMBER}\.{_T3_SEMVER_NUMBER}\.{_T3_SEMVER_NUMBER}"
-    rf"(?:-{_T3_SEMVER_PRERELEASE}(?:\.{_T3_SEMVER_PRERELEASE})*)?"
-    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 _T3_DEFAULT_PORT = 3773
 _T3_NATIVE_PACKAGES = ("node-pty", "msgpackr-extract")
@@ -1890,46 +1886,19 @@ def _t3_active_binary(home: str) -> str | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+    if not isinstance(state, dict) or not has_t3_active_runtime_contract(
         state.get("protocol")
     ):
         return None
     version = state.get("activeVersion")
-    if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:
+    if not is_t3_service_version(version):
         return None
     version_root = os.path.join(
         runtime,
         "versions",
         version,
     )
-    return _t3_version_binary(version_root)
-
-
-def _t3_version_binary(version_root: str) -> str | None:
-    """Return T3's executable for a version in either supported layout."""
-
-    for relative_path in (
-        ("t3",),
-        ("node_modules", "t3", "dist", "bin.mjs"),
-    ):
-        binary = os.path.join(version_root, *relative_path)
-        if os.path.isfile(binary) and os.access(binary, os.X_OK):
-            return binary
-    return None
-
-
-def _t3_version_root(binary: str) -> str | None:
-    for parent_count, relative_path in (
-        (1, ("t3",)),
-        (4, ("node_modules", "t3", "dist", "bin.mjs")),
-    ):
-        version_root = binary
-        for _ in range(parent_count):
-            version_root = os.path.dirname(version_root)
-        expected = os.path.join(version_root, *relative_path)
-        if os.path.normpath(binary) == os.path.normpath(expected):
-            return version_root if os.path.isdir(version_root) else None
-    return None
+    return t3_version_binary(version_root)
 
 
 def _t3_node_binary(drop_in: str) -> str | None:
@@ -1956,7 +1925,7 @@ def _t3_native_runtime_healthy(
 ) -> bool:
     if node is None or binary is None:
         return False
-    version_root = _t3_version_root(binary)
+    version_root = t3_version_root(binary)
     if version_root is None:
         return False
     node_pty = os.path.join(version_root, "node_modules", "node-pty")
@@ -1971,7 +1940,7 @@ def _repair_t3_native_runtime(
     binary: str,
     environment: dict[str, str],
 ) -> bool:
-    version_root = _t3_version_root(binary)
+    version_root = t3_version_root(binary)
     npm = os.path.join(os.path.dirname(node), "npm")
     if (
         version_root is None

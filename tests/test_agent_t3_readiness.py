@@ -17,7 +17,7 @@ from lib.agent_readiness import build_agent_readiness_record
 
 
 class T3ReadinessTests(unittest.TestCase):
-    def test_active_binary_accepts_protocol_three_runtime(self):
+    def test_active_binary_accepts_forward_protocol_with_known_runtime_layout(self):
         with tempfile.TemporaryDirectory() as home:
             runtime = Path(home, ".t3", "runtime")
             version_root = runtime / "versions" / "0.0.44"
@@ -33,6 +33,16 @@ class T3ReadinessTests(unittest.TestCase):
 
             (runtime / "service-state.json").write_text(
                 json.dumps({"protocol": 4, "activeVersion": "0.0.44"})
+            )
+            self.assertEqual(agent_cli._t3_active_binary(home), str(binary))
+
+            (runtime / "service-state.json").write_text(
+                json.dumps({"protocol": 1, "activeVersion": "0.0.44"})
+            )
+            self.assertIsNone(agent_cli._t3_active_binary(home))
+
+            (runtime / "service-state.json").write_text(
+                json.dumps({"protocol": True, "activeVersion": "0.0.44"})
             )
             self.assertIsNone(agent_cli._t3_active_binary(home))
 

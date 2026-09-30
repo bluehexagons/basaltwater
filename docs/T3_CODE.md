@@ -247,22 +247,29 @@ Keyboard helpers dispatch after semantic pointer focus; programmatic typing can
 set DOM focus before page input is pointer-activated, so retry a no-op key once
 after clicking its intended target and verify the outcome.
 
-The current T3 Code service launcher uses service-state protocol 3. Basaltwater
-accepts protocols 2 and 3 so existing installations continue to work while the
-current T3 CLI reconciles the launcher during setup. The doctor's runtime
-resolver, stable T3 wrapper, failed-update repair, and cache cleanup all use
-the same supported-protocol list; unknown protocols are rejected safely. Both
-the standalone executable layout (`versions/<version>/t3`) and the older npm
-layout remain supported. T3 v0.0.43 added the client-side guard that stops
-server updates under an older service launcher; v0.0.44 is the current desktop
-release. The runtime requires Node.js `^22.16`, `^23.11`, or `>=24.10` and uses
-the `node-pty` and `msgpackr-extract` native dependencies. Basaltwater applies
-the supported 50 MiB request-body limit to T3's managed HTTPS route while
-leaving the pairing route at its deliberately small limit. See the upstream
+T3's service-state protocol identifies the launcher and runtime contract, and
+upstream has changed that contract as its executable layout evolved. Basaltwater
+accepts protocol 2 and later for active runtime selection only when
+`activeVersion` is valid SemVer and the installed executable matches a known
+layout. This lets a protocol-only launcher update work without assuming that an
+unknown runtime layout is executable. Setup, the doctor, and the stable `t3`
+wrapper share the version and layout checks. Retained failed-update repair and
+cache cleanup can alter or delete runtime data, so they remain limited to
+explicitly reviewed protocols 2 and 3 and fail closed for newer protocols.
+When upstream changes the active state fields or executable layout, update the
+shared state/version/layout definitions and compatibility tests, then review
+whether the new protocol is safe for repair and cleanup. Both the standalone
+executable layout (`versions/<version>/t3`) and the older npm layout remain
+supported. The
+published runtime archive includes its executable and native packages; Node.js
+and npm are used by Basaltwater's setup-time updater and native-module repair,
+not as a prerequisite for launching the standalone runtime. T3 uses the
+`node-pty` and `msgpackr-extract` native dependencies. Basaltwater applies the
+supported 50 MiB request-body limit to T3's managed HTTPS route while leaving
+the pairing route at its deliberately small limit. See the upstream
 [background-service documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/background-service.md),
 [update documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md),
-[v0.0.43 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.43),
-and [v0.0.44 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.44).
+and [release process](https://github.com/pingdotgg/t3code/blob/main/docs/operations/release.md).
 
 Older basaltwater installations used a root-owned
 `basaltwater-t3code.service` and a separate npm runtime. A subsequent setup
