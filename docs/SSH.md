@@ -62,6 +62,11 @@ provisioning. This reduces repeated prompts, but it does not replace an agent
 for parallel operations such as `fan`, `df`, or `reachable`. Preload the key
 when a command can open more than one SSH connection at a time.
 
+Managed control sockets are scoped to the SSH identity, server port, and
+workspace host-key store. Their containing directory must be owned by the
+invoking user with mode `0700`; symlinks, other owners, and unsafe permissions
+stop connection reuse without changing the unexpected path.
+
 The same terminal-aware behavior is used by SCP, rsync-over-SSH, SSHFS, and
 other SSH uploads. A hosted setup may still prompt once for the Proxmox
 identity and once for a different guest identity; loading both keys into the

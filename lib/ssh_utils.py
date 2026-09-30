@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -76,17 +77,26 @@ def get_ssh_control_path(
     stable across adjacent CLI invocations so ``probe`` followed by ``audit``
     can reuse it while OpenSSH's ``ControlPersist`` window is active.
     """
-    identity = "\0".join((host, username, ssh_key or ""))
+    identity = "\0".join((host, username, ssh_key or "", get_known_hosts_path()))
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     control_dir = os.path.join(
         tempfile.gettempdir(), f"basaltwater-ssh-{os.getuid()}"
     )
-    os.makedirs(control_dir, mode=0o700, exist_ok=True)
     try:
-        os.chmod(control_dir, 0o700)
-    except OSError:
+        os.mkdir(control_dir, mode=0o700)
+    except FileExistsError:
         pass
-    return os.path.join(control_dir, f"{digest}.sock")
+    try:
+        descriptor = os.open(control_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(descriptor)
+            if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise ValueError(f"SSH control directory must be owned by this user with mode 0700: {control_dir}")
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise ValueError(f"Unsafe SSH control directory: {control_dir}") from exc
+    return os.path.join(control_dir, f"{digest}-%p.sock")
 
 
 def build_ssh_command(

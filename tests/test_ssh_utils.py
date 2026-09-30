@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -43,12 +45,52 @@ class TestSshUtils(unittest.TestCase):
         self.assertEqual(ssh_process_timeout(60), 60)
 
     def test_control_path_is_private_and_identity_specific(self):
-        first = get_ssh_control_path("10.0.0.10", "root", "/tmp/key")
-        second = get_ssh_control_path("10.0.0.11", "root", "/tmp/key")
+        with tempfile.TemporaryDirectory() as directory, patch(
+            'lib.ssh_utils.tempfile.gettempdir', return_value=directory,
+        ):
+            first = get_ssh_control_path("10.0.0.10", "root", "/tmp/key")
+            second = get_ssh_control_path("10.0.0.11", "root", "/tmp/key")
+            self.assertEqual(os.stat(os.path.dirname(first)).st_mode & 0o777, 0o700)
 
         self.assertNotEqual(first, second)
         self.assertTrue(first.endswith(".sock"))
         self.assertIn("basaltwater-ssh-", first)
+        self.assertIn('%p', first)
+
+    def test_control_path_is_specific_to_workspace_trust(self):
+        with tempfile.TemporaryDirectory() as directory, patch(
+            'lib.ssh_utils.tempfile.gettempdir', return_value=directory,
+        ), patch('lib.ssh_utils.get_known_hosts_path', side_effect=['/one/known_hosts', '/two/known_hosts']):
+            first = get_ssh_control_path('server', 'root')
+            second = get_ssh_control_path('server', 'root')
+        self.assertNotEqual(first, second)
+
+    def test_control_directory_links_are_rejected_without_chmod_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = os.path.join(directory, 'unrelated')
+            os.mkdir(target, 0o755)
+            os.chmod(target, 0o755)
+            os.symlink(target, os.path.join(directory, f'basaltwater-ssh-{os.getuid()}'))
+            with patch('lib.ssh_utils.tempfile.gettempdir', return_value=directory):
+                with self.assertRaisesRegex(ValueError, 'Unsafe SSH control directory'):
+                    get_ssh_control_path('server', 'root')
+            self.assertEqual(os.stat(target).st_mode & 0o777, 0o755)
+
+    def test_control_directory_requires_private_mode_and_current_owner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            control_dir = os.path.join(directory, f'basaltwater-ssh-{os.getuid()}')
+            os.mkdir(control_dir)
+            os.chmod(control_dir, 0o777)
+            with patch('lib.ssh_utils.tempfile.gettempdir', return_value=directory):
+                with self.assertRaisesRegex(ValueError, 'mode 0700'):
+                    get_ssh_control_path('server', 'root')
+                self.assertEqual(os.stat(control_dir).st_mode & 0o777, 0o777)
+                os.chmod(control_dir, 0o700)
+                with patch('lib.ssh_utils.os.fstat', return_value=SimpleNamespace(
+                    st_uid=os.getuid() + 1, st_mode=os.stat(control_dir).st_mode,
+                )):
+                    with self.assertRaisesRegex(ValueError, 'owned by this user'):
+                        get_ssh_control_path('server', 'root')
 
     def test_shell_join_quotes_spaces(self):
         self.assertEqual(shell_join(["cat", "/tmp/file name.txt"]), "cat '/tmp/file name.txt'")
