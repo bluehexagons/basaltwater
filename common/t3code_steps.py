@@ -1040,7 +1040,7 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
         '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n'
         f"{_T3_GH_CONFIG_EXPORT}\n"
         f"state={shlex.quote(os.path.join(runtime, 'service-state.json'))}\n"
-        'version=$(/usr/bin/python3 -c \'import json,re,sys; '
+        'version=$(python3 -c \'import json,re,sys; '
         'value=json.load(open(sys.argv[1], encoding="utf-8")); '
         f'protocols={json.dumps(sorted(T3_SUPPORTED_SERVICE_PROTOCOLS))}; '
         'assert type(value.get("protocol")) is int and value["protocol"] in protocols; '
