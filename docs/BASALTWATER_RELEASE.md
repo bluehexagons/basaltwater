@@ -58,6 +58,10 @@ panel specimens do not certify live provisioning or migration.
 
 ## Live agent VM audit — 2026-09-19
 
+The following records describe the cutover-era checkouts and remaining work at
+that time. The fleet has since completed migration; the code and retry behavior
+described below are retained only in the pinned intermediate version.
+
 After the operator reran setup with commit `03298b0`, a read-only audit of the
 Debian agent VM (kernel `6.12.107+deb13-cloud-amd64`) confirmed:
 

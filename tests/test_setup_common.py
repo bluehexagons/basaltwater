@@ -478,66 +478,41 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(managed_dir, setup_common.REMOTE_ARGS_FILENAME)))
             self.assertTrue(os.path.islink(os.path.join(managed_dir, "state")))
 
-    def test_local_runtime_migrates_state_before_replacing_source_tree(self):
+    def test_local_runtime_refuses_retired_state_before_replacing_source_tree(self):
         from lib import setup_common
 
         with tempfile.TemporaryDirectory() as temp_dir:
             install_dir = os.path.join(temp_dir, "basaltwater")
-            legacy_state_dir = os.path.join(install_dir, "state")
-            persistent_state_dir = os.path.join(temp_dir, "persistent-state")
+            old_state = os.path.join(install_dir, "state")
+            state_dir = os.path.join(temp_dir, "persistent-state")
             build_dir = os.path.join(temp_dir, "build")
-            os.makedirs(legacy_state_dir)
+            os.makedirs(old_state)
             os.makedirs(build_dir)
-            with open(
-                os.path.join(legacy_state_dir, "godot.json"),
-                "w",
-                encoding="utf-8",
-            ) as file_obj:
-                file_obj.write('{"tag_name":"4.7.2-stable"}')
-            with open(
-                os.path.join(legacy_state_dir, "setup-operation.json"),
-                "w",
-                encoding="utf-8",
-            ) as file_obj:
-                file_obj.write('{"status":"recovery_required"}')
-            with open(
-                os.path.join(build_dir, "remote_setup.py"),
-                "w",
-                encoding="utf-8",
-            ) as file_obj:
-                file_obj.write("# replacement runtime\n")
+            marker = os.path.join(old_state, "setup-operation.json")
+            with open(marker, "w", encoding="utf-8") as stream:
+                stream.write('{"status":"recovery_required"}')
+            with patch.object(setup_common, "REMOTE_INSTALL_DIR", install_dir), \
+                 patch.object(setup_common, "PERSISTENT_STATE_DIR", state_dir):
+                with self.assertRaisesRegex(RuntimeError, "intermediate version"):
+                    setup_common._activate_local_runtime(build_dir)
+            with open(marker, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), '{"status":"recovery_required"}')
+            self.assertFalse(os.path.lexists(state_dir))
+            self.assertFalse(os.path.islink(old_state))
 
-            with (
-                patch.object(setup_common, "REMOTE_INSTALL_DIR", install_dir),
-                patch.object(
-                    setup_common,
-                    "PERSISTENT_STATE_DIR",
-                    persistent_state_dir,
-                ),
-            ):
-                setup_common._activate_local_runtime(build_dir)
+    def test_local_runtime_refuses_unexpected_state_link(self):
+        from lib import setup_common
 
-            state_link = os.path.join(install_dir, "state")
-            self.assertTrue(os.path.islink(state_link))
-            self.assertEqual(os.path.realpath(state_link), persistent_state_dir)
-            with open(
-                os.path.join(persistent_state_dir, "godot.json"),
-                encoding="utf-8",
-            ) as file_obj:
-                self.assertEqual(file_obj.read(), '{"tag_name":"4.7.2-stable"}')
-            self.assertFalse(
-                os.path.exists(
-                    os.path.join(persistent_state_dir, "setup-operation.json")
-                )
-            )
-            self.assertTrue(
-                os.path.isfile(
-                    os.path.join(
-                        persistent_state_dir,
-                        setup_common.LEGACY_SETUP_OPERATION_FILENAME,
-                    )
-                )
-            )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_dir = os.path.join(temp_dir, "basaltwater")
+            os.makedirs(install_dir)
+            os.symlink(os.path.join(temp_dir, "other-state"), os.path.join(install_dir, "state"))
+            with patch.object(setup_common, "REMOTE_INSTALL_DIR", install_dir), \
+                 patch.object(setup_common, "PERSISTENT_STATE_DIR", os.path.join(temp_dir, "state")):
+                with self.assertRaisesRegex(RuntimeError, "intermediate version"):
+                    setup_common._activate_local_runtime(temp_dir)
+            self.assertEqual(os.readlink(os.path.join(install_dir, "state")),
+                             os.path.join(temp_dir, "other-state"))
 
     def test_local_runtime_preserves_new_durable_operation_marker(self):
         from lib import setup_common
@@ -576,7 +551,7 @@ class TestRunRemoteSetupArgumentSecurity(unittest.TestCase):
                 os.path.exists(
                     os.path.join(
                         persistent_state_dir,
-                        setup_common.LEGACY_SETUP_OPERATION_FILENAME,
+                        "setup-operation.pre-persistence.json",
                     )
                 )
             )

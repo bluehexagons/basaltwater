@@ -7,6 +7,9 @@ Default workspace lookup refuses old client directories rather than treating
 them as an empty current workspace. Setup refuses old target runtimes/state
 and incomplete historical journals before activating the new runtime.
 Completed migration journals and their private archives remain untouched.
+Older installations with a real `/opt/basaltwater/state` directory are also
+refused. Current setup uses durable `/var/lib/basaltwater` state and a runtime
+link; it does not copy or rename old state or operation markers.
 
 ## Intermediate version for an old installation
 
@@ -31,6 +34,12 @@ cd basaltwater-migration
 python3 basaltwater.py migrate
 python3 basaltwater.py migrate --apply
 ```
+
+For an already renamed Basaltwater installation that still has runtime-relative
+state, run its normal host setup using this pinned checkout before upgrading.
+That version moves the state into `/var/lib/basaltwater` and installs the
+runtime link. Review any retained `setup-operation.pre-persistence.json` and
+resolve unfinished operations before resuming setup with the current version.
 
 For a system installation, perform the system pass first on that host:
 

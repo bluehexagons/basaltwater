@@ -93,7 +93,6 @@ REMOTE_ARGS_FILENAME = ".remote_setup_args.json"
 AGENT_PAYLOAD_DIRNAME = "agent_payload"
 DEVICE_PAIRING_PAYLOAD_DIRNAME = "device_pairing_payload"
 WEB_PANEL_PAYLOAD_DIRNAME = "web_panel_payload"
-LEGACY_SETUP_OPERATION_FILENAME = "setup-operation.pre-persistence.json"
 MAX_AGENT_CREDENTIAL_BYTES = 4 * 1024 * 1024
 MAX_DEVICE_PAIRING_AUTH_BYTES = 64 * 1024
 _GIT_IDENTITY_PAYLOAD_PATH = os.path.join("config", "git", "identity.json")
@@ -353,51 +352,31 @@ def _is_managed_local_install(install_dir: str) -> bool:
 
 
 def _runtime_state_path() -> str:
-    """Return the compatibility path exposed inside the runtime tree."""
+    """Return the durable state link exposed inside the runtime tree."""
     return os.path.join(REMOTE_INSTALL_DIR, "state")
 
 
-def _migrate_local_runtime_state() -> None:
-    """Move legacy local runtime state into its durable host directory."""
-    legacy_state_dir = _runtime_state_path()
+def _ensure_local_runtime_state() -> None:
+    """Prepare durable state, refusing retired runtime-relative directories."""
+    runtime_state = _runtime_state_path()
+    if os.path.lexists(runtime_state) and not (
+        os.path.islink(runtime_state)
+        and os.path.realpath(runtime_state) == os.path.realpath(PERSISTENT_STATE_DIR)
+    ):
+        raise RuntimeError(
+            f"Retired runtime-relative state at {runtime_state}; use the intermediate "
+            "version in docs/BASALTWATER_MIGRATION.md before replacing this installation"
+        )
     if os.path.islink(PERSISTENT_STATE_DIR):
         raise RuntimeError(
             f"Refusing symlinked basaltwater state directory: {PERSISTENT_STATE_DIR}"
         )
     os.makedirs(PERSISTENT_STATE_DIR, mode=0o700, exist_ok=True)
-
-    migrated_legacy_state = False
-    if os.path.lexists(legacy_state_dir):
-        if os.path.islink(legacy_state_dir):
-            if os.path.realpath(legacy_state_dir) != os.path.realpath(
-                PERSISTENT_STATE_DIR
-            ):
-                raise RuntimeError(
-                    f"Refusing unexpected basaltwater state link: {legacy_state_dir}"
-                )
-        elif os.path.isdir(legacy_state_dir):
-            _copy_existing_path(legacy_state_dir, PERSISTENT_STATE_DIR)
-            migrated_legacy_state = True
-        else:
-            raise RuntimeError(
-                f"basaltwater state path is not a directory: {legacy_state_dir}"
-            )
-    if migrated_legacy_state:
-        operation_marker = os.path.join(
-            PERSISTENT_STATE_DIR,
-            "setup-operation.json",
-        )
-        legacy_marker = os.path.join(
-            PERSISTENT_STATE_DIR,
-            LEGACY_SETUP_OPERATION_FILENAME,
-        )
-        if os.path.isfile(operation_marker) and not os.path.lexists(legacy_marker):
-            os.replace(operation_marker, legacy_marker)
     os.chmod(PERSISTENT_STATE_DIR, 0o700)
 
 
 def _install_local_runtime_state_link() -> None:
-    """Expose durable state at the historical runtime-relative path."""
+    """Expose durable state without deleting unexpected runtime entries."""
     legacy_state_dir = _runtime_state_path()
     if os.path.lexists(legacy_state_dir):
         if (
@@ -406,10 +385,7 @@ def _install_local_runtime_state_link() -> None:
             == os.path.realpath(PERSISTENT_STATE_DIR)
         ):
             return
-        if os.path.isdir(legacy_state_dir) and not os.path.islink(legacy_state_dir):
-            shutil.rmtree(legacy_state_dir)
-        else:
-            os.unlink(legacy_state_dir)
+        raise RuntimeError(f"Refusing unexpected runtime state path: {legacy_state_dir}")
     os.symlink(PERSISTENT_STATE_DIR, legacy_state_dir, target_is_directory=True)
 
 
@@ -422,7 +398,7 @@ def _activate_local_runtime(build_dir: str) -> None:
         )
     if os.path.islink(REMOTE_INSTALL_DIR):
         raise RuntimeError(f"Refusing symlinked runtime directory: {REMOTE_INSTALL_DIR}")
-    _migrate_local_runtime_state()
+    _ensure_local_runtime_state()
     if not _is_managed_local_install(REMOTE_INSTALL_DIR):
         parent_dir = os.path.dirname(REMOTE_INSTALL_DIR)
         os.makedirs(parent_dir, exist_ok=True)
