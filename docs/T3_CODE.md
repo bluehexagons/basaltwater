@@ -86,7 +86,13 @@ credential contents, use `basaltw agent support-bundle`.
 Basaltwater uses T3 Code's supported per-user background service. Upstream owns
 the launcher, immutable version directories, service state, updates, and
 rollback. Basaltwater adds a systemd drop-in for the configured workspace,
-host, port, PATH, and GitHub CLI environment.
+host, port, PATH, and GitHub CLI environment. The drop-in runs T3's current
+upstream `ExecStart` through a small output filter, resolving that command from
+the upstream unit on each start so launcher updates do not require a pinned
+Basaltwater command. It redacts credential fields and terminal QR rows from
+both output streams, then forwards the remaining diagnostics to T3's normal
+service log. A pre-start step also sanitizes an existing `boot-service.log`
+and its numbered rotations after the previous service process has stopped.
 
 The service unit is:
 
@@ -111,7 +117,10 @@ tail -n 100 ~/.t3/userdata/logs/boot-service.log
 
 The upstream launcher writes application startup failures, including native
 module load errors, to `~/.t3/userdata/logs/boot-service.log`. systemd's journal
-primarily records the launcher lifecycle.
+primarily records the launcher lifecycle. The managed filter removes startup
+tokens, pairing URLs, and their QR image before they reach persistent logs.
+One-time pairing commands intentionally return a fresh URL to the authenticated
+caller; do not copy that command output into shared logs or diagnostics.
 
 T3 also records non-fatal provider diagnostics. It can health-check optional
 agent CLIs even when setup deliberately omitted them, so a missing-Claude or

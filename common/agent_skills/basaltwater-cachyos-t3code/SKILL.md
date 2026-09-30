@@ -46,6 +46,11 @@ systemctl --user status basaltwater-cachyos-t3.service
 journalctl --user -u basaltwater-cachyos-t3.service -n 100
 ```
 
+Managed web-service output is filtered before systemd records it, including
+headless startup tokens, pairing URLs, and QR rows. The explicit `t3 pair`
+command still returns a one-time credential to the local caller; do not save
+its output in shared logs or support reports.
+
 The runtime is installed under `~/.local/share/basaltwater/cachyos-t3`, separate
 from an existing T3 desktop installation. Its data is explicitly under that
 runtime root's `data` directory. Older units used `~/.t3`; rerunning web setup

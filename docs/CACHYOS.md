@@ -380,8 +380,10 @@ unit is `~/.config/systemd/user/basaltwater-cachyos-t3.service`. The stable
 `~/.local/share/basaltwater/cachyos-t3/bin/t3` link selects the current release
 for pairing and Connect commands. Setup validates the CLI, a disposable native
 PTY shell, the generated unit, and HTTP UI reachability. Provider login and a
-real coding thread still need verification. HTTP 200 alone is not backend
-health: an unknown route such as `/api/health` can return the frontend HTML.
+real coding thread still need verification. Service output passes through a
+credential filter before systemd records it in the journal, so headless startup
+tokens, pairing URLs, and QR rows are not persisted. HTTP 200 alone is not
+backend health: an unknown route such as `/api/health` can return the frontend HTML.
 If port 3773 is busy, rerun with another port from 1024 through 65535.
 
 ### T3 Connect
@@ -425,10 +427,12 @@ Generate a fresh native T3 pairing link with the managed runtime:
 ```
 
 The command prints a QR code, a `Pairing URL`, and a token. Treat the URL and
-token as credentials and use the link once. Paste the complete URL into the T3
-desktop app at **Settings → Connections → Add environment**, or open it in a
-browser. The bare `http://127.0.0.1:3773` address redirects to T3's pairing
-page; it is not the pairing link itself.
+token as credentials and use the link once. This explicit pairing command
+returns the secret to the local caller; avoid saving its output in shared logs.
+Paste the complete URL into the T3 desktop app at
+**Settings → Connections → Add environment**, or open it in a browser. The bare
+`http://127.0.0.1:3773` address redirects to T3's pairing page; it is not the
+pairing link itself.
 
 To pair a browser, desktop app, or phone on another system, bind T3 to the
 workstation's private LAN address. Find that address with `ip -4 addr`, then

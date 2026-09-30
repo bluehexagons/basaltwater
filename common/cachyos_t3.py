@@ -146,6 +146,30 @@ def _unit_path(value: str) -> str:
     return value.replace("\\", "\\x5c").replace("%", "%%").replace(" ", "\\x20")
 
 
+def _unit_exec_arg(value: str) -> str:
+    if value.startswith("/"):
+        return _unit_exec_quote(value)
+    if re.fullmatch(r"[A-Za-z0-9_./:@+-]+", value):
+        return value
+    return _unit_exec_quote(value)
+
+
+def _filtered_exec_start(binary: str, arguments: tuple[str, ...]) -> str:
+    """Render T3's command through the shared credential-safe log filter."""
+
+    filter_script = Path(__file__).resolve().parent / "service_tools/t3code_log_filter.py"
+    validate_filesystem_path(str(filter_script), must_exist=True)
+    command = (
+        str(filter_script),
+        "exec",
+        binary,
+        *arguments,
+    )
+    return "ExecStart=/usr/bin/python3 -I " + " ".join(
+        _unit_exec_arg(value) for value in command
+    )
+
+
 @contextmanager
 def _setup_lock(prefix: Path) -> Iterator[None]:
     descriptor = os.open(prefix / ".setup.lock", os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
@@ -417,6 +441,16 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
         host = config.web_interface_host or "127.0.0.1"
         data = prefix / "data"
         _directory(data)
+        service_arguments = (
+            "serve",
+            "--host",
+            host,
+            "--port",
+            str(config.web_interface_port),
+            "--base-dir",
+            str(data),
+            "--no-browser",
+        )
         if unit.exists() and "--base-dir" not in unit.read_text():
             print("  Moving the managed web service to isolated data; previous ~/.t3 data is retained, not migrated")
         content = (
@@ -425,8 +459,7 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
             f"WorkingDirectory={_unit_path(workspace)}\n"
             f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
             "UnsetEnvironment=T3CODE_STATE_DIR T3CODE_BASE_DIR T3CODE_HOME\n"
-            f"ExecStart={_unit_exec_quote(str(candidate / 'bin/t3'))} serve --host {host} "
-            f"--port {config.web_interface_port} --base-dir {_unit_exec_quote(str(data))} --no-browser\n"
+            f"{_filtered_exec_start(str(candidate / 'bin/t3'), service_arguments)}\n"
             "Restart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
         )
         _activate(prefix, unit, candidate, content, f"http://{host}:{config.web_interface_port}/")

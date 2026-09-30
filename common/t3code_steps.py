@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
@@ -71,6 +72,11 @@ DEVICE_PAIRING_SCRIPT = (
 )
 T3_ADMIN_PAIR_SCRIPT = (
     "/opt/basaltwater/common/service_tools/t3code_admin_pair.py"
+)
+T3_SERVICE_LOG_FILTER_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "service_tools",
+    "t3code_log_filter.py",
 )
 T3_AGENT_SKILLS_ROOT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "agent_skills"
@@ -726,6 +732,9 @@ def _configure_t3_service_drop_in(
     uid: int,
     gid: int,
 ) -> bool:
+    validate_filesystem_path(T3_SERVICE_LOG_FILTER_SCRIPT, must_exist=True)
+    with open(T3_SERVICE_LOG_FILTER_SCRIPT, "rb") as filter_file:
+        filter_revision = hashlib.sha256(filter_file.read()).hexdigest()
     path = _t3_service_drop_in(home)
     parent = os.path.dirname(path)
     current = home
@@ -754,6 +763,7 @@ def _configure_t3_service_drop_in(
         )
     )
     content = f"""# Managed by basaltwater
+# T3 log filter revision {filter_revision}
 [Service]
 WorkingDirectory={workspace}
 Environment=T3CODE_HOST={host}
@@ -765,6 +775,9 @@ Environment=CXX=g++
 Environment=npm_config_strict_allow_scripts=false
 UnsetEnvironment=npm_config_allow_scripts NPM_CONFIG_ALLOW_SCRIPTS npm_config_dangerously_allow_all_scripts NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS
 Environment=PATH={environment_path}
+ExecStartPre=/usr/bin/python3 -I {T3_SERVICE_LOG_FILTER_SCRIPT} sanitize-log
+ExecStart=
+ExecStart=/usr/bin/python3 -I {T3_SERVICE_LOG_FILTER_SCRIPT} upstream
 """
     changed = _write_text_if_changed(path, content, 0o644)
     os.chown(parent, uid, gid)
@@ -811,6 +824,10 @@ def _install_t3_service(
         gid,
     )
     service_file = _t3_service_file(home)
+    if drop_in_changed and os.path.isfile(service_file):
+        drop_in_reload = _user_systemctl(username, uid, "daemon-reload")
+        if drop_in_reload.returncode != 0:
+            raise RuntimeError("Could not load the T3 Code log-filter service configuration")
     binary = _active_t3_binary(home)
     previous_binary = binary
     service_was_present = os.path.isfile(service_file)

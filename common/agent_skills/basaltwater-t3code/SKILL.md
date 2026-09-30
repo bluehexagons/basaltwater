@@ -28,6 +28,12 @@ journalctl --user -u t3code.service -n 100 --no-pager
 tail -n 100 ~/.t3/userdata/logs/boot-service.log
 ```
 
+On Basaltwater-managed Debian services, startup tokens, pairing URLs, and QR
+rows are filtered before they reach this log. The first service start after
+filter installation also scrubs matching values from the prior log and its
+numbered rotations. Pairing commands still return a one-time URL directly to
+the caller; do not paste that output into shared logs or support reports.
+
 The upstream unit is `~/.config/systemd/user/t3code.service`.
 Basaltwater keeps networking and workspace settings in
 `~/.config/systemd/user/t3code.service.d/basaltwater.conf`.
