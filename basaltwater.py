@@ -107,6 +107,7 @@ from lib.setup_common import (
     remove_replaced_setup_cache,
     run_remote_setup,
 )
+from lib.setup_reboot import restart_after_setup
 from lib.state_read import StateReadError
 from lib.interactive_setup import prompt_for_missing_passwords
 from lib.system_utils import get_current_username
@@ -296,6 +297,19 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         epilog="Run 'basaltw setup --help' for full options"
     )
     add_setup_arguments(setup_parser, allow_steps=True, include_system_type=True)
+    setup_parser.add_argument(
+        "--restart-if-needed",
+        action="store_true",
+        help="After successful setup, restart the target if a reboot is required",
+    )
+    setup_parser.add_argument(
+        "--wait-for-restart",
+        action="store_true",
+        help=(
+            "With --restart-if-needed, wait for a remote target to boot again "
+            "and run health checks"
+        ),
+    )
     setup_parser.add_argument(
         "--verify-provider",
         action="store_true",
@@ -1809,10 +1823,27 @@ def deploy_configurations(pattern: str, force: bool, deploy_latest: bool = False
 
 def run_setup_command(args: argparse.Namespace) -> int:
     """Execute the setup command."""
-    if args.system_type == "agent_cachyos":
-        from lib.cachyos import run_cachyos_command
+    restart_if_needed = getattr(args, "restart_if_needed", False)
+    wait_for_restart = getattr(args, "wait_for_restart", False)
+    if wait_for_restart and not restart_if_needed:
+        print("Error: --wait-for-restart requires --restart-if-needed")
+        return 1
+    if wait_for_restart and _is_local_host(args.host):
+        print("Error: --wait-for-restart requires a remote setup target")
+        return 1
 
-        return run_cachyos_command(args)
+    if args.system_type == "agent_cachyos":
+        from lib.cachyos import cachyos_config_from_args, run_cachyos_command
+
+        returncode = run_cachyos_command(args)
+        if returncode != 0 or not restart_if_needed:
+            return returncode
+        try:
+            config = cachyos_config_from_args(args)
+        except ValueError as exc:
+            print(f"Setup completed, but restart options could not be applied: {exc}")
+            return 1
+        return restart_after_setup(config)
     explicit_ipv4 = getattr(args, "static_ipv4", None)
     if getattr(args, "hosted_node", None) and isinstance(explicit_ipv4, str) and explicit_ipv4:
         print(
@@ -2128,7 +2159,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
         remote_access_details=get_last_remote_access_details(),
     )
     print("=" * 60)
-    
+
+    if restart_if_needed:
+        return restart_after_setup(config, wait_for_restart=wait_for_restart)
+
     return 0
 
 

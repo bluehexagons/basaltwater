@@ -1,8 +1,8 @@
 # Command-Line Reference
 
-Reference for the upcoming stable `v2.0.0` `basaltw` CLI. The code help and
-`lib/arg_parser.py` are the source of truth; this page summarizes the command
-surface and behaviors that are easy to miss.
+Reference for the upcoming stable `v2.0.0` `basaltw` CLI. The code help,
+`basaltwater.py`, and `lib/arg_parser.py` are the source of truth; this page
+summarizes the command surface and behaviors that are easy to miss.
 
 Related pages:
 
@@ -234,6 +234,36 @@ tools, not for an LXC container.
 | `--auto-restart` / `--no-auto-restart` | Control normal automatic restarts |
 | `--auto-restart-force-days N` | Force restart after N days of deferrals |
 | `--auto-restart-grace N` | Warning period before an automatic restart |
+| `--restart-if-needed` | After successful setup, restart the target when `/run/reboot-required` exists |
+| `--wait-for-restart` | With `--restart-if-needed` on a remote target, wait for a new boot and run `basaltw health` |
+
+### Restart after setup
+
+`--restart-if-needed` checks the target after a successful setup and requests a
+restart only when `/run/reboot-required` is present. It does not treat a newer
+installed kernel without that marker as sufficient evidence to reboot. The
+flag is a one-time action: it may interrupt active sessions and work. Proxmox
+targets are checked first and are not restarted while the maintenance report
+finds running or locked guests or other blockers. `--dry-run` never requests a
+restart.
+
+By default, setup requests the restart and exits without waiting for the host
+to return. Add `--wait-for-restart` to wait up to five minutes for a remote
+target to boot again over SSH, then run the standard `basaltw health` summary.
+This flag requires `--restart-if-needed` and a remote target; if no reboot is
+needed, setup skips both the wait and health check. Local targets can use
+`--restart-if-needed`, but cannot use `--wait-for-restart` because the
+controller would be rebooting with the target.
+
+```bash
+basaltw setup server_web example.com admin --restart-if-needed
+basaltw setup server_web example.com admin \
+  --restart-if-needed --wait-for-restart
+```
+
+The recurring `--auto-restart` policy is separate. Its scheduled restart
+service defers for active sessions and recognized work; the one-time setup
+flag explicitly requests a restart as soon as setup finishes.
 
 ### Common Setup Flags
 

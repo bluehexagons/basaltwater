@@ -39,6 +39,7 @@ _OPTIONS = {
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
 }
+_CONTROLLER_OPTIONS = {"restart_if_needed", "wait_for_restart"}
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
     "agent_tools_removed", "install_gh", "install_codex", "install_claude",
     "install_opencode",
@@ -70,7 +71,7 @@ def cachyos_config_from_args(
     """Reject unrelated setup features before config normalization or side effects."""
     defaults = vars(_default_args(for_remote=for_remote))
     for name, value in vars(args).items():
-        if name in _OPTIONS or name == "command":
+        if name in _OPTIONS or name in _CONTROLLER_OPTIONS or name == "command":
             continue
         if value != defaults.get(name) and value is not None and value is not False:
             raise ValueError(f"agent_cachyos does not support setup option {name!r}")
