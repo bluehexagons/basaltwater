@@ -247,7 +247,9 @@ class T3CodeLogFilterTests(unittest.TestCase):
         )
 
         self.assertTrue(line.startswith("ExecStart=/usr/bin/python3 -I "))
-        command = log_filter.parse_systemd_exec_start(f"[Service]\n{line}\n")
+        # The CI container may not provide the deployment's /usr/bin/python3.
+        with patch.object(log_filter, "validate_filesystem_path"):
+            command = log_filter.parse_systemd_exec_start(f"[Service]\n{line}\n")
         self.assertIn("t3code_log_filter.py", command[2])
         self.assertEqual(command[3], "exec")
         self.assertIn("serve", command)
