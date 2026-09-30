@@ -82,6 +82,13 @@ env -u npm_config_dangerously_allow_all_scripts \
 basaltw agent doctor --capability t3code --fix
 ```
 
+If the client says the update requires a newer T3 Code service launcher, rerun
+the saved Basaltwater setup command on that VM. Setup uses the current T3 CLI's
+service reconciliation command to update the launcher and runtime, then the
+doctor validates the selected runtime. Basaltwater recognizes service-state
+protocols 2 and 3, including the standalone executable runtime layout used by
+current T3 releases.
+
 Keep those npm settings scoped to this trusted T3 update command. npm 12
 rejects inherited `allow-scripts` and `dangerously-allow-all-scripts` settings
 in T3's nested runtime. Basaltwater installs the referenced npm passthrough; it

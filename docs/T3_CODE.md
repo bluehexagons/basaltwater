@@ -210,12 +210,15 @@ npm policy allowing only `node-pty` and `msgpackr-extract`, then removes the
 policy before T3 publishes the runtime. All other npm commands pass through
 unchanged, and the target user's normal npm configuration remains unchanged.
 
-If npm 12 already produced an incomplete candidate and T3 rolled back, rerun
-the same Basaltwater setup on that VM. Setup identifies the retained `failed`
-or `rolled-back` candidate from protocol-2 service state and rebuilds its two
-trusted native dependencies without stopping the active working version. Then
-retry **Update server** in the client. A refresh setup performs the same repair
-before invoking the upstream updater.
+If the client reports that its update needs a newer T3 Code service launcher,
+rerun the same Basaltwater setup on that VM. Setup invokes the current T3 CLI's
+service reconciliation command, which updates the launcher and runtime; the
+doctor then validates the selected runtime. If npm 12 already produced an
+incomplete candidate and T3 rolled back, setup identifies the retained
+`failed` or `rolled-back` candidate from protocol-2 or protocol-3 service state
+and rebuilds its two trusted native dependencies without stopping the active
+working version. Then retry **Update server** in the client. A refresh setup
+performs the same repair before invoking the upstream updater.
 
 T3 v0.0.35 also invokes `loginctl enable-linger` without a username. That can
 fail in the sessionless `runuser` environment used by remote setup even after
@@ -237,19 +240,29 @@ active-runtime repair is available after setup:
 basaltw agent doctor --capability t3code --fix
 ```
 
-As of 2026-09-01, basaltwater service and collaborative-preview checks pass with
-T3 Code v0.0.37, including preview open, snapshot, semantic input, scrolling,
-viewport and appearance emulation, and client-side recording. Keyboard helpers
-dispatch after semantic pointer focus; programmatic typing can set DOM focus
-before page input is pointer-activated, so retry a no-op key once after clicking
-its intended target and verify the outcome. The validated runtime uses
-service-state protocol 2, keeps the same `node-pty` and
-`msgpackr-extract` native dependencies, and requires Node.js `^22.16`,
-`^23.11`, or `>=24.10`. It also raises supported file uploads to 50 MiB;
-Basaltwater applies the matching request-body limit to T3's managed HTTPS route
-while leaving the pairing route at its deliberately small limit. See the upstream [background-service documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/background-service.md),
+As of 2026-09-01, Basaltwater's service and collaborative-preview checks had
+passed with T3 Code v0.0.37, including preview open, snapshot, semantic input,
+scrolling, viewport and appearance emulation, and client-side recording.
+Keyboard helpers dispatch after semantic pointer focus; programmatic typing can
+set DOM focus before page input is pointer-activated, so retry a no-op key once
+after clicking its intended target and verify the outcome.
+
+The current T3 Code service launcher uses service-state protocol 3. Basaltwater
+accepts protocols 2 and 3 so existing installations continue to work while the
+current T3 CLI reconciles the launcher during setup. The doctor's runtime
+resolver, stable T3 wrapper, failed-update repair, and cache cleanup all use
+the same supported-protocol list; unknown protocols are rejected safely. Both
+the standalone executable layout (`versions/<version>/t3`) and the older npm
+layout remain supported. T3 v0.0.43 added the client-side guard that stops
+server updates under an older service launcher; v0.0.44 is the current desktop
+release. The runtime requires Node.js `^22.16`, `^23.11`, or `>=24.10` and uses
+the `node-pty` and `msgpackr-extract` native dependencies. Basaltwater applies
+the supported 50 MiB request-body limit to T3's managed HTTPS route while
+leaving the pairing route at its deliberately small limit. See the upstream
+[background-service documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/background-service.md),
 [update documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md),
-and [v0.0.36 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.36).
+[v0.0.43 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.43),
+and [v0.0.44 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.44).
 
 Older basaltwater installations used a root-owned
 `basaltwater-t3code.service` and a separate npm runtime. A subsequent setup

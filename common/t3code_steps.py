@@ -31,6 +31,10 @@ from lib.auth_failure_bans import (
 from lib.config import SetupConfig
 from lib.local_http import open_loopback
 from lib.remote_utils import install_package, is_dry_run, run
+from lib.t3code_runtime import (
+    T3_SUPPORTED_SERVICE_PROTOCOLS,
+    is_supported_t3_service_protocol,
+)
 from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 from lib.validators import validate_username
 
@@ -296,7 +300,9 @@ def _active_t3_binary(home: str) -> str | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or state.get("protocol") != 2:
+    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+        state.get("protocol")
+    ):
         return None
     version = state.get("activeVersion")
     if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:
@@ -320,7 +326,9 @@ def _retained_failed_t3_binary(home: str) -> tuple[str, str] | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or state.get("protocol") != 2:
+    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+        state.get("protocol")
+    ):
         return None
     update = state.get("update")
     if not isinstance(update, dict) or update.get("status") not in {
@@ -1034,7 +1042,8 @@ def _write_passthrough_wrapper(path: str, home: str) -> bool:
         f"state={shlex.quote(os.path.join(runtime, 'service-state.json'))}\n"
         'version=$(/usr/bin/python3 -c \'import json,re,sys; '
         'value=json.load(open(sys.argv[1], encoding="utf-8")); '
-        'assert value.get("protocol") == 2; '
+        f'protocols={json.dumps(sorted(T3_SUPPORTED_SERVICE_PROTOCOLS))}; '
+        'assert type(value.get("protocol")) is int and value["protocol"] in protocols; '
         'version=value["activeVersion"]; '
         f"assert re.fullmatch({json.dumps(_T3_VERSION_RE.pattern)}, version); "
         'print(version)\' "$state")\n'

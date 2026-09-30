@@ -39,6 +39,7 @@ from lib.agent_credentials import (
 )
 from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
+from lib.t3code_runtime import is_supported_t3_service_protocol
 from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_host, validate_username
 from lib.remote_utils import CommandTimeoutError, run as run_command
@@ -1889,7 +1890,9 @@ def _t3_active_binary(home: str) -> str | None:
             state = json.load(file_obj)
     except (OSError, ValueError):
         return None
-    if not isinstance(state, dict) or state.get("protocol") != 2:
+    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+        state.get("protocol")
+    ):
         return None
     version = state.get("activeVersion")
     if not isinstance(version, str) or _T3_VERSION_RE.fullmatch(version) is None:

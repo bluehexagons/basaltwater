@@ -70,7 +70,11 @@ class T3CodeWebTest(unittest.TestCase):
         return binary
 
     @staticmethod
-    def _write_upstream_native_runtime(home: str, version: str = "0.0.42") -> str:
+    def _write_upstream_native_runtime(
+        home: str,
+        version: str = "0.0.42",
+        protocol: int = 2,
+    ) -> str:
         """Create the current T3 native executable runtime layout."""
 
         runtime = os.path.join(home, ".t3", "runtime")
@@ -84,7 +88,7 @@ class T3CodeWebTest(unittest.TestCase):
             "w",
             encoding="utf-8",
         ) as file_obj:
-            json.dump({"protocol": 2, "activeVersion": version}, file_obj)
+            json.dump({"protocol": protocol, "activeVersion": version}, file_obj)
         service = os.path.join(home, ".config", "systemd", "user", "t3code.service")
         os.makedirs(os.path.dirname(service), exist_ok=True)
         with open(service, "w", encoding="utf-8") as file_obj:
@@ -215,10 +219,22 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertEqual(_active_t3_binary(home), native_binary)
             state_file = os.path.join(home, ".t3", "runtime", "service-state.json")
             with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump({"protocol": 3, "activeVersion": "0.0.42"}, file_obj)
+            self.assertEqual(_active_t3_binary(home), native_binary)
+            with open(state_file, "w", encoding="utf-8") as file_obj:
                 json.dump(
-                    {"protocolVersion": 2, "activeVersion": "0.0.34"},
+                    {"protocolVersion": 2, "activeVersion": "0.0.42"},
                     file_obj,
                 )
+            self.assertIsNone(_active_t3_binary(home))
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump(
+                    {"protocol": 4, "activeVersion": "0.0.42"},
+                    file_obj,
+                )
+            self.assertIsNone(_active_t3_binary(home))
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump({"protocol": True, "activeVersion": "0.0.42"}, file_obj)
             self.assertIsNone(_active_t3_binary(home))
 
             build_binary = self._write_upstream_runtime(
@@ -240,7 +256,7 @@ class T3CodeWebTest(unittest.TestCase):
 
             def run_as_user(_username, _home, command, **_kwargs):
                 commands.append(command)
-                self._write_upstream_native_runtime(home)
+                self._write_upstream_native_runtime(home, protocol=3)
                 return completed
 
             with (
@@ -883,7 +899,7 @@ class T3CodeWebTest(unittest.TestCase):
             with open(state_file, "w", encoding="utf-8") as file_obj:
                 json.dump(
                     {
-                        "protocol": 2,
+                        "protocol": 3,
                         "activeVersion": "0.0.35",
                         "update": {
                             "status": "rolled-back",
@@ -1022,13 +1038,44 @@ class T3CodeWebTest(unittest.TestCase):
             with open(wrapper, encoding="utf-8") as file_obj:
                 content = file_obj.read()
             self.assertIn("service-state.json", content)
-            self.assertIn('value.get("protocol") == 2', content)
+            self.assertIn("protocols=[2, 3]", content)
+            self.assertIn('value["protocol"] in protocols', content)
             self.assertIn('NVM_DIR="$HOME/.nvm"', content)
             self.assertIn("versions", content)
             self.assertIn('binary="$version_root/t3"', content)
             self.assertIn('binary="$version_root/node_modules/t3/dist/bin.mjs"', content)
             self.assertIn('exec "$binary" "$@"', content)
             self.assertNotIn("npx", content)
+
+            runtime = os.path.join(home, ".t3", "runtime")
+            version = os.path.join(runtime, "versions", "0.0.44")
+            binary = os.path.join(version, "t3")
+            os.makedirs(version, exist_ok=True)
+            with open(binary, "w", encoding="utf-8") as file_obj:
+                file_obj.write('#!/bin/sh\nprintf "%s\\n" "$1"\n')
+            os.chmod(binary, 0o755)
+            state_file = os.path.join(runtime, "service-state.json")
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump({"protocol": 3, "activeVersion": "0.0.44"}, file_obj)
+
+            result = subprocess.run(
+                [wrapper, "protocol-three"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout.strip(), "protocol-three")
+
+            with open(state_file, "w", encoding="utf-8") as file_obj:
+                json.dump({"protocol": 4, "activeVersion": "0.0.44"}, file_obj)
+            result = subprocess.run(
+                [wrapper, "unknown-protocol"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
 
     def test_web_step_is_server_only_and_uses_upstream_service(self) -> None:
         with tempfile.TemporaryDirectory() as home:

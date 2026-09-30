@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack, redirect_stdout
 import io
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,6 +17,25 @@ from lib.agent_readiness import build_agent_readiness_record
 
 
 class T3ReadinessTests(unittest.TestCase):
+    def test_active_binary_accepts_protocol_three_runtime(self):
+        with tempfile.TemporaryDirectory() as home:
+            runtime = Path(home, ".t3", "runtime")
+            version_root = runtime / "versions" / "0.0.44"
+            binary = version_root / "t3"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n")
+            binary.chmod(0o700)
+            (runtime / "service-state.json").write_text(
+                json.dumps({"protocol": 3, "activeVersion": "0.0.44"})
+            )
+
+            self.assertEqual(agent_cli._t3_active_binary(home), str(binary))
+
+            (runtime / "service-state.json").write_text(
+                json.dumps({"protocol": 4, "activeVersion": "0.0.44"})
+            )
+            self.assertIsNone(agent_cli._t3_active_binary(home))
+
     def inspect(self, *, gh=True, endpoint=True, fix=False):
         with ExitStack() as stack:
             home = stack.enter_context(tempfile.TemporaryDirectory())

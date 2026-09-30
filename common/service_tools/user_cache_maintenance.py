@@ -24,6 +24,7 @@ from lib.agent_storage import (
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
 from lib.logging_utils import get_service_logger, log_event
+from lib.t3code_runtime import is_supported_t3_service_protocol
 from lib.maintenance_defaults import (
     CLEANUP_COMMAND_TIMEOUT_SECONDS,
     CODEX_CACHE_MAX_BYTES,
@@ -965,7 +966,7 @@ def cleanup_electron_downloads(context: UserContext, *, dry_run: bool) -> list[s
 
 
 def _t3_state(context: UserContext, path: str) -> JSONDict:
-    """Read only a bounded regular T3 protocol-2 state file with known versions."""
+    """Read a bounded T3 state file with a supported protocol and known versions."""
     if not is_safe_managed_path(context, path, "T3 service state"):
         raise ValueError("unsafe T3 state path")
     info = os.lstat(path)
@@ -973,7 +974,9 @@ def _t3_state(context: UserContext, path: str) -> JSONDict:
         raise ValueError("unrecognized T3 state file")
     with open(path, encoding="utf-8") as handle:
         state = json.load(handle)
-    if not isinstance(state, dict) or state.get("protocol") != 2:
+    if not isinstance(state, dict) or not is_supported_t3_service_protocol(
+        state.get("protocol")
+    ):
         raise ValueError("unrecognized T3 state protocol")
     if (
         not isinstance(state.get("activeVersion"), str)

@@ -178,6 +178,7 @@ class TestT3RuntimeRetention(unittest.TestCase):
         binary.write_text("#!/bin/sh\n")
         binary.chmod(0o755)
         (active / ".install-complete").write_text("0.0.5")
+        self.write_state(protocol=3)
 
         self.assertEqual(maintenance.cleanup_t3_runtimes(self.context, dry_run=False), [])
         self.assertEqual(self.remaining(), ["0.0.4", "0.0.5", "0.0.6"])
@@ -186,7 +187,7 @@ class TestT3RuntimeRetention(unittest.TestCase):
         self.write_state(update={"status": "pending", "fromVersion": "0.0.5", "targetVersion": "0.0.6"})
         self.assertEqual(maintenance.cleanup_t3_runtimes(self.context, dry_run=False), [])
         self.assertEqual(len(self.remaining()), 6)
-        self.write_state(protocol=3)
+        self.write_state(protocol=4)
         self.assertTrue(maintenance.cleanup_t3_runtimes(self.context, dry_run=False))
         self.assertEqual(len(self.remaining()), 6)
         self.write_state(update={"status": "failed", "fromVersion": "0.0.4", "targetVersion": "0.0.6"})
