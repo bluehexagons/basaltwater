@@ -12,7 +12,7 @@ from typing import Optional
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
 from lib.remote_utils import CommandTimeoutError, run
-from lib.ssh_utils import build_ssh_command, ssh_batch_mode
+from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.validators import validate_host, validate_username
 
 
@@ -48,6 +48,7 @@ def _ssh_result(
             batch_mode=ssh_batch_mode(),
             connect_timeout=15,
             server_alive_interval=15,
+            control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
         ),
         capture_output=True,
         text=True,
