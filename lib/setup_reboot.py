@@ -5,9 +5,11 @@ from __future__ import annotations
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import time
 from typing import Optional
+from uuid import UUID
 
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
@@ -20,17 +22,22 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _RESTART_WAIT_SECONDS = 300
 _POLL_INTERVAL_SECONDS = 5
 _REMOTE_RESTART_STATUS = r"""
-import os
 import sys
 sys.path.insert(0, "/opt/basaltwater")
-from lib.machine_state import can_restart_system
-if not os.path.isfile("/run/reboot-required"):
-    print("clear")
-elif not can_restart_system():
-    print("unsupported")
-else:
-    print("needed")
+from lib.setup_reboot import _local_restart_status
+print(_local_restart_status())
 """
+
+
+def _local_restart_status() -> str:
+    """Inspect the actual target, independently of the requested setup profile."""
+    if not os.path.isfile("/run/reboot-required"):
+        return "clear"
+    if not can_restart_system():
+        return "unsupported"
+    if os.path.isdir("/etc/pve") or shutil.which("pveversion"):
+        return "needed-proxmox"
+    return "needed"
 
 
 def _ssh_result(
@@ -58,15 +65,12 @@ def _ssh_result(
 
 
 def _restart_status(config: SetupConfig) -> Optional[str]:
-    if config.host in _LOCAL_HOSTS:
-        if not os.path.isfile("/run/reboot-required"):
-            return "clear"
-        return "needed" if can_restart_system() else "unsupported"
-
-    command = "python3 -c " + shlex.quote(_REMOTE_RESTART_STATUS)
     try:
+        if config.host in _LOCAL_HOSTS:
+            return _local_restart_status()
+        command = "python3 -c " + shlex.quote(_REMOTE_RESTART_STATUS)
         result = _ssh_result(config, command)
-    except (CommandTimeoutError, OSError, subprocess.SubprocessError) as exc:
+    except (CommandTimeoutError, OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Error checking restart status on {config.host}: {exc}")
         return None
 
@@ -76,7 +80,7 @@ def _restart_status(config: SetupConfig) -> Optional[str]:
         return None
 
     status = result.stdout.strip()
-    if status not in {"clear", "needed", "unsupported"}:
+    if status not in {"clear", "needed", "needed-proxmox", "unsupported"}:
         print(f"Error checking restart status on {config.host}: invalid response")
         return None
     return status
@@ -112,18 +116,17 @@ def _check_proxmox_reboot_safety(config: SetupConfig) -> bool:
     return False
 
 
-def _boot_id(config: SetupConfig) -> Optional[str]:
-    if config.host in _LOCAL_HOSTS:
-        try:
-            with open(
-                "/proc/sys/kernel/random/boot_id", "r", encoding="ascii"
-            ) as handle:
-                value = handle.read().strip()
-        except OSError as exc:
-            print(f"Error reading the local boot ID: {exc}")
-            return None
-        return value or None
+def _validated_boot_id(output: str) -> Optional[str]:
+    """Require a single canonical kernel UUID, not banners or other SSH output."""
+    value = output.strip()
+    try:
+        parsed = str(UUID(value))
+    except ValueError:
+        return None
+    return parsed if parsed == value.lower() else None
 
+
+def _boot_id(config: SetupConfig) -> Optional[str]:
     try:
         result = _ssh_result(
             config,
@@ -136,8 +139,10 @@ def _boot_id(config: SetupConfig) -> Optional[str]:
         detail = (result.stderr or result.stdout).strip()
         print(f"Error reading boot ID from {config.host}: {detail or 'SSH failed'}")
         return None
-    value = result.stdout.strip()
-    return value or None
+    value = _validated_boot_id(result.stdout)
+    if value is None:
+        print(f"Error reading boot ID from {config.host}: invalid response")
+    return value
 
 
 def _request_restart(config: SetupConfig) -> bool:
@@ -187,8 +192,8 @@ def _wait_for_remote_restart(config: SetupConfig, old_boot_id: str) -> bool:
             result = None
 
         if result is not None and result.returncode == 0:
-            new_boot_id = result.stdout.strip()
-            if new_boot_id and new_boot_id != old_boot_id:
+            new_boot_id = _validated_boot_id(result.stdout)
+            if new_boot_id is not None and new_boot_id != old_boot_id:
                 return True
 
         time.sleep(min(_POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
@@ -226,7 +231,7 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
         print(f"  ⚠ {config.host} cannot restart itself; leaving the marker pending")
         return 0
 
-    if config.system_type == "server_proxmox":
+    if status == "needed-proxmox" or config.system_type == "server_proxmox":
         if not _check_proxmox_reboot_safety(config):
             return 1
 

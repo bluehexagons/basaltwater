@@ -68,6 +68,15 @@ restores the previous items; incomplete recovery leaves the backup directory
 named in the error for inspection. Runtime staging rejects links in the
 controller source tree before changing permissions or uploading code.
 
+The optional [restart after setup](COMMAND_LINE.md#restart-after-setup) checks
+the target's reboot marker and restart capability. A detected Proxmox host
+requires the guest and maintenance safety checks even when setup uses a
+different profile, such as `custom_steps`. Local Proxmox restarts require the
+explicit Proxmox maintenance workflow. Remote restart waits accept only a
+valid kernel boot ID that differs from the pre-restart ID; malformed SSH
+output cannot count as a successful reboot. Invalid machine state stops the
+restart check and leaves the target running.
+
 Deployment and gateway readiness requests use literal loopback addresses,
 ignore proxy environment variables, and never follow redirects. Deployment
 activation requires a local 2xx response from the configured health endpoint.
