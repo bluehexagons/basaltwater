@@ -47,6 +47,53 @@ class TestWorkspaceCredentials(unittest.TestCase):
             self.assertEqual(load_workspace_credentials(tmpdir), {"alice": "secret1"})
             self.assertEqual(os.stat(credentials_path).st_mode & 0o777, 0o600)
 
+    def test_credential_links_and_special_files_are_rejected_without_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = get_credentials_path(directory)
+            external = os.path.join(directory, 'unrelated.json')
+            content = '{"version":1,"credentials":{"alice":{"password":"secret"}}}'
+            with open(external, 'w') as stream:
+                stream.write(content)
+            os.chmod(external, 0o640)
+            for kind in ('symlink', 'hardlink', 'fifo', 'directory', 'dangling'):
+                with self.subTest(kind=kind):
+                    if kind == 'symlink':
+                        os.symlink(external, path)
+                    elif kind == 'hardlink':
+                        os.link(external, path)
+                    elif kind == 'fifo':
+                        os.mkfifo(path)
+                    elif kind == 'directory':
+                        os.mkdir(path)
+                    else:
+                        os.symlink(os.path.join(directory, 'missing'), path)
+                    with self.assertRaises(ValueError):
+                        set_workspace_credential('bob', 'replacement', directory)
+                    self.assertEqual(os.stat(external).st_mode & 0o777, 0o640)
+                    with open(external) as stream:
+                        self.assertEqual(stream.read(), content)
+                    self.assertTrue(os.path.lexists(path))
+                    if kind == 'directory':
+                        os.rmdir(path)
+                    else:
+                        os.unlink(path)
+
+    def test_invalid_credential_state_blocks_updates_and_retains_original(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = get_credentials_path(directory)
+            for content in ('invalid', '[]', '{"version":true,"credentials":{}}',
+                            '{"version":1}', '{"version":1,"credentials":[]}',
+                            '{"version":1,"credentials":{" alice":{"password":"secret"}}}',
+                            '{"version":1,"credentials":{"alice":{"password":""}}}',
+                            ' ' * (1024 * 1024 + 1)):
+                with self.subTest(content=content[:80]):
+                    with open(path, 'w') as stream:
+                        stream.write(content)
+                    with self.assertRaises(ValueError):
+                        set_workspace_credential('bob', 'replacement', directory)
+                    with open(path) as stream:
+                        self.assertEqual(stream.read(), content)
+
     def test_store_cli_credentials_saves_inline_passwords(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config = SetupConfig(

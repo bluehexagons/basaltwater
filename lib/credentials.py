@@ -5,10 +5,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import stat
 import subprocess
 
 from lib.atomic_io import write_json_atomic
 from lib.concurrency import resource_lock
+from lib.state_read import StateReadError
 from lib.config import SetupConfig
 from lib.git_credentials import (
     MAX_GIT_CA_BUNDLE_BYTES,
@@ -31,6 +33,7 @@ from lib.workspace import (
 
 
 CREDENTIALS_VERSION = 1
+MAX_CREDENTIAL_STORE_BYTES = 1024 * 1024
 
 
 def _normalize_credential_username(username: str) -> str:
@@ -53,55 +56,48 @@ def _normalize_credential_password(password: str) -> str:
     return normalized
 
 
-def _ensure_secure_credentials_file(path: str) -> None:
-    if not os.path.exists(path):
-        return
-
-    current_mode = os.stat(path).st_mode & 0o777
-    if current_mode == 0o600:
-        return
-
-    try:
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        raise ValueError(f"Credential store must use 0600 permissions: {path}") from exc
-
-    updated_mode = os.stat(path).st_mode & 0o777
-    if updated_mode != 0o600:
-        raise ValueError(f"Credential store must use 0600 permissions: {path}")
-
-
 def _load_workspace_credentials_unlocked(workspace: str | None = None) -> dict[str, str]:
     ensure_workspace_dir(workspace)
     credentials_path = get_credentials_path(workspace)
-    if not os.path.exists(credentials_path):
+    try:
+        descriptor = os.open(credentials_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
         return {}
+    except OSError as exc:
+        raise StateReadError(credentials_path, "unsafe or unreadable credential store") from exc
 
-    _ensure_secure_credentials_file(credentials_path)
-
-    with open(credentials_path, "r", encoding="utf-8") as file_obj:
-        payload = json.load(file_obj)
-
-    if not isinstance(payload, dict):
-        raise ValueError(
-            f"Credential store must contain a JSON object, got {type(payload).__name__}"
-        )
-
-    if payload.get("version") != CREDENTIALS_VERSION:
-        raise ValueError("Unsupported credential store version")
-
-    credentials_obj = payload.get("credentials", {})
-    if not isinstance(credentials_obj, dict):
-        raise ValueError("Credential store credentials field must be an object")
+    try:
+        with os.fdopen(descriptor, "rb") as file_obj:
+            info = os.fstat(file_obj.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid != os.getuid()):
+                raise ValueError("credential store must be an owned regular file with one link")
+            content = file_obj.read(MAX_CREDENTIAL_STORE_BYTES + 1)
+            if len(content) > MAX_CREDENTIAL_STORE_BYTES:
+                raise ValueError("credential store exceeds 1 MiB")
+            payload = json.loads(content.decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("credential store must contain a JSON object")
+            if type(payload.get("version")) is not int or payload["version"] != CREDENTIALS_VERSION:
+                raise ValueError("unsupported credential store version")
+            credentials_obj = payload.get("credentials")
+            if not isinstance(credentials_obj, dict):
+                raise ValueError("credential store credentials field must be an object")
+            if stat.S_IMODE(info.st_mode) != 0o600:
+                os.fchmod(file_obj.fileno(), 0o600)
+    except (OSError, ValueError, RecursionError) as exc:
+        raise StateReadError(credentials_path, "unsafe, unreadable, or malformed credential store") from exc
 
     credentials: dict[str, str] = {}
     for username, entry in credentials_obj.items():
-        normalized_username = _normalize_credential_username(str(username))
+        normalized_username = _normalize_credential_username(username)
+        if normalized_username != username:
+            raise StateReadError(credentials_path, "credential usernames must be normalized")
         if not isinstance(entry, dict):
             raise ValueError(f"Credential entry for {normalized_username} must be an object")
         password = entry.get("password")
-        if not isinstance(password, str):
-            raise ValueError(f"Credential entry for {normalized_username} must contain a password string")
+        if not isinstance(password, str) or not password.strip():
+            raise ValueError(f"Credential entry for {normalized_username} must contain a nonempty password string")
         credentials[normalized_username] = password
 
     return credentials
@@ -132,13 +128,6 @@ def _save_workspace_credentials_unlocked(
     }
 
     write_json_atomic(credentials_path, payload, mode=0o600, sort_keys=True)
-
-
-def save_workspace_credentials(credentials: dict[str, str], workspace: str | None = None) -> None:
-    """Persist workspace credentials using the versioned JSON layout."""
-    path = get_credentials_path(workspace)
-    with resource_lock("workspace-credentials", path, wait=True):
-        _save_workspace_credentials_unlocked(credentials, workspace)
 
 
 def set_workspace_credential(username: str, password: str, workspace: str | None = None) -> None:

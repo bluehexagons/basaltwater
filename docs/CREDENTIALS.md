@@ -42,6 +42,11 @@ store is private to the active workspace:
 ~/.config/basaltwater/credentials.json
 ```
 
+The store must be an owned regular file with one link, no symlink, and valid
+versioned JSON no larger than 1 MiB. Reads repair its permissions to `0600`
+through the opened file descriptor. Invalid stores block credential updates and
+remain available for recovery; only a missing file starts an empty store.
+
 Use the global `--workspace PATH` option to select another workspace. The
 repeatable setup option `--credential USERNAME PASSWORD` updates the same
 store, but a command-line password may be exposed through shell history and
