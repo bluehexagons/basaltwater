@@ -122,9 +122,15 @@ def parse_systemd_exec_start(contents: str) -> list[str]:
         raise T3ServiceError("The T3 user service start command is malformed") from exc
     if not arguments or not os.path.isabs(arguments[0]):
         raise T3ServiceError("The T3 user service start command is not an absolute path")
-    # T3 escapes systemd specifier markers as %% when rendering its unit.
-    decoded_arguments = [argument.replace("%%", "%") for argument in arguments]
-    validate_filesystem_path(decoded_arguments[0], must_exist=True)
+    # Undo systemd's literal specifier and environment markers. Popen does not
+    # perform systemd expansion, so doubled dollars must also be decoded.
+    decoded_arguments = [
+        argument.replace("%%", "%").replace("$$", "$") for argument in arguments
+    ]
+    try:
+        validate_filesystem_path(decoded_arguments[0], must_exist=True)
+    except ValueError as exc:
+        raise T3ServiceError("The T3 user service executable path is invalid or unavailable") from exc
     return decoded_arguments
 
 

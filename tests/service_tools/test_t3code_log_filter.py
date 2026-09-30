@@ -228,6 +228,26 @@ class T3CodeLogFilterTests(unittest.TestCase):
                 "ExecStart=/usr/bin/t3 __service-launcher\n"
             )
 
+    def test_unit_parser_decodes_literal_dollars_and_percent_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "launcher $literal 100%"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            unit = (
+                "[Service]\nExecStart=" + cachyos_t3._unit_exec_quote(str(binary))
+                + ' __service-launcher "$$data%%" "$${LITERAL}"\n'
+            )
+            self.assertEqual(
+                log_filter.parse_systemd_exec_start(unit),
+                [str(binary), "__service-launcher", "$data%", "${LITERAL}"],
+            )
+
+    def test_unavailable_upstream_executable_produces_a_safe_service_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            unit = f'[Service]\nExecStart="{temporary}/missing" __service-launcher\n'
+            with self.assertRaisesRegex(log_filter.T3ServiceError, "invalid or unavailable"):
+                log_filter.parse_systemd_exec_start(unit)
+
     def test_supervisor_filters_both_streams_and_returns_child_status(self) -> None:
         stdout = io.BytesIO()
         stderr = io.BytesIO()
