@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 import json
 import os
 import re
 import shutil
+import stat
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from typing import Any, Optional, cast
 
 from lib.atomic_io import write_json_atomic
 from lib.config import SetupConfig
+from lib.concurrency import resource_lock
 from lib.proxmox_hosts import (
     ProxmoxHost,
     _validate_host_record,
@@ -35,6 +38,7 @@ class CleanupFinding:
     reason: str
     action: str
     record_index: Optional[int] = None
+    fingerprint: str = ""
 
 
 @dataclass
@@ -73,19 +77,34 @@ def _cache_path_for_host(cache_dir: str, host: str) -> str:
     return os.path.join(cache_dir, f"{safe_host}_{host_hash}.json")
 
 
+def _read_cleanup_file(path: str) -> bytes:
+    """Read one bounded regular file without following its final symlink."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError(f"Cleanup requires a regular file: {path}")
+        content = stream.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise ValueError(f"Cleanup file exceeds 1 MiB; review manually: {path}")
+        return content
+
+
 def _setup_cache_findings(
     workspace: str,
     target_host: Optional[str],
 ) -> list[CleanupFinding]:
     cache_dir = get_setup_cache_dir(workspace)
+    if os.path.islink(cache_dir):
+        raise ValueError(f"Refusing symlinked setup cache directory: {cache_dir}")
     if not os.path.isdir(cache_dir):
         return []
 
     findings: list[CleanupFinding] = []
     try:
         entries = sorted(os.scandir(cache_dir), key=lambda entry: entry.name)
-    except OSError:
-        return []
+    except OSError as exc:
+        raise ValueError(f"Could not inspect setup cache: {cache_dir}") from exc
 
     target_cache_path = (
         _cache_path_for_host(cache_dir, target_host)
@@ -96,10 +115,11 @@ def _setup_cache_findings(
         if not entry.name.endswith(".json") or not entry.is_file(follow_symlinks=False):
             continue
         cache_path = entry.path
+        content = _read_cleanup_file(cache_path)
+        fingerprint = hashlib.sha256(content).hexdigest()
         try:
-            with open(cache_path, "r", encoding="utf-8") as file_obj:
-                data = json.load(file_obj)
-        except Exception as exc:
+            data = json.loads(content.decode('utf-8'))
+        except (ValueError, RecursionError) as exc:
             if target_cache_path is not None and cache_path != target_cache_path:
                 continue
             findings.append(
@@ -108,6 +128,7 @@ def _setup_cache_findings(
                     path=cache_path,
                     reason=str(exc),
                     action="remove",
+                    fingerprint=fingerprint,
                 )
             )
             continue
@@ -140,6 +161,7 @@ def _setup_cache_findings(
                     path=cache_path,
                     reason=str(exc),
                     action="remove",
+                    fingerprint=fingerprint,
                 )
             )
     return findings
@@ -150,13 +172,14 @@ def _proxmox_findings(
     target_host: Optional[str],
 ) -> list[CleanupFinding]:
     registry_path = get_proxmox_hosts_path(workspace)
-    if not os.path.exists(registry_path) or os.path.islink(registry_path):
+    if not os.path.lexists(registry_path):
         return []
 
+    content = _read_cleanup_file(registry_path)
+    fingerprint = hashlib.sha256(content).hexdigest()
     try:
-        with open(registry_path, "r", encoding="utf-8") as file_obj:
-            raw = json.load(file_obj)
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(content.decode('utf-8'))
+    except (ValueError, RecursionError) as exc:
         if target_host is not None:
             return []
         return [
@@ -165,6 +188,7 @@ def _proxmox_findings(
                 path=registry_path,
                 reason=f"registry cannot be parsed: {exc}",
                 action="reset_registry",
+                fingerprint=fingerprint,
             )
         ]
 
@@ -177,6 +201,7 @@ def _proxmox_findings(
                 path=registry_path,
                 reason="registry must contain a JSON array",
                 action="reset_registry",
+                fingerprint=fingerprint,
             )
         ]
 
@@ -205,6 +230,7 @@ def _proxmox_findings(
                     reason=str(exc),
                     action="remove_record",
                     record_index=index,
+                    fingerprint=fingerprint,
                 )
             )
     return findings
@@ -239,6 +265,9 @@ def inspect_cleanup(
 def _backup_directory(workspace: str) -> str:
     parent = os.path.join(workspace, "cleanup-backups")
     os.makedirs(parent, mode=0o700, exist_ok=True)
+    info = os.lstat(parent)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError(f"Unsafe cleanup backup directory: {parent}")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     candidate = os.path.join(parent, timestamp)
     suffix = 0
@@ -257,8 +286,14 @@ def _backup_files(findings: list[CleanupFinding], workspace: str) -> str:
     for finding in findings:
         if finding.path in backed_up:
             continue
-        destination = os.path.join(backup_dir, os.path.basename(finding.path))
+        relative_path = os.path.relpath(finding.path, workspace)
+        if relative_path == '..' or relative_path.startswith('../') or os.path.isabs(relative_path):
+            raise ValueError(f"Cleanup path is outside workspace: {finding.path}")
+        destination = os.path.join(backup_dir, relative_path)
+        os.makedirs(os.path.dirname(destination), mode=0o700, exist_ok=True)
         shutil.copy2(finding.path, destination, follow_symlinks=False)
+        if hashlib.sha256(_read_cleanup_file(destination)).hexdigest() != finding.fingerprint:
+            raise ValueError(f"Cleanup file changed during backup; inspect again: {finding.path}")
         backed_up.add(finding.path)
     return backup_dir
 
@@ -288,8 +323,7 @@ def _remove_proxmox_findings(findings: list[CleanupFinding]) -> None:
     }
     if not invalid_indexes:
         return
-    with open(registry_path, "r", encoding="utf-8") as file_obj:
-        raw = json.load(file_obj)
+    raw = json.loads(_read_cleanup_file(registry_path).decode('utf-8'))
     if not isinstance(raw, list):
         raise ValueError("Proxmox registry changed and is no longer a JSON array")
     retained = [entry for index, entry in enumerate(raw) if index not in invalid_indexes]
@@ -354,11 +388,25 @@ def run_cleanup(
 
     actionable = plan.actionable_findings
     try:
-        backup_dir = _backup_files(actionable, workspace_path)
-        _remove_setup_findings(plan.setup_findings)
-        _remove_proxmox_findings(plan.proxmox_findings)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        print(f"Error: cleanup failed after backup attempt: {exc}")
+        with ExitStack() as locks:
+            resources = {
+                ('proxmox-hosts' if finding.category == 'Proxmox registry' else 'setup-cache', finding.path)
+                for finding in actionable
+            }
+            for namespace, path in sorted(resources):
+                locks.enter_context(resource_lock(namespace, path, wait=True))
+            for finding in actionable:
+                current = hashlib.sha256(_read_cleanup_file(finding.path)).hexdigest()
+                if current != finding.fingerprint:
+                    raise ValueError(f"Cleanup file changed after inspection; inspect again: {finding.path}")
+            backup_dir = _backup_files(actionable, workspace_path)
+            for finding in actionable:
+                if hashlib.sha256(_read_cleanup_file(finding.path)).hexdigest() != finding.fingerprint:
+                    raise ValueError(f"Cleanup file changed during backup; inspect again: {finding.path}")
+            _remove_setup_findings(plan.setup_findings)
+            _remove_proxmox_findings(plan.proxmox_findings)
+    except (OSError, RuntimeError, TypeError, ValueError, RecursionError) as exc:
+        print(f"Error: cleanup stopped: {exc}")
         return 1
 
     print(f"Removed {len(actionable)} obsolete configuration item(s).")

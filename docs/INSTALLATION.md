@@ -425,6 +425,13 @@ basaltw credentials remove admin
 
 Passwords are excluded from saved setup state and reconstructed commands.
 
+Use `basaltw cleanup --dry-run` to inspect incompatible local setup or Proxmox
+records, then `basaltw cleanup --yes` to remove the reviewed findings. Cleanup
+locks affected state against managed writers and refuses files changed since
+inspection. Its private timestamped backups under `<workspace>/cleanup-backups/`
+retain workspace-relative paths, so identically named files keep separate
+copies. Symlinked cache or backup directories are refused.
+
 For agent VM authentication, provider-specific login/file/GitHub sources, per-VM isolation, and remote
 rotation, see [Agent authentication](AGENT_AUTHENTICATION.md). For repository
 policy and HTTPS credentials, see [Git access](GIT_ACCESS.md).

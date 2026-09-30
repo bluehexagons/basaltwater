@@ -74,7 +74,7 @@ class TestConfigCleanup(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertFalse(stale_path.exists())
             self.assertTrue(valid_path.exists())
-            backup_files = list((workspace / "cleanup-backups").glob("*/*"))
+            backup_files = [path for path in (workspace / "cleanup-backups").rglob('*') if path.is_file()]
             self.assertEqual(len(backup_files), 1)
             self.assertEqual(backup_files[0].name, stale_path.name)
 
@@ -106,9 +106,89 @@ class TestConfigCleanup(unittest.TestCase):
             records = json.loads(registry_path.read_text(encoding="utf-8"))
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["name"], "pve1")
-            backup_files = list((workspace / "cleanup-backups").glob("*/*"))
+            backup_files = [path for path in (workspace / "cleanup-backups").rglob('*') if path.is_file()]
             self.assertEqual(len(backup_files), 1)
             self.assertEqual(backup_files[0].name, registry_path.name)
+
+    def test_cleanup_refuses_changes_made_while_awaiting_confirmation(self):
+        for category in ('setup', 'proxmox'):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as directory:
+                workspace = Path(directory)
+                if category == 'setup':
+                    path = workspace / 'setups' / 'stale.json'
+                    path.parent.mkdir()
+                    path.write_text('invalid')
+                    config = SetupConfig(host='server', username='agent', system_type='server_lite')
+                    replacement = {'host': config.host, 'system_type': config.system_type, 'args': config.to_dict()}
+                else:
+                    path = Path(get_proxmox_hosts_path(directory))
+                    old = {'name': 'old', 'address': '10.0.0.1'}
+                    valid = {'name': 'pve', 'address': '10.0.0.2', 'schema_version': 1, 'provider': 'proxmox'}
+                    self._write_json(path, [old, valid])
+                    replacement = [valid, old]
+
+                def confirm(_prompt):
+                    self._write_json(path, replacement)
+                    return 'y'
+
+                with patch('lib.config_cleanup.sys.stdin.isatty', return_value=True), \
+                     patch('builtins.input', side_effect=confirm):
+                    self.assertEqual(run_cleanup(workspace=directory), 1)
+                self.assertEqual(json.loads(path.read_text()), replacement)
+                self.assertFalse((workspace / 'cleanup-backups').exists())
+
+    def test_backups_preserve_same_named_files_in_different_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            registry = Path(get_proxmox_hosts_path(directory))
+            setup = workspace / 'setups' / registry.name
+            setup.parent.mkdir()
+            setup.write_text('invalid setup')
+            registry.write_text('invalid registry')
+            self.assertEqual(run_cleanup(workspace=directory, assume_yes=True), 0)
+            backup = next((workspace / 'cleanup-backups').iterdir())
+            self.assertEqual((backup / 'setups' / setup.name).read_text(), 'invalid setup')
+            self.assertEqual((backup / registry.name).read_text(), 'invalid registry')
+
+    def test_linked_backup_directory_cannot_redirect_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as unrelated:
+            workspace = Path(directory)
+            setup = workspace / 'setups' / 'stale.json'
+            setup.parent.mkdir()
+            setup.write_text('invalid setup')
+            os.symlink(unrelated, workspace / 'cleanup-backups')
+            self.assertEqual(run_cleanup(workspace=directory, assume_yes=True), 1)
+            self.assertTrue(setup.exists())
+            self.assertEqual(list(Path(unrelated).iterdir()), [])
+
+    def test_linked_cache_directory_cannot_redirect_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as unrelated:
+            workspace = Path(directory)
+            external = Path(unrelated) / 'stale.json'
+            external.write_text('invalid setup')
+            os.symlink(unrelated, workspace / 'setups')
+            self.assertEqual(run_cleanup(workspace=directory, assume_yes=True), 1)
+            self.assertTrue(external.exists())
+            self.assertFalse((workspace / 'cleanup-backups').exists())
+
+    def test_registry_lock_is_held_through_backup_and_removal(self):
+        from lib import config_cleanup
+        from lib.concurrency import ResourceBusyError, resource_lock
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(get_proxmox_hosts_path(directory))
+            path.write_text('invalid registry')
+            original_backup = config_cleanup._backup_files
+
+            def backup(findings, workspace):
+                with self.assertRaises(ResourceBusyError):
+                    with resource_lock('proxmox-hosts', str(path)):
+                        pass
+                return original_backup(findings, workspace)
+
+            with patch('lib.config_cleanup._backup_files', side_effect=backup):
+                self.assertEqual(run_cleanup(workspace=directory, assume_yes=True), 0)
+            self.assertEqual(json.loads(path.read_text()), [])
 
     def test_dry_run_does_not_change_state_or_create_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

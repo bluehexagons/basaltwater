@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import time
@@ -13,6 +12,7 @@ from typing import Optional, Any
 
 from lib.state_read import StateReadError, read_state_object
 from lib.config import SetupConfig
+from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
 from lib.validators import validate_username
 from lib.workspace import get_history_dir, get_setup_cache_dir
@@ -93,38 +93,39 @@ def save_setup_command(
     operation: str = "setup",
 ) -> None:
     cache_path = get_cache_path_for_host(config.host)
-    _load_cache_file(cache_path, config.host)
-    
-    cache_data: dict[str, Any] = {
-        "host": config.host,
-        "system_type": config.system_type,
-        "args": config.to_dict(),
-    }
-    cache_data.update(_get_entrypoint_metadata(operation))
-    
-    if config.friendly_name:
-        cache_data["name"] = config.friendly_name
-    if config.tags:
-        cache_data["tags"] = config.tags
-        
-    # Add metadata if provided
-    if start_time is not None:
-        cache_data["last_start_time"] = start_time
-    if end_time is not None:
-        cache_data["last_end_time"] = end_time
-    if success is not None:
-        cache_data["last_success"] = success
-    
-    write_json_atomic(cache_path, cache_data)
+    with resource_lock("setup-cache", cache_path, wait=True):
+        _load_cache_file(cache_path, config.host)
 
-    if start_time is not None and end_time is not None and success is not None:
-        _write_history_entry(
-            config,
-            operation=operation,
-            start_time=start_time,
-            end_time=end_time,
-            success=success,
-        )
+        cache_data: dict[str, Any] = {
+            "host": config.host,
+            "system_type": config.system_type,
+            "args": config.to_dict(),
+        }
+        cache_data.update(_get_entrypoint_metadata(operation))
+
+        if config.friendly_name:
+            cache_data["name"] = config.friendly_name
+        if config.tags:
+            cache_data["tags"] = config.tags
+
+        # Add metadata if provided
+        if start_time is not None:
+            cache_data["last_start_time"] = start_time
+        if end_time is not None:
+            cache_data["last_end_time"] = end_time
+        if success is not None:
+            cache_data["last_success"] = success
+
+        write_json_atomic(cache_path, cache_data)
+
+        if start_time is not None and end_time is not None and success is not None:
+            _write_history_entry(
+                config,
+                operation=operation,
+                start_time=start_time,
+                end_time=end_time,
+                success=success,
+            )
 
 
 def _rewrite_cached_home_path(value: Any, old_home: str, new_home: str) -> Any:
@@ -204,26 +205,23 @@ def rename_setup_command(
     if cached is None:
         raise ValueError(f"No cached setup found for {host}")
     cache_path = get_cache_path_for_host(cached.host)
-    try:
-        with open(cache_path, "r", encoding="utf-8") as file_obj:
-            cache_data = json.load(file_obj)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Could not load setup cache for {cached.host}: {exc}") from exc
-    if not isinstance(cache_data, dict) or not isinstance(cache_data.get("args"), dict):
-        raise ValueError(f"Invalid setup cache for {cached.host}")
+    with resource_lock("setup-cache", cache_path, wait=True):
+        cache_data = _cache_record(cache_path)
+        if cache_data is None:
+            raise ValueError(f"Setup cache disappeared for {cached.host}")
 
-    args = cache_data["args"]
-    if args.get("username") != old_username:
-        raise ValueError(
-            f"Setup cache username mismatch: expected {old_username!r}, "
-            f"found {args.get('username')!r}"
-        )
-    updated_args = _rewrite_cached_home_paths(args, old_home, new_home)
-    if not isinstance(updated_args, dict):
-        raise ValueError("Setup cache arguments are not an object")
-    updated_args["username"] = new_username
-    cache_data["args"] = updated_args
-    write_json_atomic(cache_path, cache_data, mode=0o600)
+        args = cache_data["args"]
+        if args.get("username") != old_username:
+            raise ValueError(
+                f"Setup cache username mismatch: expected {old_username!r}, "
+                f"found {args.get('username')!r}"
+            )
+        updated_args = _rewrite_cached_home_paths(args, old_home, new_home)
+        if not isinstance(updated_args, dict):
+            raise ValueError("Setup cache arguments are not an object")
+        updated_args["username"] = new_username
+        cache_data["args"] = updated_args
+        write_json_atomic(cache_path, cache_data, mode=0o600)
 
 
 def _cache_record(path: str) -> dict[str, Any] | None:
