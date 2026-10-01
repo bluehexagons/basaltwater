@@ -40,11 +40,15 @@ in the base catalog:
 | `basaltwater-t3-preview-testing` | T3 Code collaborative preview only |
 | `basaltwater-browser-testing` | Both managed Playwright and T3 Code preview |
 
-The combined skill selects Playwright for repeatable VM-origin work when live
-collaboration is unnecessary, and selects T3 preview for shared interaction or
-client-origin checks. It routes immediately to Playwright when the T3 app is
-closed. T3-only guidance treats a closed app or untrusted client certificate as
-a browser coverage gap, not a prerequisite that blocks non-browser work.
+In T3 sessions with collaborative preview tools, browser skills follow T3's
+preview-first policy: status, then open when no capable tab is attached.
+Fallback requires absent tools, an explicit request for another browser, or an
+explicit unsupported/unavailable response from open. Outside T3 sessions, the
+combined skill can select Playwright for repeatable VM-origin work. Both T3
+variants resolve loopback ports through `basaltwater-web preview resolve`,
+verify uncertain input acknowledgments, scope diagnostics by navigation and
+component, and inspect service-worker freshness when updates appear missing.
+Browser coverage gaps do not block unrelated non-browser work.
 
 Other provisioned capabilities add focused skills:
 

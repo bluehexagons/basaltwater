@@ -125,7 +125,9 @@ The guided `basaltw shell` workstation-development flow offers the
 data-analysis bundle as a separate, default-off choice and uses the saved
 choice as the default when starting from a template.
 
-Choose the browser surface for the task. Prefer managed Playwright for
+In T3 sessions exposing preview tools, follow the
+[preview-first session policy](BROWSER_AUTOMATION.md#choosing-playwright-or-collaborative-preview).
+Outside those sessions, choose the browser surface for the task: prefer Playwright for
 repeatable VM-origin checks and when user collaboration is unnecessary;
 prefer T3 Code's preview for a shared browser or client-origin behavior. Add
 `--browser-automation playwright` when Codex or OpenCode should provide both,

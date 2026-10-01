@@ -17,6 +17,10 @@ Prefer this browser workflow over an installed shared desktop for ordinary web
 testing, including canvas/WebGL. Desktop browser input is a fallback only when
 preview is unavailable or the task requires desktop-specific integration; explain
 its reduced coverage. Use the desktop skill if that capability is installed.
+In a T3 session with `preview_*` tools, fallback requires absent preview tools,
+an explicit user request for another browser, or an explicit unsupported/unavailable
+error from `preview_open`. Navigation, capture, timeout, and certificate failures
+alone do not permit switching browsers; inspect and correct actionable errors.
 
 Call `preview_status` first. If no automation-capable tab is attached, call
 `preview_open` once. Do not repeatedly reopen or poll. A closed or minimized T3
@@ -47,6 +51,27 @@ change, semantically click the intended target and retry the key once. If it
 still has no effect, use an equivalent semantic click when appropriate or
 report the keyboard behavior as unverified; do not mutate page state through
 evaluation to fake the check.
+
+If an input call fails or times out, inspect state before retrying it. A changed
+dropdown after a failed `Home` acknowledgment is successful input with uncertain
+acknowledgment. Keep transport failure, timeout, and unverified input distinct;
+do not repeat a toggle or submission when the expected change already occurred.
+
+Attribute diagnostics by tab ID, requested URL, and navigation time/action.
+Separate Electron/preload/preview-host errors from gateway/network and application
+errors. Errors retained from `about:blank` are historical host diagnostics;
+do not count them as current game errors without evidence.
+
+When a changed build appears stale, use read-only `preview_evaluate` to inspect
+the controlling service worker's script URL/state and the current page's
+`getRegistration()` scope and active/installing/waiting workers. Report whether
+an update is waiting; avoid `ready`, which can wait indefinitely. Compare a
+served artifact with the build, use the app's update flow or one reload, and
+recheck. Worker metadata alone does not establish freshness. Do not unregister
+workers, delete caches, or force activation merely to diagnose a stale preview.
+See the read-only expression in the
+[browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#offline-cache-freshness)
+or `docs/BROWSER_AUTOMATION.md` in a Basaltwater checkout.
 
 Canvas snapshots may expose only fallback text; inspect the screenshot and
 use supported coordinate input for canvas controls, keeping semantic locators
@@ -92,7 +117,19 @@ The preview runs in the connected client's context, not on the VM. An
 `environment-port` target rewrites the requested port onto the environment
 connection host; it does not tunnel to VM loopback. If the VM endpoint is
 healthy but preview navigation remains at `about:blank` with no network entry,
-report the client/VM routing boundary.
+report the client/VM routing boundary. Resolve VM development ports first:
+
+```bash
+basaltwater-web preview resolve --port PORT --json
+```
+
+Navigate using the returned `navigation.url` and retained tab ID. For
+`forward_missing`, execute the exact returned `command` when client-visible
+preview is in the requested scope, then resolve again. Use `--host ::1` for
+IPv6 or `--profile godot` for threaded Godot. The resolver is read-only and
+reports failures by `component`, `issue`, and `remediation`. If the CLI is
+missing, report the unprovisioned gateway; a VM-side pass does not verify client
+reachability or trust.
 
 Use the managed `basaltwater-web-gateway` only when client-visible access is in
 scope. Do not rebind the development server or weaken access policy solely to

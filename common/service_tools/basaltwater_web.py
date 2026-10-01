@@ -34,7 +34,7 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools import godot_web_publish, static_web_publish
-from lib.validation import validate_positive_integer
+from lib.validation import validate_network_ip, validate_positive_integer
 from lib.local_http import open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
 
@@ -206,6 +206,13 @@ def _parser() -> argparse.ArgumentParser:
 
     preview = commands.add_parser("preview", help="Manage supervised live previews")
     preview_commands = preview.add_subparsers(dest="preview_command", required=True)
+    preview_resolve = preview_commands.add_parser(
+        "resolve", help="Resolve a loopback port to a collaborative HTTPS preview",
+    )
+    preview_resolve.add_argument("--port", type=validate_positive_integer, required=True)
+    preview_resolve.add_argument("--host", default="127.0.0.1")
+    preview_resolve.add_argument("--profile", choices=("general", "godot"), default="general")
+    preview_resolve.add_argument("--json", action="store_true")
     preview_start = preview_commands.add_parser(
         "start",
         help="Start and expose a preview",
@@ -1921,6 +1928,121 @@ def _preview_list(as_json: bool) -> int:
     return 0
 
 
+def _preview_transport_issue(error: Exception) -> str:
+    """Classify failures without confusing HTTP responses with transport errors."""
+    if isinstance(error, RuntimeError) and error.__cause__ is not None:
+        error = error.__cause__
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return "certificate_untrusted"
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, ConnectionRefusedError):
+        return "connection_refused"
+    return "transport_failure"
+
+
+def _preview_resolve(args: argparse.Namespace) -> int:
+    """Find an owned route or report its exact creation command without mutation."""
+    host = validate_network_ip(args.host, "preview host")
+    url_host = f"[{host}]" if ":" in host else host
+    host, port = _parse_upstream(f"{url_host}:{args.port}")
+    upstream_url = f"http://{url_host}:{port}/"
+    result: dict[str, object] = {
+        "ok": False,
+        "upstream_url": upstream_url,
+        "url": None,
+        "navigation": None,
+        "component": "gateway",
+        "issue": None,
+        "remediation": None,
+        "command": None,
+    }
+    try:
+        policy = _load_policy()
+        owner = _requesting_username(policy)
+        routes = _load_forwards(policy)
+    except (OSError, RuntimeError, ValueError) as exc:
+        result.update(
+            issue="gateway_unavailable", error=str(exc),
+            remediation="Check gateway policy and ownership; rerun the saved gateway-capable VM setup.",
+        )
+    else:
+        route = next((item for item in routes if (
+            item["owner"] == owner and item["target_host"] == host
+            and item["target_port"] == port and item["profile"] == args.profile
+        )), None)
+        result["component"] = "upstream"
+        result["remediation"] = "Start or repair the loopback HTTP server, then retry resolution."
+        try:
+            request = urllib.request.Request(
+                upstream_url, headers={"User-Agent": "basaltwater-web-preview/1"},
+            )
+            try:
+                with open_loopback(request, timeout=3) as response:
+                    status = response.status
+                    headers = {key.lower(): value for key, value in response.headers.items()}
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                headers = {key.lower(): value for key, value in exc.headers.items()}
+                exc.close()
+            result["upstream_status"] = status
+            if not _forward_https_status_is_healthy(status, headers):
+                result.update(issue="http_error", error=f"Loopback HTTP endpoint returned {status}")
+            elif route is None:
+                name_base = f"preview-{owner}-{'v6-' if ':' in host else ''}{port}"
+                name = name_base
+                suffix = 2
+                names = {item["name"] for item in routes}
+                while name in names:
+                    name = f"{name_base}-{suffix}"
+                    suffix += 1
+                command = shlex.join([
+                    "basaltwater-web", "forward", "add", name,
+                    "--listen", "auto", "--to", f"{url_host}:{port}",
+                    "--profile", args.profile, "--wait", "30", "--json",
+                ])
+                result.update(
+                    component="gateway", issue="forward_missing", command=command,
+                    remediation="Run the supplied command within the requested preview scope, then retry resolution.",
+                )
+            else:
+                url = _forward_url(str(policy["base_url"]), int(route["listen"]))
+                result.update(
+                    component="gateway", url=url, name=route["name"],
+                    remediation="Check the HTTPS listener, VM routing and saved access-source policy; run basaltwater-web doctor " + str(route["name"]) + ".",
+                )
+                status, headers = _https_headers(url)
+                result["gateway_status"] = status
+                if not _forward_https_status_is_healthy(status, headers):
+                    result.update(issue="http_error", error=f"Gateway HTTPS endpoint returned {status}")
+                elif args.profile == "godot" and (
+                    headers.get("cross-origin-opener-policy") != "same-origin"
+                    or headers.get("cross-origin-embedder-policy") != "require-corp"
+                ):
+                    result.update(issue="isolation_headers_missing", error="Gateway is missing Godot cross-origin isolation headers")
+                else:
+                    result.update(
+                        ok=True, navigation={"url": url}, remediation=None,
+                        network_origin="vm",
+                    )
+        except (OSError, RuntimeError) as exc:
+            issue = _preview_transport_issue(exc)
+            result.update(issue=issue, error=str(exc))
+            if issue == "certificate_untrusted":
+                result["remediation"] = "Inspect VM certificate trust with basaltwater-web ca; preserve TLS verification."
+    if args.json:
+        print(json.dumps(result, sort_keys=True))
+    elif result["ok"]:
+        print(result["url"])
+    else:
+        print(f"{result['component']}: {result['issue']}. {result['remediation']}", file=sys.stderr)
+        if result["command"]:
+            print(result["command"], file=sys.stderr)
+    return 0 if result["ok"] else 1
+
+
 def _preview_print_url(name: str) -> int:
     policy = _load_policy()
     account = pwd.getpwuid(os.getuid())
@@ -2072,6 +2194,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.forward_command == "reconcile":
                 return _forward_reconcile(args.json)
         if args.command == "preview":
+            if args.preview_command == "resolve":
+                return _preview_resolve(args)
             if args.preview_command == "start":
                 return _preview_start(args)
             if args.preview_command == "stop":

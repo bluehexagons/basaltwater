@@ -172,7 +172,7 @@ managed user's Chromium NSS database, so Playwright and Chromium-based agents
 on the VM trust the same origin as system tools. A browser on another computer
 must trust that VM CA only if it needs to open the private origin; client CA
 enrollment is optional. Until the user chooses to enroll it, use managed
-Playwright on the VM for browser coverage or skip the client-origin browser
+Playwright on the VM when session policy permits fallback, or skip the client-origin browser
 check and continue with server-side verification. A publicly trusted
 certificate cannot be issued automatically for a private IP or an unowned
 internal hostname. Setup prints the CA file fingerprint, and the user-readable
@@ -228,7 +228,9 @@ for a profile that selects neither agent. See
 
 ## Browser and physics testing
 
-Use healthy managed Playwright directly for repeatable VM-origin checks. T3
+In T3 sessions exposing preview tools, follow the
+[preview-first session policy](BROWSER_AUTOMATION.md#choosing-playwright-or-collaborative-preview).
+Outside those sessions, use healthy Playwright for repeatable VM-origin checks. T3
 preview is useful for live shared inspection or client-origin checks and needs
 the connected client app running. Its absence does not reduce Playwright's
 canvas, input, console, or network coverage. Share selected screenshots and the

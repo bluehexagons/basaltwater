@@ -8,8 +8,7 @@ metadata:
 # T3 preview and Playwright
 
 This VM has two browser surfaces with different strengths and network origins.
-Choose deliberately; T3 preview is not a mandatory first step when collaboration
-is not part of the task.
+Follow the active session's browser policy when choosing between them.
 
 ## Choose the browser
 
@@ -18,7 +17,14 @@ testing, including canvas/WebGL. If a shared desktop is also installed, use it
 only for desktop-specific browser integration or a justified fallback when these
 tools cannot cover the task; state the resulting coverage limits.
 
-Prefer VM-local Playwright when the task needs repeatable headless interactions,
+In T3 Code sessions exposing `preview_*` tools, use collaborative preview first:
+call `preview_status`, then `preview_open` if no automation-capable tab is attached.
+Use another browser only when preview tools are absent, the user explicitly
+requests it, or `preview_open` reports an explicit unsupported/unavailable error.
+A closed pane, failed navigation, timeout, or TLS error alone does not authorize
+fallback. Inspect actionable errors and retry with corrected arguments.
+
+Outside those sessions, prefer VM-local Playwright for repeatable headless interactions,
 DOM/console/network inspection, loopback access, canvas input, or browser-engine
 verification that does not need to be shared live with the user. It remains
 available when the T3 application is closed.
@@ -102,16 +108,25 @@ the collaborative browser as unavailable from that status alone. Preserve the
 returned `tabId` for later actions instead of relying on an implicit current
 tab after an agent-session boundary.
 
-Preview absence is a normal fallback condition. Continue immediately with
-healthy Playwright when VM-origin testing fits the task. Do not treat the
-closed T3 application as an application failure.
+When the session policy permits fallback, continue with healthy Playwright for
+VM-origin testing. Otherwise continue non-browser checks and report the coverage
+gap. Do not treat preview absence as an application failure.
 
 An `environment-port` target rewrites the port onto the environment connection
-host; it is not a tunnel to VM loopback. If a verified loopback server leaves
-the preview at `about:blank` with no network entry, use Playwright for VM-origin
-coverage. Publish through the managed `basaltwater-web-gateway` only when
-client-visible access is itself in scope; do not rebind the server or widen the
-firewall solely for automation.
+host; it is not a tunnel to VM loopback. Resolve a VM development port before
+navigating:
+
+```bash
+basaltwater-web preview resolve --port PORT --json
+```
+
+Use `navigation.url` with `preview_navigate` and the retained `tabId`. If
+`issue` is `forward_missing`, run the exact returned `command` when the requested
+preview includes client-visible access, then resolve again. Add `--host ::1` for
+IPv6 or `--profile godot` for threaded Godot. The resolver changes no routes;
+failures identify `component`, `issue`, and `remediation`. If the CLI is absent,
+report that the gateway was not provisioned. Keep the loopback binding and
+saved access policy. A VM-side success does not prove client routing or trust.
 
 Opening a tab or seeing the requested URL in status is not proof of rendering.
 Confirm visible content or a snapshot. For WebAssembly/WebGL, allow one bounded
@@ -128,6 +143,27 @@ state change, semantically click the intended keyboard target and retry the key
 once. If it still has no effect, use an equivalent semantic click when the task
 permits or report the keyboard path as unverified. Do not mutate the page with
 evaluation merely to manufacture a passing result.
+
+A failed or timed-out input acknowledgment can follow successful page input.
+Inspect state before retrying, especially toggles and submissions. If the
+expected change occurred, report successful input with uncertain acknowledgment;
+otherwise report transport failure or timeout as observed, and leave the input
+outcome unverified when state cannot be inspected.
+
+Scope diagnostics to the retained tab, requested URL, and navigation time/action.
+Label Electron/preload/preview-host errors separately from gateway/network and
+application errors. Historical `about:blank` errors do not establish a current
+game failure; retain uncertain attribution instead of assigning it to the app.
+
+When updates appear missing, use read-only `preview_evaluate` to report
+`navigator.serviceWorker.controller` script URL/state and the current page's
+`getRegistration()` scope, active/installing/waiting worker URLs/states, and
+whether an update is waiting. Avoid `ready`, which can wait indefinitely.
+Compare the hosted artifact with the build, then use the app's normal update
+flow or one reload and recheck. Worker metadata alone does not prove freshness;
+do not clear caches, unregister workers, or force activation as a diagnostic.
+The [browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#offline-cache-freshness)
+(`docs/BROWSER_AUTOMATION.md` in a Basaltwater checkout) has a read-only expression.
 
 Viewport presets exercise CSS layout breakpoints without changing the desktop
 browser user agent. Snapshot again after resize or scroll because coordinates
@@ -153,7 +189,7 @@ failure indicates stale T3 preview-presentation state, not an application,
 route, certificate, or Playwright failure.
 
 Restarting the desktop client may leave that state in the VM-side T3 service.
-Use healthy Playwright while collaboration is optional. If client-visible
+Use healthy Playwright when the session permits fallback. If client-visible
 coverage is required and the user explicitly accepts interruption of every
 active T3 session, restart the managed server as the target user:
 
@@ -169,7 +205,7 @@ closed; a full VM reboot is not the first recovery step.
 
 Only treat an explicit `net::ERR_CERT_AUTHORITY_INVALID` preview network entry
 as a client trust error. Do not require the user to enroll the VM CA to finish
-an otherwise testable task. Route browser work to healthy VM-local Playwright,
+an otherwise testable task. Use healthy VM-local Playwright when fallback is permitted,
 continue server and HTTP checks, and report that collaborative client-origin
 coverage was skipped. Never use `curl -k`, ignore HTTPS errors, or weaken TLS.
 

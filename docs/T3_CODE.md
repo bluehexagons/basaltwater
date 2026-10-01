@@ -40,10 +40,11 @@ basaltw agent web pair vm.example agent
 ```
 
 T3 Code sessions can expose collaborative preview tools through the client.
-Use them when shared interaction or client-origin evidence matters. For
-repeatable browser work that does not require collaboration, or a dependable
-browser while the T3 application is closed, request VM-local Chromium
-explicitly during setup:
+In those sessions, use preview first: status, then open if no capable tab is
+attached. Fallback requires absent preview tools, an explicit user request for
+another browser, or an explicit unsupported/unavailable response from open;
+navigation and certificate failures alone do not permit switching browsers.
+For independent SSH or terminal sessions, request VM-local Chromium explicitly:
 
 ```bash
 basaltw setup agent_code_vm vm.example agent \
@@ -53,10 +54,18 @@ basaltw setup agent_code_vm vm.example agent \
 The collaborative preview uses the connected client's routes and certificate
 store. Use the [browser workflow](BROWSER_AUTOMATION.md#collaborative-preview-and-private-networks)
 for tab attachment, verified input, recordings, and bounded recovery. If only
-client-origin testing fails, continue with healthy VM-local Playwright or
+client-origin testing fails, continue with healthy VM-local Playwright when
+session policy permits fallback, or
 non-browser checks. For an explicit `ERR_CERT_AUTHORITY_INVALID`, optional
 [client CA enrollment](CLIENT_CA_TRUST.md) can restore private-origin access;
 a timeout or unreachable address needs network diagnosis. Never bypass TLS.
+
+Before navigating to a VM development port, run
+`basaltwater-web preview resolve --port PORT --json`. It returns a verified
+owned gateway URL for `preview_navigate`, or an exact forward creation command
+with actionable failure fields. See [Internal HTTPS previews](INTERNAL_WEB.md#forward-an-existing-loopback-service).
+The browser guide also covers navigation/component attribution, uncertain
+input acknowledgments, and [offline-cache freshness](BROWSER_AUTOMATION.md#offline-cache-freshness).
 
 Agent-enabled T3 setups install T3-only preview guidance, or the combined
 Playwright/T3 skill when both capabilities are selected, plus focused T3 Code
@@ -157,7 +166,7 @@ systemctl --user restart t3code.service
 ```
 
 Reconnect the client and retry one status/open cycle. Prefer managed Playwright
-or non-browser checks when collaboration is optional. Restart the service
+when session policy permits fallback, or continue non-browser checks. Restart the service
 before considering a whole-VM reboot so VM-side T3 state is isolated.
 Basaltwater does not automatically restart a healthy T3 service on a normal
 setup rerun or maintenance schedule because that could terminate the agent

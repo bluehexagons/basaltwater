@@ -128,7 +128,16 @@ configuration. Isolated mode discards any cookies created during the session.
 
 ## Choosing Playwright or collaborative preview
 
-Playwright is not limited to emergency fallback use. Prefer it for repeatable
+T3 sessions that expose `preview_*` tools use collaborative preview first.
+Call `preview_status`, then `preview_open` when no automation-capable tab is
+attached. Switch browsers only when preview tools are absent, the user
+explicitly requests another browser, or open returns an explicit unsupported
+or unavailable error. A failed navigation, timeout, closed pane, or TLS error
+alone does not permit fallback; inspect actionable failures and retry with
+corrected arguments. This session policy takes precedence over the general
+surface-selection guidance below.
+
+Outside those sessions, prefer Playwright for repeatable
 headless interactions, DOM/console/network inspection, canvas input, VM
 loopback access, and browser-engine checks that do not need live collaboration.
 It remains available when the connected T3 application is closed.
@@ -248,10 +257,23 @@ represented by a private VM address, a server bound only to VM loopback is not
 listening on that address. A healthy loopback Vite server can therefore remain
 unreachable through both `environment-port` and a direct loopback URL. Treat a
 failed navigation that leaves the tab at `about:blank` with no network request
-as a client/VM routing boundary after verifying the VM endpoint. Do not rebind
-the development server or widen firewall policy solely for automation; use
-the managed VM-local fallback, or use an explicit `basaltwater-web` publication when
-client access is part of the task.
+as a client/VM routing boundary after verifying the VM endpoint.
+
+Resolve a VM development port before navigating in T3:
+
+```bash
+basaltwater-web preview resolve --port 8080 --json
+```
+
+Use the returned `navigation.url` with `preview_navigate` and the retained tab
+ID. If `issue` is `forward_missing`, run the exact returned `command` when
+client-visible preview is in scope, then resolve again. The read-only resolver
+checks owned HTTPS forwards without changing bindings or access policy.
+Failures identify the upstream or gateway, distinguish refused connections,
+timeouts, HTTP errors and certificate failures, and include recovery advice.
+Use `--host ::1` for IPv6 or `--profile godot` for cross-origin isolation.
+See [preview resolution](INTERNAL_WEB.md#forward-an-existing-loopback-service).
+VM-side success does not verify the client's network or certificate trust.
 
 Collaborative preview is an opportunistic test surface. During normal agent
 work, T3 may be minimized, its preview pane may be closed, or no preview
@@ -266,7 +288,7 @@ navigate and accept input, but a minimized T3 window can make snapshots or
 recordings fail. Attempt one snapshot after navigation. If capture fails or
 times out while the tab remains available and invisible, do not repeatedly
 retry or diagnose the application, WebGL, TLS, or network from that result.
-Use the healthy VM-local fallback when its different network origin is
+Use the healthy VM-local fallback when session policy permits it and its network origin is
 appropriate, or finish with non-browser checks and report the coverage gap.
 When collaborative evidence is important, restoring T3 should make the
 existing tab capturable; recheck status and retry that tab rather than opening
@@ -292,6 +314,21 @@ the equivalent semantic click when the test allows it or record the keyboard
 path as unverified. Do not inject mutations through page evaluation merely to
 turn an unverified interaction green.
 
+A failed input call can also leave a changed page. Before retrying a press,
+click, or submission, inspect the expected state. If the change occurred,
+report successful input with uncertain acknowledgment; retain the tool error
+separately. If state cannot be inspected, report an unverified outcome.
+Distinguish automation transport failure from a deadline timeout using the
+actual error details; do not infer either from a generic failure alone.
+
+Tag diagnostic evidence with tab ID, requested URL, navigation time or action
+ID, and component: preview host (including Electron/preload), gateway/network,
+or application. Snapshots can retain errors from a previous `about:blank`
+navigation. Keep those historical host errors separate from current page
+errors, and preserve uncertain attribution when no URL or timestamp proves
+which navigation produced a message. Basaltwater provides this reporting
+workflow; native tool error schemas and snapshot tagging are owned by T3.
+
 Viewport presets change CSS layout dimensions while preserving T3's desktop
 browser user agent; they are breakpoint checks, not full mobile-device
 emulation. Re-snapshot after resizing or scrolling before using coordinates,
@@ -315,8 +352,8 @@ status remains `visible: false`, lightweight DOM operations can succeed, and
 snapshot capture fails or times out. This is stale T3 preview-presentation
 state, not proof of an application, route, certificate, or VM browser failure.
 Do not create more tabs. Restarting the desktop client may preserve the stale
-tab registry in the VM-side service. Use managed Playwright when collaboration
-is optional. If collaborative coverage is required, warn that every active T3
+tab registry in the VM-side service. Use managed Playwright when session policy
+permits fallback. If collaborative coverage is required, warn that every active T3
 session will be interrupted and, only with the user's approval, restart the
 server as the target user:
 
@@ -341,7 +378,7 @@ snapshot and network error. Use the observed failure to choose the next step:
 
 | Observation | Next step |
 | --- | --- |
-| No automation host or unavailable capture | Use healthy VM-local Playwright when VM-origin coverage fits; otherwise report the browser gap. |
+| No automation host or unavailable capture | Inspect status/open; use Playwright only when session policy permits fallback, otherwise report the browser gap. |
 | Explicit `ERR_CERT_AUTHORITY_INVALID` | Offer `basaltwater-web ca` and [Client CA trust](CLIENT_CA_TRUST.md) only when the user wants client access restored. Otherwise skip that client-origin check. |
 | Timeout, refused connection, or unreachable address | Check client routing and the gateway's source policy; CA enrollment will not repair connectivity. |
 | Background DOM works but no visible surface or snapshot | Follow the bounded stale-preview recovery above. |
@@ -355,6 +392,47 @@ Report which network origin passed and which failed. A client-only failure
 does not establish that the hosted site is down. Preserve TLS verification,
 loopback bindings, and the intended access policy; client CA enrollment is
 optional and does not block unrelated work.
+
+## Offline-cache freshness
+
+When an updated game appears unchanged, distinguish the copied publication
+from the browser's offline cache. First compare a served artifact with the
+build as described in [Internal HTTPS sites](INTERNAL_WEB.md). Then pass this
+read-only expression to `preview_evaluate` in the same tab:
+
+```javascript
+(async () => {
+  if (!('serviceWorker' in navigator)) return {supported: false};
+  const worker = value => value
+    ? {scriptURL: value.scriptURL, state: value.state} : null;
+  const registration = await navigator.serviceWorker.getRegistration();
+  return {
+    supported: true,
+    pageURL: location.href,
+    controller: worker(navigator.serviceWorker.controller),
+    registration: registration ? {
+      scope: registration.scope,
+      active: worker(registration.active),
+      installing: worker(registration.installing),
+      waiting: worker(registration.waiting),
+      updateWaiting: Boolean(registration.waiting)
+    } : null
+  };
+})()
+```
+
+`controller` identifies the worker controlling this page; `getRegistration()`
+selects the registration matching its URL rather than unrelated applications
+on the shared gateway origin. A waiting worker is an installed update that
+has not activated. These fields expose cache context, not the contents or age
+of cached responses. See the [controller API](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerContainer/controller)
+and [waiting worker API](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/waiting).
+
+Use the app's normal update flow or reload once, then capture the worker state
+and expected changed content again. Avoid awaiting `serviceWorker.ready`, which
+can remain pending when no worker activates. Do not unregister workers, delete
+caches, or force `skipWaiting` merely to diagnose freshness. Report a pending
+update or unresolved freshness check instead of treating it as a failed build.
 
 ## Verification
 

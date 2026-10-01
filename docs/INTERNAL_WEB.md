@@ -209,6 +209,35 @@ not touch another user's previews.
 
 ## Forward an existing loopback service
 
+For T3 collaborative preview, resolve the existing loopback port first:
+
+```bash
+basaltwater-web preview resolve --port 8080 --json
+```
+
+Resolution is read-only. It probes the loopback HTTP endpoint, finds a forward
+owned by the requesting account with the same host, port, and profile, and
+verifies that route's HTTPS endpoint with normal TLS validation. On success,
+`navigation` contains the exact `{ "url": "https://..." }` argument for T3's
+`preview_navigate`; supply the retained tab ID as well. Plain output prints
+only the URL on success.
+
+If no matching route exists, `issue: forward_missing` includes an executable
+`command` that allocates a managed listener, waits for upstream readiness, and
+retains the saved access policy. Run it within the requested preview scope and
+resolve again. The suggested name avoids replacing any existing forward.
+`--host ::1` selects IPv6 loopback; `--profile godot` requires the matching
+profile and verifies its cross-origin isolation headers.
+
+Failures return exit status 1, `ok: false`, and `component`, `issue`, and
+`remediation`. Transport issues distinguish `connection_refused`, `timeout`,
+`certificate_untrusted`, and other `transport_failure` cases; HTTP errors
+include the observed status. Missing or invalid gateway policy returns
+`gateway_unavailable`. Invalid inputs return status 2. The resolver never
+starts a server, changes routes, or reads browser state. A successful VM-origin
+probe does not prove that the connected T3 client can reach or trust the URL,
+render the application, or bypass an older service-worker cache.
+
 Keep `forward` as the low-level path when another service manager already owns
 the upstream process:
 

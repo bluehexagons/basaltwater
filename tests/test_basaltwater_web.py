@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
+from io import StringIO
 import os
 import socket
+import ssl
 import tempfile
 import unittest
+import urllib.error
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -448,6 +451,180 @@ class TestInfraWebPreviews(unittest.TestCase):
         apply_forwards.assert_called_once_with([], _policy())
         remove_service.assert_called_once_with(record)
         write_state.assert_called_once_with([])
+
+
+class TestPreviewResolution(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=1000))
+        self.enterContext(patch.object(basaltwater_web, "_load_policy", return_value=_policy()))
+        self.enterContext(patch.object(basaltwater_web, "_requesting_username", return_value="agent"))
+        self.route = {
+            "listen": 8444, "name": "game", "owner": "agent", "profile": "general",
+            "target_host": "127.0.0.1", "target_port": 8080,
+        }
+        self.routes = self.enterContext(patch.object(
+            basaltwater_web, "_load_forwards", return_value=[self.route],
+        ))
+        self.loopback = self.enterContext(patch.object(basaltwater_web, "open_loopback"))
+        response = self.loopback.return_value.__enter__.return_value
+        response.status = 200
+        response.headers = {}
+        self.https = self.enterContext(patch.object(
+            basaltwater_web, "_https_headers", return_value=(200, {}),
+        ))
+        self.apply = self.enterContext(patch.object(basaltwater_web, "_apply_forwards"))
+        self.control = self.enterContext(patch.object(basaltwater_web_control, "request"))
+
+    def resolve(self, *extra: str) -> tuple[int, dict[str, object]]:
+        output = StringIO()
+        with redirect_stdout(output):
+            status = basaltwater_web.main(["preview", "resolve", "--port", "8080", "--json", *extra])
+        self.apply.assert_not_called()
+        self.control.assert_not_called()
+        return status, json.loads(output.getvalue())
+
+    def test_owned_forward_resolves_to_exact_t3_navigation(self) -> None:
+        status, result = self.resolve()
+        self.assertEqual(status, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["navigation"], {"url": "https://games.example:8444/"})
+        self.assertEqual(result["upstream_url"], "http://127.0.0.1:8080/")
+        self.assertEqual(result["network_origin"], "vm")
+        self.assertIsNone(result["command"])
+        self.assertEqual(self.loopback.call_args.kwargs["timeout"], 3)
+
+    def test_missing_route_returns_executable_command(self) -> None:
+        self.routes.return_value = []
+        status, result = self.resolve()
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "forward_missing")
+        argv = basaltwater_web.shlex.split(result["command"])
+        parsed = basaltwater_web._parser().parse_args(argv[1:])
+        self.assertEqual(parsed.to, "127.0.0.1:8080")
+        self.assertEqual(parsed.listen, "auto")
+        self.assertEqual(parsed.wait, 30)
+        self.assertTrue(parsed.json)
+        self.https.assert_not_called()
+
+    def test_other_owners_hosts_ports_and_profiles_are_not_reused(self) -> None:
+        for changes in (
+            {"owner": "other"}, {"target_host": "::1"},
+            {"target_port": 8081}, {"profile": "syncthing"},
+        ):
+            with self.subTest(changes=changes):
+                self.routes.return_value = [{**self.route, **changes}]
+                _, result = self.resolve()
+                self.assertEqual(result["issue"], "forward_missing")
+                self.assertIsNone(result["url"])
+
+    def test_suggested_name_does_not_replace_existing_routes(self) -> None:
+        self.routes.return_value = [
+            {**self.route, "name": "preview-agent-8080", "owner": "other"},
+            {**self.route, "name": "preview-agent-8080-2", "target_port": 8081},
+        ]
+        _, result = self.resolve()
+        self.assertIn("forward add preview-agent-8080-3 ", result["command"])
+
+    def test_ipv6_route_and_command_use_bracketed_upstream(self) -> None:
+        self.routes.return_value = []
+        _, result = self.resolve("--host", "::1", "--profile", "godot")
+        self.assertEqual(result["upstream_url"], "http://[::1]:8080/")
+        argv = basaltwater_web.shlex.split(result["command"])
+        parsed = basaltwater_web._parser().parse_args(argv[1:])
+        self.assertEqual(parsed.to, "[::1]:8080")
+        self.assertEqual(parsed.profile, "godot")
+        self.routes.return_value = [{**self.route, "target_host": "::1"}]
+        self.assertEqual(self.resolve("--host", "::1")[0], 0)
+
+    def test_transport_failures_are_classified_by_component(self) -> None:
+        for component in ("upstream", "gateway"):
+            for error, expected in (
+                (ConnectionRefusedError("refused"), "connection_refused"),
+                (TimeoutError("timed out"), "timeout"),
+                (OSError("no route"), "transport_failure"),
+            ):
+                with self.subTest(component=component, error=expected):
+                    self.loopback.side_effect = None
+                    self.https.side_effect = None
+                    failure = urllib.error.URLError(error)
+                    if component == "gateway":
+                        wrapped = RuntimeError("HTTPS request failed")
+                        wrapped.__cause__ = failure
+                        self.https.side_effect = wrapped
+                    else:
+                        self.loopback.side_effect = failure
+                    status, result = self.resolve()
+                    self.assertEqual(status, 1)
+                    self.assertEqual(result["component"], component)
+                    self.assertEqual(result["issue"], expected)
+                    self.assertIsNone(result["navigation"])
+
+    def test_gateway_certificate_failure_is_not_an_application_failure(self) -> None:
+        error = RuntimeError("HTTPS request failed")
+        error.__cause__ = urllib.error.URLError(ssl.SSLCertVerificationError("untrusted"))
+        self.https.side_effect = error
+        _, result = self.resolve()
+        self.assertEqual(result["component"], "gateway")
+        self.assertEqual(result["issue"], "certificate_untrusted")
+        self.assertIn("basaltwater-web ca", result["remediation"])
+
+    def test_upstream_http_error_does_not_suggest_exposure(self) -> None:
+        self.loopback.side_effect = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/", 503, "Unavailable", {}, None,
+        )
+        _, result = self.resolve()
+        self.assertEqual(result["issue"], "http_error")
+        self.assertEqual(result["component"], "upstream")
+        self.assertEqual(result["upstream_status"], 503)
+        self.assertIsNone(result["command"])
+        self.https.assert_not_called()
+
+    def test_gateway_http_error_retains_url_and_recovery(self) -> None:
+        self.https.return_value = (502, {})
+        _, result = self.resolve()
+        self.assertEqual(result["issue"], "http_error")
+        self.assertEqual(result["gateway_status"], 502)
+        self.assertIn("basaltwater-web doctor game", result["remediation"])
+        self.assertEqual(result["url"], "https://games.example:8444/")
+
+    def test_authenticated_forward_can_be_navigated(self) -> None:
+        self.https.return_value = (401, {"www-authenticate": 'Basic realm="Preview"'})
+        self.assertEqual(self.resolve()[0], 0)
+        self.https.return_value = (401, {})
+        self.assertEqual(self.resolve()[1]["issue"], "http_error")
+
+    def test_godot_route_requires_isolation_headers(self) -> None:
+        self.routes.return_value = [{**self.route, "profile": "godot"}]
+        self.assertEqual(self.resolve("--profile", "godot")[1]["issue"], "isolation_headers_missing")
+        self.https.return_value = (200, {
+            "cross-origin-opener-policy": "same-origin",
+            "cross-origin-embedder-policy": "require-corp",
+        })
+        self.assertEqual(self.resolve("--profile", "godot")[0], 0)
+
+    def test_missing_gateway_has_setup_remediation(self) -> None:
+        with patch.object(basaltwater_web, "_load_policy", side_effect=RuntimeError("not configured")):
+            _, result = self.resolve()
+        self.assertEqual(result["issue"], "gateway_unavailable")
+        self.assertIn("saved", result["remediation"])
+        self.loopback.assert_not_called()
+
+    def test_invalid_host_or_privileged_port_fails_before_network(self) -> None:
+        for extra in (("--host", "192.0.2.1"), ("--host", "localhost"), ("--port", "80"), ("--port", "65536")):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.resolve(*extra)[0], 2)
+        self.loopback.assert_not_called()
+
+    def test_plain_output_is_url_or_actionable_failure(self) -> None:
+        output, errors = StringIO(), StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
+            self.assertEqual(basaltwater_web.main(["preview", "resolve", "--port", "8080"]), 0)
+        self.assertEqual(output.getvalue(), "https://games.example:8444/\n")
+        self.routes.return_value = []
+        with redirect_stderr(errors):
+            self.assertEqual(basaltwater_web.main(["preview", "resolve", "--port", "8080"]), 1)
+        self.assertIn("gateway: forward_missing", errors.getvalue())
+        self.assertIn("basaltwater-web forward add", errors.getvalue())
 
 
 class TestInfraWebControl(unittest.TestCase):

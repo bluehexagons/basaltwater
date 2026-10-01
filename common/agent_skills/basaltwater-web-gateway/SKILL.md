@@ -107,6 +107,21 @@ basaltwater-web preview stop NAME
 
 ## Live forwards
 
+For a collaborative preview of an already-running loopback server, resolve its
+port before guessing an `environment-port` or client-loopback URL:
+
+```bash
+basaltwater-web preview resolve --port PORT --json
+```
+
+The read-only resolver returns an existing owned route as `navigation.url`, or
+`forward_missing` with an exact creation `command`. Run that command when the
+requested preview includes client-visible access, then resolve again. Failures
+identify the upstream or gateway in `component`, distinguish transport, timeout,
+HTTP and certificate issues, and include `remediation`. Use `--host ::1` for
+IPv6 and `--profile godot` when isolation headers are required. VM-side success
+does not establish client routing, source-policy access, trust, or rendering.
+
 Create a forward after its loopback service is ready:
 
 ```bash
