@@ -62,6 +62,41 @@ class TestConfigureBalloonTarget(unittest.TestCase):
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
+    def test_automatic_policy_never_loosens_stricter_existing_target(self, _memory, command, _dry):
+        for target in (0, 60):
+            with self.subTest(target=target):
+                command.reset_mock()
+                command.return_value = MagicMock(returncode=0, stdout=f'{{"ballooning-target": {target}}}')
+                configure_proxmox_balloon_target(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+                command.assert_called_once()
+
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
+    def test_explicit_override_can_raise_an_existing_target(self, _memory, command, _dry):
+        command.side_effect = [
+            MagicMock(returncode=0, stdout='{"ballooning-target": 60}'),
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout='{"ballooning-target": 70}'),
+        ]
+        configure_proxmox_balloon_target(SetupConfig(host="pve", username="root", system_type="server_proxmox", proxmox_balloon_target=70))
+        self.assertIn(call("pvenode config set --ballooning-target 70"), command.call_args_list)
+
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
+    def test_invalid_current_target_stops_without_mutation(self, _memory, command, _dry):
+        for output in ("", "[]", '{"ballooning-target": true}', '{"ballooning-target": 80.5}'):
+            with self.subTest(output=output):
+                command.reset_mock()
+                command.return_value = MagicMock(returncode=0, stdout=output)
+                with self.assertRaisesRegex(RuntimeError, "existing Proxmox balloon target"):
+                    configure_proxmox_balloon_target(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+                command.assert_called_once()
+
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
     def test_materializes_implicit_default(self, _mock_memory, mock_run, _mock_dry):
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="{}", stderr=""),

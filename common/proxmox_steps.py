@@ -165,14 +165,14 @@ def _host_total_memory_mib(meminfo_path: str = "/proc/meminfo") -> int:
 
 def _configured_balloon_target(output: str) -> int | None:
     """Extract an explicitly stored node target, if present."""
-    if not output.strip():
-        return None
     try:
         config: Any = json.loads(output)
         value = config.get("ballooning-target")
         if value is None:
             return None
-        return int(value)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+            raise ValueError("Invalid node balloon target")
+        return value
     except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(
             "Unable to read the existing Proxmox balloon target"
@@ -187,11 +187,19 @@ def configure_proxmox_balloon_target(config: SetupConfig) -> None:
         getattr(config, "proxmox_balloon_target", None),
     )
     source = "automatic" if policy.automatic else "override"
+    current_target = None
+    dry_run = is_dry_run()
+    if not dry_run:
+        current = run(_NODE_CONFIG_COMMAND, capture_output=True)
+        current_target = _configured_balloon_target(current.stdout or "")
+        if policy.automatic and current_target is not None and current_target < policy.target_percent:
+            policy = calculate_balloon_target(total_mib, current_target)
+            source = "existing conservative setting"
     print(
         "  Proxmox memory policy: "
         f"{format_gib(policy.total_mib)} host RAM, "
         f"{policy.target_percent}% balloon target ({source}), "
-        f"{format_gib(policy.reserve_mib)} host headroom"
+        f"{format_gib(policy.reserve_mib)} nominal host headroom"
     )
     if policy.automatic and total_mib < 4096:
         print(
@@ -203,12 +211,10 @@ def configure_proxmox_balloon_target(config: SetupConfig) -> None:
         "pvenode config set "
         f"--ballooning-target {policy.target_percent}"
     )
-    if is_dry_run():
+    if dry_run:
         run(set_command)
         return
 
-    current = run(_NODE_CONFIG_COMMAND, capture_output=True)
-    current_target = _configured_balloon_target(current.stdout or "")
     if current_target == policy.target_percent:
         print(f"  ✓ Balloon target already set to {current_target}%")
         return

@@ -159,10 +159,13 @@ late-order sysctl drop-in, applies the complete boot-time precedence for that
 setting, and verifies the live result.
 
 Every `server_proxmox` setup also reconciles the node's Proxmox balloon target.
-The automatic target reserves the larger of 20% of physical RAM or 2 GiB for
-the host, never raises the target above Proxmox's 80% default, and uses a 50%
-floor on hosts too small to preserve the full 2 GiB reserve. Setup prints the
-host total, selected percentage, and resulting headroom for comparison. Use
+The automatic target aims for the larger of 20% of physical RAM or 2 GiB of
+host headroom, never raises the target above Proxmox's 80% default, and uses a
+50% floor on small hosts. A stricter existing target is preserved unless an
+explicit override is supplied. Setup prints the host total, selected
+percentage, and nominal headroom for comparison. Ballooning responds to host
+memory use and depends on guest support and available reclaimable memory;
+the target does not guarantee a physical RAM reserve. Use
 `--proxmox-balloon-target PERCENT` to override the calculation with a value
 from 1 through 95; this changes the node policy, so reserve enough memory for
 Proxmox services, storage, and QEMU overhead.
