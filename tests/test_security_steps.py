@@ -131,6 +131,10 @@ class TestAppArmorProfiles(unittest.TestCase):
 
 
 class TestHardenSSH(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch("security.security_steps._verify_ssh_policy"))
+        self.enterContext(patch("security.security_steps.open", mock_open()))
+
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
     @patch("security.security_steps.run")
     @patch("security.security_steps.os.makedirs")
@@ -145,7 +149,7 @@ class TestHardenSSH(unittest.TestCase):
         mock_write.assert_called_once()
         self.assertEqual(
             mock_write.call_args.args[0],
-            "/etc/ssh/sshd_config.d/99-basaltwater-hardening.conf",
+            "/etc/ssh/sshd_config.d/00-basaltwater-hardening.conf",
         )
         self.assertEqual(mock_write.call_args.kwargs, {"mode": 0o600})
         written = mock_write.call_args.args[1]
@@ -219,12 +223,13 @@ class TestHardenSSH(unittest.TestCase):
         self, mock_remove, _exists, _write, _md, mock_run, _which
     ):
         mock_run.return_value = SimpleNamespace(returncode=1)
-        harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
+        with self.assertRaisesRegex(RuntimeError, "sshd -t failed"):
+            harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
         run_commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertIn("/usr/sbin/sshd -t", run_commands)
         self.assertFalse(any(cmd.startswith("systemctl reload sshd") for cmd in run_commands))
         mock_remove.assert_called_once_with(
-            "/etc/ssh/sshd_config.d/99-basaltwater-hardening.conf"
+            "/etc/ssh/sshd_config.d/00-basaltwater-hardening.conf"
         )
 
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
@@ -238,7 +243,8 @@ class TestHardenSSH(unittest.TestCase):
     ):
         mock_run.return_value = SimpleNamespace(returncode=1)
 
-        harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
+        with self.assertRaisesRegex(RuntimeError, "sshd -t failed"):
+            harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
 
         self.assertEqual(mock_write.call_args_list[-1].args[1], "previous\n")
         self.assertEqual(mock_write.call_args_list[-1].kwargs, {"mode": 0o600})

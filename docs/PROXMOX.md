@@ -134,6 +134,14 @@ own its swap layout. It retains the host's permissive reverse-path filtering
 because strict filtering can drop valid routed, NATed, or bridged guest
 traffic.
 
+SSH hardening uses an early `00-basaltwater-hardening.conf` drop-in and verifies
+the effective key-only policy with `sshd -T` for root and the setup account,
+including the current SSH peer when available. Conflicting earlier or `Match`
+settings stop setup and restore a changed drop-in before any reload. Both
+identities must belong to `remoteusers`. The former managed `99-` drop-in is
+removed only after its replacement passes verification. Root public-key login
+and normal forwarding remain available for Proxmox cluster operations.
+
 Setup inspects active host swap without resizing or replacing it, reports each
 device's type, size, and current use, and warns when no swap is active. A
 direct `/dev/zvol/` or `/dev/zd*` swap device receives a prominent warning but

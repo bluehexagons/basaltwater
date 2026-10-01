@@ -23,14 +23,15 @@ from lib.machine_state import (
 )
 from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_network_ip_or_cidr
-from lib.validators import validate_username
+from lib.validators import validate_ip_address, validate_username
 
 _LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades"
 _LEGACY_MANAGED_ORIGINS_FILE = "/etc/basaltwater/unattended_upgrades_origins.list"
 _JOURNAL_CONF_DIR = "/etc/systemd/journald.conf.d"
 _JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
-_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
+_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/00-basaltwater-hardening.conf"
+_LEGACY_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
 _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
@@ -495,19 +496,66 @@ findtime = 600
         print("  ✓ fail2ban configured (sshd jail, 1 hour ban)")
 
 
+def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
+    """Check effective authentication for root and the setup identity."""
+    address = "127.0.0.1"
+    connection = os.environ.get("SSH_CONNECTION", "").split()
+    if connection:
+        if len(connection) != 4 or not validate_ip_address(connection[0]):
+            raise RuntimeError("Cannot determine the SSH setup peer")
+        address = connection[0]
+    for username in dict.fromkeys(("root", config.username)):
+        if not validate_username(username):
+            raise ValueError("Cannot verify SSH policy for an invalid username")
+        context = f"user={username},host={address},addr={address}"
+        effective = run(
+            f"{shlex.quote(sshd_path)} -T -C {shlex.quote(context)}",
+            check=False,
+            capture_output=True,
+        )
+        if effective.returncode != 0:
+            raise RuntimeError("Could not inspect effective SSH configuration")
+        settings = {}
+        for line in (effective.stdout or "").splitlines():
+            key, separator, value = line.partition(" ")
+            if separator:
+                settings[key] = value.strip()
+        required = {
+            "passwordauthentication": {"no"},
+            "kbdinteractiveauthentication": {"no"},
+            "pubkeyauthentication": {"yes"},
+            "permitrootlogin": {"prohibit-password", "without-password"},
+            "allowgroups": {"remoteusers"},
+            "authenticationmethods": {"any", "publickey"},
+        }
+        if config.harden_user and username == config.username:
+            required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})
+        conflicts = [key for key, values in required.items() if settings.get(key) not in values]
+        if conflicts:
+            raise RuntimeError(
+                f"Effective SSH policy for {username} conflicts with hardening: "
+                + ", ".join(conflicts)
+            )
+        groups = run(f"id -nG {shlex.quote(username)}", check=False, capture_output=True)
+        if groups.returncode != 0 or "remoteusers" not in (groups.stdout or "").split():
+            raise RuntimeError(f"SSH identity {username} is not a member of remoteusers")
+
+
 def harden_ssh(config: SetupConfig) -> None:
     """Apply SSH hardening via a drop-in file under /etc/ssh/sshd_config.d/.
 
     Using a drop-in keeps the distro-shipped sshd_config untouched and makes
     the hardening idempotent across reruns and OpenSSH upgrades that move
-    settings between files. The drop-in is read first by sshd, so its values
-    win over later occurrences in the main config.
+    settings between files. An early filename takes precedence over normal
+    distro drop-ins; effective-policy checks detect any earlier overrides.
     """
     hardening_content = """# Managed by basaltwater - SSH hardening drop-in.
 # Drop-ins under /etc/ssh/sshd_config.d/*.conf are read before the main
 # sshd_config; the first-match-wins rule means these directives override
 # anything later in /etc/ssh/sshd_config.
 PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthenticationMethods publickey
 PasswordAuthentication no
 PermitEmptyPasswords no
 KbdInteractiveAuthentication no
@@ -563,12 +611,11 @@ Match all
         except OSError as exc:
             print(f"  ⚠ Could not read existing SSH hardening drop-in; leaving it unchanged: {exc}")
             return
-        if existing == hardening_content:
-            print("  ✓ SSH already hardened")
-            return
+    changed = existing != hardening_content
 
     try:
-        write_text_atomic(_SSHD_DROPIN_FILE, hardening_content, mode=0o600)
+        if changed:
+            write_text_atomic(_SSHD_DROPIN_FILE, hardening_content, mode=0o600)
     except OSError as exc:
         print(
             "  ⚠ Skipping SSH hardening (cannot write "
@@ -578,25 +625,38 @@ Match all
 
     # Validate the resulting config before reloading so we do not lock out
     # access if a future change introduces a typo.
-    validate = run(f"{shlex.quote(sshd_path)} -t", check=False)
-    if validate.returncode != 0:
+    try:
+        validate = run(f"{shlex.quote(sshd_path)} -t", check=False)
+        if validate.returncode != 0:
+            raise RuntimeError("sshd -t failed after hardening")
+        _verify_ssh_policy(sshd_path, config)
+    except Exception:
         try:
-            if existing is None:
-                os.remove(_SSHD_DROPIN_FILE)
-            else:
-                write_text_atomic(_SSHD_DROPIN_FILE, existing, mode=0o600)
+            if changed:
+                if existing is None:
+                    os.remove(_SSHD_DROPIN_FILE)
+                else:
+                    write_text_atomic(_SSHD_DROPIN_FILE, existing, mode=0o600)
         except OSError as exc:
-            print(f"  ⚠ Failed to restore the previous SSH hardening drop-in: {exc}")
-            return
-        print("  ⚠ sshd -t failed after hardening drop-in; restored previous configuration")
-        return
+            raise RuntimeError("Failed to restore previous SSH configuration") from exc
+        raise
 
-    run("systemctl reload sshd || systemctl reload ssh", check=True)
+    # Remove only our former drop-in after the replacement is validated.
+    try:
+        with open(_LEGACY_SSHD_DROPIN_FILE, encoding="utf-8") as legacy:
+            legacy_content = legacy.read()
+    except FileNotFoundError:
+        legacy_content = ""
+    if legacy_content.startswith("# Managed by basaltwater - SSH hardening drop-in."):
+        os.remove(_LEGACY_SSHD_DROPIN_FILE)
+        changed = True
+    if changed:
+        run("systemctl reload sshd || systemctl reload ssh", check=True)
 
     details = "key-only auth, timeouts, AllowGroups remoteusers"
     if config.harden_user:
         details += ", coding-user forwarding disabled"
-    print(f"  ✓ SSH hardened (drop-in: {details})")
+    print(f"  ✓ SSH hardening verified (drop-in: {details})")
 
 
 def harden_kernel(config: SetupConfig) -> None:
