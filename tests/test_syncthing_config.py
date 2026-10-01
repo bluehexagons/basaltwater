@@ -173,7 +173,7 @@ class SyncthingConfigTest(unittest.TestCase):
         self.assertTrue(merged.enable_syncthing)
         self.assertEqual(merged.syncthing_root, "/mnt/team-files")
 
-    def test_removed_declarations_are_ignored_in_old_cache(self) -> None:
+    def test_removed_declarations_require_intermediate_upgrade(self) -> None:
         data = self._config().to_dict()
         data.update(
             {
@@ -185,10 +185,10 @@ class SyncthingConfigTest(unittest.TestCase):
             }
         )
 
-        restored = SetupConfig.from_dict("fileserver", "server_lite", data)
-
-        self.assertTrue(restored.enable_syncthing)
-        self.assertFalse(hasattr(restored, "syncthing_devices"))
+        with self.assertRaisesRegex(ValueError, "docs/BASALTWATER_MIGRATION.md"):
+            SetupConfig.from_dict("fileserver", "server_lite", data)
+        self.assertEqual(data['syncthing_devices'], [["old-device", "OLD-ID"]])
+        self.assertEqual(data['syncthing_versioning'], 'trashcan')
 
     def test_admin_requires_enablement_and_valid_username(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires --syncthing"):

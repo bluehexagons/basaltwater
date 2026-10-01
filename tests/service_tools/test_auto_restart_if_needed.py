@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -14,10 +15,13 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from common.service_tools import auto_restart_if_needed
+from lib.state_read import StateReadError
 
 
 class TestAutoRestartIfNeeded(unittest.TestCase):
     def setUp(self):
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')))
         config = patch.object(auto_restart_if_needed, "load_setup_config", return_value={})
         config.start()
         self.addCleanup(config.stop)
@@ -297,14 +301,20 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
 
 
 class TestRestartPolicy(unittest.TestCase):
+    def setUp(self):
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        self.enterContext(patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')))
+
     @patch('common.service_tools.auto_restart_if_needed.load_setup_config', return_value={'no_restart': True})
     @patch('common.service_tools.auto_restart_if_needed.check_restart_required', return_value=True)
     @patch('common.service_tools.auto_restart_if_needed.can_restart_system', return_value=True)
     @patch('common.service_tools.auto_restart_if_needed.load_notification_configs_from_state', return_value=[])
     @patch('common.service_tools.auto_restart_if_needed.perform_restart')
-    def test_retired_policy_stops_restart_check(self, restart, _notifications, _capability, _marker, _config):
+    @patch('common.service_tools.auto_restart_if_needed.send_notification_safe')
+    def test_retired_policy_stops_restart_check(self, notify, restart, _notifications, _capability, _marker, _config):
         self.assertEqual(auto_restart_if_needed.main(), 1)
         restart.assert_not_called()
+        self.assertEqual(notify.call_args.kwargs['status'], 'error')
 
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"auto_restart": False, "username": "u", "system_type": "server_lite"})
     def test_reads_configured_auto_restart(self, _load):
@@ -331,15 +341,78 @@ class TestRestartPolicy(unittest.TestCase):
             "auto_restart_grace": -2,
         },
     )
-    def test_invalid_persisted_numbers_fall_back_safely(self, _load):
-        policy = auto_restart_if_needed.load_restart_policy()
-        self.assertEqual(policy["force_days"], 7)
-        self.assertEqual(policy["grace"], 0)
+    def test_invalid_persisted_numbers_are_refused(self, _load):
+        with self.assertRaisesRegex(ValueError, 'auto_restart_force_days'):
+            auto_restart_if_needed.load_restart_policy()
+
+    def test_invalid_policy_cannot_enable_or_force_a_restart(self):
+        for config in ({'auto_restart': 'false'}, {'auto_restart_force_days': True},
+                       {'auto_restart_force_days': '7'}, {'auto_restart_grace': -1}):
+            with (self.subTest(config=config),
+                  patch.object(auto_restart_if_needed, 'load_setup_config', return_value=config),
+                  patch.object(auto_restart_if_needed, 'check_restart_required', return_value=True),
+                  patch.object(auto_restart_if_needed, 'can_restart_system', return_value=True),
+                  patch.object(auto_restart_if_needed, 'load_notification_configs_from_state', return_value=['cfg']),
+                  patch.object(auto_restart_if_needed, 'send_notification_safe') as notify,
+                  patch.object(auto_restart_if_needed, 'perform_restart') as restart,
+                  patch.object(auto_restart_if_needed, 'save_restart_state') as save):
+                self.assertEqual(auto_restart_if_needed.main(), 1)
+                restart.assert_not_called()
+                save.assert_not_called()
+                self.assertEqual(notify.call_args.kwargs['status'], 'error')
 
     @patch("common.service_tools.auto_restart_if_needed.load_restart_state", return_value={"first_required": "invalid"})
     @patch("common.service_tools.auto_restart_if_needed.time.time", return_value=1000)
     def test_invalid_restart_timestamp_does_not_force(self, _time, _state):
         self.assertFalse(auto_restart_if_needed.force_deadline_reached({"force_days": 7}))
+
+
+class TestRestartState(unittest.TestCase):
+    def test_missing_history_is_fresh_and_valid_history_roundtrips(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')
+        ):
+            self.assertEqual(auto_restart_if_needed.load_restart_state(), {})
+            state = {'first_required': 1.0, 'last_notified': 2.0, 'last_reason': 'active work'}
+            auto_restart_if_needed.save_restart_state(state)
+            self.assertEqual(auto_restart_if_needed.load_restart_state(), state)
+
+    def test_invalid_history_is_retained_and_blocks_restart_or_clear(self):
+        contents = ['{broken', '[]', ' ' * (1024 * 1024 + 1)] + [json.dumps(state) for state in (
+            {'first_required': True}, {'first_required': -1}, {'first_required': '1'},
+            {'first_required': float('nan')}, {'last_notified': float('inf')},
+            {'first_required': 10 ** 1000}, {'last_reason': []},
+        )]
+        with (tempfile.TemporaryDirectory() as root,
+              patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')),
+              patch.object(auto_restart_if_needed, 'load_notification_configs_from_state', return_value=['cfg']),
+              patch.object(auto_restart_if_needed, 'send_notification_safe') as notify,
+              patch.object(auto_restart_if_needed, 'perform_restart') as restart,
+              patch.object(auto_restart_if_needed, 'clear_restart_state') as clear,
+              patch.object(auto_restart_if_needed, 'save_restart_state') as save):
+            for content in contents:
+                with self.subTest(content=content[:40]):
+                    with open(auto_restart_if_needed.STATE_FILE, 'w') as state_file:
+                        state_file.write(content)
+                    self.assertEqual(auto_restart_if_needed.main(), 1)
+                    self.assertEqual(notify.call_args.kwargs['status'], 'error')
+                    with open(auto_restart_if_needed.STATE_FILE) as state_file:
+                        self.assertEqual(state_file.read(), content)
+            restart.assert_not_called()
+            clear.assert_not_called()
+            save.assert_not_called()
+
+    def test_symlink_and_special_history_files_are_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            target, link, fifo = (os.path.join(root, name) for name in ('target', 'link', 'fifo'))
+            with open(target, 'w') as state_file:
+                state_file.write('{}')
+            os.symlink(target, link)
+            os.mkfifo(fifo)
+            for path in (link, fifo, root):
+                with self.subTest(path=path), patch.object(auto_restart_if_needed, 'STATE_FILE', path):
+                    with self.assertRaises(StateReadError):
+                        auto_restart_if_needed.load_restart_state()
 
 
 if __name__ == "__main__":

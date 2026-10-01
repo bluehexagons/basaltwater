@@ -79,6 +79,15 @@ not count as delivery. Delivery failures remain best effort and do not change
 the restart policy. Inspect the restart service journal for the deferral reason
 and delivery result; service success alone does not prove notification delivery.
 
+Restart checks refuse malformed policy instead of coercing strings or booleans
+into restart authorization or deadlines. Deferral history in
+`/var/lib/basaltwater/auto_restart_state.json` is read as a bounded regular JSON
+file. Invalid timestamps, symlinks, special files, unreadable files, and files
+over 1 MiB stop the check, report failure, and retain the file without scheduling
+a restart or resetting history. Restore a verified backup or explicitly
+quarantine it after reviewing the force deadline and notification history.
+Only a missing history file starts fresh.
+
 [HomeBox](HOMEBOX.md) retains its installed version on ordinary setup reruns.
 Select an immediate reviewed upgrade with `--homebox-version TAG`; the weekly
 HomeBox timer also resolves the newest stable upstream release. Both paths use
@@ -208,6 +217,12 @@ with a symbolic link.
 Release tags are restricted to safe path components, release assets require
 credential-free HTTPS URLs without protocol-downgrade redirects, and Go
 archives require the official feed's full SHA-256 digest before extraction.
+
+Godot, Butler, Gogs, and Antistatic release-state reads refuse malformed JSON,
+empty objects, symlinks, special files, and files over 1 MiB. Invalid metadata is
+retained for recovery rather than treated as a fresh installation. Antistatic
+binary downloads are staged on the destination filesystem so publication is
+an atomic rename even when `/tmp` is on another filesystem.
 
 ## Cleanup and State Safety
 

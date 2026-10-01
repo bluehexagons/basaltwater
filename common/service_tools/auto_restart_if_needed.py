@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import pwd
@@ -20,11 +19,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.agent_maintenance import inspect_agent_maintenance
-from lib.config import RetiredSetupConfigError, validate_current_setup_fields
+from lib.config import validate_current_setup_fields
 from lib.kernel_restart import newer_installed_kernel
 from lib.machine_state import can_restart_system, load_setup_config
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.plugin_registry import get_system_type_definition
+from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
 
 logger = get_service_logger('auto_restart_if_needed', 'common', use_syslog=True)
@@ -217,29 +217,35 @@ def load_restart_policy() -> dict[str, Any]:
     if isinstance(system_type, str):
         defaults = get_system_type_definition(system_type)
 
-    auto_restart = bool(config.get("auto_restart", defaults.default_auto_restart if defaults else True))
-
-    return {
-        "auto_restart": auto_restart,
-        "force_days": _nonnegative_int(
-            config.get(
-                "auto_restart_force_days",
-                defaults.default_auto_restart_force_days if defaults else 7,
-            ),
-            defaults.default_auto_restart_force_days if defaults else 7,
-        ),
-        "grace": _nonnegative_int(config.get("auto_restart_grace", 5), 5),
-    }
+    auto_restart = config.get("auto_restart", defaults.default_auto_restart if defaults else True)
+    force_days = config.get("auto_restart_force_days", defaults.default_auto_restart_force_days if defaults else 7)
+    grace = config.get("auto_restart_grace", 5)
+    if type(auto_restart) is not bool:
+        raise ValueError("Saved auto_restart policy must be boolean")
+    for name, value in (("auto_restart_force_days", force_days), ("auto_restart_grace", grace)):
+        if type(value) is not int or value < 0:
+            raise ValueError(f"Saved {name} policy must be a non-negative integer")
+    return {"auto_restart": auto_restart, "force_days": force_days, "grace": grace}
 
 
 def load_restart_state() -> dict[str, Any]:
-    """Load persistent auto-restart deferral state."""
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as handle:
-            state = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    """Retain invalid deferral history instead of resetting the force deadline."""
+    state = read_state_object(STATE_FILE, versioned=False)
+    if state is None:
         return {}
-    return state if isinstance(state, dict) else {}
+    for name in ("first_required", "last_notified"):
+        if name not in state:
+            continue
+        value = state[name]
+        try:
+            valid = type(value) in {int, float} and math.isfinite(value) and value >= 0
+        except OverflowError:
+            valid = False
+        if not valid:
+            raise StateReadError(STATE_FILE, f"invalid {name} timestamp")
+    if 'last_reason' in state and not isinstance(state['last_reason'], str):
+        raise StateReadError(STATE_FILE, "invalid last deferral reason")
+    return state
 
 
 def save_restart_state(state: dict[str, Any]) -> None:
@@ -353,11 +359,9 @@ def perform_restart(notification_configs, grace_minutes: int, forced: bool = Fal
         return 1
 
 
-def main() -> int:
-    """Check and perform restart if needed."""
-    log_event(logger, "Starting restart check")
-    notification_configs = load_notification_configs_from_state(logger)
-
+def _check_restart(notification_configs) -> int:
+    """Apply restart policy only after the retained history can be read safely."""
+    load_restart_state()
     if not check_restart_required():
         try:
             pending_kernel = newer_installed_kernel()
@@ -382,11 +386,7 @@ def main() -> int:
         record_deferral("machine type cannot restart itself", notification_configs)
         return 0
 
-    try:
-        policy = load_restart_policy()
-    except RetiredSetupConfigError as exc:
-        log_event(logger, "Restart policy requires an intermediate upgrade", level=ERROR, error=str(exc))
-        return 1
+    policy = load_restart_policy()
     uptime = get_uptime_seconds()
     if uptime is None:
         record_deferral("system uptime could not be determined", notification_configs)
@@ -427,6 +427,21 @@ def main() -> int:
         return 0
 
     return perform_restart(notification_configs, int(policy["grace"]), forced=forced)
+
+
+def main() -> int:
+    """Check and perform restart, reporting invalid policy or retained state."""
+    log_event(logger, "Starting restart check")
+    notification_configs = load_notification_configs_from_state(logger)
+    try:
+        return _check_restart(notification_configs)
+    except ValueError as exc:
+        log_event(logger, "Restart check stopped", level=ERROR, error=str(exc))
+        send_notification_safe(
+            notification_configs, subject="Error: restart check stopped",
+            job="auto_restart_if_needed", status="error", message=str(exc), logger=logger,
+        )
+        return 1
 
 
 if __name__ == "__main__":
