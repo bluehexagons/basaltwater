@@ -181,6 +181,18 @@ open for the first rollout. `--no-access-source` and `--no-lan-access` remove
 the corresponding saved policy and tool-owned set entries but deliberately do
 not disable a firewall that may contain other policy.
 
+Source reconciliation checks the node firewall, the cluster input policy,
+the selected backend service, and configuration compilation before changing
+access. A disabled node firewall or `ACCEPT` input policy stops setup for
+operator correction. New sources must be readable before activation; old
+managed sources are removed only after activation passes verification. Failed
+activation restores a previously disabled cluster firewall. When available,
+the current SSH peer must belong to a requested or retained operator source.
+Setup verifies the final IP set and reports retained operator entries and
+implicit cluster access. Existing rules still take precedence; this does not
+prove that only the requested sources can connect. Backend selection stays
+operator-owned, including an already-selected nftables backend.
+
 Automatic host restarts and forced restart deadlines are disabled by default.
 The setup reports pending restarts, but schedule any hypervisor reboot around
 guest downtime (or opt in explicitly with `--auto-restart` or

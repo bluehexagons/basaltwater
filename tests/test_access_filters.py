@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import unquote
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -470,6 +472,10 @@ class TestGenericUfwFiltering(unittest.TestCase):
 
 
 class TestProxmoxManagementFilter(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("security.security_steps.is_dry_run", return_value=False))
+        self.enterContext(patch.dict(os.environ, {}, clear=True))
+
     @patch("security.security_steps.run")
     def test_reconciles_owned_entries_and_preserves_operator_entries(self, mock_run) -> None:
         existing = [
@@ -480,14 +486,27 @@ class TestProxmoxManagementFilter(unittest.TestCase):
             },
         ]
 
+        cluster = {"enable": 0}
+
         def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
+            stdout = ""
+            if command == "pvesh get /cluster/firewall/options --output-format json":
+                stdout = json.dumps(cluster)
+            elif "/options --output-format" in command:
+                stdout = "{}"
+            elif command.startswith("pvesh get /cluster/firewall/ipset/management"):
+                stdout = json.dumps(existing)
+            elif command.startswith("pvesh create /cluster/firewall/ipset/management"):
+                args = shlex.split(command)
+                existing.append({"cidr": args[args.index("--cidr") + 1], "comment": args[args.index("--comment") + 1]})
+            elif command.startswith("pvesh delete /cluster/firewall/ipset/management/"):
+                cidr = unquote(command.split("/management/", 1)[1])
+                existing[:] = [entry for entry in existing if entry["cidr"] != cidr]
+            elif command == "pvesh set /cluster/firewall/options --enable 1":
+                cluster["enable"] = 1
             return SimpleNamespace(
                 returncode=0,
-                stdout=(
-                    json.dumps(existing)
-                    if command.startswith("pvesh get ")
-                    else ""
-                ),
+                stdout=stdout,
             )
 
         mock_run.side_effect = run_side_effect
@@ -512,10 +531,10 @@ class TestProxmoxManagementFilter(unittest.TestCase):
             commands,
         )
         self.assertFalse(any("10.0.0.0" in command for command in commands[1:]))
-        self.assertEqual(
-            commands[-1],
-            "pvesh set /cluster/firewall/options --enable 1",
-        )
+        self.assertLess(commands.index(add_command), commands.index("pvesh set /cluster/firewall/options --enable 1"))
+        self.assertLess(commands.index("pvesh set /cluster/firewall/options --enable 1"),
+                        commands.index("pvesh delete /cluster/firewall/ipset/management/172.16.0.0%2F12"))
+        self.assertEqual(commands[-1], "pvesh get /cluster/firewall/ipset/management --output-format json")
 
     @patch("security.security_steps.run")
     def test_clear_removes_only_owned_entries_without_enabling_firewall(self, mock_run) -> None:
@@ -525,10 +544,12 @@ class TestProxmoxManagementFilter(unittest.TestCase):
                 "comment": "basaltwater access source 192.168.1.0/24",
             }
         ]
-        mock_run.side_effect = lambda command, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout=json.dumps(existing) if command.startswith("pvesh get ") else "",
-        )
+        def run_side_effect(command: str, **_kwargs: object) -> SimpleNamespace:
+            if command.startswith("pvesh delete "):
+                existing.clear()
+            return SimpleNamespace(returncode=0, stdout=json.dumps(existing) if command.startswith("pvesh get ") else "")
+
+        mock_run.side_effect = run_side_effect
 
         configure_proxmox_management_firewall(
             SetupConfig(

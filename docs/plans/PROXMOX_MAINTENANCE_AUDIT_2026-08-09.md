@@ -12,10 +12,20 @@ validation.
 - 2026-08-09: made `rolling-update` run that audit before any changes, after
   each node update, and after reconnecting from a reboot. Automatic reboot now
   stops when guests are running or locked, and later nodes remain untouched.
+- 2026-10-01: setup validates VE 9.2/trixie and stable repository access before
+  profile changes. Daily APT updates now share the local setup/restart lock,
+  validate repositories and release candidates, and check package consistency,
+  holds, and node health before and after upgrading. HA and Ceph stay
+  operator-managed. Opt-in scheduled reboots require evacuation and health even
+  after a forced deadline. Cross-node update timing remains deferred.
+- 2026-10-01: SSH verifies effective key-only policy before reload, automatic
+  memory policy preserves stricter targets, and native management firewall
+  setup verifies node policy, backend, activation, and saved sources while
+  reporting retained operator and implicit cluster access.
 
 These are the first P1 safety controls, not completion of either P1 item below.
-Repository suitability, HA/Ceph health, guest evacuation policy, storage-type
-specific checks still require larger work and live-cluster validation. Rolling
+HA/Ceph health, automated guest evacuation, and storage-type-specific checks
+still require larger work and live-cluster validation. Rolling
 updates now keep durable checkpoints and require explicit resume. Their supported
 policy requires evacuated nodes and rejects HA/Ceph configurations, which remain
 operator-managed until the broader orchestration below is qualified.
@@ -66,8 +76,8 @@ changes.
 
 ### P1: Proxmox-aware update orchestration
 
-Current daily APT maintenance is node-local and repository-agnostic. The
-separate rolling-update command replays the saved setup. The global
+Current daily APT maintenance validates the supported stable repositories and
+local node health. The separate rolling-update command replays the saved setup. The global
 cleanup-first service gap tracked by `ARCH-05` was removed on 2026-08-19, but
 the update now keeps durable per-node transaction state. It establishes basic
 node health, requires evacuation before mutation, and rejects HA/Ceph topologies.
@@ -90,9 +100,10 @@ introduce a parallel transaction framework.
 
 ### P1: Proxmox health and maintenance observability
 
-The generic cleanup job checks only root-filesystem usage. The security monitor
-checks host authentication events, but neither evaluates the resources most
-likely to threaten guest availability.
+The generic cleanup job checks block and inode pressure on distinct local
+storage mounts. The security monitor checks host authentication events. Daily
+APT maintenance now checks basic Proxmox service and storage availability,
+but detailed storage health and backup recoverability remain outside those jobs.
 
 Extend the initial read-only Proxmox maintenance audit to cover:
 

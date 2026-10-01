@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -1147,6 +1148,72 @@ def _proxmox_management_entries() -> list[dict[str, object]] | None:
     return payload
 
 
+def _proxmox_firewall_options(endpoint: str) -> dict[str, object]:
+    result = run(f"pvesh get {endpoint}/options --output-format json", check=False, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError("Could not inspect Proxmox firewall options")
+    try:
+        options = json.loads(result.stdout or "")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Could not parse Proxmox firewall options") from exc
+    if not isinstance(options, dict):
+        raise RuntimeError("Proxmox returned invalid firewall options")
+    return options
+
+
+def _check_proxmox_firewall(*, require_enabled: bool) -> dict[str, object]:
+    """Check native node policy and its chosen backend without changing either."""
+    cluster = _proxmox_firewall_options("/cluster/firewall")
+    node = _proxmox_firewall_options("/nodes/$(hostname -s)/firewall")
+    if node.get("enable", 1) not in (1, True):
+        raise RuntimeError("The node firewall is disabled; enable it before applying management sources")
+    if cluster.get("policy_in", "DROP") not in ("DROP", "REJECT"):
+        raise RuntimeError("Proxmox input policy must be DROP or REJECT to filter management access")
+    if require_enabled and cluster.get("enable", 0) not in (1, True):
+        raise RuntimeError("Proxmox cluster firewall enablement did not persist")
+    nftables = node.get("nftables", 0) in (1, True)
+    service = "proxmox-firewall" if nftables else "pve-firewall"
+    active = run(f"systemctl is-active --quiet {service}", check=False, capture_output=True)
+    if active.returncode != 0:
+        raise RuntimeError(f"Selected Proxmox firewall backend {service} is not active")
+    compiler = "/usr/libexec/proxmox/proxmox-firewall" if nftables else "pve-firewall"
+    compiled = run(f"{compiler} compile", check=False, capture_output=True)
+    if compiled.returncode != 0:
+        raise RuntimeError("Proxmox firewall configuration could not be compiled")
+    # The legacy compiler warns about invalid rules while still exiting zero.
+    if not nftables and (getattr(compiled, "stderr", "") or "").strip():
+        raise RuntimeError("Proxmox firewall compilation warnings require operator review")
+    return cluster
+
+
+def _proxmox_source_key(source: str) -> str:
+    validated = validate_network_ip_or_cidr(source, "Proxmox management source")
+    return str(ipaddress.ip_network(validated, strict=False))
+
+
+def _verify_proxmox_sources(
+    desired_sources: list[str], *, allow_stale: bool = False,
+) -> list[dict[str, object]]:
+    entries = _proxmox_management_entries()
+    if entries is None:
+        raise RuntimeError("Could not verify the Proxmox management IP set")
+    desired = {_proxmox_source_key(source) for source in desired_sources}
+    actual = set()
+    stale = []
+    for entry in entries:
+        cidr = entry.get("cidr")
+        if not isinstance(cidr, str):
+            raise RuntimeError("Proxmox management entry has no CIDR")
+        key = _proxmox_source_key(cidr)
+        if not entry.get("nomatch", False):
+            actual.add(key)
+        if str(entry.get("comment", "")).startswith(_PROXMOX_MANAGEMENT_COMMENT_PREFIX) and key not in desired:
+            stale.append(cidr)
+    if not desired.issubset(actual) or (stale and not allow_stale):
+        raise RuntimeError("Proxmox management source reconciliation did not persist")
+    return entries
+
+
 def configure_proxmox_management_firewall(config: SetupConfig) -> None:
     """Reconcile native Proxmox management sources and enable its firewall."""
 
@@ -1154,6 +1221,10 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         validate_network_ip_or_cidr(source, "Proxmox management source")
         for source in config.effective_access_sources()
     ]
+    if is_dry_run():
+        print("  [DRY-RUN] Would verify native firewall policy and reconcile managed Proxmox sources")
+        return
+    cluster_options = _check_proxmox_firewall(require_enabled=False) if desired_sources else None
     existing_entries = _proxmox_management_entries()
     if existing_entries is None:
         if not desired_sources:
@@ -1173,8 +1244,32 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
         for entry in existing_entries
         if isinstance(entry.get("cidr"), str)
     }
+    existing_by_key = {_proxmox_source_key(cidr): entry for cidr, entry in existing_by_cidr.items()}
+    desired_set = {_proxmox_source_key(source) for source in desired_sources}
     for source in desired_sources:
-        if source in existing_by_cidr:
+        requested = ipaddress.ip_network(_proxmox_source_key(source))
+        for cidr, entry in existing_by_cidr.items():
+            if entry.get("nomatch", False):
+                excluded = ipaddress.ip_network(_proxmox_source_key(cidr))
+                if requested.version == excluded.version and requested.overlaps(excluded):
+                    raise RuntimeError("An excluded management IP-set entry overlaps a requested source")
+
+    connection = os.environ.get("SSH_CONNECTION", "").split()
+    if desired_sources and connection:
+        if len(connection) != 4 or not validate_ip_address(connection[0]):
+            raise RuntimeError("Cannot verify the current SSH peer before enabling the firewall")
+        peer = ipaddress.ip_address(connection[0])
+        retained = [cidr for cidr, entry in existing_by_cidr.items()
+                    if not str(entry.get("comment", "")).startswith(_PROXMOX_MANAGEMENT_COMMENT_PREFIX)
+                    and not entry.get("nomatch", False)]
+        allowed = [ipaddress.ip_network(_proxmox_source_key(cidr)) for cidr in desired_sources + retained]
+        excluded = [ipaddress.ip_network(_proxmox_source_key(cidr)) for cidr, entry in existing_by_cidr.items()
+                    if entry.get("nomatch", False)]
+        if not any(peer in network for network in allowed) or any(peer in network for network in excluded):
+            raise RuntimeError("Current SSH peer is outside the requested or retained management sources")
+
+    for source in desired_sources:
+        if _proxmox_source_key(source) in existing_by_key:
             continue
         comment = f"{_PROXMOX_MANAGEMENT_COMMENT_PREFIX} {source}"
         result = run(
@@ -1187,13 +1282,27 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
                 f"Could not add Proxmox management source {source}"
             )
 
-    desired_set = set(desired_sources)
+    # Keep old access sources until new entries and native enablement are verified.
+    if desired_sources:
+        _verify_proxmox_sources(desired_sources, allow_stale=True)
+        try:
+            result = run("pvesh set /cluster/firewall/options --enable 1", check=False)
+            if result.returncode != 0:
+                raise RuntimeError("Could not enable the Proxmox cluster firewall")
+            _check_proxmox_firewall(require_enabled=True)
+        except Exception:
+            if cluster_options is not None and cluster_options.get("enable", 0) not in (1, True):
+                restored = run("pvesh set /cluster/firewall/options --enable 0", check=False)
+                if restored.returncode != 0:
+                    raise RuntimeError("Firewall activation failed and previous enablement could not be restored")
+            raise
+
     for cidr, entry in existing_by_cidr.items():
         comment = entry.get("comment")
         if (
             not isinstance(comment, str)
             or not comment.startswith(_PROXMOX_MANAGEMENT_COMMENT_PREFIX)
-            or cidr in desired_set
+            or _proxmox_source_key(cidr) in desired_set
         ):
             continue
         encoded_cidr = quote(cidr, safe="")
@@ -1206,20 +1315,20 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
                 f"Could not remove stale Proxmox management source {cidr}"
             )
 
+    verified_entries = _verify_proxmox_sources(desired_sources)
     if not desired_sources:
         print("  ✓ Proxmox managed access sources cleared; firewall state preserved")
         return
 
-    result = run(
-        "pvesh set /cluster/firewall/options --enable 1",
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("Could not enable the Proxmox cluster firewall")
     print(
-        "  ✓ Proxmox management access restricted to: "
+        "  ✓ Proxmox managed access sources verified: "
         + ", ".join(desired_sources)
     )
+    retained_sources = [str(entry["cidr"]) for entry in verified_entries
+                        if _proxmox_source_key(str(entry["cidr"])) not in desired_set]
+    if retained_sources:
+        print("  Retained operator management entries: " + ", ".join(retained_sources))
+    print("  Proxmox's implicit cluster access and existing firewall rules remain in effect")
 
 
 def configure_auto_restart(config: SetupConfig) -> None:
