@@ -45,7 +45,8 @@ own HTTPS origin and Basic Auth record, has no cookies, and does not share the
 web-panel credential.
 
 Both sockets accept bounded messages with strict action fields. Execution uses
-fixed `systemctl` argv, a clean environment, no shell, and no privileged output
+the reviewed exact argv (fixed `systemctl` argv for structured service/reboot
+actions), a clean environment, no shell, and no privileged output
 returned to the agent. Policy, code, credentials, and their ancestor paths must
 be root-owned, non-symlinked, and not group/world writable.
 
@@ -62,6 +63,13 @@ The root-only database is
 account, but not tamper-proof against root. Execution claims are committed
 before effects. Pending requests expire on restart; an in-progress action is
 marked uncertain and never replayed.
+
+The request socket also permits its authenticated owner to cancel pending or
+approved requests. Cancellation shares the execution-claim lock and commits a
+`cancelled` state and UID-attributed event before responding. It cannot cancel
+another UID's request or an action already claimed by the worker. Cancelled
+requests remain terminal across broker restarts and stale browser decisions;
+cancellation does not erase audit records or reset the hourly request quota.
 
 There can be eight outstanding requests and 30 requests per UID per hour. The
 database capacity is bounded and fails closed. Archive it as root with the

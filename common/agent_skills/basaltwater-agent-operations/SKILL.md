@@ -104,6 +104,13 @@ already work without this approval flow. See
 [Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/PRIVILEGE_APPROVALS.md)
 for the supported actions and portal setup.
 
+If the action becomes unnecessary, use
+`basaltw agent privilege cancel REQUEST_ID --json`.
+It withdraws your pending or approved request until the
+worker claims execution. Already expired requests stay expired; claimed actions
+cannot be stopped or undone by cancellation. A cancelled request needs no
+operator approval and remains in the audit history.
+
 ## Credential rotation
 
 Inspect credential status from the controller. Start a login only when the

@@ -131,6 +131,19 @@ class Broker:
                 raise PermissionError("Request unavailable")
             return result
 
+    def cancel(self, request_id: str, uid: int) -> dict:
+        """Withdraw an owned request before the worker claims execution."""
+        with self.lock, self.db:
+            self._expire()
+            row = self._get(request_id)
+            if row["uid"] != uid:
+                raise PermissionError("Request unavailable")
+            if row["state"] in {"pending", "approved"}:
+                self._transition(request_id, "cancelled", f"uid:{uid}")
+            elif row["state"] not in {"cancelled", "expired", "denied", "invalidated"}:
+                raise ValueError("Execution was already claimed; cancellation cannot undo the action")
+            return self._get(request_id)
+
     def decide(self, request_id: str, fingerprint: str, approve: bool, actor: str) -> dict:
         if not isinstance(actor, str) or not actor or len(actor) > 128 or any(ord(c) < 32 for c in actor):
             raise ValueError("Invalid approver identity")
@@ -188,6 +201,8 @@ class Broker:
                                       "state": row["state"], "operation": json.loads(row["plan"])["operation"]} for row in rows]}
         if action == "status" and set(message) == {"action", "id"}:
             return self.status(message["id"], None if approval else uid)
+        if not approval and action == "cancel" and set(message) == {"action", "id"}:
+            return self.cancel(message["id"], uid)
         if not approval and action == "request" and set(message) == {"action", "operation", "parameters", "reason"}:
             return self.request(uid, message["operation"], message["parameters"], message["reason"])
         if approval and action == "decide" and set(message) == {"action", "id", "digest", "approve", "actor"}:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import copy
+from contextlib import redirect_stdout
 import io
 import json
 import os
@@ -13,6 +15,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from common.service_tools.privilege_broker import Broker, Handler, execute
+from lib.privilege_client import add_privilege_parser, run_privilege_command
 from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan, validate_policy
 
 
@@ -55,6 +58,70 @@ class BrokerTests(unittest.TestCase):
             self.broker.status(request["id"], 1001)
         with self.assertRaises(PermissionError):
             self.broker.request(1001, "system.reboot", {}, "test")
+
+    def test_owner_cancellation_is_durable_and_rejects_stale_approval(self):
+        request = self.request()
+        result = self.broker.dispatch({"action": "cancel", "id": request["id"]}, 1000)
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(result["actor"], "uid:1000")
+        self.assertEqual(self.broker.cancel(request["id"], 1000)["state"], "cancelled")
+        with self.assertRaises(ValueError):
+            self.broker.decide(request["id"], request["digest"], True, "operator")
+        self.broker.db.close()
+        self.broker = Broker(self.path, lambda: self.policy, self.runner)
+        self.assertEqual(self.broker.status(request["id"])["state"], "cancelled")
+        self.assertFalse(self.broker.execute_next())
+        self.runner.assert_not_called()
+        events = self.broker.db.execute("SELECT state FROM events ORDER BY sequence").fetchall()
+        self.assertEqual([row[0] for row in events], ["pending", "cancelled"])
+
+    def test_cancellation_can_withdraw_approval_but_cannot_impersonate_an_owner(self):
+        request = self.request()
+        for message, uid, approval in (
+            ({"action": "cancel", "id": request["id"]}, 1001, False),
+            ({"action": "cancel", "id": request["id"], "uid": 1000}, 1000, False),
+            ({"action": "cancel", "id": request["id"]}, 1000, True),
+        ):
+            with self.subTest(message=message, uid=uid), self.assertRaises(PermissionError):
+                self.broker.dispatch(message, uid, approval=approval)
+        self.broker.decide(request["id"], request["digest"], True, "operator")
+        self.assertEqual(self.broker.cancel(request["id"], 1000)["state"], "cancelled")
+        self.assertFalse(self.broker.execute_next())
+        self.runner.assert_not_called()
+
+    def test_cancellation_cannot_stop_or_relabel_a_claimed_action(self):
+        request = self.request()
+        self.broker.decide(request["id"], request["digest"], True, "operator")
+        started, release = threading.Event(), threading.Event()
+        def run(plan):
+            started.set()
+            release.wait(5)
+            return "succeeded"
+        self.broker.runner = run
+        worker = threading.Thread(target=self.broker.execute_next)
+        worker.start()
+        try:
+            self.assertTrue(started.wait(5))
+            with self.assertRaisesRegex(ValueError, "claimed"):
+                self.broker.cancel(request["id"], 1000)
+            self.assertEqual(self.broker.status(request["id"])["state"], "executing")
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+        with self.assertRaisesRegex(ValueError, "claimed"):
+            self.broker.cancel(request["id"], 1000)
+        self.assertEqual(self.broker.status(request["id"])["state"], "succeeded")
+
+    def test_expired_cancellation_is_a_noop_and_cancellation_keeps_hourly_quota(self):
+        request = self.request()
+        with patch("common.service_tools.privilege_broker.time.time", return_value=request["expires"] + 1):
+            self.assertEqual(self.broker.cancel(request["id"], 1000)["state"], "expired")
+        for _ in range(29):
+            self.broker.cancel(self.request()["id"], 1000)
+        with self.assertRaisesRegex(ValueError, "quota"):
+            self.request()
+        self.runner.assert_not_called()
 
     def test_no_caller_supplied_commands_or_extra_fields(self):
         for operation, parameters in (("shell", {}), ("system.reboot", {"argv": ["sh"]}),
@@ -182,6 +249,31 @@ class PolicyTests(unittest.TestCase):
             candidate[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_policy(candidate)
+
+
+class ClientTests(unittest.TestCase):
+    def arguments(self, action):
+        parser = argparse.ArgumentParser()
+        add_privilege_parser(parser.add_subparsers(dest="command"))
+        return parser.parse_args(["privilege", action, "a" * 32, "--json"])
+
+    @patch("lib.privilege_client.exchange")
+    def test_cancel_dispatch_and_already_closed_exit_status(self, exchange):
+        for state in ("cancelled", "expired", "denied", "invalidated"):
+            exchange.return_value = {"id": "a" * 32, "state": state}
+            with self.subTest(state=state), redirect_stdout(output := io.StringIO()):
+                self.assertEqual(run_privilege_command(self.arguments("cancel")), 0)
+            self.assertEqual(json.loads(output.getvalue())["state"], state)
+            exchange.assert_called_with({"action": "cancel", "id": "a" * 32})
+
+    @patch("lib.privilege_client.exchange")
+    @patch("lib.privilege_client.time.sleep")
+    def test_wait_stops_on_cancellation_with_an_unsuccessful_result(self, sleep, exchange):
+        exchange.return_value = {"id": "a" * 32, "state": "cancelled"}
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run_privilege_command(self.arguments("wait")), 1)
+        sleep.assert_not_called()
+        exchange.assert_called_once_with({"action": "status", "id": "a" * 32})
 
 
 class TransportTests(unittest.TestCase):

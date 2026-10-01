@@ -64,6 +64,23 @@ request; an interrupted execution is marked uncertain and is never retried.
 Check status before submitting a replacement request. A reboot reported as
 `dispatched` is not proof that the VM returned.
 
+When an action is no longer needed, withdraw your own request without an
+operator approval:
+
+```bash
+basaltw agent privilege cancel REQUEST_ID --json
+```
+
+Cancellation prevents a pending or approved request from executing if the
+worker has not claimed it yet. It is recorded as `cancelled` in the audit
+history and cannot be approved again. Repeating cancellation is safe; already
+expired, denied, or invalidated requests retain their existing state. The
+command rejects a request whose execution was claimed, including one that has
+finished; it cannot stop a running action or undo its effects. `wait` exits
+unsuccessfully for a cancelled action, while `cancel` succeeds for a cancelled
+or already closed, unexecuted request. Setup must refresh both the CLI and the
+broker before using this command on an existing VM.
+
 When the optional [web panel](WEB_PANEL.md) is installed, its **Services** area
 links to the approval page. The panel has a different password and cannot read
 approval credentials or approve requests.

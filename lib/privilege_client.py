@@ -39,7 +39,7 @@ def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
                          help="Exact command and arguments; place after --command")
     request.add_argument("--reason", required=True, help="Explain why the operation is needed")
     request.add_argument("--json", action="store_true")
-    for name in ("status", "wait"):
+    for name in ("status", "wait", "cancel"):
         sub = actions.add_parser(name)
         sub.add_argument("request_id")
         sub.add_argument("--json", action="store_true")
@@ -69,6 +69,8 @@ def run_privilege_command(args: argparse.Namespace) -> int:
                 raise ValueError("--command is required only for command.run")
             result = exchange({"action": "request", "operation": args.operation,
                                "parameters": ({"unit": args.unit} if args.unit else {"argv": args.privilege_argv} if args.privilege_argv else {}), "reason": args.reason})
+        elif args.privilege_command == "cancel":
+            result = exchange({"action": "cancel", "id": args.request_id})
         else:
             timeout = getattr(args, "timeout", 0)
             if not 0 <= timeout <= 900:
@@ -85,7 +87,9 @@ def run_privilege_command(args: argparse.Namespace) -> int:
             print(f"{result['id']}: {result['state']}")
             if result.get("review_url"):
                 print("Review on your own device: " + result["review_url"])
-        if result["state"] in {"denied", "failed", "uncertain", "expired", "invalidated"}:
+        if args.privilege_command == "cancel":
+            return 0 if result["state"] in {"cancelled", "expired", "denied", "invalidated"} else 1
+        if result["state"] in {"cancelled", "denied", "failed", "uncertain", "expired", "invalidated"}:
             return 1
         if args.privilege_command == "wait" and result["state"] in {"pending", "approved", "executing"}:
             return 2
