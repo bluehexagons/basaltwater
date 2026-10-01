@@ -79,7 +79,8 @@ not count as delivery. Delivery failures remain best effort and do not change
 the restart policy. Inspect the restart service journal for the deferral reason
 and delivery result; service success alone does not prove notification delivery.
 
-Restart checks refuse malformed policy instead of coercing strings or booleans
+Restart checks require a saved setup policy and refuse missing or malformed
+policy instead of coercing strings or booleans
 into restart authorization or deadlines. Deferral history in
 `/var/lib/basaltwater/auto_restart_state.json` is read as a bounded regular JSON
 file. Invalid timestamps, symlinks, special files, unreadable files, and files
@@ -87,6 +88,12 @@ over 1 MiB stop the check, report failure, and retain the file without schedulin
 a restart or resetting history. Restore a verified backup or explicitly
 quarantine it after reviewing the force deadline and notification history.
 Only a missing history file starts fresh.
+
+The restart job takes the same local lock as target setup. If setup or another
+protected maintenance job is running, it defers without scheduling a restart,
+even when a forced deadline has passed. This also protects first setup: timers
+may become due immediately when activated, but restart authorization is not
+available until successful setup has saved its policy.
 
 [HomeBox](HOMEBOX.md) retains its installed version on ordinary setup reruns.
 Select an immediate reviewed upgrade with `--homebox-version TAG`; the weekly

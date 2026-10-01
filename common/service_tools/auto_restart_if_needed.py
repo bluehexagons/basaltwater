@@ -22,6 +22,7 @@ from lib.agent_maintenance import inspect_agent_maintenance
 from lib.config import validate_current_setup_fields
 from lib.kernel_restart import newer_installed_kernel
 from lib.machine_state import can_restart_system, load_setup_config
+from lib.maintenance_lock import maintenance_lock
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.plugin_registry import get_system_type_definition
 from lib.state_read import StateReadError, read_state_object
@@ -210,15 +211,17 @@ def _timestamp(value: Any, default: float) -> float:
 
 def load_restart_policy() -> dict[str, Any]:
     """Load auto-restart policy from persisted setup config."""
-    config = load_setup_config() or {}
+    config = load_setup_config()
+    if not config:
+        raise ValueError("Saved setup policy is required before automatic restarts")
     validate_current_setup_fields(config)
     system_type = config.get("system_type")
-    defaults = None
-    if isinstance(system_type, str):
-        defaults = get_system_type_definition(system_type)
+    if not isinstance(system_type, str) or not system_type:
+        raise ValueError("Saved setup policy requires a system_type")
+    defaults = get_system_type_definition(system_type)
 
-    auto_restart = config.get("auto_restart", defaults.default_auto_restart if defaults else True)
-    force_days = config.get("auto_restart_force_days", defaults.default_auto_restart_force_days if defaults else 7)
+    auto_restart = config.get("auto_restart", defaults.default_auto_restart)
+    force_days = config.get("auto_restart_force_days", defaults.default_auto_restart_force_days)
     grace = config.get("auto_restart_grace", 5)
     if type(auto_restart) is not bool:
         raise ValueError("Saved auto_restart policy must be boolean")
@@ -434,8 +437,12 @@ def main() -> int:
     log_event(logger, "Starting restart check")
     notification_configs = load_notification_configs_from_state(logger)
     try:
-        return _check_restart(notification_configs)
-    except ValueError as exc:
+        with maintenance_lock() as acquired:
+            if not acquired:
+                log_event(logger, "Restart check deferred while setup or maintenance is running")
+                return 0
+            return _check_restart(notification_configs)
+    except (OSError, ValueError) as exc:
         log_event(logger, "Restart check stopped", level=ERROR, error=str(exc))
         send_notification_safe(
             notification_configs, subject="Error: restart check stopped",

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,6 +17,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from common.service_tools import auto_restart_if_needed
 from lib.state_read import StateReadError
+
+
+def setUpModule():
+    lock = patch.object(auto_restart_if_needed, "maintenance_lock", side_effect=lambda: nullcontext(True))
+    lock.start()
+    unittest.addModuleCleanup(lock.stop)
 
 
 class TestAutoRestartIfNeeded(unittest.TestCase):
@@ -304,6 +311,29 @@ class TestRestartPolicy(unittest.TestCase):
     def setUp(self):
         root = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')))
+
+    def test_missing_or_incomplete_policy_cannot_authorize_restart(self):
+        for config in (None, {}, {"auto_restart": True}):
+            with (
+                self.subTest(config=config),
+                patch.object(auto_restart_if_needed, "load_setup_config", return_value=config),
+                patch.object(auto_restart_if_needed, "check_restart_required", return_value=True),
+                patch.object(auto_restart_if_needed, "can_restart_system", return_value=True),
+                patch.object(auto_restart_if_needed, "load_notification_configs_from_state", return_value=[]),
+                patch.object(auto_restart_if_needed, "send_notification_safe"),
+                patch.object(auto_restart_if_needed, "perform_restart") as restart,
+            ):
+                self.assertEqual(auto_restart_if_needed.main(), 1)
+                restart.assert_not_called()
+
+    def test_setup_lock_defers_even_an_authorized_forced_restart(self):
+        with (
+            patch.object(auto_restart_if_needed, "maintenance_lock", return_value=nullcontext(False)),
+            patch.object(auto_restart_if_needed, "load_notification_configs_from_state", return_value=[]),
+            patch.object(auto_restart_if_needed, "_check_restart") as check,
+        ):
+            self.assertEqual(auto_restart_if_needed.main(), 0)
+            check.assert_not_called()
 
     @patch('common.service_tools.auto_restart_if_needed.load_setup_config', return_value={'no_restart': True})
     @patch('common.service_tools.auto_restart_if_needed.check_restart_required', return_value=True)
