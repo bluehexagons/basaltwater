@@ -297,15 +297,24 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
 
 
 class TestRestartPolicy(unittest.TestCase):
+    @patch('common.service_tools.auto_restart_if_needed.load_setup_config', return_value={'no_restart': True})
+    @patch('common.service_tools.auto_restart_if_needed.check_restart_required', return_value=True)
+    @patch('common.service_tools.auto_restart_if_needed.can_restart_system', return_value=True)
+    @patch('common.service_tools.auto_restart_if_needed.load_notification_configs_from_state', return_value=[])
+    @patch('common.service_tools.auto_restart_if_needed.perform_restart')
+    def test_retired_policy_stops_restart_check(self, restart, _notifications, _capability, _marker, _config):
+        self.assertEqual(auto_restart_if_needed.main(), 1)
+        restart.assert_not_called()
+
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"auto_restart": False, "username": "u", "system_type": "server_lite"})
     def test_reads_configured_auto_restart(self, _load):
         policy = auto_restart_if_needed.load_restart_policy()
         self.assertFalse(policy["auto_restart"])
 
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"no_restart": True, "username": "u", "system_type": "server_lite"})
-    def test_maps_legacy_no_restart(self, _load):
-        policy = auto_restart_if_needed.load_restart_policy()
-        self.assertFalse(policy["auto_restart"])
+    def test_refuses_legacy_no_restart(self, _load):
+        with self.assertRaisesRegex(ValueError, 'docs/BASALTWATER_MIGRATION.md'):
+            auto_restart_if_needed.load_restart_policy()
 
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"username": "u", "system_type": "server_proxmox"})
     def test_uses_proxmox_defaults(self, _load):

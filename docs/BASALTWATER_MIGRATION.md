@@ -41,6 +41,17 @@ That version moves the state into `/var/lib/basaltwater` and installs the
 runtime link. Review any retained `setup-operation.pre-persistence.json` and
 resolve unfinished operations before resuming setup with the current version.
 
+Saved configuration translation is also retired. Current setup refuses old
+`privilege_broker` origins, `no_restart`, the removed `rdp_max_sessions`,
+`rdp_kill_disconnected`, and `rdp_disconnected_timeout` policy fields, and removed
+Ruby, API-subdomain, desktop-interface, and Syncthing topology fields. Cache
+files are retained, and automatic restart checks refuse those old policies.
+Use this same intermediate checkout for the normal saved-configuration
+setup/deploy flow and verify the resulting settings before upgrading. It writes
+`privilege_broker_port` and `auto_restart`, removes obsolete fields, and applies
+the current persistent desktop-session policy. Review that policy change before
+resuming desktop work. Do not delete saved configurations to bypass this check.
+
 For a system installation, perform the system pass first on that host:
 
 ```bash

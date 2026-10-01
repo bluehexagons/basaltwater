@@ -6,7 +6,6 @@ import argparse
 import ipaddress
 import shlex
 import socket
-import warnings
 from dataclasses import dataclass, asdict
 from functools import lru_cache
 from typing import Optional, cast
@@ -49,6 +48,27 @@ _LAN_IPV4_BLOCKS = (
 )
 _LAN_IPV6_BLOCK = ipaddress.ip_network("fc00::/7")
 _DEFAULT_LAN_PREFIX_LENGTHS = {4: 24, 6: 64}
+
+
+class RetiredSetupConfigError(ValueError):
+    """Saved configuration requires the retired intermediate upgrade path."""
+
+
+def validate_current_setup_fields(data: JSONDict) -> None:
+    """Refuse retired fields instead of silently translating saved policy."""
+    retired = {
+        'privilege_broker', 'rdp_max_sessions', 'rdp_kill_disconnected',
+        'rdp_disconnected_timeout', 'no_restart', 'install_ruby',
+        'reset_migrations', 'api_subdomain', 'desktop_interfaces',
+        'syncthing_devices', 'syncthing_folders', 'syncthing_versioning',
+    }
+    found = sorted(retired.intersection(data))
+    if found:
+        raise RetiredSetupConfigError(
+            'Retired setup fields: ' + ', '.join(found)
+            + '. Resave configuration using the intermediate version in '
+            'docs/BASALTWATER_MIGRATION.md before upgrading.'
+        )
 
 
 def _is_lan_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -1248,9 +1268,6 @@ class SetupConfig:
             flag = "--deploy-latest" if self.deploy_latest else "--deploy"
             for deploy_spec, git_url in self.deploy_specs:
                 args.append(f"{flag} {shlex.quote(deploy_spec)} {shlex.quote(git_url)}")
-        elif self.deploy_latest:
-            # deploy_latest without specs doesn't make sense, but keep for backward compat
-            args.append("--deploy-latest")
         
         if self.enable_ssl:
             args.append("--ssl")
@@ -1804,9 +1821,6 @@ class SetupConfig:
             flag = "--deploy-latest" if self.deploy_latest else "--deploy"
             for deploy_spec, git_url in self.deploy_specs:
                 cmd_parts.append(f"{flag} {shlex.quote(deploy_spec)} {shlex.quote(git_url)}")
-        elif self.deploy_latest:
-            # deploy_latest without specs doesn't make sense, but keep for backward compat
-            cmd_parts.append("--deploy-latest")
         
         # SSL
         if self.enable_ssl:
@@ -2085,48 +2099,13 @@ class SetupConfig:
     
     @classmethod
     def from_dict(cls, host: str, system_type: str, data: JSONDict) -> 'SetupConfig':
+        validate_current_setup_fields(data)
         data = dict(data)
-        legacy_privilege_broker = data.pop('privilege_broker', None)
-        if legacy_privilege_broker is not None:
-            from lib.privilege_setup import legacy_privilege_broker_port
-
-            legacy_port = legacy_privilege_broker_port(legacy_privilege_broker)
-            configured_port = data.get('privilege_broker_port')
-            if configured_port is not None and configured_port != legacy_port:
-                raise ValueError("Conflicting legacy and managed privilege broker ports")
-            data['privilege_broker_port'] = legacy_port
-        retired = {
-            "rdp_max_sessions": (None, 1, 10),
-            "rdp_kill_disconnected": (None, False),
-            "rdp_disconnected_timeout": (None, 0),
-        }
-        changed = [key for key, defaults in retired.items() if data.get(key) not in defaults]
-        if changed:
-            warnings.warn(
-                "Migrating legacy desktop policy to one persistent session; removed: "
-                + ", ".join(changed),
-                UserWarning,
-                stacklevel=2,
-            )
-        for key in retired:
-            data.pop(key, None)
         # Older cache entries may contain this one-shot flag. Never replay a
         # sensitive live handoff merely because a saved configuration is
         # loaded for deploy, patch, or reconstruction.
         data.pop('activate_network', None)
         data.pop('disable_syncthing', None)
-        # Ignore removed feature fields when loading older saved setup state so
-        # upgrades remain usable.
-        for removed_field in (
-            'install_ruby',
-            'reset_migrations',
-            'api_subdomain',
-            'desktop_interfaces',
-            'syncthing_devices',
-            'syncthing_folders',
-            'syncthing_versioning',
-        ):
-            data.pop(removed_field, None)
         tags_str = data.get('tags')
         if tags_str and isinstance(tags_str, str):
             data['tags'] = [tag.strip() for tag in tags_str.split(',') if tag.strip()]
@@ -2186,12 +2165,7 @@ class SetupConfig:
         ):
             data['agent_auth_source'] = system_defaults.default_agent_auth_source
         if 'auto_restart' not in data or data.get('auto_restart') is None:
-            if 'no_restart' in data and data.get('no_restart') is not None:
-                data['auto_restart'] = not bool(data.pop('no_restart'))
-            else:
-                data['auto_restart'] = system_defaults.default_auto_restart
-        else:
-            data.pop('no_restart', None)
+            data['auto_restart'] = system_defaults.default_auto_restart
         if 'auto_restart_force_days' not in data or data.get('auto_restart_force_days') is None:
             data['auto_restart_force_days'] = system_defaults.default_auto_restart_force_days
         data['auto_restart_force_days'] = _validate_non_negative_int(

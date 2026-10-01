@@ -11,7 +11,7 @@ from dataclasses import asdict
 from typing import Optional, Any
 
 from lib.state_read import StateReadError, read_state_object
-from lib.config import SetupConfig
+from lib.config import RetiredSetupConfigError, SetupConfig
 from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
 from lib.validators import validate_username
@@ -255,6 +255,8 @@ def _load_cache_file(cache_path: str, host: str) -> Optional[SetupConfig]:
         if config.tags is not None and (not isinstance(config.tags, list) or not all(isinstance(tag, str) for tag in config.tags)):
             raise ValueError("Invalid tags")
         return config
+    except RetiredSetupConfigError as exc:
+        raise StateReadError(cache_path, str(exc)) from exc
     except (KeyError, ValueError, TypeError, AttributeError) as exc:
         raise StateReadError(cache_path, "invalid setup arguments") from exc
 

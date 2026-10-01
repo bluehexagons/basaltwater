@@ -122,14 +122,12 @@ class TestSetupConfigToDict(unittest.TestCase):
 
 
 class TestSetupConfigFromDict(unittest.TestCase):
-    def test_legacy_desktop_policy_migrates_without_mutating_saved_input(self):
+    def test_legacy_desktop_policy_is_refused_without_mutating_saved_input(self):
         data = {'username': 'agent', 'rdp_max_sessions': 3,
                 'rdp_kill_disconnected': True, 'rdp_disconnected_timeout': 60}
-        with self.assertWarns(UserWarning):
-            config = SetupConfig.from_dict('vm', 'agent_workstation', data)
+        with self.assertRaisesRegex(ValueError, 'docs/BASALTWATER_MIGRATION.md'):
+            SetupConfig.from_dict('vm', 'agent_workstation', data)
         self.assertEqual(data['rdp_max_sessions'], 3)
-        for name in ('rdp_max_sessions', 'rdp_kill_disconnected', 'rdp_disconnected_timeout'):
-            self.assertNotIn(name, config.to_dict())
 
     def test_from_dict_basic(self):
         data = {'username': 'testuser', 'timezone': 'UTC'}
@@ -153,7 +151,7 @@ class TestSetupConfigFromDict(unittest.TestCase):
         config = SetupConfig.from_dict('h', 'server_lite', data)
         self.assertIsNone(config.friendly_name)
 
-    def test_from_dict_ignores_removed_feature_fields(self):
+    def test_from_dict_rejects_removed_feature_fields(self):
         data = {
             'username': 'u',
             'install_ruby': True,
@@ -162,15 +160,11 @@ class TestSetupConfigFromDict(unittest.TestCase):
             'desktop_interfaces': ['t3code'],
         }
 
-        config = SetupConfig.from_dict('h', 'server_web', data)
-
-        self.assertNotIn('install_ruby', config.to_dict())
-        self.assertNotIn('reset_migrations', config.to_dict())
-        self.assertNotIn('api_subdomain', config.to_dict())
-        self.assertNotIn('desktop_interfaces', config.to_dict())
+        with self.assertRaisesRegex(ValueError, 'Retired setup fields'):
+            SetupConfig.from_dict('h', 'server_web', data)
 
     def test_from_dict_rejects_invalid_legacy_privilege_broker_origin(self):
-        with self.assertRaisesRegex(ValueError, 'Legacy privilege broker origin'):
+        with self.assertRaisesRegex(ValueError, 'Retired setup fields: privilege_broker'):
             SetupConfig.from_dict(
                 'vm.example', 'agent_vm',
                 {'username': 'agent', 'privilege_broker': 'http://vm.example:9444'},
@@ -305,10 +299,11 @@ class TestSetupConfigToRemoteArgs(unittest.TestCase):
 
     def test_deploy_latest(self):
         config = self._make_config(deploy_latest=True)
-        args = config.to_remote_args()
-        self.assertIn('--deploy-latest', args)
-        args = config.to_setup_command()
-        self.assertIn('--deploy-latest', args)
+        self.assertNotIn('--deploy-latest', config.to_remote_args())
+        self.assertNotIn('--deploy-latest', config.to_setup_command())
+        config.deploy_specs = [['example.com/', 'https://github.com/user/repo.git']]
+        self.assertIn('--deploy-latest example.com/ https://github.com/user/repo.git', config.to_remote_args())
+        self.assertIn('--deploy-latest example.com/ https://github.com/user/repo.git', config.to_setup_command())
         self.assertNotIn('deploy_latest', config.to_dict())
 
     def test_sync_specs(self):
@@ -794,13 +789,10 @@ class TestSetupConfigFromArgs(unittest.TestCase):
         self.assertFalse(config.auto_restart)
         self.assertEqual(config.auto_restart_force_days, 0)
 
-    def test_from_dict_maps_legacy_no_restart(self):
-        config = SetupConfig.from_dict(
-            'server1',
-            'server_lite',
-            {'username': 'root', 'no_restart': True},
-        )
-        self.assertFalse(config.auto_restart)
+    def test_from_dict_refuses_legacy_no_restart_even_with_current_policy(self):
+        for policy in ({'no_restart': True}, {'no_restart': None, 'auto_restart': False}):
+            with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, 'Retired setup fields: no_restart'):
+                SetupConfig.from_dict('server1', 'server_lite', {'username': 'root', **policy})
 
 
 class TestSetupConfigHostedFields(unittest.TestCase):

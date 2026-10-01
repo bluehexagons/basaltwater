@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.agent_maintenance import inspect_agent_maintenance
+from lib.config import RetiredSetupConfigError, validate_current_setup_fields
 from lib.kernel_restart import newer_installed_kernel
 from lib.machine_state import can_restart_system, load_setup_config
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
@@ -210,14 +211,13 @@ def _timestamp(value: Any, default: float) -> float:
 def load_restart_policy() -> dict[str, Any]:
     """Load auto-restart policy from persisted setup config."""
     config = load_setup_config() or {}
+    validate_current_setup_fields(config)
     system_type = config.get("system_type")
     defaults = None
     if isinstance(system_type, str):
         defaults = get_system_type_definition(system_type)
 
     auto_restart = bool(config.get("auto_restart", defaults.default_auto_restart if defaults else True))
-    if "auto_restart" not in config and "no_restart" in config:
-        auto_restart = not bool(config.get("no_restart"))
 
     return {
         "auto_restart": auto_restart,
@@ -382,7 +382,11 @@ def main() -> int:
         record_deferral("machine type cannot restart itself", notification_configs)
         return 0
 
-    policy = load_restart_policy()
+    try:
+        policy = load_restart_policy()
+    except RetiredSetupConfigError as exc:
+        log_event(logger, "Restart policy requires an intermediate upgrade", level=ERROR, error=str(exc))
+        return 1
     uptime = get_uptime_seconds()
     if uptime is None:
         record_deferral("system uptime could not be determined", notification_configs)
