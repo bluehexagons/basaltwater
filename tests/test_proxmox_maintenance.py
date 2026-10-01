@@ -15,6 +15,7 @@ from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_maintenance import (
     ProxmoxMaintenanceReport,
     collect_maintenance_report,
+    collect_local_maintenance_report,
     format_maintenance_report,
 )
 
@@ -51,6 +52,15 @@ def _healthy_memory_diagnostics() -> list[subprocess.CompletedProcess[str]]:
 class TestCollectMaintenanceReport(unittest.TestCase):
     def setUp(self) -> None:
         self.host = ProxmoxHost(name="pve1", address="10.0.0.10")
+
+    @patch("lib.proxmox_maintenance._run")
+    @patch("lib.proxmox_maintenance.run", side_effect=TimeoutError("local command timed out"))
+    def test_local_probe_uses_no_ssh_and_fails_closed(self, local, remote) -> None:
+        report = collect_local_maintenance_report()
+        self.assertFalse(report.healthy)
+        self.assertIn("local command timed out", report.errors[0])
+        remote.assert_not_called()
+        self.assertEqual(local.call_args.args[0], "hostname -s")
 
     @patch("lib.proxmox_maintenance._run")
     def test_collects_healthy_standalone_node(self, mock_run) -> None:

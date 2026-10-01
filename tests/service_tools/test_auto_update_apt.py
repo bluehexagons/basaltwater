@@ -6,11 +6,22 @@ import os
 import subprocess
 import sys
 import unittest
+from contextlib import nullcontext
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from common.service_tools import auto_update_apt
+
+
+def setUpModule() -> None:
+    for target, kwargs in (
+        ("maintenance_lock", {"side_effect": lambda: nullcontext(True)}),
+        ("is_proxmox_host", {"return_value": False}),
+    ):
+        mocker = patch(f"common.service_tools.auto_update_apt.{target}", **kwargs)
+        mocker.start()
+        unittest.addModuleCleanup(mocker.stop)
 
 
 class TestAutoUpdateApt(unittest.TestCase):
@@ -90,6 +101,54 @@ class TestAutoUpdateApt(unittest.TestCase):
         self.assertFalse(ok)
         mock_run.assert_not_called()
         self.assertIn("Debian APT source preflight failed", "\n".join(logs.output))
+
+
+class TestProxmoxUpdateGates(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch.object(auto_update_apt, "is_proxmox_host", return_value=True))
+        self.enterContext(patch.object(auto_update_apt, "load_notification_configs_from_state", return_value=["cfg"]))
+        self.notify = self.enterContext(patch.object(auto_update_apt, "send_notification_safe"))
+        self.installation = self.enterContext(patch.object(auto_update_apt, "check_proxmox_installation"))
+        self.health = self.enterContext(patch.object(auto_update_apt, "check_proxmox_update_safety"))
+        self.candidate = self.enterContext(patch.object(auto_update_apt, "check_proxmox_upgrade_candidate"))
+        self.refresh = self.enterContext(patch.object(auto_update_apt, "update_package_lists", return_value=True))
+        self.upgrade = self.enterContext(patch.object(auto_update_apt, "upgrade_packages", return_value=(True, "")))
+
+    def test_health_rechecked_after_refresh_and_after_upgrade(self) -> None:
+        events = []
+        self.health.side_effect = lambda: events.append("health")
+        self.refresh.side_effect = lambda **_: events.append("refresh") or True
+        self.upgrade.side_effect = lambda: (events.append("upgrade") or True, "")
+        self.assertEqual(auto_update_apt.main(), 0)
+        self.assertEqual(events, ["health", "refresh", "health", "upgrade", "health"])
+        self.refresh.assert_called_once_with(repair_sources=False)
+        self.candidate.assert_called_once()
+        self.assertEqual(self.installation.call_count, 2)
+
+    def test_busy_setup_defers_all_package_commands(self) -> None:
+        with patch.object(auto_update_apt, "maintenance_lock", side_effect=lambda: nullcontext(False)):
+            self.assertEqual(auto_update_apt.main(), 0)
+        self.installation.assert_not_called()
+        self.refresh.assert_not_called()
+        self.upgrade.assert_not_called()
+
+    def test_new_backup_after_refresh_prevents_upgrade(self) -> None:
+        self.health.side_effect = [None, RuntimeError("1 active Proxmox task(s)")]
+        self.assertEqual(auto_update_apt.main(), 1)
+        self.upgrade.assert_not_called()
+        self.assertIn("active Proxmox task", self.notify.call_args.kwargs["message"])
+
+    def test_unsupported_repository_prevents_refresh(self) -> None:
+        self.installation.side_effect = RuntimeError("Unsupported Proxmox repository")
+        self.assertEqual(auto_update_apt.main(), 1)
+        self.refresh.assert_not_called()
+        self.upgrade.assert_not_called()
+
+    def test_post_upgrade_failure_is_not_reported_as_success(self) -> None:
+        self.health.side_effect = [None, None, RuntimeError("Core service pveproxy is failed")]
+        self.assertEqual(auto_update_apt.main(), 1)
+        self.upgrade.assert_called_once()
+        self.assertIn("pveproxy", self.notify.call_args.kwargs["message"])
 
 
 class TestRunAptCommand(unittest.TestCase):

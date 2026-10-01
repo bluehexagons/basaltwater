@@ -25,6 +25,7 @@ from lib.machine_state import can_restart_system, load_setup_config
 from lib.maintenance_lock import maintenance_lock
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.plugin_registry import get_system_type_definition
+from lib.proxmox_preflight import check_proxmox_update_safety, is_proxmox_host
 from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
 
@@ -429,6 +430,12 @@ def _check_restart(notification_configs) -> int:
         )
         return 0
 
+    if is_proxmox_host():
+        try:
+            check_proxmox_update_safety(require_evacuated=True)
+        except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            record_deferral(str(exc), notification_configs)
+            return 0
     return perform_restart(notification_configs, int(policy["grace"]), forced=forced)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from lib.proxmox_memory import (
@@ -13,6 +14,8 @@ from lib.proxmox_memory import (
     parse_swapon_output,
 )
 from lib.remote_utils import is_dry_run, run
+from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
+from lib.proxmox_preflight import check_proxmox_installation
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -28,6 +31,30 @@ _APPLY_SWAPPINESS_COMMAND = (
 _NODE_CONFIG_COMMAND = (
     "pvesh get /nodes/$(hostname -s)/config --output-format json"
 )
+
+
+def preflight_proxmox(config: SetupConfig) -> None:
+    """Validate the supported release and APT access before host setup changes."""
+    if config.harden_user:
+        raise ValueError(
+            "--harden-user is incompatible with Proxmox root SSH forwarding; "
+            "omit it to preserve cluster migration, replication, and console access"
+        )
+    if is_dry_run():
+        print("  Would verify Proxmox VE 9.2, Debian trixie, and stable APT repositories")
+        return
+    check_proxmox_installation()
+    refreshed = run(
+        shlex.join(["apt-get", "update"] + APT_LOCK_OPTIONS + APT_UPDATE_OPTIONS),
+        check=False, capture_output=True,
+    )
+    if refreshed.returncode != 0:
+        raise RuntimeError(
+            "Proxmox repository refresh failed; check signatures, network access, "
+            "and subscription validity for enabled enterprise repositories: "
+            + (refreshed.stderr or refreshed.stdout or "unknown APT error").strip()
+        )
+    print("  ✓ Supported Proxmox installation and repository access verified")
 
 
 def configure_proxmox_host_memory_safety(config: SetupConfig) -> None:

@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from dataclasses import asdict, dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_manage import ContainerInfo, _parse_pct_list, _parse_qm_list
@@ -16,6 +16,7 @@ from lib.proxmox_memory import (
     parse_swapon_output,
 )
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
+from lib.remote_utils import run
 
 
 MIN_ROOT_FREE_BYTES = 4 * 1024 ** 3
@@ -32,6 +33,7 @@ _PREVIOUS_BOOT_PATTERN = (
     "nvme.*reset|ata.*error|zfs.*(error|fault)|mce|edac|"
     "hardware error|thermal"
 )
+CommandRunner = Callable[[ProxmoxHost, str], subprocess.CompletedProcess[str]]
 
 
 @dataclass
@@ -160,9 +162,10 @@ def _parse_storage_states(stdout: str) -> dict[str, str]:
 def _collect_memory_diagnostics(
     host: ProxmoxHost,
     report: ProxmoxMaintenanceReport,
+    run_command: CommandRunner,
 ) -> None:
     """Add read-only host memory and previous-boot diagnostics to an audit."""
-    node_status = _run(
+    node_status = run_command(
         host,
         "pvesh get /nodes/$(hostname -s)/status --output-format json",
     )
@@ -195,7 +198,7 @@ def _collect_memory_diagnostics(
             ):
                 report.warnings.append("Host swap use is at least 50%")
 
-    swap_status = _run(host, SWAPON_STATUS_COMMAND)
+    swap_status = run_command(host, SWAPON_STATUS_COMMAND)
     if swap_status.returncode != 0:
         report.warnings.append(
             f"Could not inspect host swap devices: {_failure_detail(swap_status)}"
@@ -213,7 +216,7 @@ def _collect_memory_diagnostics(
                 + ", ".join(zfs_devices)
             )
 
-    swappiness = _run(host, "sysctl -n vm.swappiness")
+    swappiness = run_command(host, "sysctl -n vm.swappiness")
     if swappiness.returncode != 0:
         report.warnings.append(
             f"Could not inspect vm.swappiness: {_failure_detail(swappiness)}"
@@ -229,7 +232,7 @@ def _collect_memory_diagnostics(
                     f"vm.swappiness is {report.swappiness}; Proxmox host policy is 10"
                 )
 
-    boots = _run(host, "journalctl --list-boots --no-pager")
+    boots = run_command(host, "journalctl --list-boots --no-pager")
     if boots.returncode != 0:
         report.previous_boot_available = None
         report.warnings.append(
@@ -245,7 +248,7 @@ def _collect_memory_diagnostics(
                 "Previous boot journal is unavailable; forced-lockup evidence may be lost"
             )
 
-    findings = _run(
+    findings = run_command(
         host,
         "journalctl -b -1 -k --no-pager -o short-monotonic "
         f"| grep -Ei '{_PREVIOUS_BOOT_PATTERN}' | tail -n 40",
@@ -260,22 +263,25 @@ def _collect_memory_diagnostics(
         )
 
 
-def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
+def collect_maintenance_report(
+    host: ProxmoxHost, *, command_runner: CommandRunner | None = None,
+) -> ProxmoxMaintenanceReport:
     """Collect a read-only maintenance preflight report for ``host``."""
     report = ProxmoxMaintenanceReport(host_name=host.name, address=host.address)
+    run_command = command_runner or _run
 
     try:
-        identity = _run(host, "hostname -s")
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        report.errors.append(f"SSH probe failed: {exc}")
+        identity = run_command(host, "hostname -s")
+    except (OSError, TimeoutError, subprocess.TimeoutExpired) as exc:
+        report.errors.append(f"Node probe failed: {exc}")
         return report
     if identity.returncode != 0 or not identity.stdout.strip():
-        report.errors.append(f"SSH probe failed: {_failure_detail(identity)}")
+        report.errors.append(f"Node probe failed: {_failure_detail(identity)}")
         return report
     report.node_name = identity.stdout.strip().splitlines()[0]
 
     try:
-        services = _run(host, "systemctl is-active " + " ".join(CORE_SERVICES))
+        services = run_command(host, "systemctl is-active " + " ".join(CORE_SERVICES))
         service_lines = [line.strip().lower() for line in services.stdout.splitlines()]
         if len(service_lines) != len(CORE_SERVICES):
             report.errors.append("Could not determine every core Proxmox service state")
@@ -285,10 +291,10 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
             if state != "active":
                 report.errors.append(f"Core service {service_name} is {state}")
 
-        cluster_config = _run(host, "test -s /etc/pve/corosync.conf")
+        cluster_config = run_command(host, "test -s /etc/pve/corosync.conf")
         if cluster_config.returncode == 0:
             report.clustered = True
-            cluster_status = _run(host, "pvecm status")
+            cluster_status = run_command(host, "pvecm status")
             if cluster_status.returncode != 0:
                 report.quorate = False
                 report.errors.append(
@@ -310,7 +316,7 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
                 f"Could not determine cluster membership: {_failure_detail(cluster_config)}"
             )
 
-        tasks = _run(
+        tasks = run_command(
             host,
             "pvenode task list --source active --output-format json",
         )
@@ -331,8 +337,8 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
                             f"{len(report.active_tasks)} active Proxmox task(s)"
                         )
 
-        pct_result = _run(host, "pct list")
-        qm_result = _run(host, "qm list")
+        pct_result = run_command(host, "pct list")
+        qm_result = run_command(host, "qm list")
         if pct_result.returncode != 0:
             report.errors.append(f"Could not list LXC guests: {_failure_detail(pct_result)}")
         if qm_result.returncode != 0:
@@ -352,7 +358,7 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
         if report.locked_guests:
             report.errors.append(f"{len(report.locked_guests)} locked guest(s)")
 
-        storage = _run(host, "pvesm status")
+        storage = run_command(host, "pvesm status")
         if storage.returncode != 0:
             report.errors.append(f"Could not read storage status: {_failure_detail(storage)}")
         else:
@@ -363,7 +369,7 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
                 if state != "active":
                     report.errors.append(f"Storage {storage_name} is {state}")
 
-        root_free = _run(host, "df -Pk / | awk 'NR==2 {print $4}'")
+        root_free = run_command(host, "df -Pk / | awk 'NR==2 {print $4}'")
         if root_free.returncode != 0:
             report.errors.append(f"Could not read root free space: {_failure_detail(root_free)}")
         else:
@@ -375,7 +381,7 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
                 if report.root_free_bytes < MIN_ROOT_FREE_BYTES:
                     report.errors.append("Root filesystem has less than 4 GiB free")
 
-        reboot_required = _run(host, "test -f /var/run/reboot-required")
+        reboot_required = run_command(host, "test -f /var/run/reboot-required")
         if reboot_required.returncode in (0, 1):
             report.reboot_required = reboot_required.returncode == 0
             if report.reboot_required:
@@ -384,11 +390,21 @@ def collect_maintenance_report(host: ProxmoxHost) -> ProxmoxMaintenanceReport:
             report.errors.append(
                 f"Could not check reboot-required state: {_failure_detail(reboot_required)}"
             )
-        _collect_memory_diagnostics(host, report)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        _collect_memory_diagnostics(host, report, run_command)
+    except (OSError, TimeoutError, subprocess.TimeoutExpired) as exc:
         report.errors.append(f"Maintenance probe failed: {exc}")
 
     return report
+
+
+def collect_local_maintenance_report() -> ProxmoxMaintenanceReport:
+    """Run the same maintenance checks locally without requiring SSH to self."""
+    def run_local(_host: ProxmoxHost, command: str) -> subprocess.CompletedProcess[str]:
+        return run(command, check=False, capture_output=True, timeout=60)
+
+    return collect_maintenance_report(
+        ProxmoxHost(name="localhost", address="127.0.0.1"), command_runner=run_local,
+    )
 
 
 def _format_bytes(value: Optional[int]) -> str:
@@ -466,5 +482,6 @@ __all__ = [
     "MIN_ROOT_FREE_BYTES",
     "ProxmoxMaintenanceReport",
     "collect_maintenance_report",
+    "collect_local_maintenance_report",
     "format_maintenance_report",
 ]

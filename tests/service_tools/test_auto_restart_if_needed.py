@@ -23,6 +23,9 @@ def setUpModule():
     lock = patch.object(auto_restart_if_needed, "maintenance_lock", side_effect=lambda: nullcontext(True))
     lock.start()
     unittest.addModuleCleanup(lock.stop)
+    host = patch.object(auto_restart_if_needed, "is_proxmox_host", return_value=False)
+    host.start()
+    unittest.addModuleCleanup(host.stop)
 
 
 class TestAutoRestartIfNeeded(unittest.TestCase):
@@ -311,6 +314,25 @@ class TestRestartPolicy(unittest.TestCase):
     def setUp(self):
         root = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')))
+
+    def test_forced_proxmox_restart_still_requires_evacuated_healthy_node(self):
+        with (
+            patch.object(auto_restart_if_needed, "check_restart_required", return_value=True),
+            patch.object(auto_restart_if_needed, "can_restart_system", return_value=True),
+            patch.object(auto_restart_if_needed, "load_restart_policy", return_value={"auto_restart": False, "force_days": 7, "grace": 5}),
+            patch.object(auto_restart_if_needed, "force_deadline_reached", return_value=True),
+            patch.object(auto_restart_if_needed, "get_uptime_seconds", return_value=3600),
+            patch.object(auto_restart_if_needed, "get_active_sessions", return_value=[]),
+            patch.object(auto_restart_if_needed, "get_active_agent_workloads", return_value=[]),
+            patch.object(auto_restart_if_needed, "is_proxmox_host", return_value=True),
+            patch.object(auto_restart_if_needed, "check_proxmox_update_safety", side_effect=RuntimeError("running guests: 100")) as safety,
+            patch.object(auto_restart_if_needed, "record_deferral") as defer,
+            patch.object(auto_restart_if_needed, "perform_restart") as restart,
+        ):
+            self.assertEqual(auto_restart_if_needed._check_restart([]), 0)
+            safety.assert_called_once_with(require_evacuated=True)
+            defer.assert_called_once_with("running guests: 100", [])
+            restart.assert_not_called()
 
     def test_missing_or_incomplete_policy_cannot_authorize_restart(self):
         for config in (None, {}, {"auto_restart": True}):

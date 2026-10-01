@@ -112,7 +112,12 @@ are disabled only after the replacement timer is enabled, started, and verified.
 Setup and scheduled APT refreshes treat any repository-index error, including
 transient failures, as a failure and do not proceed to the upgrade with stale
 indexes. The scheduled job reports the failure through its notification targets.
-An APT executable launch failure also follows that reporting path.
+An APT executable launch failure also follows that reporting path. On Proxmox
+hosts the job validates supported stable repositories without rewriting them,
+and checks local node health before and after upgrading. HA and Ceph require
+operator-managed updates; see [Proxmox host safety](PROXMOX.md#host-safety-defaults).
+APT updates and restart checks acquire the local setup lock, deferring when
+setup or either job already holds it.
 
 Each uv self-update or tool-upgrade command has a 30-minute limit. A timeout
 or executable launch failure is logged and notified just like a nonzero exit,

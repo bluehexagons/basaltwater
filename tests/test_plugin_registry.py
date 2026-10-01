@@ -185,7 +185,7 @@ class TestPluginRegistry(unittest.TestCase):
     def test_proxmox_step_builder_is_plugin_registered(self):
         config = SetupConfig(host="host", username="user", system_type="server_proxmox")
         step_names = [name for name, _ in get_steps_for_system_type(config)]
-        self.assertEqual(step_names[0], "Creating remoteusers group")
+        self.assertEqual(step_names[0], "Checking Proxmox release and repositories")
         self.assertEqual(step_names[-1], "Checking if restart required")
 
     def test_build_server_adds_build_user_tool_steps(self):

@@ -134,6 +134,15 @@ own its swap layout. It retains the host's permissive reverse-path filtering
 because strict filtering can drop valid routed, NATed, or bridged guest
 traffic.
 
+Setup verifies Proxmox VE 9.2 on Debian 13 (`trixie`), enabled Debian base and
+security sources, and the stable Proxmox enterprise or no-subscription channel
+before the first profile change. Test channels and mixed official Debian or
+Proxmox suites stop setup. A strict repository refresh must succeed, including
+subscription authentication when enterprise sources are enabled. Repository
+selection stays operator-owned; setup does not switch a host to no-subscription
+or perform a release upgrade. `--harden-user` is rejected for this profile
+because its forwarding restrictions would interfere with root's cluster SSH.
+
 SSH hardening uses an early `00-basaltwater-hardening.conf` drop-in and verifies
 the effective key-only policy with `sshd -T` for root and the setup account,
 including the current SSH peer when available. Conflicting earlier or `Match`
@@ -180,7 +189,12 @@ The default setup installs these recurring host-maintenance timers:
   sends findings when notification targets are configured.
 - `auto-update-apt.timer` applies non-removing distribution upgrades daily at
   06:00; Debian's competing APT timers are retired only after this replacement
-  is verified active.
+  is verified active. The job checks the supported release and repositories,
+  package consistency and holds, core services, quorum, active tasks, guest
+  locks, storage availability, and root free space before upgrading. It repeats
+  health checks after refreshing indexes and after upgrading, and refuses an
+  APT candidate outside the supported release. HA and Ceph configurations
+  require operator-managed updates and produce a notification instead.
 - `auto-restart-if-needed.timer` checks daily at 02:00 and after boot, but the
   default Proxmox policy records and reports a deferral instead of rebooting.
 - `cleanup-maintenance.timer` removes unused APT packages and residual package
@@ -192,10 +206,14 @@ The default setup installs these recurring host-maintenance timers:
   directly modify `proxmox-boot-tool` kernel selections.
 
 Inspect these jobs with the commands in [Recurring Maintenance](MAINTENANCE.md).
-The timers do not currently validate Proxmox quorum, guest evacuation, storage
-health, or backup recoverability. Run the Proxmox audit before planned
-maintenance and verify backups through your normal retention and restore
-process.
+APT updates and restart checks share the node's setup lock and defer while it
+is occupied. Opt-in reboots also require no running guests; a forced deadline
+cannot bypass Proxmox health or evacuation checks. Checks describe the node
+before scheduling a reboot; operators must keep it evacuated during the grace
+period. Package maintainer scripts can restart host services despite
+`--no-remove`. There is no cross-node timing coordination or backup
+recoverability check. Run the Proxmox audit before planned maintenance and
+verify backups through your normal retention and restore process.
 
 Create a Debian VM with XFCE, RDP, Firefox, and coding tools:
 

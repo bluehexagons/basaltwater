@@ -28,6 +28,13 @@ from lib.logging_utils import log_event
 from lib.apt_sources import ensure_debian_package_sources
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
+from lib.maintenance_lock import maintenance_lock
+from lib.proxmox_preflight import (
+    check_proxmox_installation,
+    check_proxmox_update_safety,
+    check_proxmox_upgrade_candidate,
+    is_proxmox_host,
+)
 
 
 # Initialize centralized logger
@@ -55,10 +62,11 @@ def run_apt_command(args: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=str(exc))
 
 
-def update_package_lists() -> bool:
+def update_package_lists(*, repair_sources: bool = True) -> bool:
     """Run apt-get update to refresh package lists."""
     try:
-        ensure_debian_package_sources()
+        if repair_sources:
+            ensure_debian_package_sources()
     except (OSError, RuntimeError, ValueError) as exc:
         log_event(
             logger,
@@ -97,8 +105,32 @@ def main() -> int:
     """Main function to update APT packages."""
     log_event(logger, "Starting APT package update")
     notification_configs = load_notification_configs_from_state(logger)
+    try:
+        with maintenance_lock() as acquired:
+            if not acquired:
+                log_event(logger, "APT update deferred while setup or maintenance is running")
+                return 0
+            return _update_packages(notification_configs)
+    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+        log_event(logger, "APT maintenance stopped", level=ERROR, error=str(exc))
+        send_notification_safe(
+            notification_configs, subject="Error: APT maintenance stopped",
+            job="auto_update_apt", status="error", message=str(exc), logger=logger,
+        )
+        return 1
 
-    if not update_package_lists():
+
+def _update_packages(notification_configs) -> int:
+    """Run one transaction while setup and other local maintenance are excluded."""
+    proxmox = is_proxmox_host()
+    if proxmox:
+        check_proxmox_installation()
+        check_proxmox_update_safety()
+
+    refreshed = (
+        update_package_lists(repair_sources=False) if proxmox else update_package_lists()
+    )
+    if not refreshed:
         send_notification_safe(
             notification_configs,
             subject="Error: APT update failed",
@@ -109,6 +141,10 @@ def main() -> int:
         )
         return 1
 
+    if proxmox:
+        # Recheck after downloading indexes: a backup or migration may have begun.
+        check_proxmox_upgrade_candidate()
+        check_proxmox_update_safety()
     success, output = upgrade_packages()
     if not success:
         send_notification_safe(
@@ -122,6 +158,9 @@ def main() -> int:
         )
         return 1
 
+    if proxmox:
+        check_proxmox_installation()
+        check_proxmox_update_safety()
     log_event(logger, "APT package update completed successfully")
     return 0
 
