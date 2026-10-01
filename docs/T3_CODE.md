@@ -337,6 +337,11 @@ UFW rules and refuses conflicting unmanaged rules on the managed ports.
 The protected device-pairing broker uses port 3774 by default. Its Basic Auth
 credential is staged for setup and is not written to the saved setup command.
 Prefer the HTTPS endpoints printed during setup.
+Opening the protected HTTPS endpoint completes browser pairing and opens T3
+automatically. Its `/devices` page retains manual enrollment and T3 Connect
+controls. Use the primary T3 HTTPS URL after pairing; if a saved browser session
+stops working, reopen the protected entry to obtain a fresh native session.
+See [device pairing](DEVICE_PAIRING.md) for origin and cookie diagnostics.
 
 ## Git and provider behavior
 

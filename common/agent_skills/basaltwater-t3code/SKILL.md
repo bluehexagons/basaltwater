@@ -126,10 +126,11 @@ Those skills account for the preview depending on the connected T3 application
 remaining open.
 
 An explicit preview `net::ERR_CERT_AUTHORITY_INVALID` is a connected-client
-trust issue, not a T3 service failure. Certificate enrollment is optional: use
-Playwright when available, or skip the affected browser operation and continue
-with server checks. Offer the verified `basaltwater-web ca` enrollment URL and
-fingerprint only when the user wants collaborative preview access restored.
+trust issue, not a T3 service failure. Certificate enrollment is optional.
+Use Playwright only when the installed browser skill's fallback conditions are
+met; otherwise continue with server checks. Offer the verified
+`basaltwater-web ca` enrollment URL and fingerprint only when the user wants
+collaborative preview access restored.
 Never weaken TLS or require client trust to complete unrelated work.
 
 A healthy T3 doctor result does not exercise the connected desktop client's
@@ -152,6 +153,13 @@ basaltw agent web pair HOST USER
 Use the full returned URL. A bare T3 URL showing a pairing-key form is expected.
 When protected browser enrollment is enabled, use the HTTPS pairing endpoint
 and Basic Auth credentials supplied by the operator.
+That endpoint automatically issues a one-time browser credential and opens
+T3; `/devices` retains manual pairing and T3 Connect controls. Use the primary
+T3 URL after pairing to reuse the native browser session. If a previously paired
+browser returns to the key form, check hostname/scheme changes and cookie
+acceptance before attributing it to an update. Reopen the protected entry to
+recover a rejected session. Never print cookies or pairing credentials while
+diagnosing the transition.
 
 ## Git
 

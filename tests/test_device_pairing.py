@@ -470,10 +470,10 @@ class PairingBrokerTest(unittest.TestCase):
         headers["Cookie"] = f"basaltwater_pairing_nonce={nonce}"
         handler = PairingRequestHandler.__new__(PairingRequestHandler)
         handler.server = SimpleNamespace(pairing_state=state)
-        handler.path = "/"
+        handler.path = "/devices"
         handler.command = "GET"
         handler.request_version = "HTTP/1.1"
-        handler.requestline = "GET / HTTP/1.1"
+        handler.requestline = "GET /devices HTTP/1.1"
         handler.headers = headers
         handler.wfile = BytesIO()
 
@@ -492,6 +492,64 @@ class PairingBrokerTest(unittest.TestCase):
         self.assertIn("Start authorization", response)
         self.assertIn("Never share a pairing link", response)
         self.assertNotIn("Create a link for this browser", response)
+
+    def test_basic_auth_entry_submits_a_nonce_protected_browser_login(self) -> None:
+        state = PairingState({"t3code": self._provider()})
+        handler = PairingRequestHandler.__new__(PairingRequestHandler)
+        handler.server = SimpleNamespace(pairing_state=state)
+        handler.path = "/"
+        handler.command = "GET"
+        handler.request_version = "HTTP/1.1"
+        handler.requestline = "GET / HTTP/1.1"
+        handler.headers = Message()
+        handler.headers["X-Forwarded-Proto"] = "https"
+        handler.headers["X-Forwarded-Host"] = "agent-vm:8445"
+        handler.wfile = BytesIO()
+        with patch.object(state, "issue") as issue:
+            handler.do_GET()
+        response = handler.wfile.getvalue().decode("utf-8")
+        self.assertIn('name="intent" value="open"', response)
+        self.assertIn('action="/pair/t3code"', response)
+        self.assertIn('requestSubmit()', response)
+        self.assertIn("script-src 'nonce-", response)
+        self.assertIn("form-action 'self' https://agent-vm:3773;", response)
+        self.assertIn("HttpOnly; SameSite=Strict; Secure", response)
+        self.assertIn('href="/devices"', response)
+        self.assertIn("Cache-Control: no-store", response)
+        issue.assert_not_called()
+
+    def test_browser_open_redirect_preserves_token_fragment_and_limits_replay(self) -> None:
+        state = PairingState({"t3code": {**self._provider(), "https_public_port": 8444}})
+        nonce = state.new_nonce()
+        body = urlencode({"nonce": nonce, "intent": "open"}).encode("utf-8")
+        handler = PairingRequestHandler.__new__(PairingRequestHandler)
+        handler.server = SimpleNamespace(pairing_state=state)
+        handler.path = "/pair/t3code"
+        handler.command = "POST"
+        handler.request_version = "HTTP/1.1"
+        handler.requestline = "POST /pair/t3code HTTP/1.1"
+        handler.headers = Message()
+        for name, value in {
+            "Content-Type": "application/x-www-form-urlencoded", "Content-Length": str(len(body)),
+            "Cookie": f"basaltwater_pairing_nonce={nonce}", "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "agent-vm:8445", "X-Real-IP": "192.168.0.12",
+        }.items():
+            handler.headers[name] = value
+        handler.rfile = BytesIO(body)
+        handler.wfile = BytesIO()
+        pair_url = "https://agent-vm:8444/pair#token=ONETIME"
+        with patch.object(state, "issue", return_value=(pair_url, "soon")) as issue:
+            handler.do_POST()
+            response = handler.wfile.getvalue().decode("utf-8")
+            self.assertIn(" 303 ", response)
+            self.assertIn(f"Location: {pair_url}\r\n", response)
+            self.assertIn("Cache-Control: no-store", response)
+            self.assertIn("Referrer-Policy: no-referrer", response)
+            handler.rfile = BytesIO(body)
+            handler.wfile = BytesIO()
+            handler.do_POST()
+            self.assertIn(" 403 ", handler.wfile.getvalue().decode("utf-8"))
+        issue.assert_called_once_with("t3code", "https://agent-vm:8444")
 
     def test_rejects_provider_redirect_to_another_origin(self) -> None:
         with self.assertRaises(PairingError):
@@ -766,6 +824,9 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
             payload_dir = os.path.join(temporary, "payload")
             nginx_available = os.path.join(temporary, "nginx-available")
             nginx_enabled = os.path.join(temporary, "nginx-enabled")
+            broker_source = os.path.join(temporary, "broker.py")
+            with open(broker_source, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# initial implementation\n")
             os.makedirs(payload_dir)
             os.makedirs(config_dir)
             with open(os.path.join(payload_dir, "htpasswd"), "w", encoding="utf-8") as file_obj:
@@ -798,6 +859,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 "DEVICE_PAIRING_NGINX_LINK": nginx_enabled,
                 "DEVICE_PAIRING_SOCKET": "/run/basaltwater-device-pairing/http.sock",
                 "DEVICE_PAIRING_SCRIPT": "/opt/basaltwater/common/service_tools/device_pairing_service.py",
+                "DEVICE_PAIRING_SOURCE": broker_source,
             }
 
             def run_command(_command: str, **_kwargs: object) -> SimpleNamespace:
@@ -807,7 +869,7 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                 patch.multiple("common.t3code_steps", **constants),
                 patch("common.t3code_steps.pwd.getpwnam", return_value=account),
                 patch("common.t3code_steps.os.chown"),
-                patch("common.t3code_steps.run", side_effect=run_command),
+                patch("common.t3code_steps.run", side_effect=run_command) as execute,
                 patch(
                     "common.t3code_steps.configure_nginx_auth_failure_ban"
                 ) as configure_ban,
@@ -820,6 +882,24 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
                     "0.0.0.0",
                     3773,
                 )
+                execute.reset_mock()
+                _configure_device_pairing(
+                    config, temporary,
+                    "/home/agent/.local/bin/basaltwater-t3code-pairing-provider",
+                    "0.0.0.0", 3773,
+                )
+                self.assertFalse(any(
+                    "systemctl restart" in call.args[0] for call in execute.call_args_list
+                ))
+                with open(broker_source, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# updated implementation\n")
+                execute.reset_mock()
+                _configure_device_pairing(
+                    config, temporary,
+                    "/home/agent/.local/bin/basaltwater-t3code-pairing-provider",
+                    "0.0.0.0", 3773,
+                )
+                execute.assert_any_call("systemctl restart basaltwater-device-pairing.service")
 
             self.assertEqual(
                 os.stat(os.path.join(temporary, ".t3")).st_mode & 0o777,
@@ -883,11 +963,12 @@ class DevicePairingRemoteSetupTest(unittest.TestCase):
             ) as file_obj:
                 service = file_obj.read()
             self.assertIn("Environment=T3CODE_PORT=3773", service)
+            self.assertIn("# Pairing broker revision ", service)
             self.assertIn("Wants=network-online.target", service)
             self.assertNotIn("basaltwater-t3code.service", service)
             self.assertNotIn("Requires=basaltwater-t3code.service", service)
             self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", service)
-            configure_ban.assert_called_once_with(
+            configure_ban.assert_called_with(
                 "device-pairing",
                 "/var/log/nginx/basaltwater-device-pairing-auth-failures.log",
             )

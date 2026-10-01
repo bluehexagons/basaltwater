@@ -705,6 +705,8 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         body: str,
         *,
         nonce: str | None = None,
+        script_nonce: str | None = None,
+        form_redirect_origin: str | None = None,
     ) -> None:
         page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -725,7 +727,10 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'",
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+            + (f" {form_redirect_origin}" if form_redirect_origin else "")
+            + "; base-uri 'none'"
+            + (f"; script-src 'nonce-{script_nonce}'" if script_nonce else ""),
         )
         if nonce is not None:
             secure = (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
@@ -735,6 +740,46 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(encoded)
+
+    def _open_browser(self, provider_name: str, provider: dict[str, Any]) -> None:
+        """Submit a same-origin, nonce-protected login after Basic Auth."""
+        try:
+            origin = _public_base_url(
+                self, provider["public_port"], provider.get("https_public_port")
+            )
+        except PairingError:
+            self.send_error(HTTPStatus.BAD_REQUEST, "The requested public origin is invalid")
+            return
+        nonce = self._page_nonce()
+        script_nonce = secrets.token_urlsafe(32)
+        label = html.escape(provider["label"])
+        body = (
+            '<section class="card"><h2>Opening ' + label + '</h2>'
+            '<p class="lead">Authorizing this browser and opening your environment.</p>'
+            f'<form id="open-browser" method="post" action="/pair/{html.escape(provider_name, quote=True)}">'
+            f'<input type="hidden" name="nonce" value="{html.escape(nonce, quote=True)}">'
+            '<input type="hidden" name="intent" value="open">'
+            '<button type="submit">Open ' + label + '</button></form>'
+            '<p class="muted">If the environment does not open automatically, use the button above.</p>'
+            '<nav class="footer-nav"><a class="text-link" href="/devices">'
+            'Manage devices and T3 Connect</a></nav></section>'
+            f'<script nonce="{script_nonce}">document.getElementById("open-browser").requestSubmit();</script>'
+        )
+        self._send_html(
+            HTTPStatus.OK, "Open " + provider["label"], body,
+            nonce=nonce, script_nonce=script_nonce,
+            form_redirect_origin=origin,
+        )
+
+    def _open_environment(self, pair_url: str) -> None:
+        """Navigate with the credential in the fragment, never the request path."""
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", pair_url)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
 
     def _nonce_cookie(self) -> str:
         cookie = SimpleCookie()
@@ -903,12 +948,15 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
     ) -> str:
         return (
             self._connect_section(name, provider, nonce, error=error)
-            + '<nav class="footer-nav"><a class="text-link" href="/">'
+            + '<nav class="footer-nav"><a class="text-link" href="/devices">'
             "← Back to device pairing</a></nav>"
         )
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if path == "/" and "t3code" in self.state.providers:
+            self._open_browser("t3code", self.state.providers["t3code"])
+            return
         connect_match = re.fullmatch(r"/connect/([a-z0-9-]{1,32})", path)
         if connect_match is not None:
             provider_name = connect_match.group(1)
@@ -924,7 +972,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
                 nonce=nonce,
             )
             return
-        if path != "/":
+        if path not in {"/", "/devices"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         nonce = self._page_nonce()
@@ -993,7 +1041,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         intent = (form.get("intent") or [""])[0]
         route = match.group(1)
         allowed_intents = {
-            "pair": {"current", "other"},
+            "pair": {"open", "current", "other"},
             "connect": {"start", "input", "toggle"},
         }
         if (
@@ -1007,7 +1055,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
                 '<section class="card"><div class="notice error">'
                 "<strong>This form has expired</strong>"
                 "<p>Reload the enrollment page and try again.</p></div>"
-                '<nav class="footer-nav"><a class="text-link" href="/">'
+                '<nav class="footer-nav"><a class="text-link" href="/devices">'
                 "← Back to device pairing</a></nav></section>",
             )
             return
@@ -1023,7 +1071,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
                 '<section class="card"><div class="notice error">'
                 "<strong>Too many requests</strong>"
                 "<p>Wait one minute before requesting another link.</p></div>"
-                '<nav class="footer-nav"><a class="text-link" href="/">'
+                '<nav class="footer-nav"><a class="text-link" href="/devices">'
                 "← Back to device pairing</a></nav></section>",
             )
             return
@@ -1085,9 +1133,12 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
                 '<section class="card"><div class="notice error">'
                 "<strong>Could not create pairing link</strong>"
                 f"<p>{html.escape(str(exc))}</p></div>"
-                '<nav class="footer-nav"><a class="text-link" href="/">'
+                '<nav class="footer-nav"><a class="text-link" href="/devices">'
                 "← Back to device pairing</a></nav></section>",
             )
+            return
+        if intent == "open":
+            self._open_environment(pair_url)
             return
         encoded_url = html.escape(pair_url, quote=True)
         link_label = (
@@ -1104,7 +1155,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
             '<div class="link-box"><span class="muted">Pairing link</span>'
             f'<code>{html.escape(pair_url)}</code></div>'
             f'<p class="muted">Expires {html.escape(expires)}. Keep this link private.</p>'
-            '<nav class="footer-nav"><a class="text-link" href="/">'
+            '<nav class="footer-nav"><a class="text-link" href="/devices">'
             '← Back to device pairing</a></nav></section>'
         )
         self._send_html(HTTPStatus.OK, "Pairing link created", body)

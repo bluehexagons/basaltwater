@@ -70,6 +70,9 @@ DEVICE_PAIRING_SOCKET = "/run/basaltwater-device-pairing/http.sock"
 DEVICE_PAIRING_SCRIPT = (
     "/opt/basaltwater/common/service_tools/device_pairing_service.py"
 )
+DEVICE_PAIRING_SOURCE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "service_tools", "device_pairing_service.py"
+)
 T3_ADMIN_PAIR_SCRIPT = (
     "/opt/basaltwater/common/service_tools/t3code_admin_pair.py"
 )
@@ -1354,7 +1357,11 @@ def _configure_device_pairing(
     )
     os.chown(DEVICE_PAIRING_PROVIDERS_FILE, 0, web_account.pw_gid)
 
-    service_content = f"""[Unit]
+    validate_filesystem_path(DEVICE_PAIRING_SOURCE, must_exist=True)
+    with open(DEVICE_PAIRING_SOURCE, "rb") as broker_file:
+        broker_revision = hashlib.sha256(broker_file.read()).hexdigest()
+    service_content = f"""# Pairing broker revision {broker_revision}
+[Unit]
 Description=basaltwater protected device-pairing broker
 After=network-online.target nginx.service
 Wants=network-online.target

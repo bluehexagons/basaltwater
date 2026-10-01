@@ -91,8 +91,17 @@ setup**. The direct listener below is HTTP-only compatibility; do not use
 http://192.168.0.41:3774/
 ```
 
-Enter the configured Basic Auth username and password, then choose one of the
-portal actions:
+Enter the configured Basic Auth username and password. The endpoint authorizes
+this browser and opens T3 automatically, including when an earlier browser
+session is no longer accepted. Without JavaScript, use **Open T3 Code**.
+The transition uses a same-origin, single-use form nonce and then redirects to
+the primary T3 origin with a short-lived credential in the URL fragment. T3
+exchanges it for its own browser session; Basic Auth does not replace that
+session. Once paired, bookmark the primary T3 HTTPS URL for normal use. Opening
+the Basic Auth entry again creates another device session.
+
+For enrollment controls and T3 Connect, open `/devices` on the Basic Auth
+endpoint. It retains the manual portal actions:
 
 - **Pair this browser** creates a one-time credential, then shows
   a button that opens T3's pairing page on the primary T3 HTTPS endpoint. The
@@ -121,7 +130,7 @@ the environment when T3 reports that `access:write` is unavailable.
 
 ## T3 Connect management
 
-The authenticated portal includes a **T3 Connect** section. Choose **Start
+The authenticated `/devices` page includes a **T3 Connect** section. Choose **Start
 authorization** to run T3's supported `t3 connect link --headless` flow. The
 page cleans up terminal control sequences and displays readable installation
 progress and authorization instructions. The known relay-install confirmation
@@ -166,6 +175,8 @@ replaces the file and reloads Nginx only after `nginx -t` succeeds.
 Reconciliation also retains the last validated primary T3 HTTPS port until the
 gateway confirms its current named endpoints, avoiding an HTTP-link window
 while the managed routes are refreshed.
+Setup also tracks the broker implementation revision and restarts that broker
+when its code changes, even if provider and networking settings are unchanged.
 
 To remove enrollment from a saved host:
 
@@ -263,6 +274,16 @@ loopback/all-address bind). The final `curl` should return `401 Unauthorized`
 because it omits Basic Auth.
 Do not place a portal password or a one-time pairing URL in diagnostics shared
 with other people.
+
+If a previously paired browser shows T3's pairing-key screen, Basic Auth alone
+does not establish that its T3 cookie is valid. Check that the browser is using
+the same primary hostname and scheme as before; changing origins can hide an
+existing cookie. Expired, revoked, or rejected sessions require fresh pairing.
+An update is not established as the cause merely because it preceded the
+redirect. Reopen the protected entry to recover access, or use the manual
+**Pair this browser** action at `/devices`. If this still returns to pairing,
+check the browser's authentication request status and whether a session cookie
+was accepted; share statuses and origins, never cookie or credential values.
 
 ## Provider extension contract
 
