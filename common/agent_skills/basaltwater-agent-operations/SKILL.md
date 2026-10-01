@@ -13,6 +13,9 @@ redacted.
 For quick project discovery, run `basaltw agent manifest --json` from its
 checkout. It reports available tools, workspace/artifact conventions, and
 explicit branch-to-deployment mappings from optional `basaltwater-agent.json`.
+Projects can also declare required executables and named validation recipes;
+the summary reports missing prerequisites and displays commands without running
+them. Use relevant project recipes when choosing checks for the user's task.
 Undeclared `dev` and `staging` destinations remain unknown; tool presence does
 not prove health or authentication. See the
 [environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_ENVIRONMENT.md)

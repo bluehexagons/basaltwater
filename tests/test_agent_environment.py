@@ -72,6 +72,7 @@ class TestAgentEnvironment(unittest.TestCase):
             "desktop_skills": [],
             "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "browser_evidence": self.directory, "artifact_directories": []},
             "deployments": {}, "undeclared_branches": ["dev", "staging"],
+            "required_tools": {}, "recipes": {},
             "health_command": "basaltw agent doctor --all-capabilities --json",
         }
         output = StringIO()
@@ -98,6 +99,61 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertTrue(result["workspace"]["dirty"])
         self.assertEqual(result["workspace"]["artifact_directories"], [{"path": ".artifacts", "ignored": True}])
         self.assertEqual(result["tools"]["git"], "/bin/git")
+
+    def test_project_requirements_and_recipes_are_discovered_without_execution(self) -> None:
+        self.declaration(
+            required_tools=["blender", "scene_tool", "blender"],
+            recipes={"render": {
+                "description": "Render the shared validation scene",
+                "argv": ["blender", "--background", "scene with spaces.blend", "--render-frame", "1"],
+                "requires": ["blender", "scene_tool"],
+            }},
+        )
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/blender" if name == "blender" else None),
+            patch.object(agent_environment.subprocess, "run") as execute,
+            redirect_stdout(output := StringIO()),
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+            self.assertEqual(agent_environment.run_manifest_command(argparse.Namespace(repository=self.directory, json=False)), 0)
+        self.assertEqual(result["required_tools"]["blender"], {"executable": "/bin/blender", "status": "available"})
+        self.assertEqual(result["required_tools"]["scene_tool"], {"executable": None, "status": "missing"})
+        self.assertEqual(result["recipes"]["render"]["missing_tools"], ["scene_tool"])
+        self.assertEqual(result["recipes"]["render"]["directory"], ".")
+        self.assertIn("Required tool: scene_tool (missing)", output.getvalue())
+        self.assertIn("'scene with spaces.blend'", output.getvalue())
+        execute.assert_not_called()
+
+    def test_invalid_requirements_and_recipes_are_rejected(self) -> None:
+        recipe = {"description": "Run tests", "argv": ["python3", "tests.py"]}
+        for fields in (
+            {"required_tools": "blender"}, {"required_tools": ["../bin/blender"]},
+            {"required_tools": ["blender\nother"]}, {"required_tools": ["tool --flag"]},
+            {"required_tools": [None]}, {"required_tools": ["tool"] * 101},
+            {"recipes": []}, {"recipes": {"test": {"argv": ["python3"]}}},
+            {"recipes": {"test": {**recipe, "argv": []}}},
+            {"recipes": {"test": {**recipe, "argv": ["python3", "bad\nargument"]}}},
+            {"recipes": {"test": {**recipe, "environment": {"TOKEN": "secret"}}}},
+            {"recipes": {"test": {**recipe, "directory": "../outside"}}},
+            {"recipes": {"test": {**recipe, "directory": "/tmp"}}},
+            {"recipes": {"test": {**recipe, "requires": ["/bin/python3"]}}},
+        ):
+            with self.subTest(fields=fields):
+                self.declaration(**fields)
+                with self.assertRaises(ValueError):
+                    agent_environment.load_project_environment(self.directory)
+
+    def test_recipe_directory_cannot_escape_through_a_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as outside:
+            Path(self.directory, "outside").symlink_to(outside, target_is_directory=True)
+            self.declaration(recipes={"test": {
+                "description": "Run tests", "argv": ["python3", "tests.py"], "directory": "outside",
+            }})
+            with self.assertRaisesRegex(ValueError, "remain below"):
+                agent_environment.load_project_environment(self.directory)
 
     def test_invalid_schema_and_mapping_are_rejected(self) -> None:
         for data in (

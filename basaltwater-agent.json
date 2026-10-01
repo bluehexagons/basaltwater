@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "required_tools": ["git", "python3", "rg"],
+  "recipes": {
+    "agent-tests": {
+      "description": "Validate agent tooling, discovery, workspaces and packaging",
+      "argv": ["python3", "run_tests.py", "--suite", "agent"],
+      "requires": ["python3"]
+    },
+    "web-tests": {
+      "description": "Validate web services, gateway routing and device pairing",
+      "argv": ["python3", "run_tests.py", "--suite", "web"],
+      "requires": ["python3"]
+    },
+    "all-tests": {
+      "description": "Run all repository tests after broader changes",
+      "argv": ["python3", "run_tests.py"],
+      "requires": ["python3"]
+    }
+  }
+}

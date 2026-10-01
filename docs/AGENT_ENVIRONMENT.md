@@ -3,8 +3,9 @@
 Run `basaltw agent manifest` in a project checkout for a concise discovery
 summary, or `basaltw agent manifest /path/to/repo --json` for structured output.
 It reports executables on the active session PATH, the current branch/commit
-and dirty state, managed workspace conventions, artifact directories, and
-declared branch-to-deployment mappings. It performs no installation, cloud
+and dirty state, managed workspace conventions, artifact directories, required
+tools, named validation recipes, and declared branch-to-deployment mappings.
+It performs no installation, cloud
 request, deployment, or authentication-file inspection. Tool availability does
 not establish health; use the reported doctor command for that separate check.
 
@@ -23,6 +24,14 @@ and does not change CI or deployment behavior. For example:
 ```json
 {
   "version": 1,
+  "required_tools": ["node", "yarn"],
+  "recipes": {
+    "test": {
+      "description": "Run the project test suite",
+      "argv": ["yarn", "test"],
+      "requires": ["node", "yarn"]
+    }
+  },
   "artifact_directories": [".artifacts", "dist"],
   "deployments": {
     "dev": {
@@ -53,6 +62,30 @@ The summary reports whether Git ignores each declared directory; it does not
 edit `.gitignore`. Tools missing from PATH appear as `null` in JSON, even if
 another shell or Node selector could activate them. The command does not run
 package-manager shims to discover versions because those can download tools.
+
+`required_tools` declares executable names, including project-specific tools
+outside the built-in inventory. The result reports each as `available` or
+`missing`; availability still means PATH presence, not tested readiness.
+Missing requirements are discovery findings and do not change the command's
+exit status. Tool names contain letters, digits, underscores, plus, dot, or
+hyphen and start with a letter or digit; paths and command flags are rejected.
+
+Each recipe requires a short `description` and an `argv` array of literal
+arguments. Optional `directory` defaults to the repository root (`.`) and
+must stay inside it, including through existing symlinks. Optional `requires`
+lists the executable names needed for that recipe; the result's `missing_tools`
+identifies absent prerequisites. Commands are displayed with shell quoting,
+never executed by the manifest. Arguments do not expand environment variables,
+substitutions, or globs. Choose whether to run a recipe according to the user's
+task and review project commands before execution.
+
+For a Blender project, declare `blender` and a recipe such as
+`["blender", "--background", "scenes/validation.blend", "--render-output",
+".artifacts/render-", "--render-format", "PNG", "--render-frame", "1"]`.
+Record scene, camera, engine, device, frame, and resolution in project capture
+settings; the recipe does not prove desktop or GPU readiness. Keep recipes
+limited to non-secret commands. Each array/object is limited to 100 entries,
+each string to 256 characters, and the entire declaration to 64 KiB.
 
 `project_source` identifies the declaration used; `current_deployment` is the
 mapping for the current branch, or `null` when undeclared or detached. Missing

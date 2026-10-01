@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import urllib.parse
@@ -60,17 +62,59 @@ def _text(value: object, label: str) -> str:
     return value
 
 
+def _required_tools(value: object) -> list[str]:
+    if not isinstance(value, list) or len(value) > 100:
+        raise ValueError("required tools must be an array of at most 100 executable names")
+    for name in value:
+        _text(name, "required tool")
+        validate_filesystem_path(name)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_+.-]*", name):
+            raise ValueError("Required tools must be executable names without paths or whitespace")
+    return list(dict.fromkeys(value))
+
+
+def _recipes(value: object, repository: str) -> dict[str, object]:
+    if not isinstance(value, dict) or len(value) > 100:
+        raise ValueError("recipes must be an object of at most 100 named workflows")
+    recipes = {}
+    for name, recipe in value.items():
+        _text(name, "recipe name")
+        if not isinstance(recipe, dict) or set(recipe) - {"description", "argv", "directory", "requires"}:
+            raise ValueError(f"Invalid recipe: {name}")
+        description = _text(recipe.get("description"), "recipe description")
+        argv = recipe.get("argv")
+        if not isinstance(argv, list) or not 1 <= len(argv) <= 100:
+            raise ValueError("Recipe argv must contain between 1 and 100 arguments")
+        for argument in argv:
+            _text(argument, "recipe argument")
+        directory = _text(recipe.get("directory", "."), "recipe directory")
+        validate_filesystem_path(directory)
+        directory = os.path.normpath(directory)
+        if (
+            os.path.isabs(directory) or directory == ".." or directory.startswith("../")
+            or os.path.commonpath([
+                os.path.realpath(repository), os.path.realpath(os.path.join(repository, directory)),
+            ]) != os.path.realpath(repository)
+        ):
+            raise ValueError("Recipe directory must remain below the repository")
+        recipes[name] = {
+            "description": description, "argv": argv, "directory": directory,
+            "requires": _required_tools(recipe.get("requires", [])),
+        }
+    return recipes
+
+
 def load_project_environment(repository: str) -> dict[str, object]:
     """Load only explicit non-secret declarations; never infer deployment targets."""
     path = os.path.join(repository, PROJECT_FILE)
     try:
         data = read_json_file(path, max_bytes=64 * 1024)
     except FileNotFoundError:
-        return {"source": None, "deployments": {}, "artifact_directories": []}
+        return {"source": None, "deployments": {}, "artifact_directories": [], "required_tools": [], "recipes": {}}
     if (
         not isinstance(data, dict) or type(data.get("version")) is not int
         or data["version"] != 1
-        or set(data) - {"version", "deployments", "artifact_directories"}
+        or set(data) - {"version", "deployments", "artifact_directories", "required_tools", "recipes"}
     ):
         raise ValueError(f"{PROJECT_FILE}: expected version 1 and known fields")
     deployments = data.get("deployments", {})
@@ -112,6 +156,8 @@ def load_project_environment(repository: str) -> dict[str, object]:
     return {
         "source": path, "deployments": deployments,
         "artifact_directories": list(dict.fromkeys(normalized)),
+        "required_tools": _required_tools(data.get("required_tools", [])),
+        "recipes": _recipes(data.get("recipes", {}), repository),
     }
 
 
@@ -127,7 +173,19 @@ def inspect_environment(repository: str) -> dict[str, object]:
     ]
     # Resolve the active session PATH. Do not run package-manager shims, which
     # can download tools even for --version, or inspect authentication files.
-    tools = {name: shutil.which(name) for name in TOOLS}
+    declared_tools = dict.fromkeys([
+        *TOOLS, *project["required_tools"],
+        *(name for recipe in project["recipes"].values() for name in recipe["requires"]),
+    ])
+    tools = {name: shutil.which(name) for name in declared_tools}
+    requirements = {
+        name: {"executable": tools[name], "status": "available" if tools[name] else "missing"}
+        for name in project["required_tools"]
+    }
+    recipes = {
+        name: {**recipe, "missing_tools": [tool for tool in recipe["requires"] if not tools[tool]]}
+        for name, recipe in project["recipes"].items()
+    }
     desktop = {
         name: {**guidance, "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
         for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
@@ -152,6 +210,8 @@ def inspect_environment(repository: str) -> dict[str, object]:
             "artifact_directories": artifacts,
         },
         "project_source": project["source"],
+        "required_tools": requirements,
+        "recipes": recipes,
         "deployments": mappings,
         "current_deployment": mappings.get(state["branch"]),
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
@@ -174,6 +234,13 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     workspace = result["workspace"]
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
+    for name, requirement in result["required_tools"].items():
+        print(f"Required tool: {name} ({requirement['status']})")
+    for name, recipe in result["recipes"].items():
+        print(f"Recipe: {name} — {recipe['description']}")
+        print(f"  Directory: {recipe['directory']}; command: {shlex.join(recipe['argv'])}")
+        if recipe["missing_tools"]:
+            print("  Missing tools: " + ", ".join(recipe["missing_tools"]))
     for name, application in result["desktop_applications"].items():
         print(f"Desktop: {name} — {', '.join(application['workflows'])} (readiness unverified)")
         for instruction in application.get("instructions", []):
