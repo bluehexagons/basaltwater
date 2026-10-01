@@ -20,10 +20,12 @@ from lib.release_management import (
     fetch_latest_github_release_asset,
     install_binary_release,
     load_json_state,
+    validate_release_tag,
     write_json_state,
 )
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
 from lib.remote_utils import install_package, run, user_exists
+from lib.state_read import StateReadError
 from lib.unit_transaction import replace_units
 
 
@@ -152,18 +154,17 @@ def _fetch_latest_antistatic_db_release(arch: str) -> tuple[str, str]:
 
 def _read_installed_antistatic_release() -> str | None:
     """Return the recorded antistatic release tag, if available."""
-    if not os.path.exists(ANTISTATIC_RELEASE_STATE_FILE):
-        return None
     release_state = load_json_state(
         ANTISTATIC_RELEASE_STATE_FILE,
         read_error_label="antistatic release metadata",
-        invalid_state_message="Invalid antistatic release metadata, reinstalling latest release",
+        invalid_state_message="Invalid antistatic release metadata",
     )
-    tag_name = release_state.get("tag_name")
-    if not isinstance(tag_name, str) or not tag_name:
-        print("  ⚠ Warning: Missing antistatic release tag in metadata, reinstalling latest release")
+    if not release_state:
         return None
-    return tag_name
+    try:
+        return validate_release_tag(release_state.get("tag_name"))
+    except ValueError as exc:
+        raise StateReadError(ANTISTATIC_RELEASE_STATE_FILE, "invalid release tag") from exc
 
 
 def _write_installed_antistatic_release(tag_name: str) -> None:
@@ -173,18 +174,17 @@ def _write_installed_antistatic_release(tag_name: str) -> None:
 
 def _read_installed_antistatic_db_release() -> str | None:
     """Return the recorded antistatic-db release tag, if available."""
-    if not os.path.exists(ANTISTATIC_DB_RELEASE_STATE_FILE):
-        return None
     release_state = load_json_state(
         ANTISTATIC_DB_RELEASE_STATE_FILE,
         read_error_label="antistatic-db release metadata",
-        invalid_state_message="Invalid antistatic-db release metadata, reinstalling latest release",
+        invalid_state_message="Invalid antistatic-db release metadata",
     )
-    tag_name = release_state.get("tag_name")
-    if not isinstance(tag_name, str) or not tag_name:
-        print("  ⚠ Warning: Missing antistatic-db release tag in metadata, reinstalling latest release")
+    if not release_state:
         return None
-    return tag_name
+    try:
+        return validate_release_tag(release_state.get("tag_name"))
+    except ValueError as exc:
+        raise StateReadError(ANTISTATIC_DB_RELEASE_STATE_FILE, "invalid release tag") from exc
 
 
 def _write_installed_antistatic_db_release(tag_name: str) -> None:

@@ -589,6 +589,11 @@ class TestAntistaticFirewallHandling(unittest.TestCase):
 
 
 class TestAntistaticReleaseDownloads(unittest.TestCase):
+    def setUp(self):
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        self.binary_path = os.path.join(root, 'antistatic-server')
+        self.enterContext(patch.object(antistatic_steps, 'ANTISTATIC_BINARY', self.binary_path))
+
     def test_fetch_latest_release_prefers_newest_release(self):
         release_payload = [
             {
@@ -692,7 +697,7 @@ class TestAntistaticReleaseDownloads(unittest.TestCase):
                 ),
                 call(f"chmod +x {temporary_path}", check=True),
                 call(
-                    f"mv {temporary_path} /usr/local/bin/antistatic-server",
+                    f"mv -T -- {temporary_path} {self.binary_path}",
                     check=True,
                 ),
             ]
@@ -768,6 +773,11 @@ class TestAntistaticReleaseDownloads(unittest.TestCase):
 
 
 class TestAntistaticDbReleaseDownloads(unittest.TestCase):
+    def setUp(self):
+        root = self.enterContext(tempfile.TemporaryDirectory())
+        self.binary_path = os.path.join(root, 'antistatic-db')
+        self.enterContext(patch.object(antistatic_steps, 'ANTISTATIC_DB_BINARY', self.binary_path))
+
     def test_fetch_latest_release_returns_tag_and_asset_url(self):
         release_payload = [
             {
@@ -859,7 +869,7 @@ class TestAntistaticDbReleaseDownloads(unittest.TestCase):
                 ),
                 call(f"chmod +x {temporary_path}", check=True),
                 call(
-                    f"mv {temporary_path} /usr/local/bin/antistatic-db",
+                    f"mv -T -- {temporary_path} {self.binary_path}",
                     check=True,
                 ),
             ]

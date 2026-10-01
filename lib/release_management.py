@@ -11,8 +11,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import run
+from lib.state_read import StateReadError
 from lib.update_policy import order_preferred_github_releases
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
@@ -283,18 +284,15 @@ def load_json_state(
     read_error_label: str,
     invalid_state_message: str,
 ) -> dict[str, Any]:
-    """Load a JSON object state file, returning an empty mapping when unavailable."""
+    """Return fresh state only when the file is missing; retain invalid evidence."""
     try:
-        with open(path, "r", encoding="utf-8") as file_obj:
-            payload = json.load(file_obj)
+        payload = read_json_file(path)
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"  ⚠ Warning: Failed to read {read_error_label}: {exc}")
-        return {}
-    if not isinstance(payload, dict):
-        print(f"  ⚠ Warning: {invalid_state_message}")
-        return {}
+    except (OSError, ValueError) as exc:
+        raise StateReadError(path, f"failed to read {read_error_label}") from exc
+    if not isinstance(payload, dict) or not payload:
+        raise StateReadError(path, invalid_state_message)
     return payload
 
 
@@ -329,7 +327,11 @@ def install_binary_release(
         return tag_name
 
     print(f"  Downloading {binary_name} ({tag_name})...")
-    with tempfile.TemporaryDirectory(prefix="basaltwater-release-") as temporary_dir:
+    # Keep download staging on the destination filesystem so mv publishes
+    # atomically instead of falling back to a copy over the active binary.
+    with tempfile.TemporaryDirectory(
+        prefix=".basaltwater-release-", dir=os.path.dirname(binary_path),
+    ) as temporary_dir:
         tmp_path = os.path.join(temporary_dir, binary_name)
         download_result = run(
             "curl -fL --proto '=https' --proto-redir '=https' "
@@ -346,7 +348,7 @@ def install_binary_release(
         if chmod_result.returncode != 0:
             raise RuntimeError(f"Failed to make {binary_name} {tag_name} executable")
         install_result = run(
-            f"mv {shlex.quote(tmp_path)} {shlex.quote(binary_path)}",
+            f"mv -T -- {shlex.quote(tmp_path)} {shlex.quote(binary_path)}",
             check=True,
         )
         if install_result.returncode != 0:

@@ -17,6 +17,14 @@ The release is downloaded from the official
 storage under `/var/lib/antistatic`. The service has health checks and automatic
 restart behavior.
 
+Release metadata is retained under `/opt/basaltwater/state/antistatic_release.json`
+and `antistatic_db_release.json`. Missing files allow a fresh installation;
+malformed or empty records, invalid tags, symlinks, special files, or files over
+1 MiB stop release installation. Restore a verified backup or explicitly
+quarantine invalid metadata after reviewing the installed version. Downloads
+are staged beside the destination binary and published by atomic rename.
+The shared release-state read safeguards also apply to Godot, Butler, and Gogs.
+
 Use `--cloudflare` when the hostname is published through a Cloudflare tunnel:
 
 ```bash
