@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shlex
@@ -21,6 +20,7 @@ from common.storage_steps import (
 )
 from lib.atomic_io import (
     _fsync_directory,
+    read_json_file,
     remove_file_durable,
     write_json_atomic,
     write_text_atomic,
@@ -74,13 +74,13 @@ def get_free_disk_mb() -> int:
 
 def _load_state() -> dict[str, Any]:
     try:
-        with open(SWAP_STATE_FILE, encoding="utf-8") as state_file:
-            state = json.load(state_file)
+        state = read_json_file(SWAP_STATE_FILE)
     except FileNotFoundError:
         return {"schema": SWAP_SCHEMA_VERSION, "areas": []}
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         raise RuntimeError("Could not read the managed swap state") from exc
-    if not isinstance(state, dict) or state.get("schema") != SWAP_SCHEMA_VERSION:
+    if (not isinstance(state, dict) or type(state.get("schema")) is not int
+            or state["schema"] != SWAP_SCHEMA_VERSION):
         raise RuntimeError("Managed swap state has an unsupported schema")
     state["areas"] = _validate_state_areas(state.get("areas"))
     return state

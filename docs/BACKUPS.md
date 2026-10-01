@@ -47,6 +47,14 @@ managed mount, a local disk, or a future storage provider. The disk backup flag
 controls whether Proxmox includes the data disk in a VM-level backup; it does
 not schedule the file-level mirror declared by `--backup`.
 
+VM disk identities in `/var/lib/basaltwater/vm-storage.json` are checkpointed
+after each completed cache or mount, retaining prior identities if a later
+resource fails. Incomplete or malformed state cannot authorize fresh storage
+initialization. Disk state, mounted filesystem markers, and managed swap state
+are read as bounded regular files; symlinks, special files, and files over 1 MiB
+are refused. Preserve failed state and restore a verified backup after reviewing
+device identities before retrying setup.
+
 ## Consistency and recovery limits
 
 For HomeBox, use [`basaltw homebox backup`](HOMEBOX.md#backup-and-restore).

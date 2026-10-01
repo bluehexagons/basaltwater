@@ -80,7 +80,7 @@ class TestDiskIdentity(unittest.TestCase):
             path = Path(directory) / "vm-storage.json"
             with patch.object(storage_steps, "STORAGE_STATE_FILE", str(path)):
                 self.assertEqual(storage_steps._load_storage_state(), {})
-                state = {"schema_version": 2, "mounts": [{"name": "data", "serial": "it-data", "uuid": "12345678-abcd"}]}
+                state = {"schema_version": 2, "caches": [], "mounts": [{"name": "data", "serial": "it-data", "uuid": "12345678-abcd"}]}
                 path.write_text(json.dumps(state))
                 self.assertEqual(storage_steps._load_storage_state(), state)
                 state["mounts"].append(state["mounts"][0])
@@ -90,6 +90,34 @@ class TestDiskIdentity(unittest.TestCase):
                 path.write_text("broken")
                 with self.assertRaisesRegex(RuntimeError, "Could not read"):
                     storage_steps._load_storage_state()
+
+    def test_incomplete_state_cannot_reset_disk_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, 'vm-storage.json')
+            for state in ({'schema_version': 2}, {'schema_version': 2, 'mounts': []},
+                          {'schema_version': 2, 'caches': []},
+                          {'schema_version': 1, 'caches': []}):
+                with self.subTest(state=state), open(path, 'w') as state_file:
+                    json.dump(state, state_file)
+                with patch.object(storage_steps, 'STORAGE_STATE_FILE', path):
+                    with self.assertRaisesRegex(RuntimeError, 'Invalid managed VM storage'):
+                        storage_steps._load_storage_state()
+
+    def test_unsafe_or_oversized_state_is_rejected_without_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = os.path.join(directory, 'target')
+            with open(target, 'w') as state_file:
+                state_file.write(' ' * (1024 * 1024 + 1))
+            fifo, link = os.path.join(directory, 'fifo'), os.path.join(directory, 'link')
+            os.mkfifo(fifo)
+            os.symlink(target, link)
+            for path in (target, fifo, link, directory):
+                with (self.subTest(path=path), patch.object(storage_steps, 'STORAGE_STATE_FILE', path),
+                      patch.object(storage_steps, '_run_capture') as run):
+                    with self.assertRaises(RuntimeError):
+                        storage_steps._load_storage_state()
+                    run.assert_not_called()
+            self.assertEqual(os.path.getsize(target), 1024 * 1024 + 1)
 
     @patch("common.storage_steps._lsblk")
     def test_shared_mapper_can_appear_under_multiple_backing_disks(self, mock_lsblk):
@@ -510,6 +538,48 @@ class TestPrepareMount(unittest.TestCase):
 
 
 class TestSetupVMStorage(unittest.TestCase):
+    def test_mount_failure_retains_completed_cache_identity(self):
+        config = SetupConfig(host='host', username='agent', system_type='server_web',
+                             container_storage=[['data', 'bulk', '2G'], ['cache', 'fast', '1G']],
+                             storage_mounts=[['data', '/srv/data']], storage_caches=[['data', 'cache']])
+        cache = {'data_name': 'data', 'cache_name': 'cache', 'mode': 'writethrough',
+                 'volume_group': 'basaltwater_data', 'device': '/dev/mapper/basaltwater_data-data',
+                 'data_serial': 'bw-data', 'cache_serial': 'bw-cache'}
+        with (tempfile.TemporaryDirectory() as root,
+              patch.object(storage_steps, 'STORAGE_STATE_FILE', os.path.join(root, 'state.json')),
+              patch.object(storage_steps, 'is_dry_run', return_value=False),
+              patch.object(storage_steps, '_run_capture', return_value=_result()),
+              patch.object(storage_steps, '_find_declared_disk', return_value={}),
+              patch.object(storage_steps, '_prepare_lvm_cache', return_value=cache),
+              patch.object(storage_steps, '_prepare_mount', side_effect=RuntimeError('mount failed'))):
+            with self.assertRaisesRegex(RuntimeError, 'mount failed'):
+                storage_steps.setup_vm_storage(config)
+            state = storage_steps._load_storage_state()
+            self.assertEqual(state['mounts'], [])
+            self.assertEqual(state['caches'][0]['data_serial'], 'bw-data')
+            self.assertEqual(state['caches'][0]['volume_group'], 'basaltwater_data')
+
+    def test_later_mount_failure_retains_completed_and_previous_identities(self):
+        from pathlib import Path
+
+        config = SetupConfig(host='host', username='agent', system_type='server_web',
+                             container_storage=[['first', 'bulk', '2G'], ['second', 'bulk', '2G']],
+                             storage_mounts=[['first', '/srv/first'], ['second', '/srv/second']])
+        completed = {'name': 'first', 'serial': 'bw-first', 'uuid': '12345678-abcd'}
+        retained = {'name': 'retained', 'serial': 'bw-retained', 'uuid': 'aaaaaaaa-bbbb'}
+        with (tempfile.TemporaryDirectory() as root,
+              patch.object(storage_steps, 'STORAGE_STATE_FILE', os.path.join(root, 'state.json')),
+              patch.object(storage_steps, 'is_dry_run', return_value=False),
+              patch.object(storage_steps, '_run_capture', return_value=_result()),
+              patch.object(storage_steps, '_prepare_mount', side_effect=[completed, RuntimeError('second failed')])):
+            storage_steps._write_storage_state([retained], [])
+            with self.assertRaisesRegex(RuntimeError, 'second failed'):
+                storage_steps.setup_vm_storage(config)
+            state = json.loads(Path(storage_steps.STORAGE_STATE_FILE).read_text())
+            self.assertEqual({record['name'] for record in state['mounts']}, {'first', 'retained'})
+            self.assertEqual(next(item for item in state['mounts'] if item['name'] == 'first')['uuid'], completed['uuid'])
+            self.assertEqual(storage_steps._load_storage_state(), state)
+
     def test_cached_origin_mount_uses_mapper_and_records_cache_state(self):
         config = SetupConfig(
             host="host",
@@ -569,6 +639,25 @@ class TestSetupVMStorage(unittest.TestCase):
 
 
 class TestDeclaredMountAssertion(unittest.TestCase):
+    def test_marker_symlinks_and_special_files_block_application_writes(self):
+        with tempfile.TemporaryDirectory() as root:
+            marker = os.path.join(root, storage_steps.STORAGE_MARKER)
+            target = os.path.join(root, 'target.json')
+            with open(target, 'w') as state_file:
+                json.dump({'name': 'data', 'uuid': '12345678-abcd'}, state_file)
+            config = SetupConfig(host='host', username='agent', system_type='server_web',
+                                 storage_mounts=[['data', root]])
+            for special in ('link', 'fifo'):
+                if special == 'link':
+                    os.symlink(target, marker)
+                else:
+                    os.mkfifo(marker)
+                with self.subTest(special=special), patch.object(storage_steps, '_verify_active_mount') as verify:
+                    with self.assertRaises(RuntimeError):
+                        storage_steps.assert_declared_storage_mount(config, root)
+                    verify.assert_not_called()
+                os.unlink(marker)
+
     def test_application_write_requires_matching_active_mount(self):
         with tempfile.TemporaryDirectory() as directory:
             marker_path = os.path.join(directory, storage_steps.STORAGE_MARKER)

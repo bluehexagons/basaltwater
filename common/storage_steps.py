@@ -9,7 +9,7 @@ import shlex
 import time
 from typing import Any
 
-from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_vm_storage_name
@@ -38,8 +38,7 @@ def _load_storage_state() -> dict[str, Any]:
 
     _reject_symlinked_mount_path(STORAGE_STATE_FILE)
     try:
-        with open(STORAGE_STATE_FILE, encoding="utf-8") as state_file:
-            state = json.load(state_file)
+        state = read_json_file(STORAGE_STATE_FILE)
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
@@ -47,7 +46,7 @@ def _load_storage_state() -> dict[str, Any]:
     if not isinstance(state, dict) or type(state.get("schema_version")) is not int or state["schema_version"] not in {1, 2}:
         raise RuntimeError("Invalid managed VM storage schema")
     for key, identity in (("mounts", "name"), ("caches", "data_name")):
-        records = state.get(key, [])
+        records = state.get(key, [] if key == "caches" and state["schema_version"] == 1 else None)
         if not isinstance(records, list):
             raise RuntimeError(f"Invalid managed VM storage {key}")
         seen: set[str] = set()
@@ -66,6 +65,16 @@ def _load_storage_state() -> dict[str, Any]:
             ):
                 raise RuntimeError(f"Invalid recorded VM storage identity: {name}")
     return state
+
+
+def _write_storage_state(mounts: list[dict[str, Any]], caches: list[dict[str, Any]]) -> None:
+    """Checkpoint disk identities after each successful resource preparation."""
+    write_json_atomic(
+        STORAGE_STATE_FILE,
+        {"schema_version": STORAGE_SCHEMA_VERSION, "mounts": mounts, "caches": caches},
+        mode=0o600,
+        sort_keys=True,
+    )
 
 
 def _run_capture(command: str, *, check: bool = True):
@@ -667,6 +676,8 @@ def setup_vm_storage(config: SetupConfig) -> None:
         )
         cache_records.append(cache_record)
         cache_by_data_name[cache.data_name] = cache_record
+        old_caches[cache.data_name] = cache_record
+        _write_storage_state(list(old_mounts.values()), list(old_caches.values()))
         print(
             f"  Cached VM data disk {cache.data_name} with "
             f"{cache.cache_name} ({cache.mode})"
@@ -691,19 +702,13 @@ def setup_vm_storage(config: SetupConfig) -> None:
             cache_record=cache_record,
             prior=old_mounts.get(mount.name),
         )
-        records.append({**record, "pool": disk.pool, "requested_size": disk.size})
+        record = {**record, "pool": disk.pool, "requested_size": disk.size}
+        records.append(record)
+        old_mounts[mount.name] = record
+        _write_storage_state(list(old_mounts.values()), list(old_caches.values()))
         print(f"  Mounted VM data disk {mount.name} at {mount.path}")
 
-    write_json_atomic(
-        STORAGE_STATE_FILE,
-        {
-            "schema_version": STORAGE_SCHEMA_VERSION,
-            "mounts": records,
-            "caches": cache_records,
-        },
-        mode=0o600,
-        sort_keys=True,
-    )
+    _write_storage_state(records, cache_records)
 
 
 def assert_declared_storage_mount(config: SetupConfig, path: str) -> None:
@@ -718,10 +723,10 @@ def assert_declared_storage_mount(config: SetupConfig, path: str) -> None:
         return
     mount = max(matching, key=lambda item: len(item.path))
     marker_path = os.path.join(mount.path, STORAGE_MARKER)
+    _reject_symlinked_mount_path(marker_path)
     try:
-        with open(marker_path, encoding="utf-8") as file_obj:
-            marker = json.load(file_obj)
-    except (OSError, json.JSONDecodeError) as exc:
+        marker = read_json_file(marker_path)
+    except (OSError, ValueError) as exc:
         raise RuntimeError(
             f"Required VM storage marker is missing or invalid: {marker_path}"
         ) from exc
