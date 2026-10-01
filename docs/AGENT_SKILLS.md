@@ -107,6 +107,9 @@ require the [intermediate migration version](BASALTWATER_MIGRATION.md) first.
 
 ## Maintaining the catalog
 
+For project discovery, `basaltw agent manifest` reports tools, workspace
+conventions and declared deployment mappings. See [Agent environment manifest](AGENT_ENVIRONMENT.md).
+
 Skill sources live in `common/agent_skills`. Keep each entrypoint short and
 self-contained, with a precise discovery description and only non-obvious VM
 behavior. Add a base skill to `BASE_AGENT_SKILL_NAMES` in

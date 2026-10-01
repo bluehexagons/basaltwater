@@ -10,6 +10,14 @@ metadata:
 Use the managed commands so checks, updates, and handoffs stay bounded and
 redacted.
 
+For quick project discovery, run `basaltw agent manifest --json` from its
+checkout. It reports available tools, workspace/artifact conventions, and
+explicit branch-to-deployment mappings from optional `basaltwater-agent.json`.
+Undeclared `dev` and `staging` destinations remain unknown; tool presence does
+not prove health or authentication. See the
+[environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_ENVIRONMENT.md)
+or `docs/AGENT_ENVIRONMENT.md` in a Basaltwater checkout.
+
 ## Readiness and updates
 
 Select the relevant checks; these are alternatives, not a checklist to run in

@@ -76,6 +76,7 @@ automation, T3 Code, skills, and hardening.
 | [Shared desktop automation](DESKTOP_AUTOMATION.md) | Native application launch, accessibility and pixel input, screenshots, and human handoff |
 | [Agentic coding security](AGENT_SECURITY.md) | Sudo, Codex approval/sandbox policy, hardened modes, and supply-chain boundaries |
 | [Agentic VMs](AGENTIC_VMS.md) | Headless, full-capability, approval-panel, unrestricted, and hardened VM configurations |
+| [Agent environment manifest](AGENT_ENVIRONMENT.md) | Available tools, workspace conventions, and explicit branch-to-deployment mappings |
 | [Privilege approvals](PRIVILEGE_APPROVALS.md) | Separate HTTPS approval page, supported operations, and administrator allowlists |
 | [Privilege broker reference](PRIVILEGE_BROKER_REFERENCE.md) | Allowlist policy, audit records, and approval-service security boundaries |
 | [Agent browser automation](BROWSER_AUTOMATION.md) | Playwright provisioning, Codex/OpenCode registration, and browser security boundaries |
