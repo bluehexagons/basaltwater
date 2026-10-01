@@ -527,7 +527,7 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
             "pubkeyauthentication": {"yes"},
             "permitrootlogin": {"prohibit-password", "without-password"},
             "allowgroups": {"remoteusers"},
-            "authenticationmethods": {"any", "publickey"},
+            "authenticationmethods": {"publickey"},
         }
         if config.harden_user and username == config.username:
             required.update({"disableforwarding": {"yes"}, "permituserrc": {"no"}})

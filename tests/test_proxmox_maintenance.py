@@ -69,8 +69,8 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result(_active_services()),
             _result(returncode=1),
             _result("[]\n"),
-            _result("VMID Status Name\n"),
-            _result("VMID NAME STATUS\n"),
+            _result("[]"),
+            _result("[]"),
             _result("Name Type Status Total Used Available %\nlocal dir active 1 1 1 1%\n"),
             _result("5000000\n"),
             _result(returncode=1),
@@ -115,8 +115,8 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result(),
             _result("Cluster information\nQuorate: Yes\n"),
             _result("[]\n"),
-            _result("VMID Status Name\n100 running web\n"),
-            _result("VMID NAME STATUS\n200 db stopped\n"),
+            _result('[{"vmid": 100, "name": "web", "status": "running"}]'),
+            _result('[{"vmid": 200, "name": "db", "status": "stopped"}]'),
             _result("Name Type Status\nlocal dir active\n"),
             _result("5000000\n"),
             _result(),
@@ -139,8 +139,8 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("active\nactive\nfailed\nactive\nactive\n", returncode=3),
             _result(returncode=1),
             _result(tasks),
-            _result("VMID Status Lock Name\n100 running backup web\n"),
-            _result("VMID NAME STATUS\n"),
+            _result('[{"vmid": 100, "name": "web", "status": "running", "lock": "backup"}]'),
+            _result("[]"),
             _result("Name Type Status\nbackup nfs inactive\n"),
             _result("1000\n"),
             _result(returncode=1),
@@ -163,8 +163,8 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result(_active_services()),
             _result(returncode=1),
             _result("[]\n"),
-            _result("VMID Status Name\n"),
-            _result("VMID NAME STATUS\n"),
+            _result("[]"),
+            _result("[]"),
             _result("Name Type Status\nlocal dir active\n"),
             _result("5000000\n"),
             _result(returncode=1),
@@ -207,6 +207,37 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertFalse(report.healthy)
         self.assertIn("connection refused", report.errors[0])
         mock_run.assert_called_once()
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_stopped_locked_vm_blocks_maintenance_and_reboot(self, command) -> None:
+        command.side_effect = self._inventory_results(
+            '[{"vmid": 200, "name": "db", "status": "stopped", "lock": "snapshot-delete"}]'
+        )
+        report = collect_maintenance_report(self.host)
+        self.assertFalse(report.healthy)
+        self.assertFalse(report.reboot_safe)
+        self.assertEqual(report.locked_guests[0].vmid, 200)
+        self.assertEqual(report.locked_guests[0].guest_type, "vm")
+        self.assertEqual(report.locked_guests[0].lock, "snapshot-delete")
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_invalid_vm_inventory_never_reports_evacuated_node(self, command) -> None:
+        for inventory in ("", "{}", "garbage", '[{"vmid": 200}]', '[{"vmid": 200, "status": "unknown"}]'):
+            with self.subTest(inventory=inventory):
+                command.side_effect = self._inventory_results(inventory)
+                report = collect_maintenance_report(self.host)
+                self.assertFalse(report.healthy)
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(any("guest inventory" in error for error in report.errors))
+
+    @staticmethod
+    def _inventory_results(vm_inventory: str) -> list[subprocess.CompletedProcess[str]]:
+        return [
+            _result("pve1\n"), _result(_active_services()), _result(returncode=1),
+            _result("[]"), _result("[]"), _result(vm_inventory),
+            _result("Name Type Status\nlocal dir active\n"), _result("5000000\n"),
+            _result(returncode=1),
+        ] + _healthy_memory_diagnostics()
 
 
 class TestFormatMaintenanceReport(unittest.TestCase):

@@ -33,6 +33,7 @@ class TestEffectiveSSHPolicy(unittest.TestCase):
             (EFFECTIVE, "root", "member of remoteusers"),
             ("", "root remoteusers", "conflicts"),
             (EFFECTIVE.replace("authenticationmethods publickey", "authenticationmethods publickey,password"), "root remoteusers", "authenticationmethods"),
+            (EFFECTIVE.replace("authenticationmethods publickey", "authenticationmethods any") + "gssapiauthentication yes\n", "root remoteusers", "authenticationmethods"),
         ):
             with self.subTest(error=error), patch.object(ssh, "run") as run:
                 run.side_effect = [SimpleNamespace(returncode=0, stdout=output), SimpleNamespace(returncode=0, stdout=groups)]

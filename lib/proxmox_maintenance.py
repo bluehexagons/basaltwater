@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable, Optional
 
 from lib.proxmox_hosts import ProxmoxHost
-from lib.proxmox_manage import ContainerInfo, _parse_pct_list, _parse_qm_list
+from lib.proxmox_manage import ContainerInfo
 from lib.proxmox_memory import (
     SWAPON_STATUS_COMMAND,
     HostSwapDevice,
@@ -157,6 +157,31 @@ def _parse_storage_states(stdout: str) -> dict[str, str]:
         if len(parts) >= 3:
             states[parts[0]] = parts[2].lower()
     return states
+
+
+def _parse_guest_inventory(stdout: str, guest_type: str) -> list[ContainerInfo]:
+    """Read the current node API inventory, including locks omitted by qm list."""
+    payload = json.loads(stdout)
+    if not isinstance(payload, list):
+        raise ValueError("Guest inventory was not a JSON list")
+    guests = []
+    seen = set()
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise ValueError("Guest inventory contains an invalid entry")
+        vmid = entry.get("vmid")
+        status = entry.get("status")
+        lock = entry.get("lock")
+        name = entry.get("name", "")
+        if type(vmid) is not int or not 100 <= vmid <= 999999999 or vmid in seen:
+            raise ValueError("Guest inventory contains an invalid or duplicate VMID")
+        if status not in ("running", "stopped"):
+            raise ValueError(f"Guest {vmid} has an unknown status")
+        if not isinstance(name, str) or (lock is not None and not isinstance(lock, str)):
+            raise ValueError(f"Guest {vmid} has invalid name or lock data")
+        seen.add(vmid)
+        guests.append(ContainerInfo(vmid=vmid, status=status, name=name, guest_type=guest_type, lock=lock))
+    return guests
 
 
 def _collect_memory_diagnostics(
@@ -337,17 +362,20 @@ def collect_maintenance_report(
                             f"{len(report.active_tasks)} active Proxmox task(s)"
                         )
 
-        pct_result = run_command(host, "pct list")
-        qm_result = run_command(host, "qm list")
-        if pct_result.returncode != 0:
-            report.errors.append(f"Could not list LXC guests: {_failure_detail(pct_result)}")
-        if qm_result.returncode != 0:
-            report.errors.append(f"Could not list VM guests: {_failure_detail(qm_result)}")
         guests: list[ContainerInfo] = []
-        if pct_result.returncode == 0:
-            guests.extend(_parse_pct_list(pct_result.stdout))
-        if qm_result.returncode == 0:
-            guests.extend(_parse_qm_list(qm_result.stdout))
+        for endpoint, guest_type in (("lxc", "lxc"), ("qemu", "vm")):
+            result = run_command(
+                host, f"pvesh get /nodes/$(hostname -s)/{endpoint} --output-format json",
+            )
+            if result.returncode != 0:
+                report.errors.append(f"Could not list {guest_type} guests: {_failure_detail(result)}")
+                continue
+            try:
+                guests.extend(_parse_guest_inventory(result.stdout, guest_type))
+            except (TypeError, ValueError) as exc:
+                report.errors.append(f"Could not parse {guest_type} guest inventory: {exc}")
+        if len({guest.vmid for guest in guests}) != len(guests):
+            report.errors.append("Guest inventory contains duplicate VMIDs across types")
         guests.sort(key=lambda guest: guest.vmid)
         report.running_guests = [
             guest for guest in guests if guest.status.lower() == "running"

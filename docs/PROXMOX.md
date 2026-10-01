@@ -193,6 +193,10 @@ implicit cluster access. Existing rules still take precedence; this does not
 prove that only the requested sources can connect. Backend selection stays
 operator-owned, including an already-selected nftables backend.
 
+Maintenance audits read the node's JSON guest inventories, including VM and
+LXC locks. Invalid or incomplete inventory responses block updates and reboots;
+a stopped guest with a leftover lock also requires operator review.
+
 Automatic host restarts and forced restart deadlines are disabled by default.
 The setup reports pending restarts, but schedule any hypervisor reboot around
 guest downtime (or opt in explicitly with `--auto-restart` or
