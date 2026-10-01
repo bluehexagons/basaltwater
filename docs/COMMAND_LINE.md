@@ -63,6 +63,9 @@ basaltw channel [CHANNEL]
 basaltw upgrade
 basaltw refresh [--dry-run] [CACHYOS_SETUP_FLAGS...]
 basaltw user rename <host> <new_username> [options]
+basaltw agent manifest [REPOSITORY] [--json]
+basaltw agent visuals compare BEFORE.png AFTER.png [options]
+basaltw agent visuals capture --before REV --after REV --settings JSON [options] -- COMMAND...
 basaltw agent doctor [HOST USER] [options]
 basaltw agent update [HOST USER] [options]
 basaltw agent auth set HOST USER --tool TOOL --file PATH
@@ -762,10 +765,15 @@ stores the credential in a dedicated mode-`0600` file because unattended Git
 and Git LFS need persistent access.
 
 Select the relevant command below; this is a catalog, not a sequence to run.
-Doctor is read-only unless `--fix` or `--record` is selected. Updates, workspace
-creation, and maintenance holds change state:
+Manifest is read-only; doctor is read-only unless `--fix` or `--record` is
+selected. Visual comparisons write private evidence; revision captures run a
+project command in new worktrees. Updates, workspace creation, and maintenance
+holds also change state:
 
 ```bash
+basaltw agent manifest --json
+basaltw agent visuals compare before.png after.png --json
+basaltw agent visuals capture --before HEAD~1 --after HEAD --settings ~/capture-settings.json --json -- ./tools/capture-scene --settings '{settings}' --output '{output}'
 basaltw agent doctor
 basaltw agent doctor --tool codex --tool claude --json
 basaltw agent doctor --all-capabilities --json
@@ -789,6 +797,24 @@ basaltw agent maintenance status --json
 basaltw agent maintenance release 10.0.0.10 agent
 basaltw agent support-bundle --output ~/agent-support.json
 ```
+
+`agent manifest` lists active tools, desktop application workflows, workspace
+conventions and explicit branch-to-deployment mappings. It does not launch
+applications or check authentication. Commit optional project declarations in
+`basaltwater-agent.json`; undeclared mappings remain unknown. See
+[environment manifests](AGENT_ENVIRONMENT.md) and
+[desktop development](DESKTOP_DEVELOPMENT.md), including Blender instructions.
+
+`agent visuals compare` embeds two PNGs and optional `--before-settings` and
+`--after-settings` JSON in a standalone viewer with synchronized zoom/scroll,
+overlays and pixel differences. `capture` resolves both revisions to commits
+and runs the supplied argv in separate managed worktrees with shared settings
+and distinct PNG output paths. `--repository` defaults to the current checkout;
+`--timeout` bounds each capture to 1–3600 seconds (default 600). Both commands
+accept `--output NEW_DIRECTORY` and otherwise use private managed state.
+Worktrees, logs and evidence are retained on success or failure; captures never
+switch the primary checkout or publish evidence. Read
+[visual comparisons](VISUAL_COMPARISONS.md) for harness requirements and cleanup.
 
 The default doctor check covers GitHub CLI, Codex CLI, Claude Code, and OpenCode.
 Missing credential files are reported as sign-in reminders but do not make an

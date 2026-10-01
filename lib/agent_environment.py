@@ -16,12 +16,35 @@ from lib.validators import validate_host
 
 
 PROJECT_FILE = "basaltwater-agent.json"
+DESKTOP_APPLICATIONS = {
+    "blender": {
+        "workflows": ["3D scene editing", "background rendering", "Python scene automation"],
+        "instructions": [
+            "Render without a desktop: blender --background scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
+            "Load the blend file before output overrides; put the render action last. Record camera, frame, resolution, render engine and device.",
+            "Use a native desktop session to validate interactive editing; background rendering does not verify UI or GPU readiness.",
+        ],
+    },
+    "krita": {"workflows": ["raster painting", "texture editing"]},
+    "gimp": {"workflows": ["raster image editing"]},
+    "inkscape": {"workflows": ["SVG editing", "vector asset export"]},
+    "freecad": {"workflows": ["parametric CAD", "3D model inspection"]},
+    "kicad": {"workflows": ["schematic editing", "PCB inspection"]},
+    "kdenlive": {"workflows": ["video editing"]},
+    "shotcut": {"workflows": ["video editing"]},
+    "audacity": {"workflows": ["audio editing"]},
+    "ardour": {"workflows": ["audio production"]},
+    "lmms": {"workflows": ["music production"]},
+    "scribus": {"workflows": ["page layout", "PDF production"]},
+    "obs": {"workflows": ["desktop recording"]},
+}
 TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
     "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "magick",
-    "rg", "jq", "aws", "basaltwater-web",
+    "rg", "jq", "aws", "basaltwater-web", *DESKTOP_APPLICATIONS,
 )
+DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"
 
 
 def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
@@ -105,11 +128,21 @@ def inspect_environment(repository: str) -> dict[str, object]:
     # Resolve the active session PATH. Do not run package-manager shims, which
     # can download tools even for --version, or inspect authentication files.
     tools = {name: shutil.which(name) for name in TOOLS}
+    desktop = {
+        name: {**guidance, "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
+        for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
+    }
+    desktop_skills = [
+        path for name in ("basaltwater-desktop", "basaltwater-cachyos-workstation")
+        if os.path.isfile(path := os.path.join(home, ".agents", "skills", name, "SKILL.md"))
+    ]
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
     return {
         "schema_version": 1,
         "tools": tools,
+        "desktop_applications": desktop,
+        "desktop_skills": desktop_skills if desktop else [],
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
@@ -141,6 +174,14 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     workspace = result["workspace"]
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
+    for name, application in result["desktop_applications"].items():
+        print(f"Desktop: {name} — {', '.join(application['workflows'])} (readiness unverified)")
+        for instruction in application.get("instructions", []):
+            print(f"  {instruction}")
+    if result["desktop_applications"]:
+        print(f"Desktop guide: {DESKTOP_GUIDE}")
+        for path in result["desktop_skills"]:
+            print(f"Desktop skill: {path}")
     print(f"Worktrees: {workspace['worktree_root']} (agent/TASK)")
     print(f"Browser evidence: {workspace['browser_evidence']}")
     for artifact in workspace["artifact_directories"]:

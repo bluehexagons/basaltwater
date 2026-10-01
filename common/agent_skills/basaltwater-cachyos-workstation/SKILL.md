@@ -61,6 +61,11 @@ and repositories; do not substitute blanket cache deletion or orphan-package
 removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md#cleanup-during-setup).
 
 Managed Playwright and KDE input/screenshot automation are not installed.
+Run `basaltw agent manifest` in the project to discover active tools, installed
+desktop applications, workflow instructions and declared deployment mappings.
+When Blender is detected, use its background-render guidance for repeatable
+output checks; validate editing behavior in the existing native desktop.
+See the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md).
 For browser checks, use tools actually available in the session or the project's
 own test commands. For GUI-only validation, launch the application in the user's
 desktop session and arrange human testing. Do not assume XRDP, X11 automation,

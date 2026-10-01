@@ -151,6 +151,9 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_environment import add_manifest_parser
 
     add_manifest_parser(commands)
+    from lib.agent_visuals import add_visuals_parser
+
+    add_visuals_parser(commands)
     doctor = commands.add_parser(
         "doctor",
         help="Check installed agent tools and local credential files",
@@ -2471,6 +2474,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.agent_environment import run_manifest_command
 
         return run_manifest_command(args)
+    if args.agent_command == "visuals":
+        from lib.agent_visuals import run_visuals_command
+
+        return run_visuals_command(args)
     if args.agent_command == "privilege":
         from lib.privilege_client import run_privilege_command
 
@@ -2689,7 +2696,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, visuals, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

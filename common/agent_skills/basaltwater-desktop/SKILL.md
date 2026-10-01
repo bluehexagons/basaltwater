@@ -13,10 +13,19 @@ on demand and persists through RDP or agent disconnection until desktop logout,
 failure, or VM shutdown. Only one human RDP connection is supported at a time.
 
 Read `status` for the configured environment (XFCE by default; i3, Cinnamon or
-LXQt may be selected), current state and geometry. Discover applications with
-`command -v` or package queries; installation of this skill does not imply that
-a particular editor or browser exists. Standard emulated graphics use software
+LXQt may be selected), current state and geometry. Use `basaltw agent manifest`
+inside the project for installed applications, workflows and instruction links;
+use `command -v` or package queries for further discovery. This skill does not
+imply that a particular editor or browser exists. Standard emulated graphics use software
 rendering; heavy 3D work may be slow and does not establish GPU compatibility.
+
+When Blender is detected, the manifest provides a background-render recipe.
+Use background rendering for repeatable output checks and this shared desktop
+for interactive editing checks. Record scene, camera, frame, resolution, engine
+and device alongside PNG captures. Compare results with `basaltw agent visuals
+compare`; use a project harness with `visuals capture` for isolated revisions.
+Read the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md)
+for application guidance and the distinction between discovery and readiness.
 
 Use it for native editors, office applications, graphical tools, and behavior
 that specifically depends on the desktop environment. Use shell commands for

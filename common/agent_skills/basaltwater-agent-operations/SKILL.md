@@ -18,6 +18,14 @@ not prove health or authentication. See the
 [environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_ENVIRONMENT.md)
 or `docs/AGENT_ENVIRONMENT.md` in a Basaltwater checkout.
 
+For image evidence, `basaltw agent visuals compare BEFORE.png AFTER.png --json`
+creates a private standalone viewer with synchronized zoom/scroll, overlays,
+pixel differences, and optional per-image settings. `agent visuals capture`
+replays a project capture command and settings in two managed Git worktrees;
+it retains worktrees and evidence rather than swapping primary assets. Read the
+[visual comparison guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/VISUAL_COMPARISONS.md)
+or `docs/VISUAL_COMPARISONS.md` before running revision captures.
+
 ## Readiness and updates
 
 Select the relevant checks; these are alternatives, not a checklist to run in

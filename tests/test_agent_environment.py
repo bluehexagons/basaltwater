@@ -40,7 +40,47 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertEqual(result["undeclared_branches"], ["dev", "staging"])
         self.assertEqual(result["deployments"], {})
         self.assertIsNone(result["tools"]["yarn"])
+        self.assertEqual(result["desktop_applications"], {})
+        self.assertEqual(result["desktop_skills"], [])
         execute.assert_not_called()
+
+    def test_desktop_discovery_provides_workflows_without_claiming_readiness(self) -> None:
+        skill = Path(self.directory, ".agents/skills/basaltwater-desktop/SKILL.md")
+        skill.parent.mkdir(parents=True)
+        skill.write_text("Desktop guidance")
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/" + name if name in ("blender", "krita") else None),
+            patch.object(agent_environment.subprocess, "run") as execute,
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+        self.assertEqual(set(result["desktop_applications"]), {"blender", "krita"})
+        blender = result["desktop_applications"]["blender"]
+        self.assertEqual(blender["executable"], "/bin/blender")
+        self.assertEqual(blender["readiness"], "unverified")
+        self.assertIn("background rendering", blender["workflows"])
+        self.assertIn("--background", blender["instructions"][0])
+        self.assertEqual(result["desktop_skills"], [str(skill)])
+        execute.assert_not_called()
+
+    def test_summary_includes_application_specific_instructions(self) -> None:
+        result = {
+            "tools": {"blender": "/bin/blender"},
+            "desktop_applications": {"blender": {**agent_environment.DESKTOP_APPLICATIONS["blender"], "readiness": "unverified"}},
+            "desktop_skills": [],
+            "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "browser_evidence": self.directory, "artifact_directories": []},
+            "deployments": {}, "undeclared_branches": ["dev", "staging"],
+            "health_command": "basaltw agent doctor --all-capabilities --json",
+        }
+        output = StringIO()
+        with patch.object(agent_environment, "inspect_environment", return_value=result), redirect_stdout(output):
+            status = agent_environment.run_manifest_command(argparse.Namespace(repository=self.directory, json=False))
+        self.assertEqual(status, 0)
+        self.assertIn("Desktop: blender", output.getvalue())
+        self.assertIn("--render-frame 1", output.getvalue())
+        self.assertIn("readiness unverified", output.getvalue())
 
     def test_explicit_mappings_artifacts_and_current_branch(self) -> None:
         mapping = {"environment": "preproduction", "provider": "aws", "region": "us-east-1", "url": "https://staging.example.com/"}

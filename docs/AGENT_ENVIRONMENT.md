@@ -8,6 +8,14 @@ declared branch-to-deployment mappings. It performs no installation, cloud
 request, deployment, or authentication-file inspection. Tool availability does
 not establish health; use the reported doctor command for that separate check.
 
+Installed desktop applications appear with supported workflows and a link to
+the [desktop development guide](DESKTOP_DEVELOPMENT.md). Blender also includes
+a background-render recipe and guidance on argument order and capture settings.
+`desktop_applications` includes only applications found on the active PATH;
+their `readiness` remains `unverified`. Discovery never launches a window,
+renderer, device probe, or audio session. `desktop_skills` links available local
+desktop instructions; it does not establish that a desktop session is attached.
+
 Projects can commit an optional `basaltwater-agent.json` at their Git root.
 This discovery file is separate from the `basaltwater.json` deployment manifest
 and does not change CI or deployment behavior. For example:
