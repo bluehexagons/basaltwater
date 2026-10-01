@@ -149,6 +149,13 @@ failures and `retry_after` Unix timestamps separately from completed cadence.
 Starting the service manually still respects this backoff; targeted CLI verify
 and recovery remain available under the shared operation lock.
 
+Only a missing last-run file starts a new schedule. Malformed JSON, invalid
+timestamps or retry entries, symlinks, special files, and files over 1 MiB stop
+all scheduled operations before any sync or parity work. The service reports
+failure and retains the file; restore a verified backup or explicitly quarantine
+it after reviewing cadence and retry history. Quarantining it resets that history
+and delays the first full scrub by its configured interval.
+
 After upgrading an installation affected by hourly retries, the old overdue
 timestamp is retained. Expect one more full scrub to record completion under
 the new behavior; no manual state reset is needed. The scan still reports any

@@ -15,7 +15,6 @@ from __future__ import annotations
 import sys
 import os
 import io
-import json
 import fcntl
 import math
 import time
@@ -38,6 +37,7 @@ from lib.machine_state import load_setup_config
 from lib.mount_utils import get_mount_ancestor
 from lib.task_utils import needs_mount_check, validate_configured_storage_mounts
 from lib.runtime_config import RuntimeConfig
+from lib.state_read import StateReadError, read_state_object
 from lib.validation import validate_filesystem_path
 
 # Constants
@@ -127,15 +127,32 @@ class OperationLock:
 
 
 def load_last_run() -> dict:
-    """Load last run timestamps from state file."""
-    if os.path.exists(STATE_FILE):
+    """Read cadence and retry state without resetting corrupt recovery evidence."""
+    state = read_state_object(STATE_FILE, versioned=False)
+    if state is None:
+        return {}
+
+    def valid_timestamp(value: object) -> bool:
         try:
-            with open(STATE_FILE, 'r') as f:
-                state = json.load(f)
-                return state if isinstance(state, dict) else {}
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+            return type(value) in {int, float} and math.isfinite(value) and value >= 0
+        except OverflowError:
+            return False
+
+    for op_id, timestamp in state.items():
+        if op_id != '_attempts' and (not op_id or not valid_timestamp(timestamp)):
+            raise StateReadError(STATE_FILE, f"invalid completion timestamp for {op_id!r}")
+    attempts = state.get('_attempts', {})
+    if not isinstance(attempts, dict):
+        raise StateReadError(STATE_FILE, "invalid retry history")
+    for op_id, entry in attempts.items():
+        if not op_id or not isinstance(entry, dict):
+            raise StateReadError(STATE_FILE, "invalid retry entry")
+        failed_at, retry_after = entry.get('failed_at'), entry.get('retry_after')
+        if (type(entry.get('failures')) is not int or not 1 <= entry['failures'] <= 6
+                or not valid_timestamp(failed_at) or not valid_timestamp(retry_after)
+                or not failed_at <= retry_after <= failed_at + 86400):
+            raise StateReadError(STATE_FILE, f"invalid retry entry for {op_id!r}")
+    return state
 
 
 def save_last_run(state: dict) -> None:
@@ -412,7 +429,17 @@ def execute_storage_operations() -> dict:
         return results
     
     # Load last run state
-    last_run = load_last_run()
+    try:
+        last_run = load_last_run()
+    except StateReadError as exc:
+        results['success'] = False
+        results['error'] = str(exc)
+        results['end_time'] = datetime.now().isoformat()
+        log_event(logger, "Storage operations stopped", level=ERROR, error=str(exc))
+        if notification_configs:
+            send_operation_notification(results, notification_configs, logger,
+                                        friendly_name=config.friendly_name)
+        return results
     new_state = last_run.copy()
     baseline_time = time.time()
     full_scrubs_attempted: set[tuple[str, str]] = set()
@@ -659,6 +686,8 @@ Full Scrub Operations:
 Parity Update Operations:
 {format_operation_results(results["parity_updates"])}
 """
+    if results.get('error'):
+        details += f"\nOperations stopped: {results['error']}\n"
     
     try:
         send_notification_safe(

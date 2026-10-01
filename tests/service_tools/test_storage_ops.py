@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, mock_open, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from lib.runtime_config import RuntimeConfig
+from lib.state_read import StateReadError
 from sync.service_tools.storage_ops import (
     FREQUENCY_SECONDS,
     OperationLock,
@@ -305,27 +306,91 @@ class TestLoadLastRun(unittest.TestCase):
         finally:
             os.unlink(temp_path)
 
-    def test_returns_empty_dict_on_corrupt_json(self):
+    def test_preserves_and_rejects_corrupt_json(self):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write("not valid json{{{")
             f.flush()
             temp_path = f.name
         try:
             with patch("sync.service_tools.storage_ops.STATE_FILE", temp_path):
-                result = load_last_run()
-            self.assertEqual(result, {})
+                with self.assertRaisesRegex(StateReadError, "File retained"):
+                    load_last_run()
+            with open(temp_path) as state_file:
+                self.assertEqual(state_file.read(), "not valid json{{{")
         finally:
             os.unlink(temp_path)
 
-    def test_returns_empty_dict_for_non_mapping_json(self):
+    def test_rejects_non_mapping_json(self):
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             json.dump([123], f)
             temp_path = f.name
         try:
             with patch("sync.service_tools.storage_ops.STATE_FILE", temp_path):
-                self.assertEqual(load_last_run(), {})
+                with self.assertRaises(StateReadError):
+                    load_last_run()
         finally:
             os.unlink(temp_path)
+
+    def test_rejects_invalid_cadence_and_retry_metadata(self):
+        invalid = [
+            {'op': True}, {'op': '123'}, {'op': -1}, {'op': float('nan')},
+            {'op': float('inf')}, {'op': 10 ** 1000}, {'_attempts': []},
+            {'_attempts': {'op': {'failures': True, 'failed_at': 1, 'retry_after': 2}}},
+            {'_attempts': {'op': {'failures': 1, 'failed_at': 2, 'retry_after': 1}}},
+            {'_attempts': {'op': {'failures': 1, 'failed_at': 1, 'retry_after': 86402}}},
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, 'last_run.json')
+            for state in invalid:
+                content = json.dumps(state)
+                with self.subTest(state=state), open(path, 'w') as state_file:
+                    state_file.write(content)
+                with patch('sync.service_tools.storage_ops.STATE_FILE', path):
+                    with self.assertRaises(StateReadError):
+                        load_last_run()
+                with open(path) as state_file:
+                    self.assertEqual(state_file.read(), content)
+
+    def test_rejects_unsafe_state_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, 'target.json')
+            with open(target, 'w') as state_file:
+                state_file.write('{}')
+            link, fifo = os.path.join(root, 'link'), os.path.join(root, 'fifo')
+            os.symlink(target, link)
+            os.mkfifo(fifo)
+            for path in (link, fifo, root):
+                with self.subTest(path=path), patch('sync.service_tools.storage_ops.STATE_FILE', path):
+                    with self.assertRaises(StateReadError):
+                        load_last_run()
+
+    def test_invalid_state_stops_all_work_and_notifies_without_saving(self):
+        from sync.service_tools import storage_ops
+
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(storage_ops, 'STATE_FILE', os.path.join(root, 'last_run.json')),
+            patch.object(storage_ops, 'load_setup_config', return_value={
+                'sync_specs': [['/src', '/dst', 'daily']],
+                'scrub_specs': [['/src', '.db', '10%', 'weekly']],
+            }),
+            patch.object(storage_ops, 'get_service_logger'),
+            patch.object(storage_ops, 'parse_notification_args', return_value=['cfg']),
+            patch.object(storage_ops, 'run_sync') as sync,
+            patch.object(storage_ops, 'run_scrub') as scrub,
+            patch.object(storage_ops, 'save_last_run') as save,
+            patch.object(storage_ops, 'send_notification_safe') as notify,
+        ):
+            with open(storage_ops.STATE_FILE, 'w') as state_file:
+                state_file.write('{broken')
+            result = storage_ops.execute_storage_operations()
+            self.assertFalse(result['success'])
+            self.assertIn('File retained', result['error'])
+            sync.assert_not_called()
+            scrub.assert_not_called()
+            save.assert_not_called()
+            self.assertEqual(notify.call_args.kwargs['status'], 'error')
+            self.assertIn('File retained', notify.call_args.kwargs['details'])
 
 
 class TestSaveLastRun(unittest.TestCase):
