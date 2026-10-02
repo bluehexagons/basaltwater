@@ -41,7 +41,9 @@ from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
 from lib.t3code_runtime import (
     has_t3_active_runtime_contract,
+    is_t3_standalone_binary,
     is_t3_service_version,
+    t3_native_probe_command,
     t3_version_binary,
     t3_version_root,
 )
@@ -1929,14 +1931,11 @@ def _t3_native_runtime_healthy(
     binary: str | None,
     environment: dict[str, str],
 ) -> bool:
-    if node is None or binary is None:
+    command = t3_native_probe_command(binary, node)
+    if command is None:
         return False
-    version_root = t3_version_root(binary)
-    if version_root is None:
-        return False
-    node_pty = os.path.join(version_root, "node_modules", "node-pty")
     return _run_check(
-        [node, "-e", "require(process.argv[1])", node_pty],
+        command,
         environment=environment,
     ).returncode == 0
 
@@ -1946,6 +1945,8 @@ def _repair_t3_native_runtime(
     binary: str,
     environment: dict[str, str],
 ) -> bool:
+    if is_t3_standalone_binary(binary):
+        return False
     version_root = t3_version_root(binary)
     npm = os.path.join(os.path.dirname(node), "npm")
     if (
@@ -2145,7 +2146,10 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         if setup_git.returncode == 0:
             fixes.append("configured GitHub HTTPS credential helper")
             credential_helper = True
-    if fix and t3_binary and node and not native_runtime:
+    if (
+        fix and t3_binary and node and not native_runtime
+        and not is_t3_standalone_binary(t3_binary)
+    ):
         if service.returncode == 0:
             _run_check(
                 ["systemctl", "--user", "stop", _T3_SERVICE_NAME],
@@ -2203,6 +2207,12 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
     healthy = all(checks.values())
     checks["git_identity"] = bool(git_name and git_email)
     warnings: list[str] = []
+    if t3_binary and is_t3_standalone_binary(t3_binary) and not native_runtime:
+        warnings.append(
+            "T3 standalone native module check failed; restore the matching "
+            "upstream release archive and rerun setup. Host npm cannot repair "
+            "the embedded Node runtime."
+        )
     if not checks["git_identity"]:
         warnings.append("Git author identity is missing; configure user.name and user.email before committing")
     if gh_path:

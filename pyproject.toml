@@ -47,5 +47,6 @@ namespaces = true
 
 [tool.setuptools.package-data]
 common = ["agent_skills/*/SKILL.md"]
+lib = ["t3code_native_probe.cjs"]
 desktop = ["config/*.template"]
 web = ["config/*"]

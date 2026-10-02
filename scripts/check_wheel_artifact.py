@@ -19,6 +19,7 @@ REQUIRED_WHEEL_PATHS = (
     "basaltwater.py",
     "remote_setup.py",
     "lib/config.py",
+    "lib/t3code_native_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
     "common/cachyos_steps.py",

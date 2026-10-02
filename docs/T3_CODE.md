@@ -218,8 +218,8 @@ a damaged runtime, or a failed readiness check remains fatal. Updater failures
 include bounded diagnostics from both the beginning and end of npm's output so
 an earlier npm error is not hidden by a later successful native-build message.
 
-Keep the npm settings scoped to the trusted T3 updater. npm 12 blocks native
-dependency scripts by default, but inherited `allow-scripts` or
+For older npm-backed runtimes, keep the npm settings scoped to the trusted T3
+updater. npm 12 blocks native dependency scripts by default, but inherited `allow-scripts` or
 `dangerously-allow-all-scripts` settings cannot be used by T3's nested
 project-scoped install: npm rejects that combination with `EALLOWSCRIPTS`.
 This also applies when npm reads `allow-scripts` from a user or global
@@ -237,7 +237,7 @@ rerun the same Basaltwater setup on that VM. Setup invokes the current T3 CLI's
 service reconciliation command, which updates the launcher and runtime; the
 doctor then validates the selected runtime. If npm 12 already produced an
 incomplete candidate and T3 rolled back, setup identifies the retained
-`failed` or `rolled-back` candidate from protocol-2 or protocol-3 service state
+`failed` or `rolled-back` npm-backed candidate from reviewed service state
 and rebuilds its two trusted native dependencies without stopping the active
 working version. Then retry **Update server** in the client. A refresh setup
 performs the same repair before invoking the upstream updater.
@@ -250,11 +250,11 @@ it confirms lingering is already enabled, otherwise adds the validated target
 username to that exact no-argument request, and delegates every other
 invocation unchanged. The shim is removed immediately after the updater exits.
 
-T3's published `node-pty` package has no Linux prebuild, so Basaltwater also
+Older npm-backed T3 runtimes need a local `node-pty` build, so Basaltwater also
 selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
 from selecting a missing versioned compiler. Basaltwater validates the native
-module, rebuilds an incomplete active runtime, and waits for several
+module, rebuilds an incomplete npm-backed active runtime, and waits for several
 consecutive healthy service and HTTP checks before setup succeeds. The same
 active-runtime repair is available after setup:
 
@@ -282,16 +282,28 @@ When upstream changes the active state fields or executable layout, update the
 shared state/version/layout definitions and compatibility tests, then review
 whether the new protocol is safe for repair and cleanup. Both the standalone
 executable layout (`versions/<version>/t3`) and the older npm layout remain
-supported. The
-published runtime archive includes its executable and native packages; Node.js
-and npm are used by Basaltwater's setup-time updater and native-module repair,
-not as a prerequisite for launching the standalone runtime. T3 uses the
-`node-pty` and `msgpackr-extract` native dependencies. Basaltwater applies the
-supported 50 MiB request-body limit to T3's managed HTTPS route while leaving
+supported. The published runtime archive includes its executable and native
+packages. Basaltwater checks its `node-pty` with the executable's embedded Node
+using a short-lived preload that exits before T3 opens application state. Host Node.js is not needed
+for this check. npm-backed runtimes use the Node configured in the service PATH
+and retain the `node-pty`/`msgpackr-extract` repair allowlist. Host npm must not
+rebuild a standalone archive against a different Node runtime. A failed archive
+probe is reported without stopping an active service; restore the damaged
+version from its matching upstream release archive and rerun setup. Basaltwater
+applies the supported 50 MiB request-body limit to T3's managed HTTPS route while leaving
 the pairing route at its deliberately small limit. See the upstream
 [background-service documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/background-service.md),
 [update documentation](https://github.com/pingdotgg/t3code/blob/main/docs/user/updating.md),
 and [release process](https://github.com/pingdotgg/t3code/blob/main/docs/operations/release.md).
+
+Compatibility reviewed on 2026-10-02 against the stable
+[v0.0.45 release](https://github.com/pingdotgg/t3code/releases/tag/v0.0.45).
+The v0.0.44 → v0.0.45 comparison leaves the service-state protocol (3), runtime
+layout, pairing scopes, and database migration list unchanged. Existing v0.0.44
+installations need the normal upstream update, with no Basaltwater data move or
+pairing reset. Earlier npm-backed installations migrate through the current
+`t3 service install` command on a saved setup rerun; application data remains
+under `~/.t3/userdata`. Basaltwater does not edit T3's database or schema versions.
 
 Older basaltwater installations used a root-owned
 `basaltwater-t3code.service` and a separate npm runtime. A subsequent setup
@@ -411,8 +423,8 @@ check does not clear T3's provider cache or fix this upstream timeout behavior.
 The doctor validates the upstream service-state protocol and selected immutable
 runtime, required native terminal module, active and boot-enabled user service,
 endpoint, pairing helper, Git identity, and managed agent skill. Add `--fix` to
-rebuild an incomplete native runtime, repair GitHub's credential helper, enable
-the service for future boots, or restart an inactive user service. The separate
+rebuild an incomplete npm-backed native runtime, repair GitHub's credential
+helper, enable the service for future boots, or restart an inactive user service. The separate
 host capability reports memory, swap, filesystem and agent-storage headroom,
 T3 cgroup usage, recurring maintenance state, and pending reboots. Capacity
 warnings do not make an otherwise healthy service fail; critical disk pressure

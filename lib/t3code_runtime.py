@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+
+from lib.validation import validate_filesystem_path
 
 
 # Protocols 2 and 3 have the activeVersion state field and runtime layouts
@@ -78,3 +81,37 @@ def t3_version_root(binary: str) -> str | None:
         ):
             return version_root
     return None
+
+
+def is_t3_standalone_binary(binary: str) -> bool:
+    """Return whether the runtime embeds Node rather than using the host Node."""
+
+    root = t3_version_root(binary)
+    return root is not None and os.path.normpath(binary) == os.path.join(root, "t3")
+
+
+def t3_native_probe_command(binary: str | None, node: str | None) -> list[str] | None:
+    """Load node-pty using the same Node runtime that runs the selected T3 CLI."""
+
+    if binary is None or (root := t3_version_root(binary)) is None:
+        return None
+    if is_t3_standalone_binary(binary):
+        probe = os.path.join(os.path.dirname(__file__), "t3code_native_probe.cjs")
+        validate_filesystem_path(probe, must_exist=True)
+        # A SEA cannot run `-e`. Node's preload runs before its embedded entry
+        # point and exits after the check, without starting another server.
+        # Replace inherited Node options for this child only.
+        return [
+            "/usr/bin/env",
+            f"NODE_OPTIONS=--require={json.dumps(probe, ensure_ascii=False)}",
+            binary,
+            "--version",
+        ]
+    if node is None or not os.path.isfile(node) or not os.access(node, os.X_OK):
+        return None
+    return [
+        node,
+        "-e",
+        "require(process.argv[1])",
+        os.path.join(root, "node_modules", "node-pty"),
+    ]

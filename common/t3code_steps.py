@@ -39,6 +39,8 @@ from lib.t3code_runtime import (
     has_t3_active_runtime_contract,
     is_known_t3_service_protocol,
     is_t3_service_version,
+    is_t3_standalone_binary,
+    t3_native_probe_command,
     t3_version_binary,
     t3_version_root,
 )
@@ -364,17 +366,16 @@ def _t3_native_runtime_healthy(
     node_bin: str,
     binary: str,
 ) -> bool:
-    """Load T3's required native terminal module with its service Node.js."""
+    """Load T3's native terminal module with its actual Node runtime."""
 
     node = os.path.join(node_bin, "node")
-    node_pty = os.path.join(_t3_version_root(binary), "node_modules", "node-pty")
-    if not os.path.isfile(node) or not os.access(node, os.X_OK):
+    command = t3_native_probe_command(binary, node)
+    if command is None:
         return False
     result = _run_as_login_user(
         username,
         home,
-        f"{shlex.quote(node)} -e "
-        f"{shlex.quote('require(process.argv[1])')} {shlex.quote(node_pty)}",
+        shlex.join(command),
         check=False,
         capture_output=True,
     )
@@ -414,6 +415,12 @@ def _rebuild_t3_native_runtime(
 ) -> None:
     """Rebuild native dependencies omitted by npm's lifecycle-script policy."""
 
+    if is_t3_standalone_binary(binary):
+        raise RuntimeError(
+            "T3 Code standalone archive is incomplete; restore the matching "
+            "upstream release archive and rerun setup. Host npm cannot repair "
+            "the embedded Node runtime."
+        )
     npm = os.path.join(node_bin, "npm")
     if not os.path.isfile(npm) or not os.access(npm, os.X_OK):
         raise RuntimeError("T3 Code native runtime repair requires npm")
@@ -923,7 +930,8 @@ def _install_t3_service(
             raise RuntimeError("T3 Code did not create a valid managed runtime")
         native_repaired = False
         if not _t3_native_runtime_healthy(username, home, node_bin, binary):
-            _user_systemctl(username, uid, "stop", T3_SERVICE_NAME)
+            if not is_t3_standalone_binary(binary):
+                _user_systemctl(username, uid, "stop", T3_SERVICE_NAME)
             _rebuild_t3_native_runtime(username, home, node_bin, binary)
             native_repaired = True
         daemon_reload = _user_systemctl(username, uid, "daemon-reload")
