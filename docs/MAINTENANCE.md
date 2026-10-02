@@ -116,8 +116,8 @@ An APT executable launch failure also follows that reporting path. On Proxmox
 hosts the job validates supported stable repositories without rewriting them,
 and checks local node health before and after upgrading. HA and Ceph require
 operator-managed updates; see [Proxmox host safety](PROXMOX.md#host-safety-defaults).
-APT updates and restart checks acquire the local setup lock, deferring when
-setup or either job already holds it.
+APT updates, restart checks, and cleanup's APT phase acquire the local setup
+lock, deferring when setup or another maintenance job already holds it.
 
 Each uv self-update or tool-upgrade command has a 30-minute limit. A timeout
 or executable launch failure is logged and notified just like a nonzero exit,
@@ -251,27 +251,29 @@ system logrotate policy, removes recognized crash-report files older than 30
 days, and removes only exact basaltwater-owned temporary artifact names older
 than seven days in `/tmp` and `/var/tmp`.
 
-The cleanup job also runs noninteractive `apt-get autoremove --purge` wherever
-APT is available. This removes packages APT has marked as unused, including
-superseded kernel packages, while APT's configured kernel-retention policy
+The cleanup job also runs noninteractive `apt-get autoremove --purge` on APT
+hosts other than Proxmox. Proxmox package removal and kernel-retention changes
+remain operator-managed. On other hosts this removes packages APT has marked
+as unused, including superseded kernels, while APT's kernel-retention policy
 protects kernels it considers required. It deliberately retains configuration
 remnants for packages that were already removed: blanket residual purges can
 run maintainer hooks for service names now owned by installed replacement
-packages. It then audits `dpkg` state and reports incomplete or inconsistent
-packages without attempting an automatic repair. On physical machines, VMs,
-and Proxmox hosts, cleanup returns unused blocks to storage after deletion when
-discard is supported. It defers to an active native `fstrim.timer` instead of
-running a duplicate trim; containers skip this host-level operation.
+packages. The APT phase holds the local setup/maintenance lock and first audits
+`dpkg` state; incomplete packages prevent its package cleanup without an
+automatic repair. When the lock is busy, including setup's child cleanup run,
+the job defers APT and continues non-package cleanup and capacity checks.
+On physical machines, VMs, and Proxmox hosts, cleanup returns unused blocks after
+deletion when discard is supported. It defers to an active native `fstrim.timer`
+instead of running a duplicate trim; containers skip this host-level operation.
 
-Before autoremove, kernel-capable non-container hosts return obsolete manual
-kernel selections to automatic APT management. This covers versioned
-Debian/Ubuntu kernel images matching the running flavour and old Proxmox kernel
-series metapackages. Only versions older than the running kernel qualify; the
-newest older image is also excluded from these metadata changes as a fallback.
-APT holds and `NeverAutoRemove` rules remain respected, including Proxmox's
-generated boot-selection protections. Default-kernel and helper packages,
-unversioned Debian/Ubuntu tracking metapackages, other flavours, and unknown
-custom kernel names are left alone. APT determines actual removals from its
+Before autoremove, kernel-capable non-container hosts other than Proxmox return
+obsolete manual kernel selections to automatic APT management. This covers
+versioned Debian/Ubuntu kernel images matching the running flavour. Only versions
+older than the running kernel qualify; the newest older image is also excluded
+from these metadata changes as a fallback.
+APT holds and `NeverAutoRemove` rules remain respected. Default-kernel and
+helper packages, unversioned Debian/Ubuntu tracking metapackages, other flavours,
+and unknown custom kernel names are left alone. APT determines actual removals from its
 dependency and retention rules; Basaltwater never deletes boot images directly.
 
 Rerun setup to deploy this behavior and perform one cleanup immediately.
@@ -285,8 +287,9 @@ sudo /usr/bin/python3 -m lib.kernel_cleanup
 
 To deliberately retain an additional obsolete image, use `apt-mark hold PACKAGE`
 (which also blocks package upgrades), or the platform's kernel retention rules.
-A manual-install flag alone no longer reserves an obsolete kernel. Failed
-inventory, retention inspection, or metadata updates stop the package-removal
+On hosts with automated kernel cleanup, a manual-install flag alone no longer
+reserves an obsolete kernel. Failed inventory, retention inspection, or metadata
+updates stop the package-removal
 phase and are reported through the cleanup job's failure notification.
 
 `user-cache-maintenance` runs as the configured non-root account instead of

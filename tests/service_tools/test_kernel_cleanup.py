@@ -122,12 +122,17 @@ class TestKernelCleanup(unittest.TestCase):
 
 
 class TestKernelCleanupIntegration(unittest.TestCase):
+    def setUp(self):
+        mocker = patch.object(cleanup_maintenance, "is_proxmox_host", return_value=False)
+        mocker.start()
+        self.addCleanup(mocker.stop)
+
     @patch("common.service_tools.cleanup_maintenance.shutil.which", return_value="/usr/bin/apt-get")
     @patch("common.service_tools.cleanup_maintenance.run_cleanup_command", return_value=None)
-    @patch("common.service_tools.cleanup_maintenance.obsolete_manual_kernels", return_value=["proxmox-kernel-6.8"])
+    @patch("common.service_tools.cleanup_maintenance.obsolete_manual_kernels", return_value=["linux-image-6.1.0-20-amd64"])
     def test_marks_before_autoremove(self, _plan, run, _which):
         self.assertEqual(cleanup_maintenance.cleanup_unused_packages(), [])
-        self.assertEqual(run.call_args_list[0].args[0], ["apt-mark", "auto", "proxmox-kernel-6.8"])
+        self.assertEqual(run.call_args_list[0].args[0], ["apt-mark", "auto", "linux-image-6.1.0-20-amd64"])
         self.assertEqual(run.call_args_list[1].args[0][1], "autoremove")
 
     @patch("common.service_tools.cleanup_maintenance.shutil.which", return_value="/usr/bin/apt-get")
@@ -139,7 +144,7 @@ class TestKernelCleanupIntegration(unittest.TestCase):
 
     @patch("common.service_tools.cleanup_maintenance.shutil.which", return_value="/usr/bin/apt-get")
     @patch("common.service_tools.cleanup_maintenance.run_cleanup_command", return_value="mark failed")
-    @patch("common.service_tools.cleanup_maintenance.obsolete_manual_kernels", return_value=["proxmox-kernel-6.8"])
+    @patch("common.service_tools.cleanup_maintenance.obsolete_manual_kernels", return_value=["linux-image-6.1.0-20-amd64"])
     def test_mark_failure_prevents_autoremove(self, _plan, run, _which):
         self.assertEqual(cleanup_maintenance.cleanup_unused_packages(), ["mark failed"])
         run.assert_called_once()

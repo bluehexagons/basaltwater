@@ -216,18 +216,20 @@ The default setup installs these recurring host-maintenance timers:
   require operator-managed updates and produce a notification instead.
 - `auto-restart-if-needed.timer` checks daily at 02:00 and after boot, but the
   default Proxmox policy records and reports a deferral instead of rebooting.
-- `cleanup-maintenance.timer` removes unused APT packages and residual package
-  configuration, audits `dpkg` consistency, cleans bounded caches, journals,
-  old crash reports, and Basaltwater-owned temporary artifacts, and ensures
+- `cleanup-maintenance.timer` audits `dpkg` consistency, cleans bounded caches,
+  journals, old crash reports, and Basaltwater-owned temporary artifacts, and ensures
   filesystem TRIM through the native timer or a cleanup fallback each Sunday.
   Post-cleanup checks cover block and inode pressure on distinct local storage
   mounts. The job does not prune backups, templates, ISOs, guest volumes, or
-  directly modify `proxmox-boot-tool` kernel selections.
+  change installed packages, kernel APT marks, or `proxmox-boot-tool` selections.
+  Hypervisor package removal and kernel retention remain operator-managed.
 
 Inspect these jobs with the commands in [Recurring Maintenance](MAINTENANCE.md).
 APT updates and restart checks share the node's setup lock and defer while it
-is occupied. Opt-in reboots also require no running guests; a forced deadline
-cannot bypass Proxmox health or evacuation checks. Checks describe the node
+is occupied. Cleanup's APT phase uses the same lock; when busy, its non-package
+cleanup and storage checks still run. Opt-in reboots also require no running
+guests; a forced deadline cannot bypass Proxmox health or evacuation checks.
+Checks describe the node
 before scheduling a reboot; operators must keep it evacuated during the grace
 period. Package maintainer scripts can restart host services despite
 `--no-remove`. There is no cross-node timing coordination or backup

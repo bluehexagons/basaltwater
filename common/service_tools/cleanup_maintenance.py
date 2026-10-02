@@ -33,6 +33,8 @@ from lib.maintenance_defaults import (
     STORAGE_WARNING_PERCENT,
 )
 from lib.machine_state import is_container
+from lib.maintenance_lock import maintenance_lock
+from lib.proxmox_preflight import is_proxmox_host
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_positive_integer
@@ -147,6 +149,9 @@ def cleanup_unused_packages() -> list[str]:
     installed replacement (for example, ifupdown and ifupdown2 both use
     networking.service).
     """
+    if is_proxmox_host():
+        log_event(logger, "Proxmox package removal and kernel retention are operator-managed; skipping autoremove")
+        return []
     apt_get = shutil.which("apt-get")
     if not apt_get:
         log_event(logger, "apt-get not found, skipping unused package cleanup")
@@ -202,6 +207,28 @@ def audit_package_database() -> str | None:
 
     log_event(logger, "Package database audit completed", level=INFO)
     return None
+
+
+def cleanup_package_tasks() -> list[str]:
+    """Serialize package cleanup with setup, updates, and restart checks.
+
+    Setup already owns this lock. Its child cleanup can still run the bounded
+    non-package tasks while leaving APT work for a later scheduled run.
+    """
+    try:
+        with maintenance_lock() as acquired:
+            if not acquired:
+                log_event(logger, "Package cleanup deferred while setup or maintenance is running")
+                return []
+            audit_failure = audit_package_database()
+            if audit_failure:
+                return [audit_failure]
+            failures = cleanup_apt_cache()
+            failures.extend(cleanup_unused_packages())
+            return failures
+    except (OSError, ValueError) as exc:
+        log_event(logger, "Package cleanup stopped", level=ERROR, error=str(exc))
+        return [f"package cleanup lock: {exc}"]
 
 
 def run_optional_cleanup(
@@ -616,11 +643,7 @@ def main() -> int:
     log_event(logger, "Starting cleanup maintenance")
     notification_configs = load_notification_configs_from_state(logger)
 
-    failures = cleanup_apt_cache()
-    failures.extend(cleanup_unused_packages())
-    package_audit_failure = audit_package_database()
-    if package_audit_failure:
-        failures.append(package_audit_failure)
+    failures = cleanup_package_tasks()
 
     for failure in (
         run_optional_cleanup(["systemd-tmpfiles"], ["--clean"], "systemd tmpfiles cleanup"),

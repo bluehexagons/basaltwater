@@ -8,12 +8,23 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from common.service_tools import cleanup_maintenance
+
+
+def setUpModule() -> None:
+    for target, kwargs in (
+        ("maintenance_lock", {"side_effect": lambda: nullcontext(True)}),
+        ("is_proxmox_host", {"return_value": False}),
+    ):
+        mocker = patch.object(cleanup_maintenance, target, **kwargs)
+        mocker.start()
+        unittest.addModuleCleanup(mocker.stop)
 
 
 class TestCleanupMaintenance(unittest.TestCase):
@@ -103,6 +114,48 @@ class TestCleanupMaintenance(unittest.TestCase):
 
 
 class TestCleanupHelpers(unittest.TestCase):
+    def test_proxmox_does_not_autoremove_or_change_kernel_marks(self):
+        with (
+            patch.object(cleanup_maintenance, "is_proxmox_host", return_value=True),
+            patch.object(cleanup_maintenance, "obsolete_manual_kernels") as kernels,
+            patch.object(cleanup_maintenance, "run_cleanup_command") as command,
+        ):
+            self.assertEqual(cleanup_maintenance.cleanup_unused_packages(), [])
+        kernels.assert_not_called()
+        command.assert_not_called()
+
+    def test_busy_setup_defers_apt_and_dpkg_checks(self):
+        with (
+            patch.object(cleanup_maintenance, "maintenance_lock", side_effect=lambda: nullcontext(False)),
+            patch.object(cleanup_maintenance, "cleanup_apt_cache") as cache,
+            patch.object(cleanup_maintenance, "cleanup_unused_packages") as packages,
+            patch.object(cleanup_maintenance, "audit_package_database") as audit,
+        ):
+            self.assertEqual(cleanup_maintenance.cleanup_package_tasks(), [])
+        cache.assert_not_called()
+        packages.assert_not_called()
+        audit.assert_not_called()
+
+    def test_incomplete_package_state_prevents_apt_cleanup(self):
+        with (
+            patch.object(cleanup_maintenance, "audit_package_database", return_value="dpkg is incomplete"),
+            patch.object(cleanup_maintenance, "cleanup_apt_cache") as cache,
+            patch.object(cleanup_maintenance, "cleanup_unused_packages") as packages,
+        ):
+            self.assertEqual(cleanup_maintenance.cleanup_package_tasks(), ["dpkg is incomplete"])
+        cache.assert_not_called()
+        packages.assert_not_called()
+
+    def test_unsafe_lock_reports_failure_without_touching_packages(self):
+        with (
+            patch.object(cleanup_maintenance, "maintenance_lock", side_effect=ValueError("Unsafe lock")),
+            patch.object(cleanup_maintenance, "cleanup_apt_cache") as cache,
+            patch.object(cleanup_maintenance, "cleanup_unused_packages") as packages,
+        ):
+            self.assertEqual(cleanup_maintenance.cleanup_package_tasks(), ["package cleanup lock: Unsafe lock"])
+        cache.assert_not_called()
+        packages.assert_not_called()
+
     @patch("common.service_tools.cleanup_maintenance.run_command")
     def test_run_cleanup_command_logs_structured_failure(self, mock_run_command):
         mock_run_command.return_value = subprocess.CompletedProcess(
