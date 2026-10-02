@@ -357,6 +357,39 @@ See [device pairing](DEVICE_PAIRING.md) for origin and cookie diagnostics.
 
 ## Git and provider behavior
 
+### Features available in v0.0.45
+
+After installing or updating Basaltwater's managed skills, use **Restart agent
+session** from T3's command palette (`Ctrl+K` on Linux/Windows, `Cmd+K` on
+macOS). The next message resumes the conversation in a fresh provider process
+that reloads skills, plugins, and MCP servers. Finish the current turn first.
+This provides a per-thread way to load configuration changes while keeping
+the background T3 service running.
+
+**Settings → Providers → Update all** updates supported outdated providers on
+every connected environment. Hover the control to inspect its targets. Use an
+individual provider control or `basaltw agent update HOST USER --tool TOOL` for
+a narrower update. Manual-only methods are excluded from T3's bulk action.
+After a T3 provider update, run Basaltwater's doctor and record readiness;
+Basaltwater's updater records and rollback backups are only created by its own
+update flow. See the upstream
+[provider update guide](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/updating.md#update-providers).
+
+**No project** threads use individual folders under `~/.t3/scratch` on the
+managed Debian service. Deleting a thread keeps its files. The host doctor
+includes their size as `agent_storage.size_bytes.t3_scratch`; automatic cache
+maintenance preserves them. CachyOS web installations use the `scratch` folder
+under their isolated T3 data directory. For repository changes, choose a
+project and an isolated worktree. T3 hides projectless threads when its data
+directory is inside a Git checkout. See the upstream
+[projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/thread-sidebar.md#start-without-a-project).
+
+The managed T3 skill also uses native `link_pull_request` and
+`list_thread_pull_requests` tools when available, so PRs created through `gh`
+appear in T3's linked-PR panel, including all layers of a stack.
+
+### Server-side Git checks
+
 T3 Code runs as the target user. Git identity, GitHub CLI credentials, provider
 credentials, repositories, and the workspace therefore stay in that user's
 home and configured workspace.

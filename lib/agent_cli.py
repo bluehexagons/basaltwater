@@ -1455,6 +1455,7 @@ def _agent_storage_inventory(home: str) -> JSONDict:
         "npm_cache": os.path.join(home, ".npm"),
         "browser_cache": os.path.join(home, ".cache", "ms-playwright"),
         "t3_logs": os.path.join(home, ".t3", "userdata", "logs"),
+        "t3_scratch": os.path.join(home, ".t3", "scratch"),
         "codex_packages": os.path.join(home, ".codex", "packages"),
         "workspace": os.path.join(home, "repos"),
     }

@@ -20,6 +20,21 @@ from common import t3code_steps
 
 
 class T3ReadinessTests(unittest.TestCase):
+    def test_host_inventory_counts_scratch_files_without_following_symlinks(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as outside:
+            scratch = Path(home, '.t3', 'scratch', 'thread-folder')
+            scratch.mkdir(parents=True)
+            generated = scratch / 'output.txt'
+            generated.write_bytes(b'generated output')
+            external = Path(outside, 'private.txt')
+            external.write_bytes(b'external contents must not be counted')
+            (scratch / 'external').symlink_to(outside, target_is_directory=True)
+            inventory = agent_cli._agent_storage_inventory(home)
+            self.assertEqual(inventory['paths']['t3_scratch'], str(scratch.parent))
+            self.assertEqual(inventory['size_bytes']['t3_scratch'], len(b'generated output'))
+            self.assertTrue(generated.is_file())
+            self.assertTrue(external.is_file())
+
     def test_standalone_probe_uses_embedded_node_without_host_node(self):
         with tempfile.TemporaryDirectory(prefix="t3 home ") as home:
             binary = Path(home, "versions", "0.0.45", "t3")

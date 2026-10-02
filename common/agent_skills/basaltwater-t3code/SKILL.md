@@ -95,22 +95,57 @@ doctor validates the selected runtime. Basaltwater recognizes service-state
 protocols 2 and 3, including the standalone executable runtime layout used by
 current T3 releases.
 
-Keep those npm settings scoped to this trusted T3 update command. npm 12
-rejects inherited `allow-scripts` and `dangerously-allow-all-scripts` settings
-in T3's nested runtime. Basaltwater installs the referenced npm passthrough; it
+For older npm-backed runtimes, keep those npm settings scoped to this trusted
+T3 update command. npm 12 rejects inherited `allow-scripts` and
+`dangerously-allow-all-scripts` settings in T3's nested runtime. Basaltwater
+installs the referenced npm passthrough; it
 recognizes only a versioned T3 install into an immutable `.staging-*` runtime,
 creates a short-lived project policy allowing only `node-pty` and
 `msgpackr-extract`, and removes it before publication. Other npm commands pass
 through unchanged.
 
-If the UI update or setup rerun rolled back with a native-module load error,
+If an older npm-backed update rolled back with a native-module load error,
 rerun the VM's Basaltwater setup. It repairs the retained candidate without
 stopping the working active version; then retry **Update server**. The doctor
-repairs and verifies the active runtime. `basaltw agent update` is not a
-T3 updater; setup reruns update selected Codex, Claude Code, and OpenCode
-installations as well, while the command remains available for an agent-only
-update.
+repairs and verifies npm-backed active runtimes. Standalone archives are checked
+with their embedded Node, without requiring host Node for the probe. If that
+check fails, restore the matching upstream release archive and rerun setup;
+host npm must not rebuild the archive against a different Node runtime.
+`basaltw agent update` remains an agent-only updater; setup reruns update T3
+and selected Codex, Claude Code, and OpenCode installations as well.
 Do not start a second foreground T3 server on the managed port.
+
+## T3 v0.0.45 workflow features
+
+After setup refreshes managed skills, or after changing plugins or MCP servers,
+use **Restart agent session** in T3's command palette (`Ctrl+K` on Linux/Windows,
+`Cmd+K` on macOS) once the current turn is finished. The next message resumes
+the conversation with a new provider process and reloads its skills, plugins,
+and MCP servers. This is a per-thread action; reloading agent configuration does
+not require restarting the whole T3 service.
+
+**Settings → Providers → Update all** updates supported outdated providers on
+every connected environment. Use it for an explicitly requested bulk update;
+for a single VM or provider, use its individual update control or the existing
+`basaltw agent update HOST USER --tool TOOL` flow. T3 omits manual-only update
+methods from the bulk action. Follow a deliberate provider update with
+`basaltw agent doctor --tool TOOL --capability t3code --capability host --record`.
+Basaltwater's recorded readiness and rollback history belong to updates made
+through Basaltwater; a T3 update does not create those records automatically.
+
+**No project** threads keep generated files in individual folders under
+`~/.t3/scratch` on the managed Debian service. Deleting a thread retains its
+folder. These are user files, not a disposable cache; the host doctor reports
+their total size and cache maintenance leaves them alone. Use a real project
+and a managed worktree for changes intended for a repository. Do not move T3's
+data directory or relax Codex policy to enable projectless work.
+
+When this session exposes `link_pull_request`, register each PR created or
+worked on using its full URL, including every layer of a stack. Do this when
+the PR is created or work starts; before finishing, use
+`list_thread_pull_requests` and register any missing PR from this task. Native
+PR links give T3's linked-PR panel the associations that CLI Git operations
+alone do not supply.
 
 ## Long-running work
 
