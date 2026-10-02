@@ -32,6 +32,10 @@ def _active_services() -> str:
     return "active\nactive\nactive\nactive\nactive\n"
 
 
+def _storage_status(name: str = "local", *, enabled: int = 1, active: int = 1) -> str:
+    return json.dumps([{"storage": name, "enabled": enabled, "active": active}])
+
+
 def _healthy_memory_diagnostics() -> list[subprocess.CompletedProcess[str]]:
     return [
         _result(
@@ -71,7 +75,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("[]\n"),
             _result("[]"),
             _result("[]"),
-            _result("Name Type Status Total Used Available %\nlocal dir active 1 1 1 1%\n"),
+            _result(_storage_status()),
             _result("5000000\n"),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
@@ -83,6 +87,10 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertFalse(report.clustered)
         self.assertEqual(report.storage_states, {"local": "active"})
         self.assertFalse(report.reboot_required)
+        self.assertIn(
+            "pvesh get /nodes/$(hostname -s)/storage --output-format json",
+            [call.args[1] for call in mock_run.call_args_list],
+        )
 
     @patch("lib.proxmox_maintenance.ssh_batch_mode", return_value=False)
     @patch("lib.proxmox_maintenance.subprocess.run")
@@ -117,7 +125,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("[]\n"),
             _result('[{"vmid": 100, "name": "web", "status": "running"}]'),
             _result('[{"vmid": 200, "name": "db", "status": "stopped"}]'),
-            _result("Name Type Status\nlocal dir active\n"),
+            _result(_storage_status()),
             _result("5000000\n"),
             _result(),
         ] + _healthy_memory_diagnostics()
@@ -141,7 +149,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result(tasks),
             _result('[{"vmid": 100, "name": "web", "status": "running", "lock": "backup"}]'),
             _result("[]"),
-            _result("Name Type Status\nbackup nfs inactive\n"),
+            _result(_storage_status("backup", active=0)),
             _result("1000\n"),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
@@ -165,7 +173,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("[]\n"),
             _result("[]"),
             _result("[]"),
-            _result("Name Type Status\nlocal dir active\n"),
+            _result(_storage_status()),
             _result("5000000\n"),
             _result(returncode=1),
             _result(
@@ -230,12 +238,76 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                 self.assertFalse(report.reboot_safe)
                 self.assertTrue(any("guest inventory" in error for error in report.errors))
 
+    @patch("lib.proxmox_maintenance._run")
+    def test_empty_or_invalid_task_response_blocks_maintenance(self, command) -> None:
+        for tasks in ("", " ", "null", "{}", '["vzdump"]', "[null]"):
+            with self.subTest(tasks=tasks):
+                results = self._inventory_results("[]")
+                results[3] = _result(tasks)
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertFalse(report.healthy)
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(any("task" in error for error in report.errors))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_invalid_storage_response_never_passes_partial_inventory(self, command) -> None:
+        valid = {"storage": "local", "enabled": 1, "active": 1}
+        malformed_entries = (
+            None, {}, {"storage": "backup", "enabled": 1},
+            {"storage": "backup", "enabled": None, "active": 1},
+            {"storage": "backup", "enabled": 1, "active": "1"},
+            {"storage": "backup", "enabled": 2, "active": 1},
+            {"storage": "bad/name", "enabled": 1, "active": 1}, valid,
+        )
+        for storage in ("", "garbage", "{}", "[]", *(
+            json.dumps([valid, invalid]) for invalid in malformed_entries
+        )):
+            with self.subTest(storage=storage):
+                results = self._inventory_results("[]")
+                results[6] = _result(storage)
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertFalse(report.healthy)
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(any("storage" in error.lower() for error in report.errors))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_disabled_storage_is_reported_without_blocking_enabled_pool(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[6] = _result(json.dumps([
+            {"storage": "local", "enabled": 1, "active": 1},
+            {"storage": "other-node", "enabled": 0, "active": 0},
+        ]))
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertTrue(report.healthy)
+        self.assertEqual(report.storage_states, {"local": "active", "other-node": "disabled"})
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_all_disabled_storage_blocks_maintenance(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[6] = _result(_storage_status(enabled=0, active=0))
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertFalse(report.healthy)
+        self.assertIn("No enabled Proxmox storage pools were reported", report.errors)
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_service_probe_failure_blocks_even_with_active_stdout(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[1] = _result(_active_services(), returncode=1, stderr="probe failed")
+        command.side_effect = results
+        report = collect_maintenance_report(self.host)
+        self.assertFalse(report.healthy)
+        self.assertTrue(any("probe failed" in error for error in report.errors))
+
     @staticmethod
     def _inventory_results(vm_inventory: str) -> list[subprocess.CompletedProcess[str]]:
         return [
             _result("pve1\n"), _result(_active_services()), _result(returncode=1),
             _result("[]"), _result("[]"), _result(vm_inventory),
-            _result("Name Type Status\nlocal dir active\n"), _result("5000000\n"),
+            _result(_storage_status()), _result("5000000\n"),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
 

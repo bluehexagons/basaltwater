@@ -142,6 +142,31 @@ class TestLocalUpdateSafety(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing"):
                 _read_config(os.path.join(root, "storage.cfg"), required=True)
 
+    def test_package_probe_stderr_cannot_be_ignored(self) -> None:
+        for failing_probe in (0, 1):
+            with self.subTest(failing_probe=failing_probe):
+                self.command.side_effect = [
+                    subprocess.CompletedProcess([], 0, "", "package database warning" if index == failing_probe else "")
+                    for index in range(2)
+                ]
+                with self.assertRaises(RuntimeError):
+                    check_proxmox_update_safety()
+        self.audit.assert_not_called()
+
+    def test_held_cluster_storage_and_proxmox_libraries_block_updates(self) -> None:
+        for package in (
+            "libproxmox-rs-perl", "libcorosync-common4", "libknet1t64",
+            "libqb100", "libzfs6linux", "libzpool6linux", "lxc-pve", "liblxc1",
+        ):
+            with self.subTest(package=package):
+                self.command.side_effect = [
+                    subprocess.CompletedProcess([], 0, "", ""),
+                    subprocess.CompletedProcess([], 0, package + "\n", ""),
+                ]
+                with self.assertRaisesRegex(RuntimeError, "Held Proxmox packages"):
+                    check_proxmox_update_safety()
+        self.audit.assert_not_called()
+
 
 class TestSetupPreflight(unittest.TestCase):
     @patch("common.proxmox_steps.run")

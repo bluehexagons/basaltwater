@@ -17,6 +17,7 @@ from lib.proxmox_memory import (
 )
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.remote_utils import run
+from lib.validation import validate_proxmox_storage_name
 
 
 MIN_ROOT_FREE_BYTES = 4 * 1024 ** 3
@@ -140,9 +141,7 @@ def _failure_detail(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
 
 
-def _format_task(task: object) -> str:
-    if not isinstance(task, dict):
-        return str(task)
+def _format_task(task: dict[str, object]) -> str:
     task_type = str(task.get("type") or "task")
     task_id = str(task.get("id") or "").strip()
     user = str(task.get("user") or "").strip()
@@ -151,11 +150,28 @@ def _format_task(task: object) -> str:
 
 
 def _parse_storage_states(stdout: str) -> dict[str, str]:
+    """Validate the complete node storage API response before trusting it."""
+    payload = json.loads(stdout)
+    if not isinstance(payload, list):
+        raise ValueError("Storage response was not a JSON list")
     states: dict[str, str] = {}
-    for line in stdout.splitlines()[1:]:
-        parts = line.split()
-        if len(parts) >= 3:
-            states[parts[0]] = parts[2].lower()
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise ValueError("Storage response contains an invalid entry")
+        name = entry.get("storage")
+        if not isinstance(name, str):
+            raise ValueError("Storage response contains an invalid name")
+        validate_proxmox_storage_name(name)
+        if name in states:
+            raise ValueError(f"Storage response repeats {name}")
+        for flag in ("enabled", "active"):
+            value = entry.get(flag)
+            if type(value) not in (int, bool) or value not in (0, 1):
+                raise ValueError(f"Storage {name} has invalid {flag} data")
+        states[name] = (
+            "disabled" if not entry["enabled"]
+            else "active" if entry["active"] else "inactive"
+        )
     return states
 
 
@@ -307,6 +323,8 @@ def collect_maintenance_report(
 
     try:
         services = run_command(host, "systemctl is-active " + " ".join(CORE_SERVICES))
+        if services.returncode != 0:
+            report.errors.append(f"Core service probe failed: {_failure_detail(services)}")
         service_lines = [line.strip().lower() for line in services.stdout.splitlines()]
         if len(service_lines) != len(CORE_SERVICES):
             report.errors.append("Could not determine every core Proxmox service state")
@@ -349,12 +367,14 @@ def collect_maintenance_report(
             report.errors.append(f"Could not list active tasks: {_failure_detail(tasks)}")
         else:
             try:
-                task_data = json.loads(tasks.stdout or "[]")
-            except json.JSONDecodeError as exc:
+                task_data = json.loads(tasks.stdout)
+            except (TypeError, ValueError) as exc:
                 report.errors.append(f"Could not parse active task list: {exc}")
             else:
                 if not isinstance(task_data, list):
                     report.errors.append("Active task response was not a JSON list")
+                elif any(not isinstance(task, dict) for task in task_data):
+                    report.errors.append("Active task response contains an invalid entry")
                 else:
                     report.active_tasks = [_format_task(task) for task in task_data]
                     if report.active_tasks:
@@ -386,16 +406,22 @@ def collect_maintenance_report(
         if report.locked_guests:
             report.errors.append(f"{len(report.locked_guests)} locked guest(s)")
 
-        storage = run_command(host, "pvesm status")
+        storage = run_command(
+            host, "pvesh get /nodes/$(hostname -s)/storage --output-format json",
+        )
         if storage.returncode != 0:
             report.errors.append(f"Could not read storage status: {_failure_detail(storage)}")
         else:
-            report.storage_states = _parse_storage_states(storage.stdout)
-            if not report.storage_states:
-                report.errors.append("No Proxmox storage pools were reported")
-            for storage_name, state in report.storage_states.items():
-                if state != "active":
-                    report.errors.append(f"Storage {storage_name} is {state}")
+            try:
+                report.storage_states = _parse_storage_states(storage.stdout)
+            except (TypeError, ValueError) as exc:
+                report.errors.append(f"Could not parse storage status: {exc}")
+            else:
+                if not any(state != "disabled" for state in report.storage_states.values()):
+                    report.errors.append("No enabled Proxmox storage pools were reported")
+                for storage_name, state in report.storage_states.items():
+                    if state == "inactive":
+                        report.errors.append(f"Storage {storage_name} is {state}")
 
         root_free = run_command(host, "df -Pk / | awk 'NR==2 {print $4}'")
         if root_free.returncode != 0:

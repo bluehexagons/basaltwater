@@ -122,13 +122,17 @@ def check_proxmox_update_safety(*, require_evacuated: bool = False) -> None:
     ):
         raise RuntimeError("Ceph requires operator-managed Proxmox updates")
     audit = run("dpkg --audit", check=False, capture_output=True, timeout=60)
-    if audit.returncode != 0 or (audit.stdout or "").strip():
+    if audit.returncode != 0 or (audit.stdout or "").strip() or (audit.stderr or "").strip():
         raise RuntimeError("dpkg reports an incomplete package transaction; repair it first")
     holds = run("apt-mark showhold", check=False, capture_output=True, timeout=60)
-    if holds.returncode != 0:
+    if holds.returncode != 0 or (holds.stderr or "").strip():
         raise RuntimeError("Could not inspect held packages")
     held_core = [name for name in (holds.stdout or "").split() if name.startswith(
-        ("proxmox-", "pve-", "libpve-", "qemu-server", "corosync", "ceph", "zfs")
+        (
+            "proxmox-", "pve-", "libpve-", "libproxmox-", "qemu-server",
+            "corosync", "libcorosync", "libknet", "libqb", "ceph",
+            "zfs", "libzfs", "libzpool", "lxc", "liblxc",
+        )
     )]
     if held_core:
         raise RuntimeError("Held Proxmox packages require review: " + ", ".join(held_core))

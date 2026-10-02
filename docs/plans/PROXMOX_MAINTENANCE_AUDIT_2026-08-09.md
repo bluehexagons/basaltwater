@@ -22,6 +22,11 @@ validation.
   memory policy preserves stricter targets, and native management firewall
   setup verifies node policy, backend, activation, and saved sources while
   reporting retained operator and implicit cluster access.
+- 2026-10-01: weekly cleanup leaves Proxmox package removal and kernel retention
+  operator-managed. Its APT phase now shares the maintenance lock and audits
+  package state before cleanup. Maintenance audits require complete JSON task,
+  guest, and storage responses; malformed data blocks updates and reboots,
+  and disabled storage is distinguished from inaccessible enabled pools.
 
 These are the first P1 safety controls, not completion of either P1 item below.
 HA/Ceph health, automated guest evacuation, and storage-type-specific checks

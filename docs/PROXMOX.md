@@ -723,7 +723,10 @@ basaltw proxmox audit pve1 --json
 
 The audit checks core Proxmox services, quorum on clustered nodes, active tasks,
 configured storage, at least 4 GiB of free root space, guest locks, running
-guests, and whether a reboot is pending. It also reports host RAM and swap use,
+guests, and whether a reboot is pending. Task, guest, and storage inventories
+must return valid JSON; empty or malformed responses block maintenance.
+Every enabled storage pool must be accessible, while disabled pools are
+reported separately. It also reports host RAM and swap use,
 swap devices, swappiness, and whether the previous boot journal is retained.
 The previous kernel journal is scanned for OOM kills, blocked tasks, lockups,
 watchdogs, storage timeouts, thermal events, and hardware-error indicators;
