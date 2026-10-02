@@ -114,15 +114,17 @@ class TestCleanupMaintenance(unittest.TestCase):
 
 
 class TestCleanupHelpers(unittest.TestCase):
-    def test_proxmox_does_not_autoremove_or_change_kernel_marks(self):
+    def test_proxmox_uses_kernel_only_cleanup_without_autoremove_or_mark_changes(self):
         with (
             patch.object(cleanup_maintenance, "is_proxmox_host", return_value=True),
+            patch.object(cleanup_maintenance, "cleanup_proxmox_kernels", return_value=[]) as kernel_cleanup,
             patch.object(cleanup_maintenance, "obsolete_manual_kernels") as kernels,
             patch.object(cleanup_maintenance, "run_cleanup_command") as command,
         ):
             self.assertEqual(cleanup_maintenance.cleanup_unused_packages(), [])
         kernels.assert_not_called()
         command.assert_not_called()
+        kernel_cleanup.assert_called_once()
 
     def test_busy_setup_defers_apt_and_dpkg_checks(self):
         with (

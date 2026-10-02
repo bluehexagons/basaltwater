@@ -217,21 +217,27 @@ The default setup installs these recurring host-maintenance timers:
 - `auto-restart-if-needed.timer` checks daily at 02:00 and after boot, but the
   default Proxmox policy records and reports a deferral instead of rebooting.
 - `cleanup-maintenance.timer` audits `dpkg` consistency, cleans bounded caches,
-  journals, old crash reports, and Basaltwater-owned temporary artifacts, and ensures
+  journals, old crash reports, and Basaltwater-owned temporary artifacts, and
+  ensures
   filesystem TRIM through the native timer or a cleanup fallback each Sunday.
   Post-cleanup checks cover block and inode pressure on distinct local storage
-  mounts. The job does not prune backups, templates, ISOs, guest volumes, or
-  change installed packages, kernel APT marks, or `proxmox-boot-tool` selections.
-  Hypervisor package removal and kernel retention remain operator-managed.
+  mounts. On supported healthy nodes it also removes obsolete kernels while
+  preserving the running kernel, newer kernels, an older fallback, holds, and
+  Proxmox's boot-retention protections. A simulated purge and an APT transaction
+  guard reject changes outside the selected old kernels. HA/Ceph and failing
+  health checks require operator-managed removal. The job does not prune
+  backups, templates, ISOs, guest volumes, change kernel APT marks, or alter
+  explicit `proxmox-boot-tool` selections. Broad package autoremove remains
+  operator-managed. See [kernel cleanup](MAINTENANCE.md#cleanup-and-state-safety)
+  for a read-only preview and an immediate cleanup command.
 
 Inspect these jobs with the commands in [Recurring Maintenance](MAINTENANCE.md).
 APT updates and restart checks share the node's setup lock and defer while it
 is occupied. Cleanup's APT phase uses the same lock; when busy, its non-package
 cleanup and storage checks still run. Opt-in reboots also require no running
 guests; a forced deadline cannot bypass Proxmox health or evacuation checks.
-Checks describe the node
-before scheduling a reboot; operators must keep it evacuated during the grace
-period. Package maintainer scripts can restart host services despite
+Checks describe the node before scheduling a reboot; operators must keep it
+evacuated during the grace period. Package maintainer scripts can restart host services despite
 `--no-remove`. There is no cross-node timing coordination or backup
 recoverability check. Run the Proxmox audit before planned maintenance and
 verify backups through your normal retention and restore process.

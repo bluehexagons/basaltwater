@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from logging import ERROR, INFO, WARNING, DEBUG
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 
 from lib.disk_utils import get_disk_usage_details
-from lib.kernel_cleanup import obsolete_manual_kernels
+from lib.kernel_cleanup import obsolete_kernel_packages, obsolete_manual_kernels
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.maintenance_defaults import (
@@ -34,7 +35,11 @@ from lib.maintenance_defaults import (
 )
 from lib.machine_state import is_container
 from lib.maintenance_lock import maintenance_lock
-from lib.proxmox_preflight import is_proxmox_host
+from lib.proxmox_preflight import (
+    check_proxmox_installation,
+    check_proxmox_update_safety,
+    is_proxmox_host,
+)
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_positive_integer
@@ -150,8 +155,7 @@ def cleanup_unused_packages() -> list[str]:
     networking.service).
     """
     if is_proxmox_host():
-        log_event(logger, "Proxmox package removal and kernel retention are operator-managed; skipping autoremove")
-        return []
+        return cleanup_proxmox_kernels()
     apt_get = shutil.which("apt-get")
     if not apt_get:
         log_event(logger, "apt-get not found, skipping unused package cleanup")
@@ -179,6 +183,80 @@ def cleanup_unused_packages() -> list[str]:
         env=env,
     )
     return [failure] if failure else []
+
+
+def _validate_kernel_simulation(stdout: str, kernels: list[str]) -> None:
+    """Reject dependency changes outside the selected obsolete kernels."""
+    summary = re.search(r"^(\d+) upgraded, (\d+) newly installed, (\d+) to remove\b", stdout, re.MULTILINE)
+    removed = []
+    for line in stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if fields[0] in ("Inst", "Conf"):
+            raise ValueError("Kernel purge would install or configure packages")
+        if fields[0] in ("Remv", "Purg"):
+            if len(fields) < 2 or fields[1] not in kernels:
+                raise ValueError("Kernel purge would remove packages outside the kernel plan")
+            removed.append(fields[1])
+    if (
+        not summary or summary.group(1, 2) != ("0", "0")
+        or int(summary.group(3)) != len(kernels)
+        or set(removed) != set(kernels) or len(removed) != len(kernels)
+    ):
+        raise ValueError("Could not verify the complete kernel purge simulation")
+
+
+def cleanup_proxmox_kernels() -> list[str]:
+    """Remove only verified obsolete kernels; leave broad autoremove to operators.
+
+    Called within cleanup's package lock. An APT hook checks the real removal
+    plan and boot-retention policy under APT's locks before dpkg can act.
+    """
+    try:
+        check_proxmox_installation()
+        check_proxmox_update_safety()
+        kernels = obsolete_kernel_packages()
+        if not kernels:
+            log_event(logger, "No obsolete Proxmox kernels eligible for cleanup")
+            return []
+        apt_get = shutil.which("apt-get")
+        if not apt_get:
+            raise RuntimeError("apt-get is unavailable")
+        guard = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kernel_cleanup_guard.py")
+        validate_filesystem_path(guard, must_exist=True)
+        hook = shlex.join([guard] + kernels)
+        # APT keys hook options by the command's first whitespace-delimited token.
+        hook_key = hook.split(" ", 1)[0]
+        options = APT_LOCK_OPTIONS + [
+            "--no-upgrade", "--no-install-recommends", "-q=0",
+            "-o", "APT::Get::AutomaticRemove=false",
+        ]
+        command = [apt_get, "purge"] + options
+        env = os.environ.copy()
+        env.update(DEBIAN_FRONTEND="noninteractive", LC_ALL="C")
+        simulated = run_command(command + ["--simulate", "--"] + kernels, env=env)
+        if simulated.returncode != 0 or simulated.stderr.strip():
+            raise RuntimeError(simulated.stderr.strip() or "APT kernel purge simulation failed")
+        _validate_kernel_simulation(simulated.stdout, kernels)
+        check_proxmox_update_safety()
+        log_event(logger, "Removing obsolete Proxmox kernels", packages=",".join(kernels))
+        failure = run_cleanup_command(
+            command + [
+                "-y", "-o", f"DPkg::Pre-Install-Pkgs::={hook}",
+                "-o", f"DPkg::Tools::Options::{hook_key}::Version=2",
+                "-o", f"DPkg::Tools::Options::{hook_key}::InfoFD=0",
+                "--",
+            ] + kernels,
+            "Proxmox obsolete kernel cleanup", env=env,
+        )
+        if failure:
+            return [failure]
+        check_proxmox_update_safety()
+        return []
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        log_event(logger, "Proxmox kernel cleanup stopped", level=WARNING, error=str(exc))
+        return [f"Proxmox kernel cleanup: {exc}"]
 
 
 def audit_package_database() -> str | None:

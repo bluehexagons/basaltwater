@@ -252,8 +252,7 @@ days, and removes only exact basaltwater-owned temporary artifact names older
 than seven days in `/tmp` and `/var/tmp`.
 
 The cleanup job also runs noninteractive `apt-get autoremove --purge` on APT
-hosts other than Proxmox. Proxmox package removal and kernel-retention changes
-remain operator-managed. On other hosts this removes packages APT has marked
+hosts other than Proxmox. On those hosts this removes packages APT has marked
 as unused, including superseded kernels, while APT's kernel-retention policy
 protects kernels it considers required. It deliberately retains configuration
 remnants for packages that were already removed: blanket residual purges can
@@ -273,24 +272,52 @@ older than the running kernel qualify; the newest older image is also excluded
 from these metadata changes as a fallback.
 APT holds and `NeverAutoRemove` rules remain respected. Default-kernel and
 helper packages, unversioned Debian/Ubuntu tracking metapackages, other flavours,
-and unknown custom kernel names are left alone. APT determines actual removals from its
-dependency and retention rules; Basaltwater never deletes boot images directly.
+and unknown custom kernel names are left alone. APT determines actual removals
+from its dependency and retention rules; Basaltwater never deletes boot images
+directly.
 
-Rerun setup to deploy this behavior and perform one cleanup immediately.
-The weekly timer handles later runs. Preview the manual selections it would
-release without changing anything:
+Proxmox has automatic kernel-only cleanup instead of broad autoremove. It
+selects obsolete installed kernel images and old series metapackages, whether
+manually or automatically installed. It preserves the running kernel, all newer
+kernels, the newest older image as a fallback, package holds, and every APT
+`NeverAutoRemove` protection, including Proxmox's generated boot-selection rules.
+It also reads the current native boot list to preserve manual selections and
+permanent or next-boot pins even before those APT rules are refreshed.
+Default-kernel and helper packages are never selected. The job requires a
+supported healthy node under the same local maintenance lock used by updates;
+HA, Ceph, core package holds, and failing health checks defer removal to operators.
+It simulates an explicit kernel purge and refuses any dependency removal,
+installation, or upgrade outside the selected kernels. Before dpkg runs, an
+APT hook rechecks both the actual package actions and kernel-retention policy
+under APT's locks. It leaves kernel APT marks and explicit boot-tool selections
+alone; standard kernel package hooks maintain the boot files.
+
+Rerun setup to deploy this behavior. Setup's child cleanup defers the APT phase
+while setup owns the maintenance lock; the weekly timer handles later runs.
+Preview the manual selections on other hosts without changing anything:
 
 ```bash
 cd /opt/basaltwater
 sudo /usr/bin/python3 -m lib.kernel_cleanup
 ```
 
+On Proxmox, include automatic packages to preview the kernel-only removal
+candidates:
+
+```bash
+sudo /usr/bin/python3 -m lib.kernel_cleanup --all
+```
+
+After setup completes, run `sudo systemctl start cleanup-maintenance.service`
+to perform cleanup immediately instead of waiting for the weekly timer. The
+same safety checks apply.
+
 To deliberately retain an additional obsolete image, use `apt-mark hold PACKAGE`
 (which also blocks package upgrades), or the platform's kernel retention rules.
 On hosts with automated kernel cleanup, a manual-install flag alone no longer
-reserves an obsolete kernel. Failed inventory, retention inspection, or metadata
-updates stop the package-removal
-phase and are reported through the cleanup job's failure notification.
+reserves an obsolete kernel. Failed inventory, retention inspection, package
+simulation, or metadata updates stop package removal and are reported through
+the cleanup job's failure notification.
 
 `user-cache-maintenance` runs as the configured non-root account instead of
 root, daily after the scheduled update windows. It inventories tool-reported
