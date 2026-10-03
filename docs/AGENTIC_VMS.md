@@ -144,6 +144,17 @@ one in place.
 
 ## Day-two operation
 
+For native game development and baseline-compatible packaging, add
+`--container-tools --debug-tools` to a Debian VM setup. The first installs
+rootless Podman and its helpers; the second adds native debugging, compiler
+cache, and Ninja tools. See [project tooling](PROJECT_TOOLING.md).
+`--python` adds uv for isolated Python tools. `--av-tools` and `--gl-tools`
+provide media inspection and OpenGL tracing; these are separate from GPU
+acceleration, which depends on the virtual hardware and graphics driver.
+Use `--git-lfs` when repositories contain LFS assets, and `--mount-smb` when
+agents need source assets from an existing share. Browser automation and T3
+Code should follow the chosen profile and browser guide.
+
 After setup, verify the agent environment from the controller:
 
 ```bash

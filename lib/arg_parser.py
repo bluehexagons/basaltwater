@@ -59,6 +59,18 @@ class RemovedDesktopPolicyAction(argparse.Action):
         )
 
 
+class AptToolBundleAction(argparse.Action):
+    """Expand an opt-in Debian tool bundle into ordinary saved APT packages."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        del parser, values, option_string
+        selected = list(getattr(namespace, self.dest, None) or [])
+        for package in self.const:
+            if package not in selected:
+                selected.append(package)
+        setattr(namespace, self.dest, selected)
+
+
 class VMDiskSettingAction(argparse.Action):
     """Set a VM-wide disk default or one logical disk override."""
 
@@ -698,6 +710,16 @@ def add_setup_arguments(
                        action="append",
                        metavar="PACKAGE",
                        help="Install package via apt (can be used multiple times)")
+    for flag, packages, description in (
+        ("--container-tools", ("podman", "uidmap", "slirp4netns", "fuse-overlayfs"),
+         "Install rootless Podman and its user-namespace/network/storage helpers (Debian APT setup)"),
+        ("--debug-tools", ("gdb", "strace", "valgrind", "ccache", "ninja-build"),
+         "Install native debugging and build-cache tools (Debian APT setup)"),
+    ):
+        parser.add_argument(
+            flag, dest="apt_packages", action=AptToolBundleAction,
+            nargs=0, const=packages, help=description,
+        )
     parser.add_argument("--flatpak-install", dest="flatpak_packages",
                        action="append",
                        metavar="PACKAGE",

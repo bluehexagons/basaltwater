@@ -90,8 +90,9 @@ hyphen ranges, and `||` alternatives are supported. NVM `node`, `stable`,
 unsupported syntax fail with guidance; no runtime is downloaded implicitly.
 Commit a stable pin for reproducible builds. A rolling `node` pin deliberately
 selects the newest installed release and can differ from reviewed packaging
-metadata. Antistatic uses an exact pin matching its packaged runtime; other
-projects may choose a supported major.
+metadata. A development major and a reviewed packaged runtime are separate
+contracts: projects such as Antistatic select development Node independently
+and obtain their verified packaged runtime during packaging.
 
 ```bash
 # Execute in the current directory using the frontend's runtime selection.
@@ -120,3 +121,26 @@ work through ordinary NVM or system toolchains without Basaltwater. NVM's
 [project version-file guidance](https://github.com/nvm-sh/nvm#nvmrc) and npm's
 [stable range reference](https://docs.npmjs.com/cli/v6/using-npm/semver/)
 describe the underlying conventions.
+
+## Build for an older release baseline
+
+A newer VM's libc and native libraries can exceed a project's supported
+release ABI even when its source builds and tests pass. Use the project's
+reviewed SDK/container build and retain its compatibility gates. Runtime
+selection alone cannot make newer host libraries compatible with older targets.
+Antistatic's `npm run package:linux` builds in its pinned Steam Runtime SDK;
+its normal source builds remain independent of Basaltwater.
+
+For managed Debian coding VMs that need container builds, add `--container-tools`
+to the saved setup. It expands to `podman`, `uidmap`, `slirp4netns`, and
+`fuse-overlayfs` through the existing `--apt-install` package path. Verify
+subordinate UID/GID mappings and run `podman info`
+as the login user. Rootless Podman does not require a Docker daemon or adding
+the coding account to a privileged Docker group. The images and build cache
+consume several GB; include their storage in VM capacity planning.
+
+`--debug-tools` similarly adds GDB, strace, Valgrind, ccache, and Ninja for
+native diagnosis and builds. These opt-in Debian bundles are saved and sent to
+the target as explicit APT packages. They do not alter sudo authority or
+container/kernel policy. Remove unwanted packages from the saved selection;
+removing a bundle selection does not uninstall packages.
