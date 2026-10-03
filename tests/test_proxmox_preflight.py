@@ -113,14 +113,14 @@ class TestLocalUpdateSafety(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not quorate"):
             check_proxmox_update_safety()
 
-    def test_network_exception_is_opt_in_and_retains_evacuated_guest_gate(self) -> None:
+    def test_storage_exception_is_opt_in_and_retains_evacuated_guest_gate(self) -> None:
         check_proxmox_update_safety()
-        self.audit.assert_called_once_with(allow_inactive_network_storage=False)
-        self.report.warnings = ["Storage shared is inactive (network storage)"]
+        self.audit.assert_called_once_with(allow_inactive_storage=False)
+        self.report.warnings = ["Storage ts1sd32 is inactive"]
         self.report.running_guests = [ContainerInfo(vmid=107, status="running", name="samba")]
         with self.assertRaisesRegex(RuntimeError, "running guests: 107"):
-            check_proxmox_update_safety(require_evacuated=True, allow_inactive_network_storage=True)
-        self.audit.assert_called_with(allow_inactive_network_storage=True)
+            check_proxmox_update_safety(require_evacuated=True, allow_inactive_storage=True)
+        self.audit.assert_called_with(allow_inactive_storage=True)
 
     def test_ha_and_ceph_defer_to_operator_before_package_commands(self) -> None:
         for configured_path, content in (

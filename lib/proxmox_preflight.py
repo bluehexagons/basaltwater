@@ -131,7 +131,7 @@ def check_proxmox_package_state() -> None:
 
 
 def check_proxmox_update_safety(
-    *, require_evacuated: bool = False, allow_inactive_network_storage: bool = False,
+    *, require_evacuated: bool = False, allow_inactive_storage: bool = False,
 ) -> ProxmoxMaintenanceReport:
     """Gate node maintenance and return its audit without coordinating other nodes."""
     if _read_config("/etc/pve/ha/resources.cfg").strip():
@@ -144,7 +144,7 @@ def check_proxmox_update_safety(
         raise RuntimeError("Ceph requires operator-managed Proxmox maintenance")
     check_proxmox_package_state()
     report = collect_local_maintenance_report(
-        allow_inactive_network_storage=allow_inactive_network_storage,
+        allow_inactive_storage=allow_inactive_storage,
     )
     if not report.healthy:
         raise RuntimeError("Proxmox maintenance checks failed: " + "; ".join(report.errors))

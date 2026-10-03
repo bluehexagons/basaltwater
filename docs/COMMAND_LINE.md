@@ -312,17 +312,16 @@ Without the wait flag, inspect failures on the node with
 can leave some guests stopped. After reboot, Proxmox's existing autostart and
 HA policies determine which guests start.
 
-For this explicit restart only, inactive CIFS, NFS, or PBS storage produces a
-warning rather than blocking the restart, regardless of its configured content.
-The restart flag authorizes the outage even for shares with mixed content or
-guest disks. This covers shares served by a container on the node being
-rebooted, including a container left stopped by an earlier failed restart.
-The same exception applies before shutdown, after shutdown, and during the
-post-reboot check. Dependent guests and jobs may remain unavailable until the
-storage provider returns; setup does not start guests or change their autostart
-settings. Local storage and unknown storage types still block when inactive.
-At least one storage pool must be active, and active tasks, locks, quorum, and
-other health gates still apply.
+For this explicit restart only, inactive storage produces a warning rather
+than blocking the restart, regardless of its backend or configured content.
+The restart flag authorizes the outage for local storage, stale entries, and
+shares with mixed content or guest disks. A reboot may help restore storage;
+it can also stop a container serving shares on the node. The same policy
+applies before shutdown, after shutdown, and during the post-reboot check,
+even if every enabled pool is inactive. Dependent guests and jobs may remain
+unavailable until storage returns; setup does not start guests or change their
+autostart settings. Failed storage probes or invalid API responses, active
+tasks, locks, quorum, and other health gates still block the restart.
 Normal audits and scheduled maintenance retain their strict storage checks.
 
 ```bash

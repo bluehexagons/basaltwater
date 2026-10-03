@@ -270,14 +270,15 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         for storage in ("", "garbage", "{}", "[]", *(
             json.dumps([valid, invalid]) for invalid in malformed_entries
         )):
-            with self.subTest(storage=storage):
-                results = self._inventory_results("[]")
-                results[6] = _result(storage)
-                command.side_effect = results
-                report = collect_maintenance_report(self.host)
-                self.assertFalse(report.healthy)
-                self.assertFalse(report.reboot_safe)
-                self.assertTrue(any("storage" in error.lower() for error in report.errors))
+            for explicit in (False, True):
+                with self.subTest(storage=storage, explicit=explicit):
+                    results = self._inventory_results("[]")
+                    results[6] = _result(storage)
+                    command.side_effect = results
+                    report = collect_maintenance_report(self.host, allow_inactive_storage=explicit)
+                    self.assertFalse(report.healthy)
+                    self.assertFalse(report.reboot_safe)
+                    self.assertTrue(any("storage" in error.lower() for error in report.errors))
 
     @patch("lib.proxmox_maintenance._run")
     def test_disabled_storage_is_reported_without_blocking_enabled_pool(self, command) -> None:
@@ -301,9 +302,9 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertIn("No enabled Proxmox storage pools were reported", report.errors)
 
     @patch("lib.proxmox_maintenance._run")
-    def test_explicit_restart_tolerates_mixed_network_outages_but_audits_remain_strict(self, command) -> None:
+    def test_explicit_restart_tolerates_all_storage_outages_but_audits_remain_strict(self, command) -> None:
         for storage_type, content, explicit in product(
-            ("cifs", "nfs", "pbs"),
+            ("cifs", "nfs", "pbs", "dir", "lvmthin", "zfspool", "unknown", None),
             ("backup", "backup,images,rootdir,iso,vztmpl,snippets", "images", "rootdir", "iso", "snippets", None),
             (False, True),
         ):
@@ -318,7 +319,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                 ]))
                 command.side_effect = results
                 report = collect_maintenance_report(
-                    self.host, allow_inactive_network_storage=explicit,
+                    self.host, allow_inactive_storage=explicit,
                 )
                 self.assertEqual(report.reboot_safe, explicit)
                 self.assertEqual(report.storage_states["scrap_100_1_write"], "inactive")
@@ -329,29 +330,34 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                     self.assertIn("until storage returns", format_maintenance_report(report))
 
     @patch("lib.proxmox_maintenance._run")
-    def test_restart_exception_never_exempts_local_storage_or_unknown_types(self, command) -> None:
-        for metadata in (
-            {"type": "dir", "content": "backup"},
-            {"type": "lvmthin", "content": "images,rootdir"},
-            {"type": "zfspool", "content": "images,rootdir"},
-            {"type": "unknown", "content": "backup"},
-            {"content": "backup"}, {"type": None, "content": "backup"},
-            {"type": ["cifs"], "content": "backup"},
-        ):
-            with self.subTest(metadata=metadata):
+    def test_ghost_storage_warns_even_when_every_pool_is_inactive(self, command) -> None:
+        for local_active, explicit in product((0, 1), (False, True)):
+            with self.subTest(local_active=local_active, explicit=explicit):
                 results = self._inventory_results("[]")
                 results[6] = _result(json.dumps([
-                    {"storage": "local", "enabled": 1, "active": 1},
-                    {"storage": "shared", "enabled": 1, "active": 0, **metadata},
+                    {"storage": "local", "enabled": 1, "active": local_active, "type": "dir"},
+                    {"storage": "ts1sd32", "enabled": 1, "active": 0,
+                     "type": "dir", "content": "images,rootdir,backup"},
                 ]))
                 command.side_effect = results
-                report = collect_maintenance_report(self.host, allow_inactive_network_storage=True)
-                self.assertFalse(report.reboot_safe)
-                self.assertIn("Storage shared is inactive", report.errors)
+                report = collect_maintenance_report(self.host, allow_inactive_storage=explicit)
+                self.assertEqual(report.reboot_safe, explicit)
+                self.assertEqual(report.to_dict()["storage_states"]["ts1sd32"], "inactive")
+                messages = report.warnings if explicit else report.errors
+                self.assertTrue(any("Storage ts1sd32 is inactive" in message for message in messages))
 
     @patch("lib.proxmox_maintenance._run")
-    def test_network_exception_preserves_other_reboot_gates(self, command) -> None:
-        for gate in ("quorum", "tasks", "guests", "locks", "storage", "capacity"):
+    def test_explicit_restart_does_not_ignore_failed_storage_probe(self, command) -> None:
+        results = self._inventory_results("[]")
+        results[6] = _result(returncode=1, stderr="storage probe failed")
+        command.side_effect = results
+        report = collect_maintenance_report(self.host, allow_inactive_storage=True)
+        self.assertFalse(report.reboot_safe)
+        self.assertIn("Could not read storage status: storage probe failed", report.errors)
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_storage_exception_preserves_other_reboot_gates(self, command) -> None:
+        for gate in ("quorum", "tasks", "guests", "locks", "services", "capacity"):
             with self.subTest(gate=gate):
                 results = self._inventory_results("[]")
                 results[6] = _result(json.dumps([
@@ -369,20 +375,17 @@ class TestCollectMaintenanceReport(unittest.TestCase):
                         "vmid": 107, "status": "running" if gate == "guests" else "stopped",
                         **({"lock": "backup"} if gate == "locks" else {}),
                     }]))
-                elif gate == "storage":
-                    results[6] = _result(json.dumps([{
-                        "storage": "backup", "enabled": 1, "active": 0,
-                        "type": "cifs", "content": "backup,images,iso",
-                    }]))
+                elif gate == "services":
+                    results[1] = _result("active\nactive\nfailed\nactive\nactive\n", returncode=3)
                 else:
                     results[7] = _result(_filesystem_capacity("1000 100000 50000"))
                 command.side_effect = results
-                report = collect_maintenance_report(self.host, allow_inactive_network_storage=True)
+                report = collect_maintenance_report(self.host, allow_inactive_storage=True)
                 self.assertFalse(report.reboot_safe)
                 self.assertTrue(report.reboot_blockers())
 
     @patch("lib.proxmox_maintenance.run")
-    def test_local_restart_uses_the_same_network_storage_policy(self, command) -> None:
+    def test_local_restart_uses_the_same_storage_policy(self, command) -> None:
         results = self._inventory_results("[]")
         results[6] = _result(json.dumps([
             {"storage": "local", "enabled": 1, "active": 1},
@@ -390,7 +393,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
              "type": "cifs", "content": "backup,images,iso"},
         ]))
         command.side_effect = results
-        self.assertTrue(collect_local_maintenance_report(allow_inactive_network_storage=True).reboot_safe)
+        self.assertTrue(collect_local_maintenance_report(allow_inactive_storage=True).reboot_safe)
 
     @patch("lib.proxmox_maintenance._run")
     def test_service_probe_failure_blocks_even_with_active_stdout(self, command) -> None:

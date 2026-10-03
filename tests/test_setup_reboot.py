@@ -374,9 +374,9 @@ class RestartTransportTests(unittest.TestCase):
         self.assertEqual(command[-3:-1], ["/usr/bin/python3", "-c"])
         self.assertIn("_restart_local_proxmox()", command[-1])
 
-    def test_preflight_reports_inactive_share_warning_for_local_and_remote_targets(self) -> None:
-        warning = "Storage scrap_100_1_write is inactive (network storage)"
-        for host in ("localhost", "example.test"):
+    def test_preflight_reports_inactive_storage_warning_for_local_and_remote_targets(self) -> None:
+        warning = "Storage ts1sd32 is inactive"
+        for host in ("localhost", "192.168.0.23"):
             with (
                 self.subTest(host=host),
                 patch("lib.proxmox_maintenance.collect_maintenance_report") as remote,
@@ -386,7 +386,7 @@ class RestartTransportTests(unittest.TestCase):
                 audit = local if host == "localhost" else remote
                 audit.return_value = ProxmoxMaintenanceReport(host, host, warnings=[warning])
                 self.assertTrue(setup_reboot._prepare_proxmox_restart(_config(host=host)))
-                self.assertTrue(audit.call_args.kwargs["allow_inactive_network_storage"])
+                self.assertTrue(audit.call_args.kwargs["allow_inactive_storage"])
                 self.assertIn(warning, output.getvalue())
 
 
@@ -486,21 +486,21 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         self.shutdown.assert_called_once_with()
         self.assertEqual(self.collect.call_count, 2)
         self.assertEqual(self.collect.call_args.kwargs, {
-            "require_evacuated": True, "allow_inactive_network_storage": True,
+            "require_evacuated": True, "allow_inactive_storage": True,
         })
         self.assertEqual(self.reboot.call_args.args[0], ["/usr/bin/systemctl", "reboot", "--no-wall"])
 
     def test_share_lost_after_container_shutdown_does_not_block_reboot(self) -> None:
         self.stopped.storage_states = {"local": "active", "scrap_100_1_write": "inactive"}
         self.stopped.warnings = [
-            "Storage scrap_100_1_write is inactive (network storage); "
+            "Storage scrap_100_1_write is inactive; "
             "explicit restart can proceed, but dependent guests and jobs "
             "may be unavailable until storage returns",
         ]
         self.collect.side_effect = [self.running, self.stopped]
         with redirect_stdout(io.StringIO()) as output:
             self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
-        self.assertTrue(all(call.kwargs["allow_inactive_network_storage"] for call in self.collect.call_args_list))
+        self.assertTrue(all(call.kwargs["allow_inactive_storage"] for call in self.collect.call_args_list))
         self.assertIn("until storage returns", output.getvalue())
         self.shutdown.assert_called_once()
         self.reboot.assert_called_once()
@@ -571,8 +571,13 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
                 self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
 
     def test_already_evacuated_node_reboots_without_stopall(self) -> None:
+        self.stopped.storage_states = {"ts1sd32": "inactive"}
+        self.stopped.warnings = ["Storage ts1sd32 is inactive"]
         self.collect.return_value = self.stopped
-        self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
+        self.assertIn("WARNING: Storage ts1sd32 is inactive", output.getvalue())
+        self.collect.assert_called_once_with(allow_inactive_storage=True)
         self.shutdown.assert_not_called()
         self.reboot.assert_called_once()
 
@@ -597,7 +602,7 @@ class ProxmoxRestartVerificationTests(unittest.TestCase):
         self.remote.assert_not_called()
 
     def test_post_reboot_failure_is_bounded_and_does_not_claim_success(self) -> None:
-        self.collect.return_value = ProxmoxMaintenanceReport("pve1", "example.test", errors=["Storage local inactive"])
+        self.collect.return_value = ProxmoxMaintenanceReport("pve1", "example.test", errors=["Core service pveproxy is failed"])
         output = io.StringIO()
         with (
             patch.object(setup_reboot, "_RESTART_WAIT_SECONDS", 5),
@@ -606,21 +611,21 @@ class ProxmoxRestartVerificationTests(unittest.TestCase):
         ):
             self.assertFalse(setup_reboot._verify_proxmox_restart(_config()))
         self.assertIn("unhealthy after restart", output.getvalue())
-        self.assertIn("Storage local inactive", output.getvalue())
+        self.assertIn("Core service pveproxy is failed", output.getvalue())
 
-    def test_post_reboot_share_outage_remains_visible_without_failing_host_readiness(self) -> None:
-        self.healthy.storage_states = {"local": "active", "backup": "inactive"}
-        self.healthy.warnings = ["Storage backup is inactive (network storage)"]
+    def test_post_reboot_ghost_storage_remains_visible_without_failing_host_readiness(self) -> None:
+        self.healthy.storage_states = {"local": "active", "ts1sd32": "inactive"}
+        self.healthy.warnings = ["Storage ts1sd32 is inactive"]
         self.collect.return_value = self.healthy
         with redirect_stdout(io.StringIO()) as output:
             self.assertTrue(setup_reboot._verify_proxmox_restart(_config()))
-        self.assertIn("backup=inactive", output.getvalue())
-        self.assertIn("WARNING: Storage backup is inactive", output.getvalue())
-        self.assertTrue(self.collect.call_args.kwargs["allow_inactive_network_storage"])
+        self.assertIn("ts1sd32=inactive", output.getvalue())
+        self.assertIn("WARNING: Storage ts1sd32 is inactive", output.getvalue())
+        self.assertTrue(self.collect.call_args.kwargs["allow_inactive_storage"])
 
     def test_audit_commands_share_remaining_deadline_and_saved_root_identity(self) -> None:
-        def audit(host, *, command_runner, allow_inactive_network_storage):
-            self.assertTrue(allow_inactive_network_storage)
+        def audit(host, *, command_runner, allow_inactive_storage):
+            self.assertTrue(allow_inactive_storage)
             self.assertEqual((host.address, host.user, host.ssh_key), ("example.test", "root", "/keys/private"))
             command_runner(host, "systemctl is-active pveproxy")
             with self.assertRaises(TimeoutError):
