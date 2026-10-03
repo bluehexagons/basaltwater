@@ -31,6 +31,8 @@ MAX_STATE_BYTES = 1024 * 1024
 MAX_STREAM_BYTES = 1024 * 1024
 DEFAULT_TIMEOUT_MINUTES = 30
 MAX_TIMEOUT_MINUTES = 7 * 24 * 60
+DEFAULT_FAILURE_LIMIT = 3
+MAX_FAILURE_LIMIT = 10
 EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 WEB_SEARCH_MODES = ("disabled", "cached", "live")
 INTERVALS = {"once": 0, "hourly": 3600, "daily": 86400, "weekly": 604800}
@@ -124,6 +126,11 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
         timeout = int(timeout)
     if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT_MINUTES:
         raise ValueError(f"Maximum runtime must be 1–{MAX_TIMEOUT_MINUTES} whole minutes")
+    failure_limit = values.get("failure_limit", DEFAULT_FAILURE_LIMIT)
+    if isinstance(failure_limit, str) and re.fullmatch(r"[0-9]{1,2}", failure_limit):
+        failure_limit = int(failure_limit)
+    if type(failure_limit) is not int or not 0 <= failure_limit <= MAX_FAILURE_LIMIT:
+        raise ValueError(f"Pause after failures must be 0–{MAX_FAILURE_LIMIT} whole runs")
     web_search = values.get("web_search", "disabled")
     if not isinstance(web_search, str) or web_search not in WEB_SEARCH_MODES:
         raise ValueError("Select disabled, cached, or live web search")
@@ -140,7 +147,7 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
     if not isinstance(network, bool) or (network and mode != "workspace"):
         raise ValueError("Command network access requires workspace changes")
     return {"title": title, "prompt": prompt, "directory": directory, "mode": mode,
-            "model": model, "effort": effort, "timeout_minutes": timeout,
+            "model": model, "effort": effort, "timeout_minutes": timeout, "failure_limit": failure_limit,
             "web_search": web_search, "session_history": session_history, "temporary_files": temporary_files,
             "interval": interval, "network": network}
 
@@ -333,6 +340,15 @@ class AgentTasks:
                 ids.add(task["id"])
                 if type(task["enabled"]) is not bool or type(task["queued"]) is not bool:
                     raise ValueError("Invalid task state")
+                task.setdefault("draft", False)
+                task.setdefault("auto_paused", False)
+                task.setdefault("consecutive_failures", 0)
+                if (type(task["draft"]) is not bool or type(task["auto_paused"]) is not bool
+                        or type(task["consecutive_failures"]) is not int
+                        or not 0 <= task["consecutive_failures"] <= 1000000
+                        or task["draft"] and (task["enabled"] or task["queued"])
+                        or task["auto_paused"] and task["enabled"]):
+                    raise ValueError("Invalid task failure or draft state")
                 if task["enabled"] and not INTERVALS[task["interval"]]:
                     raise ValueError("One-time task cannot repeat")
                 due = task["next_run"]
@@ -356,6 +372,12 @@ class AgentTasks:
                         raise ValueError("Invalid run time")
                 if not isinstance(run["output"], str) or len(run["output"].encode("utf-8")) > MAX_OUTPUT_BYTES + 128:
                     raise ValueError("Invalid output")
+                duration = run.get("duration_seconds")
+                if duration is not None and (type(duration) not in {int, float} or not math.isfinite(duration) or duration < 0):
+                    raise ValueError("Invalid run duration")
+                exit_code = run.get("exit_code")
+                if exit_code is not None and type(exit_code) is not int:
+                    raise ValueError("Invalid run exit code")
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("Prompt task state is invalid") from exc
 
@@ -375,21 +397,24 @@ class AgentTasks:
         with self._lock:
             return copy.deepcopy(self._load())
 
-    def create(self, values: dict[str, Any], *, run_now: bool, now: float | None = None) -> str:
+    def create(self, values: dict[str, Any], *, run_now: bool, now: float | None = None, draft: bool = False) -> str:
         task = validate_task(values, self.home)
         _validate_model_effort(task, self.home)
-        if not _tool_path("codex", self.home):
+        if type(draft) is not bool or draft and run_now:
+            raise ValueError("A draft cannot run immediately")
+        if not draft and not _tool_path("codex", self.home):
             raise ValueError("Install Codex for the panel account before creating prompt tasks")
         interval = INTERVALS[task["interval"]]
-        if not interval and not run_now:
+        if not interval and not run_now and not draft:
             raise ValueError("A one-time prompt must be run now")
         with self._lock:
             state = self._load()
             if len(state["tasks"]) >= MAX_TASKS:
                 raise ValueError(f"At most {MAX_TASKS} saved tasks are allowed; remove an unused task")
             identifier = uuid.uuid4().hex
-            state["tasks"].append({**task, "id": identifier, "enabled": bool(interval),
-                                   "queued": run_now, "next_run": (now if now is not None else time.time()) + interval if interval else None})
+            state["tasks"].append({**task, "id": identifier, "enabled": bool(interval) and not draft,
+                                   "queued": run_now, "draft": draft, "auto_paused": False, "consecutive_failures": 0,
+                                   "next_run": (now if now is not None else time.time()) + interval if interval and not draft else None})
             self._save()
         self._wake.set()
         return identifier
@@ -436,17 +461,30 @@ class AgentTasks:
             elif action == "run":
                 if running or task["queued"]:
                     raise ValueError("This task is already running or queued")
-                task["queued"] = True
+                task["queued"], task["draft"] = True, False
             elif action == "pause":
                 task["enabled"], task["queued"] = False, False
+                task["auto_paused"] = False
             else:
                 interval = INTERVALS[task["interval"]]
                 if not interval:
                     raise ValueError("A one-time task cannot be resumed as a schedule")
-                task["enabled"] = True
+                task["enabled"], task["draft"], task["auto_paused"] = True, False, False
+                task["consecutive_failures"] = 0
                 task["next_run"] = (time.time() if now is None else now) + interval
             self._save()
         self._wake.set()
+
+    def _record_outcome(self, state: dict[str, Any], run: dict[str, Any]) -> None:
+        task = next((task for task in state["tasks"] if task["id"] == run["task"]["id"]), None)
+        if task is None:
+            return
+        if run["status"] == "completed":
+            task["consecutive_failures"], task["auto_paused"] = 0, False
+        elif run["status"] in {"failed", "interrupted"}:
+            task["consecutive_failures"] = min(1000000, task["consecutive_failures"] + 1)
+            if task["enabled"] and task["failure_limit"] and task["consecutive_failures"] >= task["failure_limit"]:
+                task["enabled"], task["queued"], task["auto_paused"] = False, False, True
 
     def tick(self, *, now: float | None = None) -> bool:
         """Claim one due task, advance its deadline, then execute outside the lock."""
@@ -471,13 +509,16 @@ class AgentTasks:
             state["runs"] = (state["runs"] + [run])[-MAX_RUNS:]
             self._cancel.clear()
             self._save()
+        started = time.monotonic()
         try:
             result = execute_prompt(run["task"], self.home, self._cancel)
         except Exception as exc:
             result = {"status": "failed", "output": "", "message": f"Prompt could not complete: {type(exc).__name__}: {exc}"[:500]}
         with self._lock:
-            stored_run = next(record for record in self._load()["runs"] if record["id"] == run["id"])
-            stored_run.update(result, finished_at=time.time())
+            state = self._load()
+            stored_run = next(record for record in state["runs"] if record["id"] == run["id"])
+            stored_run.update(result, finished_at=time.time(), duration_seconds=max(0, time.monotonic() - started))
+            self._record_outcome(state, stored_run)
             self._save()
         return True
 
@@ -503,7 +544,11 @@ class AgentTasks:
                 state = self._load()
                 for run in state["runs"]:
                     if run["status"] == "running":
-                        run.update(status="interrupted", finished_at=time.time(), message="Panel restarted during this run; review changes before running it again")
+                        finished = time.time()
+                        run.update(status="interrupted", finished_at=finished,
+                                   duration_seconds=max(0, finished - run["started_at"]),
+                                   message="Panel restarted during this run; review changes before running it again")
+                        self._record_outcome(state, run)
                 self._save()
             self._thread = threading.Thread(target=self._loop, daemon=True, name="agent-prompts")
             self._thread.start()

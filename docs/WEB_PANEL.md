@@ -100,7 +100,12 @@ without a home and show diagnostics with prompt execution unavailable.
    is a duration cap, not an exact cost or token budget.
 6. Choose once, hourly, daily, or weekly. **Run now** queues an immediate run
    and enables repetition when selected. **Create schedule** starts after one
-   interval.
+   interval. **Save draft** stores an inactive task, including a one-time
+   prompt, without running it or enabling repetition. Drafts can be prepared
+   before Codex is installed.
+7. Set **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
+   The default is 3. Failed or interrupted runs count toward this limit;
+   cancellation preserves the count, and a completed run resets it.
 
 The starting templates cover these tasks. Their prompts and settings remain
 editable before submission; selecting a template does not run or schedule it.
@@ -167,13 +172,32 @@ Codex too. Panel run history is retained with either choice.
 
 Saved tasks show their next run, last outcome, and working directory. Use
 **Pause**, **Resume**, **Edit**, **Run now**, or **Remove** to manage them.
+Use **Start schedule** to activate a recurring draft. Running a draft manually
+does not activate its repeat schedule. **Duplicate** opens a new form with a
+saved task's settings so you can adjust its directory, model, or prompt. Run
+history's **Reuse run settings** uses the prompt and execution settings recorded
+for that specific run, even after the task is edited or removed. Reuse defaults
+to Once to avoid enabling another recurring schedule inadvertently. Neither
+link saves or executes work until you submit the form.
+
+Schedules that reach their failure limit show **Auto-paused** and the failure
+count. Inspect the last run, edit the task if needed, then use **Resume** to
+reset the count and schedule its next interval. A successful manual recovery
+run clears the count but leaves the schedule paused until resumed. Timeouts
+and CLI startup errors count as failed runs. A completed CLI process does not
+prove the requested task succeeded; review its output and validation evidence.
+
 Once tasks are saved, the screen leads with their status; expand **Create a
 prompt task** to add another, or select a saved task's **Edit** link.
 Pausing stops future work and clears a queued run; cancel an active run
 separately. Cancellation stops processes, but does not undo completed edits.
-Run history retains the prompt and settings used, timestamps, and bounded
-output. Use **Refresh status** to see results without automatic reloads that
-would discard a prompt draft.
+Run history retains the prompt and settings used, timestamps, duration, exit
+code when available, and bounded output. Summary cards show the active/queued
+work, repeating schedules, drafts, automatically paused tasks, recent outcomes,
+and recorded wall time for retained finished runs. These are retained-history
+totals, not lifetime usage or spending estimates. Active runs show elapsed time
+and remaining runtime at page load. Use **Refresh status** to update results
+and timing without automatic reloads that would discard a prompt draft.
 
 The scheduler belongs to the panel service, so it runs without T3 Code while
 the panel is running. Tasks persist across panel and host restarts. After

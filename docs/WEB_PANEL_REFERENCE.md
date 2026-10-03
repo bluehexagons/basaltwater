@@ -119,8 +119,9 @@ Basic Auth and the panel's CSRF token. The fixed form routes are
 `/actions/agent-diagnostics`; duplicate and unknown fields are rejected.
 Tasks accept a name, prompt, working directory, optional model and reasoning
 effort, maximum runtime, execution mode, command-network and temporary-write
-choices, web-search mode, Codex session retention, and a fixed interval. No
-executable or arbitrary CLI arguments can be supplied through a form.
+choices, web-search mode, Codex session retention, a fixed interval, and a
+0–10 consecutive-failure limit (default 3). No executable or arbitrary CLI
+arguments can be supplied through a form.
 
 The starting catalog combines universal templates with integration templates
 filtered by existing manifest feature flags, configured service/access labels,
@@ -167,6 +168,33 @@ before the normal deadline does not move that deadline. Resume schedules a full
 interval from the resume time. Pause clears queued work and stops repetition;
 cancel stops the active process group. Restarted runs become interrupted and
 are not automatically retried as the same run.
+
+Draft creation persists settings with repetition and queueing disabled; it
+does not require Codex to be installed. One-time drafts can be queued later;
+recurring drafts can also be activated with Start schedule. Editing a draft
+does not activate it. Task duplication (`?copy=TASK_ID`) and reuse of historical
+settings (`?reuse=RUN_ID`) only prefill forms. Both use strict 32-character IDs;
+reuse defaults to a one-time run and survives deletion of the original task
+while its history is retained. All submissions still use CSRF protection and
+normal task validation.
+
+The consecutive-failure count is persisted on each saved task independently
+of bounded run history. Failed and restart-interrupted runs increment it;
+completed runs reset it; cancelled runs leave it unchanged. At the configured
+nonzero limit, enabled schedules are disabled and labelled automatically paused.
+There are no automatic retries. Resume resets the count and schedules a full
+interval; a successful manual run leaves a paused schedule disabled. Older
+state receives the default limit and a zero count, without recounting historical
+failures. Recovery counts each interrupted run once. Policy state and run
+results are saved together.
+
+New run durations measure elapsed monotonic time around execution. Interrupted
+run recovery and older records use nonnegative timestamp differences when a
+monotonic duration is unavailable. Interrupted duration can include downtime;
+active elapsed/remaining values use the wall clock at page load and can be
+affected by clock adjustments. Outcome and duration summaries cover the latest
+retained finished runs only; CLI completion is not proof of task success, and
+duration is not a provider-usage or cost metric.
 
 Limits are 32 saved tasks, 40 retained runs, a 4,000-byte prompt, and a 1 MiB
 state file. Each task has a 1–10,080 minute wall-clock limit, defaulting to 30

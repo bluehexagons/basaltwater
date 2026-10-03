@@ -77,6 +77,150 @@ class AgentTaskTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.manager.create({**self.values, "interval": "once"}, run_now=False)
 
+    def test_drafts_stay_inactive_across_restart_until_explicitly_started(self) -> None:
+        once = self.manager.create({**self.values, "interval": "once"}, run_now=False, draft=True, now=100)
+        repeating = self.manager.create(self.values, run_now=False, draft=True, now=100)
+        restored = tasks.AgentTasks(self.home)
+        for task in restored.snapshot()["tasks"]:
+            self.assertTrue(task["draft"])
+            self.assertFalse(task["enabled"])
+            self.assertFalse(task["queued"])
+            self.assertIsNone(task["next_run"])
+        with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "output": "", "message": "Done"}) as execute:
+            self.assertFalse(restored.tick(now=99999999))
+            restored.action(once, "run")
+            self.assertTrue(restored.tick(now=200))
+        execute.assert_called_once()
+        restored.action(repeating, "resume", now=200)
+        task = restored.snapshot()["tasks"][1]
+        self.assertTrue(task["enabled"])
+        self.assertFalse(task["draft"])
+        self.assertEqual(task["next_run"], 200 + 604800)
+
+    def test_draft_can_be_saved_before_codex_installation_but_never_queued_on_save(self) -> None:
+        with patch.object(tasks, "_tool_path", return_value=None), patch.object(tasks, "execute_prompt") as execute:
+            self.manager.create(self.values, run_now=False, draft=True)
+            self.assertFalse(self.manager.tick(now=9999999999))
+            with self.assertRaises(ValueError):
+                self.manager.create(self.values, run_now=True, draft=True)
+        execute.assert_not_called()
+
+    def test_failure_limit_pauses_schedule_and_persists_beyond_history_retention(self) -> None:
+        identifier = self.manager.create({**self.values, "failure_limit": 3}, run_now=True, now=0)
+        manager = self.manager
+        with patch.object(tasks, "MAX_RUNS", 1), patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "", "message": "Denied"}):
+            for count, now in enumerate((1, 604800, 1209600), start=1):
+                self.assertTrue(manager.tick(now=now))
+                manager = tasks.AgentTasks(self.home)
+                task = manager.snapshot()["tasks"][0]
+                self.assertEqual(task["consecutive_failures"], count)
+                self.assertEqual(task["enabled"], count < 3)
+            self.assertTrue(task["auto_paused"])
+            self.assertFalse(manager.tick(now=9999999))
+        self.assertEqual(len(manager.snapshot()["runs"]), 1)
+        manager.action(identifier, "resume", now=2000000)
+        task = manager.snapshot()["tasks"][0]
+        self.assertFalse(task["auto_paused"])
+        self.assertEqual(task["consecutive_failures"], 0)
+        self.assertEqual(task["next_run"], 2000000 + 604800)
+
+    def test_cancellation_preserves_failure_streak_and_completion_resets_it(self) -> None:
+        identifier = self.manager.create(self.values, run_now=True, now=0)
+        for status, count in (("failed", 1), ("cancelled", 1), ("completed", 0), ("failed", 1)):
+            with self.subTest(status=status), patch.object(tasks, "execute_prompt", return_value={"status": status, "output": "", "message": status}):
+                self.assertTrue(self.manager.tick(now=1))
+                task = self.manager.snapshot()["tasks"][0]
+                self.assertEqual(task["consecutive_failures"], count)
+                self.assertTrue(task["enabled"])
+                self.manager.action(identifier, "run")
+
+    def test_manual_recovery_run_does_not_reenable_an_automatically_paused_schedule(self) -> None:
+        identifier = self.manager.create({**self.values, "failure_limit": 1}, run_now=True, now=0)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "", "message": "Blocked"}):
+            self.manager.tick(now=1)
+        self.manager.action(identifier, "run")
+        with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "output": "", "message": "Recovered"}):
+            self.manager.tick(now=2)
+        task = self.manager.snapshot()["tasks"][0]
+        self.assertFalse(task["enabled"])
+        self.assertFalse(task["auto_paused"])
+        self.assertEqual(task["consecutive_failures"], 0)
+
+    def test_disabled_failure_limit_keeps_repeating_and_manual_pause_is_preserved(self) -> None:
+        identifier = self.manager.create({**self.values, "failure_limit": 0}, run_now=True, now=0)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "", "message": "Blocked"}):
+            for now in (1, 604800, 1209600, 1814400):
+                self.assertTrue(self.manager.tick(now=now))
+        self.assertTrue(self.manager.snapshot()["tasks"][0]["enabled"])
+        self.manager.update(identifier, {**self.values, "failure_limit": 1})
+        self.manager.action(identifier, "run")
+        def pause_during_run(*_args: object) -> dict[str, str]:
+            self.manager.action(identifier, "pause")
+            return {"status": "failed", "output": "", "message": "Blocked"}
+        with patch.object(tasks, "execute_prompt", side_effect=pause_during_run):
+            self.manager.tick(now=1814401)
+        task = self.manager.snapshot()["tasks"][0]
+        self.assertFalse(task["enabled"])
+        self.assertFalse(task["auto_paused"])
+
+    def test_restart_interruption_counts_once_and_can_pause_a_schedule(self) -> None:
+        self.manager.create({**self.values, "failure_limit": 1}, run_now=True, now=0)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "running", "output": "", "message": "Running"}):
+            self.manager.tick(now=1)
+        restored = tasks.AgentTasks(self.home)
+        self.addCleanup(restored.close)
+        with patch.object(tasks.threading, "Thread"):
+            restored.start()
+        task = restored.snapshot()["tasks"][0]
+        self.assertTrue(task["auto_paused"])
+        self.assertFalse(task["enabled"])
+        self.assertEqual(task["consecutive_failures"], 1)
+        restored.close()
+        another = tasks.AgentTasks(self.home)
+        self.addCleanup(another.close)
+        with patch.object(tasks.threading, "Thread"):
+            another.start()
+        self.assertEqual(another.snapshot()["tasks"][0]["consecutive_failures"], 1)
+
+    def test_run_duration_uses_monotonic_time_and_survives_reload(self) -> None:
+        self.manager.create(self.values, run_now=True, now=100)
+        with patch.object(tasks.time, "monotonic", side_effect=(10, 135)), patch.object(tasks.time, "time", return_value=50), patch.object(
+            tasks, "execute_prompt", return_value={"status": "completed", "output": "", "message": "Done", "exit_code": 0},
+        ):
+            self.manager.tick(now=100)
+        run = tasks.AgentTasks(self.home).snapshot()["runs"][0]
+        self.assertEqual(run["duration_seconds"], 125)
+        self.assertEqual(run["exit_code"], 0)
+        self.assertLess(run["finished_at"], run["started_at"])
+
+    def test_older_state_receives_policy_defaults_without_reclassifying_past_runs(self) -> None:
+        self.manager.create(self.values, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "failed", "output": "", "message": "Blocked"}):
+            self.manager.tick()
+        value = self.manager.snapshot()
+        for key in ("failure_limit", "consecutive_failures", "auto_paused", "draft"):
+            value["tasks"][0].pop(key)
+        value["runs"][0]["task"].pop("failure_limit")
+        value["runs"][0].pop("duration_seconds")
+        self.manager.path.write_text(json.dumps(value))
+        restored = tasks.AgentTasks(self.home).snapshot()
+        self.assertEqual(restored["tasks"][0]["failure_limit"], 3)
+        self.assertEqual(restored["tasks"][0]["consecutive_failures"], 0)
+        self.assertTrue(restored["tasks"][0]["enabled"])
+        self.assertNotIn("duration_seconds", restored["runs"][0])
+
+    def test_invalid_persisted_failure_and_draft_state_is_rejected(self) -> None:
+        self.manager.create(self.values, run_now=False)
+        original = self.manager.snapshot()
+        for changes in ({"consecutive_failures": -1}, {"consecutive_failures": True},
+                        {"auto_paused": True}, {"draft": True}, {"draft": "yes"}):
+            with self.subTest(changes=changes):
+                value = json.loads(json.dumps(original))
+                value["tasks"][0].update(changes)
+                self.manager.path.write_text(json.dumps(value))
+                with self.assertRaises(RuntimeError):
+                    tasks.AgentTasks(self.home).snapshot()
+
     def test_run_now_requests_do_not_duplicate_and_take_priority(self) -> None:
         repeating = self.manager.create(self.values, run_now=False, now=0)
         manual = self.manager.create({**self.values, "interval": "once", "title": "Manual"}, run_now=True)
@@ -156,6 +300,8 @@ class AgentTaskTest(unittest.TestCase):
             {"timeout_minutes": "1.5"}, {"timeout_minutes": "-1"}, {"effort": "unlimited"},
             {"web_search": "shell"}, {"session_history": "true"}, {"temporary_files": "true"},
             {"mode": "inspect", "temporary_files": True},
+            {"failure_limit": -1}, {"failure_limit": 11}, {"failure_limit": True},
+            {"failure_limit": "1.5"}, {"failure_limit": "unlimited"},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 tasks.validate_task({**self.values, **changes}, self.home)
@@ -562,6 +708,115 @@ class AgentScreenTest(unittest.TestCase):
         self.assertTrue(snapshot["tasks"][0]["enabled"])
         self.assertFalse(snapshot["tasks"][0]["queued"])
 
+    def test_save_draft_accepts_every_form_field_without_launching_or_scheduling(self) -> None:
+        values = {"csrf": self.state.csrf_token, "id": "", "title": "Prepare work", "prompt": "Inspect later",
+                  "directory": self.temporary.name, "mode": "workspace", "interval": "daily", "submit": "draft",
+                  "model": "", "custom_model": "test-model", "effort": "high", "timeout_minutes": "120",
+                  "web_search": "cached", "network": "1", "temporary_files": "1", "session_history": "1", "failure_limit": "5"}
+        self.assertEqual(len(values), 17)
+        handler = self.handler("/actions/agent-task/save", values)
+        with patch.object(tasks, "execute_prompt") as execute:
+            handler.do_POST()
+            self.assertFalse(self.state.agent_tasks.tick(now=9999999999))
+        execute.assert_not_called()
+        handler.send_response.assert_called_with(303)
+        task = self.state.agent_tasks.snapshot()["tasks"][0]
+        self.assertEqual(task["failure_limit"], 5)
+        self.assertTrue(task["draft"])
+        self.assertFalse(task["enabled"])
+        self.assertFalse(task["queued"])
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("Draft<small>daily", page)
+        self.assertIn("Start schedule</button>", page)
+
+    def test_one_time_draft_can_be_prepared_without_codex_and_does_not_skip_csrf(self) -> None:
+        values = {"csrf": self.state.csrf_token, "title": "Prepare", "prompt": "Inspect later",
+                  "directory": self.temporary.name, "mode": "inspect", "interval": "once", "submit": "draft"}
+        with patch.object(tasks, "_tool_path", return_value=None), patch.object(agents, "_tool_path", return_value=None):
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            self.assertIn('value="run" disabled', page)
+            self.assertIn('value="draft">Save draft', page)
+            denied = self.handler("/actions/agent-task/save", {**values, "csrf": "wrong"})
+            denied.do_POST()
+            self.assertEqual(denied._send.call_args.args[0].value, 403)
+            handler = self.handler("/actions/agent-task/save", values)
+            handler.do_POST()
+            handler.send_response.assert_called_with(303)
+        self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 1)
+
+    def test_duplicate_and_reuse_links_prefill_reviewable_settings_without_mutation(self) -> None:
+        settings = {"title": "Review <repo>", "prompt": "Original <prompt>", "directory": self.temporary.name,
+                    "mode": "workspace", "interval": "weekly", "network": True, "temporary_files": True,
+                    "model": "historical-model", "effort": "high", "timeout_minutes": 120, "web_search": "cached", "failure_limit": 5}
+        identifier = self.state.agent_tasks.create(settings, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "output": "", "message": "Done"}):
+            self.state.agent_tasks.tick()
+        run = self.state.agent_tasks.snapshot()["runs"][0]
+        self.state.agent_tasks.update(identifier, {**settings, "prompt": "Edited prompt", "model": "current-model"})
+        before = self.state.agent_tasks.snapshot()
+        for name, source, expected_prompt, expected_model, interval in (
+            ("copy", identifier, "Edited prompt", "current-model", "weekly"),
+            ("reuse", run["id"], "Original &lt;prompt&gt;", "historical-model", "once"),
+        ):
+            with self.subTest(name=name), patch.object(tasks, "execute_prompt") as execute:
+                query = agents.parse_agent_query(f"{name}={source}")
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+            execute.assert_not_called()
+            self.assertIn('name="id" value=""', page)
+            self.assertIn(expected_prompt, page)
+            self.assertIn(f'<option value="{expected_model}" selected>', page)
+            self.assertIn(f'<option value="{interval}" selected>', page)
+            self.assertIn('value="120"', page)
+            self.assertIn('name="failure_limit" min="0" max="10" step="1" value="5"', page)
+            self.assertIn('value="draft">Save draft', page)
+            self.assertNotIn("Save changes</button>", page)
+            self.assertEqual(self.state.agent_tasks.snapshot(), before)
+        self.state.agent_tasks.action(identifier, "delete")
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {"reuse": run["id"]})
+        self.assertIn("Original &lt;prompt&gt;", page)
+
+    def test_missing_copy_or_history_source_is_reported_without_creating_a_task(self) -> None:
+        for name in ("copy", "reuse"):
+            with self.subTest(name=name):
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {name: "a" * 32})
+                self.assertIn("source task or run is no longer available", page)
+                self.assertIn('name="id" value=""', page)
+                self.assertIn('name="title" value=""', page)
+                self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
+
+    def test_summary_shows_outcomes_runtime_exit_codes_and_automatic_pause(self) -> None:
+        settings = {"title": "Review", "prompt": "Inspect", "directory": self.temporary.name,
+                    "mode": "inspect", "interval": "daily", "failure_limit": 1}
+        identifier = self.state.agent_tasks.create(settings, run_now=True, now=100)
+        with patch.object(tasks.time, "monotonic", side_effect=(10, 135)), patch.object(
+            tasks, "execute_prompt", return_value={"status": "failed", "output": "", "message": "password=private-value", "exit_code": 2},
+        ):
+            self.state.agent_tasks.tick(now=100)
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("0 drafts · 1 paused after failures", page)
+        self.assertIn("1 failed/interrupted · 0 cancelled · latest 1 finished runs", page)
+        self.assertIn("2m 05s duration · exit code 2", page)
+        self.assertIn("Auto-paused<small>daily", page)
+        self.assertIn("1 consecutive failure · pause at 1", page)
+        self.assertIn(f'href="/agents?copy={identifier}"', page)
+        self.assertIn("Reuse run settings", page)
+        self.assertNotIn("private-value", page)
+
+    def test_active_run_timing_and_remaining_cap_are_snapshots_not_auto_reload(self) -> None:
+        settings = {"title": "Long review", "prompt": "Inspect", "directory": self.temporary.name,
+                    "mode": "inspect", "interval": "daily", "timeout_minutes": 10}
+        self.state.agent_tasks.create(settings, run_now=True, now=100)
+        def inspect_running(*_args: object) -> dict[str, str]:
+            with patch.object(agents.time, "time", return_value=225):
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            self.assertIn("Running: Long review", page)
+            self.assertIn("2m 05s elapsed · 7m 55s remaining at page load", page)
+            self.assertIn("1 running", page)
+            self.assertNotIn('http-equiv="refresh"', page)
+            return {"status": "completed", "output": "", "message": "Done"}
+        with patch.object(tasks, "execute_prompt", side_effect=inspect_running):
+            self.state.agent_tasks.tick(now=100)
+
     def test_invalid_csrf_duplicate_fields_and_unknown_actions_do_not_mutate(self) -> None:
         for body, status in (
             ({"csrf": "wrong", "id": "a" * 32, "action": "run"}, 403),
@@ -623,7 +878,7 @@ class AgentScreenTest(unittest.TestCase):
     def test_invalid_runtime_and_checkbox_are_rejected_without_creating_tasks(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Review", "prompt": "Inspect host",
                   "directory": self.temporary.name, "mode": "inspect", "interval": "once", "submit": "run"}
-        for changes in ({"timeout_minutes": "0"}, {"session_history": "true"}, {"effort": "unlimited"}):
+        for changes in ({"timeout_minutes": "0"}, {"session_history": "true"}, {"effort": "unlimited"}, {"failure_limit": "11"}):
             with self.subTest(changes=changes):
                 handler = self.handler("/actions/agent-task/save", {**values, **changes})
                 handler.do_POST()
@@ -631,7 +886,8 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
 
     def test_query_rejects_unsupported_filters_before_rendering(self) -> None:
-        for query in ("load=1", "template=no", "edit=../../etc/passwd", "template=repository&template=maintenance"):
+        for query in ("load=1", "template=no", "edit=../../etc/passwd", "template=repository&template=maintenance",
+                      "copy=../task", "reuse=no", f"copy={'a' * 32}&reuse={'b' * 32}"):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 agents.parse_agent_query(query)
 

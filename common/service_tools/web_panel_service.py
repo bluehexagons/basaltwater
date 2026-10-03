@@ -2076,7 +2076,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=16,
+                max_num_fields=17,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
@@ -2105,6 +2105,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "csrf", "id", "title", "prompt", "directory", "mode", "interval", "model",
                 "custom_model", "network", "submit", "effort", "timeout_minutes",
                 "web_search", "session_history", "temporary_files",
+                "failure_limit",
             },
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):
@@ -2139,9 +2140,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                             raise ValueError("Select Save changes for an existing task")
                         manager.update(identifier, submitted)
                     else:
-                        if choice not in {"run", "schedule"}:
-                            raise ValueError("Select Run now or Create schedule")
-                        manager.create(submitted, run_now=choice == "run")
+                        if choice not in {"run", "schedule", "draft"}:
+                            raise ValueError("Select Run now, Create schedule, or Save draft")
+                        manager.create(submitted, run_now=choice == "run", draft=choice == "draft")
             except ValueError as exc:
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_agents(
                     self.state, _PAGE_STYLE, {}, error=str(exc),
