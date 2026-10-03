@@ -19,6 +19,7 @@ from lib import setup_reboot
 
 OLD_BOOT_ID = "12345678-1234-4234-8234-123456789abc"
 NEW_BOOT_ID = "87654321-4321-4321-8321-cba987654321"
+RESTART_UNIT = "basaltwater-setup-reboot-58343ea9a904"
 
 
 def _config(**options: object) -> SetupConfig:
@@ -113,6 +114,7 @@ class RestartStatusTests(unittest.TestCase):
 
 class RestartWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(setup_reboot.secrets, "token_hex", return_value="58343ea9a904"))
         self.status = self.enterContext(patch.object(setup_reboot, "_restart_status", return_value="needed"))
         self.request = self.enterContext(patch.object(setup_reboot, "_request_restart", return_value=True))
         self.boot = self.enterContext(patch.object(setup_reboot, "_boot_id", return_value=OLD_BOOT_ID))
@@ -201,8 +203,8 @@ class RestartWorkflowTests(unittest.TestCase):
         config = _config()
         with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
             self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 0)
-        self.request.assert_called_once_with(config, proxmox=True)
-        self.wait.assert_called_once_with(config, OLD_BOOT_ID, timeout_seconds=2100)
+        self.request.assert_called_once_with(config, proxmox=True, restart_unit=RESTART_UNIT)
+        self.wait.assert_called_once_with(config, OLD_BOOT_ID, timeout_seconds=2100, restart_unit=RESTART_UNIT)
         self.proxmox_health.assert_called_once_with(config)
 
     def test_failed_proxmox_post_reboot_audit_fails_setup_result(self) -> None:
@@ -254,6 +256,61 @@ class RestartTransportTests(unittest.TestCase):
         ):
             self.assertFalse(setup_reboot._wait_for_remote_restart(_config(), OLD_BOOT_ID))
         self.assertEqual(ssh.call_args.kwargs["timeout"], 1)
+
+    def test_failed_proxmox_job_stops_waiting_before_restart_timeout(self) -> None:
+        output = io.StringIO()
+        with (
+            patch.object(setup_reboot, "_ssh_result", side_effect=[
+                _result(OLD_BOOT_ID),
+                _result("ActiveState=failed\nResult=exit-code\nExecMainStatus=1\n"),
+            ]) as ssh,
+            patch.object(setup_reboot.time, "monotonic", return_value=0),
+            patch.object(setup_reboot.time, "sleep") as sleep,
+            redirect_stdout(output),
+        ):
+            self.assertFalse(setup_reboot._wait_for_remote_restart(
+                _config(), OLD_BOOT_ID, timeout_seconds=2100, restart_unit=RESTART_UNIT,
+            ))
+        sleep.assert_not_called()
+        self.assertEqual(ssh.call_count, 2)
+        self.assertIn(RESTART_UNIT + ".service", ssh.call_args.args[1])
+        self.assertIn("exit-code, exit 1", output.getvalue())
+        self.assertIn("journalctl -u " + RESTART_UNIT, output.getvalue())
+
+    def test_wait_tolerates_running_job_or_probe_disconnect_and_then_new_boot(self) -> None:
+        for job in (_result("ActiveState=active\nResult=success\n"), _result(returncode=255),
+                    subprocess.TimeoutExpired("ssh", 10)):
+            with (
+                self.subTest(job=job),
+                patch.object(setup_reboot, "_ssh_result", side_effect=[_result(OLD_BOOT_ID), job, _result(NEW_BOOT_ID)]) as ssh,
+                patch.object(setup_reboot.time, "monotonic", return_value=0),
+                patch.object(setup_reboot.time, "sleep"),
+            ):
+                self.assertTrue(setup_reboot._wait_for_remote_restart(
+                    _config(), OLD_BOOT_ID, restart_unit=RESTART_UNIT,
+                ))
+                self.assertEqual(ssh.call_count, 3)
+
+    def test_new_boot_never_inspects_unit_from_the_previous_boot(self) -> None:
+        with (
+            patch.object(setup_reboot, "_ssh_result", return_value=_result(NEW_BOOT_ID)) as ssh,
+            patch.object(setup_reboot.time, "monotonic", return_value=0),
+        ):
+            self.assertTrue(setup_reboot._wait_for_remote_restart(
+                _config(), OLD_BOOT_ID, restart_unit=RESTART_UNIT,
+            ))
+        ssh.assert_called_once()
+
+    def test_restart_job_probe_uses_remaining_wait_budget(self) -> None:
+        with patch.object(setup_reboot, "_ssh_result", return_value=_result("ActiveState=active")) as ssh:
+            self.assertFalse(setup_reboot._restart_job_failed(_config(), RESTART_UNIT, timeout=1))
+        self.assertEqual(ssh.call_args.kwargs["timeout"], 1)
+
+    def test_restart_job_name_is_validated_before_scheduling(self) -> None:
+        with patch.object(setup_reboot, "_ssh_result") as ssh:
+            with self.assertRaisesRegex(ValueError, "Invalid setup restart unit"):
+                setup_reboot._request_restart(_config(), restart_unit="--invalid")
+        ssh.assert_not_called()
 
     def test_restart_uses_delayed_systemd_request_and_reports_transport_failures(self) -> None:
         for host in ("localhost", "example.test"):
@@ -326,8 +383,22 @@ class ProxmoxGuestShutdownTests(unittest.TestCase):
         ])
         self.sleep.assert_called_once()
 
+    def test_cli_progress_before_final_json_does_not_block_host_reboot(self) -> None:
+        output = f"Stopping CT 107\nall VMs and CTs stopped\n{json.dumps(self.TASK)}\n"
+        self.run.side_effect = [_result(output), _result('{"status":"stopped","exitstatus":"OK"}')]
+        self.assertTrue(setup_reboot._shutdown_proxmox_guests())
+        self.assertEqual(self.run.call_args_list[0].kwargs["timeout"], 1800)
+        self.sleep.assert_not_called()
+
+    def test_synchronous_shutdown_consumes_the_shared_status_deadline(self) -> None:
+        self.run.side_effect = [_result(json.dumps(self.TASK)), _result('{"status":"running"}')]
+        with patch.object(setup_reboot.time, "monotonic", side_effect=(0, 1799, 1800, 1800)):
+            self.assertFalse(setup_reboot._shutdown_proxmox_guests())
+        self.assertEqual(self.run.call_args.kwargs["timeout"], 1)
+
     def test_bad_shutdown_task_response_fails_closed(self) -> None:
-        for response in ("", "[]", "null", '"invalid"', json.dumps(self.TASK.replace("stopall", "startall"))):
+        for response in ("", "[]", "null", '"invalid"', json.dumps(self.TASK.replace("stopall", "startall")),
+                         "all VMs and CTs stopped\n", f'{json.dumps(self.TASK)}\nunexpected trailing output'):
             with self.subTest(response=response):
                 self.run.return_value = _result(response)
                 self.assertFalse(setup_reboot._shutdown_proxmox_guests())

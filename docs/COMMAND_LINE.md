@@ -297,6 +297,12 @@ Proxmox allows up to 30 minutes for guest shutdown plus five minutes for the
 host to return. Its shutdown and restart job runs on the node under the
 maintenance lock, so it can finish even if the controller is a guest being
 stopped. The job repeats the maintenance checks before shutdown and reboot.
+The synchronous Proxmox shutdown command and its task verification share the
+30-minute shutdown budget; CLI progress output is separate from its final API
+result. Setup prints the exact restart service name. With `--wait-for-restart`,
+it checks that service while the original boot is reachable and reports a
+failed job promptly, including its journal command, instead of waiting for the
+full restart timeout. A queued job is not proof that the host rebooted.
 Without the wait flag, inspect failures on the node with
 `sudo journalctl -u 'basaltwater-setup-reboot-*' --no-pager`. A failed shutdown
 can leave some guests stopped. After reboot, Proxmox's existing autostart and

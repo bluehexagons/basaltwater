@@ -99,14 +99,18 @@ def _restart_status(config: SetupConfig) -> Optional[str]:
 def _shutdown_proxmox_guests() -> bool:
     """Wait for Proxmox's ordered graceful shutdown, never forcing guest stops."""
     try:
+        deadline = time.monotonic() + _GUEST_SHUTDOWN_WAIT_SECONDS
         result = run(
             ["pvesh", "create", "/nodes/localhost/stopall", "--force-stop", "0",
              "--timeout", "180", "--output-format", "json"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False, timeout=_GUEST_SHUTDOWN_WAIT_SECONDS,
         )
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout).strip() or "guest shutdown request failed")
-        task = json.loads(result.stdout)
+        # pvesh uses a synchronous CLI worker: progress precedes the final
+        # JSON API result. Keep the task status check even after CLI success.
+        lines = result.stdout.strip().splitlines()
+        task = json.loads(lines[-1] if lines else "")
         parts = task.split(":") if isinstance(task, str) else []
         if (
             len(parts) != 9 or parts[0] != "UPID" or not validate_host(parts[1])
@@ -116,7 +120,6 @@ def _shutdown_proxmox_guests() -> bool:
         ):
             raise ValueError("invalid Proxmox shutdown task response")
 
-        deadline = time.monotonic() + _GUEST_SHUTDOWN_WAIT_SECONDS
         command = ["pvenode", "task", "status", task, "--output-format", "json"]
         while (remaining := deadline - time.monotonic()) > 0:
             result = run(command, capture_output=True, text=True, check=False, timeout=min(30, remaining))
@@ -232,12 +235,18 @@ def _boot_id(config: SetupConfig) -> Optional[str]:
     return value
 
 
-def _request_restart(config: SetupConfig, *, proxmox: bool = False) -> bool:
+def _request_restart(
+    config: SetupConfig, *, proxmox: bool = False, restart_unit: str | None = None,
+) -> bool:
+    if restart_unit is None:
+        restart_unit = f"basaltwater-setup-reboot-{secrets.token_hex(6)}"
+    if not re.fullmatch(r"basaltwater-setup-reboot-[0-9a-f]{12}", restart_unit):
+        raise ValueError("Invalid setup restart unit")
     command = [
         "/usr/bin/systemd-run",
         "--quiet",
         "--unit",
-        f"basaltwater-setup-reboot-{secrets.token_hex(6)}",
+        restart_unit,
         "--on-active=2s",
     ]
     if proxmox:
@@ -269,8 +278,33 @@ def _request_restart(config: SetupConfig, *, proxmox: bool = False) -> bool:
     return False
 
 
+def _restart_job_failed(config: SetupConfig, restart_unit: str, *, timeout: float) -> bool:
+    """Report a failed target-side job while its original host is reachable."""
+    unit = shlex.quote(restart_unit + ".service")
+    try:
+        result = _ssh_result(
+            config,
+            f"systemctl show {unit} --property=ActiveState --property=Result --property=ExecMainStatus",
+            timeout=min(10, timeout),
+        )
+    except (CommandTimeoutError, OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if properties.get("ActiveState") != "failed":
+        return False
+    print(
+        f"Error: restart job {restart_unit}.service failed on {config.host} "
+        f"({properties.get('Result', 'unknown')}, exit {properties.get('ExecMainStatus', 'unknown')})"
+    )
+    print(f"  Inspect journalctl -u {restart_unit}.service --no-pager on the node")
+    return True
+
+
 def _wait_for_remote_restart(
     config: SetupConfig, old_boot_id: str, *, timeout_seconds: int | None = None,
+    restart_unit: str | None = None,
 ) -> bool:
     wait_seconds = _RESTART_WAIT_SECONDS if timeout_seconds is None else timeout_seconds
     deadline = time.monotonic() + wait_seconds
@@ -289,6 +323,10 @@ def _wait_for_remote_restart(
             new_boot_id = _validated_boot_id(result.stdout)
             if new_boot_id is not None and new_boot_id != old_boot_id:
                 return True
+            if new_boot_id == old_boot_id and restart_unit:
+                remaining = deadline - time.monotonic()
+                if remaining > 0 and _restart_job_failed(config, restart_unit, timeout=remaining):
+                    return False
 
         time.sleep(min(_POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
 
@@ -371,11 +409,15 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
             return 1
 
     print(f"  Restart required on {config.host}; requesting restart")
-    requested = _request_restart(config, proxmox=True) if proxmox else _request_restart(config)
+    restart_unit = f"basaltwater-setup-reboot-{secrets.token_hex(6)}" if proxmox else None
+    requested = (
+        _request_restart(config, proxmox=True, restart_unit=restart_unit)
+        if proxmox else _request_restart(config)
+    )
     if not requested:
         return 1
     if proxmox:
-        print("  Proxmox shutdown and restart job queued; failures appear in the node's systemd journal")
+        print(f"  Proxmox shutdown and restart job queued: {restart_unit}.service")
 
     if not wait_for_restart:
         print("  Restart requested; the setup command will not wait for reconnection")
@@ -387,6 +429,7 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
         _wait_for_remote_restart(
             config, old_boot_id,
             timeout_seconds=_GUEST_SHUTDOWN_WAIT_SECONDS + _RESTART_WAIT_SECONDS,
+            restart_unit=restart_unit,
         ) if proxmox else _wait_for_remote_restart(config, old_boot_id)
     )
     if not completed:
