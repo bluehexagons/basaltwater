@@ -86,9 +86,12 @@ Device presets change the CSS viewport but retain the desktop user agent.
 Snapshot again after resize or scroll, and expect scroll position to persist
 across some resizes. Restore appearance emulation to `system` after light/dark
 checks unless the task requires otherwise. Recording output belongs to the
-connected client's artifact store rather than the VM; stop every recording and
-use its returned artifact metadata without trying to read the client path from
-the VM. The current snapshot can appear as `running` in its own action timeline
+agent environment after the current `preview_recording_stop` tool transfers it
+once (up to 50 MiB). Stop every recording, verify successful transfer and a
+readable local file, then link the returned evidence path. For older tools that
+return client-only artifacts, use their metadata without assuming the client
+path is mounted here. Keep recordings short and free of credentials and private
+data. The current snapshot can appear as `running` in its own action timeline
 while the response is assembled; that self-entry is not a hung action after the
 snapshot has returned.
 
@@ -117,7 +120,12 @@ The preview runs in the connected client's context, not on the VM. An
 `environment-port` target rewrites the requested port onto the environment
 connection host; it does not tunnel to VM loopback. If the VM endpoint is
 healthy but preview navigation remains at `about:blank` with no network entry,
-report the client/VM routing boundary. Resolve VM development ports first:
+report the client/VM routing boundary. For a local environment on the preview
+client's machine, navigate with `target: {kind: "environment-port", port: PORT}`
+and the retained tab ID; add `path` or `protocol` as needed. Remote private hosts
+require an already reachable service; public relay hosts reject this target
+until T3's authenticated preview gateway exists. Resolve a remote VM's loopback
+development ports first:
 
 ```bash
 basaltwater-web preview resolve --port PORT --json

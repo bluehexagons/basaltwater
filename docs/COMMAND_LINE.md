@@ -18,7 +18,7 @@ Related pages:
 - [`AGENT_AUTHENTICATION.md`](./AGENT_AUTHENTICATION.md) for agent auth
   sources, rotation, recovery, and portability
 - [`GIT_ACCESS.md`](./GIT_ACCESS.md) for Git policy and HTTPS authentication
-- [`AGENT_SKILLS.md`](./AGENT_SKILLS.md) for managed Codex/OpenCode workflow
+- [`AGENT_SKILLS.md`](./AGENT_SKILLS.md) for managed Codex/OpenCode/Claude workflow
   skills and capability routing
 - [`AGENT_SECURITY.md`](./AGENT_SECURITY.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
@@ -695,7 +695,10 @@ Basaltwater installation on the VM. An existing executable with that name is
 retained; setup never overwrites an unmanaged user launcher.
 
 When Codex or OpenCode is selected, setup also installs the shared base
-workflow skills under `~/.agents/skills`. T3 Code and Godot web setup add their
+workflow skills under `~/.agents/skills`. Selected Claude Code installations
+receive the catalog under `~/.claude/skills`. Supporting references, scripts,
+assets, and agent metadata are copied with each bundle and tracked for safe
+refresh and retirement. T3 Code and Godot web setup add their
 capability-specific skills. See [Managed agent workflow
 skills](AGENT_SKILLS.md) for the catalog and reconciliation rules.
 
@@ -742,9 +745,9 @@ Credential seeding and config copy are intentionally tool-scoped and transient:
 - `--agent-auth login` retains or renews target Codex auth and starts device authorization when needed in a terminal. Unattended setup fails clearly when authorization is required.
 - Explicit `--agent-auth-file TOOL PATH` seeds that provider's missing credentials without requiring the tool on the controller; other providers retain their defaults. A Codex file also replaces refresh-required auth when the staged source is unambiguously current. Coding-agent active copying is removed; `--git-auth active` remains GitHub-specific and requires controller `gh` only when its token is keyring-backed.
 - `--agent-config active` copies known non-secret configuration from the active controller user.
-- Codex and OpenCode receive only non-secret managed workflow skills; T3 Code
-  adds its focused service and HTTPS-gateway guidance. Basaltwater does not copy
-  T3 Code credentials.
+- Codex, OpenCode, and Claude Code receive only non-secret managed workflow
+  skills; T3 Code adds its focused service and HTTPS-gateway guidance.
+  Basaltwater does not copy T3 Code credentials.
 
 The root-only upload payload is removed after selected config is applied and
 credentials are reconciled. Repositories are never cloned or cached on the

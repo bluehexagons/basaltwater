@@ -1,8 +1,9 @@
 # T3 Code Agent VM Improvement Plan
 
-Status: active implementation; phases 1 through 3 and the phase 4 restart and
-durable-readiness boundaries are code-complete as of 2026-08-27, with
-disposable-VM deployment validation still pending.
+Status: active qualification; phases 1 through 3 and the phase 4 restart and
+durable-readiness boundaries are code-complete. The T3 v0.0.45 compatibility
+and phase 5 skill-delivery slice landed on 2026-10-02. Disposable-VM deployment
+and connected-client preview qualification remain separate pending work.
 
 ## Objective
 
@@ -109,6 +110,50 @@ HTTPS listeners, UFW policy, and cleanup.
 The phase 4 restart behavior reuses the existing restart job and forced
 deadline rather than introducing a parallel scheduler. Real-VM validation is
 still required before the phase is considered complete.
+
+### Phase 5: current T3 features and agent capability delivery
+
+Delivered on 2026-10-02:
+
+- Verified T3 v0.0.45 against the v0.0.44 service, pairing-scope, runtime-layout,
+  and persistence contracts. No T3 database migration is required for that
+  upgrade. Standalone native-addon checks use the archive's embedded Node;
+  host npm is reserved for older npm-backed runtime repairs (`20a68fa`).
+- Added per-thread configuration reload, deliberate bulk provider update,
+  native PR linking, and preserved scratch-folder guidance. Host inventory
+  counts projectless scratch files without cleaning user data (`c42432a`).
+- Installed the capability-selected managed catalog for Claude Code in
+  `~/.claude/skills`, alongside the Codex/OpenCode shared catalog. Complete
+  bundles now include supporting files with tracked refresh/retirement,
+  personal-file preservation, and resource readiness checks (`9e83cd1`).
+  Setup refreshes guidance after provider configuration copying, which can
+  otherwise seed older Claude skills over the current catalog.
+- Updated collaborative recording guidance for environment-local transfer
+  and documented when native environment-port navigation is appropriate.
+  The pinned upstream resolver remains a hostname/port rewrite; public relays
+  require the future authenticated preview gateway. Retain Basaltwater's
+  existing HTTPS resolver for remote VM loopback services.
+
+Verification evidence: the published standalone archive passed an isolated
+native-addon probe, server startup/database initialization, administrative
+pairing and bootstrap-credential revocation. The agent/Godot/wheel regression
+suite passed 736 tests after bundle integration, and the wheel build/install
+smoke verified the shipped T3 update reference. These are source/artifact
+checks, not a deployed-host launcher update or full connected-client test.
+Preview status and open both reported no automation host in this headless
+session; recording transfer and native port rendering remain unexercised here.
+
+Next qualification: rerun a saved Debian VM setup with Claude-only and mixed
+providers, restart the affected agent session to discover refreshed skills,
+and exercise local/private/relay preview boundaries plus short video transfer
+with an attached desktop client. Evaluate Claude Playwright registration as a
+separate capability change when a concrete standalone Claude browser workflow
+needs it; current registration still supports Codex and OpenCode only.
+
+Android implementation is explicitly deferred. Potential Android and SSH-hosted
+iOS workflows, prerequisites, ownership, and rollout are in the
+[mobile agent support proposal](MOBILE_AGENT_SUPPORT.md); no device setup or
+agent-device access is enabled by these improvements.
 
 ## Acceptance criteria
 

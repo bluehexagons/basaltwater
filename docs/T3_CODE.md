@@ -60,7 +60,7 @@ non-browser checks. For an explicit `ERR_CERT_AUTHORITY_INVALID`, optional
 [client CA enrollment](CLIENT_CA_TRUST.md) can restore private-origin access;
 a timeout or unreachable address needs network diagnosis. Never bypass TLS.
 
-Before navigating to a VM development port, run
+Before navigating to a remote VM's loopback development port, run
 `basaltwater-web preview resolve --port PORT --json`. It returns a verified
 owned gateway URL for `preview_navigate`, or an exact forward creation command
 with actionable failure fields. See [Internal HTTPS previews](INTERNAL_WEB.md#forward-an-existing-loopback-service).
@@ -71,6 +71,12 @@ Agent-enabled T3 setups install T3-only preview guidance, or the combined
 Playwright/T3 skill when both capabilities are selected, plus focused T3 Code
 and HTTPS-gateway guidance. See
 [Managed agent workflow skills](AGENT_SKILLS.md) for the installation matrix.
+Selected Claude Code receives the catalog under `~/.claude/skills`; Codex and
+OpenCode share `~/.agents/skills`. Bundled references ship with the entrypoint,
+so host-side migration instructions remain available outside this repository.
+Finish the current turn and restart the agent session after setup refreshes
+its skills.
+
 When Codex is selected, root-owned Codex defaults make direct CLI sessions use
 auto-reviewed workspace access. They do not restrict explicit user or client
 choices, so T3 can retain its upstream full-access default and users can select
@@ -387,6 +393,18 @@ directory is inside a Git checkout. See the upstream
 The managed T3 skill also uses native `link_pull_request` and
 `list_thread_pull_requests` tools when available, so PRs created through `gh`
 appear in T3's linked-PR panel, including all layers of a stack.
+
+### Optional mobile device workflows
+
+T3 also offers a Device panel and `device_*` tools for native mobile testing.
+Basaltwater does not provision their SDKs, emulators, or simulator hosts and
+does not enable agent device access during setup. Existing `--device-pairing`
+enrolls T3 clients; it does not grant simulator control. Android implementation
+is deferred, and iOS through a separate Mac is an unscheduled proposal. See
+the [mobile support plan](plans/MOBILE_AGENT_SUPPORT.md) and the
+[upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/devices.md)
+for ownership and prerequisites. Responsive browser presets remain browser
+coverage rather than native-device verification.
 
 ### Server-side Git checks
 

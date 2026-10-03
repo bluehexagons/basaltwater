@@ -273,6 +273,13 @@ documented roadmap values rather than accepted CLI choices.
 
 ## Small improvements to land continuously
 
+Checkpoint, 2026-10-02: [T3 Code VM improvements](T3_CODE_AGENT_VM_IMPROVEMENTS.md)
+now cover v0.0.45 compatibility, native archive checks, per-thread agent reload,
+bulk provider updates, projectless scratch preservation, native PR links,
+complete managed skill bundles for Codex/OpenCode/Claude, and current preview
+recording delivery. Source, archive, and wheel checks passed; deployed-host and
+connected-client qualification remain explicit follow-up work.
+
 Small, well-contained fixes should not wait for a larger phase. Good follow-ups
 include plugin import fault isolation, extending consistent `--json` support to
 remaining read-only commands, and auditing remaining non-JSON configuration
@@ -280,7 +287,16 @@ writes for atomic replacement and permissions.
 
 ## Deliberately deferred
 
-Until P0 and P1 are substantially complete, avoid prioritizing:
+Until P0 and P1 are substantially complete, additional platform and installer
+work remains lower priority.
+
+Android support is additionally deferred by explicit project direction as of
+2026-10-02. The [mobile agent support proposal](MOBILE_AGENT_SUPPORT.md) covers
+potential Android hosts and iOS through an operator-provided SSH Mac. Neither
+is an accepted setup capability or a scheduled implementation commitment;
+viewport-based web checks do not count as native mobile qualification.
+
+The remaining deferred work includes:
 
 - additional browsers, desktop environments, and language installers;
 - broad non-Debian support;

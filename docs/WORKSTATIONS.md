@@ -75,7 +75,9 @@ control-plane administrator package set. Remove `--agent-config` or `--repo`
 when those inputs are not needed. Use `tmux` for long-running agent sessions
 over SSH. To add another provider, use `--agent-tool opencode` or a
 comma-separated list. Use `--no-agent-tool gh` to remove a profile default.
-Codex and OpenCode also receive the shared base workflow skills described in
+Codex and OpenCode receive base workflow skills under `~/.agents/skills`;
+Claude Code receives them under `~/.claude/skills` when selected. The complete
+bundles and ownership rules are described in
 [Managed agent workflow skills](AGENT_SKILLS.md); they do not require T3 Code.
 
 ### High-capability graphical agent VM

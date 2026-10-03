@@ -113,7 +113,12 @@ VM-origin testing. Otherwise continue non-browser checks and report the coverage
 gap. Do not treat preview absence as an application failure.
 
 An `environment-port` target rewrites the port onto the environment connection
-host; it is not a tunnel to VM loopback. Resolve a VM development port before
+host; it is not a tunnel to VM loopback. For a local environment on the same
+machine as the preview client, use `target: {kind: "environment-port", port: PORT}`
+with the retained tab ID; specify `path` or `protocol` when needed. A remote
+private-network environment requires a service already reachable on that host
+and port. Public relay hosts reject this target until T3's authenticated preview
+gateway exists. For a remote VM's loopback development port, resolve it before
 navigating:
 
 ```bash
@@ -172,11 +177,14 @@ across a resize. Use appearance emulation for light/dark checks, then restore
 `system` unless the task needs the override left in place.
 
 Start a recording only when video evidence is useful and always stop it. The
-returned recording path belongs to the connected client's artifact store, not
-the VM filesystem, so use the returned artifact metadata/link rather than
-trying to copy that path from the VM. Keep credentials and unrelated user data
-out of recordings. A snapshot action timeline can show the snapshot currently
-being assembled as `running`; once the snapshot response returns, judge prior
+current `preview_recording_stop` tool transfers the compressed recording once
+(up to 50 MiB) into this agent environment and returns a local evidence path.
+Verify the transfer succeeded and the file is readable before linking it for
+the user. Older tools may return client-only artifact metadata; follow that
+tool's contract rather than assuming its path is mounted here. Keep recordings
+short and exclude credentials and unrelated user data. A snapshot action timeline
+can show the snapshot currently being assembled as `running`; once the snapshot
+response returns, judge prior
 actions and the returned page state instead of treating that self-entry as a
 hung action.
 

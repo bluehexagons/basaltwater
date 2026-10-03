@@ -83,7 +83,7 @@ automation, T3 Code, skills, and hardening.
 | [Privilege broker reference](PRIVILEGE_BROKER_REFERENCE.md) | Allowlist policy, audit records, and approval-service security boundaries |
 | [Agent browser automation](BROWSER_AUTOMATION.md) | Playwright provisioning, Codex/OpenCode registration, and browser security boundaries |
 | [T3 Code server](T3_CODE.md) | Headless service, deliberate updates, pairing, remote clients, and security boundaries |
-| [Managed agent workflow skills](AGENT_SKILLS.md) | Installed Codex/OpenCode skills, capability routing, reconciliation, and maintenance |
+| [Managed agent workflow skills](AGENT_SKILLS.md) | Codex/OpenCode/Claude skills, complete bundles, capability routing, and reconciliation |
 | [Godot Engine](GODOT.md) | Verified graphical/headless installation, web/publishing bundles, agent access, and updates |
 
 ## Services, deployments, and data
@@ -110,6 +110,10 @@ automation, T3 Code, skills, and hardening.
 The [`plans/`](plans/) directory contains implementation plans and audit
 records. It is not operator documentation; start with the
 [planning index](plans/README.md) only when researching project work.
+
+Potential Android emulator and SSH-hosted iOS simulator workflows are scoped
+in the deferred [mobile agent support plan](plans/MOBILE_AGENT_SUPPORT.md).
+They are not current Basaltwater setup capabilities.
 
 The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
 Debian-based operating environment built around basaltwater. It is not a

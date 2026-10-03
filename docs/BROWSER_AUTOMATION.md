@@ -249,6 +249,24 @@ an internal `basaltwater-web` URL such as `https://192.168.x.x:8443/...` can pas
 when the client lacks a route to that LAN, is outside the gateway's allowed
 source ranges, or has not enrolled the local CA.
 
+For a local environment hosted on the preview client's own machine, use the
+native target with the retained tab ID:
+
+```json
+{"tabId":"TAB_ID","target":{"kind":"environment-port","port":5173,"path":"/"}}
+```
+
+Pass exactly one of `url` or `target`. The target defaults to HTTP and accepts
+`protocol: "https"` when the development endpoint uses TLS. A private remote
+environment can use this target only when the service is already reachable at
+that environment's connection host and port. T3 v0.0.45 rejects public relay
+hosts with an authenticated-preview-gateway requirement; the target does not
+add a relay tunnel. Keep a remote loopback development server on loopback and
+use Basaltwater's existing HTTPS forward rather than broadening its binding.
+These boundaries were checked against the
+[pinned upstream resolver](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/browser/browserTargetResolver.ts)
+and its tests; they do not establish live client reachability.
+
 An `environment-port` preview target is a host rewrite, not a tunnel from the
 connected client to VM loopback. T3 maps the requested port onto the host in
 the environment connection. If that connection is represented by localhost,
@@ -337,12 +355,16 @@ dark, and system appearance emulation changes `prefers-color-scheme`; restore
 the system setting after a bounded comparison unless the user asked to leave an
 override.
 
-Collaborative recordings are saved by the connected client. The returned path
-can therefore name a client filesystem that is not mounted on the agent VM;
-use T3's returned artifact metadata or link instead of trying to read or copy
-that path from the VM. Start recording only when video adds useful evidence,
-stop it promptly, and avoid credentials or unrelated user data. A snapshot's
-action timeline can show the snapshot currently being constructed as `running`.
+The current `preview_recording_stop` tool transfers a compressed collaborative
+recording once, up to 50 MiB, into an evidence file in the agent environment.
+After successful transfer, check that the returned local path is readable and
+link it for review. Keep the recording short enough for the transfer limit;
+do not claim local evidence when transfer fails. Older tools can return
+client-only artifacts, so follow the attached tool's description and metadata
+rather than assuming every returned path is local. Start recording only when
+video adds useful evidence, stop it promptly, and avoid credentials or unrelated
+user data. A snapshot's action timeline can show the snapshot currently being
+constructed as `running`.
 When the response itself has returned, that self-entry is expected; use prior
 completed actions and the returned page state to assess success.
 
