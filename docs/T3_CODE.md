@@ -279,6 +279,18 @@ Keyboard helpers dispatch after semantic pointer focus; programmatic typing can
 set DOM focus before page input is pointer-activated, so retry a no-op key once
 after clicking its intended target and verify the outcome.
 
+On 2026-10-03, a managed host running stable v0.0.45 passed post-setup T3,
+host, browser, and development doctor checks. The user service was active and
+boot-enabled; runtime/native-addon, Git identity/authentication, credential
+helper, and installed skill references passed. A live administrative pairing
+request succeeded, and both its temporary pairing link and bootstrap session
+were revoked without printing credentials. The managed HTTPS route passed
+VM-side verification and connected-client navigation with normal certificate
+validation. Native preview open, snapshot, pointer focus, verified text input,
+and compressed recording transfer to a readable VM-local MP4 also passed.
+This verifies the installed stable service and private gateway path. Fresh
+installation, full browser enrollment, and cloud-account sign-in remain unverified.
+
 T3's service-state protocol identifies the launcher and runtime contract, and
 upstream has changed that contract as its executable layout evolved. Basaltwater
 accepts protocol 2 and later for active runtime selection only when
@@ -422,6 +434,25 @@ automatically. Its `/devices` page retains manual enrollment and T3 Connect
 controls. Use the primary T3 HTTPS URL after pairing; if a saved browser session
 stops working, reopen the protected entry to obtain a fresh native session.
 See [device pairing](DEVICE_PAIRING.md) for origin and cookie diagnostics.
+
+### Browser authentication diagnostics
+
+An unpaired browser can report WebSocket authentication failures while showing
+the native pairing form. A bare URL has not enrolled that browser; complete
+the normal pairing flow before judging authenticated WebSocket access.
+
+During the v0.0.45 post-setup check, the private HTTPS origin also returned
+HTTP 400 from `clerk.t3.codes` with a production-key domain error requiring
+`t3.codes`. T3 loads its browser cloud-account provider from its bundled public
+configuration; see the upstream [app entrypoint](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/main.tsx)
+and [browser auth shell](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/components/clerk/BrowserManagedAuthShell.tsx).
+The pairing form, native administrative pairing endpoint, gateway certificate
+checks, and preview interaction still passed. Cloud-account sign-in on that
+private browser origin remains unverified. Identify the failed request's
+origin before changing credentials or pairing; a Clerk domain rejection does
+not establish that Basaltwater's TLS route or native pairing is broken.
+Preserve the managed authentication policy and upstream assets while tracking
+that cloud-account limitation separately.
 
 ## Git and provider behavior
 

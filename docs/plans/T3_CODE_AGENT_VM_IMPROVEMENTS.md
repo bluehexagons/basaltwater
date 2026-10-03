@@ -2,8 +2,9 @@
 
 Status: active qualification; phases 1 through 3 and the phase 4 restart and
 durable-readiness boundaries are code-complete. The T3 v0.0.45 compatibility
-and phase 5 skill-delivery slice landed on 2026-10-02. Disposable-VM deployment
-and connected-client preview qualification remain separate pending work.
+and phase 5 skill-delivery slice landed on 2026-10-02. Post-setup checks on an
+active stable host and private-gateway native preview passed on 2026-10-03.
+Disposable-VM setup coverage and the remaining client boundaries are pending.
 Stable T3 releases remain the deployment target. Forward compatibility for
 orchestration V2 was checked against an isolated
 v0.0.46-nightly.20261003.2623 artifact on 2026-10-03; stable was v0.0.45.
@@ -143,15 +144,46 @@ pairing and bootstrap-credential revocation. The agent/Godot/wheel regression
 suite passed 736 tests after bundle integration, and the wheel build/install
 smoke verified the shipped T3 update reference. These are source/artifact
 checks, not a deployed-host launcher update or full connected-client test.
-Preview status and open both reported no automation host in this headless
-session; recording transfer and native port rendering remain unexercised here.
+The initial headless session had no automation host. The subsequent post-setup
+check below exercised private-gateway rendering and recording transfer;
+native environment-port rendering remains unexercised.
 
-Next qualification: rerun a saved Debian VM setup with Claude-only and mixed
+Remaining qualification: rerun a saved Debian VM setup with Claude-only and mixed
 providers, restart the affected agent session to discover refreshed skills,
-and exercise local/private/relay preview boundaries plus short video transfer
+and exercise direct local/private environment-port and relay preview boundaries
 with an attached desktop client. Evaluate Claude Playwright registration as a
 separate capability change when a concrete standalone Claude browser workflow
 needs it; current registration still supports Codex and OpenCode only.
+
+### Stable host post-setup qualification
+
+Checked on 2026-10-03 after the operator reran setup:
+
+- The installed and running upstream user service selected stable v0.0.45
+  with service-state protocol 3 and the standalone executable. It was active
+  and boot-enabled, with the Basaltwater output-filter drop-in present.
+- T3 and host doctor checks passed without warnings; browser and development
+  capabilities were healthy as well. The managed skill entrypoint and update
+  and future-migration references were installed. A fresh T3/host readiness
+  record was saved on the VM.
+- The VM reported about 2.5 GiB available RAM, idle swap activity, 49% disk
+  use, and about 29 GiB free. Recurring maintenance reported successful runs
+  and no reboot was pending. These are point-in-time operating readings.
+- A live eight-scope administrative pairing request passed. Its temporary
+  link and bootstrap session were revoked, with no credential output.
+- The managed T3 HTTPS resolver and doctor passed. Connected-client preview
+  navigation and rendering used the existing private gateway with certificate
+  verification intact. Snapshot, pointer focus, verified text input/clear,
+  and recording transfer passed. The 25,058-byte VM-local recording was
+  readable and had an MP4 header. No service restart or route change was needed.
+- An unpaired browser's WebSocket authentication failures were kept separate
+  from readiness. Clerk cloud-account requests on the private origin failed
+  the production-key domain check; native pairing and preview interaction
+  passed. Added operator/agent guidance for that distinction. Full browser
+  enrollment and cloud-account sign-in were not exercised.
+
+No Basaltwater runtime defect was found in these checks. Stable remains the
+deployment target; the nightly evidence below is advance compatibility work.
 
 Android implementation is explicitly deferred. Potential Android and SSH-hosted
 iOS workflows, prerequisites, ownership, and rollout are in the

@@ -170,6 +170,14 @@ acceptance before attributing it to an update. Reopen the protected entry to
 recover a rejected session. Never print cookies or pairing credentials while
 diagnosing the transition.
 
+A fresh, unpaired browser can log WebSocket authentication failures while
+showing the pairing form. T3 v0.0.45 can also report a Clerk production-key
+domain error on a private HTTPS origin; that identifies rejected cloud-account
+requests. Check the failing origin and native pairing separately. It does not
+by itself establish a gateway, TLS, or local pairing failure. Keep cloud sign-in
+unverified when those requests fail; preserve the managed TLS/authentication
+policy and upstream assets.
+
 ## Git
 
 GitHub authentication and Git operations happen on the server as the target
