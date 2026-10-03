@@ -46,7 +46,7 @@ class WebPanelTemplateTest(unittest.TestCase):
 
     def test_every_view_has_identical_navigation_destinations(self) -> None:
         expected = [(href, label) for href, label, _ in panel_navigation(current="dashboard")]
-        for current in ("services", "jobs", "logs"):
+        for current in ("agents", "services", "jobs", "logs"):
             with self.subTest(current=current):
                 self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current)], expected)
 

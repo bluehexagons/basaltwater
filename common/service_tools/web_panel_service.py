@@ -36,7 +36,9 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agents
 from common.service_tools.web_panel_templates import panel_navigation, render_document
+from lib.agent_tasks import AgentTasks
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
     WEB_PANEL_INGEST_TOKEN,
@@ -689,6 +691,7 @@ class WebPanelState:
         audit_snapshot_path: str = WEB_PANEL_AUDIT_SNAPSHOT,
         notification_log_path: str = WEB_PANEL_NOTIFICATION_LOG,
         ingest_token_path: str = WEB_PANEL_INGEST_TOKEN,
+        agent_home: str | None = None,
     ) -> None:
         self.manifest = manifest
         self.csrf_token = secrets.token_urlsafe(32)
@@ -709,6 +712,10 @@ class WebPanelState:
         self._service_health: list[dict[str, str]] = []
         self._service_health_at = float("-inf")
         self._service_health_lock = threading.Lock()
+        self.agent_tasks = AgentTasks(agent_home)
+        self.agent_diagnostics = AgentDiagnostics(
+            self.agent_tasks.home, manifest["features"].get("t3_update") is True,
+        )
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
@@ -1992,6 +1999,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._send(HTTPStatus.OK, "ok\n", "text/plain")
             return
+        if path == "/agents":
+            try:
+                query = parse_agent_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid agent view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
+            return
         if path == "/logs":
             try:
                 query = parse_diagnostic_query(parsed.query)
@@ -2038,12 +2053,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.OK, render_page(self.state), "text/html")
 
     def do_POST(self) -> None:
-        path = urllib.parse.urlsplit(self.path).path
+        parsed = urllib.parse.urlsplit(self.path)
+        path = parsed.path
         if path == WEB_PANEL_NOTIFICATION_ENDPOINT:
             self._handle_notification_ingest()
             return
-        if path != "/actions/t3-update":
+        agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics"}
+        if path != "/actions/t3-update" and path not in agent_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
+            return
+        if parsed.query:
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid action query\n", "text/plain")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -2056,19 +2076,83 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=8,
+                max_num_fields=16,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
             return
-        if not secrets.compare_digest(values.get("csrf", [""])[0], self.state.csrf_token):
+        if len(values.get("csrf", [])) != 1 or not secrets.compare_digest(
+            values["csrf"][0].encode("utf-8"), self.state.csrf_token.encode("utf-8"),
+        ):
             self._send(HTTPStatus.FORBIDDEN, "Invalid request\n", "text/plain")
+            return
+        if path in agent_paths:
+            self._handle_agent_action(path, values)
             return
         if not self.state.trigger_t3_update():
             self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/")
+        self.send_header("Location", "/agents" if values.get("return") == ["agents"] else "/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _handle_agent_action(self, path: str, values: dict[str, list[str]]) -> None:
+        allowed = {
+            "/actions/agent-diagnostics": {"csrf"},
+            "/actions/agent-task": {"csrf", "id", "action"},
+            "/actions/agent-task/save": {
+                "csrf", "id", "title", "prompt", "directory", "mode", "interval", "model",
+                "custom_model", "network", "submit", "effort", "timeout_minutes",
+                "web_search", "session_history", "temporary_files",
+            },
+        }[path]
+        if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid agent action\n", "text/plain")
+            return
+        if path == "/actions/agent-diagnostics":
+            if not self.state.agent_diagnostics.trigger():
+                self._send(HTTPStatus.CONFLICT, "Agent diagnostics are already running\n", "text/plain")
+                return
+        else:
+            manager = self.state.agent_tasks
+            if manager.error or not manager.available():
+                self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Prompt task execution is unavailable\n", "text/plain")
+                return
+            submitted = {key: entries[0] for key, entries in values.items() if key != "csrf"}
+            submitted["network"] = values.get("network") == ["1"]
+            submitted["session_history"] = values.get("session_history") == ["1"]
+            submitted["temporary_files"] = values.get("temporary_files") == ["1"]
+            try:
+                if path == "/actions/agent-task":
+                    manager.action(values.get("id", [""])[0], values.get("action", [""])[0])
+                else:
+                    for option in ("network", "session_history", "temporary_files"):
+                        if option in values and values[option] != ["1"]:
+                            raise ValueError("Invalid checkbox option")
+                    if submitted.get("custom_model"):
+                        submitted["model"] = submitted["custom_model"]
+                    identifier = values.get("id", [""])[0]
+                    choice = values.get("submit", [""])[0]
+                    if identifier:
+                        if choice != "save":
+                            raise ValueError("Select Save changes for an existing task")
+                        manager.update(identifier, submitted)
+                    else:
+                        if choice not in {"run", "schedule"}:
+                            raise ValueError("Select Run now or Create schedule")
+                        manager.create(submitted, run_now=choice == "run")
+            except ValueError as exc:
+                self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_agents(
+                    self.state, _PAGE_STYLE, {}, error=str(exc),
+                    submitted=submitted if path.endswith("/save") else None,
+                ), "text/html")
+                return
+            except (OSError, RuntimeError):
+                self._send(HTTPStatus.SERVICE_UNAVAILABLE, "Prompt task storage is unavailable\n", "text/plain")
+                return
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/agents")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -2192,8 +2276,10 @@ def main() -> int:
             raise ValueError("--port must be between 1 and 65535")
         server = _ThreadingTCPHTTPServer((args.listen, args.port), WebPanelHandler)
     try:
+        state.agent_tasks.start()
         server.serve_forever(poll_interval=0.5)
     finally:
+        state.agent_tasks.close()
         server.server_close()
         if args.socket:
             try:

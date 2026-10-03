@@ -58,6 +58,7 @@ def panel_navigation(
 
     items: list[NavigationItem] = [
         ("/", "Dashboard", "dashboard"),
+        ("/agents", "Agents", "agents"),
         ("/#services-heading", "Web services", None),
         ("/#audit-heading", "Security activity", None),
         ("/#notifications-heading", "Notifications", None),
@@ -83,6 +84,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
 
     icons = {
         "Dashboard": "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        "Agents": "M8 4h8v4H8z M5 11h14v9H5z M12 8v3 M2 14h3 M19 14h3 M9 15h.01 M15 15h.01 M9 18h6",
         "Web services": "M3 5h18v14H3z M3 9h18 M7 7h.01 M10 7h.01",
         "Security activity": "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
         "Notifications": "M6 8a6 6 0 0 1 12 0v7l2 3H4l2-3z M10 21h4",

@@ -111,6 +111,71 @@ T3 Code's **Update to latest** action uses the supported user-service updater
 and readiness checks. There is no general package update button; use setup with
 `--refresh-packages` for deliberate reconciliation.
 
+## Agent prompt runner
+
+`/agents` renders without launching diagnostics or prompts. State changes use
+Basic Auth and the panel's CSRF token. The fixed form routes are
+`/actions/agent-task/save`, `/actions/agent-task`, and
+`/actions/agent-diagnostics`; duplicate and unknown fields are rejected.
+Tasks accept a name, prompt, working directory, optional model and reasoning
+effort, maximum runtime, execution mode, command-network and temporary-write
+choices, web-search mode, Codex session retention, and a fixed interval. No
+executable or arbitrary CLI arguments can be supplied through a form.
+
+The runner invokes the installed Codex executable directly with `codex exec`,
+passes the prompt through stdin, and explicitly uses the read-only or
+workspace-write sandbox and the `never` approval policy. Workspace mode
+explicitly configures command network access and temporary-directory writes,
+and clears additional configured writable roots. Inspection uses a read-only
+sandbox; workspace writes are restricted to a directory inside the account's
+home plus `/tmp` and `TMPDIR` when explicitly enabled. These tasks use the
+account's Codex configuration, credentials, and repository instructions; the
+panel does not sandbox installed hooks or MCP servers independently. Sandboxing
+must be supported by the installed CLI and host; failures remain failed runs
+rather than falling back to unrestricted execution.
+
+Model choices read only selector metadata from the bounded local
+`~/.codex/models_cache.json`; identity and credential fields are never exposed.
+Missing, malformed, oversized, or unavailable caches leave the configured
+default and custom-ID option usable. Cached effort capabilities validate
+explicit model choices when saving; availability is ultimately checked by
+Codex when it runs. Effort overrides use `model_reasoning_effort`. Web-search
+overrides use `web_search`; command-network restrictions do not restrict
+provider requests or independently configured MCP integrations. Runs use
+`--ephemeral` unless Codex session retention is enabled. These settings follow
+the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
+State lives in `~/.local/state/basaltwater/prompt-tasks/tasks.json` (0600) below
+a private directory (0700). A lifetime process lock prevents a second panel
+scheduler from executing the same tasks. The scheduler runs with the panel
+service, checks due work every 15 seconds, persists a claim before execution,
+and executes serially. Next-run deadlines use elapsed hourly/daily/weekly
+intervals rather than local calendar times; timestamps display in UTC. An
+overdue task runs once, then advances beyond the current time. A run-now request
+before the normal deadline does not move that deadline. Resume schedules a full
+interval from the resume time. Pause clears queued work and stops repetition;
+cancel stops the active process group. Restarted runs become interrupted and
+are not automatically retried as the same run.
+
+Limits are 32 saved tasks, 40 retained runs, a 4,000-byte prompt, and a 1 MiB
+state file. Each task has a 1–10,080 minute wall-clock limit, defaulting to 30
+minutes. Sleeping and waiting count against this limit; cancellation or expiry
+stops the process group, including child commands. A runtime limit does not
+enforce a monetary or token budget. The runner retains the last 8 KiB of output
+and stops a run after 1 MiB of output. Common credential patterns are redacted for display;
+raw output and exact prompt settings remain in private state. Users must avoid
+putting credentials in prompts, and output can contain application data.
+Removing a task retains its existing run history. Removing the web panel stops
+the scheduler but retains account-owned prompt state for explicit cleanup or
+later reinstallation.
+
+Runtime diagnostics use the existing local tool and credential inspectors.
+T3 Code is checked only when configured or its runtime directory is present,
+and checks never use `--fix`. The screen does not expose credential contents or
+the T3 pairing password. Missing tools remain optional; only Codex is required
+for prompt execution. A root-owned setup's locked panel service account cannot
+run prompt tasks.
+
 ## Access controls and scope
 
 The panel uses Basic Auth, request throttling, an

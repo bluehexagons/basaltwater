@@ -1,9 +1,9 @@
 # Minimal web panel
 
 The optional web panel is a browser dashboard for one managed machine. It
-shows current host state, configured services, audit activity, maintenance, and
-notifications. It has no terminal, arbitrary command runner, package form, or
-general service control.
+shows current host state, configured services, audit activity, maintenance,
+notifications, and agent prompt tasks. Agent tasks use the installed Codex CLI
+under the panel account; no T3 Code installation is required.
 
 | Need | Open | Result |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ general service control.
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
+| Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
 
@@ -70,6 +71,69 @@ An agent VM configured with `--privilege-broker [PORT]` receives a
 own password and service identity. The panel cannot approve actions or read the
 approval credential. Use [Privilege approvals](PRIVILEGE_APPROVALS.md) for the
 agent and user workflow.
+
+## Agent prompt tasks
+
+Open **Agents** to run Codex prompts against the host or a repository. Install
+and authenticate Codex as the non-root account running the panel. Other
+terminal agents are inventoried by diagnostics but do not execute prompt tasks
+in this initial version. Root-managed panels use a locked service account
+without a home and show diagnostics with prompt execution unavailable.
+
+1. Start with **Host maintenance review**, **Update repository dependencies**,
+   or **Repository health check**, or write a custom prompt.
+2. Enter the working directory. Repository templates require you to choose
+   the specific checkout; host inspection defaults to the account's home.
+3. Choose **Inspect only** for Codex's read-only sandbox, or **Workspace
+   changes** for a directory inside the account's home. Enable command network
+   access when changes require package downloads, and temporary writes when
+   tests or package tools need `/tmp` or `TMPDIR`. Provider requests still use
+   the network in either mode. Configured hooks and MCP integrations retain
+   their own permissions.
+4. Select a model and reasoning effort, or keep the configured defaults. The
+   model dropdown reads Codex's local cache without contacting the provider;
+   **Additional options** accepts a custom model ID when needed. Model access
+   and supported effort levels depend on the installed CLI and account.
+5. Set **Maximum runtime** in whole minutes, from 1 minute to 7 days (default
+   30 minutes). Waiting and sleeping count toward this wall-clock limit. This
+   is a duration cap, not an exact cost or token budget.
+6. Choose once, hourly, daily, or weekly. **Run now** queues an immediate run
+   and enables repetition when selected. **Create schedule** starts after one
+   interval.
+
+Additional options control Codex's web search independently of command network
+access: disabled, cached results, or live search. Runs use ephemeral Codex
+sessions by default; enable **Keep Codex session history** to retain them in
+Codex too. Panel run history is retained with either choice.
+
+Saved tasks show their next run, last outcome, and working directory. Use
+**Pause**, **Resume**, **Edit**, **Run now**, or **Remove** to manage them.
+Once tasks are saved, the screen leads with their status; expand **Create a
+prompt task** to add another, or select a saved task's **Edit** link.
+Pausing stops future work and clears a queued run; cancel an active run
+separately. Cancellation stops processes, but does not undo completed edits.
+Run history retains the prompt and settings used, timestamps, and bounded
+output. Use **Refresh status** to see results without automatic reloads that
+would discard a prompt draft.
+
+The scheduler belongs to the panel service, so it runs without T3 Code while
+the panel is running. Tasks persist across panel and host restarts. After
+downtime, each overdue schedule runs at most once, then advances to its next
+interval. Runs interrupted by a restart are labelled for review. The initial
+runner executes serially and does not create isolated Git worktrees: choose
+a dedicated checkout when work could overlap another agent session.
+
+**Check agent readiness** collects versions and local credential metadata for
+Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and
+the timestamp of any saved readiness record. T3 Code is checked when configured
+or installed; its update action appears for a configured installation.
+Credential file presence is not proof of provider authentication. Checks run
+in the background and do not launch prompts or automatically repair the host.
+
+Prompt execution uses the account's existing privileges. Host repairs that
+need elevation use the configured [privilege approval workflow](PRIVILEGE_APPROVALS.md);
+the panel does not grant root access. The templates prepare changes for review
+and do not ask the agent to commit, push, or deploy.
 
 ## Receive notifications
 
