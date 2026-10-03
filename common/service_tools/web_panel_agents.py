@@ -92,6 +92,84 @@ PROMPT_TEMPLATES = {
         "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
         "prompt": "Inspect readable public certificate metadata, configured HTTPS service references, and renewal timer or job state on this host. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures and identify services using certificates where the configuration is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
     },
+    "t3-readiness": {
+        "requires": "t3", "scope": "host", "title": "Check T3 Code readiness",
+        "description": "Check the user service, runtime, agent tools, and saved readiness evidence.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect the configured or installed T3 Code runtime using available Basaltwater agent diagnostics without repair options. Check user-service state, runtime and installed version evidence, terminal agent availability, local credential metadata, Git identity readiness, and maintenance holds. Distinguish file presence from verified authentication. Report failures and missing evidence with suggested next steps. Do not update tools, restart services, rotate credentials, read or reveal pairing passwords or credential contents, or change the host.",
+    },
+    "containers": {
+        "requires": "containers", "scope": "host", "title": "Review container health",
+        "description": "Inspect Docker or Podman health, resource use, and storage pressure.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Use the installed Docker or Podman CLI for bounded read-only inspection of local containers, health status, restart counts, resource usage, and image or volume storage metadata. Check available recent error evidence without dumping environment variables or secrets. Command presence does not prove daemon access; report unavailable sockets, permissions, or health checks explicitly. Identify failing containers and cleanup candidates with evidence. Do not start, stop, restart, exec into, pull, build, prune, remove, or change containers, images, volumes, or networks.",
+    },
+    "web-hosting": {
+        "requires": "web_hosting", "scope": "host", "title": "Review web hosting",
+        "description": "Check gateway registrations, Nginx state, and local upstream evidence.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect existing Basaltwater web gateway registrations and readable Nginx site metadata, service state, and bounded recent error logs using read-only tools. Identify static sites, forwards, missing document roots, failed upstream services, and certificate or route configuration gaps. Do not infer live public reachability from configuration; distinguish saved configuration from verified health. Report inaccessible files or checks blocked by sandbox permissions. Do not publish sites, register forwards, modify configuration, reload services, renew certificates, or expose credentials or private site contents.",
+    },
+    "shared-storage": {
+        "requires": "shared_storage", "scope": "host", "title": "Check shared storage",
+        "description": "Check configured SMB shares and existing CIFS or SSHFS mounts.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect configured Samba shares and existing CIFS or SSHFS mount metadata using available Basaltwater diagnostics and readable local configuration. Check local service state, mount presence, ownership, relevant errors, and existing backup coverage. Keep checks bounded: avoid traversing unavailable network mounts, reading shared file contents, or printing credentials and mount passwords. An installed client does not prove a share is configured or reachable; report missing evidence. Do not mount, unmount, reconnect, chmod, change share configuration, delete files, or copy data.",
+    },
+    "remote-desktop": {
+        "requires": "remote_desktop", "scope": "host", "title": "Check remote desktop readiness",
+        "description": "Inspect xrdp, session-manager state, and recent connection failures.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
+        "prompt": "Inspect configured remote desktop access, xrdp and session-manager service state, readable session configuration, and bounded recent connection or startup errors. Report missing desktop components, service failures, and relevant permission or certificate evidence. Local readiness does not prove a remote client can connect; distinguish those checks. Do not open or capture another user's desktop, terminate sessions, restart services, modify accounts or configuration, or expose credentials.",
+    },
+    "github-actions": {
+        "requires": "github", "scope": "repository", "title": "Review GitHub Actions failures",
+        "description": "Read recent CI runs with GitHub CLI and identify recurring failures.",
+        "mode": "workspace", "interval": "daily", "network": True, "timeout_minutes": 20,
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Identify its GitHub repository from the existing remote without changing it. Use GitHub CLI read-only commands to inspect a bounded number of recent Actions runs and relevant failed-job logs. Compare failures with local workflow configuration; separate likely code, infrastructure, flaky-test, and permission causes. Redact credentials and report unavailable authentication or repository access explicitly. Produce an evidence-backed triage report. Do not modify files, rerun or cancel workflows, create issues or comments, commit, push, publish, or deploy.",
+    },
+    "browser-smoke": {
+        "requires": "browser", "scope": "repository", "title": "Run browser smoke checks",
+        "description": "Check key application flows with the managed browser tooling.",
+        "mode": "workspace", "interval": "once", "network": True, "temporary_files": True, "timeout_minutes": 30,
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Check the managed browser capability using available Basaltwater diagnostics, then use the repository's documented local preview and configured browser tools to inspect key flows, console errors, and a narrow viewport. Use an isolated test environment and synthetic data; avoid production endpoints and real user transactions. Start a local preview only when repository instructions support it, and stop processes you start. Keep screenshots in the browser's private evidence directory and report results, URLs, and blocked checks. Do not install tools, change application code, publish, deploy, or send messages.",
+    },
+    "godot-export": {
+        "requires": "godot", "scope": "repository", "title": "Validate Godot web export",
+        "description": "Check export presets and prepare a local web build for review.",
+        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Confirm a Godot project and suitable web export preset exist in the selected checkout. Check the installed Godot version and existing export templates, then use the documented headless export workflow to produce a local web build in the repository's designated ignored output directory. If the output location is not documented or would overwrite tracked or unrelated files, report the blocker. Report export errors, artifact paths, and runtime or browser checks still needed. Do not download tools or templates, change project sources or presets, commit, push, publish, or deploy.",
+    },
+    "homebox-health": {
+        "requires": "homebox", "scope": "host", "title": "Check HomeBox data protection",
+        "description": "Review service health and backup coverage for inventory and attachments.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect the configured HomeBox service using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Identify inventory database and attachment storage paths from configuration without reading their contents. Check available capacity and existing backup-job evidence covering both database and attachments; distinguish job completion from restore verification. Report missing coverage, service failures, and inaccessible evidence. Do not change inventory, query private records, start backups, restore data, copy database files, restart services, or expose credentials.",
+    },
+    "gogs-health": {
+        "requires": "gogs", "scope": "host", "title": "Check Gogs repository hosting",
+        "description": "Review service errors, repository storage, and existing backup evidence.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect the configured or installed Gogs service using readable local service and configuration metadata and bounded recent error logs. Identify repository, database, and attachment storage locations without reading private repository or database contents. Check capacity, relevant ownership evidence, and existing backup coverage. Distinguish configured locations from verified availability and report inaccessible evidence. Recommend follow-up for failures or protection gaps. Do not change users or repositories, run repository hooks, migrate data, restart services, start backups, or expose credentials.",
+    },
+    "antistatic-health": {
+        "requires": "antistatic", "scope": "host", "title": "Check Antistatic services",
+        "description": "Review configured lobby and database service state and recent errors.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect the configured Antistatic lobby and database services using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Check service state, dependency failures, resource pressure, database storage capacity, and existing backup-job evidence where available. Distinguish configuration from verified application readiness and report unavailable checks. Do not query player records, send game requests, modify databases, restart services, start backups, or expose credentials.",
+    },
+    "notifications-health": {
+        "requires": "notifications", "scope": "host", "title": "Check notification delivery",
+        "description": "Inspect receiver configuration and existing delivery evidence.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
+        "prompt": "Inspect the configured Basaltwater panel notification receiver using available diagnostics and readable non-secret configuration or existing delivery logs. Check panel and proxy service state, accepted-event timestamps, sender failure or retry evidence, and relevant throttling or authentication errors. No recent events alone does not prove delivery is broken; report expected cadence only when configured evidence supports it. Redact sender links and bearer tokens. Do not reveal or rotate tokens, send test notifications or messages, change sender configuration, or restart services.",
+    },
+    "privilege-health": {
+        "requires": "privilege", "scope": "host", "title": "Check privilege approval readiness",
+        "description": "Review broker service, policy metadata, and available audit evidence.",
+        "mode": "inspect", "interval": "weekly", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect the configured Basaltwater privilege approval broker using available diagnostics, readable service and policy metadata, and sanitized audit evidence. Check broker service state, socket or endpoint configuration, policy coverage, and recent denial or execution errors. Report inaccessible evidence and distinguish configured permissions from verified readiness. Do not read approval credentials, submit or approve requests, execute privileged commands, change policies or allowlists, restart services, or expose secrets.",
+    },
 }
 
 _STYLE = """
@@ -210,19 +288,65 @@ def _action_form(csrf: str, identifier: str, action: str, label: str) -> str:
 <input type="hidden" name="id" value="{_escape(identifier)}"><button class="agent-secondary" name="action" value="{action}">{label}</button></form>'''
 
 
-def _render_templates(selected: str) -> str:
-    active_scope = PROMPT_TEMPLATES.get(selected, {}).get("scope", "repository")
+def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[str, Any]]:
+    """Use saved configuration and executable presence, without executing tools."""
+
+    def labels(section: str) -> set[str]:
+        return {row["label"] for row in manifest.get(section, [])
+                if isinstance(row, dict) and isinstance(row.get("label"), str)}
+
+    def installed(*names: str) -> bool:
+        return any(_tool_path(name, home) for name in names)
+
+    services, access = labels("services"), labels("access")
+    features = manifest.get("features", {})
+    capabilities = {
+        "t3": "T3 Code configured" if features.get("t3_update") is True else
+              "T3 Code runtime detected" if os.path.isdir(os.path.join(home, ".t3/runtime")) else "",
+        "containers": "Container CLI detected" if installed("docker", "podman") else "",
+        "web_hosting": "Web server configured" if "Web server" in services else
+                       "Web hosting command detected" if installed("basaltwater-web", "nginx") else "",
+        "shared_storage": "Samba configured" if "Samba / SMB" in access else
+                          "Shared storage command detected" if installed("smbd", "mount.cifs", "sshfs") else "",
+        "remote_desktop": "Remote desktop configured" if "Remote desktop" in access else
+                          "xrdp command detected" if installed("xrdp") else "",
+        "github": "GitHub CLI detected" if installed("gh") else "",
+        "browser": "Managed browser launcher detected" if installed("basaltwater-playwright-mcp") else "",
+        "godot": "Godot command detected" if installed("godot", "godot4") else "",
+        "homebox": "HomeBox configured" if "HomeBox" in services else "",
+        "gogs": "Gogs configured" if "Gogs" in services else
+                "Gogs command detected" if installed("gogs") else "",
+        "antistatic": "Antistatic configured" if services & {"Antistatic lobby", "Antistatic DB"} else "",
+        "notifications": "Notification ingest enabled" if features.get("notification_ingest") is True else "",
+        "privilege": "Privilege approvals configured" if "Privilege approvals" in services else "",
+    }
+    return {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
+            for key, template in PROMPT_TEMPLATES.items()
+            if "requires" not in template or capabilities[template["requires"]]}
+
+
+def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
+    active_scope = templates.get(selected, {}).get("scope", "repository")
     groups = []
     for scope, label in (("repository", "Repository work"), ("host", "Host checks")):
         links = []
-        for key, template in PROMPT_TEMPLATES.items():
+        for key, template in templates.items():
             if template["scope"] != scope:
                 continue
             mode = "Inspect only" if template["mode"] == "inspect" else "Workspace changes"
             interval = {"once": "Once", "daily": "Daily", "weekly": "Weekly"}[template["interval"]]
             runtime = template.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES)
             current = ' aria-current="true"' if key == selected else ""
-            links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span><small>{mode} · {interval} · {runtime} min cap</small></a>')
+            permissions = []
+            if template["network"]:
+                permissions.append("command network")
+            if template.get("temporary_files"):
+                permissions.append("temporary writes")
+            if template.get("web_search") == "live":
+                permissions.append("live web search")
+            settings = " · ".join([mode, interval, f"{runtime} min cap", *permissions])
+            availability = f'<small>{_escape(template["availability"])}</small>' if template.get("availability") else ""
+            links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span>{availability}<small>{_escape(settings)}</small></a>')
         groups.append(f'<details class="agent-template-group"{" open" if scope == active_scope else ""}><summary>{label} · {len(links)} templates</summary>{"".join(links)}</details>')
     return "".join(groups)
 
@@ -242,14 +366,19 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     diagnostics = state.agent_diagnostics.snapshot()
     ready = manager.available() and not manager.error and not storage_error
     codex_installed = bool(_tool_path("codex", manager.home))
+    templates = _available_templates(state.manifest, manager.home)
     defaults: dict[str, Any] = {"title": "", "prompt": "", "directory": manager.home,
                                "mode": "inspect", "interval": "once", "model": "", "network": False, "id": "",
                                "effort": "", "timeout_minutes": DEFAULT_TIMEOUT_MINUTES,
                                "web_search": "disabled", "session_history": False, "custom_model": "", "temporary_files": False}
     if "template" in query:
-        defaults.update(PROMPT_TEMPLATES[query["template"]])
-        if defaults["scope"] == "repository":
-            defaults["directory"] = ""
+        template = templates.get(query["template"])
+        if template is None:
+            error = error or "This template is unavailable: its required feature or software was not detected. Choose another template or write a custom prompt."
+        else:
+            defaults.update(template)
+            if template["scope"] == "repository":
+                defaults["directory"] = ""
     if "edit" in query:
         task = next((task for task in tasks if task["id"] == query["edit"]), None)
         if task is None:
@@ -297,8 +426,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-buttons">{'<button name="submit" value="save"' + disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Run now</button><button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>'}
 <a href="/agents">Clear form</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected.</p></form></div>'''
-    template_links = _render_templates(query.get("template", ""))
-    helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting.</p>{template_links}
+    template_links = _render_templates(query.get("template", ""), templates)
+    helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
 <details><summary>Execution limits</summary><p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. Schedules run while this panel service is running; missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></aside>'''
     rows = []
     for task in tasks:

@@ -122,6 +122,17 @@ effort, maximum runtime, execution mode, command-network and temporary-write
 choices, web-search mode, Codex session retention, and a fixed interval. No
 executable or arbitrary CLI arguments can be supplied through a form.
 
+The starting catalog combines universal templates with integration templates
+filtered by existing manifest feature flags, configured service/access labels,
+the account's T3 runtime directory, and a fixed list of executable names in
+the managed account/system search paths. Rendering does not execute version,
+service, credential, or browser checks for template discovery. Detection
+reasons describe configuration or command presence, not health or authenticated
+access. Conditional template links are validated against the fixed catalog;
+unavailable selections show an explanatory notice without prefilling the task.
+Saved tasks remain independent of catalog availability. See the [template
+table](WEB_PANEL.md#agent-prompt-tasks) for conditions and suggested settings.
+
 The runner invokes the installed Codex executable directly with `codex exec`,
 passes the prompt through stdin, and explicitly uses the read-only or
 workspace-write sandbox and the `never` approval policy. Workspace mode

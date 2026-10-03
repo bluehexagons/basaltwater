@@ -82,7 +82,7 @@ without a home and show diagnostics with prompt execution unavailable.
 
 1. Choose a starting template under **Repository work** or **Host checks**,
    or write a custom prompt. Each template shows its execution mode, suggested
-   repeat interval, and runtime cap before selection.
+   repeat interval, runtime cap, and additional permissions before selection.
 2. Enter the working directory. Repository templates require you to choose
    the specific checkout; host inspection defaults to the account's home.
 3. Choose **Inspect only** for Codex's read-only sandbox, or **Workspace
@@ -127,6 +127,38 @@ and certificate checks do not renew certificates or change trust. Missing
 configuration or unavailable evidence is reported explicitly. Security review
 uses web search for current advisories and distinguishes confirmed version
 matches from uncertain findings.
+
+Additional templates appear when the panel's saved setup configuration or
+commands installed for its account indicate a relevant integration. Each shows
+the detection reason. These checks do not run commands or prove service health,
+browser readiness, repository compatibility, or authentication. Repository
+templates still require you to select a suitable checkout.
+
+| Conditional template | Appears when | Default repeat / cap | Scope |
+| --- | --- | --- | --- |
+| Check T3 Code readiness | T3 Code is configured or `~/.t3/runtime` exists | Daily / 15 minutes | Inspect only |
+| Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Inspect only |
+| Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Inspect only |
+| Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Inspect only |
+| Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Inspect only |
+| Review GitHub Actions failures | `gh` is installed | Daily / 20 minutes | Workspace permissions for command network; prompt requests inspection only |
+| Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
+| Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
+| Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Inspect only |
+| Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Daily / 15 minutes | Inspect only |
+| Check Antistatic services | Antistatic lobby or DB is configured | Daily / 15 minutes | Inspect only |
+| Check notification delivery | Panel notification ingest is enabled | Daily / 10 minutes | Inspect only |
+| Check privilege approval readiness | Privilege approvals are configured | Weekly / 15 minutes | Inspect only |
+
+GitHub CI inspection needs command network access; the runner offers that in
+workspace mode, so its prompt explicitly requests no file changes or remote
+actions. Browser checks use isolated local previews and synthetic data. Godot
+exports use a documented ignored output directory and report missing presets
+or export templates instead of downloading them. Other integration checks
+inspect existing state and recommend follow-up without repairs or privileged
+actions. Availability filters only the starting catalog: saved tasks retain
+their prompts and settings if an integration is later removed. Opening a stale
+template link explains why it is unavailable and leaves the custom form usable.
 
 Additional options control Codex's web search independently of command network
 access: disabled, cached results, or live search. Runs use ephemeral Codex
