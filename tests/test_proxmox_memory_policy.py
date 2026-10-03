@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -63,10 +64,13 @@ class TestConfigureBalloonTarget(unittest.TestCase):
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
     def test_automatic_policy_never_loosens_stricter_existing_target(self, _memory, command, _dry):
-        for target in (0, 60):
+        for target in (0, 60, "0", "60", "80"):
             with self.subTest(target=target):
                 command.reset_mock()
-                command.return_value = MagicMock(returncode=0, stdout=f'{{"ballooning-target": {target}}}')
+                command.return_value = MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"ballooning-target": target}),
+                )
                 configure_proxmox_balloon_target(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
                 command.assert_called_once()
 
@@ -86,13 +90,61 @@ class TestConfigureBalloonTarget(unittest.TestCase):
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
     def test_invalid_current_target_stops_without_mutation(self, _memory, command, _dry):
-        for output in ("", "[]", '{"ballooning-target": true}', '{"ballooning-target": 80.5}'):
+        invalid_values = (
+            True, False, 80.5, 80.0, -1, 101, "", "80.5", "80.0",
+            "-1", "101", "80%", " 80", "80\n", "８０", [], {},
+        )
+        outputs = ["", "[]", "null"] + [
+            json.dumps({"ballooning-target": value}) for value in invalid_values
+        ]
+        for output in outputs:
             with self.subTest(output=output):
                 command.reset_mock()
                 command.return_value = MagicMock(returncode=0, stdout=output)
                 with self.assertRaisesRegex(RuntimeError, "existing Proxmox balloon target"):
                     configure_proxmox_balloon_target(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
                 command.assert_called_once()
+
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps._host_total_memory_mib", return_value=32768)
+    def test_verifies_string_target_after_materializing_default(self, _memory, command, _dry):
+        command.side_effect = [
+            MagicMock(returncode=0, stdout="{}"),
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout='{"ballooning-target": "80"}'),
+        ]
+
+        configure_proxmox_balloon_target(
+            SetupConfig(host="pve", username="root", system_type="server_proxmox")
+        )
+
+        self.assertIn(call("pvenode config set --ballooning-target 80"), command.call_args_list)
+        self.assertEqual(command.call_count, 3)
+
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps._host_total_memory_mib", return_value=8192)
+    def test_changes_and_verifies_string_target_then_reruns(self, _memory, command, _dry):
+        command.side_effect = [
+            MagicMock(returncode=0, stdout='{"ballooning-target": "80"}'),
+            MagicMock(returncode=0, stdout=""),
+            MagicMock(returncode=0, stdout='{"ballooning-target": "75"}'),
+        ]
+        config = SetupConfig(host="pve", username="root", system_type="server_proxmox")
+
+        configure_proxmox_balloon_target(config)
+
+        self.assertIn(call("pvenode config set --ballooning-target 75"), command.call_args_list)
+        self.assertEqual(command.call_count, 3)
+
+        command.reset_mock()
+        command.side_effect = None
+        command.return_value = MagicMock(returncode=0, stdout='{"ballooning-target": "75"}')
+
+        configure_proxmox_balloon_target(config)
+
+        command.assert_called_once()
 
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
     @patch("common.proxmox_steps.run")

@@ -170,6 +170,10 @@ def _configured_balloon_target(output: str) -> int | None:
         value = config.get("ballooning-target")
         if value is None:
             return None
+        # Proxmox reads saved node settings as strings, even for integer
+        # schema fields; pvesh can preserve that type in its JSON output.
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            value = int(value)
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
             raise ValueError("Invalid node balloon target")
         return value

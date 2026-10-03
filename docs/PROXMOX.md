@@ -170,6 +170,13 @@ the target does not guarantee a physical RAM reserve. Use
 from 1 through 95; this changes the node policy, so reserve enough memory for
 Proxmox services, storage, and QEMU overhead.
 
+Setup accepts the node target as either a JSON integer or a decimal digit
+string, because Proxmox can return saved node configuration values as strings.
+Both the initial read and verification enforce Proxmox's 0–100 range. If an
+older setup fails with `Unable to read the existing Proxmox balloon target`
+for a valid saved value, update Basaltwater on the controller and rerun the
+same setup command; the node setting does not need to be deleted.
+
 By default, setup does not change Proxmox firewall state. Supplying
 `--lan-access` or `--access-source` reconciles only basaltwater-commented
 entries in Proxmox's standard cluster-wide `management` IP set, preserves
