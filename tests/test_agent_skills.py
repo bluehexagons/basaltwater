@@ -265,6 +265,20 @@ class ManagedAgentSkillTests(unittest.TestCase):
         self.assertIn("Installing agent VM management command", names)
         self.assertIn("Installing managed agent workflow skills", names)
 
+    def test_skill_refresh_follows_provider_config_that_can_include_older_skills(self) -> None:
+        config = SetupConfig(
+            host="host", username="agent", system_type="agent_vm",
+            agent_tools=["claude"], install_claude=True, agent_payload=True,
+            web_interfaces=["t3code"],
+        )
+        steps: list[tuple[str, StepFunc]] = []
+        extend_agent_steps(config, steps)
+        names = [name for name, _step in steps]
+        self.assertLess(names.index("Copying agent tool configuration"),
+                        names.index("Installing managed agent workflow skills"))
+        self.assertLess(names.index("Installing managed agent workflow skills"),
+                        names.index("Installing T3 Code web interface"))
+
 
 if __name__ == "__main__":
     unittest.main()

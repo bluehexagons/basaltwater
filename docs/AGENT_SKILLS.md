@@ -87,6 +87,8 @@ alone. It removes obsolete Basaltwater-managed desktop/browser skills when the
 selected capability combination changes, while preserving unrelated skills and
 user configuration. It refuses symlinked paths, directories owned by another
 user, and a same-name skill without the managed marker.
+The refresh runs after provider configuration is copied, so an older managed
+catalog included in `--agent-config active` cannot replace the current guidance.
 
 Supporting resources are tracked with SHA-256 digests in the private
 `.basaltwater-files.json` inventory. Refreshes preflight each bundle before

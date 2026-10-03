@@ -250,13 +250,6 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         steps.append(
             ("Installing agent VM management command", install_agent_cli_launcher)
         )
-        if SKILL_AGENT_TOOLS.intersection(config.selected_agent_tools()):
-            steps.append(
-                (
-                    "Installing managed agent workflow skills",
-                    install_agent_workflow_skills,
-                )
-            )
 
     if config.install_gh:
         steps.append(("Installing GitHub CLI", install_github_cli))
@@ -274,6 +267,13 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
     # interface that probes those providers during its initial discovery.
     if config.agent_payload:
         steps.append(("Copying agent tool configuration", copy_agent_tooling_payload))
+
+    # Claude's copied configuration can contain an older managed skill catalog.
+    # Refresh after payload seeding so the current source owns managed guidance.
+    if SKILL_AGENT_TOOLS.intersection(config.selected_agent_tools()):
+        steps.append(
+            ("Installing managed agent workflow skills", install_agent_workflow_skills)
+        )
 
     if config.install_codex:
         steps.append(
