@@ -116,7 +116,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         '<nav class="sidebar" aria-label="Panel sections">'
         f'<strong class="brand">{BRAND_SYMBOL}<span>Basaltwater</span></strong>'
         '<div class="nav-links">'
-        f'{"".join(links)}</div><p class="sidebar-note">One machine.<br>Your whole workspace.</p></nav>'
+        f'{"".join(links)}</div></nav>'
     )
 
 

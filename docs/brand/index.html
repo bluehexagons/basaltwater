@@ -9,7 +9,7 @@ body {
   color: var(--text);
   font: 15px/1.5 system-ui, sans-serif;
 }
-main { max-width: 1560px; margin: 0 auto 0 248px; padding: 32px 40px 64px; }
+main { max-width: 1560px; margin: 0 auto 0 248px; padding: 24px 28px 48px; }
 body { overflow-wrap: anywhere; }
 .sidebar {
   position: fixed; inset: 0 auto 0 0; width: 248px; padding: 28px 16px;
@@ -21,8 +21,6 @@ body { overflow-wrap: anywhere; }
 .sidebar a svg { flex: none; }
 .nav-group { margin: 24px 12px 8px; color: var(--muted); font-size: .66rem; font-weight: 750;
   letter-spacing: .12em; text-transform: uppercase; }
-.sidebar-note { margin: 30px 12px 0; padding-top: 18px; border-top: 1px solid var(--accent-soft);
-  color: var(--muted); font-size: .75rem; line-height: 1.7; }
 .sidebar a:hover { background: var(--accent-soft); color: var(--accent); }
 a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; background: var(--panel); z-index: 3; }
@@ -63,10 +61,17 @@ body:has(#maintenance-heading:target) .sidebar a[href="/#maintenance-heading"] {
 .job-facts dd { margin: 4px 0 0; }
 .job-load { margin-bottom: 14px; }
 .badge.success { color: var(--ok); }
-header { margin-bottom: 32px; padding: 28px 30px; border: 1px solid var(--accent-soft);
-  border-top: 3px solid var(--accent); border-radius: 16px;
+header { margin-bottom: 24px; padding: 20px 24px; border: 1px solid var(--accent-soft);
+  border-top: 3px solid var(--accent); border-radius: 12px;
   background: radial-gradient(ellipse at top right, var(--accent-soft), transparent 65%), var(--panel); }
-.eyebrow, .section-kicker {
+.dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.dashboard-header > div { min-width: 0; }
+.dashboard-header h1 { font-size: clamp(1.6rem, 3vw, 2rem); }
+.dashboard-header .meta { margin-top: 12px; }
+.dashboard-header .meta div { padding: 0; border-radius: 0; background: none; }
+.dashboard-header .meta div + div { border-left: 1px solid var(--line); padding-left: 12px; }
+.dashboard-header .refresh-link { margin: 0; flex: none; }
+.eyebrow {
   margin: 0 0 6px;
   color: var(--accent);
   font-size: .75rem;
@@ -97,27 +102,27 @@ h1 {
 }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; font-weight: 650; }
-section { margin-top: 32px; }
+section { margin-top: 24px; }
 .section-heading {
   display: flex;
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 13px;
+  margin-bottom: 10px;
 }
 h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .count { color: var(--muted); font-size: .75rem; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 .card {
   display: flex;
-  min-height: 160px;
+  min-height: 116px;
   flex-direction: column;
-  gap: 8px;
-  padding: 20px;
+  gap: 4px;
+  padding: 12px 14px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
@@ -126,7 +131,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   text-decoration: none;
 }
 .card:hover { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--panel)); }
-.card strong { font-size: 1rem; letter-spacing: -.02em; }
+.card strong { font-size: .9rem; letter-spacing: -.02em; }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .service-kind { color: var(--muted); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .service-arrow { color: var(--accent); font-size: 1.2rem; }
@@ -134,7 +139,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
-.card-description { color: var(--muted); font-size: .9rem; }
+.card-description { color: var(--muted); font-size: .8rem; }
 .card-status { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 700; }
 .card-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .card-status.ready { color: var(--ok); }
@@ -142,7 +147,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .card-status.unavailable { color: var(--bad); }
 .card-url {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 6px;
   border-top: 1px solid var(--accent-soft);
   color: var(--muted);
   font-size: .72rem;
@@ -151,12 +156,12 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: 14px;
+  gap: 10px;
   margin: 0;
 }
 .metric {
-  min-height: 140px;
-  padding: 20px;
+  min-height: 110px;
+  padding: 12px 14px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
@@ -164,9 +169,10 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 }
 .metric dt { color: var(--muted); font-size: .82rem; }
 .metric dd { margin: 5px 0 0; }
-.metric-value { display: block; font-size: 1.4rem; font-weight: 750; letter-spacing: -.035em; }
-.metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .82rem; }
-meter { display: block; width: 100%; height: 6px; margin: 13px 0 10px; border: 0; border-radius: 999px;
+.metric-value { display: block; font-size: 1.15rem; font-weight: 750; letter-spacing: -.035em; }
+.metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .75rem; }
+.host-overview { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+meter { display: block; width: 100%; height: 6px; margin: 8px 0; border: 0; border-radius: 999px;
   background: var(--accent-soft); accent-color: var(--accent); }
 meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 999px; background: var(--accent-soft); }
 meter::-webkit-meter-optimum-value { background: var(--accent); }
@@ -304,7 +310,7 @@ meter::-moz-meter-bar { background: var(--accent); }
 code { overflow-wrap: anywhere; }
 .empty {
   margin: 0;
-  padding: 18px;
+  padding: 12px 14px;
   border: 1px dashed var(--line);
   border-radius: 12px;
   color: var(--muted);
@@ -372,13 +378,22 @@ footer {
   .sidebar .nav-links { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px;
     scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
   .sidebar a { padding: 10px 12px; flex: none; white-space: nowrap; }
-  .nav-group, .sidebar-note { display: none; }
+  .nav-group { display: none; }
+}
+@media (min-width: 901px) and (max-width: 1150px) {
+  .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   main { padding: 20px 16px 40px; }
-  header { padding: 22px 20px; }
+  header { padding: 16px; }
+  .dashboard-header { align-items: start; flex-direction: column; gap: 12px; }
+  .dashboard-header .meta { gap: 4px 12px; }
+  .dashboard-header .meta div + div { border: 0; padding: 0; }
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric { padding: 16px; }
+  .metric { padding: 12px; }
   .metric-value { font-size: 1.15rem; }
   .section-heading, .event-head { align-items: start; flex-direction: column; gap: 6px; }
   .meta div { flex-wrap: wrap; border-radius: 12px; }
@@ -389,6 +404,6 @@ footer {
   footer { flex-direction: column; }
 }:root{--bg:#f3f8fa;--panel:#ffffff;--text:#17232c;--muted:#49616e;--line:#738995;--accent:#17657d;--accent-soft:#d8f0f4;--ok:#21694f;--bad:#a2342b;--warning:#825119;--brand-water:#17657d;--shadow:0 12px 36px rgb(23 35 44 / 7%)}@media(prefers-color-scheme:dark){:root{--bg:#101a21;--panel:#17232c;--text:#e8f5f8;--muted:#aec6cf;--line:#718c99;--accent:#4dc5dd;--accent-soft:#223e4b;--ok:#75d2ae;--bad:#ffa69d;--warning:#e9b979;--brand-water:#4dc5dd;--shadow:none}}body{font-family:"DejaVu Sans",system-ui,sans-serif}code,pre{font-family:"DejaVu Sans Mono",monospace}.sidebar strong.brand{display:flex;align-items:center;gap:8px;font-size:17px;letter-spacing:-.04em;color:var(--text)}.brand svg{flex:none;width:28px;height:28px}.badge.warning{color:var(--warning)}@media(forced-colors:active){.brand svg{--brand-water:CanvasText}}</style></head><body>
 <a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="3" d="M2 28h8l6-4h14"/></svg><span>Basaltwater</span></strong><div class="nav-links"><a href="index.html" aria-current="page"><span>Identity</span></a><a href="readme.html"><span>README specimen</span></a><a href="panel.html"><span>Web panel specimen</span></a></div><p class="sidebar-note">One machine.<br>Your whole workspace.</p></nav>
-<main id="main" tabindex="-1"><header><p class="eyebrow">Basaltwater identity</p><h1>One machine. Your whole network.</h1></header><p class="lede">Basaltwater combines solid foundations with a clear current. Angular columns and a waterline form the compact mark.</p><section><h2>Small, simple, recognizable</h2><p><img src="symbol-light.svg" width="32" height="32" alt="Color symbol on light" style="background:white"> <img src="symbol-mono.svg" width="16" height="16" alt="Monochrome symbol at favicon size" style="background:white"></p><p>Leave one quarter of the symbol width clear on every side. Use at least 16 pixels for the symbol and 176 pixels for the wordmark.</p></section><section><h2>States always have labels</h2><p><span class="badge success">Healthy</span> <span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p><p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section><section><h2>Typography and motion</h2><p>DejaVu Sans for interfaces; DejaVu Sans Mono for commands. System fallbacks remain available. No font download, JavaScript, or animation is required.</p><pre><code>basaltw --version
+<nav class="sidebar" aria-label="Panel sections"><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="3" d="M2 28h8l6-4h14"/></svg><span>Basaltwater</span></strong><div class="nav-links"><a href="index.html" aria-current="page"><span>Identity</span></a><a href="readme.html"><span>README specimen</span></a><a href="panel.html"><span>Web panel specimen</span></a></div></nav>
+<main id="main" tabindex="-1"><header><p class="eyebrow">Basaltwater identity</p><h1>Basaltwater identity</h1></header><p class="lede">The symbol uses angular columns and a waterline.</p><section><h2>Symbol sizes and spacing</h2><p><img src="symbol-light.svg" width="32" height="32" alt="Color symbol on light" style="background:white"> <img src="symbol-mono.svg" width="16" height="16" alt="Monochrome symbol at favicon size" style="background:white"></p><p>Leave one quarter of the symbol width clear on every side. Use at least 16 pixels for the symbol and 176 pixels for the wordmark.</p></section><section><h2>States always have labels</h2><p><span class="badge success">Healthy</span> <span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p><p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section><section><h2>Typography and motion</h2><p>DejaVu Sans for interfaces; DejaVu Sans Mono for commands. System fallbacks remain available. No font download, JavaScript, or animation is required.</p><pre><code>basaltw --version
 basaltw setup server_lite example.test --dry-run</code></pre></section><footer>Review specimen · Apache-2.0 assets · bluehexagons</footer></main></body></html>

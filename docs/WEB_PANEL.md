@@ -7,7 +7,7 @@ general service control.
 
 | Need | Open | Result |
 | --- | --- | --- |
-| Check host health | Overview | Uptime, memory, root-disk use, reboot state, and update timers |
+| Check host health | Overview | Uptime, load average, memory, swap, root-disk and inode use, kernel, reboot state, and update timers |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
@@ -25,6 +25,12 @@ optional areas explain when they are not configured. On smaller screens the
 navigation becomes a horizontal scrollable row. Light and dark themes follow
 the device preference. Memory and disk meters retain numeric values, and
 service states have text labels as well as color.
+
+The compact dashboard header shows the host, setup profile, and account.
+Service totals distinguish responding endpoints, endpoints needing attention,
+and endpoints without a readiness check. Audit totals include warning/error
+events while retaining collection warnings. These summaries reuse the displayed
+records; they do not start extra service or log queries.
 
 ## Install and sign in
 

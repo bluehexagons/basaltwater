@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import unittest
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,74 @@ from common.service_tools import web_panel_jobs as jobs
 
 
 class DashboardTest(unittest.TestCase):
+    def test_host_snapshot_reports_load_swap_inodes_and_kernel(self) -> None:
+        def proc_file(path: str, **_kwargs: object) -> StringIO:
+            if path == "/proc/uptime":
+                return StringIO("3600 100\n")
+            if path == "/proc/meminfo":
+                return StringIO("MemTotal: 8000 kB\nMemAvailable: 2000 kB\nSwapTotal: 4000 kB\nSwapFree: 3000 kB\n")
+            raise AssertionError(f"Unexpected file read: {path}")
+
+        with (
+            patch("builtins.open", side_effect=proc_file),
+            patch.object(panel.os, "getloadavg", return_value=(6.0, 4.0, 2.0)),
+            patch.object(panel.os, "cpu_count", return_value=4),
+            patch.object(panel.os, "statvfs", return_value=SimpleNamespace(f_files=1000, f_ffree=100)),
+            patch.object(panel.os, "uname", return_value=SimpleNamespace(release="test-kernel", machine="x86_64")),
+            patch.object(panel.shutil, "disk_usage", return_value=SimpleNamespace(total=100, used=50, free=50)),
+            patch.object(panel, "_timer_properties", return_value={"LoadState": "loaded", "ActiveState": "active"}),
+            patch.object(panel.os.path, "exists", return_value=True),
+        ):
+            records = {record["label"]: record for record in panel.collect_system_overview()}
+        self.assertEqual(len(records), 8)
+        self.assertEqual(records["Load average (1m)"]["value"], "6.00")
+        self.assertEqual(records["Load average (1m)"]["status"], "warning")
+        self.assertEqual(records["Load average (1m)"]["description"], "5m 4.00 · 15m 2.00 · 4 logical CPUs")
+        self.assertEqual(records["Memory"]["value"], "75% used")
+        self.assertEqual(records["Swap"]["value"], "25% used")
+        self.assertEqual(records["Root inodes"]["value"], "90% used")
+        self.assertEqual(records["Root inodes"]["description"], "100 free of 1,000")
+        self.assertEqual(records["Kernel"]["value"], "test-kernel")
+        self.assertEqual(records["Kernel"]["description"], "x86_64")
+        self.assertEqual(records["Maintenance"]["value"], "Reboot required")
+
+    def test_missing_host_readings_and_zero_capacity_remain_explicit(self) -> None:
+        cases = (
+            ({}, "Unavailable", SimpleNamespace(f_files=0, f_ffree=0), "Not reported"),
+            ({"MemTotal": 8000, "SwapTotal": 0, "SwapFree": 0}, "Not configured", OSError("No filesystem"), "Unavailable"),
+        )
+        for memory, swap, filesystem, inodes in cases:
+            with (
+                self.subTest(memory=memory),
+                patch("builtins.open", side_effect=OSError("No proc")),
+                patch.object(panel, "_read_proc_values", return_value=memory),
+                patch.object(panel.os, "getloadavg", side_effect=OSError("No load")),
+                patch.object(panel.os, "cpu_count", return_value=None),
+                patch.object(panel.os, "statvfs", side_effect=filesystem if isinstance(filesystem, OSError) else None, return_value=filesystem),
+                patch.object(panel.os, "uname", side_effect=OSError("No kernel")),
+                patch.object(panel.shutil, "disk_usage", side_effect=OSError("No disk")),
+                patch.object(panel, "_timer_properties", return_value={}),
+                patch.object(panel.os.path, "exists", return_value=False),
+            ):
+                records = {record["label"]: record for record in panel.collect_system_overview()}
+            for label in ("Uptime", "Load average (1m)", "Memory", "Root disk", "Kernel"):
+                self.assertEqual(records[label]["value"], "Unavailable")
+            self.assertEqual(records["Swap"]["value"], swap)
+            self.assertEqual(records["Root inodes"]["value"], inodes)
+
+    def test_missing_gateway_readiness_is_not_reported_as_responding(self) -> None:
+        with (
+            patch.object(panel.shutil, "which", return_value="/test/basaltwater-web"),
+            patch.object(panel, "_internal_web_landing_service", return_value=None),
+            patch.object(panel, "_run_json", side_effect=[{"forwards": [
+                {"name": "unknown", "url": "https://example.test/"},
+                {"name": "up", "url": "https://example.test:8444/", "ready": True},
+                {"name": "down", "url": "https://example.test:8445/", "ready": False},
+            ]}, {}]),
+        ):
+            services = panel.discover_basaltwater_web_services()
+        self.assertEqual([record["description"] for record in services], ["Readiness not reported", "live", "not responding"])
+
     def test_rendered_views_share_sidebar_without_collecting_on_demand_data(self) -> None:
         state = panel.WebPanelState({
             "host": "example.test", "username": "agent", "system_type": "server_dev",
@@ -39,6 +108,31 @@ class DashboardTest(unittest.TestCase):
         for sidebar in sidebars:
             self.assertEqual(sidebar.count('aria-current="page"'), 1)
             self.assertEqual(sidebar.replace(' aria-current="page"', ''), sidebars[0].replace(' aria-current="page"', ''))
+            self.assertNotIn("One machine", sidebar)
+            self.assertNotIn("whole workspace", sidebar)
+
+    def test_service_summary_uses_existing_results_and_counts_each_service_once(self) -> None:
+        state = panel.WebPanelState({
+            "host": "example.test", "username": "agent", "system_type": "server_dev",
+            "features": {}, "access": [], "services": [
+                {"label": "Editor", "url": "https://example.test:8444/", "description": "live"},
+                {"label": "Review", "url": "https://example.test:8445/", "description": "not responding"},
+                {"label": "Library", "url": "https://example.test:8446/", "description": "Readiness not reported"},
+                {"label": "HomeBox", "url": "https://example.test:8447/", "description": "live",
+                 "probe": {"kind": "homebox", "port": 8447}},
+            ],
+        })
+        with (
+            patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
+            patch.object(panel, "discover_certificate_trust", return_value=None),
+            patch.object(panel, "_probe_homebox", return_value=("attention", "Registration is open")) as probe,
+            patch.object(state, "system_overview", return_value=[]),
+            patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
+        ):
+            page = panel.render_page(state)
+        probe.assert_called_once_with(8447)
+        self.assertIn("4 services · 1 responding · 2 need attention · 1 not checked", page)
+        self.assertIn("Registration is open", page)
 
     def test_usage_meters_are_bounded_and_service_states_keep_text_labels(self) -> None:
         state = panel.WebPanelState({
@@ -126,6 +220,7 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("Remote notifications are not enabled", page)
         self.assertIn("No managed gateway certificate information", page)
         self.assertIn("Show 3 more events", page)
+        self.assertIn("8 warning/error events", page)
         self.assertIn("Event &lt;7&gt;", page)
         self.assertNotIn("Event <7>", page)
         self.assertIn('href="/services"', page)

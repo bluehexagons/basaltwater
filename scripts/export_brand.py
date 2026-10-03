@@ -38,10 +38,9 @@ def export_assets(assets: Path) -> None:
     navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None), ("panel.html", "Web panel specimen", None))
     specimens = {
         "index.html": (
-            "Identity guide", "One machine. Your whole network.",
-            '<p class="lede">Basaltwater combines solid foundations with a clear current. '
-            'Angular columns and a waterline form the compact mark.</p>'
-            '<section><h2>Small, simple, recognizable</h2><p>'
+            "Identity guide", "Basaltwater identity",
+            '<p class="lede">The symbol uses angular columns and a waterline.</p>'
+            '<section><h2>Symbol sizes and spacing</h2><p>'
             '<img src="symbol-light.svg" width="32" height="32" alt="Color symbol on light" style="background:white"> '
             '<img src="symbol-mono.svg" width="16" height="16" alt="Monochrome symbol at favicon size" style="background:white">'
             '</p><p>Leave one quarter of the symbol width clear on every side. '
@@ -57,9 +56,9 @@ def export_assets(assets: Path) -> None:
             "README specimen", "Basaltwater",
             '<picture><source media="(prefers-color-scheme:dark)" srcset="wordmark-dark.svg">'
             '<img src="wordmark-light.svg" width="264" height="48" alt="Basaltwater wordmark"></picture>'
-            '<p class="lede">Infrastructure management, from one machine to your whole network.</p>'
+            '<p class="lede">Linux host setup and service management.</p>'
             '<p>The primary command is <code>basaltw</code>.</p>'
-            '<section><h2>Install. Describe. Manage.</h2><p>Configure Linux hosts, services and agent workspaces '
+            '<section><h2>Commands</h2><p>Configure Linux hosts, services and agent workspaces '
             'with repeatable setup and explicit recovery.</p><pre><code>basaltw --help\nbasaltw agent doctor --json</code></pre></section>',
         ),
     }
@@ -85,8 +84,12 @@ def export_assets(assets: Path) -> None:
         patch.object(panel, "discover_certificate_trust", return_value=None),
         patch.object(state, "system_overview", return_value=[
             {"label": "Uptime", "value": "2d 6h", "description": "Since the last boot"},
+            {"label": "Load average (1m)", "value": "0.32", "description": "5m 0.41 · 15m 0.36 · 4 logical CPUs"},
             {"label": "Memory", "value": "24% used", "description": "6.1 GiB available of 8.0 GiB"},
+            {"label": "Swap", "value": "8% used", "description": "164 MiB of 2.0 GiB"},
             {"label": "Root disk", "value": "52% used", "description": "30.2 GiB free of 62.8 GiB"},
+            {"label": "Root inodes", "value": "12% used", "description": "3,604,480 free of 4,096,000"},
+            {"label": "Kernel", "value": "6.12.48+deb13", "description": "x86_64"},
             {"label": "Maintenance", "value": "No reboot pending", "description": "Automatic package updates are scheduled"},
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),

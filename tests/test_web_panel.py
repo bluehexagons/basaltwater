@@ -1904,13 +1904,18 @@ class WebPanelEventTest(unittest.TestCase):
                 "common.service_tools.web_panel_service.os.path.exists",
                 return_value=False,
             ),
+            patch("common.service_tools.web_panel_service.os.getloadavg", return_value=(0.3, 0.4, 0.5)),
+            patch("common.service_tools.web_panel_service.os.cpu_count", return_value=4),
+            patch("common.service_tools.web_panel_service.os.statvfs", return_value=SimpleNamespace(f_files=100, f_ffree=50)),
+            patch("common.service_tools.web_panel_service.os.uname", return_value=SimpleNamespace(release="test-kernel", machine="test-arch")),
         ):
             overview = collect_system_overview()
 
-        self.assertEqual(overview[0]["value"], "2d 3h")
-        self.assertEqual(overview[1]["value"], "50% used")
-        self.assertEqual(overview[2]["value"], "50% used")
-        self.assertIn("Tue 2026-09-01", overview[3]["description"])
+        by_label = {record["label"]: record for record in overview}
+        self.assertEqual(by_label["Uptime"]["value"], "2d 3h")
+        self.assertEqual(by_label["Memory"]["value"], "50% used")
+        self.assertEqual(by_label["Root disk"]["value"], "50% used")
+        self.assertIn("Tue 2026-09-01", by_label["Maintenance"]["description"])
 
     def test_t3_update_uses_the_user_launcher_for_readiness(self) -> None:
         state = WebPanelState(self._t3_manifest())

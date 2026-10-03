@@ -256,11 +256,18 @@ def discover_basaltwater_web_services() -> list[dict[str, str]]:
             url = _safe_url(record.get("url"))
             name = record.get(name_field)
             if url and isinstance(name, str) and name:
+                readiness = record.get("ready")
+                if readiness is True:
+                    description = "live"
+                elif readiness is False:
+                    description = "not responding"
+                else:
+                    description = "Readiness not reported"
                 services.append(
                     {
                         "label": f"{label_prefix}: {name}",
                         "url": url,
-                        "description": "live" if record.get("ready", True) else "not responding",
+                        "description": description,
                     }
                 )
     return services
@@ -376,7 +383,7 @@ def collect_system_overview() -> list[dict[str, str]]:
     memory = _read_proc_values("/proc/meminfo")
     memory_total = memory.get("MemTotal", 0)
     memory_available = memory.get("MemAvailable", 0)
-    if memory_total:
+    if memory_total and "MemAvailable" in memory:
         memory_used = max(0, memory_total - memory_available)
         memory_percent = round(memory_used * 100 / memory_total)
         memory_value = f"{memory_percent}% used"
@@ -388,6 +395,31 @@ def collect_system_overview() -> list[dict[str, str]]:
         memory_value = "Unavailable"
         memory_description = "Memory information could not be read"
 
+    swap_total = memory.get("SwapTotal")
+    swap_free = memory.get("SwapFree")
+    if swap_total is None or swap_free is None:
+        swap_value = "Unavailable"
+        swap_description = "Swap information could not be read"
+    elif swap_total == 0:
+        swap_value = "Not configured"
+        swap_description = "No swap space on this host"
+    else:
+        swap_used = max(0, swap_total - swap_free)
+        swap_value = f"{round(swap_used * 100 / swap_total)}% used"
+        swap_description = f"{_format_bytes(swap_used)} of {_format_bytes(swap_total)}"
+
+    cpu_count = os.cpu_count()
+    try:
+        load = os.getloadavg()
+        load_value = f"{load[0]:.2f}"
+        load_description = f"5m {load[1]:.2f} · 15m {load[2]:.2f}"
+        load_status = "warning" if cpu_count and load[0] > cpu_count else ""
+    except OSError:
+        load_value = "Unavailable"
+        load_description = "Load information could not be read"
+        load_status = "unavailable"
+    load_description += f" · {cpu_count} logical CPUs" if cpu_count else " · CPU count unavailable"
+
     try:
         disk = shutil.disk_usage("/")
         disk_percent = round(disk.used * 100 / disk.total) if disk.total else 0
@@ -398,6 +430,27 @@ def collect_system_overview() -> list[dict[str, str]]:
     except OSError:
         disk_value = "Unavailable"
         disk_description = "Root filesystem usage could not be read"
+
+    try:
+        filesystem = os.statvfs("/")
+        if filesystem.f_files:
+            inode_used = max(0, filesystem.f_files - filesystem.f_ffree)
+            inode_value = f"{round(inode_used * 100 / filesystem.f_files)}% used"
+            inode_description = f"{filesystem.f_ffree:,} free of {filesystem.f_files:,}"
+        else:
+            inode_value = "Not reported"
+            inode_description = "This filesystem does not report a fixed inode count"
+    except OSError:
+        inode_value = "Unavailable"
+        inode_description = "Root filesystem inode count could not be read"
+
+    try:
+        kernel = os.uname()
+        kernel_value = kernel.release
+        kernel_description = kernel.machine
+    except OSError:
+        kernel_value = "Unavailable"
+        kernel_description = "Kernel information could not be read"
 
     timer = _timer_properties("auto-update-apt.timer")
     if timer.get("LoadState") == "loaded" and timer.get("ActiveState") == "active":
@@ -416,15 +469,24 @@ def collect_system_overview() -> list[dict[str, str]]:
     return [
         {"label": "Uptime", "value": uptime, "description": "Since the last boot"},
         {
+            "label": "Load average (1m)", "value": load_value,
+            "description": load_description, "status": load_status,
+        },
+        {
             "label": "Memory",
             "value": memory_value,
             "description": memory_description,
+        },
+        {
+            "label": "Swap", "value": swap_value, "description": swap_description,
         },
         {
             "label": "Root disk",
             "value": disk_value,
             "description": disk_description,
         },
+        {"label": "Root inodes", "value": inode_value, "description": inode_description},
+        {"label": "Kernel", "value": kernel_value, "description": kernel_description},
         {
             "label": "Maintenance",
             "value": "Reboot required" if reboot_required else "No reboot pending",
@@ -880,7 +942,7 @@ body {
   color: var(--text);
   font: 15px/1.5 system-ui, sans-serif;
 }
-main { max-width: 1560px; margin: 0 auto 0 248px; padding: 32px 40px 64px; }
+main { max-width: 1560px; margin: 0 auto 0 248px; padding: 24px 28px 48px; }
 body { overflow-wrap: anywhere; }
 .sidebar {
   position: fixed; inset: 0 auto 0 0; width: 248px; padding: 28px 16px;
@@ -892,8 +954,6 @@ body { overflow-wrap: anywhere; }
 .sidebar a svg { flex: none; }
 .nav-group { margin: 24px 12px 8px; color: var(--muted); font-size: .66rem; font-weight: 750;
   letter-spacing: .12em; text-transform: uppercase; }
-.sidebar-note { margin: 30px 12px 0; padding-top: 18px; border-top: 1px solid var(--accent-soft);
-  color: var(--muted); font-size: .75rem; line-height: 1.7; }
 .sidebar a:hover { background: var(--accent-soft); color: var(--accent); }
 a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; background: var(--panel); z-index: 3; }
@@ -934,10 +994,17 @@ body:has(#maintenance-heading:target) .sidebar a[href="/#maintenance-heading"] {
 .job-facts dd { margin: 4px 0 0; }
 .job-load { margin-bottom: 14px; }
 .badge.success { color: var(--ok); }
-header { margin-bottom: 32px; padding: 28px 30px; border: 1px solid var(--accent-soft);
-  border-top: 3px solid var(--accent); border-radius: 16px;
+header { margin-bottom: 24px; padding: 20px 24px; border: 1px solid var(--accent-soft);
+  border-top: 3px solid var(--accent); border-radius: 12px;
   background: radial-gradient(ellipse at top right, var(--accent-soft), transparent 65%), var(--panel); }
-.eyebrow, .section-kicker {
+.dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.dashboard-header > div { min-width: 0; }
+.dashboard-header h1 { font-size: clamp(1.6rem, 3vw, 2rem); }
+.dashboard-header .meta { margin-top: 12px; }
+.dashboard-header .meta div { padding: 0; border-radius: 0; background: none; }
+.dashboard-header .meta div + div { border-left: 1px solid var(--line); padding-left: 12px; }
+.dashboard-header .refresh-link { margin: 0; flex: none; }
+.eyebrow {
   margin: 0 0 6px;
   color: var(--accent);
   font-size: .75rem;
@@ -968,27 +1035,27 @@ h1 {
 }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; font-weight: 650; }
-section { margin-top: 32px; }
+section { margin-top: 24px; }
 .section-heading {
   display: flex;
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 13px;
+  margin-bottom: 10px;
 }
 h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .count { color: var(--muted); font-size: .75rem; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 .card {
   display: flex;
-  min-height: 160px;
+  min-height: 116px;
   flex-direction: column;
-  gap: 8px;
-  padding: 20px;
+  gap: 4px;
+  padding: 12px 14px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
@@ -997,7 +1064,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   text-decoration: none;
 }
 .card:hover { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--panel)); }
-.card strong { font-size: 1rem; letter-spacing: -.02em; }
+.card strong { font-size: .9rem; letter-spacing: -.02em; }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .service-kind { color: var(--muted); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .service-arrow { color: var(--accent); font-size: 1.2rem; }
@@ -1005,7 +1072,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
-.card-description { color: var(--muted); font-size: .9rem; }
+.card-description { color: var(--muted); font-size: .8rem; }
 .card-status { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 700; }
 .card-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .card-status.ready { color: var(--ok); }
@@ -1013,7 +1080,7 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .card-status.unavailable { color: var(--bad); }
 .card-url {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 6px;
   border-top: 1px solid var(--accent-soft);
   color: var(--muted);
   font-size: .72rem;
@@ -1022,12 +1089,12 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: 14px;
+  gap: 10px;
   margin: 0;
 }
 .metric {
-  min-height: 140px;
-  padding: 20px;
+  min-height: 110px;
+  padding: 12px 14px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
@@ -1035,9 +1102,10 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 }
 .metric dt { color: var(--muted); font-size: .82rem; }
 .metric dd { margin: 5px 0 0; }
-.metric-value { display: block; font-size: 1.4rem; font-weight: 750; letter-spacing: -.035em; }
-.metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .82rem; }
-meter { display: block; width: 100%; height: 6px; margin: 13px 0 10px; border: 0; border-radius: 999px;
+.metric-value { display: block; font-size: 1.15rem; font-weight: 750; letter-spacing: -.035em; }
+.metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .75rem; }
+.host-overview { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+meter { display: block; width: 100%; height: 6px; margin: 8px 0; border: 0; border-radius: 999px;
   background: var(--accent-soft); accent-color: var(--accent); }
 meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 999px; background: var(--accent-soft); }
 meter::-webkit-meter-optimum-value { background: var(--accent); }
@@ -1175,7 +1243,7 @@ meter::-moz-meter-bar { background: var(--accent); }
 code { overflow-wrap: anywhere; }
 .empty {
   margin: 0;
-  padding: 18px;
+  padding: 12px 14px;
   border: 1px dashed var(--line);
   border-radius: 12px;
   color: var(--muted);
@@ -1243,13 +1311,22 @@ footer {
   .sidebar .nav-links { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px;
     scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
   .sidebar a { padding: 10px 12px; flex: none; white-space: nowrap; }
-  .nav-group, .sidebar-note { display: none; }
+  .nav-group { display: none; }
+}
+@media (min-width: 901px) and (max-width: 1150px) {
+  .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   main { padding: 20px 16px 40px; }
-  header { padding: 22px 20px; }
+  header { padding: 16px; }
+  .dashboard-header { align-items: start; flex-direction: column; gap: 12px; }
+  .dashboard-header .meta { gap: 4px 12px; }
+  .dashboard-header .meta div + div { border: 0; padding: 0; }
   .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metric { padding: 16px; }
+  .metric { padding: 12px; }
   .metric-value { font-size: 1.15rem; }
   .section-heading, .event-head { align-items: start; flex-direction: column; gap: 6px; }
   .meta div { flex-wrap: wrap; border-radius: 12px; }
@@ -1340,17 +1417,17 @@ def _render_certificate_trust(
 ) -> str:
     if not trust:
         return '''<section aria-labelledby="trust-heading"><div class="section-heading"><div>
-<p class="section-kicker">Secure connection</p><h2 id="trust-heading">Certificate trust</h2></div></div>
+<h2 id="trust-heading">Certificate trust</h2></div></div>
 <p class="empty">No managed gateway certificate information is available on this machine.</p></section>'''
     if trust.get("publicly_trusted") is True:
         return '''<section aria-labelledby="trust-heading">
-<div class="section-heading"><div><p class="section-kicker">Secure connection</p>
+<div class="section-heading"><div>
 <h2 id="trust-heading">Certificate trust</h2></div></div>
 <div class="trust-panel-public"><strong>No certificate installation required</strong>
 <p>The shared web-hosting certificate is issued by a publicly trusted authority.</p></div></section>'''
     if trust.get("status") == "unknown":
         return '''<section aria-labelledby="trust-heading">
-<div class="section-heading"><div><p class="section-kicker">Secure connection</p>
+<div class="section-heading"><div>
 <h2 id="trust-heading">Certificate trust</h2></div></div>
 <div class="trust-panel-public"><strong>Certificate trust could not be verified</strong>
 <p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code> before installing a certificate on this device.</p></div></section>'''
@@ -1585,16 +1662,20 @@ def _render_audit_section(state: WebPanelState) -> str:
     else:
         status_label = f"Snapshot {generated_at}" if generated_at else "Latest 24 hours"
     count = len(events) if isinstance(events, list) else 0
+    warning_count = sum(
+        event.get("severity") in {"warning", "error"} for event in events
+    ) if isinstance(events, list) else 0
+    warning_label = f" · {warning_count} warning/error event" + ("s" if warning_count != 1 else "")
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
-<p class="section-kicker">Security activity</p><h2 id="audit-heading">System audit log</h2></div>
-<span class="count">{count} event{"" if count == 1 else "s"} · {html.escape(status_label)}</span>
+<h2 id="audit-heading">System audit log</h2></div>
+<span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
 </div>{issue_html}{suppression_html}{content}</section>'''
 
 
 def _render_notification_section(state: WebPanelState) -> str:
     if not state.notification_ingest_enabled():
         return '''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
-<p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
+<h2 id="notifications-heading">Notifications</h2></div>
 <span class="count">Not configured</span></div>
 <p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>'''
     events = state.notification_events()
@@ -1658,7 +1739,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 <pre><code>{html.escape(full_link)}</code></pre>
 <p>Paste this complete URL as the target for <code>--notify webhook</code> on a managed sender that can reach this panel.</p></details>'''
     return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
-<p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
+<h2 id="notifications-heading">Notifications</h2></div>
 <span class="count">{count} received</span></div>
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
 {link_help}
@@ -1680,8 +1761,10 @@ def render_page(state: WebPanelState) -> str:
         manifest["services"], discover_basaltwater_web_services()
     )
     service_cards = ""
+    service_states = {"ready": 0, "attention": 0, "unavailable": 0, "unchecked": 0}
     for record in services:
         status_html = ""
+        status_class = "unchecked"
         description = record["description"] or "Open this service"
         label = record["label"]
         kind = "Web service"
@@ -1699,12 +1782,14 @@ def render_page(state: WebPanelState) -> str:
                 else ("unavailable", "Not responding")
             )
             status_html = f'<span class="card-status {tone}">{text}</span>'
+            status_class = tone
             description = ""
         if (probe_port := _homebox_probe_port(record)) is not None:
             status_class, status_text = _probe_homebox(probe_port)
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
+        service_states[status_class] += 1
         service_cards += (
             '<a class="card" href="{}"><span class="card-top"><span class="service-kind">{}</span>'
             '<span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>{}</strong>'
@@ -1740,11 +1825,11 @@ def render_page(state: WebPanelState) -> str:
     overview_cards = ""
     for record in overview:
         value = record["value"]
-        tone = ""
+        tone = record.get("status", "") if record.get("status") in {"warning", "unavailable"} else ""
         meter = ""
         percent = value.removesuffix("% used")
         if (
-            record["label"] in {"Memory", "Root disk"} and value.endswith("% used")
+            record["label"] in {"Memory", "Root disk", "Swap", "Root inodes"} and value.endswith("% used")
             and 1 <= len(percent) <= 3 and percent.isascii() and percent.isdigit()
             and 0 <= int(percent) <= 100
         ):
@@ -1769,7 +1854,7 @@ def render_page(state: WebPanelState) -> str:
     notification_section = _render_notification_section(state)
 
     action = '''<section aria-labelledby="maintenance-heading"><div class="section-heading"><div>
-<p class="section-kicker">Keep things running</p><h2 id="maintenance-heading">Maintenance</h2></div></div>
+<h2 id="maintenance-heading">Maintenance</h2></div></div>
 <div class="action"><div><strong>Scheduled maintenance</strong><p>Review update timers, housekeeping jobs, and their last results.</p></div>
 <a class="refresh-link" href="/jobs">View scheduled jobs <span aria-hidden="true">→</span></a></div></section>'''
     if state.t3_update_available():
@@ -1777,7 +1862,7 @@ def render_page(state: WebPanelState) -> str:
         disabled = " disabled" if running else ""
         button_label = "Update in progress…" if running else "Update to latest"
         action = f'''<section aria-labelledby="maintenance-heading">
-<div class="section-heading"><div><p class="section-kicker">Available action</p>
+<div class="section-heading"><div>
 <h2 id="maintenance-heading">Maintenance</h2></div></div>
 <div class="action"><div><strong>T3 Code</strong><p>Install the latest upstream release, then verify that the managed service is ready. This runs in the background.</p></div>
 <form method="post" action="/actions/t3-update">
@@ -1825,27 +1910,34 @@ def render_page(state: WebPanelState) -> str:
         else ""
     )
     service_count = f"{len(services)} service" + ("" if len(services) == 1 else "s")
+    if services:
+        service_count += f" · {service_states['ready']} responding"
+        attention_count = service_states["attention"] + service_states["unavailable"]
+        if attention_count:
+            service_count += f" · {attention_count} {'needs' if attention_count == 1 else 'need'} attention"
+        if service_states["unchecked"]:
+            service_count += f" · {service_states['unchecked']} not checked"
     access_count = sum(
         1
         for record in manifest["access"]
         if isinstance(record, dict) and record.get("value")
     )
     access_label = f"{access_count} method" + ("" if access_count == 1 else "s")
-    header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>{html.escape(title)}</h1>
-<p class="lede">Services, health, and activity for <code>{host}</code>.</p>
-<dl class="meta"><div><dt>System</dt><dd>{system_type}</dd></div>
-<div><dt>User</dt><dd>{username}</dd></div></dl>
+    header = f'''<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>{html.escape(title)}</h1>
+<dl class="meta"><div><dt>Host</dt><dd><code>{host}</code></dd></div>
+<div><dt>System</dt><dd>{system_type}</dd></div>
+<div><dt>User</dt><dd>{username}</dd></div></dl></div>
 <a class="refresh-link" href="/">Refresh dashboard</a></header>'''
     body = f'''{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
-<p class="section-kicker">Host health</p><h2 id="overview-heading">System overview</h2></div>
+<h2 id="overview-heading">System overview</h2></div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid">{overview_cards}</dl></section>
+<dl class="overview-grid host-overview">{overview_cards}</dl></section>
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
-<p class="section-kicker">Open in browser</p><h2 id="services-heading">Web services</h2></div>
+<h2 id="services-heading">Web services</h2></div>
 <span class="count">{service_count}</span></div><div class="grid">{service_cards}</div></section>
 {audit_section}{notification_section}
 <section aria-labelledby="access-heading"><div class="section-heading"><div>
-<p class="section-kicker">Connect directly</p><h2 id="access-heading">Access</h2></div>
+<h2 id="access-heading">Access</h2></div>
 <span class="count">{access_label}</span></div>{access_content}</section><div id="trust">{trust_section}</div>{action}
 '''
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'

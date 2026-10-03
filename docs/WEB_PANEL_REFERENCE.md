@@ -4,6 +4,25 @@ This page records the API, collection limits, and security boundaries for the
 [minimal web panel](WEB_PANEL.md). Use the main guide for installation and
 day-to-day operation.
 
+## Host snapshot
+
+The overview caches local host readings for up to 30 seconds. It shows uptime,
+memory and swap usage, root-filesystem space and inode usage, the running kernel
+and architecture, reboot state, and the package-update timer. Missing data is
+shown as unavailable; zero swap capacity is shown as not configured. A filesystem
+without a fixed inode count is shown as not reported.
+
+Load average counts runnable and uninterruptible tasks over 1, 5, and 15 minutes;
+it is not CPU utilization. The 1-minute value is highlighted when it exceeds the
+reported logical CPU count. These host readings do not account for container CPU
+quotas or memory limits. Usage meters highlight 80% and above, with a stronger
+meter warning at 95%. These thresholds are inspection cues, not a health verdict.
+
+Service summary counts reuse gateway readiness and existing HomeBox probes.
+An endpoint without a readiness result remains not checked. Audit warning/error
+counts cover the displayed snapshot, which can be incomplete or capped at 100
+events; collection health remains visible beside the counts.
+
 ## Notification ingest
 
 The receiver is opt-in, HTTPS-only, and available at
