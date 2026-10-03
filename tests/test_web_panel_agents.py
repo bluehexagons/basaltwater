@@ -386,6 +386,58 @@ class AgentScreenTest(unittest.TestCase):
         self.assertNotIn("Update T3 Code</button>", page)
         self.assertIn("read-only sandbox", page)
 
+    def test_host_templates_prefill_home_and_repository_templates_require_a_checkout(self) -> None:
+        host_templates = {"maintenance", "backups", "storage", "incident", "certificates"}
+        with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
+            for key in agents.PROMPT_TEMPLATES:
+                with self.subTest(template=key):
+                    query = agents.parse_agent_query("template=" + key)
+                    page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                    directory = self.temporary.name if key in host_templates else ""
+                    self.assertIn(f'name="directory" value="{directory}"', page)
+                    self.assertIn(f'href="/agents?template={key}" aria-current="true"', page)
+        execute.assert_not_called()
+        checks.assert_not_called()
+        self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
+
+    def test_new_template_defaults_are_visible_and_save_with_matching_permissions(self) -> None:
+        cases = (
+            ("ci-repair", "workspace", "once", 60, False, True, "disabled"),
+            ("regression-tests", "workspace", "once", 60, False, True, "disabled"),
+            ("documentation", "workspace", "weekly", 30, False, False, "disabled"),
+            ("security-review", "inspect", "weekly", 30, False, False, "live"),
+            ("release-review", "inspect", "once", 20, False, False, "disabled"),
+            ("backups", "inspect", "daily", 15, False, False, "disabled"),
+            ("storage", "inspect", "weekly", 15, False, False, "disabled"),
+            ("incident", "inspect", "once", 20, False, False, "disabled"),
+            ("certificates", "inspect", "daily", 10, False, False, "disabled"),
+        )
+        for key, mode, interval, runtime, network, temporary_files, web_search in cases:
+            with self.subTest(template=key):
+                template = agents.PROMPT_TEMPLATES[key]
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": key})
+                self.assertIn(f'<option value="{mode}" selected>', page)
+                self.assertIn(f'<option value="{interval}" selected>', page)
+                self.assertIn(f'name="timeout_minutes" min="1" max="10080" step="1" value="{runtime}"', page)
+                self.assertIn(f'<option value="{web_search}" selected>', page)
+                self.assertIn('<details class="agent-template-group" open>', page)
+                values = {"csrf": self.state.csrf_token, "title": template["title"], "prompt": template["prompt"],
+                          "directory": self.temporary.name, "mode": template["mode"], "interval": template["interval"],
+                          "timeout_minutes": str(template["timeout_minutes"]), "web_search": template.get("web_search", "disabled"),
+                          "submit": "run" if interval == "once" else "schedule"}
+                if template["network"]:
+                    values["network"] = "1"
+                if template.get("temporary_files"):
+                    values["temporary_files"] = "1"
+                handler = self.handler("/actions/agent-task/save", values)
+                handler.do_POST()
+                handler.send_response.assert_called_with(303)
+                saved = self.state.agent_tasks.snapshot()["tasks"][-1]
+                self.assertEqual((saved["mode"], saved["interval"], saved["timeout_minutes"], saved["network"],
+                                  saved["temporary_files"], saved["web_search"]),
+                                 (mode, interval, runtime, network, temporary_files, web_search))
+                self.assertEqual(saved["queued"], interval == "once")
+
     def test_form_creates_schedule_after_csrf_and_validation_then_redirects(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Review", "prompt": "Inspect this host",
                   "directory": self.temporary.name, "mode": "inspect", "interval": "daily", "submit": "schedule"}

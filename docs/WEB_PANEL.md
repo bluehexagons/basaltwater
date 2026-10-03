@@ -80,8 +80,9 @@ terminal agents are inventoried by diagnostics but do not execute prompt tasks
 in this initial version. Root-managed panels use a locked service account
 without a home and show diagnostics with prompt execution unavailable.
 
-1. Start with **Host maintenance review**, **Update repository dependencies**,
-   or **Repository health check**, or write a custom prompt.
+1. Choose a starting template under **Repository work** or **Host checks**,
+   or write a custom prompt. Each template shows its execution mode, suggested
+   repeat interval, and runtime cap before selection.
 2. Enter the working directory. Repository templates require you to choose
    the specific checkout; host inspection defaults to the account's home.
 3. Choose **Inspect only** for Codex's read-only sandbox, or **Workspace
@@ -100,6 +101,32 @@ without a home and show diagnostics with prompt execution unavailable.
 6. Choose once, hourly, daily, or weekly. **Run now** queues an immediate run
    and enables repetition when selected. **Create schedule** starts after one
    interval.
+
+The starting templates cover these tasks. Their prompts and settings remain
+editable before submission; selecting a template does not run or schedule it.
+
+| Template | Default repeat | Runtime cap | Scope |
+| --- | --- | --- | --- |
+| Update repository dependencies | Weekly | 30 minutes | Workspace changes; command network and temporary writes |
+| Repository health check | Weekly | 30 minutes | Inspect only |
+| Repair failing checks | Once | 60 minutes | Workspace changes; temporary writes |
+| Add regression tests | Once | 60 minutes | Workspace changes; temporary writes |
+| Update repository documentation | Weekly | 30 minutes | Workspace changes |
+| Review repository security | Weekly | 30 minutes | Inspect only; live web search for advisories |
+| Review release readiness | Once | 20 minutes | Inspect only |
+| Host maintenance review | Daily | 30 minutes | Inspect only |
+| Check backup health | Daily | 15 minutes | Inspect only |
+| Review storage cleanup | Weekly | 15 minutes | Inspect only |
+| Triage a service incident | Once | 20 minutes | Inspect only |
+| Check certificate expiry | Daily | 10 minutes | Inspect only |
+
+Repair and test-writing templates preserve unrelated work and leave changes
+for review. Host templates inspect existing evidence and recommend follow-up:
+backup checks do not perform restores, storage reviews do not delete files,
+and certificate checks do not renew certificates or change trust. Missing
+configuration or unavailable evidence is reported explicitly. Security review
+uses web search for current advisories and distinguishes confirmed version
+matches from uncertain findings.
 
 Additional options control Codex's web search independently of command network
 access: disabled, cached results, or live search. Runs use ephemeral Codex

@@ -24,16 +24,73 @@ from lib.agent_tasks import (
 
 PROMPT_TEMPLATES = {
     "maintenance": {
+        "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
         "title": "Host maintenance review", "mode": "inspect", "interval": "daily", "network": False,
         "prompt": "Inspect this host's resource usage, failed services, update timers, reboot state, and agent readiness using available Basaltwater diagnostics. Check T3 Code only if installed. Summarize issues, evidence, and recommended repairs. Do not change the host or expose credentials.",
     },
     "dependencies": {
+        "scope": "repository", "description": "Prepare dependency changes and validation for review each week.",
         "title": "Update repository dependencies", "mode": "workspace", "interval": "weekly", "network": True, "temporary_files": True,
         "prompt": "Review this repository's instructions and current Git status. Preserve unrelated changes. Update dependencies using its existing package manager and lockfiles. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
     },
     "repository": {
+        "scope": "repository", "description": "Inspect repository state and identify maintenance work.",
         "title": "Repository health check", "mode": "inspect", "interval": "weekly", "network": False,
         "prompt": "Read this repository's agent instructions and inspect Git status, dependency manifests, CI configuration, and recent test evidence. Identify failing checks, stale dependencies, and maintenance gaps. Report findings with file references and suggested next steps. Do not modify files or publish changes.",
+    },
+    "ci-repair": {
+        "scope": "repository", "title": "Repair failing checks",
+        "description": "Reproduce a test, lint, or build failure and prepare a focused fix.",
+        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Identify failing tests, lint checks, or builds from available local evidence. Reproduce the failure using the existing tooling, then make the smallest justified fix and rerun relevant checks. Do not weaken checks or remove tests to make them pass. If a failure cannot be reproduced or tooling is unavailable, report the missing evidence rather than guessing. Summarize the cause, changes, and validation. Do not commit, push, publish, or deploy.",
+    },
+    "regression-tests": {
+        "scope": "repository", "title": "Add regression tests",
+        "description": "Cover important behavior and edge cases using the existing test suite.",
+        "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
+        "prompt": "Read this repository's instructions, Git status, recent changes, and existing test conventions. Preserve unrelated work. Identify a small number of important behaviors or edge cases lacking meaningful coverage. Add focused regression tests that verify observable behavior, using mocks and temporary directories for external or system operations. Avoid tests that simply mirror implementation details. Run the affected suite and report what the tests cover and any remaining gaps. Do not change production behavior, commit, push, publish, or deploy.",
+    },
+    "documentation": {
+        "scope": "repository", "title": "Update repository documentation",
+        "description": "Reconcile setup instructions, examples, and references with the code.",
+        "mode": "workspace", "interval": "weekly", "network": False, "timeout_minutes": 30,
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Compare its README, setup instructions, CLI or API examples, and configuration references with the current implementation. Correct concrete discrepancies and broken local references using the established documentation format. Preserve accurate content, avoid marketing copy, and do not invent capabilities or unverified results. Run existing documentation checks when available, and report changes and any examples that could not be verified. Do not change application behavior, commit, push, publish, or deploy.",
+    },
+    "security-review": {
+        "scope": "repository", "title": "Review repository security",
+        "description": "Review sensitive code paths and dependency advisories with evidence.",
+        "mode": "inspect", "interval": "weekly", "network": False, "web_search": "live", "timeout_minutes": 30,
+        "prompt": "Read this repository's instructions, dependency manifests and lockfiles, and relevant authentication, authorization, input-validation, and secret-handling code. Review plausible security issues and use available web search to check current dependency advisories against the installed versions. Cite advisory sources and distinguish confirmed affected versions from uncertain matches. Report severity, evidence, file references, suggested remediation, and coverage limits. Redact any credentials encountered. Do not modify files, run exploit payloads, commit, push, publish, or deploy.",
+    },
+    "release-review": {
+        "scope": "repository", "title": "Review release readiness",
+        "description": "Check version consistency, change notes, validation, and rollout gaps.",
+        "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 20,
+        "prompt": "Read this repository's instructions, Git status and diff, version declarations, changelog, release configuration, migration notes, and available CI or test results. Check version consistency, undocumented behavior changes, compatibility concerns, and missing validation or rollout steps. Identify the release target from repository evidence; if unclear, say so. Produce a readiness report with evidence, blockers, and remaining checks. Do not claim unrun checks passed or modify files, create tags, commit, push, publish, or deploy.",
+    },
+    "backups": {
+        "scope": "host", "title": "Check backup health",
+        "description": "Check backup freshness, job results, and existing verification evidence.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
+        "prompt": "Identify this host's configured backup jobs using available Basaltwater diagnostics, timer state, and readable job metadata or logs. Check the last successful backup, recent failures, next scheduled run, destination capacity when available, retention metadata, and any existing integrity-check or restore-test evidence. If a backup is running, report its state. Distinguish successful job completion from verified recoverability; report missing configuration or inaccessible evidence explicitly. Summarize issues and recommended follow-up. Do not start backups, restore data, change retention, delete files, or expose backup contents or credentials.",
+    },
+    "storage": {
+        "scope": "host", "title": "Review storage cleanup",
+        "description": "Find disk and inode pressure and propose cleanup for review.",
+        "mode": "inspect", "interval": "weekly", "network": False, "timeout_minutes": 15,
+        "prompt": "Inspect this host's filesystem capacity, inode usage, and readable directory-size metadata. Identify major space consumers such as logs, caches, build artifacts, and old backups using available tools. Keep scans bounded to relevant local filesystems and summarize unavailable paths. Report sizes, likely owners, retention implications, and specific cleanup candidates with commands for later review. Do not read private file contents, delete or truncate files, prune containers, alter retention, or change the host.",
+    },
+    "incident": {
+        "scope": "host", "title": "Triage a service incident",
+        "description": "Correlate failed units, recent errors, and resource pressure.",
+        "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 20,
+        "prompt": "Use available Basaltwater diagnostics and readable service-manager state or recent logs to identify unhealthy services on this host. Check resource pressure, unit state, recent failures, dependency failures, and relevant configuration evidence. Check T3 Code only if installed. Correlate timestamps and distinguish symptoms from likely causes. If no failure is evident, report that and the checks performed. Summarize affected services, evidence, likely causes, and recommended next diagnostic or repair steps. Do not restart services, change configuration, install packages, or expose credentials.",
+    },
+    "certificates": {
+        "scope": "host", "title": "Check certificate expiry",
+        "description": "Inspect certificate lifetimes, renewal jobs, and configuration gaps.",
+        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
+        "prompt": "Inspect readable public certificate metadata, configured HTTPS service references, and renewal timer or job state on this host. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures and identify services using certificates where the configuration is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
     },
 }
 
@@ -70,6 +127,9 @@ _STYLE = """
 .agent-table small { display: block; color: var(--muted); margin-top: 4px; }
 .agent-template { display: block; padding: 12px 0; border-top: 1px solid var(--accent-soft); text-decoration: none; color: var(--accent); }
 .agent-template span { display: block; color: var(--muted); font-size: .8rem; margin-top: 4px; }
+.agent-template small { display: block; color: var(--muted); font-size: .75rem; margin-top: 5px; }
+.agent-template[aria-current=true] strong { text-decoration: underline; text-underline-offset: 3px; }
+.agent-template-group { margin-top: 12px; }
 .agent-runtime { margin: 14px 0 0; display: grid; gap: 8px; }
 .agent-runtime div { display: flex; justify-content: space-between; gap: 12px; }
 .agent-runtime dt { color: var(--muted); flex: none; }
@@ -150,6 +210,23 @@ def _action_form(csrf: str, identifier: str, action: str, label: str) -> str:
 <input type="hidden" name="id" value="{_escape(identifier)}"><button class="agent-secondary" name="action" value="{action}">{label}</button></form>'''
 
 
+def _render_templates(selected: str) -> str:
+    active_scope = PROMPT_TEMPLATES.get(selected, {}).get("scope", "repository")
+    groups = []
+    for scope, label in (("repository", "Repository work"), ("host", "Host checks")):
+        links = []
+        for key, template in PROMPT_TEMPLATES.items():
+            if template["scope"] != scope:
+                continue
+            mode = "Inspect only" if template["mode"] == "inspect" else "Workspace changes"
+            interval = {"once": "Once", "daily": "Daily", "weekly": "Weekly"}[template["interval"]]
+            runtime = template.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES)
+            current = ' aria-current="true"' if key == selected else ""
+            links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span><small>{mode} · {interval} · {runtime} min cap</small></a>')
+        groups.append(f'<details class="agent-template-group"{" open" if scope == active_scope else ""}><summary>{label} · {len(links)} templates</summary>{"".join(links)}</details>')
+    return "".join(groups)
+
+
 def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
@@ -171,7 +248,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
                                "web_search": "disabled", "session_history": False, "custom_model": "", "temporary_files": False}
     if "template" in query:
         defaults.update(PROMPT_TEMPLATES[query["template"]])
-        if query["template"] != "maintenance":
+        if defaults["scope"] == "repository":
             defaults["directory"] = ""
     if "edit" in query:
         task = next((task for task in tasks if task["id"] == query["edit"]), None)
@@ -220,10 +297,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-buttons">{'<button name="submit" value="save"' + disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Run now</button><button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>'}
 <a href="/agents">Clear form</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected.</p></form></div>'''
-    template_links = "".join(f'<a class="agent-template" href="/agents?template={key}"><strong>{label}</strong><span>{description}</span></a>' for key, label, description in (
-        ("maintenance", "Host maintenance review", "Inspect resources, services, update timers, and agent readiness."),
-        ("dependencies", "Update repository dependencies", "Prepare dependency changes and validation for review each week."),
-        ("repository", "Repository health check", "Inspect repository state and identify maintenance work.")))
+    template_links = _render_templates(query.get("template", ""))
     helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting.</p>{template_links}
 <details><summary>Execution limits</summary><p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. Schedules run while this panel service is running; missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></aside>'''
     rows = []
