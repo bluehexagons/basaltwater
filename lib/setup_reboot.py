@@ -148,11 +148,14 @@ def _prepare_proxmox_restart(config: SetupConfig) -> bool:
 
     try:
         report = (
-            collect_local_maintenance_report() if config.host in _LOCAL_HOSTS
+            collect_local_maintenance_report(allow_inactive_backup_storage=True)
+            if config.host in _LOCAL_HOSTS
             else collect_maintenance_report(ProxmoxHost(
                 name=config.host, address=config.host, user="root", ssh_key=config.ssh_key,
-            ))
+            ), allow_inactive_backup_storage=True)
         )
+        for warning in report.warnings:
+            print(f"  ⚠ {warning}")
         if report.healthy and not report.locked_guests and report.running_guests:
             guests = ", ".join(str(guest.vmid) for guest in report.running_guests)
             print(f"  Explicit restart will gracefully shut down Proxmox guests: {guests}")
@@ -182,7 +185,9 @@ def _restart_local_proxmox() -> int:
                 return 0
             if status != "needed-proxmox":
                 raise RuntimeError("target is not a reboot-capable Proxmox host")
-            report = check_proxmox_update_safety()
+            report = check_proxmox_update_safety(allow_inactive_backup_storage=True)
+            for warning in report.warnings:
+                print(f"WARNING: {warning}", flush=True)
             if report.running_guests:
                 guests = ", ".join(str(guest.vmid) for guest in report.running_guests)
                 print(f"Gracefully shutting down Proxmox guests: {guests}", flush=True)
@@ -190,7 +195,11 @@ def _restart_local_proxmox() -> int:
                     return 1
                 # stopall can finish successfully despite a failed guest
                 # shutdown, and skips HA-managed guests. Verify evacuation.
-                report = check_proxmox_update_safety(require_evacuated=True)
+                report = check_proxmox_update_safety(
+                    require_evacuated=True, allow_inactive_backup_storage=True,
+                )
+                for warning in report.warnings:
+                    print(f"WARNING: {warning}", flush=True)
             if not report.reboot_safe:
                 raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
             print("Proxmox maintenance checks passed; requesting host reboot", flush=True)
@@ -338,7 +347,7 @@ def _wait_for_remote_restart(
 
 
 def _verify_proxmox_restart(config: SetupConfig) -> bool:
-    """Allow boot services to settle, then require a healthy Proxmox audit."""
+    """Wait for core readiness, reporting backup-only network outages as warnings."""
     from lib.proxmox_hosts import ProxmoxHost
     from lib.proxmox_maintenance import collect_maintenance_report, format_maintenance_report
 
@@ -355,7 +364,9 @@ def _verify_proxmox_restart(config: SetupConfig) -> bool:
 
     while (remaining := deadline - time.monotonic()) > 0:
         try:
-            report = collect_maintenance_report(host, command_runner=probe)
+            report = collect_maintenance_report(
+                host, command_runner=probe, allow_inactive_backup_storage=True,
+            )
         except (OSError, TimeoutError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
             detail = str(exc)
         else:

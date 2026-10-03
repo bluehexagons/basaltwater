@@ -162,12 +162,13 @@ def _format_task(task: dict[str, object]) -> str:
     return f"{label} ({user})" if user else label
 
 
-def _parse_storage_states(stdout: str) -> dict[str, str]:
+def _parse_storage_status(stdout: str) -> tuple[dict[str, str], set[str]]:
     """Validate the complete node storage API response before trusting it."""
     payload = json.loads(stdout)
     if not isinstance(payload, list):
         raise ValueError("Storage response was not a JSON list")
     states: dict[str, str] = {}
+    network_backups: set[str] = set()
     for entry in payload:
         if not isinstance(entry, dict):
             raise ValueError("Storage response contains an invalid entry")
@@ -185,7 +186,12 @@ def _parse_storage_states(stdout: str) -> dict[str, str]:
             "disabled" if not entry["enabled"]
             else "active" if entry["active"] else "inactive"
         )
-    return states
+        # Only an exact backup-only content declaration qualifies. Missing or
+        # unexpected metadata must never exempt guest disks, ISO images, or
+        # snippets from the storage gate.
+        if entry.get("type") in ("cifs", "nfs", "pbs") and entry.get("content") == "backup":
+            network_backups.add(name)
+    return states, network_backups
 
 
 def _parse_guest_inventory(stdout: str, guest_type: str) -> list[ContainerInfo]:
@@ -359,8 +365,13 @@ def _collect_memory_diagnostics(
 
 def collect_maintenance_report(
     host: ProxmoxHost, *, command_runner: CommandRunner | None = None,
+    allow_inactive_backup_storage: bool = False,
 ) -> ProxmoxMaintenanceReport:
-    """Collect a read-only maintenance preflight report for ``host``."""
+    """Collect a read-only audit, optionally tolerating restart backup outages.
+
+    Explicit setup restarts may stop the guest serving backup-only network
+    storage. Normal audits and scheduled maintenance keep the strict default.
+    """
     report = ProxmoxMaintenanceReport(host_name=host.name, address=host.address)
     run_command = command_runner or _run
 
@@ -466,7 +477,7 @@ def collect_maintenance_report(
             report.errors.append(f"Could not read storage status: {_failure_detail(storage)}")
         else:
             try:
-                report.storage_states = _parse_storage_states(storage.stdout)
+                report.storage_states, network_backups = _parse_storage_status(storage.stdout)
             except (TypeError, ValueError) as exc:
                 report.errors.append(f"Could not parse storage status: {exc}")
             else:
@@ -474,7 +485,17 @@ def collect_maintenance_report(
                     report.errors.append("No enabled Proxmox storage pools were reported")
                 for storage_name, state in report.storage_states.items():
                     if state == "inactive":
-                        report.errors.append(f"Storage {storage_name} is {state}")
+                        if allow_inactive_backup_storage and storage_name in network_backups:
+                            report.warnings.append(
+                                f"Storage {storage_name} is inactive (backup-only network storage); "
+                                "explicit restart can proceed, but backups remain unavailable"
+                            )
+                        else:
+                            report.errors.append(f"Storage {storage_name} is {state}")
+                if allow_inactive_backup_storage and not any(
+                    state == "active" for state in report.storage_states.values()
+                ):
+                    report.errors.append("No active Proxmox storage pools were reported")
 
         _collect_filesystem_capacity(host, report, run_command)
 
@@ -494,13 +515,16 @@ def collect_maintenance_report(
     return report
 
 
-def collect_local_maintenance_report() -> ProxmoxMaintenanceReport:
+def collect_local_maintenance_report(
+    *, allow_inactive_backup_storage: bool = False,
+) -> ProxmoxMaintenanceReport:
     """Run the same maintenance checks locally without requiring SSH to self."""
     def run_local(_host: ProxmoxHost, command: str) -> subprocess.CompletedProcess[str]:
         return run(command, check=False, capture_output=True, timeout=60)
 
     return collect_maintenance_report(
         ProxmoxHost(name="localhost", address="127.0.0.1"), command_runner=run_local,
+        allow_inactive_backup_storage=allow_inactive_backup_storage,
     )
 
 

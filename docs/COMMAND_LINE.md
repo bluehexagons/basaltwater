@@ -308,6 +308,18 @@ Without the wait flag, inspect failures on the node with
 can leave some guests stopped. After reboot, Proxmox's existing autostart and
 HA policies determine which guests start.
 
+For this explicit restart only, inactive CIFS, NFS, or PBS storage configured
+with exactly `content backup` produces a warning rather than blocking the
+restart. This covers backup shares served by a container on the node being
+rebooted, including a container left stopped by an earlier failed restart.
+The same exception applies before shutdown, after shutdown, and during the
+post-reboot check. Backups remain unavailable until the storage provider
+returns; setup does not start guests or change their autostart settings.
+Storage with guest disks, ISO images, snippets, mixed or unknown content,
+and local storage still blocks when inactive. At least one storage pool must
+be active, and active tasks, locks, quorum, and other health gates still apply.
+Normal audits and scheduled maintenance retain their strict storage checks.
+
 ```bash
 basaltw setup server_web example.com admin --restart-if-needed
 basaltw setup server_web example.com admin \
