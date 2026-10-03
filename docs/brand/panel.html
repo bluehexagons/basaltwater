@@ -9,20 +9,29 @@ body {
   color: var(--text);
   font: 15px/1.5 system-ui, sans-serif;
 }
-main { max-width: 1240px; margin: auto; padding: 36px 28px 64px 240px; }
+main { max-width: 1560px; margin: 0 auto 0 248px; padding: 32px 40px 64px; }
 body { overflow-wrap: anywhere; }
 .sidebar {
-  position: fixed; inset: 0 auto 0 0; width: 212px; padding: 32px 18px;
-  background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto;
+  position: fixed; inset: 0 auto 0 0; width: 248px; padding: 28px 16px;
+  background: var(--panel); border-right: 1px solid var(--accent-soft); overflow-y: auto;
 }
-.sidebar strong { display: block; margin: 0 12px 24px; color: var(--accent); }
-.sidebar a { display: block; padding: 12px; color: var(--text); text-decoration: none; border-radius: 8px; }
+.sidebar strong { display: block; margin: 0 8px 28px; color: var(--accent); }
+.sidebar a { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 10px 12px;
+  margin: 3px 0; color: var(--muted); text-decoration: none; border-radius: 8px; font-size: .83rem; }
+.sidebar a svg { flex: none; }
+.nav-group { margin: 24px 12px 8px; color: var(--muted); font-size: .66rem; font-weight: 750;
+  letter-spacing: .12em; text-transform: uppercase; }
+.sidebar-note { margin: 30px 12px 0; padding-top: 18px; border-top: 1px solid var(--accent-soft);
+  color: var(--muted); font-size: .75rem; line-height: 1.7; }
 .sidebar a:hover { background: var(--accent-soft); color: var(--accent); }
 a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; background: var(--panel); z-index: 3; }
 .skip-link:focus { top: 12px; }
 h2, #trust { scroll-margin-top: 24px; }
-.refresh-link { color: var(--accent); display: inline-block; padding: 10px 0; }
+.refresh-link { color: var(--accent); display: inline-block; padding: 10px 0; text-underline-offset: 4px; }
+header .refresh-link { padding: 9px 14px; margin-top: 18px; min-height: 44px; border: 1px solid var(--accent);
+  border-radius: 8px; text-decoration: none; font-size: .8rem; font-weight: 650; }
+header .refresh-link:hover { background: var(--accent-soft); }
 .metric-value.active { color: var(--ok); }
 .metric-value.failed, .metric-value.unavailable { color: var(--bad); }
 .history > summary { margin: 10px 0; }
@@ -36,14 +45,27 @@ h2, #trust { scroll-margin-top: 24px; }
 select, .diagnostic-filters input { display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 8px;
   background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+.sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
+.sidebar a[href^="/#"]:active { background: var(--accent-soft); }
+body:has(main :target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
+body:has(#services-heading:target) .sidebar a[href="/#services-heading"],
+body:has(#audit-heading:target) .sidebar a[href="/#audit-heading"],
+body:has(#notifications-heading:target) .sidebar a[href="/#notifications-heading"],
+body:has(#access-heading:target) .sidebar a[href="/#access-heading"],
+body:has(#trust:target) .sidebar a[href="/#trust"],
+body:has(#maintenance-heading:target) .sidebar a[href="/#maintenance-heading"] {
+  background: var(--accent-soft); color: var(--accent); box-shadow: inset 3px 0 var(--accent); font-weight: 700;
+}
 .metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
 .job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
 .job-facts dt { color: var(--muted); font-size: .85rem; }
 .job-facts dd { margin: 4px 0 0; }
 .job-load { margin-bottom: 14px; }
 .badge.success { color: var(--ok); }
-header { margin-bottom: 36px; }
+header { margin-bottom: 32px; padding: 28px 30px; border: 1px solid var(--accent-soft);
+  border-top: 3px solid var(--accent); border-radius: 16px;
+  background: radial-gradient(ellipse at top right, var(--accent-soft), transparent 65%), var(--panel); }
 .eyebrow, .section-kicker {
   margin: 0 0 6px;
   color: var(--accent);
@@ -54,7 +76,7 @@ header { margin-bottom: 36px; }
 }
 h1 {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 3.25rem);
+  font-size: clamp(2rem, 4vw, 2.75rem);
   letter-spacing: -.045em;
   line-height: 1.06;
 }
@@ -69,13 +91,13 @@ h1 {
   display: flex;
   gap: 7px;
   padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: .8rem;
 }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; font-weight: 650; }
-section { margin-top: 36px; }
+section { margin-top: 32px; }
 .section-heading {
   display: flex;
   align-items: end;
@@ -84,58 +106,74 @@ section { margin-top: 36px; }
   margin-bottom: 13px;
 }
 h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
-.count { color: var(--muted); font-size: .85rem; }
+.count { color: var(--muted); font-size: .75rem; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 11px;
+  gap: 14px;
 }
 .card {
   display: flex;
-  min-height: 132px;
+  min-height: 160px;
   flex-direction: column;
-  gap: 5px;
-  padding: 17px;
-  border: 1px solid var(--line);
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
   color: var(--text);
   text-decoration: none;
 }
-.card:hover { border-color: var(--accent); }
+.card:hover { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--panel)); }
+.card strong { font-size: 1rem; letter-spacing: -.02em; }
+.card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.service-kind { color: var(--muted); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.service-arrow { color: var(--accent); font-size: 1.2rem; }
 .card:focus-visible, button:focus-visible, summary:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
 .card-description { color: var(--muted); font-size: .9rem; }
-.card-status { font-size: .8rem; font-weight: 700; }
+.card-status { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 700; }
+.card-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .card-status.ready { color: var(--ok); }
-.card-status.attention, .card-status.unavailable { color: var(--bad); }
+.card-status.attention { color: var(--warning); }
+.card-status.unavailable { color: var(--bad); }
 .card-url {
   margin-top: auto;
-  color: var(--accent);
-  font-size: .8rem;
+  padding-top: 10px;
+  border-top: 1px solid var(--accent-soft);
+  color: var(--muted);
+  font-size: .72rem;
   overflow-wrap: anywhere;
 }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: 11px;
+  gap: 14px;
   margin: 0;
 }
 .metric {
-  min-height: 112px;
-  padding: 16px;
-  border: 1px solid var(--line);
+  min-height: 140px;
+  padding: 20px;
+  border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
 .metric dt { color: var(--muted); font-size: .82rem; }
 .metric dd { margin: 5px 0 0; }
-.metric-value { display: block; font-size: 1.15rem; font-weight: 750; }
+.metric-value { display: block; font-size: 1.4rem; font-weight: 750; letter-spacing: -.035em; }
 .metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .82rem; }
+meter { display: block; width: 100%; height: 6px; margin: 13px 0 10px; border: 0; border-radius: 999px;
+  background: var(--accent-soft); accent-color: var(--accent); }
+meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 999px; background: var(--accent-soft); }
+meter::-webkit-meter-optimum-value { background: var(--accent); }
+meter::-webkit-meter-suboptimum-value { background: var(--warning); }
+meter::-webkit-meter-even-less-good-value { background: var(--bad); }
+meter::-moz-meter-bar { background: var(--accent); }
+.metric-value.warning { color: var(--warning); }
 .trust-panel {
   padding: 17px 18px 18px;
 }
@@ -328,14 +366,20 @@ footer {
   font-size: .85rem;
 }
 @media (max-width: 900px) {
-  main { padding: 28px 20px 48px; }
+  main { margin: 0; padding: 24px 20px 48px; }
   .sidebar { position: static; width: auto; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .sidebar strong { margin: 0 8px 6px; }
-  .sidebar .nav-links { display: flex; flex-wrap: wrap; gap: 0 4px; }
-  .sidebar a { padding: 10px 8px; }
+  .sidebar .nav-links { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px;
+    scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
+  .sidebar a { padding: 10px 12px; flex: none; white-space: nowrap; }
+  .nav-group, .sidebar-note { display: none; }
 }
 @media (max-width: 560px) {
-  main { padding-top: 30px; }
+  main { padding: 20px 16px 40px; }
+  header { padding: 22px 20px; }
+  .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric { padding: 16px; }
+  .metric-value { font-size: 1.15rem; }
   .section-heading, .event-head { align-items: start; flex-direction: column; gap: 6px; }
   .meta div { flex-wrap: wrap; border-radius: 12px; }
   .access-list li { grid-template-columns: 1fr; }
@@ -345,23 +389,31 @@ footer {
   footer { flex-direction: column; }
 }:root{--bg:#f3f8fa;--panel:#ffffff;--text:#17232c;--muted:#49616e;--line:#738995;--accent:#17657d;--accent-soft:#d8f0f4;--ok:#21694f;--bad:#a2342b;--warning:#825119;--brand-water:#17657d;--shadow:0 12px 36px rgb(23 35 44 / 7%)}@media(prefers-color-scheme:dark){:root{--bg:#101a21;--panel:#17232c;--text:#e8f5f8;--muted:#aec6cf;--line:#718c99;--accent:#4dc5dd;--accent-soft:#223e4b;--ok:#75d2ae;--bad:#ffa69d;--warning:#e9b979;--brand-water:#4dc5dd;--shadow:none}}body{font-family:"DejaVu Sans",system-ui,sans-serif}code,pre{font-family:"DejaVu Sans Mono",monospace}.sidebar strong.brand{display:flex;align-items:center;gap:8px;font-size:17px;letter-spacing:-.04em;color:var(--text)}.brand svg{flex:none;width:28px;height:28px}.badge.warning{color:var(--warning)}@media(forced-colors:active){.brand svg{--brand-water:CanvasText}}</style></head><body>
 <a class="skip-link" href="#main">Skip to content</a>
-<nav class="sidebar" aria-label="Panel sections"><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="3" d="M2 28h8l6-4h14"/></svg><span>Basaltwater</span></strong><div class="nav-links"><a href="/" aria-current="page">Dashboard</a><a href="#services-heading">Web services</a><a href="#audit-heading">Security activity</a><a href="#access-heading">Access</a><a href="/services">Local service status</a><a href="/jobs">Scheduled jobs</a><a href="/logs">Service diagnostics</a></div></nav>
+<nav class="sidebar" aria-label="Panel sections"><strong class="brand"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="3" d="M2 28h8l6-4h14"/></svg><span>Basaltwater</span></strong><div class="nav-links"><p class="nav-group">Workspace</p><a href="/" aria-current="page"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z"/></svg><span>Dashboard</span></a><a href="/#services-heading"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z M3 9h18 M7 7h.01 M10 7h.01"/></svg><span>Web services</span></a><a href="/#audit-heading"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6"/></svg><span>Security activity</span></a><a href="/#notifications-heading"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0v7l2 3H4l2-3z M10 21h4"/></svg><span>Notifications</span></a><p class="nav-group">Administration</p><a href="/#access-heading"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 10a5 5 0 1 0 0-7 5 5 0 0 0 0 7z M10 10L3 17v4h4v-3h3v-3l2-2"/></svg><span>Access</span></a><a href="/#trust"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v13H6z M9 16l-1 5 4-2 4 2-1-5 M9 8l2 2 4-4"/></svg><span>Certificate trust</span></a><a href="/#maintenance-heading"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 6l4 4 3-3a7 7 0 0 1-9 9l-6 6-4-4 6-6a7 7 0 0 1 9-9z"/></svg><span>Maintenance</span></a><p class="nav-group">Inspect</p><a href="/services"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h5l3-8 4 16 3-8h5"/></svg><span>Local service status</span></a><a href="/jobs"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4 M16 2v4 M3 5h18v16H3z M3 10h18 M8 14h2 M14 14h2"/></svg><span>Scheduled jobs</span></a><a href="/logs"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z M7 8l3 3-3 3 M13 16h4"/></svg><span>Service diagnostics</span></a></div><p class="sidebar-note">One machine.<br>Your whole workspace.</p></nav>
 <main id="main" tabindex="-1"><header><p class="eyebrow">Basaltwater web panel</p><h1>Workshop</h1>
-<p class="lede">Services, system health, security activity, and available maintenance for <code>workshop.example.test</code>.</p>
+<p class="lede">Services, health, and activity for <code>workshop.example.test</code>.</p>
 <dl class="meta"><div><dt>System</dt><dd>Server Dev</dd></div>
 <div><dt>User</dt><dd>operator</dd></div></dl>
 <a class="refresh-link" href="/">Refresh dashboard</a></header><section aria-labelledby="overview-heading"><div class="section-heading"><div>
 <p class="section-kicker">Host health</p><h2 id="overview-heading">System overview</h2></div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid"><div class="metric"><dt>Host</dt><dd><span class="metric-value">Ready</span><span class="metric-description">Example data</span></dd></div></dl></section>
+<dl class="overview-grid"><div class="metric"><dt>Uptime</dt><dd><span class="metric-value ">2d 6h</span><span class="metric-description">Since the last boot</span></dd></div><div class="metric"><dt>Memory</dt><dd><span class="metric-value ">24% used</span><meter min="0" max="100" low="80" high="95" optimum="0" value="24" aria-label="Memory used">24%</meter><span class="metric-description">6.1 GiB available of 8.0 GiB</span></dd></div><div class="metric"><dt>Root disk</dt><dd><span class="metric-value ">52% used</span><meter min="0" max="100" low="80" high="95" optimum="0" value="52" aria-label="Root disk used">52%</meter><span class="metric-description">30.2 GiB free of 62.8 GiB</span></dd></div><div class="metric"><dt>Maintenance</dt><dd><span class="metric-value ">No reboot pending</span><span class="metric-description">Automatic package updates are scheduled</span></dd></div></dl></section>
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
 <p class="section-kicker">Open in browser</p><h2 id="services-heading">Web services</h2></div>
-<span class="count">1 service</span></div><div class="grid"><a class="card" href="https://projects.example.test"><strong>Project library</strong><span class="card-description">Repositories and shared work</span><span class="card-url">https://projects.example.test &#8599;</span></a></div></section>
+<span class="count">4 services</span></div><div class="grid"><a class="card" href="https://projects.example.test"><span class="card-top"><span class="service-kind">Web service</span><span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>Project library</strong><span class="card-description">Repositories and shared work</span><span class="card-url">https://projects.example.test</span></a><a class="card" href="https://workshop.example.test:8444/"><span class="card-top"><span class="service-kind">HTTPS service</span><span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>t3code</strong><span class="card-status ready">Responding</span><span class="card-url">https://workshop.example.test:8444/</span></a><a class="card" href="https://workshop.example.test:8445/"><span class="card-top"><span class="service-kind">Published site</span><span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>team-handbook</strong><span class="card-status ready">Responding</span><span class="card-url">https://workshop.example.test:8445/</span></a><a class="card" href="https://workshop.example.test:8446/"><span class="card-top"><span class="service-kind">HTTPS service</span><span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>review</strong><span class="card-status unavailable">Not responding</span><span class="card-url">https://workshop.example.test:8446/</span></a></div></section>
 <section aria-labelledby="audit-heading"><div class="section-heading"><div>
 <p class="section-kicker">Security activity</p><h2 id="audit-heading">System audit log</h2></div>
 <span class="count">0 events · Latest 24 hours</span>
-</div><p class="empty">No matching audit events were recorded in the last 24 hours.</p></section>
+</div><p class="empty">No matching audit events were recorded in the last 24 hours.</p></section><section aria-labelledby="notifications-heading"><div class="section-heading"><div>
+<p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
+<span class="count">Not configured</span></div>
+<p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>
 <section aria-labelledby="access-heading"><div class="section-heading"><div>
 <p class="section-kicker">Connect directly</p><h2 id="access-heading">Access</h2></div>
-<span class="count">1 method</span></div><ul class="access-list"><li><strong>SSH</strong><code>ssh operator@workshop.example.test</code><span>Verified host identity</span></li></ul></section><div id="trust"></div>
+<span class="count">1 method</span></div><ul class="access-list"><li><strong>SSH</strong><code>ssh operator@workshop.example.test</code><span>Verified host identity</span></li></ul></section><div id="trust"><section aria-labelledby="trust-heading"><div class="section-heading"><div>
+<p class="section-kicker">Secure connection</p><h2 id="trust-heading">Certificate trust</h2></div></div>
+<p class="empty">No managed gateway certificate information is available on this machine.</p></section></div><section aria-labelledby="maintenance-heading"><div class="section-heading"><div>
+<p class="section-kicker">Keep things running</p><h2 id="maintenance-heading">Maintenance</h2></div></div>
+<div class="action"><div><strong>Scheduled maintenance</strong><p>Review update timers, housekeeping jobs, and their last results.</p></div>
+<a class="refresh-link" href="/jobs">View scheduled jobs <span aria-hidden="true">→</span></a></div></section>
 <footer><span>Managed by Basaltwater</span><span>Authenticated as operator</span></footer></main></body></html>

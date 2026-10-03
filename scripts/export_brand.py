@@ -72,13 +72,23 @@ def export_assets(assets: Path) -> None:
     state = panel.WebPanelState({
         "title": "Workshop", "host": "workshop.example.test", "username": "operator",
         "system_type": "server_dev", "features": {},
-        "services": [{"label": "Project library", "url": "https://projects.example.test", "description": "Repositories and shared work"}],
+        "services": [
+            {"label": "Project library", "url": "https://projects.example.test", "description": "Repositories and shared work"},
+            {"label": "HTTPS service: t3code", "url": "https://workshop.example.test:8444/", "description": "live"},
+            {"label": "Published site: team-handbook", "url": "https://workshop.example.test:8445/", "description": "live"},
+            {"label": "HTTPS service: review", "url": "https://workshop.example.test:8446/", "description": "not responding"},
+        ],
         "access": [{"label": "SSH", "value": "ssh operator@workshop.example.test", "description": "Verified host identity"}],
     })
     with (
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
-        patch.object(state, "system_overview", return_value=[{"label": "Host", "value": "Ready", "description": "Example data", "status": "active"}]),
+        patch.object(state, "system_overview", return_value=[
+            {"label": "Uptime", "value": "2d 6h", "description": "Since the last boot"},
+            {"label": "Memory", "value": "24% used", "description": "6.1 GiB available of 8.0 GiB"},
+            {"label": "Root disk", "value": "52% used", "description": "30.2 GiB free of 62.8 GiB"},
+            {"label": "Maintenance", "value": "No reboot pending", "description": "Automatic package updates are scheduled"},
+        ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
     ):
         (assets / "panel.html").write_text(panel.render_page(state), encoding="utf-8")

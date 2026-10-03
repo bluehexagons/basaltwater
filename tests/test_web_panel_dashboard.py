@@ -8,9 +8,67 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_service as panel
+from common.service_tools import web_panel_diagnostics as diagnostics
+from common.service_tools import web_panel_jobs as jobs
 
 
 class DashboardTest(unittest.TestCase):
+    def test_rendered_views_share_sidebar_without_collecting_on_demand_data(self) -> None:
+        state = panel.WebPanelState({
+            "host": "example.test", "username": "agent", "system_type": "server_dev",
+            "features": {}, "services": [], "access": [],
+        })
+        with (
+            patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
+            patch.object(panel, "discover_certificate_trust", return_value=None),
+            patch.object(state, "system_overview", return_value=[]),
+            patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
+            patch.object(state, "service_health") as service_health,
+            patch.object(jobs, "collect_jobs") as collect_jobs,
+            patch.object(diagnostics, "collect_diagnostics") as collect_diagnostics,
+        ):
+            pages = [
+                panel.render_page(state), panel.render_service_status(state, False),
+                jobs.render_jobs(False, panel._PAGE_STYLE, "example.test"),
+                diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(), panel._PAGE_STYLE, "example.test"),
+            ]
+        service_health.assert_not_called()
+        collect_jobs.assert_not_called()
+        collect_diagnostics.assert_not_called()
+        sidebars = [page.split('<nav class="sidebar"', 1)[1].split('</nav>', 1)[0] for page in pages]
+        for sidebar in sidebars:
+            self.assertEqual(sidebar.count('aria-current="page"'), 1)
+            self.assertEqual(sidebar.replace(' aria-current="page"', ''), sidebars[0].replace(' aria-current="page"', ''))
+
+    def test_usage_meters_are_bounded_and_service_states_keep_text_labels(self) -> None:
+        state = panel.WebPanelState({
+            "host": "example.test", "username": "agent", "system_type": "server_dev",
+            "features": {}, "access": [], "services": [
+                {"label": "HTTPS service: editor <team>", "url": "https://example.test:8444/", "description": "live"},
+                {"label": "HTTPS service: review", "url": "https://example.test:8445/", "description": "not responding"},
+            ],
+        })
+        for value, meters in (
+            ("85% used", 1), ("Unavailable", 0), ("101% used", 0),
+            ('<script>% used', 0), ("²% used", 0), ("9" * 5000 + "% used", 0),
+        ):
+            with (
+                self.subTest(value=value),
+                patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
+                patch.object(panel, "discover_certificate_trust", return_value=None),
+                patch.object(state, "system_overview", return_value=[{"label": "Memory", "value": value, "description": "Example data"}]),
+                patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
+            ):
+                page = panel.render_page(state)
+                self.assertEqual(page.count('<meter '), meters)
+                self.assertIn('class="card-status ready">Responding', page)
+                self.assertIn('class="card-status unavailable">Not responding', page)
+                self.assertIn('editor &lt;team&gt;', page)
+                self.assertNotIn('<script>', page)
+                if meters:
+                    self.assertIn('value="85" aria-label="Memory used"', page)
+                    self.assertIn('class="metric-value warning"', page)
+
     def test_partial_systemctl_failure_preserves_installed_units(self) -> None:
         output = (
             "Id=nginx.service\nLoadState=loaded\nActiveState=active\nSubState=running\n\n"
@@ -61,9 +119,12 @@ class DashboardTest(unittest.TestCase):
         ):
             page = panel.render_page(state)
         self.assertIn('aria-label="Panel sections"', page)
-        self.assertIn('href="#services-heading"', page)
-        self.assertNotIn('href="#notifications-heading"', page)
-        self.assertNotIn('href="#maintenance-heading"', page)
+        self.assertIn('href="/#services-heading"', page)
+        for anchor in ("notifications-heading", "maintenance-heading", "trust"):
+            self.assertIn(f'href="/#{anchor}"', page)
+            self.assertIn(f'id="{anchor}"', page)
+        self.assertIn("Remote notifications are not enabled", page)
+        self.assertIn("No managed gateway certificate information", page)
         self.assertIn("Show 3 more events", page)
         self.assertIn("Event &lt;7&gt;", page)
         self.assertNotIn("Event <7>", page)

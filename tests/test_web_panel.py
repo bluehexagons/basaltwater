@@ -1638,15 +1638,19 @@ class WebPanelEventTest(unittest.TestCase):
                 "features": {"t3_update": False},
             }
         )
-        with patch(
-            "common.service_tools.web_panel_service.discover_basaltwater_web_services",
-            return_value=[],
+        with (
+            patch("common.service_tools.web_panel_service.discover_basaltwater_web_services", return_value=[]),
+            patch("common.service_tools.web_panel_service.discover_certificate_trust", return_value=None),
+            patch.object(state, "system_overview", return_value=[]),
+            patch.object(state, "audit_snapshot", return_value={"status": "ok", "events": []}),
         ):
             rendered = render_page(state)
 
         self.assertIn("No hosted web services are available", rendered)
         self.assertIn("No additional access methods are configured", rendered)
-        self.assertNotIn("Maintenance</h2>", rendered)
+        self.assertIn("Maintenance</h2>", rendered)
+        self.assertIn("View scheduled jobs", rendered)
+        self.assertNotIn("Update to latest", rendered)
 
     def test_rejects_credential_bearing_service_urls(self) -> None:
         self.assertIsNone(_safe_url("https://user:password@example.test/"))

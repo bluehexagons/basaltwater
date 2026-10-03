@@ -19,6 +19,13 @@ host and service snapshots for up to 30 seconds. See the [web panel
 reference](WEB_PANEL_REFERENCE.md) for data limits, diagnostic behavior, and
 the notification API contract.
 
+Every page uses the same grouped sidebar: workspace activity, administration,
+and on-demand inspection. Dashboard links open the corresponding section;
+optional areas explain when they are not configured. On smaller screens the
+navigation becomes a horizontal scrollable row. Light and dark themes follow
+the device preference. Memory and disk meters retain numeric values, and
+service states have text labels as well as color.
+
 ## Install and sign in
 
 HTTPS is recommended:

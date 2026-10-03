@@ -292,8 +292,6 @@ def render_diagnostics(
     query: DiagnosticQuery,
     style: str,
     host: str,
-    *,
-    notification_ingest: bool = False,
 ) -> str:
     """Render a separate screen; opening the form never invokes a collector."""
 
@@ -346,8 +344,6 @@ def render_diagnostics(
         style=style,
         header=header,
         content=body,
-        navigation=panel_navigation(
-            current="logs", include_notifications=notification_ingest
-        ),
+        navigation=panel_navigation(current="logs"),
         footer=footer,
     )

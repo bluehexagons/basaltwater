@@ -137,8 +137,6 @@ def render_jobs(
     load: bool,
     style: str,
     host: str,
-    *,
-    notification_ingest: bool = False,
 ) -> str:
     content = '<p class="empty">Select Load scheduled jobs to inspect maintenance timers and their last runs.</p>'
     if load:
@@ -180,8 +178,6 @@ def render_jobs(
         style=style,
         header=header,
         content=body,
-        navigation=panel_navigation(
-            current="jobs", include_notifications=notification_ingest
-        ),
+        navigation=panel_navigation(current="jobs"),
         footer=footer,
     )

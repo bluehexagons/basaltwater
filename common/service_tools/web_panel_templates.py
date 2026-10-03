@@ -53,25 +53,18 @@ def brand_styles() -> str:
 def panel_navigation(
     *,
     current: str | None = None,
-    include_notifications: bool = False,
-    include_trust: bool = False,
-    include_maintenance: bool = False,
 ) -> tuple[NavigationItem, ...]:
-    """Return the common panel navigation, including available dashboard areas."""
+    """Keep destinations and ordering identical across every panel view."""
 
-    section_prefix = "" if current == "dashboard" else "/"
     items: list[NavigationItem] = [
         ("/", "Dashboard", "dashboard"),
-        (f"{section_prefix}#services-heading", "Web services", None),
-        (f"{section_prefix}#audit-heading", "Security activity", None),
+        ("/#services-heading", "Web services", None),
+        ("/#audit-heading", "Security activity", None),
+        ("/#notifications-heading", "Notifications", None),
+        ("/#access-heading", "Access", None),
+        ("/#trust", "Certificate trust", None),
+        ("/#maintenance-heading", "Maintenance", None),
     ]
-    if include_notifications:
-        items.append((f"{section_prefix}#notifications-heading", "Notifications", None))
-    items.append((f"{section_prefix}#access-heading", "Access", None))
-    if include_trust:
-        items.append((f"{section_prefix}#trust", "Certificate trust", None))
-    if include_maintenance:
-        items.append((f"{section_prefix}#maintenance-heading", "Maintenance", None))
     items.extend(
         (
             ("/services", "Local service status", "services"),
@@ -88,19 +81,42 @@ def panel_navigation(
 def render_sidebar(items: Iterable[NavigationItem]) -> str:
     """Render a navigation sidebar with one consistent accessible structure."""
 
-    links = "".join(
-        '<a href="{}"{}>{}</a>'.format(
+    icons = {
+        "Dashboard": "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+        "Web services": "M3 5h18v14H3z M3 9h18 M7 7h.01 M10 7h.01",
+        "Security activity": "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
+        "Notifications": "M6 8a6 6 0 0 1 12 0v7l2 3H4l2-3z M10 21h4",
+        "Access": "M14 10a5 5 0 1 0 0-7 5 5 0 0 0 0 7z M10 10L3 17v4h4v-3h3v-3l2-2",
+        "Certificate trust": "M6 3h12v13H6z M9 16l-1 5 4-2 4 2-1-5 M9 8l2 2 4-4",
+        "Maintenance": "M14 6l4 4 3-3a7 7 0 0 1-9 9l-6 6-4-4 6-6a7 7 0 0 1 9-9z",
+        "Local service status": "M2 12h5l3-8 4 16 3-8h5",
+        "Scheduled jobs": "M8 2v4 M16 2v4 M3 5h18v16H3z M3 10h18 M8 14h2 M14 14h2",
+        "Service diagnostics": "M4 4h16v16H4z M7 8l3 3-3 3 M13 16h4",
+    }
+    groups = {
+        "Dashboard": "Workspace", "Access": "Administration", "Local service status": "Inspect",
+    }
+    links: list[str] = []
+    for href, label, current in items:
+        if label in groups:
+            links.append(f'<p class="nav-group">{groups[label]}</p>')
+        icon = (
+            '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" '
+            'focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" '
+            f'stroke-linecap="round" stroke-linejoin="round"><path d="{icons[label]}"/></svg>'
+            if label in icons else ""
+        )
+        links.append('<a href="{}"{}>{}<span>{}</span></a>'.format(
             html.escape(href, quote=True),
             ' aria-current="page"' if current else "",
+            icon,
             html.escape(label),
-        )
-        for href, label, current in items
-    )
+        ))
     return (
         '<nav class="sidebar" aria-label="Panel sections">'
         f'<strong class="brand">{BRAND_SYMBOL}<span>Basaltwater</span></strong>'
         '<div class="nav-links">'
-        f"{links}</div></nav>"
+        f'{"".join(links)}</div><p class="sidebar-note">One machine.<br>Your whole workspace.</p></nav>'
     )
 
 

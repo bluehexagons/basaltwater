@@ -31,7 +31,7 @@ class WebPanelTemplateTest(unittest.TestCase):
 
     def test_navigation_keeps_core_links_and_marks_only_current_page(self) -> None:
         sidebar = render_sidebar(
-            panel_navigation(current="jobs", include_notifications=True)
+            panel_navigation(current="jobs")
         )
 
         self.assertIn('href="/"', sidebar)
@@ -39,8 +39,16 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertIn('href="/#audit-heading"', sidebar)
         self.assertIn('href="/#notifications-heading"', sidebar)
         self.assertIn('href="/#access-heading"', sidebar)
+        self.assertIn('href="/#trust"', sidebar)
+        self.assertIn('href="/#maintenance-heading"', sidebar)
         self.assertEqual(sidebar.count('aria-current="page"'), 1)
         self.assertIn('href="/jobs" aria-current="page"', sidebar)
+
+    def test_every_view_has_identical_navigation_destinations(self) -> None:
+        expected = [(href, label) for href, label, _ in panel_navigation(current="dashboard")]
+        for current in ("services", "jobs", "logs"):
+            with self.subTest(current=current):
+                self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current)], expected)
 
     def test_document_has_one_shared_shell_and_escapes_title(self) -> None:
         document = render_document(

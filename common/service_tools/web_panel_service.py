@@ -880,20 +880,29 @@ body {
   color: var(--text);
   font: 15px/1.5 system-ui, sans-serif;
 }
-main { max-width: 1240px; margin: auto; padding: 36px 28px 64px 240px; }
+main { max-width: 1560px; margin: 0 auto 0 248px; padding: 32px 40px 64px; }
 body { overflow-wrap: anywhere; }
 .sidebar {
-  position: fixed; inset: 0 auto 0 0; width: 212px; padding: 32px 18px;
-  background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto;
+  position: fixed; inset: 0 auto 0 0; width: 248px; padding: 28px 16px;
+  background: var(--panel); border-right: 1px solid var(--accent-soft); overflow-y: auto;
 }
-.sidebar strong { display: block; margin: 0 12px 24px; color: var(--accent); }
-.sidebar a { display: block; padding: 12px; color: var(--text); text-decoration: none; border-radius: 8px; }
+.sidebar strong { display: block; margin: 0 8px 28px; color: var(--accent); }
+.sidebar a { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 10px 12px;
+  margin: 3px 0; color: var(--muted); text-decoration: none; border-radius: 8px; font-size: .83rem; }
+.sidebar a svg { flex: none; }
+.nav-group { margin: 24px 12px 8px; color: var(--muted); font-size: .66rem; font-weight: 750;
+  letter-spacing: .12em; text-transform: uppercase; }
+.sidebar-note { margin: 30px 12px 0; padding-top: 18px; border-top: 1px solid var(--accent-soft);
+  color: var(--muted); font-size: .75rem; line-height: 1.7; }
 .sidebar a:hover { background: var(--accent-soft); color: var(--accent); }
 a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .skip-link { position: fixed; top: -100px; left: 16px; padding: 12px; background: var(--panel); z-index: 3; }
 .skip-link:focus { top: 12px; }
 h2, #trust { scroll-margin-top: 24px; }
-.refresh-link { color: var(--accent); display: inline-block; padding: 10px 0; }
+.refresh-link { color: var(--accent); display: inline-block; padding: 10px 0; text-underline-offset: 4px; }
+header .refresh-link { padding: 9px 14px; margin-top: 18px; min-height: 44px; border: 1px solid var(--accent);
+  border-radius: 8px; text-decoration: none; font-size: .8rem; font-weight: 650; }
+header .refresh-link:hover { background: var(--accent-soft); }
 .metric-value.active { color: var(--ok); }
 .metric-value.failed, .metric-value.unavailable { color: var(--bad); }
 .history > summary { margin: 10px 0; }
@@ -907,14 +916,27 @@ h2, #trust { scroll-margin-top: 24px; }
 select, .diagnostic-filters input { display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 8px;
   background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent); }
+.sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
+  box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
+.sidebar a[href^="/#"]:active { background: var(--accent-soft); }
+body:has(main :target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
+body:has(#services-heading:target) .sidebar a[href="/#services-heading"],
+body:has(#audit-heading:target) .sidebar a[href="/#audit-heading"],
+body:has(#notifications-heading:target) .sidebar a[href="/#notifications-heading"],
+body:has(#access-heading:target) .sidebar a[href="/#access-heading"],
+body:has(#trust:target) .sidebar a[href="/#trust"],
+body:has(#maintenance-heading:target) .sidebar a[href="/#maintenance-heading"] {
+  background: var(--accent-soft); color: var(--accent); box-shadow: inset 3px 0 var(--accent); font-weight: 700;
+}
 .metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
 .job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
 .job-facts dt { color: var(--muted); font-size: .85rem; }
 .job-facts dd { margin: 4px 0 0; }
 .job-load { margin-bottom: 14px; }
 .badge.success { color: var(--ok); }
-header { margin-bottom: 36px; }
+header { margin-bottom: 32px; padding: 28px 30px; border: 1px solid var(--accent-soft);
+  border-top: 3px solid var(--accent); border-radius: 16px;
+  background: radial-gradient(ellipse at top right, var(--accent-soft), transparent 65%), var(--panel); }
 .eyebrow, .section-kicker {
   margin: 0 0 6px;
   color: var(--accent);
@@ -925,7 +947,7 @@ header { margin-bottom: 36px; }
 }
 h1 {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 3.25rem);
+  font-size: clamp(2rem, 4vw, 2.75rem);
   letter-spacing: -.045em;
   line-height: 1.06;
 }
@@ -940,13 +962,13 @@ h1 {
   display: flex;
   gap: 7px;
   padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: .8rem;
 }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; font-weight: 650; }
-section { margin-top: 36px; }
+section { margin-top: 32px; }
 .section-heading {
   display: flex;
   align-items: end;
@@ -955,58 +977,74 @@ section { margin-top: 36px; }
   margin-bottom: 13px;
 }
 h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
-.count { color: var(--muted); font-size: .85rem; }
+.count { color: var(--muted); font-size: .75rem; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
-  gap: 11px;
+  gap: 14px;
 }
 .card {
   display: flex;
-  min-height: 132px;
+  min-height: 160px;
   flex-direction: column;
-  gap: 5px;
-  padding: 17px;
-  border: 1px solid var(--line);
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
   color: var(--text);
   text-decoration: none;
 }
-.card:hover { border-color: var(--accent); }
+.card:hover { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--panel)); }
+.card strong { font-size: 1rem; letter-spacing: -.02em; }
+.card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.service-kind { color: var(--muted); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.service-arrow { color: var(--accent); font-size: 1.2rem; }
 .card:focus-visible, button:focus-visible, summary:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
 .card-description { color: var(--muted); font-size: .9rem; }
-.card-status { font-size: .8rem; font-weight: 700; }
+.card-status { display: flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 700; }
+.card-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .card-status.ready { color: var(--ok); }
-.card-status.attention, .card-status.unavailable { color: var(--bad); }
+.card-status.attention { color: var(--warning); }
+.card-status.unavailable { color: var(--bad); }
 .card-url {
   margin-top: auto;
-  color: var(--accent);
-  font-size: .8rem;
+  padding-top: 10px;
+  border-top: 1px solid var(--accent-soft);
+  color: var(--muted);
+  font-size: .72rem;
   overflow-wrap: anywhere;
 }
 .overview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  gap: 11px;
+  gap: 14px;
   margin: 0;
 }
 .metric {
-  min-height: 112px;
-  padding: 16px;
-  border: 1px solid var(--line);
+  min-height: 140px;
+  padding: 20px;
+  border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
 .metric dt { color: var(--muted); font-size: .82rem; }
 .metric dd { margin: 5px 0 0; }
-.metric-value { display: block; font-size: 1.15rem; font-weight: 750; }
+.metric-value { display: block; font-size: 1.4rem; font-weight: 750; letter-spacing: -.035em; }
 .metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .82rem; }
+meter { display: block; width: 100%; height: 6px; margin: 13px 0 10px; border: 0; border-radius: 999px;
+  background: var(--accent-soft); accent-color: var(--accent); }
+meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 999px; background: var(--accent-soft); }
+meter::-webkit-meter-optimum-value { background: var(--accent); }
+meter::-webkit-meter-suboptimum-value { background: var(--warning); }
+meter::-webkit-meter-even-less-good-value { background: var(--bad); }
+meter::-moz-meter-bar { background: var(--accent); }
+.metric-value.warning { color: var(--warning); }
 .trust-panel {
   padding: 17px 18px 18px;
 }
@@ -1199,14 +1237,20 @@ footer {
   font-size: .85rem;
 }
 @media (max-width: 900px) {
-  main { padding: 28px 20px 48px; }
+  main { margin: 0; padding: 24px 20px 48px; }
   .sidebar { position: static; width: auto; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .sidebar strong { margin: 0 8px 6px; }
-  .sidebar .nav-links { display: flex; flex-wrap: wrap; gap: 0 4px; }
-  .sidebar a { padding: 10px 8px; }
+  .sidebar .nav-links { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px;
+    scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
+  .sidebar a { padding: 10px 12px; flex: none; white-space: nowrap; }
+  .nav-group, .sidebar-note { display: none; }
 }
 @media (max-width: 560px) {
-  main { padding-top: 30px; }
+  main { padding: 20px 16px 40px; }
+  header { padding: 22px 20px; }
+  .overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric { padding: 16px; }
+  .metric-value { font-size: 1.15rem; }
   .section-heading, .event-head { align-items: start; flex-direction: column; gap: 6px; }
   .meta div { flex-wrap: wrap; border-radius: 12px; }
   .access-list li { grid-template-columns: 1fr; }
@@ -1295,7 +1339,9 @@ def _render_certificate_trust(
     trust: dict[str, str | bool] | None,
 ) -> str:
     if not trust:
-        return ""
+        return '''<section aria-labelledby="trust-heading"><div class="section-heading"><div>
+<p class="section-kicker">Secure connection</p><h2 id="trust-heading">Certificate trust</h2></div></div>
+<p class="empty">No managed gateway certificate information is available on this machine.</p></section>'''
     if trust.get("publicly_trusted") is True:
         return '''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div><p class="section-kicker">Secure connection</p>
@@ -1454,10 +1500,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         style=_PAGE_STYLE,
         header=header,
         content=body,
-        navigation=panel_navigation(
-            current="services",
-            include_notifications=state.notification_ingest_enabled(),
-        ),
+        navigation=panel_navigation(current="services"),
         footer=footer,
     )
 
@@ -1550,7 +1593,10 @@ def _render_audit_section(state: WebPanelState) -> str:
 
 def _render_notification_section(state: WebPanelState) -> str:
     if not state.notification_ingest_enabled():
-        return ""
+        return '''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
+<p class="section-kicker">From managed machines</p><h2 id="notifications-heading">Notifications</h2></div>
+<span class="count">Not configured</span></div>
+<p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>'''
     events = state.notification_events()
     if not events:
         content = '<p class="empty">No remote notifications have been received.</p>'
@@ -1636,19 +1682,38 @@ def render_page(state: WebPanelState) -> str:
     service_cards = ""
     for record in services:
         status_html = ""
+        description = record["description"] or "Open this service"
+        label = record["label"]
+        kind = "Web service"
+        for prefix, service_kind in (
+            ("HTTPS service: ", "HTTPS service"),
+            ("Published site: ", "Published site"),
+        ):
+            if label.startswith(prefix):
+                label = label.removeprefix(prefix)
+                kind = service_kind
+                break
+        if description in {"live", "not responding"}:
+            tone, text = (
+                ("ready", "Responding") if description == "live"
+                else ("unavailable", "Not responding")
+            )
+            status_html = f'<span class="card-status {tone}">{text}</span>'
+            description = ""
         if (probe_port := _homebox_probe_port(record)) is not None:
             status_class, status_text = _probe_homebox(probe_port)
             status_html = '<span class="card-status {}">{}</span>'.format(
                 status_class, html.escape(status_text)
             )
         service_cards += (
-            '<a class="card" href="{}"><strong>{}</strong>'
-            '<span class="card-description">{}</span>{}'
-            '<span class="card-url">{} &#8599;</span></a>'
+            '<a class="card" href="{}"><span class="card-top"><span class="service-kind">{}</span>'
+            '<span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>{}</strong>'
+            '{}{}<span class="card-url">{}</span></a>'
         ).format(
             html.escape(record["url"], quote=True),
-            html.escape(record["label"]),
-            html.escape(record["description"] or "Open this service"),
+            kind,
+            html.escape(label),
+            f'<span class="card-description">{html.escape(description)}</span>' if description else "",
             status_html,
             html.escape(record["url"]),
         )
@@ -1672,20 +1737,41 @@ def render_page(state: WebPanelState) -> str:
     )
 
     overview = state.system_overview()
-    overview_cards = "".join(
-        '<div class="metric"><dt>{}</dt><dd><span class="metric-value">{}</span>'
-        '<span class="metric-description">{}</span></dd></div>'.format(
-            html.escape(record["label"]),
-            html.escape(record["value"]),
+    overview_cards = ""
+    for record in overview:
+        value = record["value"]
+        tone = ""
+        meter = ""
+        percent = value.removesuffix("% used")
+        if (
+            record["label"] in {"Memory", "Root disk"} and value.endswith("% used")
+            and 1 <= len(percent) <= 3 and percent.isascii() and percent.isdigit()
+            and 0 <= int(percent) <= 100
+        ):
+            tone = "warning" if int(percent) >= 80 else ""
+            meter = (
+                f'<meter min="0" max="100" low="80" high="95" optimum="0" value="{int(percent)}" '
+                f'aria-label="{html.escape(record["label"], quote=True)} used">{int(percent)}%</meter>'
+            )
+        elif value == "Reboot required":
+            tone = "warning"
+        elif value == "Unavailable":
+            tone = "unavailable"
+        overview_cards += (
+            '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
+            '<span class="metric-description">{}</span></dd></div>'
+        ).format(
+            html.escape(record["label"]), tone, html.escape(value), meter,
             html.escape(record["description"]),
         )
-        for record in overview
-    )
     trust_section = _render_certificate_trust(discover_certificate_trust())
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
 
-    action = ""
+    action = '''<section aria-labelledby="maintenance-heading"><div class="section-heading"><div>
+<p class="section-kicker">Keep things running</p><h2 id="maintenance-heading">Maintenance</h2></div></div>
+<div class="action"><div><strong>Scheduled maintenance</strong><p>Review update timers, housekeeping jobs, and their last results.</p></div>
+<a class="refresh-link" href="/jobs">View scheduled jobs <span aria-hidden="true">→</span></a></div></section>'''
     if state.t3_update_available():
         running = state.action_status == "running"
         disabled = " disabled" if running else ""
@@ -1746,7 +1832,7 @@ def render_page(state: WebPanelState) -> str:
     )
     access_label = f"{access_count} method" + ("" if access_count == 1 else "s")
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>{html.escape(title)}</h1>
-<p class="lede">Services, system health, security activity, and available maintenance for <code>{host}</code>.</p>
+<p class="lede">Services, health, and activity for <code>{host}</code>.</p>
 <dl class="meta"><div><dt>System</dt><dd>{system_type}</dd></div>
 <div><dt>User</dt><dd>{username}</dd></div></dl>
 <a class="refresh-link" href="/">Refresh dashboard</a></header>'''
@@ -1768,12 +1854,7 @@ def render_page(state: WebPanelState) -> str:
         style=_PAGE_STYLE,
         header=header,
         content=body,
-        navigation=panel_navigation(
-            current="dashboard",
-            include_notifications=bool(notification_section),
-            include_trust=bool(trust_section),
-            include_maintenance=bool(action),
-        ),
+        navigation=panel_navigation(current="dashboard"),
         footer=footer,
         refresh=refresh,
     )
@@ -1783,12 +1864,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     server_version = "basaltwater-web-panel/1"
     sys_version = ""
     state: WebPanelState
-
-    def _notifications_enabled(self) -> bool:
-        """Return the optional feature state for test doubles and live state."""
-
-        enabled = getattr(self.state, "notification_ingest_enabled", None)
-        return bool(enabled()) if callable(enabled) else False
 
     def _send(
         self,
@@ -1837,7 +1912,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     query,
                     _PAGE_STYLE,
                     self.state.manifest["host"],
-                    notification_ingest=self._notifications_enabled(),
                 ),
                 "text/html",
             )
@@ -1854,7 +1928,6 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     load,
                     _PAGE_STYLE,
                     self.state.manifest["host"],
-                    notification_ingest=self._notifications_enabled(),
                 ),
                 "text/html",
             )
