@@ -129,6 +129,40 @@ selected public key for root before the first setup. Basaltwater does not
 accept, store, or transmit a sudo password. The configured non-root account's
 managed `NOPASSWD` rule is present only when `--nopasswd` is selected.
 
+## SSH hardening during setup
+
+Setup validates SSH syntax and the effective authentication policy before
+activating its managed drop-in. It selects the installed `ssh.service` or
+`sshd.service`, reloads an active daemon when configuration changes, and starts
+an inactive or failed service. An idle service with an active SSH socket is
+left socket-activated. An unchanged rerun still checks service state.
+If a reload leaves the listener stopped, setup attempts a start on the same
+unit. It preserves existing unit enablement and socket activation choices.
+OCI containers validate the configuration without invoking systemd.
+If validation reports a missing `/run/sshd`, setup prepares a root-owned runtime
+directory and retries validation before starting SSH.
+
+If activation fails, setup restores the previous managed drop-in and any
+managed legacy drop-in removed during migration, then attempts service recovery
+with the restored configuration. It still reports the original failure and
+shows recent service journal entries when available. Masked units and failures
+of an active service require operator review.
+
+If an earlier setup stopped at `ssh.service is not active, cannot reload`,
+update Basaltwater on the controller and rerun the same setup command. If SSH
+cannot accept a new connection, use the container or host console to inspect
+the service first:
+
+```bash
+sudo /usr/sbin/sshd -t
+sudo systemctl status ssh.service --no-pager
+sudo journalctl -u ssh.service -n 40 --no-pager
+```
+
+Use `sshd.service` on systems that provide that unit name. The journal is
+needed to distinguish a stopped daemon from a configuration, listener, or
+service-unit failure.
+
 ## Troubleshooting
 
 Check which agent is active and whether it has the expected identity:

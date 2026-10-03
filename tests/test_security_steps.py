@@ -134,6 +134,8 @@ class TestHardenSSH(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch("security.security_steps._verify_ssh_policy"))
         self.enterContext(patch("security.security_steps.open", mock_open()))
+        self.enterContext(patch("security.security_steps.can_manage_system_services", return_value=True))
+        self.activate = self.enterContext(patch("security.security_steps._activate_ssh_service"))
 
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
     @patch("security.security_steps.run")
@@ -211,7 +213,7 @@ class TestHardenSSH(unittest.TestCase):
         harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
         run_commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertIn("/usr/sbin/sshd -t", run_commands)
-        self.assertTrue(any(cmd.startswith("systemctl reload sshd") for cmd in run_commands))
+        self.activate.assert_called_once_with(changed=True)
 
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
     @patch("security.security_steps.run")
@@ -227,7 +229,7 @@ class TestHardenSSH(unittest.TestCase):
             harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
         run_commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertIn("/usr/sbin/sshd -t", run_commands)
-        self.assertFalse(any(cmd.startswith("systemctl reload sshd") for cmd in run_commands))
+        self.activate.assert_not_called()
         mock_remove.assert_called_once_with(
             "/etc/ssh/sshd_config.d/00-basaltwater-hardening.conf"
         )
@@ -249,7 +251,7 @@ class TestHardenSSH(unittest.TestCase):
         self.assertEqual(mock_write.call_args_list[-1].args[1], "previous\n")
         self.assertEqual(mock_write.call_args_list[-1].kwargs, {"mode": 0o600})
         run_commands = [args[0] for args, _ in mock_run.call_args_list]
-        self.assertFalse(any(cmd.startswith("systemctl reload sshd") for cmd in run_commands))
+        self.activate.assert_not_called()
 
     @patch("security.security_steps.shutil.which", return_value=None)
     @patch("security.security_steps.run")

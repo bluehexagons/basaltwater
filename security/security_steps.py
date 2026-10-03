@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 from urllib.parse import quote
 
 from lib.atomic_io import write_text_atomic
@@ -17,13 +18,14 @@ from lib.config import SetupConfig
 from lib.maintenance_defaults import JOURNAL_MAX_USE
 from lib.machine_state import (
     can_manage_mdns,
+    can_manage_system_services,
     can_modify_kernel,
     is_container,
     is_hardware,
     is_vm,
 )
 from lib.remote_utils import is_dry_run, run
-from lib.validation import validate_network_ip_or_cidr
+from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
 from lib.validators import validate_ip_address, validate_username
 
 _LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades"
@@ -33,6 +35,7 @@ _JOURNAL_CONF_FILE = f"{_JOURNAL_CONF_DIR}/basaltwater.conf"
 _SSHD_DROPIN_DIR = "/etc/ssh/sshd_config.d"
 _SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/00-basaltwater-hardening.conf"
 _LEGACY_SSHD_DROPIN_FILE = f"{_SSHD_DROPIN_DIR}/99-basaltwater-hardening.conf"
+_SSHD_RUNTIME_DIR = "/run/sshd"
 _SYSCTL_HARDENING_FILE = "/etc/sysctl.d/99-security-hardening.conf"
 _FAIL2BAN_SSHD_JAIL = "/etc/fail2ban/jail.d/sshd.local"
 _FAIL2BAN_XRDP_JAIL = "/etc/fail2ban/jail.d/xrdp.local"
@@ -542,6 +545,92 @@ def _verify_ssh_policy(sshd_path: str, config: SetupConfig) -> None:
             raise RuntimeError(f"SSH identity {username} is not a member of remoteusers")
 
 
+def _validate_ssh_config(sshd_path: str) -> None:
+    """Validate SSH, preparing Debian's missing runtime directory if needed."""
+    command = f"{shlex.quote(sshd_path)} -t"
+    result = run(command, check=False, capture_output=True, timeout=30)
+    detail = (getattr(result, "stderr", "") or "").strip()
+    if result.returncode != 0 and detail == f"Missing privilege separation directory: {_SSHD_RUNTIME_DIR}":
+        # systemd removes RuntimeDirectory when the service stops. Validation
+        # must work before starting a daemon with the proposed configuration.
+        validate_filesystem_path(_SSHD_RUNTIME_DIR)
+        if os.geteuid() != 0:
+            raise RuntimeError("Root privileges are required to prepare the SSH runtime directory")
+        try:
+            os.mkdir(_SSHD_RUNTIME_DIR, mode=0o755)
+        except FileExistsError:
+            pass
+        directory = os.lstat(_SSHD_RUNTIME_DIR)
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_mode & 0o022:
+            raise RuntimeError("SSH runtime directory must be a root-owned directory without group/world write access")
+        result = run(command, check=False, capture_output=True, timeout=30)
+        detail = (getattr(result, "stderr", "") or "").strip()
+    if result.returncode != 0:
+        raise RuntimeError(f"sshd -t failed after hardening: {detail or 'configuration validation failed'}")
+
+
+def _activate_ssh_service(*, changed: bool) -> None:
+    """Reload a running SSH unit, or start one that is inactive or failed."""
+    for unit in ("ssh.service", "sshd.service"):
+        loaded = run(
+            f"systemctl show {unit} --property=LoadState --value",
+            check=False, capture_output=True, timeout=30,
+        )
+        load_state = (loaded.stdout or "").strip()
+        if load_state == "not-found":
+            continue
+        if loaded.returncode != 0 or load_state != "loaded":
+            detail = (loaded.stderr or loaded.stdout or "unknown state").strip()
+            raise RuntimeError(f"Cannot manage SSH unit {unit}: {detail}")
+        break
+    else:
+        raise RuntimeError("OpenSSH is installed but neither ssh.service nor sshd.service is available")
+
+    def state() -> str:
+        result = run(f"systemctl is-active {unit}", check=False, capture_output=True, timeout=30)
+        value = (result.stdout or "").strip()
+        if value not in {"active", "reloading", "activating", "inactive", "failed"}:
+            raise RuntimeError(f"Cannot determine SSH service state: {value or result.stderr or 'unknown'}")
+        return value
+
+    current = state()
+    if current in {"active", "reloading"} and not changed:
+        return
+    if current == "inactive":
+        socket = run(
+            "systemctl is-active --quiet ssh.socket sshd.socket",
+            check=False, capture_output=True, timeout=30,
+        )
+        if socket.returncode == 0:
+            print("  ✓ SSH socket is active; new connections use the validated configuration")
+            return
+    action = "reload" if current in {"active", "reloading"} else "start"
+    result = run(f"systemctl {action} {unit}", check=False, capture_output=True, timeout=60)
+    current = state()
+    # A failed HUP can leave the listening daemon stopped while established
+    # sessions survive. Recover that unit rather than retrying its alias.
+    if action == "reload" and current in {"inactive", "failed"}:
+        print(f"  ⚠ SSH reload left {unit} stopped; attempting a start")
+        result = run(f"systemctl start {unit}", check=False, capture_output=True, timeout=60)
+        current = state()
+    if result.returncode != 0 or current != "active":
+        detail = (result.stderr or result.stdout or f"service is {current}").strip()
+        try:
+            journal = run(
+                f"journalctl -u {unit} -n 20 --no-pager",
+                check=False, capture_output=True, timeout=15,
+            )
+        except (OSError, TimeoutError) as exc:
+            print(f"  ⚠ Could not read SSH service journal: {exc}")
+        else:
+            if journal.returncode == 0 and journal.stdout:
+                print(journal.stdout.strip())
+        raise RuntimeError(
+            f"SSH service activation failed for {unit}: {detail}. "
+            f"Inspect systemctl status {unit} and journalctl -u {unit}"
+        )
+
+
 def harden_ssh(config: SetupConfig) -> None:
     """Apply SSH hardening via a drop-in file under /etc/ssh/sshd_config.d/.
 
@@ -624,13 +713,30 @@ Match all
         )
         return
 
-    # Validate the resulting config before reloading so we do not lock out
-    # access if a future change introduces a typo.
+    legacy_content = ""
+    legacy_removed = False
+    activation_attempted = False
+    # Include activation in the transaction: failed reloads must not leave the
+    # new drop-in behind and make the next rerun skip service reconciliation.
     try:
-        validate = run(f"{shlex.quote(sshd_path)} -t", check=False)
-        if validate.returncode != 0:
-            raise RuntimeError("sshd -t failed after hardening")
+        _validate_ssh_config(sshd_path)
+
+        # Remove only our former drop-in after the replacement is validated.
+        try:
+            with open(_LEGACY_SSHD_DROPIN_FILE, encoding="utf-8") as legacy:
+                legacy_content = legacy.read()
+        except FileNotFoundError:
+            pass
+        if legacy_content.startswith("# Managed by basaltwater - SSH hardening drop-in."):
+            os.remove(_LEGACY_SSHD_DROPIN_FILE)
+            legacy_removed = True
+            _validate_ssh_config(sshd_path)
         _verify_ssh_policy(sshd_path, config)
+        if can_manage_system_services(config.machine_type):
+            activation_attempted = True
+            _activate_ssh_service(changed=changed or legacy_removed)
+        else:
+            print("  ℹ SSH configuration validated; service activation is managed outside this container")
     except Exception:
         try:
             if changed:
@@ -638,21 +744,17 @@ Match all
                     os.remove(_SSHD_DROPIN_FILE)
                 else:
                     write_text_atomic(_SSHD_DROPIN_FILE, existing, mode=0o600)
+            if legacy_removed:
+                write_text_atomic(_LEGACY_SSHD_DROPIN_FILE, legacy_content, mode=0o600)
         except OSError as exc:
             raise RuntimeError("Failed to restore previous SSH configuration") from exc
+        if activation_attempted:
+            try:
+                _validate_ssh_config(sshd_path)
+                _activate_ssh_service(changed=True)
+            except Exception as recovery_error:
+                print(f"  ⚠ Previous SSH configuration restored, but service recovery failed: {recovery_error}")
         raise
-
-    # Remove only our former drop-in after the replacement is validated.
-    try:
-        with open(_LEGACY_SSHD_DROPIN_FILE, encoding="utf-8") as legacy:
-            legacy_content = legacy.read()
-    except FileNotFoundError:
-        legacy_content = ""
-    if legacy_content.startswith("# Managed by basaltwater - SSH hardening drop-in."):
-        os.remove(_LEGACY_SSHD_DROPIN_FILE)
-        changed = True
-    if changed:
-        run("systemctl reload sshd || systemctl reload ssh", check=True)
 
     details = "key-only auth, timeouts, AllowGroups remoteusers"
     if config.harden_user:
