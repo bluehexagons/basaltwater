@@ -80,6 +80,8 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_plugin_registry.py",
         "tests/test_progress*.py",
         "tests/test_project_manifest.py",
+        "tests/test_manifest_init.py",
+        "tests/test_node_toolchain.py",
         "tests/test_remote_utils.py",
         "tests/test_run_tests.py",
         "tests/test_setup_report.py",

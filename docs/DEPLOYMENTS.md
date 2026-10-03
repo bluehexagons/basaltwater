@@ -6,6 +6,12 @@ root to describe one or more static sites and services explicitly. The manifest
 is validated before deployment; an invalid file stops deployment instead of
 falling back to automatic detection.
 
+Use `basaltw manifest init --dry-run` to propose a manifest from Node, Go,
+full-stack, or static project structure, then `basaltw manifest init` to create
+it. Existing files are preserved. Review the generated commands, output, and
+service settings before deployment; see [project tooling](PROJECT_TOOLING.md)
+for inference limits, CI workflows, and project Node selection.
+
 `--dry-run` performs a shallow clone into disposable local staging and validates
 the repository type and `basaltwater.json` without updating the persistent Git cache
 before target setup begins. It does not execute repository build commands;
@@ -62,9 +68,11 @@ composition is documented in
 
 ## Manifest shape
 
-The top-level object must contain `version: 1` and a non-empty `components`
-array. Component names use lowercase letters, numbers, and hyphens and must be
-unique within the file.
+The top-level object must contain `version: 1` and a `components` array.
+Deployment requires at least one component; a CI-only package may use an empty
+array when it declares `ci` workflows as described in
+[project tooling](PROJECT_TOOLING.md). Component names use lowercase letters,
+numbers, and hyphens and must be unique within the file.
 
 ### Static site
 
@@ -151,8 +159,8 @@ The existing staged manifest activation and setup-level Nginx validation apply.
 There is no new artifact upload command or coordinated zero-downtime switch of
 files and Nginx configuration. Retain the previous approved artifact/commit for
 redeployment and consult the rollback limitations in `DEPLOYMENT_SAFETY.md`.
-Use the manifest-aware setup/patch deployment path; the legacy webhook executor
-does not interpret this new component contract.
+The webhook executor also supports a single declared Godot-web output;
+multi-component activation still uses the manifest-aware setup/patch path.
 
 ### Static site plus API service
 
@@ -241,7 +249,8 @@ units.
 - Repository build commands run as an application-specific non-root build
   account that cannot modify another application's active release.
 - Node and uv are provisioned in that application's persistent build home;
-  Node projects may pin the build version with `.nvmrc`. Build caches survive
+  Node projects may pin the build version with `.nvmrc` at the root and in
+  conventional `frontend/`, `client/`, or `web/` packages. Build caches survive
   release replacement without being shared between applications.
 - Static output directories and service binaries are checked before any active
   service is stopped. A declared binary must exist and be executable.

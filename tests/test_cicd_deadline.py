@@ -58,6 +58,7 @@ class TestCICDDeadline(unittest.TestCase):
                 patch.object(executor, "load_config", return_value={"repositories": [{"url": repo, "scripts": {"build": "build.sh", "test": "test.sh", "deploy": "deploy.sh"}}]}),
                 patch.object(executor, "LOGS_DIR", directory),
                 patch.object(executor, "clone_or_update_repo", return_value=True),
+                patch.object(executor, "run_manifest_workflow", return_value=True),
                 patch.object(executor, "run_script", side_effect=build) as script,
                 self.assertLogs(executor.logger, level="ERROR") as logs,
             ):

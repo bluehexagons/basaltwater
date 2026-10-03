@@ -148,7 +148,7 @@ class TestDeliveries(unittest.TestCase):
     def test_same_commit_attempts_keep_separate_logs_and_job_mapping(self):
         config = {'repositories': [{'url': self.payload['repo_url']}]}
         logs = self.root / 'logs'
-        with patch.object(executor, 'LOGS_DIR', str(logs)), patch.object(executor, 'load_config', return_value=config), patch.object(executor, 'clone_or_update_repo', return_value=True), patch.object(executor, 'load_notification_configs_from_state', return_value=[]):
+        with patch.object(executor, 'run_manifest_workflow', return_value=True), patch.object(executor, 'LOGS_DIR', str(logs)), patch.object(executor, 'load_config', return_value=config), patch.object(executor, 'clone_or_update_repo', return_value=True), patch.object(executor, 'load_notification_configs_from_state', return_value=[]):
             for index in range(2):
                 job = self.root / f'manual-{index}.json'
                 job.write_text(json.dumps(self.payload))

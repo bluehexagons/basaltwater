@@ -532,6 +532,8 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
                 "basaltwater version; use its pinned legacy release"
             )
         manifest = load_manifest(clone_path)
+        if manifest is not None and not manifest.components:
+            raise RuntimeError('This manifest contains CI workflows only; there are no deployment components')
         if manifest is None and detect_project_type(clone_path) == "node":
             raise RuntimeError(
                 f"Automatic Node deployment of {git_url} is no longer supported; "

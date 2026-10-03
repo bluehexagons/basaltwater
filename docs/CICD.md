@@ -156,11 +156,31 @@ uses `deploy_target` (a key from `deploy_targets.json`) and an optional
 ```
 
 `install`, `build`, and `test` run in a fresh, commit-pinned workspace as
-`cicd-build`. When `deploy_target` is present, artifacts are pushed with rsync,
+`cicd-build`. Before those stages, the executor validates `basaltwater.json` or
+tries the [manifest initializer](PROJECT_TOOLING.md) when it is missing. The
+generated file stays in the disposable checkout and its guidance is logged;
+CI does not commit it. Unrecognized structures retain explicit script behavior,
+while invalid metadata/manifests fail before any stage or deployment.
+An explicitly configured stage script overrides that stage in the manifest.
+Otherwise CI runs the manifest's `ci` commands; older manifests without `ci`
+use component build hooks for the build stage. Missing stages are logged and
+skipped. Node selection follows the pin/engines for each workflow directory
+and the checkout root for explicit scripts. Install the required versions and
+package managers as `cicd-build` before accepting jobs; CI does not download
+Node runtimes implicitly.
+
+When `deploy_target` is present, artifacts are pushed with rsync,
 nginx configuration is refreshed, and the optional deploy script is streamed
 to the target directory. Without `deploy_target`, the optional deploy script
 runs locally on the build server. Use repository URLs without embedded
 credentials; the executor rejects credential-bearing URLs.
+
+For a manifest-backed remote job, publishing currently supports one static or
+Godot-web component and transfers its declared `output`, which must exist.
+The server-configured `deploy_spec` supplies its hostname and route. CI-only
+packages, services, and multi-component manifests fail remote publishing before
+transfer; use direct manifest deployment for services and full-stack activation.
+Jobs with only build/test workflows and no deploy target remain valid.
 
 Remote destinations must normalize to a strict child of the target's base
 directory. A destination equal to the base (including `/.`) or outside it is
@@ -212,8 +232,9 @@ separate UID/group, no supplementary groups or capabilities, no new privileges,
 and a clean environment. The managed home is `/var/lib/basaltwater/cicd/build`
 (0700); workspaces live in its `workspaces` subdirectory. Deployment keys remain
 private under the separate `webhook` home and are not passed to build commands.
-The broker starts Python in isolated mode, so build-managed Python packages
-cannot become broker startup code. Receipt transactions use the receiver's
+Manifest discovery, generation, workflow execution, and Node selection also
+run under the build identity. The broker starts Python in isolated mode, so
+build-managed Python packages cannot become broker startup code. Receipt transactions use the receiver's
 identity so SQLite journals remain writable by the receiver.
 
 Before remote deployment, an unprivileged exporter copies build-readable bytes

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lib.types import StrDict, StrList
+from lib.atomic_io import read_json_file
 from lib.validation import (
     validate_environment_variable_name,
     validate_filesystem_path,
@@ -137,11 +138,21 @@ class Component:
 
 
 @dataclass
+class WorkflowStep:
+    """One literal command in a repository-owned CI workflow."""
+
+    argv: StrList
+    directory: str = "."
+    env: StrDict = field(default_factory=dict)
+
+
+@dataclass
 class Manifest:
     """A parsed, validated ``basaltwater.json``."""
 
     version: int
     components: list[Component]
+    ci: dict[str, list[WorkflowStep]] = field(default_factory=dict)
 
 
 def load_manifest(repo_path: str) -> Optional[Manifest]:
@@ -160,8 +171,7 @@ def load_manifest(repo_path: str) -> Optional[Manifest]:
         return None
 
     try:
-        with open(manifest_path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        data = read_json_file(manifest_path, max_bytes=256 * 1024)
     except json.JSONDecodeError as exc:
         raise ValueError(f"{MANIFEST_FILENAME}: invalid JSON: {exc}") from exc
     except OSError as exc:
@@ -225,17 +235,20 @@ def parse_manifest(data: object) -> Manifest:
     if not isinstance(data, dict):
         raise ValueError(f"{MANIFEST_FILENAME} must be a JSON object")
 
-    _reject_unknown_keys(data, {"version", "components"}, MANIFEST_FILENAME)
+    _reject_unknown_keys(data, {"version", "components", "ci"}, MANIFEST_FILENAME)
 
     version = data.get("version")
-    if version != SUPPORTED_VERSION:
+    if type(version) is not int or version != SUPPORTED_VERSION:
         raise ValueError(
             f"unsupported manifest version: {version!r} (expected {SUPPORTED_VERSION})"
         )
 
+    ci = _parse_ci(data.get("ci", {}))
     components_raw = data.get("components")
-    if not isinstance(components_raw, list) or not components_raw:
-        raise ValueError("'components' must be a non-empty array")
+    if not isinstance(components_raw, list) or (not components_raw and not ci):
+        raise ValueError("'components' must be a non-empty array unless CI workflows are declared")
+    if len(components_raw) > 100:
+        raise ValueError("'components' must contain at most 100 entries")
 
     components: list[Component] = []
     seen: set[str] = set()
@@ -246,7 +259,37 @@ def parse_manifest(data: object) -> Manifest:
         seen.add(component.name)
         components.append(component)
 
-    return Manifest(version=version, components=components)
+    return Manifest(version=version, components=components, ci=ci)
+
+
+def _parse_ci(data: object) -> dict[str, list[WorkflowStep]]:
+    if not isinstance(data, dict):
+        raise ValueError("ci must be an object of install, build, and test workflows")
+    _reject_unknown_keys(data, {"install", "build", "test"}, "ci")
+    workflows = {}
+    for stage, commands in data.items():
+        if not isinstance(commands, list) or not 1 <= len(commands) <= 100:
+            raise ValueError(f"ci.{stage} must contain 1–100 command objects")
+        steps = []
+        for command in commands:
+            where = f"ci.{stage}"
+            if not isinstance(command, dict):
+                raise ValueError(f"{where} commands must be objects with argv")
+            _reject_unknown_keys(command, {"argv", "directory", "env"}, where)
+            argv = command.get("argv")
+            if not isinstance(argv, list) or not 1 <= len(argv) <= 100:
+                raise ValueError(f"{where}.argv must contain 1–100 literal arguments")
+            for argument in argv:
+                if not isinstance(argument, str) or not argument or len(argument) > 4096:
+                    raise ValueError(f"{where}.argv arguments must be non-empty strings of at most 4096 characters")
+                validate_no_control_characters(argument, f"{where} argument")
+            directory = command.get("directory", ".")
+            if not isinstance(directory, str) or not directory:
+                raise ValueError(f"{where}.directory must be a repository-relative path")
+            _require_repo_relative(directory, "directory", where)
+            steps.append(WorkflowStep(list(argv), directory, _parse_env(command.get("env"), where)))
+        workflows[stage] = steps
+    return workflows
 
 
 def _parse_component(entry: object, index: int) -> Component:

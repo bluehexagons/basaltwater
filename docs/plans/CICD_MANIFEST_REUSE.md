@@ -3,9 +3,11 @@
 Status: queued P1 native path, after deploy secrets and transactional
 activation. Coolify evaluation is deferred; it is an optional future platform
 for complex applications and does not gate this work. As of 2026-08-09, the
-webhook CI/CD path still consumes its server-side repository/script
-configuration and does not load `basaltwater.json`.
-This is the follow-up project for teaching that path to use the shared manifest.
+webhook CI/CD path consumed only server-side repository/script configuration.
+The initial manifest integration now validates or generates `basaltwater.json`,
+runs its CI stages as the build user, preserves explicit script overrides, and
+publishes a single declared static output. This plan retains the remaining
+shared service and multi-component deployment work below.
 
 Why it is separate:
 

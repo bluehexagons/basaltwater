@@ -77,6 +77,7 @@ automation, T3 Code, skills, and hardening.
 | [Agentic coding security](AGENT_SECURITY.md) | Sudo, Codex approval/sandbox policy, hardened modes, and supply-chain boundaries |
 | [Agentic VMs](AGENTIC_VMS.md) | Headless, full-capability, approval-panel, unrestricted, and hardened VM configurations |
 | [Agent environment manifest](AGENT_ENVIRONMENT.md) | Available tools, workspace conventions, and explicit branch-to-deployment mappings |
+| [Project manifests and Node runtimes](PROJECT_TOOLING.md) | Infer build/CI/deployment defaults and select per-project Node versions |
 | [Desktop development workflows](DESKTOP_DEVELOPMENT.md) | Installed application discovery, Blender background renders, native UI checks, and further capability-awareness ideas |
 | [Visual comparisons](VISUAL_COMPARISONS.md) | Synchronized capture viewer, difference overlays, and isolated captures across Git revisions |
 | [Privilege approvals](PRIVILEGE_APPROVALS.md) | Separate HTTPS approval page, supported operations, and administrator allowlists |

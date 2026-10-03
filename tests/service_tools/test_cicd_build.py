@@ -154,6 +154,7 @@ class TestArtifactSnapshot(unittest.TestCase):
                 patch.object(executor, "load_config", return_value={"repositories": [{"url": repo, "deploy_target": "app"}]}),
                 patch.object(executor, "LOGS_DIR", str(self.root)),
                 patch.object(executor, "clone_or_update_repo", return_value=True),
+                patch.object(executor, "run_manifest_workflow", return_value=True),
                 patch.object(executor, "artifact_snapshot") as snapshot,
                 patch.object(executor, "perform_remote_deployment", return_value=True) as deploy,
                 patch.object(executor, "load_notification_configs_from_state", return_value=[]),

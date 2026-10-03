@@ -381,7 +381,7 @@ class DeploymentOrchestrator:
                 )
             reserved.add(port)
             resolved.append(replace(component, port=port))
-        return Manifest(version=manifest.version, components=resolved)
+        return Manifest(version=manifest.version, components=resolved, ci=manifest.ci)
 
     def _app_unit_names(self, dest_path: str) -> set[str]:
         app_fragment = self._sanitize_user_part(os.path.basename(dest_path.rstrip("/")))
@@ -611,6 +611,8 @@ class DeploymentOrchestrator:
         full build; incremental skip (mirroring should_redeploy) is a future
         optimization, kept out for a small, auditable surface.
         """
+        if not manifest.components:
+            raise ValueError('This manifest contains CI workflows only; there are no deployment components')
         dest_path = self.get_deployment_path(domain, path, git_url)
         parent_dir = os.path.dirname(dest_path)
         if parent_dir and not os.path.exists(parent_dir):
@@ -888,10 +890,10 @@ class DeploymentOrchestrator:
                     f"export NVM_DIR={shlex.quote(nvm_dir)}",
                     f". {shlex.quote(nvm_script)}",
                 ))
-            shell_parts.extend((
-                f"cd {shlex.quote(dest_path)}",
-                f"{env_prefix}{command}",
-            ))
+            shell_parts.append(f"cd {shlex.quote(dest_path)}")
+            if os.path.isfile(nvm_script) and os.path.isfile(os.path.join(dest_path, '.nvmrc')):
+                shell_parts.append('nvm use')
+            shell_parts.append(f"{env_prefix}{command}")
             build_shell = " && ".join(shell_parts)
             result = run(
                 f"runuser -u {shlex.quote(build_user or self.deploy_user)} -- "
@@ -914,12 +916,23 @@ class DeploymentOrchestrator:
                 install_node_for_user(build_user, build_home)
             if not os.path.isfile(nvm_script):
                 raise RuntimeError(f"Node.js toolchain setup failed for {build_user}")
-            if os.path.isfile(os.path.join(source_path, ".nvmrc")):
+            # The initializer recognizes these conventional frontend layouts.
+            # Provision their pins too, rather than silently using the API's
+            # runtime or failing later when a nested hook selects its version.
+            node_projects = [source_path]
+            node_projects.extend(
+                os.path.join(source_path, name)
+                for name in ('frontend', 'client', 'web')
+                if os.path.isfile(os.path.join(source_path, name, 'package.json'))
+            )
+            for project_path in node_projects:
+                if not os.path.isfile(os.path.join(project_path, '.nvmrc')):
+                    continue
                 nvm_dir = os.path.join(build_home, ".nvm")
                 script = " && ".join((
                     f"export NVM_DIR={shlex.quote(nvm_dir)}",
                     f". {shlex.quote(nvm_script)}",
-                    f"cd {shlex.quote(source_path)}",
+                    f"cd {shlex.quote(project_path)}",
                     "nvm install",
                 ))
                 result = run(
@@ -930,7 +943,7 @@ class DeploymentOrchestrator:
                 )
                 if result.returncode != 0:
                     error = self._get_command_error(result, "nvm install failed")
-                    raise RuntimeError(f"Node.js version setup failed for {build_user}: {error}")
+                    raise RuntimeError(f"Node.js version setup failed for {build_user} in {project_path}: {error}")
 
         if self._source_has_marker(
             source_path,

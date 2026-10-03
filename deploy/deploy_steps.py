@@ -55,6 +55,8 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
         )
 
     manifest = load_manifest(source_path)
+    if manifest is not None and not manifest.components:
+        raise ValueError("This basaltwater.json declares CI workflows only; add deployment components before deploying")
     if manifest is None and detect_project_type(source_path) == "node":
         raise RuntimeError(
             "Automatic Node deployments are no longer supported; declare "

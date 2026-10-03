@@ -776,10 +776,9 @@ class TestExecutorStructuredLogging(unittest.TestCase):
 
         self.assertTrue(result)
         args, kwargs = mock_run.call_args
-        self.assertEqual(args[0][:2], ['/bin/bash', '-lc'])
-        self.assertIn('NVM_DIR=/var/lib/basaltwater/cicd/build/.nvm', args[0][2])
-        self.assertIn('/var/lib/basaltwater/cicd/build/.local/bin', args[0][2])
-        self.assertIn(f'exec /bin/bash {script_path}', args[0][2])
+        self.assertEqual(args[0][:2], ['/usr/bin/python3', '-I'])
+        self.assertTrue(args[0][2].endswith('/lib/cicd_project.py'))
+        self.assertEqual(args[0][3:], [workspace, '--script', script_path])
         self.assertNotIn('env', kwargs)
         output = "\n".join(logs.output)
         self.assertIn(f"Running script | script_path='{script_path}'", output)
@@ -840,7 +839,8 @@ class TestExecutorStructuredLogging(unittest.TestCase):
             with open(job_file, "w") as f:
                 json.dump(job_data, f)
 
-            with patch("web.service_tools.cicd_executor.WORKSPACES_DIR", tmpdir), \
+            with patch("web.service_tools.cicd_executor.run_manifest_workflow", return_value=True), \
+                 patch("web.service_tools.cicd_executor.WORKSPACES_DIR", tmpdir), \
                  patch("web.service_tools.cicd_executor.LOGS_DIR", tmpdir):
                 with self.assertLogs(cicd_executor.logger, level="INFO") as logs:
                     result = cicd_executor.process_job(job_file)

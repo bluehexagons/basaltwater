@@ -16,7 +16,6 @@ import sys
 import json
 import shutil
 import subprocess
-import shlex
 import time
 import fcntl
 import stat
@@ -31,7 +30,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.cicd_deadline import JOB_TIMEOUT_SECONDS, command_timeout, enter_phase, job_budget, run_command
-from lib.cicd_build import BUILD_HOME, BUILD_PATH, artifact_snapshot, receiver_state, run_build_command
+from lib.cicd_build import BUILD_HOME, artifact_snapshot, receiver_state, run_build_command
+from lib import cicd_project
 from web.service_tools.cicd_config import load_config_file
 from web.service_tools.cicd_deliveries import claim, pending_job_files
 from web.service_tools.cicd_security import (
@@ -236,16 +236,6 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
         log_event(logger, 'Script escapes repository checkout', level=40)
         return False
 
-    build_home = BUILD_HOME
-    nvm_dir = os.path.join(build_home, ".nvm")
-    script_path_env = BUILD_PATH
-    script_command = (
-        f"export HOME={shlex.quote(build_home)} && "
-        f"export NVM_DIR={shlex.quote(nvm_dir)} && "
-        f"export PATH={shlex.quote(script_path_env)} && "
-        '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; '
-        f"exec /bin/bash {shlex.quote(script_path)}"
-    )
     try:
         log_event(logger, "Running script", script_path=script_path)
         
@@ -255,7 +245,7 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
             log.write(f"{'='*80}\n\n")
             
             result = run_build_command(
-                ['/bin/bash', '-lc', script_command],
+                ['/usr/bin/python3', '-I', cicd_project.__file__, workspace, '--script', script_path],
                 cwd=workspace,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -279,6 +269,18 @@ def run_script(script_path: str, workspace: str, log_file: str) -> bool:
     except Exception as e:
         log_event(logger, "Failed to run script", level=40, script_path=script_path, error=str(e))
         return False
+
+
+def run_manifest_workflow(workspace: str, log_file: str, stage: Optional[str] = None) -> bool:
+    """Generate/read metadata after dropping privileges, then run one stage."""
+    option = ['--stage', stage] if stage else ['--prepare']
+    with open(log_file, 'a') as log:
+        log.write(f"\nManifest workflow: {stage or 'prepare'}\n")
+        result = run_build_command(
+            ['/usr/bin/python3', '-I', cicd_project.__file__, workspace, *option],
+            cwd=workspace, stdout=log, stderr=subprocess.STDOUT, timeout=3600,
+        )
+        return result.returncode == 0
 
 
 def process_job(job_file: str) -> bool:
@@ -371,16 +373,20 @@ def _process_job(job_file: str) -> bool:
             return False
         
         scripts = repo_config.get('scripts', {})
-        success = True
+        enter_phase('manifest')
+        success = run_manifest_workflow(workspace, log_file)
         
         for script_name in ['install', 'build', 'test']:
+            if not success:
+                break
             script_path = scripts.get(script_name)
-            if script_path:
-                enter_phase(script_name)
-                if not run_script(script_path, workspace, log_file):
-                    log_event(logger, "Failed at stage", level=40, stage=script_name, repo_url=repo_url, commit_sha=commit_sha[:8])
-                    success = False
-                    break
+            enter_phase(script_name)
+            passed = (run_script(script_path, workspace, log_file) if script_path
+                      else run_manifest_workflow(workspace, log_file, script_name))
+            if not passed:
+                log_event(logger, "Failed at stage", level=40, stage=script_name, repo_url=repo_url, commit_sha=commit_sha[:8])
+                success = False
+                break
         
         if success:
             deploy_target = repo_config.get('deploy_target')
@@ -483,7 +489,27 @@ def perform_remote_deployment(
     project_type = detect_project_type(workspace)
     log_event(logger, "Detected project type", deploy_target=deploy_target, project_type=project_type)
     
-    serve_path = get_project_root(workspace, project_type)
+    from lib.project_manifest import load_manifest
+    try:
+        manifest = load_manifest(workspace)
+        if manifest is None:
+            serve_path = get_project_root(workspace, project_type)
+        else:
+            if len(manifest.components) != 1 or manifest.components[0].type not in {'static', 'godot-web'}:
+                raise ValueError('Remote CI publishing supports one static component; use direct manifest deployment for services/full-stack projects')
+            component = manifest.components[0]
+            serve_path = str((Path(workspace) / component.output).resolve())
+            if not Path(serve_path).is_relative_to(Path(workspace).resolve()) or not os.path.isdir(serve_path):
+                raise ValueError('Manifest static output is missing or escapes the artifact snapshot')
+            project_type = component.type
+            if component.type == 'godot-web':
+                from lib.godot_deploy import validate_godot_export
+                validate_godot_export(serve_path, workspace)
+    except (OSError, ValueError) as exc:
+        log_event(logger, 'Manifest deployment preflight failed', level=40, error=str(exc))
+        with open(log_file, 'a') as log:
+            log.write(f'\n✗ Manifest deployment preflight failed: {exc}\n')
+        return False
     base_dir = target.get('base_dir', '/var/www')
     
     from lib.deploy_utils import create_safe_directory_name
