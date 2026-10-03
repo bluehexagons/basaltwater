@@ -167,7 +167,7 @@ def _prepare_proxmox_restart(config: SetupConfig) -> bool:
 
 def _restart_local_proxmox() -> int:
     """Complete an explicitly requested restart independently of the controller."""
-    from lib.proxmox_maintenance import collect_local_maintenance_report
+    from lib.proxmox_preflight import check_proxmox_update_safety
 
     try:
         with maintenance_lock() as acquired:
@@ -179,9 +179,7 @@ def _restart_local_proxmox() -> int:
                 return 0
             if status != "needed-proxmox":
                 raise RuntimeError("target is not a reboot-capable Proxmox host")
-            report = collect_local_maintenance_report()
-            if not report.healthy or report.locked_guests:
-                raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
+            report = check_proxmox_update_safety()
             if report.running_guests:
                 guests = ", ".join(str(guest.vmid) for guest in report.running_guests)
                 print(f"Gracefully shutting down Proxmox guests: {guests}", flush=True)
@@ -189,7 +187,7 @@ def _restart_local_proxmox() -> int:
                     return 1
                 # stopall can finish successfully despite a failed guest
                 # shutdown, and skips HA-managed guests. Verify evacuation.
-                report = collect_local_maintenance_report()
+                report = check_proxmox_update_safety(require_evacuated=True)
             if not report.reboot_safe:
                 raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
             print("Proxmox maintenance checks passed; requesting host reboot", flush=True)
@@ -301,6 +299,40 @@ def _wait_for_remote_restart(
     return False
 
 
+def _verify_proxmox_restart(config: SetupConfig) -> bool:
+    """Allow boot services to settle, then require a healthy Proxmox audit."""
+    from lib.proxmox_hosts import ProxmoxHost
+    from lib.proxmox_maintenance import collect_maintenance_report, format_maintenance_report
+
+    deadline = time.monotonic() + _RESTART_WAIT_SECONDS
+    host = ProxmoxHost(name=config.host, address=config.host, user="root", ssh_key=config.ssh_key)
+    detail = "Proxmox services did not become ready"
+    report = None
+
+    def probe(_host: ProxmoxHost, command: str) -> subprocess.CompletedProcess[str]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Proxmox post-reboot audit deadline reached")
+        return _ssh_result(config, command, timeout=min(30, remaining))
+
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            report = collect_maintenance_report(host, command_runner=probe)
+        except (OSError, TimeoutError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+            detail = str(exc)
+        else:
+            if report.healthy:
+                print(format_maintenance_report(report))
+                return True
+            detail = "; ".join(report.errors) or detail
+        time.sleep(min(_POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
+
+    if report is not None:
+        print(format_maintenance_report(report))
+    print(f"Error: Proxmox host {config.host} is unhealthy after restart: {detail}")
+    return False
+
+
 def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) -> int:
     """Restart after successful setup when the target has a reboot marker."""
 
@@ -363,4 +395,9 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
     print("  ✓ Restart completed; running host health checks")
     from lib.sysadmin_health import run_health
 
-    return run_health(config.host, config.username, config.ssh_key)
+    health_status = run_health(config.host, config.username, config.ssh_key)
+    if health_status != 0:
+        return health_status
+    if proxmox and not _verify_proxmox_restart(config):
+        return 1
+    return 0

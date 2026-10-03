@@ -15,7 +15,11 @@ from lib.proxmox_memory import (
 )
 from lib.remote_utils import is_dry_run, run
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
-from lib.proxmox_preflight import check_proxmox_installation
+from lib.proxmox_preflight import (
+    check_proxmox_installation,
+    check_proxmox_package_state,
+    check_proxmox_upgrade_candidate,
+)
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -41,9 +45,10 @@ def preflight_proxmox(config: SetupConfig) -> None:
             "omit it to preserve cluster migration, replication, and console access"
         )
     if is_dry_run():
-        print("  Would verify Proxmox VE 9.2, Debian trixie, and stable APT repositories")
+        print("  Would verify Proxmox VE 9.2, Debian trixie, stable APT repositories, and package state")
         return
     check_proxmox_installation()
+    check_proxmox_package_state()
     refreshed = run(
         shlex.join(["apt-get", "update"] + APT_LOCK_OPTIONS + APT_UPDATE_OPTIONS),
         check=False, capture_output=True,
@@ -54,6 +59,7 @@ def preflight_proxmox(config: SetupConfig) -> None:
             "and subscription validity for enabled enterprise repositories: "
             + (refreshed.stderr or refreshed.stdout or "unknown APT error").strip()
         )
+    check_proxmox_upgrade_candidate()
     print("  ✓ Supported Proxmox installation and repository access verified")
 
 

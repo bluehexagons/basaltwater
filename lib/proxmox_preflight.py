@@ -8,7 +8,7 @@ import shutil
 from urllib.parse import urlsplit
 
 from lib.apt_sources import inspect_apt_sources
-from lib.proxmox_maintenance import collect_local_maintenance_report
+from lib.proxmox_maintenance import ProxmoxMaintenanceReport, collect_local_maintenance_report
 from lib.remote_utils import read_os_release, run
 from lib.validation import validate_filesystem_path
 
@@ -111,16 +111,8 @@ def check_proxmox_upgrade_candidate() -> None:
         )
 
 
-def check_proxmox_update_safety(*, require_evacuated: bool = False) -> None:
-    """Gate a local unattended transaction without coordinating other nodes."""
-    if _read_config("/etc/pve/ha/resources.cfg").strip():
-        raise RuntimeError("HA resources require operator-managed Proxmox updates")
-    storage = _read_config("/etc/pve/storage.cfg", required=True)
-    if re.search(r"^\s*(rbd|cephfs)\s*:", storage, re.MULTILINE) or any(
-        _read_config(path).strip()
-        for path in ("/etc/pve/ceph.conf", "/etc/ceph/ceph.conf")
-    ):
-        raise RuntimeError("Ceph requires operator-managed Proxmox updates")
+def check_proxmox_package_state() -> None:
+    """Reject incomplete transactions and held core packages before mutations."""
     audit = run("dpkg --audit", check=False, capture_output=True, timeout=60)
     if audit.returncode != 0 or (audit.stdout or "").strip() or (audit.stderr or "").strip():
         raise RuntimeError("dpkg reports an incomplete package transaction; repair it first")
@@ -136,8 +128,22 @@ def check_proxmox_update_safety(*, require_evacuated: bool = False) -> None:
     )]
     if held_core:
         raise RuntimeError("Held Proxmox packages require review: " + ", ".join(held_core))
+
+
+def check_proxmox_update_safety(*, require_evacuated: bool = False) -> ProxmoxMaintenanceReport:
+    """Gate node maintenance and return its audit without coordinating other nodes."""
+    if _read_config("/etc/pve/ha/resources.cfg").strip():
+        raise RuntimeError("HA resources require operator-managed Proxmox maintenance")
+    storage = _read_config("/etc/pve/storage.cfg", required=True)
+    if re.search(r"^\s*(rbd|cephfs)\s*:", storage, re.MULTILINE) or any(
+        _read_config(path).strip()
+        for path in ("/etc/pve/ceph.conf", "/etc/ceph/ceph.conf")
+    ):
+        raise RuntimeError("Ceph requires operator-managed Proxmox maintenance")
+    check_proxmox_package_state()
     report = collect_local_maintenance_report()
     if not report.healthy:
         raise RuntimeError("Proxmox maintenance checks failed: " + "; ".join(report.errors))
     if require_evacuated and not report.reboot_safe:
         raise RuntimeError("Proxmox reboot blocked: " + "; ".join(report.reboot_blockers()))
+    return report

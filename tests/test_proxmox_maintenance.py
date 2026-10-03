@@ -36,6 +36,10 @@ def _storage_status(name: str = "local", *, enabled: int = 1, active: int = 1) -
     return json.dumps([{"storage": name, "enabled": enabled, "active": active}])
 
 
+def _filesystem_capacity(root: str = "5000000 100000 50000", boot: str | None = None) -> str:
+    return f"Avail Inodes IFree\n{root}\n{boot or root}\n"
+
+
 def _healthy_memory_diagnostics() -> list[subprocess.CompletedProcess[str]]:
     return [
         _result(
@@ -76,7 +80,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("[]"),
             _result("[]"),
             _result(_storage_status()),
-            _result("5000000\n"),
+            _result(_filesystem_capacity()),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
 
@@ -87,6 +91,8 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertFalse(report.clustered)
         self.assertEqual(report.storage_states, {"local": "active"})
         self.assertFalse(report.reboot_required)
+        self.assertEqual(report.boot_free_bytes, 5000000 * 1024)
+        self.assertEqual(report.root_free_inodes, 50000)
         self.assertIn(
             "pvesh get /nodes/$(hostname -s)/storage --output-format json",
             [call.args[1] for call in mock_run.call_args_list],
@@ -126,7 +132,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result('[{"vmid": 100, "name": "web", "status": "running"}]'),
             _result('[{"vmid": 200, "name": "db", "status": "stopped"}]'),
             _result(_storage_status()),
-            _result("5000000\n"),
+            _result(_filesystem_capacity()),
             _result(),
         ] + _healthy_memory_diagnostics()
 
@@ -150,7 +156,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result('[{"vmid": 100, "name": "web", "status": "running", "lock": "backup"}]'),
             _result("[]"),
             _result(_storage_status("backup", active=0)),
-            _result("1000\n"),
+            _result(_filesystem_capacity("1000 100000 50000")),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
 
@@ -174,7 +180,7 @@ class TestCollectMaintenanceReport(unittest.TestCase):
             _result("[]"),
             _result("[]"),
             _result(_storage_status()),
-            _result("5000000\n"),
+            _result(_filesystem_capacity()),
             _result(returncode=1),
             _result(
                 json.dumps(
@@ -302,12 +308,63 @@ class TestCollectMaintenanceReport(unittest.TestCase):
         self.assertFalse(report.healthy)
         self.assertTrue(any("probe failed" in error for error in report.errors))
 
+    @patch("lib.proxmox_maintenance._run")
+    def test_separate_boot_space_and_root_or_boot_inode_exhaustion_block_maintenance(self, command) -> None:
+        for root, boot, reason in (
+            ("5000000 100000 50000", "262143 10000 5000", "256 MiB"),
+            ("5000000 100000 1023", "500000 10000 5000", "1024 free inodes"),
+            ("5000000 100000 50000", "500000 10000 127", "128 free inodes"),
+        ):
+            with self.subTest(reason=reason):
+                results = self._inventory_results("[]")
+                results[7] = _result(_filesystem_capacity(root, boot))
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertFalse(report.healthy)
+                self.assertFalse(report.reboot_safe)
+                self.assertTrue(any(reason in error for error in report.errors))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_capacity_thresholds_and_filesystems_without_fixed_inode_limits_pass(self, command) -> None:
+        for root, boot in (
+            ("4194304 100000 1024", "262144 10000 128"),
+            ("5000000 0 0", "500000 0 0"),
+        ):
+            with self.subTest(root=root, boot=boot):
+                results = self._inventory_results("[]")
+                results[7] = _result(_filesystem_capacity(root, boot))
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertTrue(report.healthy)
+                self.assertIn("boot_free_bytes", report.to_dict())
+                self.assertIn("root_free_inodes", report.to_dict())
+                if report.root_total_inodes == 0:
+                    self.assertIn("no fixed limit", format_maintenance_report(report))
+
+    @patch("lib.proxmox_maintenance._run")
+    def test_missing_malformed_and_failed_capacity_probes_block_maintenance(self, command) -> None:
+        for result in (
+            _result(""), _result("Avail Inodes IFree\n5000000 100000 50000\n"),
+            _result(_filesystem_capacity("-1 100000 50000")),
+            _result(_filesystem_capacity("5000000 10000 50000")),
+            _result(_filesystem_capacity("5000000 unknown 50000")),
+            _result(_filesystem_capacity(), returncode=1, stderr="/boot unavailable"),
+        ):
+            with self.subTest(result=result):
+                results = self._inventory_results("[]")
+                results[7] = result
+                command.side_effect = results
+                report = collect_maintenance_report(self.host)
+                self.assertFalse(report.healthy)
+                self.assertTrue(any("capacity" in error for error in report.errors))
+                self.assertIsNone(report.boot_free_bytes)
+
     @staticmethod
     def _inventory_results(vm_inventory: str) -> list[subprocess.CompletedProcess[str]]:
         return [
             _result("pve1\n"), _result(_active_services()), _result(returncode=1),
             _result("[]"), _result("[]"), _result(vm_inventory),
-            _result(_storage_status()), _result("5000000\n"),
+            _result(_storage_status()), _result(_filesystem_capacity()),
             _result(returncode=1),
         ] + _healthy_memory_diagnostics()
 

@@ -104,7 +104,7 @@ class TestLocalUpdateSafety(unittest.TestCase):
 
     def test_healthy_node_allows_package_update_with_running_guest_but_blocks_reboot(self) -> None:
         self.report.running_guests = [ContainerInfo(vmid=100, status="running", name="web")]
-        check_proxmox_update_safety()
+        self.assertIs(check_proxmox_update_safety(), self.report)
         with self.assertRaisesRegex(RuntimeError, "running guests: 100"):
             check_proxmox_update_safety(require_evacuated=True)
 
@@ -169,6 +169,10 @@ class TestLocalUpdateSafety(unittest.TestCase):
 
 
 class TestSetupPreflight(unittest.TestCase):
+    def setUp(self) -> None:
+        self.packages = self.enterContext(patch("common.proxmox_steps.check_proxmox_package_state"))
+        self.candidate = self.enterContext(patch("common.proxmox_steps.check_proxmox_upgrade_candidate"))
+
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
     @patch("common.proxmox_steps.check_proxmox_installation")
@@ -177,7 +181,43 @@ class TestSetupPreflight(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "subscription validity"):
             preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
         installation.assert_called_once()
+        self.packages.assert_called_once()
+        self.candidate.assert_not_called()
         self.assertIn("APT::Update::Error-Mode=any", command.call_args.args[0])
+
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.check_proxmox_installation")
+    def test_package_state_failure_stops_before_repository_refresh(self, installation, _dry_run, command) -> None:
+        self.packages.side_effect = RuntimeError("dpkg reports an incomplete package transaction")
+        with self.assertRaisesRegex(RuntimeError, "incomplete package transaction"):
+            preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+        installation.assert_called_once()
+        command.assert_not_called()
+        self.candidate.assert_not_called()
+
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.check_proxmox_installation")
+    def test_refreshed_candidate_is_checked_before_setup_proceeds(self, installation, _dry_run, command) -> None:
+        command.return_value = subprocess.CompletedProcess([], 0, "", "")
+        self.candidate.side_effect = RuntimeError("APT candidate is not supported")
+        with self.assertRaisesRegex(RuntimeError, "candidate is not supported"):
+            preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+        installation.assert_called_once()
+        self.packages.assert_called_once()
+        command.assert_called_once()
+        self.candidate.assert_called_once()
+
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps.is_dry_run", return_value=True)
+    @patch("common.proxmox_steps.check_proxmox_installation")
+    def test_dry_run_does_not_read_or_mutate_package_state(self, installation, _dry_run, command) -> None:
+        preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox", dry_run=True))
+        installation.assert_not_called()
+        self.packages.assert_not_called()
+        self.candidate.assert_not_called()
+        command.assert_not_called()
 
     @patch("common.proxmox_steps.run")
     def test_root_forwarding_restrictions_rejected_before_commands(self, command) -> None:

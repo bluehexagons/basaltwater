@@ -138,10 +138,12 @@ Setup verifies Proxmox VE 9.2 on Debian 13 (`trixie`), enabled Debian base and
 security sources, and the stable Proxmox enterprise or no-subscription channel
 before the first profile change. Test channels and mixed official Debian or
 Proxmox suites stop setup. A strict repository refresh must succeed, including
-subscription authentication when enterprise sources are enabled. Repository
-selection stays operator-owned; setup does not switch a host to no-subscription
-or perform a release upgrade. `--harden-user` is rejected for this profile
-because its forwarding restrictions would interfere with root's cluster SSH.
+subscription authentication when enterprise sources are enabled. Setup
+also rejects incomplete package transactions and held core Proxmox
+packages, and checks the refreshed `pve-manager` candidate before proceeding.
+Repository selection stays operator-owned; setup does not switch a host to
+no-subscription or perform a release upgrade. `--harden-user` is rejected for
+this profile because its forwarding restrictions would interfere with root's cluster SSH.
 
 SSH hardening uses an early `00-basaltwater-hardening.conf` drop-in and verifies
 the effective key-only policy with `sshd -T` for root and the setup account,
@@ -215,12 +217,20 @@ lock, verifies health and guest locks, uses Proxmox's configured shutdown order
 without forcing guests off, and repeats the audit before rebooting. Shutdown
 has a 180-second default per guest, overridden by its configured shutdown
 timeout, and a 30-minute overall wait limit. Remaining guests or failed checks
-block the host reboot; some guests may already be stopped. HA-managed guests
-require operator-managed maintenance. The job continues if its controller is
-one of the guests being stopped. Add `--wait-for-restart` for remote boot and
-health verification, or inspect the node's job logs with
+block the host reboot; some guests may already be stopped. Configured HA
+resources, local Ceph configuration, and RBD/CephFS storage require
+operator-managed maintenance and are rejected before guest shutdown. Incomplete
+package transactions and held core packages also block this reboot job.
+The job continues if its controller is one of the guests being stopped.
+Add `--wait-for-restart` for remote boot and health verification, or inspect
+the node's job logs with
 `sudo journalctl -u 'basaltwater-setup-reboot-*' --no-pager`. Existing Proxmox
 autostart and HA policies control guest startup after the host returns.
+After SSH returns, `--wait-for-restart` also waits up to five minutes for a
+healthy Proxmox audit covering services, quorum, tasks, guest locks, and storage.
+Autostart guests may be running; evacuation is required before reboot only.
+The setup command exits nonzero if this verification fails, even when the
+general host health summary can still be read over SSH.
 
 The default setup installs these recurring host-maintenance timers:
 
@@ -230,9 +240,9 @@ The default setup installs these recurring host-maintenance timers:
   06:00; Debian's competing APT timers are retired only after this replacement
   is verified active. The job checks the supported release and repositories,
   package consistency and holds, core services, quorum, active tasks, guest
-  locks, storage availability, and root free space before upgrading. It repeats
-  health checks after refreshing indexes and after upgrading, and refuses an
-  APT candidate outside the supported release. HA and Ceph configurations
+  locks, storage availability, and root/boot disk and inode headroom before
+  upgrading. It repeats health checks after refreshing indexes and after
+  upgrading, and refuses an APT candidate outside the supported release. HA and Ceph configurations
   require operator-managed updates and produce a notification instead.
 - `auto-restart-if-needed.timer` checks daily at 02:00 and after boot, but the
   default Proxmox policy records and reports a deferral instead of rebooting.
@@ -748,9 +758,13 @@ basaltw proxmox audit pve1 --json
 ```
 
 The audit checks core Proxmox services, quorum on clustered nodes, active tasks,
-configured storage, at least 4 GiB of free root space, guest locks, running
-guests, and whether a reboot is pending. Task, guest, and storage inventories
-must return valid JSON; empty or malformed responses block maintenance.
+configured storage, guest locks, running guests, and whether a reboot is pending.
+Root must have at least 4 GiB free and `/boot` at least 256 MiB, including when
+it uses a separate filesystem. Filesystems with fixed inode limits also need
+at least 1024 free root inodes and 128 free boot inodes. Invalid or incomplete
+capacity responses block maintenance, including automated kernel installation.
+Task, guest, and storage inventories must return valid JSON; empty or malformed
+responses block maintenance.
 Every enabled storage pool must be accessible, while disabled pools are
 reported separately. It also reports host RAM and swap use,
 swap devices, swappiness, and whether the previous boot journal is retained.

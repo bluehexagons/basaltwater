@@ -21,6 +21,9 @@ from lib.validation import validate_proxmox_storage_name
 
 
 MIN_ROOT_FREE_BYTES = 4 * 1024 ** 3
+MIN_BOOT_FREE_BYTES = 256 * 1024 ** 2
+MIN_ROOT_FREE_INODES = 1024
+MIN_BOOT_FREE_INODES = 128
 CORE_SERVICES = (
     "pve-cluster",
     "pvedaemon",
@@ -52,6 +55,11 @@ class ProxmoxMaintenanceReport:
     locked_guests: list[ContainerInfo] = field(default_factory=list)
     storage_states: dict[str, str] = field(default_factory=dict)
     root_free_bytes: Optional[int] = None
+    boot_free_bytes: Optional[int] = None
+    root_total_inodes: Optional[int] = None
+    root_free_inodes: Optional[int] = None
+    boot_total_inodes: Optional[int] = None
+    boot_free_inodes: Optional[int] = None
     reboot_required: Optional[bool] = None
     memory_used_bytes: Optional[int] = None
     memory_total_bytes: Optional[int] = None
@@ -101,6 +109,11 @@ class ProxmoxMaintenanceReport:
             "locked_guests": [asdict(guest) for guest in self.locked_guests],
             "storage_states": dict(self.storage_states),
             "root_free_bytes": self.root_free_bytes,
+            "boot_free_bytes": self.boot_free_bytes,
+            "root_total_inodes": self.root_total_inodes,
+            "root_free_inodes": self.root_free_inodes,
+            "boot_total_inodes": self.boot_total_inodes,
+            "boot_free_inodes": self.boot_free_inodes,
             "reboot_required": self.reboot_required,
             "memory_used_bytes": self.memory_used_bytes,
             "memory_total_bytes": self.memory_total_bytes,
@@ -198,6 +211,46 @@ def _parse_guest_inventory(stdout: str, guest_type: str) -> list[ContainerInfo]:
         seen.add(vmid)
         guests.append(ContainerInfo(vmid=vmid, status=status, name=name, guest_type=guest_type, lock=lock))
     return guests
+
+
+def _collect_filesystem_capacity(
+    host: ProxmoxHost,
+    report: ProxmoxMaintenanceReport,
+    run_command: CommandRunner,
+) -> None:
+    """Check kernel-installation headroom, including a separate /boot mount."""
+    result = run_command(host, "LC_ALL=C df -k --output=avail,itotal,iavail / /boot")
+    if result.returncode != 0:
+        report.errors.append(f"Could not read root and boot capacity: {_failure_detail(result)}")
+        return
+    try:
+        lines = result.stdout.splitlines()
+        if len(lines) != 3 or lines[0].split() != ["Avail", "Inodes", "IFree"]:
+            raise ValueError("Incomplete filesystem capacity response")
+        capacity = []
+        for line in lines[1:]:
+            fields = line.split()
+            if len(fields) != 3 or not all(field.isascii() and field.isdecimal() for field in fields):
+                raise ValueError("Invalid filesystem capacity values")
+            available, total_inodes, free_inodes = map(int, fields)
+            if free_inodes > total_inodes:
+                raise ValueError("Free inode count exceeds total")
+            capacity.append((available * 1024, total_inodes, free_inodes))
+    except (TypeError, ValueError) as exc:
+        report.errors.append(f"Could not parse root and boot capacity: {exc}")
+        return
+
+    report.root_free_bytes, report.root_total_inodes, report.root_free_inodes = capacity[0]
+    report.boot_free_bytes, report.boot_total_inodes, report.boot_free_inodes = capacity[1]
+    if report.root_free_bytes < MIN_ROOT_FREE_BYTES:
+        report.errors.append("Root filesystem has less than 4 GiB free")
+    if report.boot_free_bytes < MIN_BOOT_FREE_BYTES:
+        report.errors.append("Boot filesystem has less than 256 MiB free")
+    # Btrfs and FAT can report 0/0 because they have no fixed inode table.
+    if report.root_total_inodes and report.root_free_inodes < MIN_ROOT_FREE_INODES:
+        report.errors.append("Root filesystem has fewer than 1024 free inodes")
+    if report.boot_total_inodes and report.boot_free_inodes < MIN_BOOT_FREE_INODES:
+        report.errors.append("Boot filesystem has fewer than 128 free inodes")
 
 
 def _collect_memory_diagnostics(
@@ -423,17 +476,7 @@ def collect_maintenance_report(
                     if state == "inactive":
                         report.errors.append(f"Storage {storage_name} is {state}")
 
-        root_free = run_command(host, "df -Pk / | awk 'NR==2 {print $4}'")
-        if root_free.returncode != 0:
-            report.errors.append(f"Could not read root free space: {_failure_detail(root_free)}")
-        else:
-            try:
-                report.root_free_bytes = int(root_free.stdout.strip()) * 1024
-            except ValueError:
-                report.errors.append("Could not parse root free space")
-            else:
-                if report.root_free_bytes < MIN_ROOT_FREE_BYTES:
-                    report.errors.append("Root filesystem has less than 4 GiB free")
+        _collect_filesystem_capacity(host, report, run_command)
 
         reboot_required = run_command(host, "test -f /var/run/reboot-required")
         if reboot_required.returncode in (0, 1):
@@ -467,6 +510,12 @@ def _format_bytes(value: Optional[int]) -> str:
     return f"{value / 1024 ** 3:.1f} GiB"
 
 
+def _format_free_inodes(free: Optional[int], total: Optional[int]) -> str:
+    if total is None:
+        return "unknown"
+    return "no fixed limit" if total == 0 else f"{free} free"
+
+
 def format_maintenance_report(report: ProxmoxMaintenanceReport) -> str:
     """Return a compact operator-facing maintenance report."""
     cluster = "unknown"
@@ -493,6 +542,9 @@ def format_maintenance_report(report: ProxmoxMaintenanceReport) -> str:
         f"  locked guests:  {len(report.locked_guests)}",
         f"  storage:        {storage_text}",
         f"  root free:      {_format_bytes(report.root_free_bytes)}",
+        f"  boot free:      {_format_bytes(report.boot_free_bytes)}",
+        f"  root inodes:    {_format_free_inodes(report.root_free_inodes, report.root_total_inodes)}",
+        f"  boot inodes:    {_format_free_inodes(report.boot_free_inodes, report.boot_total_inodes)}",
         "  host memory:    "
         f"{_format_bytes(report.memory_used_bytes)} / "
         f"{_format_bytes(report.memory_total_bytes)}",
@@ -534,6 +586,9 @@ def format_maintenance_report(report: ProxmoxMaintenanceReport) -> str:
 __all__ = [
     "CORE_SERVICES",
     "MIN_ROOT_FREE_BYTES",
+    "MIN_BOOT_FREE_BYTES",
+    "MIN_ROOT_FREE_INODES",
+    "MIN_BOOT_FREE_INODES",
     "ProxmoxMaintenanceReport",
     "collect_maintenance_report",
     "collect_local_maintenance_report",

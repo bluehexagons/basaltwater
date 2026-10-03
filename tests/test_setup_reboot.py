@@ -118,6 +118,7 @@ class RestartWorkflowTests(unittest.TestCase):
         self.boot = self.enterContext(patch.object(setup_reboot, "_boot_id", return_value=OLD_BOOT_ID))
         self.wait = self.enterContext(patch.object(setup_reboot, "_wait_for_remote_restart", return_value=True))
         self.health = self.enterContext(patch("lib.sysadmin_health.run_health", return_value=0))
+        self.proxmox_health = self.enterContext(patch.object(setup_reboot, "_verify_proxmox_restart", return_value=True))
 
     def test_dry_run_and_invalid_wait_do_not_probe_or_restart(self) -> None:
         self.assertEqual(setup_reboot.restart_after_setup(_config(dry_run=True), wait_for_restart=True), 0)
@@ -142,6 +143,7 @@ class RestartWorkflowTests(unittest.TestCase):
         self.boot.assert_not_called()
         self.wait.assert_not_called()
         self.health.assert_not_called()
+        self.proxmox_health.assert_not_called()
 
     def test_request_without_wait_skips_boot_and_health_probes(self) -> None:
         config = _config()
@@ -201,6 +203,16 @@ class RestartWorkflowTests(unittest.TestCase):
             self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 0)
         self.request.assert_called_once_with(config, proxmox=True)
         self.wait.assert_called_once_with(config, OLD_BOOT_ID, timeout_seconds=2100)
+        self.proxmox_health.assert_called_once_with(config)
+
+    def test_failed_proxmox_post_reboot_audit_fails_setup_result(self) -> None:
+        self.status.return_value = "needed-proxmox"
+        self.proxmox_health.return_value = False
+        config = _config()
+        with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
+            self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 1)
+        self.health.assert_called_once()
+        self.proxmox_health.assert_called_once_with(config)
 
     def test_failed_boot_probe_does_not_schedule_proxmox_guest_shutdown(self) -> None:
         self.status.return_value = "needed-proxmox"
@@ -348,7 +360,7 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
     def setUp(self) -> None:
         self.lock = self.enterContext(patch.object(setup_reboot, "maintenance_lock", side_effect=lambda: nullcontext(True)))
         self.status = self.enterContext(patch.object(setup_reboot, "_local_restart_status", return_value="needed-proxmox"))
-        self.collect = self.enterContext(patch("lib.proxmox_maintenance.collect_local_maintenance_report"))
+        self.collect = self.enterContext(patch("lib.proxmox_preflight.check_proxmox_update_safety"))
         self.shutdown = self.enterContext(patch.object(setup_reboot, "_shutdown_proxmox_guests", return_value=True))
         self.reboot = self.enterContext(patch.object(setup_reboot, "run", return_value=_result()))
         self.running = ProxmoxMaintenanceReport("pve1", "localhost", running_guests=[MagicMock(vmid=107)])
@@ -372,6 +384,7 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
         self.shutdown.assert_called_once_with()
         self.assertEqual(self.collect.call_count, 2)
+        self.assertEqual(self.collect.call_args.kwargs, {"require_evacuated": True})
         self.assertEqual(self.reboot.call_args.args[0], ["/usr/bin/systemctl", "reboot", "--no-wall"])
 
     def test_busy_lock_or_cleared_marker_never_stops_guests(self) -> None:
@@ -390,7 +403,7 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
             ProxmoxMaintenanceReport("pve1", "localhost", locked_guests=[MagicMock(vmid=107)]),
         ):
             with self.subTest(report=report):
-                self.collect.return_value = report
+                self.collect.side_effect = RuntimeError("; ".join(report.reboot_blockers()))
                 self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
         self.shutdown.assert_not_called()
         self.reboot.assert_not_called()
@@ -406,8 +419,21 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
             ProxmoxMaintenanceReport("pve1", "localhost", locked_guests=[MagicMock(vmid=107)]),
         ):
             with self.subTest(final=final):
-                self.collect.side_effect = [self.running, final]
+                self.collect.side_effect = [self.running, RuntimeError("; ".join(final.reboot_blockers()))]
                 self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.reboot.assert_not_called()
+
+    def test_operator_managed_topologies_and_package_state_block_before_shutdown(self) -> None:
+        for reason in (
+            "HA resources require operator-managed Proxmox maintenance",
+            "Ceph requires operator-managed Proxmox maintenance",
+            "dpkg reports an incomplete package transaction",
+            "Held Proxmox packages require review",
+        ):
+            with self.subTest(reason=reason):
+                self.collect.side_effect = RuntimeError(reason)
+                self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.shutdown.assert_not_called()
         self.reboot.assert_not_called()
 
     def test_target_no_longer_capable_of_proxmox_reboot_never_stops_guests(self) -> None:
@@ -431,6 +457,55 @@ class ProxmoxTargetRestartTests(unittest.TestCase):
         self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
         self.shutdown.assert_not_called()
         self.reboot.assert_called_once()
+
+
+class ProxmoxRestartVerificationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.collect = self.enterContext(patch("lib.proxmox_maintenance.collect_maintenance_report"))
+        self.remote = self.enterContext(patch.object(setup_reboot, "_ssh_result", return_value=_result()))
+        self.sleep = self.enterContext(patch.object(setup_reboot.time, "sleep"))
+        self.enterContext(patch.object(setup_reboot.time, "monotonic", return_value=0))
+        self.healthy = ProxmoxMaintenanceReport("pve1", "example.test", running_guests=[MagicMock(vmid=107)])
+
+    def test_readiness_wait_accepts_autostart_guests_and_recovers_from_boot_failures(self) -> None:
+        self.collect.side_effect = [
+            OSError("SSH reconnecting"),
+            ProxmoxMaintenanceReport("pve1", "example.test", errors=["pveproxy activating"]),
+            self.healthy,
+        ]
+        self.assertTrue(setup_reboot._verify_proxmox_restart(_config()))
+        self.assertEqual(self.collect.call_count, 3)
+        self.assertEqual(self.sleep.call_count, 2)
+        self.remote.assert_not_called()
+
+    def test_post_reboot_failure_is_bounded_and_does_not_claim_success(self) -> None:
+        self.collect.return_value = ProxmoxMaintenanceReport("pve1", "example.test", errors=["Storage local inactive"])
+        output = io.StringIO()
+        with (
+            patch.object(setup_reboot, "_RESTART_WAIT_SECONDS", 5),
+            patch.object(setup_reboot.time, "monotonic", side_effect=(0, 4, 5, 5)),
+            redirect_stdout(output),
+        ):
+            self.assertFalse(setup_reboot._verify_proxmox_restart(_config()))
+        self.assertIn("unhealthy after restart", output.getvalue())
+        self.assertIn("Storage local inactive", output.getvalue())
+
+    def test_audit_commands_share_remaining_deadline_and_saved_root_identity(self) -> None:
+        def audit(host, *, command_runner):
+            self.assertEqual((host.address, host.user, host.ssh_key), ("example.test", "root", "/keys/private"))
+            command_runner(host, "systemctl is-active pveproxy")
+            with self.assertRaises(TimeoutError):
+                command_runner(host, "late command")
+            return self.healthy
+
+        self.collect.side_effect = audit
+        config = _config(ssh_key="/keys/private")
+        with (
+            patch.object(setup_reboot, "_RESTART_WAIT_SECONDS", 5),
+            patch.object(setup_reboot.time, "monotonic", side_effect=(0, 0, 4, 5)),
+        ):
+            self.assertTrue(setup_reboot._verify_proxmox_restart(config))
+        self.remote.assert_called_once_with(config, "systemctl is-active pveproxy", timeout=1)
 
 
 class RestartCliTests(unittest.TestCase):
