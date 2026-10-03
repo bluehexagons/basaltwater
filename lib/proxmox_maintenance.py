@@ -168,7 +168,7 @@ def _parse_storage_status(stdout: str) -> tuple[dict[str, str], set[str]]:
     if not isinstance(payload, list):
         raise ValueError("Storage response was not a JSON list")
     states: dict[str, str] = {}
-    network_backups: set[str] = set()
+    network_storage: set[str] = set()
     for entry in payload:
         if not isinstance(entry, dict):
             raise ValueError("Storage response contains an invalid entry")
@@ -186,12 +186,11 @@ def _parse_storage_status(stdout: str) -> tuple[dict[str, str], set[str]]:
             "disabled" if not entry["enabled"]
             else "active" if entry["active"] else "inactive"
         )
-        # Only an exact backup-only content declaration qualifies. Missing or
-        # unexpected metadata must never exempt guest disks, ISO images, or
-        # snippets from the storage gate.
-        if entry.get("type") in ("cifs", "nfs", "pbs") and entry.get("content") == "backup":
-            network_backups.add(name)
-    return states, network_backups
+        # An explicit restart permits an outage of these network stores,
+        # including mixed content. Unknown types keep the strict storage gate.
+        if entry.get("type") in ("cifs", "nfs", "pbs"):
+            network_storage.add(name)
+    return states, network_storage
 
 
 def _parse_guest_inventory(stdout: str, guest_type: str) -> list[ContainerInfo]:
@@ -365,11 +364,11 @@ def _collect_memory_diagnostics(
 
 def collect_maintenance_report(
     host: ProxmoxHost, *, command_runner: CommandRunner | None = None,
-    allow_inactive_backup_storage: bool = False,
+    allow_inactive_network_storage: bool = False,
 ) -> ProxmoxMaintenanceReport:
-    """Collect a read-only audit, optionally tolerating restart backup outages.
+    """Collect a read-only audit, optionally tolerating restart share outages.
 
-    Explicit setup restarts may stop the guest serving backup-only network
+    Explicit setup restarts may stop the guest serving mixed-content network
     storage. Normal audits and scheduled maintenance keep the strict default.
     """
     report = ProxmoxMaintenanceReport(host_name=host.name, address=host.address)
@@ -477,7 +476,7 @@ def collect_maintenance_report(
             report.errors.append(f"Could not read storage status: {_failure_detail(storage)}")
         else:
             try:
-                report.storage_states, network_backups = _parse_storage_status(storage.stdout)
+                report.storage_states, network_storage = _parse_storage_status(storage.stdout)
             except (TypeError, ValueError) as exc:
                 report.errors.append(f"Could not parse storage status: {exc}")
             else:
@@ -485,14 +484,15 @@ def collect_maintenance_report(
                     report.errors.append("No enabled Proxmox storage pools were reported")
                 for storage_name, state in report.storage_states.items():
                     if state == "inactive":
-                        if allow_inactive_backup_storage and storage_name in network_backups:
+                        if allow_inactive_network_storage and storage_name in network_storage:
                             report.warnings.append(
-                                f"Storage {storage_name} is inactive (backup-only network storage); "
-                                "explicit restart can proceed, but backups remain unavailable"
+                                f"Storage {storage_name} is inactive (network storage); "
+                                "explicit restart can proceed, but dependent guests and jobs "
+                                "may be unavailable until storage returns"
                             )
                         else:
                             report.errors.append(f"Storage {storage_name} is {state}")
-                if allow_inactive_backup_storage and not any(
+                if allow_inactive_network_storage and not any(
                     state == "active" for state in report.storage_states.values()
                 ):
                     report.errors.append("No active Proxmox storage pools were reported")
@@ -516,7 +516,7 @@ def collect_maintenance_report(
 
 
 def collect_local_maintenance_report(
-    *, allow_inactive_backup_storage: bool = False,
+    *, allow_inactive_network_storage: bool = False,
 ) -> ProxmoxMaintenanceReport:
     """Run the same maintenance checks locally without requiring SSH to self."""
     def run_local(_host: ProxmoxHost, command: str) -> subprocess.CompletedProcess[str]:
@@ -524,7 +524,7 @@ def collect_local_maintenance_report(
 
     return collect_maintenance_report(
         ProxmoxHost(name="localhost", address="127.0.0.1"), command_runner=run_local,
-        allow_inactive_backup_storage=allow_inactive_backup_storage,
+        allow_inactive_network_storage=allow_inactive_network_storage,
     )
 
 

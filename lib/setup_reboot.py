@@ -148,11 +148,11 @@ def _prepare_proxmox_restart(config: SetupConfig) -> bool:
 
     try:
         report = (
-            collect_local_maintenance_report(allow_inactive_backup_storage=True)
+            collect_local_maintenance_report(allow_inactive_network_storage=True)
             if config.host in _LOCAL_HOSTS
             else collect_maintenance_report(ProxmoxHost(
                 name=config.host, address=config.host, user="root", ssh_key=config.ssh_key,
-            ), allow_inactive_backup_storage=True)
+            ), allow_inactive_network_storage=True)
         )
         for warning in report.warnings:
             print(f"  ⚠ {warning}")
@@ -185,7 +185,7 @@ def _restart_local_proxmox() -> int:
                 return 0
             if status != "needed-proxmox":
                 raise RuntimeError("target is not a reboot-capable Proxmox host")
-            report = check_proxmox_update_safety(allow_inactive_backup_storage=True)
+            report = check_proxmox_update_safety(allow_inactive_network_storage=True)
             for warning in report.warnings:
                 print(f"WARNING: {warning}", flush=True)
             if report.running_guests:
@@ -196,7 +196,7 @@ def _restart_local_proxmox() -> int:
                 # stopall can finish successfully despite a failed guest
                 # shutdown, and skips HA-managed guests. Verify evacuation.
                 report = check_proxmox_update_safety(
-                    require_evacuated=True, allow_inactive_backup_storage=True,
+                    require_evacuated=True, allow_inactive_network_storage=True,
                 )
                 for warning in report.warnings:
                     print(f"WARNING: {warning}", flush=True)
@@ -347,7 +347,7 @@ def _wait_for_remote_restart(
 
 
 def _verify_proxmox_restart(config: SetupConfig) -> bool:
-    """Wait for core readiness, reporting backup-only network outages as warnings."""
+    """Wait for core readiness, reporting network storage outages as warnings."""
     from lib.proxmox_hosts import ProxmoxHost
     from lib.proxmox_maintenance import collect_maintenance_report, format_maintenance_report
 
@@ -365,7 +365,7 @@ def _verify_proxmox_restart(config: SetupConfig) -> bool:
     while (remaining := deadline - time.monotonic()) > 0:
         try:
             report = collect_maintenance_report(
-                host, command_runner=probe, allow_inactive_backup_storage=True,
+                host, command_runner=probe, allow_inactive_network_storage=True,
             )
         except (OSError, TimeoutError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
             detail = str(exc)
