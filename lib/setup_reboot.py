@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -13,6 +15,7 @@ from uuid import UUID
 
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
+from lib.maintenance_lock import maintenance_lock
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.validators import validate_host, validate_username
@@ -20,12 +23,19 @@ from lib.validators import validate_host, validate_username
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _RESTART_WAIT_SECONDS = 300
+_GUEST_SHUTDOWN_WAIT_SECONDS = 1800
 _POLL_INTERVAL_SECONDS = 5
 _REMOTE_RESTART_STATUS = r"""
 import sys
 sys.path.insert(0, "/opt/basaltwater")
 from lib.setup_reboot import _local_restart_status
 print(_local_restart_status())
+"""
+_REMOTE_PROXMOX_RESTART = r"""
+import sys
+sys.path.insert(0, "/opt/basaltwater")
+from lib.setup_reboot import _restart_local_proxmox
+raise SystemExit(_restart_local_proxmox())
 """
 
 
@@ -86,25 +96,64 @@ def _restart_status(config: SetupConfig) -> Optional[str]:
     return status
 
 
-def _check_proxmox_reboot_safety(config: SetupConfig) -> bool:
-    """Require a clean maintenance report and no active guests before reboot."""
+def _shutdown_proxmox_guests() -> bool:
+    """Wait for Proxmox's ordered graceful shutdown, never forcing guest stops."""
+    try:
+        result = run(
+            ["pvesh", "create", "/nodes/localhost/stopall", "--force-stop", "0",
+             "--timeout", "180", "--output-format", "json"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout).strip() or "guest shutdown request failed")
+        task = json.loads(result.stdout)
+        parts = task.split(":") if isinstance(task, str) else []
+        if (
+            len(parts) != 9 or parts[0] != "UPID" or not validate_host(parts[1])
+            or not all(re.fullmatch(r"[0-9A-Fa-f]+", field) for field in parts[2:5])
+            or parts[5:7] != ["stopall", ""] or not parts[7] or parts[8]
+            or any(character.isspace() for character in task)
+        ):
+            raise ValueError("invalid Proxmox shutdown task response")
 
-    if config.host in _LOCAL_HOSTS:
-        print("Error: use Proxmox maintenance commands to restart a local Proxmox host")
+        deadline = time.monotonic() + _GUEST_SHUTDOWN_WAIT_SECONDS
+        command = ["pvenode", "task", "status", task, "--output-format", "json"]
+        while (remaining := deadline - time.monotonic()) > 0:
+            result = run(command, capture_output=True, text=True, check=False, timeout=min(30, remaining))
+            if result.returncode != 0:
+                raise RuntimeError((result.stderr or result.stdout).strip() or "could not inspect shutdown task")
+            status = json.loads(result.stdout)
+            if not isinstance(status, dict) or status.get("status") not in ("running", "stopped"):
+                raise ValueError("invalid Proxmox shutdown task status")
+            if status["status"] == "stopped":
+                if status.get("exitstatus") != "OK":
+                    raise RuntimeError(f"shutdown task failed: {status.get('exitstatus', 'unknown result')}")
+                return True
+            time.sleep(min(_POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
+        raise RuntimeError(f"guest shutdown did not finish within {_GUEST_SHUTDOWN_WAIT_SECONDS} seconds")
+    except (CommandTimeoutError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"Error shutting down Proxmox guests: {exc}")
+        print("  Host restart not requested; some guests may already be stopped")
         return False
 
+
+def _prepare_proxmox_restart(config: SetupConfig) -> bool:
+    """Check health before scheduling the explicit target-side restart job."""
+
     from lib.proxmox_hosts import ProxmoxHost
-    from lib.proxmox_maintenance import collect_maintenance_report
+    from lib.proxmox_maintenance import collect_local_maintenance_report, collect_maintenance_report
 
     try:
-        report = collect_maintenance_report(
-            ProxmoxHost(
-                name=config.host,
-                address=config.host,
-                user="root",
-                ssh_key=config.ssh_key,
-            )
+        report = (
+            collect_local_maintenance_report() if config.host in _LOCAL_HOSTS
+            else collect_maintenance_report(ProxmoxHost(
+                name=config.host, address=config.host, user="root", ssh_key=config.ssh_key,
+            ))
         )
+        if report.healthy and not report.locked_guests and report.running_guests:
+            guests = ", ".join(str(guest.vmid) for guest in report.running_guests)
+            print(f"  Explicit restart will gracefully shut down Proxmox guests: {guests}")
+            return True
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Error checking Proxmox reboot safety on {config.host}: {exc}")
         return False
@@ -114,6 +163,46 @@ def _check_proxmox_reboot_safety(config: SetupConfig) -> bool:
     blockers = "; ".join(report.reboot_blockers()) or "maintenance checks failed"
     print(f"Error: refusing to restart Proxmox host {config.host}: {blockers}")
     return False
+
+
+def _restart_local_proxmox() -> int:
+    """Complete an explicitly requested restart independently of the controller."""
+    from lib.proxmox_maintenance import collect_local_maintenance_report
+
+    try:
+        with maintenance_lock() as acquired:
+            if not acquired:
+                raise RuntimeError("setup or another maintenance job is running")
+            status = _local_restart_status()
+            if status == "clear":
+                print("No restart required; skipping Proxmox guest shutdown")
+                return 0
+            if status != "needed-proxmox":
+                raise RuntimeError("target is not a reboot-capable Proxmox host")
+            report = collect_local_maintenance_report()
+            if not report.healthy or report.locked_guests:
+                raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
+            if report.running_guests:
+                guests = ", ".join(str(guest.vmid) for guest in report.running_guests)
+                print(f"Gracefully shutting down Proxmox guests: {guests}", flush=True)
+                if not _shutdown_proxmox_guests():
+                    return 1
+                # stopall can finish successfully despite a failed guest
+                # shutdown, and skips HA-managed guests. Verify evacuation.
+                report = collect_local_maintenance_report()
+            if not report.reboot_safe:
+                raise RuntimeError("; ".join(report.reboot_blockers()) or "maintenance checks failed")
+            print("Proxmox maintenance checks passed; requesting host reboot", flush=True)
+            result = run(
+                ["/usr/bin/systemctl", "reboot", "--no-wall"],
+                capture_output=True, text=True, check=False, timeout=30,
+            )
+            if result.returncode != 0:
+                raise RuntimeError((result.stderr or result.stdout).strip() or "reboot request failed")
+            return 0
+    except (CommandTimeoutError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+        print(f"Error: refusing explicit Proxmox restart: {exc}")
+        return 1
 
 
 def _validated_boot_id(output: str) -> Optional[str]:
@@ -145,17 +234,21 @@ def _boot_id(config: SetupConfig) -> Optional[str]:
     return value
 
 
-def _request_restart(config: SetupConfig) -> bool:
+def _request_restart(config: SetupConfig, *, proxmox: bool = False) -> bool:
     command = [
         "/usr/bin/systemd-run",
         "--quiet",
         "--unit",
         f"basaltwater-setup-reboot-{secrets.token_hex(6)}",
         "--on-active=2s",
-        "/usr/bin/systemctl",
-        "reboot",
-        "--no-wall",
     ]
+    if proxmox:
+        command += [
+            "--property=RuntimeMaxSec=2400",
+            "/usr/bin/python3", "-c", _REMOTE_PROXMOX_RESTART,
+        ]
+    else:
+        command += ["/usr/bin/systemctl", "reboot", "--no-wall"]
     try:
         if config.host in _LOCAL_HOSTS:
             result = run(
@@ -178,8 +271,11 @@ def _request_restart(config: SetupConfig) -> bool:
     return False
 
 
-def _wait_for_remote_restart(config: SetupConfig, old_boot_id: str) -> bool:
-    deadline = time.monotonic() + _RESTART_WAIT_SECONDS
+def _wait_for_remote_restart(
+    config: SetupConfig, old_boot_id: str, *, timeout_seconds: int | None = None,
+) -> bool:
+    wait_seconds = _RESTART_WAIT_SECONDS if timeout_seconds is None else timeout_seconds
+    deadline = time.monotonic() + wait_seconds
     command = "cat /proc/sys/kernel/random/boot_id"
     while (remaining := deadline - time.monotonic()) > 0:
         try:
@@ -200,7 +296,7 @@ def _wait_for_remote_restart(config: SetupConfig, old_boot_id: str) -> bool:
 
     print(
         f"Error: {config.host} did not complete a restart and return over SSH "
-        f"within {_RESTART_WAIT_SECONDS} seconds"
+        f"within {wait_seconds} seconds"
     )
     return False
 
@@ -231,19 +327,23 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
         print(f"  ⚠ {config.host} cannot restart itself; leaving the marker pending")
         return 0
 
-    if status == "needed-proxmox" or config.system_type == "server_proxmox":
-        if not _check_proxmox_reboot_safety(config):
-            return 1
-
     old_boot_id: Optional[str] = None
     if wait_for_restart:
         old_boot_id = _boot_id(config)
         if old_boot_id is None:
             return 1
 
+    proxmox = status == "needed-proxmox" or config.system_type == "server_proxmox"
+    if proxmox:
+        if not _prepare_proxmox_restart(config):
+            return 1
+
     print(f"  Restart required on {config.host}; requesting restart")
-    if not _request_restart(config):
+    requested = _request_restart(config, proxmox=True) if proxmox else _request_restart(config)
+    if not requested:
         return 1
+    if proxmox:
+        print("  Proxmox shutdown and restart job queued; failures appear in the node's systemd journal")
 
     if not wait_for_restart:
         print("  Restart requested; the setup command will not wait for reconnection")
@@ -251,7 +351,13 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
 
     assert old_boot_id is not None
     print(f"  Waiting for {config.host} to boot again over SSH")
-    if not _wait_for_remote_restart(config, old_boot_id):
+    completed = (
+        _wait_for_remote_restart(
+            config, old_boot_id,
+            timeout_seconds=_GUEST_SHUTDOWN_WAIT_SECONDS + _RESTART_WAIT_SECONDS,
+        ) if proxmox else _wait_for_remote_restart(config, old_boot_id)
+    )
+    if not completed:
         return 1
 
     print("  ✓ Restart completed; running host health checks")

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 import io
+import json
 import shlex
 import subprocess
 import unittest
@@ -182,16 +183,32 @@ class RestartWorkflowTests(unittest.TestCase):
             with self.subTest(status=status, profile=profile):
                 self.status.return_value = status
                 config = _config(system_type=profile)
-                with patch.object(setup_reboot, "_check_proxmox_reboot_safety", return_value=False) as safety:
+                with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=False) as safety:
                     self.assertEqual(setup_reboot.restart_after_setup(config), 1)
                 safety.assert_called_once_with(config)
         self.request.assert_not_called()
 
     def test_safe_proxmox_target_can_restart(self) -> None:
         self.status.return_value = "needed-proxmox"
-        with patch.object(setup_reboot, "_check_proxmox_reboot_safety", return_value=True):
+        with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
             self.assertEqual(setup_reboot.restart_after_setup(_config()), 0)
         self.request.assert_called_once()
+
+    def test_proxmox_wait_allows_guest_shutdown_before_boot_wait(self) -> None:
+        self.status.return_value = "needed-proxmox"
+        config = _config()
+        with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
+            self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 0)
+        self.request.assert_called_once_with(config, proxmox=True)
+        self.wait.assert_called_once_with(config, OLD_BOOT_ID, timeout_seconds=2100)
+
+    def test_failed_boot_probe_does_not_schedule_proxmox_guest_shutdown(self) -> None:
+        self.status.return_value = "needed-proxmox"
+        self.boot.return_value = None
+        with patch.object(setup_reboot, "_prepare_proxmox_restart") as prepare:
+            self.assertEqual(setup_reboot.restart_after_setup(_config(), wait_for_restart=True), 1)
+        prepare.assert_not_called()
+        self.request.assert_not_called()
 
 
 class RestartTransportTests(unittest.TestCase):
@@ -242,24 +259,178 @@ class RestartTransportTests(unittest.TestCase):
         with patch.object(setup_reboot, "_ssh_result", side_effect=OSError("SSH unavailable")):
             self.assertFalse(setup_reboot._request_restart(_config()))
 
-    def test_proxmox_report_errors_and_running_guests_block_restart(self) -> None:
+    def test_proxmox_preflight_allows_running_guests_but_rejects_errors_and_locks(self) -> None:
         config = _config(system_type="server_proxmox")
         report = ProxmoxMaintenanceReport(config.host, config.host)
         with patch("lib.proxmox_maintenance.collect_maintenance_report", return_value=report):
-            self.assertTrue(setup_reboot._check_proxmox_reboot_safety(config))
+            self.assertTrue(setup_reboot._prepare_proxmox_restart(config))
             report.errors.append("active tasks")
-            self.assertFalse(setup_reboot._check_proxmox_reboot_safety(config))
+            self.assertFalse(setup_reboot._prepare_proxmox_restart(config))
             report.errors.clear()
             report.running_guests.append(MagicMock(vmid=101))
-            self.assertFalse(setup_reboot._check_proxmox_reboot_safety(config))
+            self.assertTrue(setup_reboot._prepare_proxmox_restart(config))
             report.running_guests.clear()
             report.locked_guests.append(MagicMock(vmid=102))
-            self.assertFalse(setup_reboot._check_proxmox_reboot_safety(config))
+            self.assertFalse(setup_reboot._prepare_proxmox_restart(config))
         with patch("lib.proxmox_maintenance.collect_maintenance_report", side_effect=OSError("inspection failed")):
-            self.assertFalse(setup_reboot._check_proxmox_reboot_safety(config))
-        with patch("lib.proxmox_maintenance.collect_maintenance_report") as collect:
-            self.assertFalse(setup_reboot._check_proxmox_reboot_safety(_config(host="localhost")))
+            self.assertFalse(setup_reboot._prepare_proxmox_restart(config))
+        with (
+            patch("lib.proxmox_maintenance.collect_maintenance_report") as collect,
+            patch("lib.proxmox_maintenance.collect_local_maintenance_report", return_value=ProxmoxMaintenanceReport("pve1", "localhost")),
+        ):
+            self.assertTrue(setup_reboot._prepare_proxmox_restart(_config(host="localhost")))
             collect.assert_not_called()
+
+    def test_proxmox_restart_runs_independently_on_target(self) -> None:
+        with patch.object(setup_reboot, "_ssh_result", return_value=_result()) as remote:
+            self.assertTrue(setup_reboot._request_restart(_config(), proxmox=True))
+        command = shlex.split(remote.call_args.args[1])
+        self.assertIn("--on-active=2s", command)
+        self.assertIn("--property=RuntimeMaxSec=2400", command)
+        self.assertEqual(command[-3:-1], ["/usr/bin/python3", "-c"])
+        self.assertIn("_restart_local_proxmox()", command[-1])
+
+
+class ProxmoxGuestShutdownTests(unittest.TestCase):
+    TASK = "UPID:pve1:00000001:00000002:00000003:stopall::root@pam:"
+
+    def setUp(self) -> None:
+        self.run = self.enterContext(patch.object(setup_reboot, "run"))
+        self.sleep = self.enterContext(patch.object(setup_reboot.time, "sleep"))
+        self.enterContext(patch.object(setup_reboot.time, "monotonic", return_value=0))
+
+    def test_graceful_shutdown_waits_for_native_ordered_task(self) -> None:
+        self.run.side_effect = [
+            _result(json.dumps(self.TASK)), _result('{"status":"running"}'),
+            _result('{"status":"stopped","exitstatus":"OK"}'),
+        ]
+        self.assertTrue(setup_reboot._shutdown_proxmox_guests())
+        self.assertEqual(self.run.call_args_list[0].args[0], [
+            "pvesh", "create", "/nodes/localhost/stopall", "--force-stop", "0",
+            "--timeout", "180", "--output-format", "json",
+        ])
+        self.assertEqual(self.run.call_args_list[1].args[0], [
+            "pvenode", "task", "status", self.TASK, "--output-format", "json",
+        ])
+        self.sleep.assert_called_once()
+
+    def test_bad_shutdown_task_response_fails_closed(self) -> None:
+        for response in ("", "[]", "null", '"invalid"', json.dumps(self.TASK.replace("stopall", "startall"))):
+            with self.subTest(response=response):
+                self.run.return_value = _result(response)
+                self.assertFalse(setup_reboot._shutdown_proxmox_guests())
+
+    def test_missing_failed_and_invalid_task_status_do_not_succeed(self) -> None:
+        for status in ("", "[]", "null", '{"status":"unknown"}', '{"status":"stopped"}',
+                       '{"status":"stopped","exitstatus":"shutdown timed out"}'):
+            with self.subTest(status=status):
+                self.run.side_effect = [_result(json.dumps(self.TASK)), _result(status)]
+                self.assertFalse(setup_reboot._shutdown_proxmox_guests())
+
+    def test_transport_failure_or_timeout_aborts_shutdown_wait(self) -> None:
+        for failure in (_result(returncode=1), OSError("cannot run"), subprocess.TimeoutExpired("pvesh", 30)):
+            with self.subTest(failure=failure):
+                self.run.side_effect = [failure]
+                self.assertFalse(setup_reboot._shutdown_proxmox_guests())
+        self.sleep.assert_not_called()
+
+    def test_shutdown_deadline_bounds_status_queries(self) -> None:
+        self.run.side_effect = [_result(json.dumps(self.TASK)), _result('{"status":"running"}')]
+        with (
+            patch.object(setup_reboot, "_GUEST_SHUTDOWN_WAIT_SECONDS", 5),
+            patch.object(setup_reboot.time, "monotonic", side_effect=(0, 4, 5, 5)),
+        ):
+            self.assertFalse(setup_reboot._shutdown_proxmox_guests())
+        self.assertEqual(self.run.call_args.kwargs["timeout"], 1)
+
+
+class ProxmoxTargetRestartTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.lock = self.enterContext(patch.object(setup_reboot, "maintenance_lock", side_effect=lambda: nullcontext(True)))
+        self.status = self.enterContext(patch.object(setup_reboot, "_local_restart_status", return_value="needed-proxmox"))
+        self.collect = self.enterContext(patch("lib.proxmox_maintenance.collect_local_maintenance_report"))
+        self.shutdown = self.enterContext(patch.object(setup_reboot, "_shutdown_proxmox_guests", return_value=True))
+        self.reboot = self.enterContext(patch.object(setup_reboot, "run", return_value=_result()))
+        self.running = ProxmoxMaintenanceReport("pve1", "localhost", running_guests=[MagicMock(vmid=107)])
+        self.stopped = ProxmoxMaintenanceReport("pve1", "localhost")
+
+    def test_shutdown_and_verification_precede_reboot_under_lock(self) -> None:
+        held = []
+
+        @contextmanager
+        def lock():
+            held.append(True)
+            try:
+                yield True
+            finally:
+                held.pop()
+
+        self.lock.side_effect = lock
+        self.collect.side_effect = [self.running, self.stopped]
+        self.shutdown.side_effect = lambda: bool(held)
+        self.reboot.side_effect = lambda *args, **kwargs: _result() if held else self.fail("lock not held")
+        self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
+        self.shutdown.assert_called_once_with()
+        self.assertEqual(self.collect.call_count, 2)
+        self.assertEqual(self.reboot.call_args.args[0], ["/usr/bin/systemctl", "reboot", "--no-wall"])
+
+    def test_busy_lock_or_cleared_marker_never_stops_guests(self) -> None:
+        self.lock.side_effect = lambda: nullcontext(False)
+        self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.lock.side_effect = lambda: nullcontext(True)
+        self.status.return_value = "clear"
+        self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
+        self.shutdown.assert_not_called()
+        self.collect.assert_not_called()
+        self.reboot.assert_not_called()
+
+    def test_preexisting_errors_or_locks_block_guest_shutdown(self) -> None:
+        for report in (
+            ProxmoxMaintenanceReport("pve1", "localhost", errors=["active backup"]),
+            ProxmoxMaintenanceReport("pve1", "localhost", locked_guests=[MagicMock(vmid=107)]),
+        ):
+            with self.subTest(report=report):
+                self.collect.return_value = report
+                self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.shutdown.assert_not_called()
+        self.reboot.assert_not_called()
+
+    def test_shutdown_failure_remaining_guests_or_new_health_error_block_reboot(self) -> None:
+        self.collect.return_value = self.running
+        self.shutdown.return_value = False
+        self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.shutdown.return_value = True
+        for final in (
+            self.running,
+            ProxmoxMaintenanceReport("pve1", "localhost", errors=["lost quorum"]),
+            ProxmoxMaintenanceReport("pve1", "localhost", locked_guests=[MagicMock(vmid=107)]),
+        ):
+            with self.subTest(final=final):
+                self.collect.side_effect = [self.running, final]
+                self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.reboot.assert_not_called()
+
+    def test_target_no_longer_capable_of_proxmox_reboot_never_stops_guests(self) -> None:
+        for status in ("unsupported", "needed"):
+            with self.subTest(status=status):
+                self.status.return_value = status
+                self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+        self.collect.assert_not_called()
+        self.shutdown.assert_not_called()
+        self.reboot.assert_not_called()
+
+    def test_failed_host_reboot_request_returns_failure(self) -> None:
+        self.collect.return_value = self.stopped
+        for failure in (_result(returncode=1), OSError("cannot reboot"), subprocess.TimeoutExpired("systemctl", 30)):
+            with self.subTest(failure=failure):
+                self.reboot.side_effect = [failure]
+                self.assertEqual(setup_reboot._restart_local_proxmox(), 1)
+
+    def test_already_evacuated_node_reboots_without_stopall(self) -> None:
+        self.collect.return_value = self.stopped
+        self.assertEqual(setup_reboot._restart_local_proxmox(), 0)
+        self.shutdown.assert_not_called()
+        self.reboot.assert_called_once()
 
 
 class RestartCliTests(unittest.TestCase):

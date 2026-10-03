@@ -209,6 +209,19 @@ The setup reports pending restarts, but schedule any hypervisor reboot around
 guest downtime (or opt in explicitly with `--auto-restart` or
 `--auto-restart-force-days`).
 
+The one-time setup flag `--restart-if-needed` explicitly authorizes graceful
+guest shutdown when a reboot is pending. A job on the node holds the maintenance
+lock, verifies health and guest locks, uses Proxmox's configured shutdown order
+without forcing guests off, and repeats the audit before rebooting. Shutdown
+has a 180-second default per guest, overridden by its configured shutdown
+timeout, and a 30-minute overall wait limit. Remaining guests or failed checks
+block the host reboot; some guests may already be stopped. HA-managed guests
+require operator-managed maintenance. The job continues if its controller is
+one of the guests being stopped. Add `--wait-for-restart` for remote boot and
+health verification, or inspect the node's job logs with
+`sudo journalctl -u 'basaltwater-setup-reboot-*' --no-pager`. Existing Proxmox
+autostart and HA policies control guest startup after the host returns.
+
 The default setup installs these recurring host-maintenance timers:
 
 - `security-monitor.timer` checks fail2ban and SSH events every 15 minutes and
@@ -241,8 +254,8 @@ The default setup installs these recurring host-maintenance timers:
 Inspect these jobs with the commands in [Recurring Maintenance](MAINTENANCE.md).
 APT updates and restart checks share the node's setup lock and defer while it
 is occupied. Cleanup's APT phase uses the same lock; when busy, its non-package
-cleanup and storage checks still run. Opt-in reboots also require no running
-guests; a forced deadline cannot bypass Proxmox health or evacuation checks.
+cleanup and storage checks still run. Scheduled opt-in reboots also require no
+running guests; a forced deadline cannot bypass Proxmox health or evacuation checks.
 Checks describe the node before scheduling a reboot; operators must keep it
 evacuated during the grace period. Package maintainer scripts can restart host services despite
 `--no-remove`. There is no cross-node timing coordination or backup

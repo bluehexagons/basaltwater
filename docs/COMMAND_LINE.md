@@ -244,10 +244,12 @@ tools, not for an LXC container.
 `--restart-if-needed` checks the target after a successful setup and requests a
 restart only when `/run/reboot-required` is present. It does not treat a newer
 installed kernel without that marker as sufficient evidence to reboot. The
-flag is a one-time action: it may interrupt active sessions and work. Proxmox
-targets are checked first and are not restarted while the maintenance report
-finds running or locked guests or other blockers. `--dry-run` never requests a
-restart.
+flag is a one-time action: it may interrupt active sessions and work. On Proxmox,
+it authorizes graceful guest shutdown in the node's configured shutdown order
+before rebooting. Health failures, active tasks, and locked guests block the
+request. Shutdown never forces guests off; any guest still running afterward
+blocks the host reboot. HA-managed guests require operator-managed maintenance.
+`--dry-run` never requests a restart.
 
 By default, setup requests the restart and exits without waiting for the host
 to return. Add `--wait-for-restart` to wait up to five minutes for a remote
@@ -256,6 +258,15 @@ This flag requires `--restart-if-needed` and a remote target; if no reboot is
 needed, setup skips both the wait and health check. Local targets can use
 `--restart-if-needed`, but cannot use `--wait-for-restart` because the
 controller would be rebooting with the target.
+
+Proxmox allows up to 30 minutes for guest shutdown plus five minutes for the
+host to return. Its shutdown and restart job runs on the node under the
+maintenance lock, so it can finish even if the controller is a guest being
+stopped. The job repeats the maintenance checks before shutdown and reboot.
+Without the wait flag, inspect failures on the node with
+`sudo journalctl -u 'basaltwater-setup-reboot-*' --no-pager`. A failed shutdown
+can leave some guests stopped. After reboot, Proxmox's existing autostart and
+HA policies determine which guests start.
 
 ```bash
 basaltw setup server_web example.com admin --restart-if-needed
