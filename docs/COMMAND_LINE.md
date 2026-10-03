@@ -10,6 +10,7 @@ Related pages:
 - [`SSH.md`](./SSH.md) for passphrase-protected keys and SSH-agent setup
 - [`NETWORKING.md`](./NETWORKING.md) for workspace network inventory
 - [`CICD.md`](./CICD.md) for webhook CI/CD setup
+- [`PROJECT_TOOLING.md`](./PROJECT_TOOLING.md) for project manifests and Node runtime selection
 - [`WORKSTATIONS.md`](./WORKSTATIONS.md) for desktop profiles and application choices
 - [`GODOT.md`](./GODOT.md) for graphical/headless Godot installation and updates
 - [`SYNCTHING.md`](./SYNCTHING.md) for private peer and folder synchronization
@@ -57,6 +58,12 @@ basaltw python-tools [options]
 basaltw bootstrap [options]
 basaltw self-setup [options]
 basaltw local [subcommand]
+basaltw manifest init [REPOSITORY] [--kind KIND] [--dry-run] [--json]
+basaltw manifest validate [REPOSITORY] [--json]
+basaltw node status [--project PATH] [--version VERSION_OR_RANGE] [--json]
+basaltw node env [--project PATH] [--version VERSION_OR_RANGE]
+basaltw node exec [--project PATH] [--version VERSION_OR_RANGE] -- COMMAND...
+basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
 basaltw desktop <command> ...
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
@@ -177,6 +184,33 @@ The same option is available on `install.sh`; place it before
 `--setup` or `--local-setup` so the installer forwards it to its internal
 self-setup step. It is intended for a Debian VM running the orchestration
 tools, not for an LXC container.
+
+## Project manifests and Node runtimes
+
+These commands operate on local project files and toolchains without selecting
+a saved host. Paths default to the current directory.
+
+`manifest init` proposes a version 1 `basaltwater.json` from project metadata
+without executing project scripts. `--dry-run` previews the proposal; normal
+initialization writes it only when no manifest exists. Existing manifests are
+validated and preserved. Review inferred commands, outputs, service settings,
+and routes before committing the proposal. `--kind` accepts `auto`, `node-site`,
+`node-package`, `node-service`, `go-service`, `full-stack`, or `static`.
+`manifest validate` checks an existing manifest without modifying it. Both
+subcommands support JSON output.
+
+`node status` reports the selected installed runtime, and `node env` prints a
+quoted PATH export for shell activation. Selection honors an explicit
+`--version`, project `.node-version` or `.nvmrc` pins, and package Node engine
+requirements. `node exec` runs the command after `--` with that runtime while
+retaining the current working directory; `--project` selects metadata rather
+than changing directories. These commands do not download a missing runtime.
+
+`node install` explicitly installs the requested version or project pin through
+managed NVM. Repeat `--package-manager NAME@VERSION` to install exact npm, pnpm,
+or yarn versions for that runtime. See [Project tooling](PROJECT_TOOLING.md)
+for selection precedence, supported ranges, initialization examples, and
+per-runtime package-manager behavior.
 
 ## Setup at a glance
 
