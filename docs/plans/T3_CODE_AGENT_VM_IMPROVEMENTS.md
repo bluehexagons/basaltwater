@@ -4,6 +4,8 @@ Status: active qualification; phases 1 through 3 and the phase 4 restart and
 durable-readiness boundaries are code-complete. The T3 v0.0.45 compatibility
 and phase 5 skill-delivery slice landed on 2026-10-02. Disposable-VM deployment
 and connected-client preview qualification remain separate pending work.
+The forward orchestration V2 upgrade was checked against
+v0.0.46-nightly.20261003.2623 on 2026-10-03; stable remains v0.0.45.
 
 ## Objective
 
@@ -154,6 +156,42 @@ Android implementation is explicitly deferred. Potential Android and SSH-hosted
 iOS workflows, prerequisites, ownership, and rollout are in the
 [mobile agent support proposal](MOBILE_AGENT_SUPPORT.md); no device setup or
 agent-device access is enabled by these improvements.
+
+### Orchestration V2 qualification
+
+Reviewed `v0.0.46-nightly.20261003.2623` at
+`fed41fa88bb27cb4325cb208d571393850bc63c2` on 2026-10-03:
+
+- The service-state protocol remains 3, the standalone layout is unchanged,
+  and the existing eight-scope administrative pairing flow passes against
+  the published Linux x64 archive. Its SHA-256 was verified before execution.
+- The application protocol changes from 1 to 2. The matching client/server
+  update is required; service readiness alone cannot verify that connection.
+- Upstream copies `state.sqlite` to `statev2.sqlite` once and owns migrations
+  through 56, including reconciliation for earlier V2 preview migration IDs.
+  A temporary v0.0.45 database passed pinned-thread and full transcript import,
+  source-database preservation, pairing, and a subsequent V2 restart.
+- Shipped agent references now cover a private recovery copy, disk headroom,
+  scheduled interruption, automatic import, and the fresh provider session
+  used to continue migrated threads. Upgrades are forward-only. No downgrade
+  flow, competing database importer, or migration-ID rewrite is added.
+- The managed skill describes history retrieval for portable handoffs and
+  ACP Registry provider ownership. Registry agents remain opt-in and do not
+  implicitly expand Basaltwater's managed terminal-agent or policy catalog.
+
+Validation: 88 focused runtime, pairing, readiness, skill-bundle, maintenance,
+and wheel tests passed. The isolated wheel build/install smoke verifies that
+the new migration reference ships with the managed skill; artifact validation
+now requires that reference. No live service was updated during these checks.
+
+Next qualification: exercise the forward service update on a disposable
+Debian VM with a matching V2 client, verify representative long/archived
+threads and attachments, and confirm preview and provider continuation.
+Preview-to-current migration numbering is reviewed in source, not exercised
+by the v0.0.45 artifact smoke. Stable setup remains on npm `latest`; deliberate
+nightly updates use the exact client-compatible version. Evaluate native T3
+scheduled tasks against maintenance holds and recorded readiness before
+recommending unattended operation; no additional scheduler is introduced.
 
 ## Acceptance criteria
 

@@ -65,6 +65,24 @@ For a deliberate T3 update, prefer the connected client's **Update server**
 action. Read [the update procedure](references/updates.md) before a host-side
 update, launcher migration, or native-module repair. It distinguishes
 standalone archives from older npm runtimes and keeps npm policy scoped.
+Before the first orchestration V2 upgrade, read
+[the thread migration procedure](references/thread-migration.md). It covers
+the private recovery copy, automatic database import, matching client protocol,
+and fresh provider session needed to continue older conversations. Support
+forward upgrades; do not downgrade or edit T3's migration bookkeeping.
+
+## T3 orchestration V2 features
+
+On V2 releases, provider switches and migrated conversations use budgeted
+portable handoffs. Retrieve omitted saved history with T3's thread-reading
+tools when exposed, and repeat important constraints before continuing.
+
+The ACP Registry in **Settings → Providers → Add provider** can add other
+agents to the server environment. It installs and authenticates agents through
+T3; it does not select additional Basaltwater-managed terminal agents or
+install their managed skills. Use it only for a provider the user requests.
+Keep that provider's native sandbox, account configuration, and update
+ownership distinct from Basaltwater's selected Codex/Claude/OpenCode tools.
 
 ## T3 v0.0.45 workflow features
 
