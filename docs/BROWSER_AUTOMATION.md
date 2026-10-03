@@ -155,6 +155,34 @@ selected screenshot artifacts and a short record of inputs and observed states.
 Live visibility is a reason to choose T3; it is not a prerequisite for complete
 VM-origin rendering, input, console, and network checks.
 
+## File import, download, and reopen
+
+Browser filesystem access follows the browser's origin. Managed Playwright can
+upload fixture paths from the VM through `browser_file_upload` or
+`browser_drop`; a VM path is not automatically available to the connected
+client's collaborative preview. When session policy permits both surfaces,
+use the surface with access to the fixture for file round trips and the shared
+preview for client-visible review. Keep source fixtures disposable and use the
+application's normal import, edit, and save controls.
+
+A successful Save click or an updated in-memory view does not prove that an
+export reached disk. For download-based editors, observe the actual download,
+verify it completed, and reopen that downloaded file through the import flow.
+If download handling requires `browser_run_code_unsafe`, use a bounded,
+agent-authored Playwright sequence: register `page.waitForEvent('download')`
+before clicking Save, await the download, and inspect `download.failure()`
+before retaining it with `download.saveAs()`. Keep routine files in the private
+evidence directory and use explicit workspace paths only for task deliverables.
+Use distinct filenames for different outcomes so a repeated suggested download
+name does not overwrite the comparison evidence.
+
+Refresh the snapshot after edits: accessible names can change, such as Save
+becoming Save *. Verify the exported format with its proper parser, including
+JSONC comments when applicable, compare unrelated data with the original, and
+run the consuming project's validator or runtime check when it is in scope.
+Report import/export/reopen coverage separately from visual review and native
+filesystem-dialog coverage.
+
 ## Real-time canvas testing
 
 An accessibility snapshot can expose only the canvas's fallback text while the
