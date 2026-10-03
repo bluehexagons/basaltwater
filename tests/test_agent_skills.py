@@ -198,7 +198,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
 
     def test_skips_shared_skills_for_an_unsupported_agent(self) -> None:
         with patch("common.agent_steps.pwd.getpwnam") as getpwnam:
-            self.assertFalse(install_managed_agent_skills("agent", ["claude"]))
+            self.assertFalse(install_managed_agent_skills("agent", ["gh"]))
 
         getpwnam.assert_not_called()
 
@@ -249,7 +249,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
             names.index("Installing managed agent workflow skills"),
         )
 
-    def test_standard_agent_steps_skip_shared_skills_for_claude_only(self) -> None:
+    def test_standard_agent_steps_install_skills_for_claude_only(self) -> None:
         config = SetupConfig(
             host="host",
             username="agent",
@@ -263,7 +263,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
 
         names = [name for name, _step in steps]
         self.assertIn("Installing agent VM management command", names)
-        self.assertNotIn("Installing managed agent workflow skills", names)
+        self.assertIn("Installing managed agent workflow skills", names)
 
 
 if __name__ == "__main__":

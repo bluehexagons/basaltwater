@@ -16,6 +16,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
@@ -1125,7 +1126,9 @@ def _browser_running_processes(
 
 
 def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
-    """Return whether one safe skill entrypoint has the basaltwater marker."""
+    """Verify a marked entrypoint and any recorded supporting resources."""
+
+    from lib.agent_skill_bundles import skill_resources_ready
 
     descriptor = -1
     try:
@@ -1150,6 +1153,7 @@ def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
         return (
             len(content) <= _MAX_AGENT_SKILL_BYTES
             and b"managed-by: basaltwater" in content
+            and skill_resources_ready(Path(path).parent, owner_uid)
         )
     except OSError:
         return False
@@ -1161,6 +1165,8 @@ def _managed_agent_skill_ready(path: str, owner_uid: int) -> bool:
 def _browser_workflow_skills(
     home: str,
     owner_uid: int | None = None,
+    *,
+    catalog: str = ".agents",
 ) -> tuple[str, ...]:
     """Return installed basaltwater-managed browser workflow variants."""
 
@@ -1175,7 +1181,7 @@ def _browser_workflow_skills(
         skill_name
         for skill_name in BROWSER_AGENT_SKILL_NAMES
         if _managed_agent_skill_ready(
-            os.path.join(home, ".agents", "skills", skill_name, "SKILL.md"),
+            os.path.join(home, catalog, "skills", skill_name, "SKILL.md"),
             owner_uid,
         )
     )
@@ -2035,7 +2041,7 @@ def _t3_service_enabled(environment: dict[str, str]) -> bool:
     return result.returncode == 0 and (result.stdout or "").strip() == "enabled"
 
 
-def _t3_agent_skills_ready(home: str) -> bool:
+def _t3_agent_skills_ready(home: str, catalogs: tuple[str, ...] = (".agents",)) -> bool:
     """Verify every workflow skill selected by the managed T3 setup."""
     from common.t3code_steps import (
         T3_AGENT_SKILL_NAMES,
@@ -2048,16 +2054,23 @@ def _t3_agent_skills_ready(home: str) -> bool:
         return False
     core_ready = all(
         _managed_agent_skill_ready(
-            os.path.join(home, ".agents", "skills", skill_name, "SKILL.md"),
+            os.path.join(home, catalog, "skills", skill_name, "SKILL.md"),
             owner_uid,
         )
+        for catalog in catalogs
         for skill_name in T3_AGENT_SKILL_NAMES
     )
-    browser_skills = _browser_workflow_skills(home, owner_uid)
+    browser_skills = [
+        _browser_workflow_skills(home, owner_uid, catalog=catalog)
+        for catalog in catalogs
+    ]
     return bool(
         core_ready
-        and len(browser_skills) == 1
-        and browser_skills[0] in T3_BROWSER_AGENT_SKILL_NAMES
+        and catalogs
+        and all(
+            len(skills) == 1 and skills[0] in T3_BROWSER_AGENT_SKILL_NAMES
+            for skills in browser_skills
+        )
     )
 
 
@@ -2092,8 +2105,10 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
     native_runtime = _t3_native_runtime_healthy(node, t3_binary, environment)
     gh_path = _tool_path("gh", user_home)
     git_path = _tool_path("git", user_home) or shutil.which("git")
-    skill_required = bool(
-        _tool_path("codex", user_home) or _tool_path("opencode", user_home)
+    from lib.agent_skill_bundles import SKILL_AGENT_TOOLS, skill_catalogs
+
+    catalogs = skill_catalogs(
+        tool for tool in sorted(SKILL_AGENT_TOOLS) if _tool_path(tool, user_home)
     )
     fixes: list[str] = []
 
@@ -2202,7 +2217,7 @@ def inspect_t3code(home: Optional[str] = None, *, fix: bool = False) -> JSONDict
         "pairing_helper": os.path.isfile(pair_wrapper)
         and os.access(pair_wrapper, os.X_OK),
         "endpoint": endpoint,
-        "t3_agent_skill": not skill_required or _t3_agent_skills_ready(user_home),
+        "t3_agent_skill": not catalogs or _t3_agent_skills_ready(user_home, catalogs),
     }
     required_checks = list(checks)
     healthy = all(checks.values())

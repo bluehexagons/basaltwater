@@ -244,12 +244,13 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
     )
     from common.agent_security_steps import configure_codex_security_policy
     from common.t3code_steps import install_t3code_web
+    from lib.agent_skill_bundles import SKILL_AGENT_TOOLS
 
     if config.has_agent_features():
         steps.append(
             ("Installing agent VM management command", install_agent_cli_launcher)
         )
-        if {"codex", "opencode"}.intersection(config.selected_agent_tools()):
+        if SKILL_AGENT_TOOLS.intersection(config.selected_agent_tools()):
             steps.append(
                 (
                     "Installing managed agent workflow skills",

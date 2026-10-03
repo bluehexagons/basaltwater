@@ -46,7 +46,13 @@ exclude = [
 namespaces = true
 
 [tool.setuptools.package-data]
-common = ["agent_skills/*/SKILL.md"]
+common = [
+    "agent_skills/*/SKILL.md",
+    "agent_skills/*/references/**/*",
+    "agent_skills/*/scripts/**/*",
+    "agent_skills/*/assets/**/*",
+    "agent_skills/*/agents/**/*",
+]
 lib = ["t3code_native_probe.cjs"]
 desktop = ["config/*.template"]
 web = ["config/*"]

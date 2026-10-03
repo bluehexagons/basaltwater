@@ -1,7 +1,8 @@
 # Managed agent workflow skills
 
 Basaltwater installs concise operational skills for Codex and OpenCode under
-the shared `~/.agents/skills` directory. The skills describe profile-specific
+the shared `~/.agents/skills` directory and for Claude Code under its personal
+`~/.claude/skills` directory. The skills describe profile-specific
 commands and boundaries that a general coding agent cannot infer reliably from
 the project alone.
 
@@ -20,8 +21,8 @@ scope and reruns.
 | `basaltwater-cachyos-workspace` | User-owned repository workspaces and safe reruns |
 | `basaltwater-cachyos-t3code` | T3 desktop or managed web mode, switching, pairing, and T3 Connect |
 
-A Debian agent-enabled setup that selects Codex or OpenCode receives these
-base skills:
+A Debian agent-enabled setup that selects Codex, OpenCode, or Claude Code
+receives these base skills:
 
 | Skill | Use it for |
 | --- | --- |
@@ -69,22 +70,42 @@ A skill does not install the capability it describes. A setup with neither T3
 Code nor managed Playwright receives no browser skill, avoiding instructions
 for tools that cannot exist on that VM.
 
-Claude Code does not consume the shared Codex/OpenCode skill location, so a
-Claude-only setup receives the agent management command but not this skill set.
+Claude-only setups receive the same capability-selected catalog, without creating
+the Codex/OpenCode shared directory. Mixed setups install independent copies in
+both locations. Personal Claude skills follow the
+[upstream skill location contract](https://code.claude.com/docs/en/skills#choose-where-skills-load).
+This adds workflow guidance; it does not add Claude Playwright MCP registration.
 
 ## Reconciliation and ownership
 
-Setup copies repository-owned `SKILL.md` files into the target account. A rerun
-refreshes files containing `managed-by: basaltwater` and leaves identical files
+Setup copies repository-owned `SKILL.md` files and complete `references/`,
+`scripts/`, `assets/`, and `agents/` trees into each selected personal catalog.
+Scripts retain executable permission, other resources use mode 0644, and
+individual files are limited to 16 MiB. Installing a bundle never runs its scripts.
+A rerun refreshes files containing `managed-by: basaltwater` and leaves identical files
 alone. It removes obsolete Basaltwater-managed desktop/browser skills when the
 selected capability combination changes, while preserving unrelated skills and
 user configuration. It refuses symlinked paths, directories owned by another
 user, and a same-name skill without the managed marker.
 
-The Playwright doctor includes the selected browser workflow skill in
+Supporting resources are tracked with SHA-256 digests in the private
+`.basaltwater-files.json` inventory. Refreshes preflight each bundle before
+replacing files and refuse untracked same-name resources or modified tracked
+resources. Move or rename those personal files before retrying; setup will not
+overwrite them. Obsolete unchanged resources are removed, while edited resources
+and unrelated personal files remain. Retirement removes the managed entrypoint,
+unchanged tracked resources, and empty directories only. Symlinked source or
+destination entries, special files, and unsafe inventory paths are rejected.
+Each file replacement is atomic; the entire catalog is not a single transaction,
+so rerun setup after correcting a reported collision.
+Readiness verifies recorded resources are present, unchanged, user-owned, and
+not writable by other users; older entrypoint-only installations remain readable.
+
+The Playwright doctor includes the shared selected browser workflow skill in
 capability health, and the T3 doctor requires exactly one T3-capable browser
-variant. Running both checks on a combined VM therefore verifies the combined
-skill rather than accepting independent Playwright-only and T3-only guidance.
+variant in every installed skill-compatible provider's catalog. Running both
+checks on a combined VM therefore verifies the combined skill rather than
+accepting independent Playwright-only and T3-only guidance.
 
 An older VM receives the current base set when its saved setup is rerun from an
 updated Basaltwater control plane. The same setup rerun also updates selected
@@ -118,13 +139,14 @@ behavior. Add a base skill to `BASE_AGENT_SKILL_NAMES` in
 tuples should extend the base constant so standalone capability setup remains
 complete.
 
-The installer currently copies only `SKILL.md`; sibling `references/`,
-`scripts/`, and `agents/` files are not deployed. Keep essential commands and
-fallbacks in the entrypoint. Link optional detailed procedures to the maintained
-operator documentation with an absolute repository URL, and mention the local
-checkout path as an alternative. Do not assume the agent's application checkout
-contains Basaltwater documentation. Supporting skill files require installer
-and reconciliation support before skills can depend on them.
+Keep essential discovery and operational boundaries in the entrypoint and link
+detailed procedures to shipped relative references. For example,
+`basaltwater-t3code` keeps host-side update and migration instructions in
+`references/updates.md`. Supporting trees are packaged in wheels as well as
+deployed from source. Do not ship credentials, caches, generated bytecode, or
+unnecessary assets, and do not assume an application checkout contains
+Basaltwater documentation. The agent suite covers bundle refresh, collisions,
+ownership, and retirement; the wheel artifact check requires the T3 reference.
 
 During an audit, check command examples against their parsers and implementation,
 check readiness claims against doctor results, and review all three browser

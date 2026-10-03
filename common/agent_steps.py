@@ -10,13 +10,20 @@ import shutil
 import stat
 import sys
 import tempfile
+from pathlib import Path
 
 from lib.agent_credentials import (
     MAX_AGENT_CREDENTIAL_BYTES,
     codex_auth_warning,
     inspect_codex_auth_file,
 )
-from lib.atomic_io import write_text_atomic
+from lib.agent_skill_bundles import (
+    SKILL_AGENT_TOOLS,
+    ensure_skill_directory,
+    install_skill_bundle,
+    remove_skill_bundle,
+    skill_catalogs,
+)
 from lib.config import SetupConfig
 from lib.maintenance_systemd import configure_maintenance_timer
 from lib.orchestrator_bootstrap import LAUNCHER_NAME
@@ -49,7 +56,6 @@ BROWSER_AGENT_SKILL_NAMES = (
     "basaltwater-playwright-testing",
     "basaltwater-t3-preview-testing",
 )
-_SKILL_COMPATIBLE_AGENT_TOOLS = frozenset({"codex", "opencode"})
 _AGENT_CLI_MARKER = "# Managed by basaltwater agent setup"
 _FRESH_AGENT_TOOLS_ATTRIBUTE = "_freshly_installed_agent_tools"
 _GIT_IDENTITY_PAYLOAD_PATH = os.path.join("config", "git", "identity.json")
@@ -123,22 +129,6 @@ def _chown_user_directory_chain(
             raise RuntimeError(f"Could not set ownership for {current}: {detail}")
 
 
-def _ensure_agent_skill_directory(path: str, uid: int, gid: int) -> bool:
-    """Create one user-owned skill directory without accepting a symlink."""
-
-    if os.path.lexists(path):
-        if os.path.islink(path) or not os.path.isdir(path):
-            raise RuntimeError(f"Refusing unsafe agent skill directory: {path}")
-        if os.stat(path).st_uid != uid:
-            raise RuntimeError(
-                f"Refusing agent skill directory owned by another user: {path}"
-            )
-        return False
-    os.mkdir(path, mode=0o755)
-    os.chown(path, uid, gid)
-    return True
-
-
 def browser_agent_skill_name(config: SetupConfig) -> str | None:
     """Return the browser workflow skill matching the selected capabilities."""
 
@@ -181,9 +171,10 @@ def install_managed_agent_skills(
     source_root: str = AGENT_SKILLS_ROOT,
     reconcile_skill_names: tuple[str, ...] = (),
 ) -> bool:
-    """Install shared managed workflow skills for compatible coding agents."""
+    """Install managed bundles in each selected provider's personal catalog."""
 
-    if not _SKILL_COMPATIBLE_AGENT_TOOLS.intersection(agent_tools):
+    catalogs = skill_catalogs(agent_tools)
+    if not catalogs:
         return False
     if not validate_username(username):
         raise ValueError(f"Invalid agent-skill username: {username}")
@@ -194,88 +185,21 @@ def install_managed_agent_skills(
     if os.path.islink(source_root) or not os.path.isdir(source_root):
         raise RuntimeError(f"Managed agent skill root is unsafe: {source_root}")
 
-    agents_dir = os.path.join(home, ".agents")
-    skills_root = os.path.join(agents_dir, "skills")
-    changed = _ensure_agent_skill_directory(
-        agents_dir,
-        account.pw_uid,
-        account.pw_gid,
-    )
-    changed = (
-        _ensure_agent_skill_directory(
-            skills_root,
-            account.pw_uid,
-            account.pw_gid,
-        )
-        or changed
-    )
-    for skill_name in skill_names:
+    for skill_name in (*skill_names, *reconcile_skill_names):
         _validate_managed_agent_skill_name(skill_name)
-        source = os.path.join(source_root, skill_name, "SKILL.md")
-        validate_filesystem_path(source, must_exist=True)
-        if os.path.islink(source) or not os.path.isfile(source):
-            raise RuntimeError(f"Managed agent skill is missing: {source}")
-
-        skill_dir = os.path.join(skills_root, skill_name)
-        changed = (
-            _ensure_agent_skill_directory(
-                skill_dir,
-                account.pw_uid,
-                account.pw_gid,
-            )
-            or changed
-        )
-        destination = os.path.join(skill_dir, "SKILL.md")
-        if os.path.lexists(destination) and (
-            os.path.islink(destination) or not os.path.isfile(destination)
-        ):
-            raise RuntimeError(f"Refusing unsafe managed agent skill: {destination}")
-        with open(source, encoding="utf-8") as file_obj:
-            content = file_obj.read()
-        try:
-            with open(destination, encoding="utf-8") as file_obj:
-                previous = file_obj.read()
-        except FileNotFoundError:
-            previous = None
-        if previous is not None and "managed-by: basaltwater" not in previous:
-            raise RuntimeError(
-                f"Refusing to replace unmanaged agent skill: {destination}"
-            )
-        if previous != content:
-            write_text_atomic(destination, content, mode=0o644)
-            changed = True
-        os.chmod(destination, 0o644)
-        os.chown(destination, account.pw_uid, account.pw_gid)
-
-    selected_names = set(skill_names)
-    for skill_name in reconcile_skill_names:
-        _validate_managed_agent_skill_name(skill_name)
-        if skill_name in selected_names:
-            continue
-        skill_dir = os.path.join(skills_root, skill_name)
-        if not os.path.lexists(skill_dir):
-            continue
-        if os.path.islink(skill_dir) or not os.path.isdir(skill_dir):
-            raise RuntimeError(f"Refusing unsafe managed agent skill: {skill_dir}")
-        if os.stat(skill_dir).st_uid != account.pw_uid:
-            raise RuntimeError(
-                f"Refusing agent skill directory owned by another user: {skill_dir}"
-            )
-        destination = os.path.join(skill_dir, "SKILL.md")
-        if not os.path.lexists(destination):
-            continue
-        if os.path.islink(destination) or not os.path.isfile(destination):
-            raise RuntimeError(f"Refusing unsafe managed agent skill: {destination}")
-        with open(destination, encoding="utf-8") as file_obj:
-            content = file_obj.read()
-        if "managed-by: basaltwater" not in content:
-            continue
-        os.unlink(destination)
-        try:
-            os.rmdir(skill_dir)
-        except OSError:
-            pass
-        changed = True
+    changed = False
+    for catalog in catalogs:
+        agents_dir = Path(home) / catalog
+        skills_root = agents_dir / "skills"
+        uid, gid = account.pw_uid, account.pw_gid
+        changed = ensure_skill_directory(agents_dir, uid, gid) or changed
+        changed = ensure_skill_directory(skills_root, uid, gid) or changed
+        for skill_name in skill_names:
+            changed = install_skill_bundle(
+                Path(source_root) / skill_name, skills_root / skill_name, uid, gid,
+            ) or changed
+        for skill_name in set(reconcile_skill_names).difference(skill_names):
+            changed = remove_skill_bundle(skills_root / skill_name, uid) or changed
     return changed
 
 
@@ -294,7 +218,7 @@ def install_agent_workflow_skills(config: SetupConfig) -> None:
     """Install or refresh the base workflow skills selected for an agent VM."""
 
     selected_tools = config.selected_agent_tools()
-    if not _SKILL_COMPATIBLE_AGENT_TOOLS.intersection(selected_tools):
+    if not SKILL_AGENT_TOOLS.intersection(selected_tools):
         return
     if is_dry_run():
         print("  [DRY-RUN] Would install managed agent workflow skills")
