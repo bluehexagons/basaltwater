@@ -102,7 +102,8 @@ def print_service_access_summary(
     lines: list[tuple[str, str, str | None]] = []
     access_details = remote_access_details or {}
 
-    lines.append(("SSH", f"ssh {config.username}@{config.host}", "shell access"))
+    ssh_username = "root" if config.system_type == "server_proxmox" else config.username
+    lines.append(("SSH", f"ssh {ssh_username}@{config.host}", "shell access"))
     if config.privilege_broker_port is not None:
         from lib.privilege_setup import privilege_broker_origin
 

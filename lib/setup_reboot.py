@@ -449,7 +449,13 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
     print("  ✓ Restart completed; running host health checks")
     from lib.sysadmin_health import run_health
 
-    health_status = run_health(config.host, config.username, config.ssh_key)
+    if proxmox:
+        health_status = run_health(
+            config.host, "root", config.ssh_key,
+            control_path=get_ssh_control_path(config.host, "root", config.ssh_key),
+        )
+    else:
+        health_status = run_health(config.host, config.username, config.ssh_key)
     if health_status != 0:
         return health_status
     if proxmox and not _verify_proxmox_restart(config):

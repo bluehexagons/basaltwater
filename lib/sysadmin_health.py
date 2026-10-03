@@ -59,7 +59,9 @@ def _resolve_host_credentials(
     config = load_setup_command(host)
     if config:
         if not username:
-            username = config.username
+            # The Proxmox profile preserves the node's existing accounts and
+            # authenticates setup as root; its named user is not provisioned.
+            username = "root" if getattr(config, "system_type", None) == "server_proxmox" else config.username
         if not ssh_key:
             ssh_key = config.ssh_key
     return username or "root", ssh_key
@@ -105,6 +107,8 @@ def run_health(
     host: str,
     username: Optional[str] = None,
     ssh_key: Optional[str] = None,
+    *,
+    control_path: Optional[str] = None,
 ) -> int:
     username, ssh_key = _resolve_host_credentials(host, username, ssh_key)
 
@@ -114,6 +118,7 @@ def run_health(
         ssh_key,
         batch_mode=ssh_batch_mode(),
         remote_command=_HEALTH_SCRIPT,
+        control_path=control_path,
     )
 
     result = run_command(cmd, capture_output=True, text=True, timeout=120)

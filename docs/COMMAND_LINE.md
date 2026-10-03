@@ -288,6 +288,10 @@ blocks the host reboot. HA-managed guests require operator-managed maintenance.
 By default, setup requests the restart and exits without waiting for the host
 to return. Add `--wait-for-restart` to wait up to five minutes for a remote
 target to boot again over SSH, then run the standard `basaltw health` summary.
+On Proxmox, the health check reuses root authentication with the setup SSH key
+and connection. The Proxmox profile preserves existing accounts and does not
+provision the named setup user. `basaltw health HOST` also defaults to root
+when the saved profile is `server_proxmox`; `-u USER` overrides that default.
 This flag requires `--restart-if-needed` and a remote target; if no reboot is
 needed, setup skips both the wait and health check. Local targets can use
 `--restart-if-needed`, but cannot use `--wait-for-restart` because the

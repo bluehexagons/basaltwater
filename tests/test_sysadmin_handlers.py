@@ -111,7 +111,7 @@ class TestSysadminHealth(unittest.TestCase):
             with redirect_stdout(stdout):
                 self.assertEqual(sysadmin_health.run_health("server"), 0)
 
-        build.assert_called_once_with("server", "saved", "/tmp/saved", batch_mode=True, remote_command=sysadmin_health._HEALTH_SCRIPT)
+        build.assert_called_once_with("server", "saved", "/tmp/saved", batch_mode=True, remote_command=sysadmin_health._HEALTH_SCRIPT, control_path=None)
         self.assertIn("Health: server", stdout.getvalue())
         self.assertIn("[!] /dev/sda 90%", stdout.getvalue())
 
@@ -122,6 +122,20 @@ class TestSysadminHealth(unittest.TestCase):
                 result = sysadmin_health.run_health("server", username="admin")
         self.assertEqual(result, 255)
         self.assertIn("permission denied", stderr.getvalue())
+
+    def test_proxmox_health_defaults_to_root_and_honors_an_explicit_user(self) -> None:
+        config = SimpleNamespace(username="loren", ssh_key="/keys/private", system_type="server_proxmox")
+        with (
+            patch.object(sysadmin_health, "load_setup_command", return_value=config),
+            patch.object(sysadmin_health, "build_ssh_command", return_value=["ssh"]) as build,
+            patch.object(sysadmin_health, "run_command", return_value=completed()),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(sysadmin_health.run_health("server", control_path="/root/control.sock"), 0)
+            self.assertEqual(build.call_args.args, ("server", "root", "/keys/private"))
+            self.assertEqual(build.call_args.kwargs["control_path"], "/root/control.sock")
+            self.assertEqual(sysadmin_health.run_health("server", username="admin", ssh_key="/keys/admin"), 0)
+            self.assertEqual(build.call_args.args, ("server", "admin", "/keys/admin"))
 
 
 class TestSysadminKeys(unittest.TestCase):

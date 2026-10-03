@@ -221,6 +221,13 @@ class TestRdpDisplay(unittest.TestCase):
         self.assertIn("Gogs web: https://192.168.0.51:3000/", rendered)
         self.assertNotIn("Gogs web: https://192.168.0.51/", rendered)
 
+    def test_proxmox_access_summary_advertises_the_existing_root_account(self) -> None:
+        config = SetupConfig(host="192.168.0.22", username="loren", system_type="server_proxmox")
+        with redirect_stdout(io.StringIO()) as output:
+            print_service_access_summary(config)
+        self.assertIn("SSH: ssh root@192.168.0.22", output.getvalue())
+        self.assertNotIn("ssh loren@", output.getvalue())
+
     def test_access_summary_omits_cloudflare_backend_port(self) -> None:
         config = SetupConfig(
             host="192.168.0.51",

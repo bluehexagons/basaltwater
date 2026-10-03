@@ -114,6 +114,7 @@ class RestartStatusTests(unittest.TestCase):
 
 class RestartWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.control = self.enterContext(patch.object(setup_reboot, "get_ssh_control_path", return_value="/root/control.sock"))
         self.enterContext(patch.object(setup_reboot.secrets, "token_hex", return_value="58343ea9a904"))
         self.status = self.enterContext(patch.object(setup_reboot, "_restart_status", return_value="needed"))
         self.request = self.enterContext(patch.object(setup_reboot, "_request_restart", return_value=True))
@@ -206,6 +207,20 @@ class RestartWorkflowTests(unittest.TestCase):
         self.request.assert_called_once_with(config, proxmox=True, restart_unit=RESTART_UNIT)
         self.wait.assert_called_once_with(config, OLD_BOOT_ID, timeout_seconds=2100, restart_unit=RESTART_UNIT)
         self.proxmox_health.assert_called_once_with(config)
+
+    def test_proxmox_health_preserves_root_authentication_for_named_or_alternate_profiles(self) -> None:
+        for status, profile in (("needed-proxmox", "server_proxmox"),
+                                ("needed-proxmox", "custom_steps"), ("needed", "server_proxmox")):
+            with self.subTest(status=status, profile=profile):
+                self.status.return_value = status
+                config = _config(username="loren", system_type=profile, ssh_key="/keys/private")
+                with patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True):
+                    self.assertEqual(setup_reboot.restart_after_setup(config, wait_for_restart=True), 0)
+                self.health.assert_called_with(
+                    config.host, "root", "/keys/private", control_path="/root/control.sock",
+                )
+                self.control.assert_called_with(config.host, "root", "/keys/private")
+                self.proxmox_health.assert_called_with(config)
 
     def test_failed_proxmox_post_reboot_audit_fails_setup_result(self) -> None:
         self.status.return_value = "needed-proxmox"
