@@ -1690,8 +1690,15 @@ def _run_check(
         return subprocess.CompletedProcess(command, 1, "", "")
 
 
-def _command_version(path: str, *arguments: str) -> Optional[str]:
-    result = _run_check([path, *(arguments or ("--version",))])
+def _command_version(
+    path: str,
+    *arguments: str,
+    environment: Optional[dict[str, str]] = None,
+    cwd: Optional[str] = None,
+) -> Optional[str]:
+    result = _run_check(
+        [path, *(arguments or ("--version",))], environment=environment, cwd=cwd,
+    )
     output = (result.stdout or result.stderr).strip()
     return output.splitlines()[0] if result.returncode == 0 and output else None
 
@@ -1760,12 +1767,23 @@ def _inspect_node_development(home: str) -> JSONDict:
     npm_path = os.path.join(node_bin, "npm") if node_bin else ""
     pnpm_path = os.path.join(node_bin, "pnpm") if node_bin else ""
     corepack_path = os.path.join(node_bin, "corepack") if node_bin else ""
-    node_version = _command_version(node_path) if node_path else None
-    npm_version = _command_version(npm_path) if os.path.isfile(npm_path) else None
-    pnpm_version = _command_version(pnpm_path) if os.path.isfile(pnpm_path) else None
-    corepack_version = (
-        _command_version(corepack_path) if os.path.isfile(corepack_path) else None
-    )
+    environment = os.environ.copy()
+    environment["PATH"] = os.pathsep.join((node_bin or "", environment.get("PATH", "")))
+    environment["COREPACK_ENABLE_NETWORK"] = "0"
+    # Corepack honors packageManager/devEngines in ancestor package.json files.
+    # Inspect the installed tools outside the invoking project, using their own
+    # Node interpreter, without letting a version probe download a manager.
+    with tempfile.TemporaryDirectory(prefix="basaltwater-node-probe-", dir="/tmp") as probe:
+        def version(path: str) -> Optional[str]:
+            return (
+                _command_version(path, environment=environment, cwd=probe)
+                if path and os.path.isfile(path) else None
+            )
+
+        node_version = version(node_path)
+        npm_version = version(npm_path)
+        pnpm_version = version(pnpm_path)
+        corepack_version = version(corepack_path)
     if node_version is None:
         issues.append("node_default_missing")
     if npm_version is None:

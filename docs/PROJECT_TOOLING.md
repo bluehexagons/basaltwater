@@ -116,6 +116,13 @@ under npm 12 and verifies their commands report the requested versions.
 Install pnpm/yarn for each selected Node version when needed; avoid exposing
 another Node version's global tool directory through PATH.
 
+`basaltw agent doctor --capability development` inventories the managed tools
+independently of the current checkout. Node/package-manager version probes run
+in a private temporary directory using the selected installation's interpreter;
+Corepack network downloads are disabled. A project's npm-only policy therefore
+does not make an installed pnpm appear missing. A broken selected installation
+still needs repair through saved setup or an explicit per-version install.
+
 These host commands are optional. Project builds and publishing should also
 work through ordinary NVM or system toolchains without Basaltwater. NVM's
 [project version-file guidance](https://github.com/nvm-sh/nvm#nvmrc) and npm's
