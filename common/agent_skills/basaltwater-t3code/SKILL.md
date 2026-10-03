@@ -60,18 +60,23 @@ unless readiness or unrelated operations fail too.
 
 ## Updates
 
-Setup reruns reconcile the upstream service and selected terminal agents.
+Basaltwater targets stable T3 releases. Setup reruns use npm's `t3@latest`
+stable channel and reconcile the upstream service and selected terminal agents.
 For a deliberate T3 update, prefer the connected client's **Update server**
 action. Read [the update procedure](references/updates.md) before a host-side
 update, launcher migration, or native-module repair. It distinguishes
 standalone archives from older npm runtimes and keeps npm policy scoped.
-Before the first orchestration V2 upgrade, read
+When orchestration V2 reaches stable, before the first upgrade read
 [the thread migration procedure](references/thread-migration.md). It covers
 the private recovery copy, automatic database import, matching client protocol,
 and fresh provider session needed to continue older conversations. Support
 forward upgrades; do not downgrade or edit T3's migration bookkeeping.
 
-## T3 orchestration V2 features
+## Upcoming stable features: orchestration V2
+
+The V2 guidance was checked against an isolated nightly artifact in advance
+of its stable release. Recheck the published stable migration contract before
+deployment; nightly testing does not change the managed release channel.
 
 On V2 releases, provider switches and migrated conversations use budgeted
 portable handoffs. Retrieve omitted saved history with T3's thread-reading

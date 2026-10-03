@@ -4,8 +4,9 @@ Status: active qualification; phases 1 through 3 and the phase 4 restart and
 durable-readiness boundaries are code-complete. The T3 v0.0.45 compatibility
 and phase 5 skill-delivery slice landed on 2026-10-02. Disposable-VM deployment
 and connected-client preview qualification remain separate pending work.
-The forward orchestration V2 upgrade was checked against
-v0.0.46-nightly.20261003.2623 on 2026-10-03; stable remains v0.0.45.
+Stable T3 releases remain the deployment target. Forward compatibility for
+orchestration V2 was checked against an isolated
+v0.0.46-nightly.20261003.2623 artifact on 2026-10-03; stable was v0.0.45.
 
 ## Objective
 
@@ -157,9 +158,9 @@ iOS workflows, prerequisites, ownership, and rollout are in the
 [mobile agent support proposal](MOBILE_AGENT_SUPPORT.md); no device setup or
 agent-device access is enabled by these improvements.
 
-### Orchestration V2 qualification
+### Forward compatibility for the next stable release
 
-Reviewed `v0.0.46-nightly.20261003.2623` at
+Reviewed the isolated nightly `v0.0.46-nightly.20261003.2623` at
 `fed41fa88bb27cb4325cb208d571393850bc63c2` on 2026-10-03:
 
 - The service-state protocol remains 3, the standalone layout is unchanged,
@@ -184,12 +185,13 @@ and wheel tests passed. The isolated wheel build/install smoke verifies that
 the new migration reference ships with the managed skill; artifact validation
 now requires that reference. No live service was updated during these checks.
 
-Next qualification: exercise the forward service update on a disposable
-Debian VM with a matching V2 client, verify representative long/archived
+Next qualification: when V2 reaches stable, recheck the published stable
+migration contract and exercise the forward service update on a disposable
+Debian VM with a matching stable V2 client. Verify representative long/archived
 threads and attachments, and confirm preview and provider continuation.
 Preview-to-current migration numbering is reviewed in source, not exercised
-by the v0.0.45 artifact smoke. Stable setup remains on npm `latest`; deliberate
-nightly updates use the exact client-compatible version. Evaluate native T3
+by the v0.0.45 artifact smoke. Setup remains on npm's `t3@latest` stable
+channel; nightly checks are advance compatibility testing only. Evaluate native T3
 scheduled tasks against maintenance holds and recorded readiness before
 recommending unattended operation; no additional scheduler is introduced.
 

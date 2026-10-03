@@ -1,13 +1,15 @@
 # Managed T3 service updates
 
-When T3 Code is selected, a Basaltwater setup rerun checks the upstream
-service and updates it when a newer release is available. A healthy service is
+Basaltwater targets stable T3 releases. When T3 Code is selected, a setup
+rerun checks npm's `t3@latest` stable channel and updates the upstream service
+when a newer stable release is available. A healthy service is
 restarted only when the runtime or managed configuration changes. Prefer the
 connected client's explicit **Update server** action when an update should be
 performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
-version required by the client. Use `latest` only for a matching stable client;
-it does not select the newest nightly or preview. Before the first upgrade to
-orchestration V2, read [the thread migration procedure](thread-migration.md)
+stable version required by the stable client, or `latest` when both should
+use the latest stable release. Nightly and preview builds are used only for
+isolated forward-compatibility testing. When orchestration V2 reaches stable,
+before the first upgrade read [the thread migration procedure](thread-migration.md)
 and arrange a private recovery copy and the required interruption. Then run:
 
 ```bash
@@ -32,11 +34,9 @@ basaltw agent doctor --capability t3code --fix
 ```
 
 If the client says the update requires a newer T3 Code service launcher,
-reconcile it with the matching release's command above. For a stable client,
+reconcile it with the matching stable release's command above. Alternatively,
 rerunning the saved Basaltwater setup command on that VM also reconciles the
-launcher and runtime. A stable setup rerun cannot advance a nightly
-client/server pair; use the exact matching release above for that forward
-upgrade. The doctor validates the selected runtime. Do not pass
+launcher and runtime. The doctor validates the selected runtime. Do not pass
 `--allow-downgrade` or replace an existing V2 database with its V1 source.
 Basaltwater recognizes service-state
 protocols 2 and 3, including the standalone executable runtime layout used by

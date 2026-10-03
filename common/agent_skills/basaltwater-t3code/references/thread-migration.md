@@ -1,11 +1,12 @@
-# Forward upgrade to T3 orchestration V2
+# Upcoming stable upgrade to T3 orchestration V2
 
 Reviewed on 2026-10-03 against `0.0.46-nightly.20261003.2623`.
-The stable npm `latest` channel still publishes `0.0.45`. Use the connected
-client's **Update server** action or the exact matching release in
-[the host-side update procedure](updates.md); a stable setup rerun does not
-opt an environment into nightly releases. Basaltwater supports forward
-upgrades here, with no downgrade procedure.
+Basaltwater targets the stable npm `latest` channel, which published `0.0.45`
+at review time. The nightly was tested in isolation to prepare for the next
+stable release. Apply this procedure when V2 reaches stable, after checking
+that release's migration contract. Use the stable client's **Update server**
+action or its matching stable version in [the host-side update procedure](updates.md).
+Upgrades are forward-only; this preparation does not enable nightly deployment.
 
 ## Before the first V2 launch
 

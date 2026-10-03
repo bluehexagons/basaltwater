@@ -179,17 +179,19 @@ setup rerun or maintenance schedule because that could terminate the agent
 session performing the setup; refresh/update paths already restart when the
 managed runtime or service configuration actually changes.
 
-When T3 Code is selected, every Basaltwater setup run checks the upstream
-service for a newer release. A healthy service is restarted only when the
+Basaltwater targets stable T3 Code releases. When T3 Code is selected, every
+setup run checks npm's `t3@latest` stable channel for a newer release.
+A healthy service is restarted only when the
 runtime changes or its managed configuration needs it, so routine reruns do
 not interrupt an unchanged session. The T3 client can also offer an explicit
 **Update server** action for this background service; prefer that action after
 active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
-set `T3_RELEASE` to the exact version required by the connected client. Use
+set `T3_RELEASE` to the exact stable version required by the stable client. Use
 `latest` only when the client is also on the latest stable release; npm's
-`latest` does not select a newer nightly or preview. Before the first
-orchestration V2 update, follow [the thread migration guidance](#orchestration-v2-thread-migration):
+`latest` does not select a newer nightly or preview. When orchestration V2
+reaches stable, before the first update follow
+[the thread migration guidance](#orchestration-v2-thread-migration):
 
 ```bash
 # As the target user, using T3 Code's documented updater:
@@ -315,15 +317,16 @@ under `~/.t3/userdata`. Basaltwater does not edit T3's database or schema versio
 
 ### Orchestration V2 thread migration
 
-Compatibility reviewed again on 2026-10-03 against
+Forward compatibility reviewed on 2026-10-03 using an isolated
 [v0.0.46-nightly.20261003.2623](https://github.com/pingdotgg/t3code/releases/tag/v0.0.46-nightly.20261003.2623)
 (`fed41fa88bb27cb4325cb208d571393850bc63c2`). Stable GitHub and npm releases
 still report v0.0.45. The nightly keeps service-state protocol 3, the standalone
 runtime layout, and all eight administrative pairing scopes. Existing
 Basaltwater runtime selection, embedded-Node native checks, and pairing work
-without a new launcher shim or pairing reset. Stable setup reruns retain their
-stable release policy; use the matching exact release for a deliberate nightly
-forward upgrade. Downgrading is not a supported workflow.
+without a new launcher shim or pairing reset. The deployment target remains
+stable; this is preparation for V2 reaching the stable channel. Recheck the
+published stable migration contract before rollout. Downgrading is not a
+supported workflow.
 
 The application wire protocol changes from 1 to 2. T3 blocks mismatched clients
 and servers and names the side to update; update that side and reconnect.
@@ -453,7 +456,10 @@ The managed T3 skill also uses native `link_pull_request` and
 `list_thread_pull_requests` tools when available, so PRs created through `gh`
 appear in T3's linked-PR panel, including all layers of a stack.
 
-### Features available in the reviewed V2 nightly
+### Upcoming stable features reviewed in the V2 nightly
+
+These features were reviewed in advance of the stable release. Their guidance
+applies when V2 reaches stable and the installed release exposes them.
 
 Portable handoffs transfer a bounded selection of saved conversation text
 when providers change or migrated threads continue. Agents can retrieve
