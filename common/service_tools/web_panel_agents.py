@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
 from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
@@ -276,8 +276,8 @@ def _render_run_summary(tasks: list[dict[str, Any]], runs: list[dict[str, Any]],
 def render_agent_activity(state: Any) -> str:
     """Summarize saved panel activity without invoking tools or diagnostics."""
 
-    heading = '''<section aria-labelledby="agent-activity-heading"><div class="section-heading">
-<h2 id="agent-activity-heading">Agent activity</h2><a class="refresh-link" href="/agents">Manage prompt tasks →</a></div>'''
+    heading = f'''<section aria-labelledby="agent-activity-heading"><div class="section-heading">
+{render_heading("Agent activity", "agents", heading_id="agent-activity-heading")}<a class="refresh-link" href="/agents">Manage prompt tasks →</a></div>'''
     manager = state.agent_tasks
     try:
         snapshot = manager.snapshot()
@@ -519,7 +519,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     model_options = "".join(f'<option value="{_escape(key)}"{" selected" if key == defaults["model"] else ""}>{_escape(label)}</option>' for key, label in models)
     effort_options = "".join(f'<option value="{key}"{" selected" if key == defaults["effort"] else ""}>{label}</option>' for key, label in [("", "Configured default")] + [(level, "Extra high (xhigh)" if level == "xhigh" else "Maximum (max)" if level == "max" else level.capitalize()) for level in EFFORTS])
     search_options = "".join(f'<option value="{key}"{" selected" if key == defaults["web_search"] else ""}>{label}</option>' for key, label in zip(WEB_SEARCH_MODES, ("Disabled", "Cached results", "Live web search")))
-    composer = f'''<div class="agent-panel"><h2>{"Edit prompt task" if editing else "Review prepared task" if prepared else "New prompt task"}</h2>
+    composer = f'''<div class="agent-panel">{render_heading("Edit prompt task" if editing else "Review prepared task" if prepared else "New prompt task", "agents")}
 {f'<p class="agent-help">{source_note}</p>' if source_note else ''}
 <form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
@@ -547,7 +547,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <a href="/agents">Clear form</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected. Save draft stores the task without running or scheduling it.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
-    helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Use <a class="refresh-link" href="/agent-tools">Agent tools</a> to prepare system reviews, workspace cleanup, or data imports and exports with explicit source and output paths.</p><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
+    helper = f'''<aside class="agent-panel">{render_heading("Start from a template", "agent-tools")}<p class="agent-help">Use <a class="refresh-link" href="/agent-tools">Agent tools</a> to prepare system reviews, workspace cleanup, or data imports and exports with explicit source and output paths.</p><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
 <details><summary>Execution limits</summary><p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. Schedules run while this panel service is running; missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></aside>'''
     rows = []
     for task in tasks:
@@ -588,7 +588,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     workbench = f'<div class="agent-columns">{composer}{helper}</div>'
     if tasks and (not query or "run" in query) and not submitted:
         workbench = f'<details><summary>Create a prompt task</summary>{workbench}</details>'
-    task_section = f'''<section aria-labelledby="agent-tasks-heading"><div class="section-heading"><h2 id="agent-tasks-heading">Prompt tasks</h2><span class="count">{len(tasks)} saved · {sum(t['enabled'] for t in tasks)} repeating · {sum(t['queued'] for t in tasks)} queued</span></div>{schedules}</section>'''
+    task_section = f'''<section aria-labelledby="agent-tasks-heading"><div class="section-heading">{render_heading("Prompt tasks", "agents", heading_id="agent-tasks-heading")}<span class="count">{len(tasks)} saved · {sum(t['enabled'] for t in tasks)} repeating · {sum(t['queued'] for t in tasks)} queued</span></div>{schedules}</section>'''
     tasks_first = tasks and not prepared and not submitted and (not query or "run" in query)
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Prompt tasks and runtime diagnostics on <code>{_escape(state.manifest['host'])}</code>.</p></div><a class="refresh-link" href="/agents">Refresh status</a></header>'''
     active = next((run for run in runs if run["status"] == "running"), None)
@@ -597,8 +597,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         elapsed = _run_seconds(active, now)
         active_html = f'''<aside class="agent-panel agent-active" role="status"><strong>Running: {_escape(active['task']['title'])}</strong><p class="agent-help">{_duration(elapsed)} elapsed · {_duration(max(0, active['task']['timeout_minutes'] * 60 - elapsed))} remaining at page load · <code>{_escape(active['task']['directory'])}</code></p><p class="agent-help">Refresh status for updated timing. Other work stays queued until this run finishes.</p></aside>'''
     content = f'''{alert}{_render_run_summary(tasks, runs, now)}{active_html}{task_section + workbench if tasks_first else workbench + task_section}
-<section aria-labelledby="agent-diagnostics-heading"><div class="section-heading"><h2 id="agent-diagnostics-heading">Runtime diagnostics</h2><span class="count">Loaded on request</span></div>{diagnostics_html}{t3_html}</section>
-<section aria-labelledby="agent-history-heading"><div class="section-heading"><h2 id="agent-history-heading">Run history</h2><span class="count">Latest {len(runs)} runs</span></div><div class="agent-history">{''.join(history) or '<p class="empty">No prompt runs have been recorded.</p>'}</div></section>'''
+<section aria-labelledby="agent-diagnostics-heading"><div class="section-heading">{render_heading("Runtime diagnostics", "diagnostics", heading_id="agent-diagnostics-heading")}<span class="count">Loaded on request</span></div>{diagnostics_html}{t3_html}</section>
+<section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">Latest {len(runs)} runs</span></div><div class="agent-history">{''.join(history) or '<p class="empty">No prompt runs have been recorded.</p>'}</div></section>'''
     return render_document(title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
                            header=header, content=content, navigation=panel_navigation(current="agents"),
                            footer='<footer><a href="/">Back to dashboard</a><span>Refresh status to see completed runs</span></footer>')

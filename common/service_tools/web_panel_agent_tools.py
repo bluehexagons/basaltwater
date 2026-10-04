@@ -9,7 +9,7 @@ import shlex
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading, render_icon
 from lib.agent_tasks import MAX_PROMPT_BYTES, validate_task
 from lib.validation import validate_filesystem_path
 
@@ -273,13 +273,18 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
 {fields}<button>Prepare prompt for review</button></form></section>'''
     catalog = ""
     for group in ("System", "Data and workspace"):
+        tone = "stone" if group == "System" else "workspace"
         cards = []
         for key, (title, description, section, mode, interval, timeout) in TOOLS.items():
             if section != group:
                 continue
             url = tool_url(key, service=next(iter(JOB_SERVICES))) if key == "job" else tool_url(key)
-            cards.append(f'<article class="tool-card"><h3>{escape(title)}</h3><p>{escape(description)}</p><p>{"Inspect only" if mode == "inspect" else "Workspace changes"} · {interval} · {timeout} min</p><a class="refresh-link" href="{escape(url, quote=True)}">Set up task →</a></article>')
-        catalog += f'<section aria-label="{group}"><div class="section-heading"><h2>{group}</h2></div><div class="tool-grid">{"".join(cards)}</div></section>'
+            icon = {"checkup": "service-status", "maintenance": "maintenance", "logs": "diagnostics",
+                    "job": "jobs", "storage": "storage", "data-audit": "data",
+                    "data-import": "import", "data-export": "export", "cleanup": "storage"}[key]
+            cards.append(f'<article class="tool-card tone-{tone}"><span class="tool-icon">{render_icon(icon)}</span><h3>{escape(title)}</h3><p>{escape(description)}</p><p>{"Inspect only" if mode == "inspect" else "Workspace changes"} · {interval} · {timeout} min</p><a class="refresh-link" href="{escape(url, quote=True)}">Set up task →</a></article>')
+        heading = render_heading(group, "maintenance" if group == "System" else "data")
+        catalog += f'<section aria-label="{group}"><div class="section-heading">{heading}</div><div class="tool-grid">{"".join(cards)}</div></section>'
     body += f'<details><summary>Choose another agent tool</summary>{catalog}</details>' if tool in TOOLS else catalog
     body += '<p class="endpoint">Host repairs remain separately approved in <a href="/admin">Admin controls</a>. These tools prepare account-level work with the existing Codex runner. T3 Code is optional. Filesystem and data-handling constraints in the prompt guide the agent; review its results and keep an independent backup for valuable data.</p>'
     header = f'<header class="dashboard-header"><div><p class="eyebrow">System and data tasks</p><h1>Agent tools</h1><p class="lede">Prepare agent work on <code>{escape(state.manifest["host"])}</code>.</p></div><a class="refresh-link" href="/agents">View tasks and results</a></header>'

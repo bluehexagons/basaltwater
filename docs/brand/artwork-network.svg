@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" width="128" height="64" class="brand-network" role="img" aria-label="Connected basalt columns" focusable="false">
+  <style>svg{color:#17232c;--brand-water:#17657d;--workspace:#694399}@media(prefers-color-scheme:dark){svg{color:#e8f5f8;--brand-water:#4dc5dd;--workspace:#c3a4ef}}</style>
+  <g fill="none" stroke="var(--workspace,currentColor)" stroke-width="2">
+    <path d="M16 5l8 5v8l-8 5-8-5v-8Z M108 5l8 5v8l-8 5-8-5v-8Z" />
+    <path d="M24 14h14l10 10 M100 14H86l-6 6" />
+  </g>
+  <g transform="translate(42 12) scale(1.25)">
+    <path fill="var(--brand-water,currentColor)" d="M8 9l6 3v3l-6 3-6-3v-3Z M23 1l6 3v3l-6 3-6-3V4Z" />
+    <path fill="currentColor" d="M2 17l5 3v6l-5-3Z M9 20l5-3v6l-5 3Z M17 9l5 3v10l-5-3Z M24 12l5-3v10l-5 3Z" />
+    <path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="2" d="M2 30h8l5-3h6l4-3h5" />
+  </g>
+  <path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="2" d="M8 58h24l8-5h48l8-5h24" />
+</svg>

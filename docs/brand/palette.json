@@ -10,7 +10,13 @@
     "ok": "#21694f",
     "bad": "#a2342b",
     "warning": "#825119",
-    "brand-water": "#17657d"
+    "brand-water": "#17657d",
+    "workspace": "#694399",
+    "workspace-soft": "#eee7f7",
+    "stone": "#80501f",
+    "stone-soft": "#f8eddf",
+    "sea": "#206452",
+    "sea-soft": "#e1f3ed"
   },
   "dark": {
     "bg": "#101a21",
@@ -23,6 +29,12 @@
     "ok": "#75d2ae",
     "bad": "#ffa69d",
     "warning": "#e9b979",
-    "brand-water": "#4dc5dd"
+    "brand-water": "#4dc5dd",
+    "workspace": "#c3a4ef",
+    "workspace-soft": "#30283e",
+    "stone": "#e9b979",
+    "stone-soft": "#392e23",
+    "sea": "#86d5b9",
+    "sea-soft": "#203a34"
   }
 }

@@ -15,12 +15,18 @@ BRAND_PALETTES = {
         "muted": "#49616e", "line": "#738995", "accent": "#17657d",
         "accent-soft": "#d8f0f4", "ok": "#21694f", "bad": "#a2342b",
         "warning": "#825119", "brand-water": "#17657d",
+        "workspace": "#694399", "workspace-soft": "#eee7f7",
+        "stone": "#80501f", "stone-soft": "#f8eddf",
+        "sea": "#206452", "sea-soft": "#e1f3ed",
     },
     "dark": {
         "bg": "#101a21", "panel": "#17232c", "text": "#e8f5f8",
         "muted": "#aec6cf", "line": "#718c99", "accent": "#4dc5dd",
         "accent-soft": "#223e4b", "ok": "#75d2ae", "bad": "#ffa69d",
         "warning": "#e9b979", "brand-water": "#4dc5dd",
+        "workspace": "#c3a4ef", "workspace-soft": "#30283e",
+        "stone": "#e9b979", "stone-soft": "#392e23",
+        "sea": "#86d5b9", "sea-soft": "#203a34",
     },
 }
 BRAND_SYMBOL = (
@@ -50,6 +56,10 @@ BRAND_ICONS = {
     "service-status": "M7 3h10l5 9-5 9H7l-5-9Z M5 12h4l2-5 3 10 2-5h3",
     "jobs": "M7 2v4 M17 2v4 M3 5h18v16H3Z M3 9h18 M12 12v4h4",
     "diagnostics": "M6 2h12l4 4v12l-4 4H6l-4-4V6Z M7 8l4 4-4 4 M14 16h4",
+    "storage": "M6 3h12l3 4v13H3V7Z M3 12h18 M3 16h18 M17 9h.01 M17 14h.01 M17 18h.01",
+    "data": "M6 2h12l4 4v14H2V6Z M2 8h20 M2 14h20 M8 8v12 M15 8v12",
+    "import": "M12 2v12 M8 10l4 4 4-4 M3 14v7h18v-7 M6 17h12",
+    "export": "M12 14V2 M8 6l4-4 4 4 M3 14v7h18v-7 M6 17h12",
 }
 NAVIGATION_ICONS = {
     "Dashboard": "dashboard", "Agents": "agents", "Agent tools": "agent-tools",
@@ -59,12 +69,58 @@ NAVIGATION_ICONS = {
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics",
 }
+ICON_TONES = {
+    "agents": "workspace", "agent-tools": "workspace", "data": "workspace",
+    "import": "workspace", "export": "workspace",
+    "admin": "stone", "maintenance": "stone", "jobs": "stone", "storage": "stone",
+    "access": "sea", "security": "sea", "certificate": "sea",
+}
+PAGE_ICONS = {
+    "dashboard": "dashboard", "agents": "agents", "agent-tools": "agent-tools",
+    "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
+}
 
 # Small repeating tiles; no raster, external resource, filter or embedded data.
 BRAND_TEXTURES = {
     "basalt": (24, 42, "M12 0l12 7v14l-12 7L0 21V7Z M12 28v14"),
     "water": (96, 32, "M0 8h12l12-6h24l12 6h36 M0 24h36l12 6h24l12-6h12"),
 }
+BRAND_NETWORK = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" '
+    'width="128" height="64" class="brand-network" aria-hidden="true" focusable="false">'
+    '<g fill="none" stroke="var(--workspace,currentColor)" stroke-width="2">'
+    '<path d="M16 5l8 5v8l-8 5-8-5v-8Z M108 5l8 5v8l-8 5-8-5v-8Z"/>'
+    '<path d="M24 14h14l10 10 M100 14H86l-6 6"/></g>'
+    '<g transform="translate(42 12) scale(1.25)">'
+    + BRAND_SYMBOL.partition(">")[2].removesuffix("</svg>") + '</g>'
+    '<path fill="none" stroke="var(--brand-water,currentColor)" stroke-width="2" '
+    'd="M8 58h24l8-5h48l8-5h24"/></svg>'
+)
+
+
+def svg_theme_styles() -> str:
+    """Let standalone SVG artwork follow the viewing browser's theme."""
+    def tokens(theme: str) -> str:
+        palette = BRAND_PALETTES[theme]
+        return (f'color:{palette["text"]};--brand-water:{palette["brand-water"]};'
+                f'--workspace:{palette["workspace"]}')
+
+    return '<style>svg{' + tokens("light") + '}@media(prefers-color-scheme:dark){svg{' + tokens("dark") + '}}</style>'
+
+
+def render_favicon() -> str:
+    """Return the theme-aware vector mark served at /favicon.svg."""
+    symbol = BRAND_SYMBOL.replace('aria-hidden="true"', 'role="img" aria-label="Basaltwater"')
+    opening, _, artwork = symbol.partition(">")
+    return opening + ">" + svg_theme_styles() + artwork
+
+
+def render_heading(label: str, icon: str, *, heading_id: str | None = None) -> str:
+    """Pair a visible section title with a decorative category icon."""
+    identifier = f' id="{html.escape(heading_id, quote=True)}"' if heading_id else ""
+    tone = ICON_TONES.get(icon, "water")
+    return (f'<h2{identifier} class="section-title"><span class="section-icon tone-{tone}">'
+            f'{render_icon(icon)}</span>{html.escape(label)}</h2>')
 
 
 def render_icon(name: str, *, label: str | None = None) -> str:
@@ -112,14 +168,51 @@ def brand_styles() -> str:
         "font-size:17px;letter-spacing:-.04em;color:var(--text)}"
         ".brand svg{flex:none;width:28px;height:28px}"
         ".sidebar a svg{width:18px;height:18px}"
+        ":root{--section-ink:var(--accent);--section-soft:var(--accent-soft)}"
+        ".tone-water{--section-ink:var(--accent);--section-soft:var(--accent-soft)}"
+        ".tone-workspace{--section-ink:var(--workspace);--section-soft:var(--workspace-soft)}"
+        ".tone-stone{--section-ink:var(--stone);--section-soft:var(--stone-soft)}"
+        ".tone-sea{--section-ink:var(--sea);--section-soft:var(--sea-soft)}"
+        ".sidebar a svg{color:var(--section-ink)}"
+        ".sidebar a[aria-current=page]{background:var(--section-soft);color:var(--section-ink);"
+        "box-shadow:inset 3px 0 var(--section-ink)}"
         "header{position:relative;isolation:isolate;overflow:hidden}"
+        "header{border-top-color:var(--section-ink);"
+        "background:radial-gradient(ellipse at top right,var(--section-soft),transparent 70%),var(--panel)}"
+        "header .eyebrow{display:flex;align-items:center;gap:8px;color:var(--section-ink)}"
+        "header .eyebrow svg{width:20px;height:20px;flex:none}"
         "header .brand-texture{position:absolute;inset:0 0 0 auto;width:192px;"
-        "height:100%;color:var(--accent);opacity:.09;z-index:-1;pointer-events:none}"
+        "height:100%;color:var(--section-ink);opacity:.09;z-index:-1;pointer-events:none}"
         "footer{background-image:linear-gradient(90deg,var(--accent) 32px,transparent 32px);"
         "background-size:100% 2px;background-repeat:no-repeat}"
         ".badge.warning{color:var(--warning)}"
+        ".section-title{display:flex;align-items:center;gap:10px}"
+        ".section-icon,.tool-icon{display:inline-flex;align-items:center;justify-content:center;"
+        "width:34px;height:34px;border-radius:9px;background:var(--section-soft);"
+        "color:var(--section-ink);flex:none}"
+        ".section-icon svg{width:20px;height:20px}"
+        ".service-kind{display:flex;align-items:center;gap:8px;color:var(--section-ink)}"
+        ".service-kind svg{width:20px;height:20px;flex:none}"
+        ".service-card,.tool-grid .tool-card{border-top:3px solid var(--section-ink);"
+        "background:linear-gradient(140deg,var(--section-soft),var(--panel) 55%)}"
+        ".tool-icon{margin-bottom:12px;width:40px;height:40px}"
+        ".agent-panel,.admin-card{border-top:3px solid var(--section-ink)}"
+        '.agent-summary .metric,section[aria-labelledby="agent-activity-heading"] .metric'
+        "{border-top:2px solid var(--workspace);background:linear-gradient(140deg,var(--workspace-soft),var(--panel) 55%)}"
+        ".host-overview .metric{border-top:2px solid var(--accent)}"
+        ".host-overview .metric:nth-child(n+3):nth-child(-n+6){border-top-color:var(--workspace)}"
+        ".host-overview .metric:nth-child(n+7){border-top-color:var(--stone)}"
+        ".empty-art{grid-column:1/-1;display:flex;align-items:center;gap:24px;"
+        "padding:20px;background:var(--panel);border:1px solid var(--accent-soft);border-radius:12px}"
+        ".empty-art .brand-network{flex:none;width:128px;height:64px}"
+        ".empty-art p{margin:0;color:var(--muted)}"
+        ".access-list strong{color:var(--sea)}"
+        ".badge.success{background:var(--sea-soft)}"
+        ".badge.warning{background:var(--stone-soft)}"
+        "@media(max-width:560px){.empty-art{gap:14px;padding:16px}"
+        ".empty-art .brand-network{width:80px;height:40px}}"
         "@media(forced-colors:active){.brand svg{--brand-water:CanvasText}"
-        "header .brand-texture{display:none}}"
+        "header .brand-texture,.empty-art .brand-network{display:none}}"
     )
 
 
@@ -165,9 +258,11 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         if label in groups:
             links.append(f'<p class="nav-group">{groups[label]}</p>')
         icon = render_icon(NAVIGATION_ICONS[label]) if label in NAVIGATION_ICONS else ""
-        links.append('<a href="{}"{}>{}<span>{}</span></a>'.format(
+        tone = ICON_TONES.get(NAVIGATION_ICONS.get(label, ""), "water")
+        links.append('<a href="{}"{} class="tone-{}">{}<span>{}</span></a>'.format(
             html.escape(href, quote=True),
             ' aria-current="page"' if current else "",
+            tone,
             icon,
             html.escape(label),
         ))
@@ -188,15 +283,22 @@ def render_document(
     navigation: Iterable[NavigationItem],
     footer: str,
     refresh: str = "",
+    favicon_href: str = "/favicon.svg",
 ) -> str:
     """Render the shared no-JavaScript document frame used by every panel view."""
 
+    navigation = tuple(navigation)
+    current = next((key for _, _, key in navigation if key), "dashboard")
+    icon = PAGE_ICONS.get(current, "dashboard")
+    tone = ICON_TONES.get(icon, "water")
+    header = header.replace('<p class="eyebrow">', '<p class="eyebrow">' + render_icon(icon), 1)
     header = header.replace("</header>", render_texture("basalt") + "</header>", 1)
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">{refresh}
-<title>{html.escape(title)} · Basaltwater</title><style>{style}{brand_styles()}</style></head><body>
+<link rel="icon" href="{html.escape(favicon_href, quote=True)}" type="image/svg+xml" sizes="any">
+<title>{html.escape(title)} · Basaltwater</title><style>{style}{brand_styles()}</style></head><body class="tone-{tone}">
 <a class="skip-link" href="#main">Skip to content</a>
 {render_sidebar(navigation)}
 <main id="main" tabindex="-1">{header}{content}{footer}</main></body></html>'''

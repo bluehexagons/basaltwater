@@ -19,14 +19,22 @@ add shadows to, or recolor individual pieces of the mark.
 | Compact symbol / favicon source | [SVG](brand/symbol-light.svg) | [SVG](brand/symbol-dark.svg) | [SVG](brand/symbol-mono.svg) |
 | Wordmark | [SVG](brand/wordmark-light.svg) | [SVG](brand/wordmark-dark.svg) | [SVG](brand/wordmark-mono.svg) |
 
+The [favicon](brand/favicon.svg) uses the compact mark and adapts its ink and
+water colors to the browser's light/dark preference. Every panel view links to
+`/favicon.svg`; the handler serves it as `image/svg+xml` without reading host
+state. Static specimens use a relative `favicon.svg` link, so they also work
+under a subdirectory. Use `<link rel="icon" href="favicon.svg"
+type="image/svg+xml" sizes="any">` on other sites. No binary ICO or PNG is needed.
+
 Use the theme-specific wordmark in README/documentation headers. For a
 single-color print process, use the monochrome version; reverse it to white
 on a dark substrate. The web panel uses the same inline symbol without an
-image request or a change to its restrictive content security policy.
+image request. The panel's content security policy allows same-origin images
+for the favicon; scripts, remote images and embedded data remain blocked.
 
 ## Icons and textures
 
-The thirteen original [navigation icons](brand/index.html) share a 24-unit
+The seventeen original [icons](brand/index.html) share a 24-unit
 grid and a 1.6-unit stroke. Hexagonal frames and angular cuts echo the mark,
 while keys, clocks, controls and other familiar shapes keep actions recognizable.
 The panel renders the icons inline using `render_icon()` from
@@ -35,6 +43,15 @@ display at 18 pixels in navigation; use 18–32 pixels elsewhere. Keep a visible
 text label on controls. Decorative icons have `aria-hidden="true"`; provide
 the helper's `label` argument when an icon needs its own accessible name.
 Individual `brand/icon-*.svg` exports are available for other pages and tools.
+Thirteen icons cover navigation; storage, data, import and export icons extend
+the family to agent tools. Page eyebrows, dashboard section headings, service
+cards and tool cards reuse the same geometry. `render_heading()` pairs a
+decorative icon with a visible title and preserves its optional anchor ID.
+
+The [connected basalt artwork](brand/artwork-network.svg) accompanies the
+unloaded local-service view and the dashboard's empty service list. It shares
+the mark's column geometry and adapts to the browser theme. Use it as supporting
+decoration alongside an explanation; it does not indicate service health.
 
 | Texture | Light background | Dark background |
 | --- | --- | --- |
@@ -71,9 +88,19 @@ Use semantic tokens instead of copying color values into each screen.
 | `line` | Control boundaries and separators |
 | `ok`, `warning`, `bad` | Healthy, attention, failure; always pair with text |
 | `brand-water` | The symbol's current |
+| `workspace`, `workspace-soft` | Violet for agents, workspace data and hosted processes |
+| `stone`, `stone-soft` | Copper for administration, maintenance and storage tools |
+| `sea`, `sea-soft` | Green for access, trust and published sites |
+
+Category accents appear on navigation icons, headers, section icon tiles,
+resource-card edges, and softly tinted service/tool cards. Use `tone-water`,
+`tone-workspace`, `tone-stone` or `tone-sea` with `--section-ink` and
+`--section-soft` to reuse these accents. Status labels continue to use the
+separate `ok`, `warning` and `bad` tokens, with explicit text.
 
 Both themes meet a 4.5:1 minimum for text, supporting text, links, and
-status labels on their page/panel/selected backgrounds. Boundaries meet
+status labels on their page/panel/selected backgrounds. The same text contrast
+checks include the three category surfaces and inks. Boundaries meet
 3:1 on page/panel backgrounds. Buttons use the panel color on the accent;
 the same tested ratio applies in reverse. Focus outlines use the accent.
 Tests enforce these actual color pairs, rather than certifying raw swatches.
@@ -100,7 +127,8 @@ data. `make brand-check` (also part of `make check`) renders into a temporary
 directory and fails if committed exports are missing or stale, without changing
 the checkout. The generator mocks host discovery; it does not contact a service
 or read private host state. Review [identity](brand/index.html), [README](brand/readme.html),
-and [web panel](brand/panel.html) together, for example through a loopback
+[web panel](brand/panel.html), [agent tools](brand/tools.html), and
+[service artwork](brand/services.html) together, for example through a loopback
 `python3 -m http.server --bind 127.0.0.1 --directory docs/brand` server.
 
 Review light/dark themes at 375 and 1280 pixels, keyboard skip-link focus,

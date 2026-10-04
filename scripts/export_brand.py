@@ -16,8 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from common.service_tools.web_panel_templates import (
-    BRAND_ICONS, BRAND_PALETTES, BRAND_SYMBOL, BRAND_TEXTURES, NAVIGATION_ICONS,
-    brand_styles, render_document, render_icon, render_texture,
+    BRAND_ICONS, BRAND_NETWORK, BRAND_PALETTES, BRAND_SYMBOL, BRAND_TEXTURES,
+    ICON_TONES, NAVIGATION_ICONS, brand_styles, render_document, render_favicon,
+    render_icon, render_texture, svg_theme_styles,
 )
 from common.service_tools import web_panel_service as panel
 
@@ -44,13 +45,18 @@ GUIDE_STYLE = """
   gap: 10px; margin-top: 16px; }
 .icon-swatch { display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; min-height: 112px; padding: 16px 10px; border: 1px solid var(--accent-soft);
-  border-radius: 10px; background: var(--panel); color: var(--accent); text-decoration: none; }
+  border-radius: 10px; background: var(--panel); color: var(--section-ink); text-decoration: none; }
 .icon-swatch:hover { background: var(--accent-soft); border-color: var(--accent); }
 .icon-swatch svg { width: 28px; height: 28px; }
 .icon-swatch span { color: var(--muted); font-size: .72rem; text-align: center; }
 .texture-swatch { min-height: 144px; background: var(--bg); }
 .texture-swatch.basalt { background-image: url(texture-basalt-light.svg); }
 .texture-swatch.water { background-image: url(texture-water-light.svg); }
+.color-roles { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:12px; margin-top:16px; }
+.color-role { padding:16px; border-left:4px solid var(--section-ink); border-radius:8px; background:var(--section-soft); }
+.color-role strong { display:block; color:var(--section-ink); }
+.color-role span { font-size:.85rem; color:var(--muted); }
+.logo-swatch.adaptive { background:var(--panel); }
 @media (prefers-color-scheme: dark) {
   .texture-swatch.basalt { background-image: url(texture-basalt-dark.svg); }
   .texture-swatch.water { background-image: url(texture-water-dark.svg); }
@@ -76,6 +82,10 @@ def write_svg(destination: Path, source: str) -> None:
 def export_assets(assets: Path) -> None:
     """Render assets into the supplied development output directory."""
     assets.mkdir(exist_ok=True)
+    write_svg(assets / "favicon.svg", render_favicon())
+    opening, _, artwork = BRAND_NETWORK.partition(">")
+    network = opening.replace('aria-hidden="true"', 'role="img" aria-label="Connected basalt columns"')
+    write_svg(assets / "artwork-network.svg", network + ">" + svg_theme_styles() + artwork)
     for theme in ("light", "dark", "mono"):
         palette = BRAND_PALETTES["dark" if theme == "dark" else "light"]
         ink = palette["text"] if theme != "mono" else "#000000"
@@ -100,11 +110,14 @@ def export_assets(assets: Path) -> None:
             write_svg(assets / f"texture-{name}-{theme}.svg", texture)
     (assets / "palette.json").write_text(json.dumps(BRAND_PALETTES, indent=2) + "\n", encoding="utf-8")
     (assets / "theme.css").write_text(brand_styles() + "\n", encoding="utf-8")
-    navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None), ("panel.html", "Web panel specimen", None))
+    navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None),
+                  ("panel.html", "Web panel specimen", None), ("tools.html", "Agent tools specimen", None),
+                  ("services.html", "Service artwork specimen", None))
+    icon_labels = {name: label for label, name in NAVIGATION_ICONS.items()}
     icon_gallery = "".join(
-        f'<a class="icon-swatch" href="icon-{name}.svg">{render_icon(name)}'
-        f'<span>{html.escape(label)}</span></a>'
-        for label, name in NAVIGATION_ICONS.items()
+        f'<a class="icon-swatch tone-{ICON_TONES.get(name, "water")}" href="icon-{name}.svg">{render_icon(name)}'
+        f'<span>{html.escape(icon_labels.get(name, name.title()))}</span></a>'
+        for name in BRAND_ICONS
     )
     specimens = {
         "index.html": (
@@ -131,7 +144,20 @@ def export_assets(assets: Path) -> None:
             '<img src="symbol-light.svg" width="32" height="32" alt="Symbol at 32 pixels">'
             '<img src="symbol-mono.svg" width="16" height="16" alt="Symbol at 16 pixels"></div>'
             '<p>32 / 16 pixels · Keep eight units of clear space around the 32-unit mark.</p></div>'
+            '<div class="asset-card"><div class="logo-swatch adaptive">'
+            '<img src="favicon.svg" width="32" height="32" alt="Adaptive favicon at 32 pixels">'
+            '<img src="favicon.svg" width="16" height="16" alt="Adaptive favicon at 16 pixels"></div>'
+            '<p>Browser tabs · <a href="favicon.svg">Adaptive favicon SVG</a></p></div>'
+            '<div class="asset-card"><div class="logo-swatch adaptive">'
+            '<img src="artwork-network.svg" width="192" height="96" alt="Connected basalt columns"></div>'
+            '<p>Supporting artwork · <a href="artwork-network.svg">Network SVG</a></p></div>'
             '</div></section>'
+            '<section><h2>Color with a purpose</h2><div class="color-roles">'
+            '<div class="color-role tone-water"><strong>Water blue</strong><span>Services and navigation</span></div>'
+            '<div class="color-role tone-workspace"><strong>Violet</strong><span>Agents and workspace data</span></div>'
+            '<div class="color-role tone-stone"><strong>Copper</strong><span>Administration and maintenance</span></div>'
+            '<div class="color-role tone-sea"><strong>Sea green</strong><span>Access and certificate trust</span></div>'
+            '</div><p>Category color supports orientation. Service health still has an explicit text label.</p></section>'
             '<section><h2>Icons from the same stone</h2><p class="lede">A 24-unit grid, '
             'consistent strokes, and angular cuts. Each tile opens its SVG.</p>'
             f'<div class="icon-grid">{icon_gallery}</div></section>'
@@ -146,6 +172,8 @@ def export_assets(assets: Path) -> None:
             '<section><h2>States always have labels</h2><p><span class="badge success">Healthy</span> '
             '<span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p>'
             '<p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section>'
+            '<section><h2>Identity in use</h2><p><a class="refresh-link" href="tools.html">Browse the agent tool cards</a>'
+            ' · <a class="refresh-link" href="services.html">Inspect the service artwork</a></p></section>'
             '<section><h2>Typography and motion</h2><p>DejaVu Sans for interfaces; DejaVu Sans Mono for commands. '
             'System fallbacks remain available. No font download, JavaScript, or animation is required.</p>'
             '<pre><code>basaltw --version\nbasaltw setup server_lite example.test --dry-run</code></pre></section>',
@@ -165,7 +193,7 @@ def export_assets(assets: Path) -> None:
         document = render_document(title=title, style=specimen_style,
             header=f'<header><p class="eyebrow">Basaltwater identity</p><h1>{heading}</h1></header>',
             content=content, navigation=tuple((url, label, url if url == filename else None) for url, label, _ in navigation),
-            footer='<footer>Review specimen · Apache-2.0 assets · bluehexagons</footer>')
+            footer='<footer>Review specimen · Apache-2.0 assets · bluehexagons</footer>', favicon_href="favicon.svg")
         (assets / filename).write_text(document + "\n", encoding="utf-8")
     state = panel.WebPanelState({
         "title": "Workshop", "host": "workshop.example.test", "username": "operator",
@@ -194,7 +222,14 @@ def export_assets(assets: Path) -> None:
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
     ):
-        (assets / "panel.html").write_text(panel.render_page(state) + "\n", encoding="utf-8")
+        pages = {
+            "panel.html": panel.render_page(state),
+            "tools.html": panel.render_tools(state, panel._PAGE_STYLE, {}),
+            "services.html": panel.render_service_status(state, False),
+        }
+        for name, document in pages.items():
+            document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')
+            (assets / name).write_text(document + "\n", encoding="utf-8")
 
 
 def main() -> int:

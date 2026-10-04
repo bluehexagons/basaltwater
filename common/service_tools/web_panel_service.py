@@ -37,7 +37,9 @@ from common.service_tools.web_panel_diagnostics import (
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import (
+    BRAND_NETWORK, panel_navigation, render_document, render_favicon, render_heading, render_icon,
+)
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
 from lib.agent_tasks import AgentTasks
@@ -1431,19 +1433,19 @@ def _render_certificate_trust(
     trust: dict[str, str | bool] | None,
 ) -> str:
     if not trust:
-        return '''<section aria-labelledby="trust-heading"><div class="section-heading"><div>
-<h2 id="trust-heading">Certificate trust</h2></div></div>
+        return f'''<section aria-labelledby="trust-heading"><div class="section-heading"><div>
+{render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
 <p class="empty">No managed gateway certificate information is available on this machine.</p></section>'''
     if trust.get("publicly_trusted") is True:
-        return '''<section aria-labelledby="trust-heading">
+        return f'''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div>
-<h2 id="trust-heading">Certificate trust</h2></div></div>
+{render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
 <div class="trust-panel-public"><strong>No certificate installation required</strong>
 <p>The shared web-hosting certificate is issued by a publicly trusted authority.</p></div></section>'''
     if trust.get("status") == "unknown":
-        return '''<section aria-labelledby="trust-heading">
+        return f'''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div>
-<h2 id="trust-heading">Certificate trust</h2></div></div>
+{render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
 <div class="trust-panel-public"><strong>Certificate trust could not be verified</strong>
 <p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code> before installing a certificate on this device.</p></div></section>'''
 
@@ -1554,8 +1556,8 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
 
     host = html.escape(state.manifest["host"])
     content = (
-        '<p class="empty">Select Load local service status to inspect fixed '
-        'system and current-user services.</p>'
+        f'<div class="empty-art">{BRAND_NETWORK}<p>Select Load local service status to inspect fixed '
+        'system and current-user services.</p></div>'
     )
     if load:
         health = state.service_health()
@@ -1683,15 +1685,15 @@ def _render_audit_section(state: WebPanelState) -> str:
     ) if isinstance(events, list) else 0
     warning_label = f" · {warning_count} warning/error event" + ("s" if warning_count != 1 else "")
     return f'''<section aria-labelledby="audit-heading"><div class="section-heading"><div>
-<h2 id="audit-heading">System audit log</h2></div>
+{render_heading("System audit log", "security", heading_id="audit-heading")}</div>
 <span class="count">{count} event{"" if count == 1 else "s"}{warning_label} · {html.escape(status_label)}</span>
 </div>{issue_html}{suppression_html}{content}</section>'''
 
 
 def _render_notification_section(state: WebPanelState) -> str:
     if not state.notification_ingest_enabled():
-        return '''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
-<h2 id="notifications-heading">Notifications</h2></div>
+        return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
+{render_heading("Notifications", "notifications", heading_id="notifications-heading")}</div>
 <span class="count">Not configured</span></div>
 <p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>'''
     events = state.notification_events()
@@ -1781,7 +1783,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 <pre><code>{html.escape(full_link)}</code></pre>
 <p>Paste this complete URL as the target for <code>--notify webhook</code> on a managed sender that can reach this panel.</p></details>'''
     return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
-<h2 id="notifications-heading">Notifications</h2></div>
+{render_heading("Notifications", "notifications", heading_id="notifications-heading")}</div>
 <span class="count">{len(alerts)} unresolved · {count} received</span></div>
 <p class="endpoint">Latest warning and error reports, grouped by sender and alert key. Recovery reports clear matching alerts. This summary covers only the latest 100 receipts; it is not a live health check.</p>
 {alert_content}
@@ -1834,12 +1836,18 @@ def render_page(state: WebPanelState) -> str:
                 status_class, html.escape(status_text)
             )
         service_states[status_class] += 1
+        icon, category = {
+            "Published site": ("web-services", "sea"),
+            "HTTPS service": ("service-status", "workspace"),
+        }.get(kind, ("web-services", "water"))
         service_cards += (
-            '<a class="card" href="{}"><span class="card-top"><span class="service-kind">{}</span>'
+            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="service-kind">{}{}</span>'
             '<span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>{}</strong>'
             '{}{}<span class="card-url">{}</span></a>'
         ).format(
+            category,
             html.escape(record["url"], quote=True),
+            render_icon(icon),
             kind,
             html.escape(label),
             f'<span class="card-description">{html.escape(description)}</span>' if description else "",
@@ -1847,7 +1855,7 @@ def render_page(state: WebPanelState) -> str:
             html.escape(record["url"]),
         )
     service_cards = service_cards or (
-        '<p class="empty">No hosted web services are available on this machine.</p>'
+        f'<div class="empty-art">{BRAND_NETWORK}<p>No hosted web services are available on this machine.</p></div>'
     )
 
     access_rows = "".join(
@@ -1897,8 +1905,8 @@ def render_page(state: WebPanelState) -> str:
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
 
-    action = '''<section aria-labelledby="maintenance-heading"><div class="section-heading"><div>
-<h2 id="maintenance-heading">Maintenance</h2></div></div>
+    action = f'''<section aria-labelledby="maintenance-heading"><div class="section-heading"><div>
+{render_heading("Maintenance", "maintenance", heading_id="maintenance-heading")}</div></div>
 <div class="action"><div><strong>Scheduled maintenance</strong><p>Review update timers, housekeeping jobs, and their last results.</p></div>
 <a class="refresh-link" href="/jobs">View scheduled jobs <span aria-hidden="true">→</span></a></div></section>'''
     if state.t3_update_available():
@@ -1907,7 +1915,7 @@ def render_page(state: WebPanelState) -> str:
         button_label = "Update in progress…" if running else "Update to latest"
         action = f'''<section aria-labelledby="maintenance-heading">
 <div class="section-heading"><div>
-<h2 id="maintenance-heading">Maintenance</h2></div></div>
+{render_heading("Maintenance", "maintenance", heading_id="maintenance-heading")}</div></div>
 <div class="action"><div><strong>T3 Code</strong><p>Install the latest upstream release, then verify that the managed service is ready. This runs in the background.</p></div>
 <form method="post" action="/actions/t3-update">
 <input type="hidden" name="csrf" value="{html.escape(state.csrf_token, quote=True)}">
@@ -1973,16 +1981,16 @@ def render_page(state: WebPanelState) -> str:
 <div><dt>User</dt><dd>{username}</dd></div></dl></div>
 <a class="refresh-link" href="/">Refresh dashboard</a></header>'''
     body = f'''{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
-<h2 id="overview-heading">System overview</h2></div>
+{render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl></section>
 {render_agent_activity(state)}
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
-<h2 id="services-heading">Web services</h2></div>
+{render_heading("Web services", "web-services", heading_id="services-heading")}</div>
 <span class="count">{service_count}</span></div><div class="grid">{service_cards}</div></section>
 {audit_section}{notification_section}
 <section aria-labelledby="access-heading"><div class="section-heading"><div>
-<h2 id="access-heading">Access</h2></div>
+{render_heading("Access", "access", heading_id="access-heading")}</div>
 <span class="count">{access_label}</span></div>{access_content}</section><div id="trust">{trust_section}</div>{action}
 '''
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
@@ -2015,7 +2023,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
@@ -2034,6 +2042,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         path = parsed.path
+        if path == "/favicon.svg":
+            self._send(HTTPStatus.OK, render_favicon(), "image/svg+xml")
+            return
         if path == "/healthz":
             self._send(HTTPStatus.OK, "ok\n", "text/plain")
             return
