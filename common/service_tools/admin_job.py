@@ -18,6 +18,7 @@ if __name__ == "__main__" and not __package__:
 from lib.admin_actions import ADMIN_ACTIONS, ADMIN_STATE, ADMIN_TIMEOUT, ADMIN_UNIT, action_spec
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.machine_state import SETUP_CONFIG_FILE, can_manage_system_services, can_restart_system
+from lib.installation_info import INSTALLATION_METADATA_FILENAME, read_installation_metadata
 from lib.privilege_policy import protected_path
 from lib.remote_utils import read_os_release
 from lib.validation import validate_channel
@@ -53,15 +54,20 @@ def availability() -> dict[str, str]:
         # the approved dry run and to refresh itself.
         protected_path(SOURCE, directory=True)
         channel_path = SOURCE + "/.basaltwater/channel.json"
-        protected_path(channel_path)
-        channel = read_json_file(channel_path, max_bytes=16384)
-        if not isinstance(channel, dict) or not channel.get("channel"):
-            raise ValueError("No managed channel")
-        validate_channel(channel["channel"])
+        if os.path.isfile(channel_path):
+            protected_path(channel_path)
+            channel = read_json_file(channel_path, max_bytes=16384)
+            if not isinstance(channel, dict) or not channel.get("channel"):
+                raise ValueError("No managed channel")
+            validate_channel(channel["channel"])
+        else:
+            protected_path(os.path.join(SOURCE, INSTALLATION_METADATA_FILENAME))
+            if read_installation_metadata(SOURCE) is None:
+                raise ValueError("No installed setup provenance")
         if not os.path.isfile(SETUP_CONFIG_FILE):
             raise ValueError("No saved setup")
     except (OSError, ValueError, RuntimeError, TypeError):
-        reason = "Requires a root-owned managed source channel and a saved local Debian setup. Controller-installed snapshots must be updated from their controller."
+        reason = "The installed Basaltwater source or saved Debian setup is missing or unsafe."
         blocked.update({"refresh-preview": reason, "refresh": reason})
     if not os.path.isfile("/usr/sbin/nginx"):
         blocked.update({key: "Nginx is not installed." for key in ("check-web", "reload-web")})

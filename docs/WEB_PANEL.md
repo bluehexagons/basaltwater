@@ -124,10 +124,12 @@ history survive panel restarts. Privileged command output is not exposed; use
 administrator SSH or console access for detailed diagnosis. T3 Code uses its
 existing account-level updater and is shown only when installed and configured.
 
-Refresh requires a root-owned managed source channel and a saved successful
-local Debian setup. Controller-installed setup snapshots need a setup rerun
-from their controller, and unmanaged or writable checkouts cannot be refreshed
-through the panel. The refresh check validates local state without fetching;
+Refresh reuses the installed source and saved successful Debian setup, including
+controller-installed snapshots. It automatically prepares a managed checkout for
+a snapshot and preserves local state and staged deployment data. Snapshot updates
+follow the recorded branch, or `main` when no branch was recorded. The previous
+source is retained for recovery. Writable or unidentified source trees are
+rejected. The refresh check validates local state without fetching;
 it does not preview upstream code changes. No credentials are copied and no
 interactive login is started by refresh. The screen explains unavailable
 actions rather than granting wider privileges.

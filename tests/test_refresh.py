@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import io
 import json
 import os
@@ -35,6 +35,8 @@ class DebianRefreshTests(unittest.TestCase):
                                   machine_type="hardware", install_node=True)
         self.saved = stack.enter_context(patch.object(refresh, "_debian_setup", return_value=self.config))
         stack.enter_context(patch.object(refresh, "managed_repository_path", return_value=str(self.root)))
+        stack.enter_context(patch.object(refresh, "get_channel_info", return_value={"channel": "dev"}))
+        stack.enter_context(patch.object(refresh, "maintenance_lock", side_effect=lambda: nullcontext(True)))
         self.upgrade = stack.enter_context(patch.object(refresh, "upgrade_channel", return_value={
             "commit": "abcdef0123456789", "channel": "dev", "updated": True,
         }))
@@ -96,12 +98,36 @@ class DebianRefreshTests(unittest.TestCase):
         self.upgrade.assert_not_called()
         self.run.assert_not_called()
 
-    def test_setup_snapshot_is_not_advertised_as_upgradable(self):
+    def test_setup_snapshot_dry_run_requires_no_channel_setup_or_download(self):
         with patch.object(refresh, "get_channel_info", return_value={
             "channel": "setup-snapshot", "installation_type": "setup-snapshot",
         }):
-            self.assertEqual(self.invoke(dry_run=True), 1)
+            self.assertEqual(self.invoke(dry_run=True), 0)
         self.run.assert_not_called()
+        self.upgrade.assert_not_called()
+
+    def test_snapshot_is_upgraded_before_replaying_setup(self):
+        with patch.object(refresh, "get_channel_info", return_value={
+            "installation_type": "setup-snapshot", "branch": "main",
+        }), patch.object(refresh, "_upgrade_snapshot", return_value={
+            "commit": "abcdef", "channel": "dev",
+        }) as snapshot:
+            self.assertEqual(self.invoke(), 0)
+        snapshot.assert_called_once_with(str(self.root), "dev")
+        self.upgrade.assert_not_called()
+        self.run.assert_called_once()
+
+    def test_busy_setup_blocks_source_mutation_and_target_runner(self):
+        with patch.object(refresh, "maintenance_lock", side_effect=lambda: nullcontext(False)):
+            self.assertEqual(self.invoke(), 1)
+        self.upgrade.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_snapshot_branch_selection_is_validated(self):
+        for branch, expected in ((None, "dev"), ("main", "dev"), ("feature/test", "branch-feature/test")):
+            self.assertEqual(refresh._refresh_channel({"installation_type": "setup-snapshot", "branch": branch}), expected)
+        with self.assertRaises(ValueError):
+            refresh._refresh_channel({"installation_type": "setup-snapshot", "branch": "--bad;command"})
 
     def test_non_root_and_missing_state_stop_before_upgrade(self):
         self.uid.return_value = 1000
@@ -118,6 +144,90 @@ class DebianRefreshTests(unittest.TestCase):
             self.assertEqual(self.invoke(), 1)
         self.saved.assert_not_called()
         self.upgrade.assert_not_called()
+
+
+class SnapshotActivationTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.source = self.root / "basaltwater"
+        self.source.mkdir()
+        (self.source / "basaltwater.py").write_text("old source")
+        (self.source / refresh.INSTALLATION_METADATA_FILENAME).write_text("{}")
+        self.state = self.root / "durable-state"
+        self.state.mkdir()
+        (self.state / "setup.json").write_text("saved options")
+        (self.source / "state").symlink_to(self.state, target_is_directory=True)
+        (self.source / "deployments").mkdir()
+        (self.source / "deployments/app").write_text("application data")
+        self.enterContext(patch("lib.privilege_policy.protected_path"))
+        self.run = self.enterContext(patch.object(refresh, "run", side_effect=self.clone))
+        self.enterContext(patch.object(refresh, "switch_channel", return_value={"commit": "new", "channel": "dev"}))
+
+    def clone(self, command, **kwargs):
+        staged = Path(command[-1])
+        (staged / ".git/info").mkdir(parents=True)
+        (staged / "basaltwater.py").write_text("new source")
+        return subprocess.CompletedProcess(command, 0)
+
+    def test_activation_preserves_state_link_deployments_and_previous_source(self):
+        refresh._upgrade_snapshot(str(self.source), "dev")
+        self.assertEqual((self.source / "basaltwater.py").read_text(), "new source")
+        self.assertTrue((self.source / "state").is_symlink())
+        self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
+        self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+        backup, = self.root.glob(".basaltwater-before-refresh-*")
+        self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
+        self.assertIn("/deployments/", (self.source / ".git/info/exclude").read_text())
+
+    def test_download_failure_preserves_installed_snapshot(self):
+        self.run.side_effect = None
+        self.run.return_value = subprocess.CompletedProcess([], 1)
+        with self.assertRaisesRegex(RuntimeError, "unchanged"):
+            refresh._upgrade_snapshot(str(self.source), "dev")
+        self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
+        self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+
+    def test_activation_failure_restores_snapshot_and_runtime_data(self):
+        rename = os.rename
+        def fail_activation(source, destination):
+            if str(source).endswith("/source") and destination == str(self.source):
+                raise OSError("activation failed")
+            rename(source, destination)
+        with patch.object(refresh.os, "rename", side_effect=fail_activation):
+            with self.assertRaisesRegex(OSError, "activation failed"):
+                refresh._upgrade_snapshot(str(self.source), "dev")
+        self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
+        self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
+        self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+
+    def test_failed_recovery_retains_every_copy_for_operator_repair(self):
+        rename = os.rename
+        def fail_activation_and_recovery(source, destination):
+            if str(source).endswith("/source") and destination == str(self.source):
+                raise OSError("activation failed")
+            if "/source/" in str(source):
+                raise OSError("recovery failed")
+            rename(source, destination)
+        with patch.object(refresh.os, "rename", side_effect=fail_activation_and_recovery):
+            with self.assertRaisesRegex(RuntimeError, "recovery needs review"):
+                refresh._upgrade_snapshot(str(self.source), "dev")
+        staged, = self.root.glob(".basaltwater-refresh-*/source")
+        self.assertEqual((staged / "deployments/app").read_text(), "application data")
+        self.assertEqual((staged / "state/setup.json").read_text(), "saved options")
+        backup, = self.root.glob(".basaltwater-before-refresh-*")
+        self.assertEqual((backup / "basaltwater.py").read_text(), "old source")
+
+    def test_source_data_conflict_stops_before_renaming_installation(self):
+        def conflicting_clone(command, **kwargs):
+            result = self.clone(command, **kwargs)
+            (Path(command[-1]) / "deployments").mkdir()
+            return result
+        self.run.side_effect = conflicting_clone
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            refresh._upgrade_snapshot(str(self.source), "dev")
+        self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
+        self.assertEqual((self.source / "deployments/app").read_text(), "application data")
 
 
 class DebianSavedStateTests(unittest.TestCase):

@@ -157,9 +157,14 @@ source was already current. Upgrade failure stops before setup; setup failure
 returns nonzero and leaves Basaltwater upgraded and the previous successful
 record available for retry. Finish active work before applying a full setup.
 
-Refresh requires a managed Git installation, as does `basaltw upgrade`.
-Controller-deployed source snapshots continue to receive source upgrades from
-their controller; update its Basaltwater checkout and redeploy the saved host.
+Debian refresh also accepts controller-installed source snapshots. It downloads
+the official repository and automatically creates a managed checkout, preserving
+durable setup state and staged application data. Snapshots follow their recorded
+branch; `main` and snapshots without a branch use `dev`. The previous source is
+retained in a private sibling backup. Download or activation failure leaves the
+previous snapshot active; setup failure leaves the upgraded source available for
+retry. Refresh holds the local setup/maintenance lock throughout the mutation.
+`basaltw upgrade` alone still requires a managed Git installation.
 The command accepts no remote host argument and never guesses which saved
 remote host to deploy. An explicit setup with your full desired selection
 replaces the saved options; CachyOS refresh flags instead merge into them.
@@ -323,7 +328,9 @@ even if every enabled pool is inactive. Dependent guests and jobs may remain
 unavailable until storage returns; setup does not start guests or change their
 autostart settings. Failed storage probes or invalid API responses, active
 tasks, locks, quorum, and other health gates still block the restart.
-Normal audits and scheduled maintenance retain their strict storage checks.
+Normal audits and scheduled reboot checks retain their strict storage checks.
+Scheduled package updates and kernel-only cleanup log inactive guest storage
+as a warning; their other maintenance checks still block unsafe work.
 
 ```bash
 basaltw setup server_web example.com admin --restart-if-needed

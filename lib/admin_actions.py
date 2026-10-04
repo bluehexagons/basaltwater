@@ -16,11 +16,11 @@ ADMIN_ACTIONS = {
     },
     "refresh-preview": {
         "title": "Check Basaltwater refresh", "group": "Updates",
-        "effect": "Run basaltw refresh --dry-run to validate the saved local setup and managed source channel without fetching or applying updates. The result reports whether validation passed.",
+        "effect": "Check that Basaltwater can repeat this machine's saved setup without downloading or applying updates. The result reports whether validation passed.",
     },
     "refresh": {
         "title": "Refresh Basaltwater", "group": "Updates",
-        "effect": "Run basaltw refresh: upgrade the installed managed source channel and replay the last successful local Debian setup. Services and active agent work may be interrupted; configuration will be reconciled.",
+        "effect": "Update Basaltwater and repeat this machine's last successful Debian setup. Services and active agent work may be interrupted; configuration will be reconciled.",
     },
     "check-web": {
         "title": "Check web configuration", "group": "Services",

@@ -186,6 +186,16 @@ class AdminJobTests(unittest.TestCase):
         self.assertEqual(admin_job.commands("refresh-preview")[0][-2:], ["refresh", "--dry-run"])
         self.assertEqual(admin_job.commands("reboot"), [["/usr/sbin/shutdown", "-r", "+2"]])
 
+    def test_snapshot_installation_has_refresh_actions_without_a_managed_channel(self):
+        with patch.object(admin_job, "can_manage_system_services", return_value=True), \
+                patch.object(admin_job, "can_restart_system", return_value=True), \
+                patch.object(admin_job, "read_os_release", return_value={"ID": "debian"}), \
+                patch.object(admin_job.os.path, "isfile", side_effect=lambda path: not path.endswith("channel.json")), \
+                patch.object(admin_job, "read_installation_metadata", return_value={"installation_type": "setup-snapshot"}):
+            self.assertEqual(self.availability_checker(), {})
+            with patch.object(admin_job, "read_installation_metadata", return_value=None):
+                self.assertIn("refresh", self.availability_checker())
+
     def test_refresh_source_validation_checks_git_hooks_and_rejects_symlinks(self):
         source = Path(self.directory.name) / "source"
         hooks = source / ".git/hooks"
