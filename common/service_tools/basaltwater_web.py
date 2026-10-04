@@ -34,7 +34,11 @@ if SOURCE_ROOT not in sys.path:
     sys.path.insert(0, SOURCE_ROOT)
 
 from common.service_tools import godot_web_publish, static_web_publish
-from lib.validation import validate_network_ip, validate_positive_integer
+from lib.validation import (
+    validate_filesystem_path,
+    validate_network_ip,
+    validate_positive_integer,
+)
 from lib.local_http import open_loopback
 from lib.remote_utils import CommandTimeoutError, run as run_command
 
@@ -62,9 +66,19 @@ _SYSTEM_COMMAND_TIMEOUT_SECONDS = 60
 _PREVIEW_INSTALL_TIMEOUT_SECONDS = 30 * 60
 
 
+def _validate_lock_timeout(value: str) -> int:
+    if value == "0":
+        return 0
+    seconds = validate_positive_integer(value, "lock timeout")
+    if seconds > 300:
+        raise ValueError("Lock timeout must be at most 300 seconds")
+    return seconds
+
+
 @contextmanager
-def _gateway_lock():
+def _gateway_lock(timeout: int = 0):
     """Hold one root-owned lock through planning, activation, and rollback."""
+    timeout = _validate_lock_timeout(str(timeout))
     if os.geteuid() != 0:
         raise RuntimeError("HTTPS gateway mutations require the control service")
     descriptor = os.open(
@@ -77,10 +91,21 @@ def _gateway_lock():
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != 0:
             raise RuntimeError("Refusing unsafe internal-web mutation lock")
         os.fchmod(descriptor, 0o600)
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("Another internal-web mutation is running; retry after it finishes") from exc
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                remaining = deadline - time.monotonic()
+                if timeout == 0:
+                    raise RuntimeError("Another internal-web mutation is running; retry after it finishes") from exc
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "Another internal-web mutation is still running after "
+                        f"waiting {timeout}s; retry after it finishes"
+                    ) from exc
+                time.sleep(min(0.2, remaining))
         yield
     finally:
         os.close(descriptor)
@@ -89,7 +114,8 @@ def _gateway_lock():
 def _serialized_mutation(function):
     @wraps(function)
     def locked(*args, **kwargs):
-        with _gateway_lock():
+        timeout = getattr(args[0], "lock_timeout", 0) if args else 0
+        with _gateway_lock(timeout):
             return function(*args, **kwargs)
     return locked
 
@@ -185,6 +211,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     forward_add.add_argument("--open", action="store_true")
     forward_add.add_argument("--json", action="store_true")
+    forward_add.add_argument(
+        "--lock-timeout", type=_validate_lock_timeout, default=0, metavar="SECONDS",
+        help="Wait up to 300 seconds for another gateway mutation (default: 0)",
+    )
     forward_remove = forward_commands.add_parser("remove", help="Remove a forward")
     forward_remove.add_argument("name")
     forward_remove.add_argument("--json", action="store_true")
@@ -203,6 +233,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Reconcile generated Nginx and UFW state",
     )
     forward_reconcile.add_argument("--json", action="store_true")
+    forward_reconcile.add_argument(
+        "--lock-timeout", type=_validate_lock_timeout, default=0, metavar="SECONDS",
+        help="Wait up to 300 seconds for another gateway mutation (default: 0)",
+    )
+    forward_reconcile.add_argument(
+        "--policy", metavar="FILE",
+        help="Apply a staged policy under the gateway lock; restore it on failure",
+    )
 
     preview = commands.add_parser("preview", help="Manage supervised live previews")
     preview_commands = preview.add_subparsers(dest="preview_command", required=True)
@@ -307,6 +345,10 @@ def _validate_base_url(value: object) -> str:
 
 def _load_policy() -> dict[str, object]:
     value = _read_json(POLICY_FILE, "internal-web policy")
+    return _validate_policy(value)
+
+
+def _validate_policy(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or value.get("version") != 1:
         raise RuntimeError("Invalid internal-web policy")
     base_url = _validate_base_url(value.get("base_url"))
@@ -711,6 +753,8 @@ def _restore_file(path: str, previous: str | None, mode: int) -> None:
 def _apply_forwards(
     routes: list[dict[str, object]],
     policy: dict[str, object],
+    *,
+    rollback_policy: dict[str, object] | None = None,
 ) -> None:
     if os.geteuid() != 0:
         raise RuntimeError("Run HTTPS forward mutations with sudo")
@@ -737,7 +781,7 @@ def _apply_forwards(
         _reconcile_firewall(routes, policy)
         _write_forward_state(routes)
         _run_checked(["systemctl", "reload", "nginx"], "Could not reload Nginx")
-    except Exception:
+    except Exception as activation_error:
         _restore_file(FORWARD_NGINX_SITE, previous_site, 0o644)
         _restore_file(FORWARD_STATE_FILE, previous_state, 0o644)
         if link_created:
@@ -746,11 +790,14 @@ def _apply_forwards(
             except FileNotFoundError:
                 pass
         try:
-            old_routes = _load_forwards(policy) if previous_state is not None else []
-            _reconcile_firewall(old_routes, policy)
+            restore_policy = policy if rollback_policy is None else rollback_policy
+            old_routes = _load_forwards(restore_policy) if previous_state is not None else []
+            _reconcile_firewall(old_routes, restore_policy)
             _run_checked(["systemctl", "reload", "nginx"], "Could not restore Nginx")
-        except Exception:
-            pass
+        except Exception as rollback_error:
+            raise RuntimeError(
+                f"{activation_error}; HTTPS forwarding rollback failed: {rollback_error}"
+            ) from activation_error
         raise
 
 
@@ -1319,12 +1366,43 @@ def _forward_prune(confirmed: bool, as_json: bool) -> int:
 
 
 @_serialized_mutation
-def _forward_reconcile(as_json: bool) -> int:
-    policy = _load_policy()
+def _forward_reconcile(args: argparse.Namespace) -> int:
+    previous_content = None
+    previous_policy = None
+    content = None
+    changed = False
+    if args.policy is not None:
+        validate_filesystem_path(args.policy, must_exist=True)
+        policy = _validate_policy(_read_json(args.policy, "staged internal-web policy"))
+        if os.path.lexists(POLICY_FILE):
+            previous_policy = _load_policy()
+            with open(POLICY_FILE, encoding="utf-8") as file_obj:
+                previous_content = file_obj.read()
+        content = json.dumps(policy, indent=2, sort_keys=True) + "\n"
+        changed = content != previous_content
+        # Reject a policy that would orphan existing previews before writing it.
+        _load_previews(policy)
+    else:
+        policy = _load_policy()
     routes = _load_forwards(policy)
-    _apply_forwards(routes, policy)
-    if as_json:
-        print(json.dumps({"forwards": len(routes), "reconciled": True}, sort_keys=True))
+    try:
+        if content is not None:
+            if changed:
+                _write_text_atomic(POLICY_FILE, content, 0o644)
+            else:
+                os.chmod(POLICY_FILE, 0o644)
+        if previous_policy is not None:
+            _apply_forwards(routes, policy, rollback_policy=previous_policy)
+        else:
+            _apply_forwards(routes, policy)
+    except Exception:
+        if changed:
+            _restore_file(POLICY_FILE, previous_content, 0o644)
+        raise
+    if args.json:
+        print(json.dumps({
+            "forwards": len(routes), "policy_changed": changed, "reconciled": True,
+        }, sort_keys=True))
     else:
         print(f"Reconciled {len(routes)} HTTPS forward(s)")
     return 0
@@ -2192,7 +2270,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.forward_command == "prune":
                 return _forward_prune(args.yes, args.json)
             if args.forward_command == "reconcile":
-                return _forward_reconcile(args.json)
+                return _forward_reconcile(args)
         if args.command == "preview":
             if args.preview_command == "resolve":
                 return _preview_resolve(args)

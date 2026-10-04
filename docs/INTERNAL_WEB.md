@@ -303,11 +303,23 @@ is unavailable, rerun saved VM setup and check
 `systemctl status basaltwater-web-control.service`. The administrator-only
 `forward reconcile` command still requires root.
 
-Forward and preview mutations share a root-owned nonblocking lock at
+Forward and preview mutations share a root-owned lock at
 `/etc/basaltwater/internal-web/mutation.lock`. A competing command fails before
-reading or changing state; retry after the active command finishes. Ownership
-lasts through rollback and state writes and is released on process exit. Do not
-delete the stable lock file to bypass a running command.
+reading or changing state by default; retry after the active command finishes.
+`forward add` and the root-only `forward reconcile` accept
+`--lock-timeout SECONDS` (0–300) to wait for the lock before reading state.
+VM setup waits up to five minutes for policy reconciliation and T3 endpoint
+creation. A timeout reports the wait duration and leaves gateway policy and
+forward state untouched by that command.
+
+Setup passes a private staged policy to `forward reconcile --policy FILE`.
+Policy validation, activation, forward reconciliation, and rollback hold the
+same lock. A reconciliation failure restores the previous policy and uses its
+access sources when restoring firewall rules; a failed rollback is included in
+the error. An unchanged, active control service stays running during setup;
+changes to its helper source or unit trigger a restart. Lock ownership lasts
+through rollback and state writes and is released on process exit. Do not delete
+the stable lock file to bypass a running command.
 
 - Static builds and live commands run as the configured non-root owner.
 - Live upstreams are limited to unprivileged loopback ports.

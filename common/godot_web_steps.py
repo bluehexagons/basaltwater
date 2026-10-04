@@ -697,7 +697,10 @@ def _configure_web_control_service() -> bool:
 
     if not os.path.isfile(GODOT_WEB_CONTROL):
         raise RuntimeError(f"HTTPS gateway control helper is missing: {GODOT_WEB_CONTROL}")
-    content = f"""[Unit]
+    with open(GODOT_WEB_CONTROL, "rb") as helper_file:
+        control_revision = hashlib.sha256(helper_file.read()).hexdigest()
+    content = f"""# Gateway control revision {control_revision}
+[Unit]
 Description=Basaltwater local HTTPS gateway control
 After=network.target
 
@@ -722,7 +725,10 @@ WantedBy=multi-user.target
     if changed:
         run("systemctl daemon-reload", check=True)
     run("systemctl enable basaltwater-web-control.service", check=True)
-    run("systemctl restart basaltwater-web-control.service", check=True)
+    if changed:
+        run("systemctl restart basaltwater-web-control.service", check=True)
+    elif not is_service_active("basaltwater-web-control.service"):
+        run("systemctl start basaltwater-web-control.service", check=True)
     if not is_service_active("basaltwater-web-control.service"):
         raise RuntimeError("HTTPS gateway control service did not start")
     return changed
@@ -755,16 +761,31 @@ def _configure_web_policy(
         indent=2,
         sort_keys=True,
     ) + "\n"
-    changed = _write_if_changed(GODOT_WEB_POLICY_FILE, content, 0o644)
-    result = run(
-        f"{shlex.quote(GODOT_WEB_UTILITY_LINK)} forward reconcile",
-        check=False,
-        capture_output=True,
-    )
+    _ensure_managed_directory(os.path.dirname(GODOT_WEB_POLICY_FILE), 0o755)
+    # Stage privately; the utility acquires the lock before replacing live policy.
+    with tempfile.TemporaryDirectory(prefix="basaltwater-web-policy-") as directory:
+        staged_policy = os.path.join(directory, "policy.json")
+        write_text_atomic(staged_policy, content, mode=0o600)
+        result = run(
+            f"{shlex.quote(GODOT_WEB_UTILITY_LINK)} forward reconcile "
+            f"--policy {shlex.quote(staged_policy)} --lock-timeout 300 --json",
+            check=False,
+            capture_output=True,
+        )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "forward reconciliation failed").strip()
         raise RuntimeError(f"Could not reconcile HTTPS forwards: {detail}")
-    return changed
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("HTTPS gateway returned an invalid policy result") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("reconciled") is not True
+        or not isinstance(payload.get("policy_changed"), bool)
+    ):
+        raise RuntimeError("HTTPS gateway returned an invalid policy result")
+    return payload["policy_changed"]
 
 
 def configure_godot_agent_skills(username: str, agent_tools: Sequence[str]) -> bool:

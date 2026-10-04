@@ -1685,7 +1685,7 @@ def _configure_t3_https(
             + " --listen auto --to 127.0.0.1:"
             + str(target_port)
             + body_size_argument
-            + " --json",
+            + " --lock-timeout 300 --json",
             check=False,
             capture_output=True,
         )

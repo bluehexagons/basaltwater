@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from io import StringIO
@@ -33,7 +34,9 @@ def _policy() -> dict[str, object]:
 
 class TestInfraWebForwarding(unittest.TestCase):
     def setUp(self):
-        self.enterContext(patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext))
+        self.gateway_lock = self.enterContext(
+            patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext)
+        )
         self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
 
     def test_rejects_non_loopback_upstream(self) -> None:
@@ -113,11 +116,14 @@ class TestInfraWebForwarding(unittest.TestCase):
                     "godot",
                     "--max-body-size",
                     "50M",
+                    "--lock-timeout",
+                    "300",
                     "--json",
                 ]
             )
 
         self.assertEqual(result, 0)
+        self.gateway_lock.assert_called_once_with(300)
         routes = apply_forwards.call_args.args[0]
         self.assertEqual(
             routes,
@@ -695,6 +701,14 @@ class TestInfraWebControl(unittest.TestCase):
 
 
 class TestInfraWebMutationLock(unittest.TestCase):
+    def test_invalid_lock_wait_fails_before_opening_lock(self):
+        for timeout in (-1, 301, float("nan"), float("inf")):
+            with self.subTest(timeout=timeout), patch.object(basaltwater_web.os, "open") as opened:
+                with self.assertRaises(ValueError):
+                    with basaltwater_web._gateway_lock(timeout):
+                        self.fail("Invalid timeout accepted")
+                opened.assert_not_called()
+
     def test_competing_mutations_fail_before_reading_state(self):
         commands = [
             ["forward", "add", "demo", "--to", "127.0.0.1:3000"],
@@ -747,6 +761,158 @@ class TestInfraWebMutationLock(unittest.TestCase):
                             self.fail("Unsafe lock accepted")
                     chmod.assert_not_called()
                 self.assertEqual(os.stat(outside).st_mode & 0o777, 0o644)
+
+
+class TestInfraWebPolicyReconciliation(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = self.enterContext(tempfile.TemporaryDirectory())
+        for constant, name in (
+            ("POLICY_FILE", "policy.json"),
+            ("MUTATION_LOCK_FILE", "mutation.lock"),
+            ("FORWARD_STATE_FILE", "forwards.json"),
+            ("PREVIEW_STATE_FILE", "previews.json"),
+            ("FORWARD_NGINX_SITE", "forwards.conf"),
+            ("FORWARD_NGINX_LINK", "enabled.conf"),
+        ):
+            self.enterContext(patch.object(basaltwater_web, constant, os.path.join(self.directory, name)))
+        self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
+        real_fstat = os.fstat
+
+        def root_stat(descriptor):
+            info = real_fstat(descriptor)
+            return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink)
+
+        self.enterContext(patch.object(basaltwater_web.os, "fstat", side_effect=root_stat))
+        self.run_checked = self.enterContext(patch.object(basaltwater_web, "_run_checked"))
+        self.firewall = self.enterContext(patch.object(basaltwater_web, "_reconcile_firewall"))
+        self.previous_content = json.dumps(_policy()) + "\n"
+        with open(basaltwater_web.POLICY_FILE, "w", encoding="utf-8") as file_obj:
+            file_obj.write(self.previous_content)
+        self.route = {
+            "listen": 8444, "name": "demo", "owner": "agent", "profile": "general",
+            "target_host": "127.0.0.1", "target_port": 3000,
+        }
+        self.write_routes([self.route])
+        self.staged = os.path.join(self.directory, "staged.json")
+        self.desired = {**_policy(), "access_sources": ["198.51.100.0/24"]}
+        with open(self.staged, "w", encoding="utf-8") as file_obj:
+            json.dump(self.desired, file_obj)
+
+    def write_routes(self, routes) -> None:
+        with open(basaltwater_web.FORWARD_STATE_FILE, "w", encoding="utf-8") as file_obj:
+            json.dump({"version": 1, "routes": routes}, file_obj)
+
+    def reconcile(self, *extra: str) -> tuple[int, dict[str, object]]:
+        output = StringIO()
+        with redirect_stdout(output):
+            status = basaltwater_web.main([
+                "forward", "reconcile", "--policy", self.staged, "--json", *extra,
+            ])
+        return status, json.loads(output.getvalue())
+
+    def assert_previous_policy(self) -> None:
+        with open(basaltwater_web.POLICY_FILE, encoding="utf-8") as file_obj:
+            self.assertEqual(file_obj.read(), self.previous_content)
+
+    def test_staged_policy_preserves_routes_and_reports_unchanged_rerun(self) -> None:
+        status, result = self.reconcile()
+        self.assertEqual(status, 0)
+        self.assertTrue(result["policy_changed"])
+        self.assertEqual(basaltwater_web._load_policy(), self.desired)
+        self.assertEqual(basaltwater_web._load_forwards(self.desired), [self.route])
+        self.firewall.assert_called_once_with([self.route], self.desired)
+        status, result = self.reconcile()
+        self.assertEqual(status, 0)
+        self.assertFalse(result["policy_changed"])
+
+    def test_wait_reads_routes_only_after_competing_mutation_finishes(self) -> None:
+        other_route = {**self.route, "listen": 8445, "name": "other", "target_port": 3001}
+        with open(basaltwater_web.MUTATION_LOCK_FILE, "w") as holder:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def finish_mutation(_seconds):
+                self.write_routes([self.route, other_route])
+                fcntl.flock(holder, fcntl.LOCK_UN)
+
+            with patch.object(basaltwater_web.time, "sleep", side_effect=finish_mutation) as sleep:
+                status, result = self.reconcile("--lock-timeout", "300")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["forwards"], 2)
+        sleep.assert_called_once()
+        self.assertEqual(basaltwater_web._load_forwards(self.desired), [self.route, other_route])
+
+    def test_wait_timeout_leaves_policy_and_routes_untouched(self) -> None:
+        with basaltwater_web._gateway_lock():
+            with (
+                patch.object(basaltwater_web.time, "monotonic", side_effect=[0, 301]),
+                patch.object(basaltwater_web.time, "sleep") as sleep,
+                patch.object(basaltwater_web, "_read_json") as read,
+            ):
+                status, result = self.reconcile("--lock-timeout", "300")
+        self.assertEqual(status, 1)
+        self.assertIn("waiting 300s", result["error"])
+        read.assert_not_called()
+        sleep.assert_not_called()
+        self.run_checked.assert_not_called()
+        self.assert_previous_policy()
+        self.assertEqual(basaltwater_web._load_forwards(_policy()), [self.route])
+
+    def test_activation_failure_restores_policy_site_routes_and_old_firewall_sources(self) -> None:
+        previous_site = basaltwater_web.render_forward_nginx([self.route], _policy())
+        with open(basaltwater_web.FORWARD_NGINX_SITE, "w", encoding="utf-8") as file_obj:
+            file_obj.write(previous_site)
+
+        def fail_activation(command, _label):
+            if command == ["systemctl", "reload", "nginx"] and self.run_checked.call_count == 2:
+                raise RuntimeError("reload failed")
+
+        self.run_checked.side_effect = fail_activation
+        status, result = self.reconcile()
+        self.assertEqual(status, 1)
+        self.assertIn("reload failed", result["error"])
+        self.assert_previous_policy()
+        self.assertEqual(basaltwater_web._load_forwards(_policy()), [self.route])
+        with open(basaltwater_web.FORWARD_NGINX_SITE, encoding="utf-8") as file_obj:
+            self.assertEqual(file_obj.read(), previous_site)
+        self.assertFalse(os.path.lexists(basaltwater_web.FORWARD_NGINX_LINK))
+        self.assertEqual(self.firewall.call_args_list[-1].args, ([self.route], _policy()))
+        with basaltwater_web._gateway_lock():
+            pass
+
+    def test_failed_first_policy_does_not_leave_new_managed_state(self) -> None:
+        os.unlink(basaltwater_web.POLICY_FILE)
+        os.unlink(basaltwater_web.FORWARD_STATE_FILE)
+        self.run_checked.side_effect = RuntimeError("nginx validation failed")
+        self.assertEqual(self.reconcile()[0], 1)
+        for path in (
+            basaltwater_web.POLICY_FILE, basaltwater_web.FORWARD_STATE_FILE,
+            basaltwater_web.FORWARD_NGINX_SITE, basaltwater_web.FORWARD_NGINX_LINK,
+        ):
+            self.assertFalse(os.path.lexists(path))
+
+    def test_rollback_failure_is_reported_while_previous_policy_is_restored(self) -> None:
+        self.run_checked.side_effect = RuntimeError("nginx unavailable")
+        status, result = self.reconcile()
+        self.assertEqual(status, 1)
+        self.assertIn("HTTPS forwarding rollback failed", result["error"])
+        self.assert_previous_policy()
+
+    def test_invalid_staged_policy_or_orphaned_owner_fails_before_mutation(self) -> None:
+        for desired in ({**self.desired, "users": ["other"]}, {**self.desired, "version": 2}):
+            with self.subTest(desired=desired):
+                with open(self.staged, "w", encoding="utf-8") as file_obj:
+                    json.dump(desired, file_obj)
+                self.assertEqual(self.reconcile()[0], 1)
+                self.assert_previous_policy()
+                self.run_checked.assert_not_called()
+
+    def test_staged_policy_cannot_be_applied_by_unprivileged_caller(self) -> None:
+        with patch.object(basaltwater_web.os, "geteuid", return_value=1000):
+            status, result = self.reconcile()
+        self.assertEqual(status, 1)
+        self.assertIn("control service", result["error"])
+        self.assert_previous_policy()
+        self.run_checked.assert_not_called()
 
 
 class TestInfraWebGames(unittest.TestCase):

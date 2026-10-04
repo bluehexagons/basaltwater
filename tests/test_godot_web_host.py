@@ -7,13 +7,13 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from common import godot_web_steps
 from common.agent_steps import BASE_AGENT_SKILL_NAMES
-from common.service_tools import godot_web_publish
+from common.service_tools import basaltwater_web, godot_web_publish
 
 
 class TestGodotWebHost(unittest.TestCase):
@@ -140,8 +140,27 @@ class TestGodotWebHost(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_dir:
             policy_file = os.path.join(temporary_dir, "policy.json")
             ca_download = "/srv/basaltwater/web/basaltwater-ca.crt"
+
+            def reconcile(command: str, **_kwargs: object) -> SimpleNamespace:
+                argv = godot_web_steps.shlex.split(command)
+                self.assertIn("--lock-timeout", argv)
+                self.assertEqual(argv[argv.index("--lock-timeout") + 1], "300")
+                staged = argv[argv.index("--policy") + 1]
+                self.assertNotEqual(staged, policy_file)
+                self.assertEqual(os.stat(staged).st_mode & 0o777, 0o600)
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    status = basaltwater_web.main(argv[1:])
+                return SimpleNamespace(returncode=status, stdout=output.getvalue(), stderr="")
+
             with (
                 patch.object(godot_web_steps, "GODOT_WEB_POLICY_FILE", policy_file),
+                patch.object(basaltwater_web, "POLICY_FILE", policy_file),
+                patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext),
+                patch.object(basaltwater_web.os, "geteuid", return_value=0),
+                patch.object(basaltwater_web, "_load_forwards", return_value=[]),
+                patch.object(basaltwater_web, "_load_previews", return_value=[]),
+                patch.object(basaltwater_web, "_apply_forwards"),
                 patch.object(
                     godot_web_steps,
                     "GODOT_WEB_CA_DOWNLOAD",
@@ -150,7 +169,7 @@ class TestGodotWebHost(unittest.TestCase):
                 patch.object(
                     godot_web_steps,
                     "run",
-                    return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+                    side_effect=reconcile,
                 ),
             ):
                 changed = godot_web_steps._configure_web_policy(
@@ -187,7 +206,82 @@ class TestGodotWebHost(unittest.TestCase):
             self.assertIn(f"ExecStart=/usr/bin/python3 {helper} serve", content)
             commands = [call.args[0] for call in run.call_args_list]
             self.assertEqual(commands.count("systemctl daemon-reload"), 1)
+            self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 1)
+
+    def test_unchanged_inactive_control_service_is_started(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            helper = os.path.join(directory, "control.py")
+            with open(helper, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# managed helper\n")
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "_write_if_changed", return_value=False),
+                patch.object(godot_web_steps, "is_service_active", side_effect=[False, True]),
+                patch.object(godot_web_steps, "run") as run,
+            ):
+                self.assertFalse(godot_web_steps._configure_web_control_service())
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("systemctl start basaltwater-web-control.service", commands)
+        self.assertNotIn("systemctl restart basaltwater-web-control.service", commands)
+
+    def test_control_helper_update_restarts_service_even_with_same_unit_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            helper = os.path.join(directory, "control.py")
+            unit = os.path.join(directory, "control.service")
+            with open(helper, "w", encoding="utf-8") as file_obj:
+                file_obj.write("# first revision\n")
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_CONTROL", helper),
+                patch.object(godot_web_steps, "GODOT_WEB_CONTROL_UNIT", unit),
+                patch.object(godot_web_steps, "is_service_active", return_value=True),
+                patch.object(godot_web_steps, "run") as run,
+            ):
+                self.assertTrue(godot_web_steps._configure_web_control_service())
+                with open(helper, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("# second revision\n")
+                self.assertTrue(godot_web_steps._configure_web_control_service())
+            commands = [call.args[0] for call in run.call_args_list]
             self.assertEqual(commands.count("systemctl restart basaltwater-web-control.service"), 2)
+
+    def test_policy_reconciliation_failure_preserves_live_policy_and_cleans_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy_file = os.path.join(directory, "policy.json")
+            with open(policy_file, "w", encoding="utf-8") as file_obj:
+                file_obj.write("previous policy\n")
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_POLICY_FILE", policy_file),
+                patch.object(godot_web_steps, "run", return_value=SimpleNamespace(
+                    returncode=1, stdout="", stderr="mutation still running after waiting 300s",
+                )) as run,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "waiting 300s"):
+                    godot_web_steps._configure_web_policy(
+                        "https://192.0.2.10:8443", "/cert", "/key", True, ["agent"], [],
+                    )
+            with open(policy_file, encoding="utf-8") as file_obj:
+                self.assertEqual(file_obj.read(), "previous policy\n")
+            argv = godot_web_steps.shlex.split(run.call_args.args[0])
+            self.assertFalse(os.path.exists(argv[argv.index("--policy") + 1]))
+
+    def test_t3_and_pairing_endpoint_creation_wait_for_gateway_mutations(self) -> None:
+        from common import t3code_steps
+        from lib.config import SetupConfig
+
+        config = SetupConfig(system_type="agent_code_vm", host="192.0.2.10", username="agent")
+        with (
+            patch.object(t3code_steps.os, "geteuid", return_value=0),
+            patch.object(t3code_steps.os.path, "isfile", return_value=True),
+            patch.object(godot_web_steps, "configure_internal_web_host"),
+            patch.object(t3code_steps, "run", side_effect=[
+                SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8444/","listen":8444}'),
+                SimpleNamespace(returncode=0, stdout='{"url":"https://192.0.2.10:8445/","listen":8445}'),
+            ]) as run,
+        ):
+            endpoints = t3code_steps._configure_t3_https(config, 3773, 3774)
+        self.assertEqual(set(endpoints), {"t3code", "t3code-pairing"})
+        for call in run.call_args_list:
+            argv = godot_web_steps.shlex.split(call.args[0])
+            self.assertEqual(argv[argv.index("--lock-timeout") + 1], "300")
 
     def test_installs_local_ca_in_managed_users_chromium_database(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
