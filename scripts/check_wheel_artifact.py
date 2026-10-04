@@ -23,6 +23,9 @@ REQUIRED_WHEEL_PATHS = (
     "lib/t3code_native_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
+    "lib/admin_actions.py",
+    "common/service_tools/admin_job.py",
+    "common/service_tools/web_panel_admin.py",
     "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
     "common/agent_skills/basaltwater-t3code/references/updates.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
@@ -137,6 +140,8 @@ def _smoke_installed_wheel(
                 "remote_setup, security, smb, sync, web; "
                 "import sync.service_tools.scrub_par2; "
                 "import web.service_tools.webhook_manager"
+                "; import common.service_tools.admin_job"
+                "; import common.service_tools.web_panel_admin"
             ),
         ],
         check=True,

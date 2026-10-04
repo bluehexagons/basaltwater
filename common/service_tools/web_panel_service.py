@@ -38,6 +38,7 @@ from common.service_tools.web_panel_diagnostics import (
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agents
 from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from lib.agent_tasks import AgentTasks
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
@@ -713,6 +714,7 @@ class WebPanelState:
         self._service_health_at = float("-inf")
         self._service_health_lock = threading.Lock()
         self.agent_tasks = AgentTasks(agent_home)
+        self.admin = PanelAdmin(manifest)
         self.agent_diagnostics = AgentDiagnostics(
             self.agent_tasks.home, manifest["features"].get("t3_update") is True,
         )
@@ -2007,6 +2009,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
             return
+        if path == "/admin":
+            try:
+                query = parse_admin_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid administration view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_admin(self.state, _PAGE_STYLE, query), "text/html")
+            return
         if path == "/logs":
             try:
                 query = parse_diagnostic_query(parsed.query)
@@ -2059,7 +2069,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             self._handle_notification_ingest()
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics"}
-        if path != "/actions/t3-update" and path not in agent_paths:
+        admin_paths = {"/actions/admin", "/actions/admin/cancel"}
+        if path != "/actions/t3-update" and path not in agent_paths | admin_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2089,11 +2100,36 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in agent_paths:
             self._handle_agent_action(path, values)
             return
+        if path in admin_paths:
+            self._handle_admin_action(path, values)
+            return
+        if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["dashboard"])[0] not in {"agents", "admin", "dashboard"}:
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
+            return
         if not self.state.trigger_t3_update():
             self._send(HTTPStatus.CONFLICT, "Action is unavailable\n", "text/plain")
             return
         self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/agents" if values.get("return") == ["agents"] else "/")
+        self.send_header("Location", {"agents": "/agents", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _handle_admin_action(self, path: str, values: dict[str, list[str]]) -> None:
+        expected = {"csrf", "id"} if path.endswith("/cancel") else {"csrf", "action", "ticket", "confirmation"}
+        if set(values) != expected or any(len(entries) != 1 for entries in values.values()):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid administration action\n", "text/plain")
+            return
+        try:
+            if path.endswith("/cancel"):
+                self.state.admin.cancel(values["id"][0])
+            else:
+                self.state.admin.submit(values["action"][0], values["ticket"][0], values["confirmation"][0])
+        except (OSError, ValueError, RuntimeError):
+            self._send(HTTPStatus.CONFLICT, render_admin(self.state, _PAGE_STYLE, {}, error=
+                "The action could not be submitted. It may be unavailable, expired, or already submitted; power controls also require the exact host name. Check Recent requests and refresh status before trying again."), "text/html")
+            return
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/admin")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

@@ -80,3 +80,30 @@ The managed units are `basaltwater-privilege-broker.service` (root) and
 The web service receives its credentials through systemd `LoadCredential`.
 Root SSH remains the setup and recovery path. The first version has no
 passkeys, multi-user roles, push notifications, or browser password recovery.
+
+## Panel administration operations
+
+The [Admin controls screen](WEB_PANEL.md#admin-controls) requests `admin.run`
+with only an `action` chosen from the installed catalog. It always requires
+individual approval; reboot and shutdown also respect the existing `reboot`
+deny rule. Review the fixed helper argv and the described effects. Actions can
+update packages, replay saved setup, reload Nginx, restart the panel, or schedule
+host power changes, so approving them can interrupt active work.
+
+Long jobs are dispatched as the detached root
+`basaltwater-admin-maintenance.service`, with a six-hour runtime cap and no
+automatic restart. The broker records `dispatched`, not command completion.
+The helper records its latest result in a private root-owned file under the
+broker state directory. Its fixed commands use a clean environment, no shell,
+and no interactive stdin. Root output is discarded. The shared transient unit
+and file lock prevent concurrent maintenance; cancelling a pending broker
+request does not stop an already dispatched job. Use administrator access to
+investigate or stop that unit deliberately.
+
+There can be only one pending/approved/executing administration request at a
+time. A new `admin-status` requester message returns bounded owned request
+metadata and sanitized job state; it cannot execute actions, decide requests, or
+read command output. The separate approval interface and existing request
+quotas remain in force. A lost dispatch response remains uncertain, and a
+broker restart never retries it. Root refresh additionally checks all installed
+code and Git metadata for root ownership, symlinks, and writable permissions.

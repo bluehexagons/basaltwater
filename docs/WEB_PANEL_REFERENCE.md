@@ -108,8 +108,53 @@ contain sensitive application data; redaction covers common credentials and
 keys but cannot identify every secret.
 
 T3 Code's **Update to latest** action uses the supported user-service updater
-and readiness checks. There is no general package update button; use setup with
-`--refresh-packages` for deliberate reconciliation.
+and readiness checks. **Admin controls** provides separately approved Debian
+package upgrades and a full Basaltwater refresh.
+
+## Administration controls
+
+`GET /admin` reads bounded broker status and recent requests. Its optional
+`action` query selects a fixed review form; it performs no host action.
+`POST /actions/admin` requires CSRF, one finite action name, a matching single-use
+five-minute review ticket, and host-name confirmation for reboot/power-off.
+Unknown and duplicate fields are rejected. `POST /actions/admin/cancel` accepts
+only CSRF and a request ID and delegates owner checks to the broker. Lost
+responses do not cause automatic retries; inspect request history first.
+
+The panel requests `admin.run` with a finite `action` parameter through the
+kernel-authenticated requester socket. It cannot choose argv, environment,
+service names, paths, or approval decisions. Every host action requires the
+independent approval identity, including service restarts that could otherwise
+have an administrator `allow` rule. The existing reboot `deny` policy also
+denies the screen's reboot and shutdown actions. Cancellation of a scheduled
+power action remains separately approved.
+
+The broker's read-only `admin-status` operation returns up to 20 recent owned
+administration requests from its latest 100 owned requests, fixed availability
+reasons, and the latest job metadata. It returns no root command output or setup
+configuration. Unavailable service state blocks new maintenance; a retained
+running result with an inactive unit becomes interrupted, never successful.
+
+Long actions use `systemd-run` to start the fixed
+`basaltwater-admin-maintenance.service` outside the panel/broker cgroups.
+`Type=exec` verifies process launch, and a six-hour runtime limit plus
+`KillMode=control-group` bounds the job and its children. The shared unit name
+and a lifetime file lock prevent overlapping maintenance. The private latest
+result is atomically stored at
+`/var/lib/basaltwater-privilege-broker/admin-job.json` before effects and after
+completion. It is not a per-request completion log; inspect each request's
+dispatch state separately. No job or ambiguous dispatch is replayed.
+
+Scheduled power cancellation uses the fixed `shutdown -c` command directly,
+so it can be approved even while a maintenance job is active. Root refresh
+validates ownership and permissions throughout the installed source and Git
+metadata before running the CLI; it never executes a selected user checkout.
+The source's managed state directory is excluded from this code check because
+the refresh command validates its saved setup separately. The approved check
+reports validation success or failure without exposing privileged plan output.
+Root-managed panels and hosts without the supported optional broker have
+inspection links and their existing account actions, with host controls
+unavailable.
 
 ## Agent prompt runner
 

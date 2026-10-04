@@ -62,6 +62,7 @@ def panel_navigation(
         ("/#services-heading", "Web services", None),
         ("/#audit-heading", "Security activity", None),
         ("/#notifications-heading", "Notifications", None),
+        ("/admin", "Admin controls", "admin"),
         ("/#access-heading", "Access", None),
         ("/#trust", "Certificate trust", None),
         ("/#maintenance-heading", "Maintenance", None),
@@ -89,6 +90,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         "Security activity": "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
         "Notifications": "M6 8a6 6 0 0 1 12 0v7l2 3H4l2-3z M10 21h4",
         "Access": "M14 10a5 5 0 1 0 0-7 5 5 0 0 0 0 7z M10 10L3 17v4h4v-3h3v-3l2-2",
+        "Admin controls": "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
         "Certificate trust": "M6 3h12v13H6z M9 16l-1 5 4-2 4 2-1-5 M9 8l2 2 4-4",
         "Maintenance": "M14 6l4 4 3-3a7 7 0 0 1-9 9l-6 6-4-4 6-6a7 7 0 0 1 9-9z",
         "Local service status": "M2 12h5l3-8 4 16 3-8h5",
@@ -96,7 +98,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         "Service diagnostics": "M4 4h16v16H4z M7 8l3 3-3 3 M13 16h4",
     }
     groups = {
-        "Dashboard": "Workspace", "Access": "Administration", "Local service status": "Inspect",
+        "Dashboard": "Workspace", "Admin controls": "Administration", "Local service status": "Inspect",
     }
     links: list[str] = []
     for href, label, current in items:

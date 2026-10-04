@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
+from lib.admin_actions import action_spec, dispatch_argv
 
 CONFIG_DIR = "/etc/basaltwater/privilege-broker"
 POLICY_PATH = CONFIG_DIR + "/policy.json"
@@ -117,6 +118,14 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         mode = policy["reboot"]
         argv = ["/usr/bin/systemctl", "--no-ask-password", "reboot"]
         effect = "Reboot this VM; all sessions and running work will be interrupted."
+    elif operation == "admin.run" and set(parameters) == {"action"}:
+        action = parameters["action"]
+        spec = action_spec(action)
+        mode = policy["reboot"] if action in {"reboot", "shutdown"} else "approve"
+        argv = dispatch_argv(action)
+        effect = spec["effect"]
+        if action != "cancel-shutdown":
+            effect += " Run independently of the panel with a six-hour limit; dispatch does not prove completion."
     elif operation == "command.run" and set(parameters) == {"argv"}:
         argv = parameters["argv"]
         if (not isinstance(argv, list) or not 1 <= len(argv) <= 64

@@ -94,7 +94,7 @@ def export_assets(assets: Path) -> None:
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
     ):
-        (assets / "panel.html").write_text(panel.render_page(state), encoding="utf-8")
+        (assets / "panel.html").write_text(panel.render_page(state) + "\n", encoding="utf-8")
 
 
 def main() -> int:

@@ -26,6 +26,8 @@ from lib.privilege_policy import (
     APPROVAL_SOCKET, DATABASE_PATH, ID_PATTERN, MAX_MESSAGE,
     REQUEST_SOCKET, WEB_USER, canonical, digest, load_policy, operation_plan, protected_path,
 )
+from common.service_tools.admin_job import availability as admin_availability, job_status
+from lib.admin_actions import ADMIN_HELPER
 
 ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"}
 
@@ -33,6 +35,10 @@ ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"
 def execute(plan: dict) -> str:
     """No arbitrary argv, environment, stdin, output, or cwd crosses this boundary."""
     try:
+        if plan["operation"] == "admin.run":
+            protected_path(ADMIN_HELPER)
+            if plan["parameters"]["action"] in admin_availability():
+                return "failed"
         result = subprocess.run(
             plan["argv"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, cwd="/", env=ENVIRONMENT, close_fds=True,
@@ -41,11 +47,14 @@ def execute(plan: dict) -> str:
     except subprocess.TimeoutExpired:
         # systemd may still have a job after its client is killed.
         return "uncertain"
-    except OSError:
+    except (OSError, ValueError, RuntimeError):
         return "failed"
     if result.returncode:
         return "failed"
-    return "dispatched" if plan["operation"] == "system.reboot" else "succeeded"
+    dispatched = plan["operation"] == "system.reboot" or (
+        plan["operation"] == "admin.run" and plan["parameters"]["action"] != "cancel-shutdown"
+    )
+    return "dispatched" if dispatched else "succeeded"
 
 
 class Broker:
@@ -105,6 +114,10 @@ class Broker:
             self._expire()
             policy = self.policy_loader()
             plan = operation_plan(policy, uid, operation, parameters)
+            if operation == "admin.run":
+                for row in self.db.execute("SELECT plan FROM requests WHERE state IN ('pending','approved','executing')"):
+                    if json.loads(row["plan"])["operation"] == "admin.run":
+                        raise ValueError("An administration request is already outstanding; review or cancel it first")
             # Persistent quotas bound pending requests and repeated automatic actions.
             count = self.db.execute("SELECT count(*) FROM requests WHERE uid=? AND created>?",
                                     (uid, time.time() - 3600)).fetchone()[0]
@@ -193,6 +206,21 @@ class Broker:
         if not isinstance(message, dict):
             raise ValueError("Expected an object")
         action = message.get("action")
+        if not approval and action == "admin-status" and set(message) == {"action"}:
+            policy = self.policy_loader()
+            if uid != policy["requester_uid"]:
+                raise PermissionError("Account is not authorized")
+            result = job_status()
+            if policy["reboot"] == "deny":
+                result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "shutdown")})
+            with self.lock, self.db:
+                self._expire()
+                rows = self.db.execute("SELECT id,created,state,plan FROM requests WHERE uid=? ORDER BY created DESC LIMIT 100", (uid,)).fetchall()
+                result["requests"] = [{"id": row["id"], "created": row["created"], "state": row["state"],
+                                       "action": json.loads(row["plan"])["parameters"]["action"],
+                                       "review_url": policy["origin"] + "/requests/" + row["id"]}
+                                      for row in rows if json.loads(row["plan"])["operation"] == "admin.run"][:20]
+            return result
         if approval and action == "list" and set(message) == {"action"}:
             with self.lock, self.db:
                 self._expire()

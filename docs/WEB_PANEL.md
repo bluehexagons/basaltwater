@@ -12,6 +12,7 @@ under the panel account; no T3 Code installation is required.
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
+| Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
 
@@ -71,6 +72,57 @@ An agent VM configured with `--privilege-broker [PORT]` receives a
 own password and service identity. The panel cannot approve actions or read the
 approval credential. Use [Privilege approvals](PRIVILEGE_APPROVALS.md) for the
 agent and user workflow.
+
+## Admin controls
+
+Open **Admin controls** for host updates and power actions. Host actions require
+the optional [privilege approval service](PRIVILEGE_APPROVALS.md), currently
+supported on non-root agent VMs. Other panels still show the available inspection
+tools and account-level T3 Code updater. The panel does not gain root privileges
+or access to the approval password.
+
+| Action | Behavior |
+| --- | --- |
+| Update system packages | Refresh Debian APT indexes, then upgrade installed packages; keep existing configuration files. Package hooks can restart services. No distribution upgrade, autoremove, or automatic reboot. |
+| Check Basaltwater refresh | Validate `basaltw refresh --dry-run`; report whether the saved setup and source channel can be refreshed. |
+| Refresh Basaltwater | Upgrade the installed managed source channel and replay the last successful local setup with `basaltw refresh`. This can reconcile configuration and restart services. |
+| Check web configuration | Run `nginx -t` without reloading. |
+| Reload web gateway | Run `nginx -t`, then reload Nginx only if validation passes. |
+| Restart web panel | Restart the panel and prompt scheduler; active panel prompts will be interrupted. |
+| Restart / shut down host | Schedule reboot or power-off two minutes after approval; interrupt all running sessions. |
+| Cancel scheduled power action | Cancel a still-pending scheduled reboot or power-off. |
+
+Choose **Review action**, read its effects, and select **Create approval request**.
+Power actions also require the exact displayed host name. Open the request's
+**Open approval review** link and approve or deny it with your separate password.
+Use **Cancel request** to withdraw an unclaimed request; cancellation cannot undo
+an action already started. Approval expiry follows the installed broker policy.
+Cancelling a scheduled power action is a new approval request: allow time to
+approve it before the two-minute deadline, or use the administrator console.
+After power-off, starting the machine requires its VM controller or physical
+access.
+
+The screen shows recent requests, panel prompt activity, and the latest
+maintenance job's result, timestamps, and exit code. **Dispatched** means the
+maintenance service started, not that its commands finished. A successful power
+job confirms scheduling only. Other agent sessions are not included in the
+panel prompt count. Review running work before updates or interruptions.
+
+Maintenance runs in a separate root system service with a six-hour limit,
+so restarting the panel or approval broker does not cancel it. One maintenance
+job runs at a time; jobs and uncertain dispatches are never retried automatically.
+Use **Refresh status** to inspect results. The latest job result and request
+history survive panel restarts. Privileged command output is not exposed; use
+administrator SSH or console access for detailed diagnosis. T3 Code uses its
+existing account-level updater and is shown only when installed and configured.
+
+Refresh requires a root-owned managed source channel and a saved successful
+local Debian setup. Controller-installed setup snapshots need a setup rerun
+from their controller, and unmanaged or writable checkouts cannot be refreshed
+through the panel. The refresh check validates local state without fetching;
+it does not preview upstream code changes. No credentials are copied and no
+interactive login is started by refresh. The screen explains unavailable
+actions rather than granting wider privileges.
 
 ## Agent prompt tasks
 
