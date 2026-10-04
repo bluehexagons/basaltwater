@@ -271,6 +271,12 @@ Run setup from SSH or a text console when desktop work is saved. Before package
 upgrades, setup automatically requests normal logout of the configured account's
 managed desktop, including a paused desktop, and waits up to 60 seconds plus
 in-flight request time. It then allows up to 10 seconds for logind/sesman cleanup.
+If the supervisor disconnects during logout, setup rechecks status within the
+same deadline instead of resending logout or assuming it finished. A connection
+reset, broken pipe or incomplete reply alone is not proof of shutdown; setup
+still requires stopped status and the subsequent graphical-session checks.
+Persistent disconnections, permission/protocol errors and replacement sessions
+continue to block setup. This handling also works with older running supervisors.
 If a session disappears between listing it and reading its properties, setup
 confirms its absence with a fresh session list and continues quietly. Older
 versions could retain `Failed to get path for session …: No session … known`

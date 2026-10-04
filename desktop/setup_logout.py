@@ -8,11 +8,31 @@ import os
 from pathlib import Path
 import sys
 import time
+from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktop import session_runtime as runtime
+
+
+def _control_disconnected(exc: Exception) -> bool:
+    """Recognize transport loss without hiding configuration or protocol errors."""
+    return (isinstance(exc, (ConnectionError, FileNotFoundError))
+            or (type(exc) is ValueError and str(exc) == "Incomplete desktop request"))
+
+
+def _status_for_logout(deadline: float) -> dict[str, Any]:
+    """Reobserve after teardown disconnects; disconnection alone is not stopped."""
+    while True:
+        try:
+            return runtime.status()
+        except (ConnectionError, FileNotFoundError, ValueError) as exc:
+            if not _control_disconnected(exc):
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Desktop logout did not finish within 60 seconds; control channel remains disconnected. Inspect desktop status and rerun setup") from exc
+            time.sleep(0.25)
 
 
 def logout_for_setup() -> bool:
@@ -22,7 +42,8 @@ def logout_for_setup() -> bool:
     if not Path(f"/run/user/{os.getuid()}").exists():
         return False
     with runtime.session_lock("start.lock"):
-        current = runtime.status()
+        deadline = time.monotonic() + 60
+        current = _status_for_logout(deadline)
         if current["state"] == "stopped":
             return False
         generation = current["generation"]
@@ -34,6 +55,11 @@ def logout_for_setup() -> bool:
                 runtime.request({"action": "resume"})
                 lease = runtime.request({"action": "acquire", "generation": generation})
                 runtime.request({"action": "logout", **lease})
+            except (ConnectionError, FileNotFoundError, ValueError) as exc:
+                if not _control_disconnected(exc):
+                    raise
+                # Logout may have completed before its reply (or during handoff).
+                # Never resend logout; the status wait must confirm shutdown.
             finally:
                 if lease is not None:
                     with contextlib.suppress(OSError, RuntimeError, ValueError):
@@ -43,9 +69,8 @@ def logout_for_setup() -> bool:
                     runtime.request({"action": "pause"})
         elif current["state"] != "stopping":
             raise RuntimeError("Desktop is starting; wait for readiness and rerun setup")
-        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
-            current = runtime.status()
+            current = _status_for_logout(deadline)
             if current["state"] == "stopped":
                 return True
             if current.get("generation") != generation:

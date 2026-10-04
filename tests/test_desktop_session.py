@@ -634,6 +634,117 @@ class DesktopSetupLogoutTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    @patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g"},
+                                                 ConnectionResetError(104, "Connection reset by peer"),
+                                                 {"state": "stopped"}])
+    @patch.object(runtime, "request", return_value={"generation": "g", "lease": "l"})
+    def test_status_reset_during_logout_waits_for_confirmed_stop(self, request, status):
+        self.assertTrue(setup_logout.logout_for_setup())
+        self.assertEqual(status.call_count, 3)
+        self.assertEqual(sum(call.args[0]["action"] == "logout" for call in request.call_args_list), 1)
+
+    def test_handoff_disconnects_do_not_replay_mutations(self):
+        for action in ("pause", "resume", "acquire", "logout"):
+            for error in (ConnectionResetError("reset"), BrokenPipeError("pipe"),
+                          ConnectionRefusedError("gone"), FileNotFoundError("gone"),
+                          ValueError("Incomplete desktop request")):
+                with self.subTest(action=action, error=type(error).__name__):
+                    disconnected = False
+
+                    def respond(payload):
+                        nonlocal disconnected
+                        if payload["action"] == action and not disconnected:
+                            disconnected = True
+                            raise error
+                        return {"generation": "g", "lease": "l"}
+
+                    with patch.object(runtime, "request", side_effect=respond) as request, \
+                            patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g"},
+                                                                        {"state": "stopped"}]):
+                        self.assertTrue(setup_logout.logout_for_setup())
+                    actions = ["pause", "resume", "acquire", "logout"]
+                    expected = actions[:actions.index(action) + 1]
+                    if action == "logout":
+                        expected.append("release")
+                    expected.append("pause")
+                    self.assertEqual([call.args[0]["action"] for call in request.call_args_list], expected)
+
+    def test_real_status_client_confirms_stop_after_teardown_reset(self):
+        observations = iter([{"state": "running", "generation": "g"},
+                             ConnectionResetError(104, "Connection reset by peer"),
+                             ConnectionRefusedError("supervisor exited")])
+
+        def respond(payload):
+            if payload["action"] == "status":
+                result = next(observations)
+                if isinstance(result, Exception):
+                    raise result
+                return result
+            return {"generation": "g", "lease": "l"}
+
+        with patch.object(runtime, "configuration", return_value={"desktop": "xfce", "username": "agent"}), \
+                patch.object(runtime, "request", side_effect=respond) as request:
+            self.assertTrue(setup_logout.logout_for_setup())
+        self.assertEqual(sum(call.args[0]["action"] == "status" for call in request.call_args_list), 3)
+        self.assertEqual(sum(call.args[0]["action"] == "logout" for call in request.call_args_list), 1)
+
+    @patch.object(runtime, "status", side_effect=[ConnectionResetError("reset"),
+                                                 BrokenPipeError("pipe"), ValueError("Incomplete desktop request"),
+                                                 {"state": "stopped"}])
+    @patch.object(runtime, "request")
+    def test_disconnecting_initial_status_is_reobserved_without_logout(self, request, status):
+        self.assertFalse(setup_logout.logout_for_setup())
+        self.assertEqual(status.call_count, 4)
+        request.assert_not_called()
+
+    @patch.object(setup_logout.time, "monotonic", side_effect=[0, 1, 2, 61])
+    @patch.object(runtime, "status", side_effect=ConnectionResetError("reset"))
+    @patch.object(runtime, "request")
+    def test_persistent_status_disconnects_fail_within_deadline(self, request, status, clock):
+        with self.assertRaisesRegex(RuntimeError, "control channel remains disconnected"):
+            setup_logout.logout_for_setup()
+        self.assertEqual(status.call_count, 3)
+        request.assert_not_called()
+
+    @patch.object(setup_logout.time, "monotonic", side_effect=[0, 1, 61])
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
+    @patch.object(runtime, "request")
+    def test_lost_logout_reply_with_running_session_is_not_success(self, request, status, clock):
+        def respond(payload):
+            if payload["action"] == "logout":
+                raise ConnectionResetError("reset")
+            return {"generation": "g", "lease": "l"}
+
+        request.side_effect = respond
+        with self.assertRaisesRegex(RuntimeError, "did not finish"):
+            setup_logout.logout_for_setup()
+        self.assertEqual(sum(call.args[0]["action"] == "logout" for call in request.call_args_list), 1)
+        self.assertEqual(request.call_args.args[0]["action"], "pause")
+
+    def test_nontransport_errors_are_not_retried(self):
+        for error in (PermissionError("denied"), ValueError("bad protocol"), RuntimeError("bad lease")):
+            with self.subTest(error=type(error).__name__):
+                with patch.object(runtime, "status", side_effect=error) as status, \
+                        patch.object(runtime, "request") as request:
+                    with self.assertRaises(type(error)):
+                        setup_logout.logout_for_setup()
+                    status.assert_called_once()
+                    request.assert_not_called()
+                with patch.object(runtime, "status", return_value={"state": "running", "generation": "g"}) as status, \
+                        patch.object(runtime, "request", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        setup_logout.logout_for_setup()
+                    status.assert_called_once()
+
+    @patch.object(runtime, "status", side_effect=[{"state": "stopping", "generation": "g"},
+                                                 ConnectionResetError("reset"),
+                                                 {"state": "running", "generation": "new"}])
+    @patch.object(runtime, "request")
+    def test_disconnect_does_not_hide_replacement_generation(self, request, status):
+        with self.assertRaisesRegex(RuntimeError, "restarted"):
+            setup_logout.logout_for_setup()
+        request.assert_not_called()
+
     @patch.object(runtime, "status", side_effect=[{"state": "running", "generation": "g", "paused": True},
                                                  {"state": "stopping", "generation": "g"}, {"state": "stopped"}])
     @patch.object(runtime, "request", return_value={"generation": "g", "lease": "l"})
