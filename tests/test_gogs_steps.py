@@ -233,7 +233,7 @@ class TestInstallGogsRelease(unittest.TestCase):
 
     @patch("web.gogs_steps.run")
     @patch("web.gogs_steps.os.path.exists", return_value=False)
-    @patch("web.gogs_steps.read_installed_gogs_release", return_value="v1.2.3")
+    @patch("web.gogs_steps._load_gogs_state", return_value={"tag_name": "v1.2.3", "archive_sha256": "b" * 64})
     @patch(
         "web.gogs_steps.fetch_preferred_gogs_release",
         return_value=("v1.2.4", "https://example.com/gogs-v1.2.4.tar.gz", "a" * 64),
@@ -243,7 +243,7 @@ class TestInstallGogsRelease(unittest.TestCase):
         self,
         _arch,
         _fetch,
-        _installed,
+        mock_state,
         _exists,
         mock_run,
     ):
@@ -255,6 +255,7 @@ class TestInstallGogsRelease(unittest.TestCase):
 
         tag_name, changed, digest = gogs_steps.install_or_update_gogs_release()
 
+        mock_state.assert_called_once_with()
         self.assertEqual((tag_name, changed), ("v1.2.4", True))
         self.assertEqual(digest, "a" * 64)
         calls = mock_run.call_args_list
@@ -293,7 +294,7 @@ class TestInstallGogsRelease(unittest.TestCase):
 
     @patch("web.gogs_steps.run")
     @patch("web.gogs_steps.os.path.exists", return_value=False)
-    @patch("web.gogs_steps.read_installed_gogs_release", return_value="v1.2.3")
+    @patch("web.gogs_steps._load_gogs_state", return_value={"tag_name": "v1.2.3", "archive_sha256": "b" * 64})
     @patch(
         "web.gogs_steps.fetch_preferred_gogs_release",
         return_value=("v1.2.4", "https://example.com/gogs-v1.2.4.tar.gz", "a" * 64),
@@ -303,7 +304,7 @@ class TestInstallGogsRelease(unittest.TestCase):
         self,
         _arch,
         _fetch,
-        _installed,
+        mock_state,
         _exists,
         mock_run,
     ):
@@ -316,6 +317,7 @@ class TestInstallGogsRelease(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "checksum"):
             gogs_steps.install_or_update_gogs_release()
 
+        mock_state.assert_called_once_with()
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertFalse(any(command.startswith("tar -xzf ") for command in commands))
         self.assertFalse(any("/opt/gogs/current" in command for command in commands))
