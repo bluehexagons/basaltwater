@@ -55,6 +55,35 @@ For a requested handoff, leave the working scene available and pause agent
 control when transferring the shared desktop. Desktop readiness includes this
 edit/save/reopen workflow; a CPU render alone leaves it unverified.
 
+## glTF/GLB and OBJ/MTL interchange
+
+Import, touch-up and export of these formats are core workflows. Keep a `.blend`
+working copy and preserve the project's required deliverable format. A CPU smoke
+render does not test import/export or texture dependencies.
+
+- **glTF/GLB:** use the bundled glTF add-on with Debian's `python3-numpy`.
+  A separate `.gltf` can reference buffers and images: deliver all companions
+  with working relative paths. Check materials, UVs, axes, scale and required
+  rigging, animation or extensions. Bake unsupported procedural materials when
+  the project requires equivalent texture appearance.
+- **OBJ/MTL:** use the built-in importer/exporter. Blender 4.x exposes
+  `bpy.ops.wm.obj_import` and `bpy.ops.wm.obj_export`, rather than older
+  `import_scene.obj`/`export_scene.obj` recipes. Export selected meshes with
+  explicit UV, normal, material and modifier settings. `path_mode='COPY'` can
+  collect textures; check the actual output. Deliver the `.obj`, referenced
+  `.mtl` and images together; inspect `mtllib`, `usemtl` and MTL texture paths.
+  OBJ is static geometry with limited material properties; keep rigging,
+  animation, modifiers and full shader graphs in the `.blend` source.
+
+Reimport into a fresh scene from a relocated copy of the export directory so
+missing files or dependencies on the original workspace cannot go unnoticed.
+Compare evaluated shape, sampled UV placement, normals, material assignments
+and texture appearance, then inspect the imported model in the native viewport.
+Vertex counts can change due to triangulation or UV/normal seams; use geometry
+and visual checks rather than exact counts. Preserve companion files and report
+the deliverable directory. Qualify the consuming application when its material
+or extension support affects the result.
+
 ## Establish a CPU baseline
 
 For a deliberate rendering check, run `basaltw agent blender smoke --json`.

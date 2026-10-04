@@ -83,6 +83,55 @@ transferring the shared desktop.
 Desktop readiness therefore includes an edit/save/reopen workflow on the target
 VM. The background CPU smoke check below supplies additional rendering evidence.
 
+### glTF/GLB and OBJ/MTL assets
+
+Treat import, touch-up and export of these formats as core autonomous workflows.
+Keep a `.blend` working copy and choose the deliverable format required by the
+project. Test actual textured assets; neither installation nor the CPU rendering
+smoke check qualifies import/export. Debian's bundled glTF add-on uses NumPy;
+its OBJ importer/exporter is built in.
+
+For glTF, distinguish binary `.glb` from separate `.gltf`, buffer and image files.
+Preserve referenced files and their relative paths when copying or delivering a
+multi-file asset. Check materials, UVs, scale, axes and any required animation,
+rigging or extensions after import. Procedural Blender materials may require
+baking to textures for interchange; a successful export does not establish
+visual fidelity in the consuming application.
+
+OBJ requires its referenced `.mtl` and image files for textured materials. Check
+the OBJ's `mtllib`/`usemtl` declarations and the MTL's texture paths; deliver the
+whole directory with relative references. Blender 4.x uses `bpy.ops.wm.obj_import`
+and `bpy.ops.wm.obj_export`; older recipes using `import_scene.obj` or
+`export_scene.obj` may not work. For a selected static mesh in a trusted script:
+
+```python
+bpy.ops.export_scene.gltf(
+    filepath="/absolute/export/model.gltf", export_format="GLTF_SEPARATE",
+    use_selection=True, export_apply=True,
+    export_draco_mesh_compression_enable=False,
+)
+bpy.ops.wm.obj_export(
+    filepath="/absolute/export/model.obj", export_selected_objects=True,
+    apply_modifiers=True, export_uv=True, export_normals=True,
+    export_materials=True, path_mode="COPY",
+)
+```
+
+Create a new export directory first and confirm selection and modifier settings.
+`COPY` collects referenced OBJ textures; verify the resulting MTL paths and
+copied files. OBJ/MTL carries static geometry and limited material properties;
+it does not preserve a Blender rig, animation, modifier stack or arbitrary shader
+graph. Avoid assuming glTF and OBJ material models are interchangeable.
+
+Import the deliverable into a fresh scene from a relocated copy of the export
+directory to catch missing companions and references to the original workspace.
+Compare evaluated geometry, UV placement, normals, material assignments and
+texture appearance. Compare shape rather than requiring identical vertex counts:
+triangulation and UV/normal seams can change the exported topology. Inspect the
+imported textured model in the native viewport and retain the export companions
+alongside validation evidence. Check the consuming application when its own
+material or extension behavior matters.
+
 ### Check rendering after setup
 
 Run a deliberate smoke check as the coding account:
