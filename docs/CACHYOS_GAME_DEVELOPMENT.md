@@ -1,0 +1,133 @@
+# Antistatic development on CachyOS
+
+Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation.
+This setup supports editing and running the core game, its direct TypeScript
+dependencies, Blender source assets, and Antistatic Animator. Debian remains
+the authoritative check/test and release-build environment; reproducing its
+compiler, formatter, graphics, or packaged-runtime baseline here is unnecessary.
+
+From the normal desktop account, without `sudo`:
+
+```bash
+basaltw setup agent_cachyos localhost --t3code-desktop \
+  --node --node-versions --python --git-lfs --game-dev --blender --dry-run
+```
+
+Remove `--dry-run` to apply. Keep all desired flags when running `setup` again.
+For an existing saved selection, upgrade the CLI first if these flags are new,
+then merge the development options without replacing your other choices:
+
+```bash
+basaltw upgrade
+basaltw refresh --game-dev --node-versions --git-lfs --blender --dry-run
+basaltw refresh --game-dev --node-versions --git-lfs --blender
+```
+
+`--node` and `--python` remain separate selections; add them to refresh if they
+were not previously selected. See [local setup](CACHYOS.md) for installation,
+T3 modes, package prompts, and refresh behavior.
+
+## Development packages
+
+| Option | Capability |
+| --- | --- |
+| `--game-dev` | CMake, Ninja, Python, pkg-config, GDB, ccache; SDL3/SDL3_image, FreeType, Vorbis, libusb, GLEW, OpenAL; Xvfb/xauth/OpenGL diagnostics; GTK3/NSS/audio/X11 host libraries used by project-installed Electron |
+| `--node` | Node/npm/pnpm when missing; existing PATH runtimes retain their original manager |
+| `--node-versions` | User-local NVM for explicit per-project Node installs; no runtime download, shell initialization, or default-version change during setup |
+| `--git-lfs` | Git LFS and missing user filter defaults for model source repositories |
+| `--blender` | Native Blender, Wayland decorations, and existing task-scoped KDE automation prerequisites |
+| `--av-tools`, `--gl-tools` | Optional asset processing and additional Vulkan/API-trace diagnostics |
+
+`--game-dev` also supplies the existing KDE automation prerequisites for native
+Animator work. It starts no GUI, capture, input session, or service. Packages
+come from the configured repositories, with their normal headers and distro
+versions; setup neither synchronizes pacman databases nor replaces installed
+packages. Run CachyOS's normal full update first. Antistatic's portable
+`npm run bootstrap:linux` remains available independently of Basaltwater.
+
+Xvfb and xauth allow optional project captures without using the personal
+desktop. The workstation's existing graphics stack supplies OpenGL/GBM and
+any software renderer. Basaltwater does not select GPU drivers or force a Mesa
+variant. Hardware rendering and captures remain project checks, not setup gates.
+The [Arch Xvfb package](https://archlinux.org/packages/extra/x86_64/xorg-server-xvfb/files/)
+provides both `Xvfb` and `xvfb-run`.
+
+The bundle installs host libraries for project-installed Electron.
+Animator's lockfile owns its Electron version and supported desktop
+baseline; launch it through its npm scripts. GTK3/NSS are also runtime
+dependencies of [Arch's Electron package](https://archlinux.org/packages/extra/x86_64/electron44/).
+No sandbox override is configured. Compiler/formatter/shader-validation pins,
+managed Playwright, Windows cross-compilation, containers, and storefront
+publishing are outside this development setup.
+
+## Select each project's Node version
+
+Antistatic and Animator intentionally use different development pins. Their
+`package.json` engines and `.nvmrc` files remain authoritative; do not copy the
+workstation's rolling Node version into project or release metadata.
+
+`--node-versions` prepares `~/.nvm` with Basaltwater's declared vendor installer
+policy. Existing NVM installations are verified and retained. Custom `NVM_DIR`
+installations remain usable through their original manager: omit this setup
+flag for them. Incomplete or unsafe default directories require explicit repair.
+Preparation uses NVM's documented
+[profile opt-out](https://github.com/nvm-sh/nvm#install--update-script), so Bash,
+Zsh, Fish, and agent shells can keep their current startup behavior.
+
+Install the checked-out pins deliberately, then select them for individual
+commands:
+
+```bash
+basaltw node install --project "$HOME/repos/antistatic"
+basaltw node install --project "$HOME/repos/antistatic-animator"
+basaltw node status --project "$HOME/repos/antistatic" --json
+basaltw node status --project "$HOME/repos/antistatic-animator" --json
+
+cd "$HOME/repos/antistatic"
+. scripts/use-node.sh
+npm ci
+npm run doctor
+npm run build
+
+cd "$HOME/repos/antistatic-animator"
+basaltw node exec -- npm ci
+basaltw node exec -- npm run dev:electron
+```
+
+Repeat `node install`/`node status` for a sibling when its own pin requires
+another runtime. An explicit `--version` can override a pin while still
+respecting its Node engines. If a project needs a different npm or another
+package manager, install its reviewed exact version with
+`basaltw node install --project PATH --package-manager npm@VERSION` (or
+`pnpm@VERSION`/`yarn@VERSION`); consult the project's metadata first.
+See [project tooling](PROJECT_TOOLING.md) for runtime selection details.
+Setup probes language versions outside repositories with Corepack downloads
+and project policy disabled; these host probes do not establish project readiness.
+
+## Repositories and native authoring
+
+Keep these checkouts beside one another under the workspace root:
+
+- `antistatic`, the game.
+- `antistatic-animator`, the Electron authoring tool.
+- `capacitor`, `easing`, `trace`, and `antistatic-translations`, direct packages.
+- `antistatic-assets`, editable Blender sources.
+
+Use repeated `--repo HTTPS_URL` during setup to clone missing repositories.
+Authenticate private repositories locally first. Setup retains existing
+checkouts; it does not pull them, install project dependencies, or run their
+scripts. Each checkout's `AGENTS.md` owns its maintenance and validation rules.
+No website, sandbox, database, or matchmaking server is required for this setup.
+
+Use Animator's Electron mode for native file access and live sync. Its Vite
+browser mode remains useful when an available browser can reach the local URL.
+For agent-driven native GUI work, start the existing KDE portal session with
+`basaltw desktop --native start` and obtain the owner's monitor/input consent;
+see [native desktop work](CACHYOS_DESKTOP.md). Package setup grants no consent.
+
+`basaltw local cachyos-doctor --json` inventories the saved selections, native
+development commands/packages, system pkg-config modules, and NVM loadability.
+It never launches the game or Animator, builds repository code, or tests the GPU.
+Run the game's doctor/build and open Animator after setup. Difficult native,
+formatter, screenshot, and full-suite validation can remain on the Debian VM;
+record the host on which a check actually ran.

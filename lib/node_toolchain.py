@@ -264,7 +264,8 @@ def run_node_command(args: argparse.Namespace) -> int:
                 raise ValueError("Install requires --version with a stable version, major, node, or lts/*")
             nvm = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
             if not nvm.is_file():
-                raise ValueError("Managed NVM is unavailable; reconcile the host's saved Node setup")
+                raise ValueError("Managed NVM is unavailable; reconcile the host's saved Node setup "
+                                 "(--node-versions on agent_cachyos)")
             managers = args.package_manager
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):

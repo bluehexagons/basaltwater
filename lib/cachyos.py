@@ -6,6 +6,7 @@ import argparse
 from dataclasses import fields
 import ipaddress
 import os
+from pathlib import Path
 import platform
 import pwd
 import shutil
@@ -29,6 +30,7 @@ _OPTIONS = {
     "host", "username", "system_type", "dry_run", "machine_type",
     "agent_tools", "no_agent_tools", "install_node", "install_python",
     "install_go", "install_git_lfs", "install_av_tools", "install_gl_tools",
+    "install_node_versions", "install_game_dev",
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",
     "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
@@ -181,6 +183,10 @@ def preflight_cachyos(config: SetupConfig) -> None:
         if os.path.realpath(codex_home) != os.path.realpath(os.path.join(account.pw_dir, ".codex")):
             raise ValueError("agent_cachyos manages Codex in ~/.codex; a custom CODEX_HOME is not supported. "
                              "Use --no-agent-tool codex to leave that installation unmanaged.")
+    if config.install_node_versions:
+        from common.cachyos_development import nvm_script
+
+        nvm_script(Path(account.pw_dir))
     if config.web_interfaces or config.t3code_desktop:
         from lib.remote_utils import run
 

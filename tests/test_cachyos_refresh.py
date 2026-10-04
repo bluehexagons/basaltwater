@@ -213,7 +213,7 @@ class CachyOSRefreshTests(unittest.TestCase):
                         self.assertEqual(refresh.load_saved_setup()[1].selected_agent_tools(), expected)
 
     def test_all_optional_tool_flags_roundtrip(self):
-        flags = ("--node", "--python", "--go", "--git-lfs", "--av-tools", "--gl-tools",
+        flags = ("--node", "--node-versions", "--game-dev", "--python", "--go", "--git-lfs", "--av-tools", "--gl-tools",
                  "--godot", "--sunshine", "--moonlight", "--gaming", "--obs", "--blender",
                  "--kdenlive", "--krita", "--inkscape", "--scribus", "--audacity", "--ardour",
                  "--lmms", "--freecad", "--kicad", "--shotcut", "--gimp", "--remmina", "--sysadmin-tools",

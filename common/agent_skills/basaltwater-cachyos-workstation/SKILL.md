@@ -30,8 +30,8 @@ to upgrade Basaltwater on its selected channel and repeat the last successful
 local setup with the updated code. The private record is
 `~/.local/state/basaltwater/cachyos/last-setup.json`. Failed runs and previews
 preserve it. Older setups need one explicit successful setup to create it;
-never infer missing options from installed packages. Changing options requires
-a full explicit setup command; its successful selection replaces the record.
+never infer missing options from installed packages. Supported refresh flags
+merge into the saved selection; a full explicit setup replaces the record.
 Refresh can update agent CLIs and restart the selected web service; finish
 active work first. It leaves OS and installed T3 desktop updates to CachyOS.
 Codex and GitHub CLI are defaults; other coding agents require explicit flags.
@@ -44,6 +44,20 @@ Packages use pacman, not APT. Basaltwater installs missing packages using the
 existing sync database. Leave full OS updates to the user's CachyOS workflow;
 never repair an installation failure with a partial `pacman -Sy` upgrade.
 Use the original manager for updates to externally managed tools.
+
+For native game and Animator development, `--game-dev` supplies CMake/native
+libraries, debugging/caching tools, Xvfb/xauth and Electron host libraries.
+`--node-versions` prepares user-local NVM without choosing a runtime or changing
+shell defaults. Use `basaltw node install` and `basaltw node status` in each
+project to follow its committed pin; `basaltw node exec -- COMMAND` works from
+Fish and agent shells too. `--node` alone retains system/PATH runtimes and does
+not prepare NVM on CachyOS. Custom NVM installations keep their own manager.
+Add `--blender --git-lfs` for source assets. Game development also selects KDE
+automation prerequisites for native Animator work, but starts no input/capture.
+Use the [game development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_GAME_DEVELOPMENT.md)
+for package scope and sibling workflows. This development setup does not
+reproduce Debian compiler/formatter pins or support release builds; difficult
+checks can run on the project's Debian validation host.
 
 For a recognized standalone Codex installation, preview with
 `basaltw agent update --tool codex --dry-run`, then update with

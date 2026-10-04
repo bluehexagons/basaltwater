@@ -67,7 +67,7 @@ def desktop_automation_requested(config: SetupConfig) -> bool:
     """Include prerequisites for graphical tools outside the desktop package table."""
     return any(getattr(config, field) for field, _, _ in CACHYOS_DESKTOP_PACKAGES) or any((
         config.install_godot, config.install_material_maker,
-        config.install_moonlight, config.install_sysadmin_tools,
+        config.install_moonlight, config.install_sysadmin_tools, config.install_game_dev,
     ))
 
 
@@ -93,6 +93,8 @@ def _user_run(command: list[str], home: Path, **kwargs: Any) -> CompletedProcess
             "GIT_TERMINAL_PROMPT=0",
             "npm_config_yes=true",
             "NPM_CONFIG_YES=true",
+            "COREPACK_ENABLE_NETWORK=0",
+            "COREPACK_ENABLE_PROJECT_SPEC=0",
             *command,
         ],
         **kwargs,
@@ -195,6 +197,10 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
         commands += [("ffmpeg", "ffmpeg"), ("magick", "imagemagick"), ("exiftool", "perl-image-exiftool")]
     if config.install_gl_tools:
         commands += [("glxinfo", "mesa-utils"), ("vulkaninfo", "vulkan-tools"), ("apitrace", "apitrace")]
+    if config.install_game_dev:
+        from common.cachyos_development import GAME_DEV_PACKAGES
+
+        packages.extend(GAME_DEV_PACKAGES)
     if config.install_sunshine:
         packages.append("sunshine")
     if config.install_moonlight:
@@ -367,6 +373,12 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
 
     report_software_readiness(config)
     home = _home(config)
+    from common.cachyos_development import report_game_dev_readiness, verify_node_versions
+
+    if config.install_game_dev:
+        report_game_dev_readiness(config)
+    if config.install_node_versions:
+        verify_node_versions(home)
     commands = ["git", "rg", *config.selected_agent_tools()]
     for enabled, selected_commands in (
         (config.install_node, ("node", "npm", "pnpm")),
@@ -382,7 +394,7 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
         if executable is None:
             raise RuntimeError(f"Requested command missing: {command}")
         version_arg = "version" if command == "go" else "--version"
-        result = _user_run([executable, version_arg], home, capture_output=True, check=False, timeout=30)
+        result = _user_run([executable, version_arg], home, cwd="/", capture_output=True, check=False, timeout=30)
         if result.returncode:
             raise RuntimeError(f"{command} failed its version check")
         print(f"  {command}: executable verified")

@@ -748,6 +748,18 @@ def add_setup_arguments(
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
                        help="Install nvm + latest Node.JS + PNPM + update NPM")
+    parser.add_argument(
+        "--node-versions", dest="install_node_versions",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help="Prepare user-local NVM for explicit project Node installs without changing shell defaults (agent_cachyos)",
+    )
+    parser.add_argument(
+        "--game-dev", dest="install_game_dev",
+        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
+        default=None if not for_remote else False,
+        help="Install native game libraries, build/debug tools, Xvfb, and Electron prerequisites (agent_cachyos)",
+    )
     parser.add_argument("--python", dest="install_python",
                         action=argparse.BooleanOptionalAction if not for_remote else "store_true",
                         default=None if not for_remote else False,

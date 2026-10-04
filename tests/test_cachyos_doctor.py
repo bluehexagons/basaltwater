@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import stat
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,6 +59,8 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(kwargs["timeout"], doctor.PROBE_TIMEOUT)
             self.assertEqual(kwargs["cwd"], "/")
             self.assertEqual(kwargs["env"]["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/run/user/1000/bus")
+            self.assertEqual(kwargs["env"]["COREPACK_ENABLE_NETWORK"], "0")
+            self.assertEqual(kwargs["env"]["COREPACK_ENABLE_PROJECT_SPEC"], "0")
             for key in ("TOKEN", "LD_PRELOAD", "HTTP_PROXY", "HOME"):
                 self.assertNotIn(key, kwargs["env"])
             kwargs["on_output"]("kwin 6.0.0-1\n")
@@ -184,6 +187,60 @@ class DoctorTests(unittest.TestCase):
                 for package in CACHYOS_AUTOMATION_PACKAGES:
                     self.assertEqual(records["package." + package]["selected"], selected)
                     self.assertEqual(records["package." + package]["state"], "failed" if selected else "deferred")
+
+    def test_selected_game_dependencies_and_modules_are_observed_without_launches(self):
+        from common.cachyos_development import GAME_DEV_PACKAGES
+        from lib.config import SetupConfig
+
+        def probe(command, uid):
+            if command[0] == "/usr/bin/pkg-config":
+                return ("error", "") if command[-1] == "sdl3-image" else ("ok", "3.4.6\n")
+            if command[0] == "/usr/bin/pacman" and command[-1] == "sdl3_image":
+                return "error", ""
+            return self.healthy_probe(command, uid)
+
+        self.probe.side_effect = probe
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             install_game_dev=True, install_python=True)
+        with patch.object(doctor.shutil, "which", return_value="/usr/bin/available"):
+            report = doctor.collect_cachyos_doctor(config=config)
+        records = {item["name"]: item for item in report["capabilities"]}
+        for package in GAME_DEV_PACKAGES:
+            self.assertTrue(records["package." + package]["selected"])
+        self.assertEqual(records["package.sdl3_image"]["state"], "failed")
+        self.assertEqual(records["native.sdl3-image"]["state"], "failed")
+        self.assertEqual(records["native.sdl3"]["version"], "3.4.6")
+        self.assertEqual(records["tool.xvfb"]["state"], "available")
+        self.assertEqual(sum(item["name"] == "tool.python" for item in report["capabilities"]), 1)
+        for call in self.probe.call_args_list:
+            command = call.args[0]
+            if command[0] == "/usr/bin/available":
+                self.assertEqual(command[1:], ["--version"])
+            else:
+                self.assertIn(command[0], ("/usr/bin/pkg-config", "/usr/bin/pacman", "/usr/bin/systemctl", "/usr/bin/busctl"))
+        for item in records.values():
+            doctor.CapabilityResult.from_dict(item)
+
+    def test_selected_nvm_reports_missing_and_loadable_installations(self):
+        from lib.config import SetupConfig
+
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos", install_node_versions=True)
+            with patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=temporary)), \
+                    patch.object(doctor.shutil, "which", return_value=None), \
+                    patch("common.cachyos_development.nvm_script", return_value=home / ".nvm/nvm.sh"), \
+                    patch.dict("os.environ", {"NVM_DIR": ""}):
+                missing = doctor.collect_cachyos_doctor(config=config)
+                self.assertEqual(next(item for item in missing["capabilities"] if item["name"] == "tool.nvm")["state"], "failed")
+                (home / ".nvm").mkdir()
+                (home / ".nvm/nvm.sh").write_text("# fixture\n")
+                self.probe.side_effect = lambda command, uid: ("ok", "0.40.6\n") if command[0] == "/usr/bin/env" else self.healthy_probe(command, uid)
+                report = doctor.collect_cachyos_doctor(config=config)
+                nvm = next(item for item in report["capabilities"] if item["name"] == "tool.nvm")
+                self.assertEqual(nvm["state"], "available")
+                self.assertEqual(nvm["version"], "0.40.6")
+                self.assertNotIn(temporary, json.dumps(report))
 
     def test_desktop_package_does_not_require_managed_web_service(self):
         def probe(command, uid):

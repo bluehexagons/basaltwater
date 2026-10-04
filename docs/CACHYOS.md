@@ -122,6 +122,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | --- | --- |
 | Extra agents | `--agent-tool opencode`, `--agent-tool claude`; repeatable. Defaults are `gh,codex`. Use `--no-agent-tool NAME` to omit a default for this run. |
 | Node, Python, Go, or Git LFS | `--node`, `--python`, `--go`, `--git-lfs` |
+| Native game and Animator development | `--game-dev`, `--node-versions` ([Antistatic workflow](CACHYOS_GAME_DEVELOPMENT.md)) |
 | Godot, media, or graphics diagnostics | `--godot`, `--av-tools`, `--gl-tools` (drivers are never installed) |
 | Gaming and streaming | `--gaming`, `--sunshine`, `--moonlight` |
 | Creative applications | `--obs`, `--blender`, `--kdenlive`, `--krita`, `--gimp`, `--inkscape`, `--scribus`, `--shotcut` |

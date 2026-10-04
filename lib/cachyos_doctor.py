@@ -17,7 +17,7 @@ import shutil
 
 from lib.cachyos import is_cachyos
 from lib.streamed_process import run_streamed
-from lib.validation import validate_package_name
+from lib.validation import validate_arch_package_name
 from lib.validators import validate_username
 
 
@@ -127,6 +127,7 @@ def _probe(command: list[str], uid: int) -> tuple[str, str]:
         "PATH": "/usr/bin:/bin", "LC_ALL": "C", "SYSTEMD_PAGER": "cat",
         "SYSTEMD_COLORS": "0", "XDG_RUNTIME_DIR": runtime,
         "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime}/bus",
+        "COREPACK_ENABLE_NETWORK": "0", "COREPACK_ENABLE_PROJECT_SPEC": "0",
     }
     try:
         code = run_streamed(command, timeout=PROBE_TIMEOUT, on_output=collect,
@@ -188,14 +189,50 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 CACHYOS_SYSADMIN_PACKAGES, desktop_automation_requested,
             )
             from common.cachyos_software import selected_software
+            from common.cachyos_development import (
+                GAME_DEV_COMMANDS, GAME_DEV_MODULES, GAME_DEV_PACKAGES, nvm_script,
+            )
 
             selected_packages.update({
                 package: desktop_automation_requested(config) for package in CACHYOS_AUTOMATION_PACKAGES
             })
+            if config.install_game_dev:
+                selected_packages.update({package: True for package in GAME_DEV_PACKAGES})
+                for command in GAME_DEV_COMMANDS:
+                    if command == "python" and config.install_python:
+                        continue  # The language selection performs its version probe below.
+                    available = shutil.which(command) is not None
+                    record("tool." + command.lower(), "available" if available else "failed",
+                           "Selected development command found; project behavior not tested." if available
+                           else "Selected development command missing; rerun --game-dev.", selected=True)
+                for module in GAME_DEV_MODULES:
+                    status, output = _probe(["/usr/bin/pkg-config", "--modversion", module], uid)
+                    version = output.strip() if status == "ok" and _VERSION.fullmatch(output.strip()) else None
+                    record("native." + module, "available" if version else "failed",
+                           "System pkg-config module found; project version requirements are checked by its doctor."
+                           if version else "System pkg-config module unavailable; rerun --game-dev and run the project's doctor.",
+                           selected=True, version=version)
+            if config.install_node_versions:
+                status, output = "missing", ""
+                try:
+                    script = nvm_script(Path(pwd.getpwuid(uid).pw_dir))
+                    if script.is_file():
+                        status, output = _probe([
+                            "/usr/bin/env", "NVM_DIR=" + str(script.parent), "/bin/bash",
+                            "--noprofile", "--norc", "-c", '. "$1" --no-use && nvm --version',
+                            "basaltwater-cachyos-nvm", str(script),
+                        ], uid)
+                except (OSError, ValueError):
+                    pass
+                version = output.strip() if status == "ok" and _VERSION.fullmatch(output.strip()) else None
+                record("tool.nvm", "available" if version else "failed",
+                       "User-local NVM loaded; use basaltw node status in each project to check its runtime."
+                       if version else "User-local NVM missing, unsafe, or unloadable; inspect ~/.nvm and rerun --node-versions.",
+                       selected=True, version=version)
             for command, packages in selected_software(config):
                 version = None
                 for package in packages:
-                    validate_package_name(package)
+                    validate_arch_package_name(package)
                     status, output = _probe(["/usr/bin/pacman", "-Q", "--", package], uid)
                     parts = output.split()
                     if status == "ok" and len(parts) == 2 and parts[0] == package and _VERSION.fullmatch(parts[1]):
@@ -257,7 +294,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
 
         installed_browsers = []
         for package in dict.fromkeys((*PACKAGES, *selected_packages)):
-            validate_package_name(package)
+            validate_arch_package_name(package)
             status, output = _probe(["/usr/bin/pacman", "-Q", "--", package], uid)
             parts = output.split()
             version = (parts[1] if status == "ok" and len(parts) == 2

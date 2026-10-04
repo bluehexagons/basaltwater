@@ -45,6 +45,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from lib.cachyos import validate_cachyos_config
     from common.cachyos_firewall import configure_firewall, firewall_requested
     from common.cachyos_software import install_software, selected_software
+    from common.cachyos_development import install_cachyos_node_versions
 
     validate_cachyos_config(config)
     steps = [
@@ -55,6 +56,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     ]
     if firewall_requested(config):
         steps.insert(2, ("Restricting workstation inbound access with UFW", configure_firewall))
+    if config.install_node_versions:
+        steps.insert(2, ("Preparing user-local NVM for project Node versions", install_cachyos_node_versions))
     if selected_software(config):
         steps.append(("Installing selected publishing and material tools (AUR review required)", install_software))
     if config.t3code_desktop:

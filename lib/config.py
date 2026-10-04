@@ -410,6 +410,8 @@ class SetupConfig:
     refresh_packages: bool = False
     install_go: bool = False
     install_node: bool = False
+    install_node_versions: bool = False
+    install_game_dev: bool = False
     install_python: bool = False
     install_data_analysis_tools: bool = False
     install_av_tools: bool = False
@@ -606,6 +608,11 @@ class SetupConfig:
 
         if self.install_data_analysis_tools:
             self.install_python = True
+
+        if self.system_type != "agent_cachyos" and (
+            self.install_node_versions or self.install_game_dev
+        ):
+            raise ValueError("--node-versions and --game-dev require the agent_cachyos profile")
 
         cachyos_native_software = (
             self.install_sunshine,
@@ -1124,6 +1131,10 @@ class SetupConfig:
         
         if self.install_node:
             args.append("--node")
+        if self.install_node_versions:
+            args.append("--node-versions")
+        if self.install_game_dev:
+            args.append("--game-dev")
         
         if self.install_python:
             args.append("--python")
@@ -1382,12 +1393,13 @@ class SetupConfig:
         for source in self.gogs_sources or []:
             args.append(f"--gogs-source {shlex.quote(source)}")
         
-        if self.auto_restart:
-            args.append("--auto-restart")
-        else:
-            args.append("--no-auto-restart")
-        args.append(f"--auto-restart-force-days {self.auto_restart_force_days}")
-        args.append(f"--auto-restart-grace {self.auto_restart_grace}")
+        if self.system_type != "agent_cachyos":
+            if self.auto_restart:
+                args.append("--auto-restart")
+            else:
+                args.append("--no-auto-restart")
+            args.append(f"--auto-restart-force-days {self.auto_restart_force_days}")
+            args.append(f"--auto-restart-grace {self.auto_restart_grace}")
         if self.proxmox_balloon_target is not None:
             args.append(f"--proxmox-balloon-target {self.proxmox_balloon_target}")
                 
@@ -1639,6 +1651,10 @@ class SetupConfig:
         
         if self.install_node:
             cmd_parts.append("--node")
+        if self.install_node_versions:
+            cmd_parts.append("--node-versions")
+        if self.install_game_dev:
+            cmd_parts.append("--game-dev")
         
         if self.install_python:
             cmd_parts.append("--python")
@@ -2058,6 +2074,8 @@ class SetupConfig:
         )
         data['install_av_tools'] = bool(self.install_av_tools)
         data['install_gl_tools'] = bool(self.install_gl_tools)
+        data['install_node_versions'] = bool(self.install_node_versions)
+        data['install_game_dev'] = bool(self.install_game_dev)
         data['install_sunshine'] = bool(self.install_sunshine)
         data['install_moonlight'] = bool(self.install_moonlight)
         data['install_gaming'] = bool(self.install_gaming)
@@ -2543,6 +2561,8 @@ class SetupConfig:
             refresh_packages=getattr(args, 'refresh_packages', False),
             install_go=getattr(args, 'install_go', False),
             install_node=getattr(args, 'install_node', False),
+            install_node_versions=getattr(args, 'install_node_versions', False) is True,
+            install_game_dev=getattr(args, 'install_game_dev', False) is True,
             install_python=getattr(args, 'install_python', False),
             install_data_analysis_tools=getattr(
                 args, 'install_data_analysis_tools', False
