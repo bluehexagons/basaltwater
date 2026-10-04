@@ -50,6 +50,7 @@ from common.web_panel_events import (
     load_audit_snapshot,
     load_ingest_token,
     load_notification_events,
+    unresolved_notification_alerts,
     validate_notification_payload,
 )
 
@@ -1241,7 +1242,8 @@ meter::-moz-meter-bar { background: var(--accent); }
   font-weight: 750;
   text-transform: uppercase;
 }
-.badge.warning, .badge.error { color: var(--bad); }
+.badge.warning { color: var(--warning); }
+.badge.error { color: var(--bad); }
 .endpoint { margin: 0 0 12px; color: var(--muted); }
 .audit-issues {
   margin: 0 0 12px;
@@ -1693,6 +1695,30 @@ def _render_notification_section(state: WebPanelState) -> str:
 <span class="count">Not configured</span></div>
 <p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>'''
     events = state.notification_events()
+    alerts = unresolved_notification_alerts(events)
+    alert_rows = []
+    for alert in alerts:
+        record = alert["record"]
+        notification = record["notification"]
+        operator = notification["operator"]
+        severity = notification["event"]["status"]
+        alert_rows.append(
+            '<li class="event"><div class="event-head"><strong>{}</strong>'
+            '<span class="badge {}">{}</span></div>'
+            '<p class="event-meta">Reported system {} · from {} · {} {} · '
+            'first received {} · latest received {}</p><p class="event-detail">{}</p></li>'.format(
+                html.escape(operator["subject"]), html.escape(severity, quote=True),
+                html.escape(severity), html.escape(operator["system"]),
+                html.escape(record["source_ip"]), alert["count"],
+                "report" if alert["count"] == 1 else "reports",
+                html.escape(alert["first_received_at"]), html.escape(record["received_at"]),
+                html.escape(operator["what_happened"]),
+            )
+        )
+    alert_content = (
+        _render_event_history(alert_rows) if alert_rows else
+        '<p class="empty">No unresolved warning or error reports in retained history.</p>'
+    )
     if not events:
         content = '<p class="empty">No remote notifications have been received.</p>'
     else:
@@ -1743,7 +1769,9 @@ def _render_notification_section(state: WebPanelState) -> str:
                     detail_html,
                 )
             )
-        content = _render_event_history(rows)
+        content = '<details class="history"><summary>Notification history ({} received)</summary>{}</details>'.format(
+            len(events), _render_event_history(rows),
+        )
     count = len(events)
     full_link = state.notification_ingest_url()
     link_help = ""
@@ -1754,7 +1782,9 @@ def _render_notification_section(state: WebPanelState) -> str:
 <p>Paste this complete URL as the target for <code>--notify webhook</code> on a managed sender that can reach this panel.</p></details>'''
     return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
 <h2 id="notifications-heading">Notifications</h2></div>
-<span class="count">{count} received</span></div>
+<span class="count">{len(alerts)} unresolved · {count} received</span></div>
+<p class="endpoint">Latest warning and error reports, grouped by sender and alert key. Recovery reports clear matching alerts. This summary covers only the latest 100 receipts; it is not a live health check.</p>
+{alert_content}
 <p class="endpoint">Ingest endpoint: <code>{WEB_PANEL_NOTIFICATION_ENDPOINT}</code>. Sender names are self-reported; use the receipt address when investigating.</p>
 {link_help}
 <details class="notification-help"><summary>Configure a Basaltwater sender</summary>

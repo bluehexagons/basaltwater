@@ -365,6 +365,40 @@ def load_notification_events(
     return events
 
 
+def unresolved_notification_alerts(
+    newest_first: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Summarize unresolved warning/error episodes within retained history.
+
+    Receipt order is authoritative: sender clocks and occurrence times are not
+    trusted. Only explicit keys from the same source, system, and event type
+    can coalesce or clear an episode. Unkeyed or unattributed events stand alone.
+    """
+
+    episodes: dict[tuple[object, ...], dict[str, Any]] = {}
+    for index, record in enumerate(reversed(newest_first)):
+        notification = record["notification"]
+        event = notification["event"]
+        operator = notification["operator"]
+        key = event.get("deduplication_key")
+        source = record.get("source_ip")
+        identity = (
+            (source, operator["system"], event["type"], key)
+            if key and source and source != "unknown" else (index,)
+        )
+        if event["state"] != "firing" or event["status"] not in {"warning", "error"}:
+            episodes.pop(identity, None)
+            continue
+        previous = episodes.get(identity)
+        episodes[identity] = {
+            "record": record,
+            "count": previous["count"] + 1 if previous else 1,
+            "first_received_at": previous["first_received_at"] if previous else record["received_at"],
+            "order": index,
+        }
+    return sorted(episodes.values(), key=lambda episode: episode["order"], reverse=True)
+
+
 def append_notification_event(
     notification: JSONDict,
     source_ip: str,

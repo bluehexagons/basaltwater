@@ -127,6 +127,35 @@ def parse_query(raw: str) -> DiagnosticQuery:
     )
 
 
+def _command_issue(command: list[str], code: int, output: str) -> str:
+    """Explain fixed collection failures without displaying raw stderr."""
+
+    # JSON journal messages may themselves report application permissions or
+    # bus failures. Only command diagnostics can establish collector failure.
+    lowered = "\n".join(
+        line for line in output.splitlines() if not line.lstrip().startswith("{")
+    ).lower()
+    if command[0] == "journalctl" and any(phrase in lowered for phrase in (
+        "insufficient permissions", "permission denied", "access denied",
+        "not seeing messages from other users",
+    )):
+        return (
+            "Journal access is restricted for the panel service. Apply the latest "
+            "Basaltwater setup to restore its managed journal permissions, then reload diagnostics."
+        )
+    if "--user" in command and "failed to connect to" in lowered and "bus" in lowered:
+        return "The panel account's user service manager is unavailable. Check its user session and T3 Code service over SSH."
+    no_matches = (
+        code == 1 and command[0] == "journalctl"
+        and any(arg.startswith("--grep=") for arg in command)
+        and output.strip() in {"", "-- No entries --"}
+    )
+    if code and not no_matches:
+        source = "Journal query" if command[0] == "journalctl" else "Service status query"
+        return f"{source} unavailable (exit status {code}); inspect this service over SSH."
+    return ""
+
+
 def _bounded_command(command: list[str]) -> tuple[str, str]:
     """Drain at most 64 KiB from a fixed command and reap it on every exit."""
 
@@ -147,15 +176,8 @@ def _bounded_command(command: list[str]) -> tuple[str, str]:
                         chunk = os.read(process.stdout.fileno(), min(4096, _MAX_BYTES + 1 - len(output)))
                         if not chunk:
                             code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-                            # journalctl returns 1 when --grep finds no matches.
-                            no_matches = (
-                                code == 1 and not output and command[0] == "journalctl"
-                                and any(arg.startswith("--grep=") for arg in command)
-                            )
-                            return output.decode("utf-8", errors="replace"), (
-                                "Query unavailable; the service or journal may not be accessible."
-                                if code and not no_matches else ""
-                            )
+                            decoded = output.decode("utf-8", errors="replace")
+                            return decoded, _command_issue(command, code, decoded)
                         output.extend(chunk)
                         if len(output) > _MAX_BYTES:
                             return output[:_MAX_BYTES].decode("utf-8", errors="replace"), "Output limit reached; narrow the time window or priority."
@@ -163,6 +185,8 @@ def _bounded_command(command: list[str]) -> tuple[str, str]:
                 if process.poll() is None:
                     process.kill()
                 process.wait()
+    except FileNotFoundError:
+        return "", f"Query unavailable; {command[0]} is not installed or could not be found."
     except (OSError, subprocess.TimeoutExpired):
         return "", "Query unavailable; the local diagnostic command could not complete."
 
@@ -242,12 +266,14 @@ def collect_diagnostics(query: DiagnosticQuery) -> dict[str, object]:
         issues = [issue for issue in (property_issue, journal_issue) if issue]
         if not fields and not property_issue:
             issues.append("Service properties were unavailable.")
+        if fields.get("LoadState") == "not-found":
+            issues.append("This service is not installed on this host. Historical journal entries may still be available.")
         events = []
         for line in journal.splitlines():
             try:
                 event = json.loads(line)
             except ValueError:
-                if line.strip():
+                if line.strip() and line.strip() != "-- No entries --" and not journal_issue:
                     issues.append("Journal access or output is incomplete; some entries may be hidden.")
                 continue
             if not isinstance(event, dict):
@@ -269,6 +295,8 @@ def collect_diagnostics(query: DiagnosticQuery) -> dict[str, object]:
             events.append({"message": message, "timestamp": timestamp, "priority": priority})
             if len(events) == 100:
                 break
+        if len(events) == 100:
+            issues.append("Entry limit reached: only the newest 100 matches are shown. Narrow the time window or message search to inspect other entries.")
         return {"properties": fields, "events": events, "issues": list(dict.fromkeys(issues))}
     finally:
         _COLLECTORS.release()
@@ -318,7 +346,25 @@ def render_diagnostics(
                     html.escape(event["timestamp"]), badge, severity, html.escape(safe_message),
                 )
             )
-        logs = f'<ol class="event-list">{"".join(rows)}</ol>' if rows else '<p class="empty">No matching entries are visible to the panel account. The journal may be restricted, rotated, or empty for these filters.</p>'
+        if rows:
+            logs = f'<ol class="event-list">{"".join(rows)}</ol>'
+        elif result["issues"]:
+            logs = '<p class="empty">No matching entries are visible. Collection notices above explain the limits; this is not proof of a clean service.</p>'
+        else:
+            logs = '<p class="empty">No matching entries were returned for these filters. Try all priorities or a wider time window; older entries may have rotated out.</p>'
+        broader = []
+        for label, changes in (
+            ("Show all priorities", {"priority": "7"}),
+            ("Search last 24 hours", {"window": "24h"}),
+        ):
+            filters = {"service": query.service, "window": query.window, "priority": query.priority, "search": query.search, "load": "1"}
+            if all(filters[key] == value for key, value in changes.items()):
+                continue
+            filters.update(changes)
+            broader.append('<a href="/logs?{}">{}</a>'.format(
+                html.escape(urllib.parse.urlencode(filters), quote=True), label,
+            ))
+        logs += '<p class="endpoint">{}</p>'.format(" · ".join(broader)) if broader else ""
         content = f'''{warning}<section aria-labelledby="runtime-heading"><h2 id="runtime-heading">Runtime details</h2>
 <p class="endpoint">Current values; restart counts and resource accounting depend on the service manager.</p>
 <dl class="overview-grid">{metrics}</dl></section>

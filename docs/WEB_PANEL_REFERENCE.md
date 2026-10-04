@@ -41,6 +41,17 @@ The receiver is opt-in, HTTPS-only, and available at
 bearer token stored at `/etc/basaltwater/web-panel/notification-ingest.token`.
 The panel keeps the latest 100 accepted events.
 
+The dashboard summarizes unresolved warning/error reports before the collapsed
+notification history. Repeated firing reports with the same source address,
+reported system, event type, and deduplication key appear once with an episode
+count and first/latest receipt times. A matching recovery or successful report
+clears the episode; a later failure starts a new count. The latest receipt wins,
+including a change to an informational status, independently of sender clocks.
+Unkeyed reports and reports without a known source address remain separate.
+The summary covers retained history only: it is not a durable incident tracker,
+and a quiet sender is not evidence of recovery. Sender address changes create a
+separate group. Every retained receipt remains available in history.
+
 | Result | Response |
 | --- | --- |
 | New event stored | HTTP 202, `duplicate: false` |
@@ -118,9 +129,14 @@ state can reset after reboot or service-manager reload.
 elevation. Select a time window, severity, and literal case-insensitive text;
 the panel shows up to 100 newest matching entries. Each collection is limited
 to five seconds and 64 KiB, with at most two concurrent requests. Empty,
-unavailable, timed-out, or truncated results are shown explicitly. Logs can
-contain sensitive application data; redaction covers common credentials and
-keys but cannot identify every secret. The panel service receives the
+unavailable, timed-out, or truncated results are shown explicitly. Broaden
+the query with links to all priorities or the last 24 hours while retaining
+the selected service and literal message search. Notices distinguish missing
+units, journal permission failures, unavailable user service managers, and
+missing diagnostic commands. A successful empty query is distinct from an
+unavailable collector; reaching 100 entries shows an explicit limit notice.
+Logs can contain sensitive application data; redaction covers common credentials
+and keys but cannot identify every secret. The panel service receives the
 `systemd-journal` supplementary group so system logs are readable without sudo.
 This is scoped to the service unit rather than the setup user's login groups;
 processes launched by the panel also inherit it. Rerun setup to apply the unit

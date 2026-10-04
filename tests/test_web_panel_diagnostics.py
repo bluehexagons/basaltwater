@@ -63,6 +63,39 @@ class DiagnosticQueryTest(unittest.TestCase):
         with patch.object(diagnostics, "_bounded_command", side_effect=[("LoadState=loaded", ""), (journal, "")]):
             result = diagnostics.collect_diagnostics(diagnostics.DiagnosticQuery(load=True))
         self.assertEqual(len(result["events"]), 100)
+        self.assertIn("Entry limit reached", result["issues"][0])
+
+    def test_empty_journal_is_not_incomplete_and_links_preserve_filters(self) -> None:
+        with patch.object(diagnostics, "_bounded_command", side_effect=[
+            ("LoadState=loaded", ""), ("-- No entries --\n", ""),
+        ]):
+            page = diagnostics.render_diagnostics(
+                diagnostics.DiagnosticQuery(load=True, service="ssh.service", search="failed[1]"), "", "host",
+            )
+        self.assertNotIn("Collection notice", page)
+        self.assertIn("No matching entries were returned", page)
+        self.assertIn("Show all priorities", page)
+        self.assertIn("Search last 24 hours", page)
+        self.assertIn("service=ssh.service&amp;window=1h&amp;priority=7&amp;search=failed%5B1%5D&amp;load=1", page)
+
+    def test_missing_unit_and_collection_failure_are_explained_separately(self) -> None:
+        with patch.object(diagnostics, "_bounded_command", side_effect=[
+            ("LoadState=not-found", ""), ("", "Journal query unavailable"),
+        ]):
+            page = diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True), "", "host")
+        self.assertIn("not installed on this host", page)
+        self.assertIn("not proof of a clean service", page)
+
+    def test_permission_failure_has_one_notice_and_preserves_visible_entries(self) -> None:
+        error = "No journal files were opened due to insufficient permissions."
+        issue = diagnostics._command_issue(["journalctl", "--system"], 1, error)
+        with patch.object(diagnostics, "_bounded_command", side_effect=[
+            ("LoadState=loaded", ""), (error + "\n" + json.dumps({"MESSAGE": "visible"}), issue),
+        ]):
+            result = diagnostics.collect_diagnostics(diagnostics.DiagnosticQuery(load=True))
+        self.assertEqual(result["issues"], [issue])
+        self.assertEqual(result["events"][0]["message"], "visible")
+        self.assertIn("managed journal permissions", issue)
 
     def test_redacts_common_credentials_before_rendering(self) -> None:
         message = (
@@ -213,6 +246,24 @@ class BoundedCommandTest(unittest.TestCase):
         self.assertEqual((output, issue), ("", ""))
         _, issue, _ = self._run([b""], returncode=1)
         self.assertIn("unavailable", issue)
+
+    def test_journal_empty_marker_does_not_mask_failures(self) -> None:
+        command = ["journalctl", "--grep=missing"]
+        self.assertEqual(diagnostics._command_issue(command, 1, "-- No entries --\n"), "")
+        self.assertIn("restricted", diagnostics._command_issue(command, 1, "Permission denied\n-- No entries --"))
+        self.assertIn("exit status 2", diagnostics._command_issue(command, 2, "-- No entries --"))
+
+    def test_user_bus_and_missing_executable_have_actionable_notices(self) -> None:
+        issue = diagnostics._command_issue(["systemctl", "--user"], 1, "Failed to connect to bus: No medium found")
+        self.assertIn("user service manager", issue)
+        self.assertIn("over SSH", issue)
+        with patch.object(diagnostics.subprocess, "Popen", side_effect=FileNotFoundError):
+            _, issue = diagnostics._bounded_command(["journalctl"])
+        self.assertIn("journalctl is not installed", issue)
+
+    def test_application_messages_are_not_collector_failures(self) -> None:
+        output = json.dumps({"MESSAGE": "Permission denied; failed to connect to bus"})
+        self.assertEqual(diagnostics._command_issue(["journalctl", "--user"], 0, output), "")
 
 
 if __name__ == "__main__":

@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import copy
 import http.client
 import json
 import os
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from common.service_tools.web_panel_service import (
     WebPanelHandler,
     WebPanelState,
+    _render_notification_section,
     _ThreadingTCPHTTPServer,
     render_page,
 )
@@ -21,6 +23,7 @@ from common.web_panel_events import (
     append_notification_event,
     load_notification_events,
     validate_notification_payload,
+    unresolved_notification_alerts,
 )
 
 
@@ -61,6 +64,69 @@ def _manifest() -> dict[str, object]:
 
 
 class WebPanelNotificationIdempotencyTest(unittest.TestCase):
+    def _record(self, *, state: str = "firing", status: str = "warning", source: str = "192.0.2.10", **event: object) -> dict[str, object]:
+        notification = _notification()
+        notification["event"].update(state=state, status=status, **event)
+        return {"notification": notification, "source_ip": source, "received_at": "2026-10-04T12:00:00+00:00"}
+
+    def test_repeated_alerts_coalesce_and_recovery_clears_episode(self) -> None:
+        first = self._record()
+        first["received_at"] = "2026-10-04T11:00:00+00:00"
+        newest = self._record(status="error")
+        alerts = unresolved_notification_alerts([newest, first])
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]["count"], 2)
+        self.assertEqual(alerts[0]["record"], newest)
+        self.assertEqual(alerts[0]["first_received_at"], first["received_at"])
+        for state in ("resolved", "success"):
+            recovered = self._record(state=state, status="good")
+            self.assertEqual(unresolved_notification_alerts([recovered, newest, first]), [])
+            reopened = unresolved_notification_alerts([newest, recovered, first])
+            self.assertEqual(reopened[0]["count"], 1)
+            self.assertEqual(reopened[0]["first_received_at"], newest["received_at"])
+
+    def test_recovery_cannot_clear_other_source_system_or_event_type(self) -> None:
+        first = self._record()
+        for kind in ("source", "system", "type", "key"):
+            recovered = self._record(state="resolved", status="good")
+            if kind == "source":
+                recovered["source_ip"] = "192.0.2.11"
+            elif kind == "system":
+                recovered["notification"]["operator"]["system"] = "other-machine"
+            else:
+                recovered["notification"]["event"]["type" if kind == "type" else "deduplication_key"] = "other"
+            with self.subTest(kind=kind):
+                self.assertEqual(len(unresolved_notification_alerts([recovered, first])), 1)
+
+    def test_unkeyed_or_unattributed_events_stay_separate(self) -> None:
+        for changes in ({"deduplication_key": None}, {"source": "unknown"}):
+            first = self._record(**changes)
+            newest = self._record(**changes)
+            recovery = self._record(state="resolved", **changes)
+            alerts = unresolved_notification_alerts([recovery, newest, first])
+            self.assertEqual(len(alerts), 2)
+
+    def test_receipt_order_wins_over_sender_clock_and_inputs_are_preserved(self) -> None:
+        first = self._record(occurred_at="2099-01-01T00:00:00+00:00")
+        recovery = self._record(state="resolved", occurred_at="2000-01-01T00:00:00+00:00")
+        records = [recovery, first]
+        original = copy.deepcopy(records)
+        self.assertEqual(unresolved_notification_alerts(records), [])
+        self.assertEqual(records, original)
+
+    def test_dashboard_summary_is_escaped_and_history_remains_available(self) -> None:
+        record = self._record()
+        record["notification"]["operator"]["subject"] = "Backup <script>"
+        state = Mock()
+        state.notification_events.return_value = [record, record]
+        state.notification_ingest_url.return_value = None
+        page = _render_notification_section(state)
+        self.assertIn("1 unresolved · 2 received", page)
+        self.assertIn("2 reports", page)
+        self.assertIn("Backup &lt;script&gt;", page)
+        self.assertNotIn("<script>", page)
+        self.assertIn("Notification history (2 received)", page)
+
     def test_duplicate_event_id_is_retained_only_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             notification_path = os.path.join(temporary, "events.jsonl")
