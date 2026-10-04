@@ -809,7 +809,7 @@ def add_setup_arguments(
     )
     for option, destination, description in (
         ("--obs", "install_obs", "Install the native CachyOS OBS Studio package"),
-        ("--blender", "install_blender", "Install the native CachyOS Blender package"),
+        ("--blender", "install_blender", "Install Blender from Debian APT or the native CachyOS repository (graphical or headless use)"),
         ("--kdenlive", "install_kdenlive", "Install the native CachyOS Kdenlive package"),
         ("--krita", "install_krita", "Install the native CachyOS Krita package"),
         ("--inkscape", "install_inkscape", "Install the native CachyOS Inkscape package"),

@@ -15,6 +15,20 @@ from lib.display import (
 
 
 class TestRdpDisplay(unittest.TestCase):
+    def test_blender_summary_identifies_the_distribution_package(self) -> None:
+        for profile, source in (
+            ("agent_vm", "Debian APT package"),
+            ("agent_cachyos", "native CachyOS package"),
+        ):
+            with self.subTest(profile=profile):
+                config = SetupConfig(
+                    host="localhost", username="agent", system_type=profile,
+                    install_blender=True,
+                )
+                with redirect_stdout(io.StringIO()) as output:
+                    print_setup_summary(config)
+                self.assertIn(f"Blender: Yes ({source})", output.getvalue())
+
     def test_setup_summary_redacts_notification_credentials(self) -> None:
         token = "a" * 43
         config = SetupConfig(

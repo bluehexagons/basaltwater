@@ -213,6 +213,11 @@ def extend_package_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]])
     if config.apt_packages:
         steps.append(("Installing custom apt packages", install_apt_packages))
 
+    if config.install_blender:
+        from desktop.steps import install_blender
+
+        steps.append(("Installing Blender (Debian package)", install_blender))
+
     if config.enable_mdns or config.clear_mdns:
         steps.append(("Configuring mDNS hostname discovery", configure_mdns))
 

@@ -21,6 +21,15 @@ not prove health or authentication. See the
 [environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_ENVIRONMENT.md)
 or `docs/AGENT_ENVIRONMENT.md` in a Basaltwater checkout.
 
+Blender is optional on Debian agent hosts: setup `--blender` selects the
+configured Debian release's APT package, including on headless `agent_vm`.
+Normal host package maintenance owns its updates. Check `blender --version`
+and use the manifest's background-render recipe for repeatable scene output;
+installation does not establish GPU or interactive desktop readiness. Native
+editing uses the shared desktop skill when that capability is installed.
+See [desktop software support and flags](https://github.com/bluehexagons/basaltwater/blob/main/docs/WORKSTATIONS.md#desktop-software-support-and-flags)
+and [Blender workflows](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md#blender).
+
 For image evidence, `basaltw agent visuals compare BEFORE.png AFTER.png --json`
 creates a private standalone viewer with synchronized zoom/scroll, overlays,
 pixel differences, and optional per-image settings. `agent visuals capture`

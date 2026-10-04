@@ -14,6 +14,14 @@ application. Use the collaborative browser policy for web applications.
 
 ## Blender
 
+Select `--blender` in a Debian workstation or standard server setup, including
+`agent_vm` for headless use. It installs Debian's APT `blender` package for the
+configured release and follows normal host package updates. CachyOS's
+`agent_cachyos` profile uses its native package with the same flag. See the
+[desktop software support table](WORKSTATIONS.md#desktop-software-support-and-flags)
+for other applications, flags and desktop access choices. Check
+`blender --version` before using version-specific scene APIs or add-ons.
+
 Blender can render a project without opening its UI:
 
 ```bash

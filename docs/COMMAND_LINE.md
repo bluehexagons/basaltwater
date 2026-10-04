@@ -528,7 +528,7 @@ list. Neither preview is a completed live setup.
 | `--sunshine` | CachyOS `agent_cachyos` only: install the native Sunshine game-stream host package |
 | `--moonlight` | CachyOS `agent_cachyos` only: install the native Moonlight Qt game-stream client package |
 | `--obs` | CachyOS `agent_cachyos` only: install native OBS Studio |
-| `--blender` | CachyOS `agent_cachyos` only: install native Blender |
+| `--blender` / `--no-blender` | Select Blender for graphical or headless use: Debian APT package on standard server/workstation profiles; native package on CachyOS `agent_cachyos` |
 | `--kdenlive` | CachyOS `agent_cachyos` only: install native Kdenlive |
 | `--krita` | CachyOS `agent_cachyos` only: install native Krita |
 | `--inkscape` | CachyOS `agent_cachyos` only: install native Inkscape |
@@ -546,6 +546,15 @@ list. Neither preview is a completed live setup.
 | `--etcher` | CachyOS only: repository Balena Etcher; no flashing or blanket disk permissions |
 | `--butler` | CachyOS only: reviewed AUR itch.io publishing CLI; no login/upload |
 | `--steamcmd` | CachyOS only: reviewed AUR SteamCMD plus 32-bit runtime libraries; no startup/login/upload |
+
+Debian's `--blender` installs the configured release's `blender` APT package,
+including on headless `agent_vm` hosts. It does not download the newest upstream
+release, add a repository, or install a dedicated update timer; normal host
+package maintenance owns updates. `--flatpak` does not change this source.
+`--no-blender` clears the install selection without uninstalling Blender.
+See [desktop software support and flags](WORKSTATIONS.md#desktop-software-support-and-flags)
+for the application support table and [Blender workflows](DESKTOP_DEVELOPMENT.md#blender)
+for background rendering and native desktop checks.
 
 The CachyOS-only gaming and desktop application flags use packages in the
 workstation's configured repositories, except the explicit AUR selections noted

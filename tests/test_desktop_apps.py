@@ -9,6 +9,63 @@ from lib.config import SetupConfig
 
 
 class TestDesktopApps(unittest.TestCase):
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_blender_installs_and_verifies_debian_package(self, mock_run, mock_probe):
+        from desktop.apps_steps import install_blender
+
+        mock_probe.side_effect = [
+            Mock(returncode=1, stdout="", stderr=""),
+            Mock(returncode=0, stdout="install ok installed", stderr=""),
+        ]
+        mock_run.return_value = Mock(returncode=0)
+        config = SetupConfig(
+            host="test.example.com", username="testuser", system_type="agent_vm",
+            install_blender=True, use_flatpak=True, machine_type="unprivileged",
+        )
+
+        install_blender(config)
+
+        mock_run.assert_called_once_with("apt-get install -y -qq blender", check=False)
+        self.assertEqual([call.args[0] for call in mock_probe.call_args_list], [
+            ["dpkg-query", "-W", "-f=${Status}", "blender"],
+            ["dpkg-query", "-W", "-f=${Status}", "blender"],
+        ])
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_blender_rerun_keeps_installed_debian_package(self, mock_run, mock_probe):
+        from desktop.apps_steps import install_blender
+
+        mock_probe.return_value = Mock(returncode=0, stdout="install ok installed")
+        config = SetupConfig(
+            host="test.example.com", username="testuser", system_type="agent_vm",
+            install_blender=True,
+        )
+
+        install_blender(config)
+
+        mock_run.assert_not_called()
+        mock_probe.assert_called_once_with(
+            ["dpkg-query", "-W", "-f=${Status}", "blender"],
+            capture_output=True, text=True, timeout=15,
+        )
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_blender_installation_failure_stops_setup(self, mock_run, mock_probe):
+        from desktop.apps_steps import install_blender
+
+        mock_run.return_value = Mock(returncode=1, stdout="", stderr="")
+        mock_probe.return_value = Mock(returncode=1, stdout="", stderr="")
+        config = SetupConfig(
+            host="test.example.com", username="testuser", system_type="agent_vm",
+            install_blender=True,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Blender installation failed"):
+            install_blender(config)
+
     def test_desktop_steps_exports_librewolf_browser_config(self):
         """desktop.steps should expose browser configuration with LibreWolf support."""
         from desktop import steps

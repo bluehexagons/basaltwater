@@ -58,6 +58,16 @@ def install_flatpak_if_needed() -> bool:
 
 
 
+def install_blender(config: SetupConfig) -> None:
+    """Install Debian's Blender package for graphical or background rendering."""
+    if not install_package(
+        "Blender",
+        "blender",
+        "apt-get install -y -qq blender",
+    ):
+        raise RuntimeError("Blender installation failed")
+
+
 def install_remmina(config: SetupConfig) -> None:
     """Install Remmina RDP client."""
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"

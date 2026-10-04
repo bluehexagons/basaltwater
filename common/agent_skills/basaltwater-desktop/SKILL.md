@@ -19,9 +19,18 @@ use `command -v` or package queries for further discovery. This skill does not
 imply that a particular editor or browser exists. Standard emulated graphics use software
 rendering; heavy 3D work may be slow and does not establish GPU compatibility.
 
+Debian setup selects Blender with `--blender` on workstation or standard server
+profiles. It uses the configured Debian release's APT package even with
+`--flatpak`; keep updates under normal host package maintenance. Check
+`blender --version` before using version-specific APIs or add-ons. See the
+[desktop software support table](https://github.com/bluehexagons/basaltwater/blob/main/docs/WORKSTATIONS.md#desktop-software-support-and-flags)
+for supported applications and setup flags.
+
 When Blender is detected, the manifest provides a background-render recipe.
 Use background rendering for repeatable output checks and this shared desktop
-for interactive editing checks. Record scene, camera, frame, resolution, engine
+for interactive editing checks; launch with
+`basaltw desktop exec -- blender /absolute/project/scene.blend`.
+Record scene, camera, frame, resolution, engine
 and device alongside PNG captures. Compare results with `basaltw agent visuals
 compare`; use a project harness with `visuals capture` for isolated revisions.
 Read the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md)

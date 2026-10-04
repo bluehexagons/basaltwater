@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
+import shlex
 import unittest
 from argparse import Namespace
 
+from lib.arg_parser import add_setup_arguments, create_setup_argument_parser
 from lib.config import SetupConfig
+from lib.plugin_registry import get_system_type_definition, get_system_type_names
 from lib.system_types import get_steps_for_system_type
 
 
@@ -23,6 +27,44 @@ def _setup_args(**overrides: object) -> Namespace:
 
 
 class TestAgentProfiles(unittest.TestCase):
+    def test_blender_is_opt_in_for_debian_server_and_workstation_profiles(self) -> None:
+        from desktop.apps_steps import install_blender
+
+        for profile in get_system_type_names():
+            if get_system_type_definition(profile).step_builder not in {
+                "plugins.server:build_server_steps",
+                "plugins.workstation:build_workstation_steps",
+            }:
+                continue
+            with self.subTest(profile=profile):
+                config = SetupConfig.from_args(_setup_args(), profile)
+                self.assertNotIn(install_blender, [step for _, step in get_steps_for_system_type(config)])
+                config = SetupConfig.from_args(_setup_args(install_blender=True), profile)
+                steps = [step for _, step in get_steps_for_system_type(config)]
+                self.assertEqual(steps.count(install_blender), 1)
+                self.assertEqual(config.include_desktop, get_system_type_definition(profile).include_desktop)
+                restored = SetupConfig.from_dict(config.host, profile, config.to_dict())
+                self.assertTrue(restored.install_blender)
+                self.assertIn(install_blender, [step for _, step in get_steps_for_system_type(restored)])
+
+    def test_blender_flag_round_trips_through_setup_and_remote_parsers(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_setup_arguments(parser, include_system_type=True)
+        args = parser.parse_args(["agent_vm", "192.0.2.10", "agent", "--blender"])
+        config = SetupConfig.from_args(args, args.system_type)
+        command = shlex.split(" ".join(config.to_setup_command()))
+        restored_args = parser.parse_args(command[2:])
+        restored = SetupConfig.from_args(restored_args, restored_args.system_type)
+        self.assertTrue(restored.install_blender)
+        remote_parser = create_setup_argument_parser("test", for_remote=True)
+        remote_args = remote_parser.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        remote_args.host = config.host
+        remote = SetupConfig.from_args(remote_args, remote_args.system_type)
+        self.assertTrue(remote.install_blender)
+        self.assertFalse(remote.include_desktop)
+        disabled = parser.parse_args(["agent_vm", "192.0.2.10", "agent", "--blender", "--no-blender"])
+        self.assertFalse(SetupConfig.from_args(disabled, disabled.system_type).install_blender)
+
     def test_agent_vm_defaults_to_github_cli_and_codex(self) -> None:
         config = SetupConfig.from_args(_setup_args(), "agent_vm")
 

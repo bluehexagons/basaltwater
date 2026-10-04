@@ -413,9 +413,11 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         print("Moonlight: Yes (native CachyOS package)")
     if config.install_gaming:
         print("Gaming bundle: Yes (native CachyOS packages)")
+    if config.install_blender:
+        source = "native CachyOS package" if config.system_type == "agent_cachyos" else "Debian APT package"
+        print(f"Blender: Yes ({source})")
     for enabled, name in (
         (config.install_obs, "OBS Studio"),
-        (config.install_blender, "Blender"),
         (config.install_kdenlive, "Kdenlive"),
         (config.install_krita, "Krita"),
         (config.install_inkscape, "Inkscape"),

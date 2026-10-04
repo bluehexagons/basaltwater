@@ -612,7 +612,6 @@ class SetupConfig:
             self.install_moonlight,
             self.install_gaming,
             self.install_obs,
-            self.install_blender,
             self.install_kdenlive,
             self.install_krita,
             self.install_inkscape,
@@ -633,7 +632,7 @@ class SetupConfig:
         )
         if self.system_type != "agent_cachyos" and any(cachyos_native_software):
             raise ValueError(
-                "--gaming, --sunshine, --moonlight, --obs, --blender, "
+                "--gaming, --sunshine, --moonlight, --obs, "
                 "--kdenlive, --krita, --inkscape, --scribus, --audacity, "
                 "--ardour, --lmms, --freecad, --kicad, --shotcut, --gimp, "
                 "--remmina, --sysadmin-tools, --material-maker, --etcher, "

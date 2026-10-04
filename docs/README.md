@@ -72,7 +72,7 @@ automation, T3 Code, skills, and hardening.
 
 | Guide | Use it for |
 | --- | --- |
-| [Workstations and desktop applications](WORKSTATIONS.md) | Desktop profiles, human-operated browsers, Flatpak, office tools, and verification |
+| [Workstations and desktop applications](WORKSTATIONS.md) | Desktop profiles, Debian/CachyOS software support and flags, Blender, browsers, Flatpak, office tools, and verification |
 | [Shared desktop automation](DESKTOP_AUTOMATION.md) | Native application launch, accessibility and pixel input, screenshots, and human handoff |
 | [Agentic coding security](AGENT_SECURITY.md) | Sudo, Codex approval/sandbox policy, hardened modes, and supply-chain boundaries |
 | [Agentic VMs](AGENTIC_VMS.md) | Headless, full-capability, approval-panel, unrestricted, and hardened VM configurations |

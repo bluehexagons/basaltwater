@@ -2,7 +2,7 @@
 
 For an already installed CachyOS KDE desktop, use the separate
 [`agent_cachyos` local tooling profile](CACHYOS.md). The Debian desktop/RDP
-setup and flags below do not apply to that profile.
+setup does not apply to that profile; application flag support is compared below.
 
 The workstation system types build a Debian desktop from the same
 machine-aware setup pipeline used for servers. Choose a profile first, then
@@ -55,6 +55,60 @@ setup user; repeat the flag to install more than one browser. Graphical editors
 are explicit on the general profiles: select Geany or Visual Studio Code with
 `--editor geany` or `--editor vscode`. The opinionated `agent_code_vm` profile
 defaults to Geany; `--editor vscode` replaces that editor default.
+
+## Desktop software support and flags
+
+Application installation and desktop access are separate choices. Debian's
+standard workstation and server profiles accept `--blender`, including the
+headless `agent_vm`. Blender is opt-in on every profile. To edit interactively,
+use a workstation profile or select `--desktop` on a standard server profile;
+`--rdp` enables remote access to the shared desktop. Background rendering needs
+neither flag. Dedicated Proxmox host and Ubuntu WSL profiles have their own
+setup plans; the application choices here target Debian workstations/servers
+and the existing CachyOS desktop.
+
+| Software or capability | Debian setup | CachyOS `agent_cachyos` setup |
+| --- | --- | --- |
+| Blender | `--blender`: Debian APT `blender` package | `--blender`: native `blender` plus `libdecor` |
+| Godot | `--godot`: verified upstream stable release; optional `--godot-bundle web` or `--godot-bundle publishing` | `--godot`: native package or existing executable |
+| Graphical editor | `--editor geany` (Debian package) or `--editor vscode` (Microsoft APT source) | Use the existing desktop's editor |
+| Desktop browser | Repeat `--browser NAME`; first becomes the default | Use the existing desktop's browser |
+| LibreOffice | `--office`; `pc_dev` selects it by default | Use the existing desktop's package manager |
+| Remmina | Included with `pc_dev`; otherwise `--apt-install remmina` with desired plugins | `--remmina` includes common desktop plugins |
+| Media conversion and metadata | `--av-tools`: ImageMagick, FFmpeg/ffprobe, ExifTool | `--av-tools`: native equivalents |
+| OpenGL diagnostics and tracing | `--gl-tools`: Mesa utilities, apitrace | `--gl-tools`: native equivalents |
+| Other native creative apps | Repeat `--apt-install PACKAGE` for packages available in the configured Debian repositories | `--gimp`, `--krita`, `--inkscape`, `--scribus`, `--kdenlive`, `--shotcut`, `--audacity`, `--ardour`, `--lmms`, `--freecad`, `--kicad`, `--obs` |
+| Gaming, streaming and publishing | Godot publishing bundle where applicable; other packages are explicit choices | `--gaming`, `--sunshine`, `--moonlight`, `--material-maker`, `--etcher`, `--butler`, `--steamcmd` |
+| Additional packages | Repeat `--apt-install PACKAGE` or `--flatpak-install APP_ID` | Use native package management; `--sysadmin-tools` selects the reviewed administration bundle |
+
+Debian's `--blender` uses the version supplied by the configured Debian release.
+Setup does not add an upstream Blender download, third-party repository,
+backports source, or dedicated Blender update timer. It remains APT-managed;
+an already installed Debian package is retained on rerun, with updates following
+the host's normal package maintenance. `--flatpak` does not change Blender's
+installation source. A failed package installation stops the requested step.
+
+Add Blender to your usual setup command, retaining its other desired options:
+
+```bash
+# Graphical Debian coding VM
+basaltw setup agent_code_vm 10.0.0.25 agent --blender --lan-access
+
+# Headless Debian rendering host
+basaltw setup agent_vm 10.0.0.24 agent --blender
+
+# Existing CachyOS KDE desktop; run as its desktop user, without sudo
+basaltw setup agent_cachyos localhost --blender
+```
+
+Preview a command with `--dry-run` before applying it. On Debian, the selection
+is saved for subsequent setup/deploy operations; `--no-blender` in a patch
+disables the install selection without uninstalling the package. CachyOS setup
+requires the complete desired selection on each explicit rerun; see
+[CachyOS software](CACHYOS_SOFTWARE.md) for package sources and publishing limits.
+Installing a package does not qualify its renderer, add-ons or GPU support.
+Use [desktop development workflows](DESKTOP_DEVELOPMENT.md) for application
+discovery, background renders and native editing checks.
 
 ## Common setups
 
@@ -349,7 +403,8 @@ can install it through the explicit custom step `install_remmina` when using
 After setup, inspect installed applications as the target user:
 
 ```bash
-command -v firefox librewolf brave-browser nvim geany code remmina
+command -v firefox librewolf brave-browser nvim geany code remmina blender
+blender --version
 flatpak list --app
 xdg-mime query default x-scheme-handler/https
 xdg-settings get default-web-browser
@@ -363,3 +418,7 @@ fallbacks and software rendering in containers, are documented in
 For agent-operated native controls, see [Desktop automation](DESKTOP_AUTOMATION.md).
 It covers bounded AT-SPI inspection, named actions, semantic waits, and a small
 Geany edit/save check using the default `agent_code_vm` editor.
+Use `basaltw agent manifest --json` to discover installed desktop application
+workflows. For a Blender editing check in a running shared desktop, use
+`basaltw desktop exec -- blender /absolute/project/scene.blend`; use the
+[background-render recipe](DESKTOP_DEVELOPMENT.md#blender) on a headless host.
