@@ -269,6 +269,63 @@ xwininfo: Window id: 0x123 "Editor"
 
 
 class DesktopProductivityTests(unittest.TestCase):
+    @patch.object(client.time, "sleep")
+    @patch.object(runtime, "request", return_value={"generation": "g", "geometry": [1280, 720]})
+    def test_paced_text_preserves_unicode_and_reuses_guarded_lease(self, request, sleep):
+        payload = {"action": "input", "generation": "g", "lease": "l", "geometry": [1280, 720],
+                   "kind": "text", "text": "Aé中", "delay_ms": 10}
+        self.assertEqual(client.send_action(payload)["submitted_characters"], 3)
+        self.assertEqual([call.args[0]["text"] for call in request.call_args_list], list("Aé中"))
+        for call in request.call_args_list:
+            self.assertEqual(call.args[0]["lease"], "l")
+            self.assertEqual(call.args[0]["geometry"], [1280, 720])
+            self.assertNotIn("delay_ms", call.args[0])
+        self.assertEqual(sleep.call_count, 2)
+
+    @patch.object(client.time, "sleep")
+    @patch.object(runtime, "request", side_effect=[{"generation": "g"}, RuntimeError("paused")])
+    def test_paced_text_stops_after_takeover_without_replaying(self, request, sleep):
+        result = client.send_action({"action": "input", "generation": "g", "lease": "l",
+            "geometry": [1280, 720], "kind": "text", "text": "abc", "delay_ms": 10})
+        self.assertEqual(result["submitted_characters"], 1)
+        self.assertIn("paused", result["error"])
+        self.assertIn("inspect input", result["error"])
+        self.assertEqual(request.call_count, 2)
+
+    @patch.object(client.time, "monotonic", side_effect=[0, 21])
+    @patch.object(runtime, "request")
+    def test_paced_text_deadline_prevents_more_input(self, request, clock):
+        result = client.send_action({"action": "input", "generation": "g", "lease": "l",
+            "geometry": [1280, 720], "kind": "text", "text": "abc", "delay_ms": 10})
+        self.assertEqual(result["submitted_characters"], 0)
+        self.assertIn("budget", result["error"])
+        request.assert_not_called()
+
+    @patch.object(runtime, "request")
+    def test_invalid_pacing_never_sends_input(self, request):
+        payload = {"action": "input", "kind": "text", "text": "abc", "delay_ms": 10}
+        for values in ({"delay_ms": 0}, {"delay_ms": True}, {"delay_ms": 101},
+                       {"text": "bad\0text"}, {"text": "a" * 1025}, {"kind": "key"},
+                       {"text": "a" * 201, "delay_ms": 100}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                client.send_action({**payload, **values})
+        request.assert_not_called()
+
+    @patch.object(client.time, "sleep")
+    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, {"generation": "g"},
+                                                 RuntimeError("geometry changed"), {}])
+    def test_paced_sequence_stops_and_releases_lease_on_partial_input(self, request, sleep):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "steps.json"
+            path.write_text(json.dumps([{"action": "input", "kind": "text", "text": "abc",
+                                        "geometry": [1280, 720], "delay_ms": 10},
+                                       {"action": "input", "kind": "key", "key": "Return"}]))
+            result = client.run_sequence(str(path), "g")
+        self.assertEqual(result["completed"], 0)
+        self.assertEqual(result["failed_action"]["submitted_characters"], 1)
+        self.assertEqual(request.call_args.args[0]["action"], "release")
+        self.assertFalse(any(call.args[0].get("key") == "Return" for call in request.call_args_list))
+
     @patch.object(client, "check_dependencies", return_value={"available": True})
     @patch.object(runtime, "status", return_value={"state": "stopped"})
     @patch.object(runtime, "runtime_directory", return_value=Path("/private/runtime"))
@@ -703,6 +760,19 @@ class DesktopSupervisorTests(unittest.TestCase):
 
 
 class DesktopCliTests(unittest.TestCase):
+    @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
+    @patch.object(runtime, "request", side_effect=[{"lease": "l"}, RuntimeError("paused"), {}])
+    def test_cli_paced_input_reports_failure_and_releases_lease(self, request, status):
+        parser = argparse.ArgumentParser()
+        add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "input", "--generation", "g", "--geometry", "1280", "720",
+                                 "text", "--text", "abc", "--delay-ms", "10"])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(run_desktop_command(args), 1)
+        self.assertEqual(json.loads(output.getvalue())["submitted_characters"], 0)
+        self.assertEqual(request.call_args.args[0]["action"], "release")
+
     @patch.object(runtime, "status", return_value={"state": "running", "generation": "g"})
     @patch.object(runtime, "request", side_effect=[{"windows": []}, {"lease": "l"},
                                                  {"pid": 42, "launch": "token", "generation": "g"}, {}])

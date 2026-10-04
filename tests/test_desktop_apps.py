@@ -17,6 +17,8 @@ class TestDesktopApps(unittest.TestCase):
         mock_probe.side_effect = [
             Mock(returncode=1, stdout="", stderr=""),
             Mock(returncode=0, stdout="install ok installed", stderr=""),
+            Mock(returncode=1, stdout="", stderr=""),
+            Mock(returncode=0, stdout="install ok installed", stderr=""),
         ]
         mock_run.return_value = Mock(returncode=0)
         config = SetupConfig(
@@ -26,10 +28,14 @@ class TestDesktopApps(unittest.TestCase):
 
         install_blender(config)
 
-        mock_run.assert_called_once_with("apt-get install -y -qq blender", check=False)
+        self.assertEqual([call.args[0] for call in mock_run.call_args_list], [
+            "apt-get install -y -qq blender", "apt-get install -y -qq python3-numpy",
+        ])
         self.assertEqual([call.args[0] for call in mock_probe.call_args_list], [
             ["dpkg-query", "-W", "-f=${Status}", "blender"],
             ["dpkg-query", "-W", "-f=${Status}", "blender"],
+            ["dpkg-query", "-W", "-f=${Status}", "python3-numpy"],
+            ["dpkg-query", "-W", "-f=${Status}", "python3-numpy"],
         ])
 
     @patch("lib.remote_utils.subprocess.run")
@@ -46,10 +52,35 @@ class TestDesktopApps(unittest.TestCase):
         install_blender(config)
 
         mock_run.assert_not_called()
-        mock_probe.assert_called_once_with(
+        self.assertEqual([call.args[0] for call in mock_probe.call_args_list], [
             ["dpkg-query", "-W", "-f=${Status}", "blender"],
-            capture_output=True, text=True, timeout=15,
-        )
+            ["dpkg-query", "-W", "-f=${Status}", "python3-numpy"],
+        ])
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_blender_rerun_repairs_missing_numpy(self, mock_run, mock_probe):
+        from desktop.apps_steps import install_blender
+
+        mock_probe.side_effect = [Mock(returncode=0, stdout="install ok installed"),
+                                 Mock(returncode=1, stdout=""),
+                                 Mock(returncode=0, stdout="install ok installed")]
+        mock_run.return_value = Mock(returncode=0)
+        install_blender(SetupConfig(host="vm", username="agent", system_type="agent_vm", install_blender=True))
+        mock_run.assert_called_once_with("apt-get install -y -qq python3-numpy", check=False)
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_blender_numpy_failure_stops_setup(self, mock_run, mock_probe):
+        from desktop.apps_steps import install_blender
+
+        for returncode in (0, 1):
+            with self.subTest(returncode=returncode):
+                mock_probe.side_effect = [Mock(returncode=0, stdout="install ok installed"),
+                                         Mock(returncode=1, stdout=""), Mock(returncode=1, stdout="")]
+                mock_run.return_value = Mock(returncode=returncode)
+                with self.assertRaisesRegex(RuntimeError, "NumPy support installation failed"):
+                    install_blender(SetupConfig(host="vm", username="agent", system_type="agent_vm", install_blender=True))
 
     @patch("lib.remote_utils.subprocess.run")
     @patch("lib.remote_utils.run")

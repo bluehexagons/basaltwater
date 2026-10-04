@@ -28,6 +28,13 @@ configured release and follows normal host package updates. CachyOS's
 for other applications, flags and desktop access choices. Check
 `blender --version` before using version-specific scene APIs or add-ons.
 
+Debian setup also installs `python3-numpy`, which Blender's bundled glTF
+import/export add-on needs but Debian Blender may not declare as a dependency.
+Setup reruns repair a missing NumPy package even when Blender is already installed.
+On an existing VM, an administrator can run `apt-get install python3-numpy`
+without rerunning desktop setup or ending the shared session. Verify an actual
+export and import; a render check does not exercise this dependency.
+
 ### Model touch-ups on the shared desktop
 
 Use a desktop-capable profile such as `agent_code_vm` or `agent_workstation`
@@ -48,6 +55,12 @@ before shortcuts or context-sensitive operators. Blender's custom UI may have
 no AT-SPI controls; screenshots and desktop input still support agentic editing.
 Use current observations for each interaction and inspect the changed geometry
 or materials from views relevant to the task.
+
+For console commands, use `desktop input ... text --delay-ms 10`; Blender can
+drop characters at the default typing speed. Inspect the entered command before
+Return and verify the resulting artifact. Write longer trusted operations to
+a script file and type a short loader. See [paced desktop input](DESKTOP_AUTOMATION.md#pace-text-for-custom-editors)
+for bounds and handling partial input.
 
 Save a checkpoint, reopen the saved task copy and verify the requested edit and
 its required dependencies. Check an exported asset when export is part of the
@@ -112,9 +125,10 @@ drivers. A trusted project that relies on those drivers needs an explicitly
 chosen auto-execution policy; do not silently change its rendering semantics.
 An explicitly supplied `--python SCRIPT` still runs. Without
 `--python-exit-code`, a Python exception can leave the process with exit status
-zero. Blender runs its bundled Python; packages installed for the host's
-`python3` or a project virtual environment are not automatically available in
-`bpy` scripts. Query `sys.version` inside Blender and keep add-on dependencies
+zero. Blender runs its own Python environment. Debian's build uses system
+Python libraries, including Debian's `python3-numpy`; upstream builds may bundle
+Python instead. A project's virtual environment is not automatically available
+in `bpy` scripts. Query `sys.version` and `sys.path` inside Blender and keep add-on dependencies
 under the project's documented Blender environment.
 
 Keep generated files in a declared, ignored artifact directory. Record the

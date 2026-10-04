@@ -144,6 +144,47 @@ def doctor() -> dict[str, Any]:
             "unverified": ["human RDP reconnect/resize", "clipboard transfer", "application responsiveness"]}
 
 
+def validate_text_delay(payload: dict[str, Any]) -> None:
+    """Reject invalid paced input before acquiring control or sending characters."""
+    delay = payload.get("delay_ms")
+    if delay is None:
+        return
+    if payload.get("action") != "input" or payload.get("kind") != "text":
+        raise ValueError("Typing delay applies only to text input")
+    text = payload.get("text")
+    if not isinstance(text, str) or len(text) > 1024 or "\0" in text:
+        raise ValueError("Text must contain at most 1024 characters without NUL")
+    if type(delay) is not int or not 1 <= delay <= 100:
+        raise ValueError("Typing delay must be an integer from 1 to 100 milliseconds")
+    if len(text) * delay > 20000:
+        raise ValueError("Paced text exceeds 20 seconds; use shorter verified commands")
+
+
+def send_action(payload: dict[str, Any], *, deadline: float | None = None) -> dict[str, Any]:
+    """Pace text with short revocable requests, including on existing supervisors."""
+    validate_text_delay(payload)
+    delay = payload.get("delay_ms")
+    request = {name: value for name, value in payload.items() if name != "delay_ms"}
+    if delay is None:
+        return runtime.request(request)
+    deadline = time.monotonic() + 20 if deadline is None else deadline
+    submitted = 0
+    result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
+    try:
+        for character in payload["text"]:
+            if submitted:
+                time.sleep(delay / 1000)
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Paced typing exceeded its 20-second budget")
+            # Every character rechecks generation, geometry, pause and the same lease.
+            result = runtime.request({**request, "text": character})
+            submitted += 1
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        return {**result, "error": f"{exc}; inspect input before retrying; the last character may have arrived",
+                "submitted_characters": submitted}
+    return {**result, "submitted_characters": submitted}
+
+
 def run_sequence(path: str, generation: str) -> dict[str, Any]:
     validate_filesystem_path(path, must_exist=True)
     if Path(path).stat().st_size > runtime.MAX_MESSAGE:
@@ -155,11 +196,17 @@ def run_sequence(path: str, generation: str) -> dict[str, Any]:
         if (not isinstance(step, dict) or step.get("action") not in ("input", "window", "screenshot", "windows")
                 or "generation" in step or "lease" in step):
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded leases or generations")
+        validate_text_delay(step)
     lease = runtime.request({"action": "acquire", "generation": generation})
     results = []
+    deadline = time.monotonic() + 20
     try:
         for step in steps:
-            results.append(runtime.request({**step, "generation": generation, "lease": lease["lease"]}))
+            result = send_action({**step, "generation": generation, "lease": lease["lease"]}, deadline=deadline)
+            if "error" in result:
+                return {"generation": generation, "error": result["error"], "completed": len(results),
+                        "results": results, "failed_action": result}
+            results.append(result)
         return {"generation": generation, "completed": len(results), "results": results}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {"generation": generation, "error": str(exc), "completed": len(results), "results": results}

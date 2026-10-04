@@ -4,6 +4,11 @@ Use Debian's configured-release APT package selected by `--blender`; normal
 package maintenance owns updates. Check `blender --version` before using
 version-specific APIs. Installation or PATH discovery does not verify rendering.
 
+Debian setup also installs `python3-numpy` for Blender's bundled glTF add-on.
+If export/import reports `No module named 'numpy'`, check this package: a CPU
+render does not exercise it. An administrator can install the missing package
+without rerunning desktop setup. Verify an exported asset by importing it again.
+
 ## Touch up models on the desktop
 
 Agentic native editing is a primary use case on desktop VMs: model touch-ups,
@@ -23,6 +28,14 @@ Use native selection, viewport inspection and editing for visual work, and
 selection and mode before shortcuts or context-sensitive operators. Blender's
 custom UI can be absent from AT-SPI; fresh application screenshots and desktop
 input remain usable. Inspect geometry or materials from task-relevant views.
+
+For Blender's Python Console, use `desktop input ... text --delay-ms 10`:
+the default fast typing can drop characters in long commands. Write longer
+trusted operations to a script file and type a short loader command. Inspect
+the entered command before Return, then verify the script's output or saved
+artifact. Paced input keeps pause/session/geometry checks between characters;
+if it fails, inspect the partial command before retrying. Allow at most 20
+seconds per paced entry and use shorter commands as needed.
 
 Save a checkpoint and reopen the saved task copy to verify the edit and required
 dependencies. Verify exports when requested and retain useful before/after
@@ -74,8 +87,9 @@ Compare decoded pixels rather than whole-file hashes: Blender PNG metadata can
 include scene paths, dates and timings even when repeated renders look identical.
 Review that metadata before sharing captures.
 
-Blender's `bpy` uses its bundled Python. Host `python3`/virtual-environment
-packages are not automatically available; inspect `sys.version` inside Blender
+Blender's `bpy` uses its own Python environment. Debian's build uses system
+Python libraries; upstream builds may bundle Python. Project virtual-environment
+packages are not automatically available; inspect `sys.version` and `sys.path` inside Blender
 and follow the project's Blender dependency recipe. Use absolute output paths
 and resolve external assets relative to the blend file when necessary.
 

@@ -109,6 +109,30 @@ restarts the application or desktop.
 Verify task results with ordinary file tools: compare saved text, inspect an
 export, or reopen the output. There is no separate artifact-verification service.
 
+## Pace text for custom editors
+
+Some custom editors, including Blender's Python Console, can drop characters
+at the default typing speed. Use `--delay-ms 10` for these controls:
+
+```bash
+basaltw desktop input --generation GENERATION --geometry WIDTH HEIGHT \
+  text --delay-ms 10 --text "print('desktop check')"
+```
+
+The delay accepts 1–100 milliseconds. Paced input sends each character under
+the same control lease, rechecking session generation, geometry and pause on
+every request. It works with already-running supervisors. Text remains limited
+to 1024 characters; pacing has a 20-second budget including request overhead.
+Use shorter commands if it exceeds the budget. Sequence input actions accept
+`"delay_ms": 10` and share that budget across paced actions in the sequence.
+
+`submitted_characters` counts acknowledged requests, not verified application
+text. Inspect the command before pressing Return, and verify its result afterward.
+On failure, a prefix may have arrived, including the last unacknowledged character;
+inspect before retrying. Failed paced sequence actions stop subsequent actions.
+For longer trusted Blender operations, write a script file and type a short loader
+command rather than entering the entire script through the UI.
+
 ## Small Geany check
 
 Run the repeatable live check on a running desktop:

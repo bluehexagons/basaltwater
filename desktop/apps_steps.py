@@ -59,13 +59,21 @@ def install_flatpak_if_needed() -> bool:
 
 
 def install_blender(config: SetupConfig) -> None:
-    """Install Debian's Blender package for graphical or background rendering."""
+    """Install Debian Blender and the NumPy dependency of its bundled exporters."""
     if not install_package(
         "Blender",
         "blender",
         "apt-get install -y -qq blender",
     ):
         raise RuntimeError("Blender installation failed")
+    # Debian can omit NumPy from Blender's dependencies despite the glTF add-on
+    # importing it. Verify separately so reruns repair existing installations.
+    if not install_package(
+        "Blender NumPy support",
+        "python3-numpy",
+        "apt-get install -y -qq python3-numpy",
+    ):
+        raise RuntimeError("Blender NumPy support installation failed")
 
 
 def install_remmina(config: SetupConfig) -> None:

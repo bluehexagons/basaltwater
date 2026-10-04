@@ -82,6 +82,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("kind", choices=("key", "text", "click", "move"))
     action.add_argument("--key")
     action.add_argument("--text")
+    action.add_argument("--delay-ms", type=int, help="Pace text characters by 1–100 ms (20-second budget); useful for Blender's console")
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
     action.add_argument("--button", type=int, default=1)
@@ -159,10 +160,12 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                     ("generation", "operation", "ref", "action_name", "text")})
                 elif command == "input":
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
+                    payload["delay_ms"] = args.delay_ms
+                    client.validate_text_delay(payload)
                 lease = runtime.request({"action": "acquire", "generation": payload["generation"]})
                 payload["lease"] = lease["lease"]
                 try:
-                    result = runtime.request(payload)
+                    result = client.send_action(payload)
                 finally:
                     try:
                         runtime.request({"action": "release", "generation": payload["generation"], "lease": lease["lease"]})
