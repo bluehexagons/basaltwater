@@ -139,7 +139,8 @@ def start() -> dict[str, Any]:
         if current["state"] == "stopped":
             try:
                 result = subprocess.run(
-                    ["xrdp-sesrun", "-t", "Xorg", "-g", "1280x720", "-b", "32"],
+                    # Native media editors can require more than 720px height.
+                    ["xrdp-sesrun", "-t", "Xorg", "-g", "1600x900", "-b", "32"],
                     capture_output=True, text=True, timeout=START_REQUEST_TIMEOUT, check=False,
                 )
                 startup_failed = result.returncode != 0
@@ -188,7 +189,7 @@ def window_ids(property_name: str = "_NET_CLIENT_LIST_STACKING") -> list[str]:
 
 
 def window_details(window_id: str) -> dict[str, Any]:
-    value = run_tool(["env", "LC_ALL=C", "xwininfo", "-id", window_id], timeout=3)
+    value = run_tool(["env", "LC_ALL=C.UTF-8", "xwininfo", "-id", window_id], timeout=3)
     fields = {}
     for name in ("Absolute upper-left X", "Absolute upper-left Y", "Width", "Height"):
         match = re.search(rf"^\s*{name}:\s*(-?\d+)\s*$", value, re.MULTILINE)
@@ -377,6 +378,16 @@ class DesktopSession:
             if not output.is_absolute() or output.suffix.lower() != ".png":
                 raise ValueError("Screenshot output must be an absolute PNG path")
             desktop_geometry = geometry()
+            if window:
+                x, y = window["origin"]
+                width, height = window["geometry"]
+                if (x < 0 or y < 0 or x + width > desktop_geometry[0]
+                        or y + height > desktop_geometry[1]):
+                    raise ValueError(
+                        "Window extends beyond the desktop; move or resize it fully "
+                        "on screen before capture. If its minimum size is too large, "
+                        "hide editor panels or use a larger desktop resolution."
+                    )
             # Refuse overwrite and symlinks; create a private file before capture.
             fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             os.close(fd)

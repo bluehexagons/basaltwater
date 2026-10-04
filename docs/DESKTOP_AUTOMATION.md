@@ -14,6 +14,13 @@ its existing logout checks. Save work before rerunning setup.
 This dependency probe neither starts the desktop nor reads application content;
 application accessibility coverage still requires an inspection.
 
+Agent-created sessions start at 1600×900 so media editors fit; existing sessions
+and RDP-client resolution choices are retained. `desktop windows` preserves
+Unicode titles for matching and identity checks. Application screenshots require
+the entire client area to fit on screen; clipped windows fail with placement
+guidance. Hide oversized editor panels or use a larger resolution when a
+window's minimum height prevents it from fitting. Recapture before more input.
+
 ## Inspect and act
 
 ```bash

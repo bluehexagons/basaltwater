@@ -133,7 +133,10 @@ A human can connect first using an RDP client and the same account's Unix
 password, or connect after the agent starts the desktop. Both see the same
 applications. Only one human viewer is supported; another connection takes
 over that display. The active RDP client controls resolution. Agent startup
-uses 1280×720 until a client resizes it. No VNC server or second GUI is started.
+uses 1600×900 until a client resizes it, so native media editors' minimum
+window sizes fit without human intervention. Existing sessions keep their
+current resolution; this default takes effect on the next agent-created session
+after updating Basaltwater. No VNC server or second GUI is started.
 
 With remote ingress disabled, connect through an SSH tunnel from the client:
 
@@ -157,6 +160,9 @@ Use `desktop windows` to discover current window IDs and titles. Capture one
 application's client area with `desktop screenshot --window ID --output PATH.png`,
 or use `--active-window` for the active application. Neither option changes focus;
 hidden or closed windows produce an error instead of a full-desktop fallback.
+Partially off-screen windows also fail with bounds guidance: move or resize the
+window fully onto the desktop, hide panels that impose a larger minimum size,
+or use a larger resolution. Repeating the same capture cannot fix clipping.
 Inspect captures for overlapping content before sharing. The `image_geometry`
 field describes the PNG, while top-level `geometry` still describes the desktop.
 Window metadata includes its desktop `origin`; recapture the desktop before
@@ -221,8 +227,9 @@ that a match belongs to the new process or that a document has finished loading.
 Inspect PID/class and the document; do not retry a timed-out launch blindly.
 
 Window inventory adds PID/class where available, an identity fingerprint, and
-the active window ID. Mutations require current generation and identity; title
-changes invalidate the fingerprint. It reduces stale targeting but cannot prove
+the active window ID. Title inspection preserves Unicode filenames and ellipses
+in an English UTF-8 locale. Mutations require current generation and identity;
+title changes invalidate the fingerprint. It reduces stale targeting but cannot prove
 an X window ID was never reused. Available operations are focus, move, resize,
 maximize, minimize, restore, and close. Desktop/panel windows are rejected.
 `close` requests normal window-manager closure, allowing unsaved-work prompts;

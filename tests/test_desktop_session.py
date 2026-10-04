@@ -229,6 +229,24 @@ class DesktopControlTests(unittest.TestCase):
                                      "window": window, "output": "/tmp/unused.png"})
         tool.assert_not_called()
 
+    @patch.object(runtime, "capture_window")
+    @patch.object(runtime, "run_tool")
+    def test_clipped_window_capture_reports_bounds_without_creating_an_artifact(self, tool, selected):
+        for origin, size in (
+            ([5, 56], [1240, 755]),  # Inkscape exceeds a 1280x720 display.
+            ([-1, 0], [640, 480]), ([0, -1], [640, 480]),
+            ([641, 0], [640, 480]),
+        ):
+            with self.subTest(origin=origin, size=size), tempfile.TemporaryDirectory() as directory:
+                selected.return_value = {"id": "0x123", "origin": origin,
+                                         "geometry": size, "visible": True}
+                path = Path(directory) / "clipped.png"
+                with self.assertRaisesRegex(ValueError, "Window extends beyond.*minimum size"):
+                    self.session.handle({"action": "screenshot", "generation": self.session.generation,
+                                         "window": "0x123", "output": str(path)})
+                self.assertFalse(path.exists())
+        tool.assert_not_called()
+
     @patch.object(runtime, "window_ids", side_effect=[["0x123"], ["0x123"]])
     @patch.object(runtime, "window_details", return_value={"id": "0x123", "visible": True})
     def test_active_window_resolves_to_a_specific_managed_window(self, details, ids):
@@ -249,6 +267,26 @@ xwininfo: Window id: 0x123 "Editor"
         self.assertEqual(result["geometry"], [640, 480])
         self.assertEqual(result["title"], "Editor")
         self.assertTrue(result["visible"])
+
+    @patch.object(runtime, "run_tool")
+    def test_window_title_keeps_unicode_with_stable_english_geometry_labels(self, tool):
+        title = "…/模型–touchup.mlt - Shotcut"
+
+        def output(argv, **kwargs):
+            if argv[0] != "env":
+                return '_NET_WM_PID(CARDINAL) = 42\nWM_CLASS(STRING) = "shotcut", "Shotcut"'
+            # Xlib cannot convert UTF8_STRING titles to the plain C locale.
+            name = title if "LC_ALL=C.UTF-8" in argv else " (failure in conversion from UTF8_STRING to ANSI_X3.4-1968)"
+            return (f'xwininfo: Window id: 0x123 "{name}"\n'
+                    '  Absolute upper-left X: 0\n  Absolute upper-left Y: 51\n'
+                    '  Width: 1280\n  Height: 669\n  Map State: IsViewable\n')
+
+        tool.side_effect = output
+        window = runtime.window_details("0x123")
+        self.assertEqual(window["title"], title)
+        self.assertEqual(window["origin"], [0, 51])
+        self.assertEqual(window["geometry"], [1280, 669])
+        self.assertEqual(window["pid"], 42)
 
     @patch.object(runtime, "capture_window")
     @patch.object(runtime, "window_details")
@@ -523,7 +561,7 @@ class DesktopStartTests(unittest.TestCase):
     @patch.object(runtime.subprocess, "run", return_value=Mock(returncode=0))
     def test_start_authenticates_as_current_uid_without_password(self, run, status, lock, config):
         self.assertEqual(runtime.start()["state"], "running")
-        self.assertEqual(run.call_args.args[0], ["xrdp-sesrun", "-t", "Xorg", "-g", "1280x720", "-b", "32"])
+        self.assertEqual(run.call_args.args[0], ["xrdp-sesrun", "-t", "Xorg", "-g", "1600x900", "-b", "32"])
 
 
 class DesktopMigrationTests(unittest.TestCase):

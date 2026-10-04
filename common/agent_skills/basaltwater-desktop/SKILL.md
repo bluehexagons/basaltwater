@@ -184,6 +184,12 @@ never fall back to capturing the whole desktop. Inspect the image for occlusion,
 dialogs and unrelated private content before sharing. These are pixel captures,
 not exports of off-screen or minimized application content.
 
+The entire client area must fit on screen. A partially off-screen window fails
+with placement guidance; move/resize it or hide panels that force an oversized
+minimum height. New agent-created sessions default to 1600×900 after updating
+Basaltwater; existing sessions and RDP-client sizes are retained. Inspect actual
+bounds after window operations, since applications can refuse a smaller size.
+
 `image_geometry` describes the PNG dimensions; top-level `geometry` remains the
 full desktop size used by input commands. For window images, `window.origin`
 gives the client area's desktop offset. Windows can move without changing the

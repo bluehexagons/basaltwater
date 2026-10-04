@@ -27,7 +27,7 @@ DESKTOP_APPLICATIONS = {
             "Render without a desktop: blender --background --disable-autoexec scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
             "Check a small isolated Cycles CPU render: basaltw agent blender smoke --json. It retains a blend scene, PNG, settings and logs; UI and GPU readiness remain unverified.",
             "Load the blend file before output overrides; put the render action last. Record camera, frame, resolution, render engine and device.",
-            "For Python scene automation, put --python-exit-code 1 before --python SCRIPT so script errors fail the command. Blender uses its bundled Python, not the host's Python packages.",
+            "For Python scene automation, put --python-exit-code 1 before --python SCRIPT so script errors fail the command. Query Blender's Python environment; Debian builds use system libraries and upstream builds may bundle Python. Project virtual environments are not automatically used.",
             "Use a native desktop session to validate interactive editing; background rendering does not verify UI or GPU readiness.",
         ],
     },
@@ -49,6 +49,7 @@ DESKTOP_APPLICATIONS = {
         "workflows": ["SVG editing", "vector asset export"],
         "instructions": [
             "Edit SVG assets with basaltw desktop exec -- inkscape /absolute/project/asset.svg. Preserve an editable SVG and resolve linked images and fonts before delivery.",
+            "If a panel forces the window beyond a small desktop, hide it before input or capture. Inspect the actual window bounds; agent-created desktops default to 1600x900 after updating Basaltwater.",
             "Export reproducibly: inkscape /absolute/project/asset.svg --export-area-page --export-type=png --export-filename=/absolute/artifact/asset.png. Check inkscape --help for version-specific options and verify viewBox, dimensions and alpha in the consuming project.",
         ],
     },
@@ -59,6 +60,7 @@ DESKTOP_APPLICATIONS = {
         "workflows": ["video editing", "short clip touch-ups"],
         "instructions": [
             "Open a timeline with basaltw desktop exec -- shotcut /absolute/project/clip.mlt. Keep the MLT project and its linked media; export the requested clip separately.",
+            "Shotcut needs a Qt display even for --version/--help; use QT_QPA_PLATFORM=offscreen for terminal-only queries, not UI validation. For isolated tests use --appdata /absolute/private/profile --noupgrade. Check Export's From selection (Source versus Timeline) and wait for the job to finish.",
             "Follow the desktop skill's media reference. Use ffprobe to check export duration, dimensions, frame rate and codecs, then inspect representative frames and audio in the consuming project.",
         ],
     },
@@ -66,6 +68,7 @@ DESKTOP_APPLICATIONS = {
         "workflows": ["audio editing", "sound effect touch-ups"],
         "instructions": [
             "Edit sound effects with basaltw desktop exec -- audacity /absolute/project/sound.wav. Save an AUP3 project and export the game's or website's required audio format separately.",
+            "A title wait can match the startup splash. Inspect the document and dismiss the Welcome dialog through observed controls; prefer accessible Effect menus and Export Audio controls. Scripting is optional and disabled by default.",
             "Follow the desktop skill's media reference. Verify trim, fades, clipping, loop boundaries, sample rate and channels; a silent RDP session does not establish that the export lacks audio.",
         ],
     },

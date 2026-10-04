@@ -37,6 +37,14 @@ relative paths; reopen the saved project to check it can find its dependencies.
 Wait for export completion and inspect the artifact before closing your editor.
 Complete the work autonomously; human handoff is optional when requested.
 
+Agent-created desktops default to 1600x900 after updating Basaltwater. Existing
+sessions and human RDP resolution choices are retained. Inkscape panels can
+force a minimum window height larger than a 720px desktop; inspect actual
+window bounds, hide the panel or use a larger resolution. An oversized window
+can obscure controls even after a successful maximize request. Window captures
+require the entire client area to fit; do not retry clipping as a resize race.
+Fresh screenshots supply the geometry for subsequent input.
+
 ## Vectors and raster assets
 
 For Inkscape, preserve `viewBox`, page bounds, IDs used by code, and the intended
@@ -47,6 +55,7 @@ portable rendering. Confirm the installed CLI supports the requested options:
 ```bash
 inkscape /absolute/project/assets/icon.svg --export-area-page \
   --export-type=png --export-width=256 \
+  --export-background-opacity=0 \
   --export-filename=/absolute/artifacts/icon.png
 ```
 
@@ -70,10 +79,39 @@ preview, following the session's browser-testing policy.
 For Audacity, save AUP3 then export the required audio format. Check trim points,
 fades, peak/clipping levels, channel count, sample rate and loop continuity.
 Retain an uncompressed working source to avoid repeated lossy re-encoding.
+The `--wait-window Audacity` launch can match its startup splash rather than a
+loaded document. Inspect the real document and any Welcome dialog before input;
+dialogs may have role `frame`, not `dialog`. Use returned AT-SPI button/menu
+actions. For a fade, select the intended range, then inspect Effect > Fading >
+Fade In/Out and invoke the observed menu item. `Ctrl+S` saves the project;
+`Ctrl+Shift+E` opens Export Audio in the tested 3.7 version. Set both filename
+and output folder, choose the intended format/rate/channels and export range,
+then verify the saved samples rather than assuming a UI action completed it.
+Optional [mod-script-pipe scripting](https://manual.audacityteam.org/man/scripting.html)
+is disabled by default. It requires an intentional Preferences > Modules change
+and restart; do not enable it or restart unrelated work just for a routine UI
+touch-up. Scripts must honor desktop pause and use bounded operations.
+
 For Shotcut, save MLT plus linked media, confirm project resolution/frame rate,
 and export a short representative range on software graphics before committing
 to a long encode. Choose the consuming project's supported codecs and formats;
 do not assume GPU encoding exists.
+
+Shotcut initializes Qt even for `--version`/`--help`. For terminal-only queries
+use `QT_QPA_PLATFORM=offscreen shotcut --version`; this does not qualify its UI.
+For an isolated test, launch with `--appdata /absolute/private/profile --noupgrade`
+before the media path. Ordinary work should use the project's intended profile.
+The initial title can be a splash; inspect the loaded media before acting.
+For short trims, seek in the Source player, move focus out of the time field,
+then use the installed version's `I`/`O` shortcuts to set in/out. Append the
+trimmed Source to the timeline with `A` where supported, and save the MLT.
+Shortcuts entered in a text field can edit text instead of the clip.
+In Export, check **From**: Source exports the loaded source clip, while Timeline
+exports the project tracks. Confirm hardware encoding is off for a CPU check,
+invoke the observed Export File button, choose a new destination, and wait for
+the Jobs result. Keep linked media with the MLT and reopen it before delivery.
+See [Shotcut shortcuts](https://www.shotcut.org/howtos/keyboard-shortcuts/) and
+[command-line options](https://www.shotcut.org/notes/command-line-options/).
 
 ```bash
 ffprobe -v error -show_format -show_streams -of json /absolute/artifacts/clip.mp4

@@ -262,6 +262,7 @@ explicit page bounds, output path and size; width preserves the page aspect rati
 ```bash
 inkscape /absolute/project/assets/icon.svg --export-area-page \
   --export-type=png --export-width=256 \
+  --export-background-opacity=0 \
   --export-filename=/absolute/artifacts/icon.png
 ffprobe -v error -show_format -show_streams -of json /absolute/artifacts/clip.mp4
 ```
@@ -280,6 +281,41 @@ redirection is disabled; silence in the remote desktop is not evidence that a
 file lacks audio. Report the limit when only waveform, metadata or decoded
 sample checks were possible. Use short CPU exports on emulated graphics before
 attempting a large video timeline.
+
+### Native media qualification and practical issues
+
+On 2026-10-04, the Debian VM's Inkscape 1.4, Audacity 3.7.3 and Shotcut
+25.03.31 application (APT package 25.03.29+ds-1) passed autonomous native
+edit/save/reopen and export checks. Inkscape saved a moved SVG rectangle and
+exported a transparent 256×144 PNG. Audacity saved a fade to AUP3 and exported
+48 kHz mono PCM WAV; decoded samples confirmed the fade without clipping.
+Shotcut trimmed a 2-second source to 36 frames at 24 fps, saved an MLT and
+exported H.264/AAC MP4 with CPU encoding. Representative video frames and audio
+signal were checked. These synthetic fixtures qualify those paths, not every
+format, effect, GPU backend or perceived audio quality; no human RDP audio check
+was performed. The desktop stayed running and unrelated applications were retained.
+
+The checks identified three desktop issues now addressed in the runtime:
+new agent-created sessions use 1600×900 because an Inkscape panel can force a
+755-pixel minimum height; window inventory reads titles in an English UTF-8
+locale to preserve Shotcut's Unicode ellipsis; and partially off-screen window
+captures report placement guidance before creating an artifact. Existing
+sessions retain their resolution and loaded supervisor code. Update Basaltwater
+through the normal setup workflow, then use the next agent-created session for
+the new default and supervisor behavior. Hide oversized panels when working in
+an older or client-selected small desktop; repeated screenshot retries do not
+fix clipping.
+
+Title-based launch waits can match the apps' startup splashes. Audacity's Welcome
+window may expose role `frame`; inspect and dismiss it before edit commands.
+Its accessible Effect/Fading menus and Export Audio controls worked without
+enabling the optional scripting module. For Shotcut, use
+`QT_QPA_PLATFORM=offscreen shotcut --version` for terminal-only version discovery;
+normal desktop work uses the shared session. Isolate tests with its
+`--appdata /absolute/private/profile --noupgrade` options. Move keyboard focus out
+of text fields before trim shortcuts, check Export's Source/Timeline selection,
+and verify the completed job and artifact. The desktop skill's media reference
+contains the tested workflow details.
 
 ## Other applications
 
