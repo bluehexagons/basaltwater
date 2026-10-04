@@ -215,7 +215,9 @@ def cleanup_proxmox_kernels() -> list[str]:
     """
     try:
         check_proxmox_installation()
-        check_proxmox_update_safety()
+        report = check_proxmox_update_safety(allow_inactive_storage=True)
+        for warning in report.warnings:
+            log_event(logger, "Proxmox maintenance warning", level=WARNING, warning=warning)
         kernels = obsolete_kernel_packages()
         if not kernels:
             log_event(logger, "No obsolete Proxmox kernels eligible for cleanup")
@@ -239,7 +241,7 @@ def cleanup_proxmox_kernels() -> list[str]:
         if simulated.returncode != 0 or simulated.stderr.strip():
             raise RuntimeError(simulated.stderr.strip() or "APT kernel purge simulation failed")
         _validate_kernel_simulation(simulated.stdout, kernels)
-        check_proxmox_update_safety()
+        check_proxmox_update_safety(allow_inactive_storage=True)
         log_event(logger, "Removing obsolete Proxmox kernels", packages=",".join(kernels))
         failure = run_cleanup_command(
             command + [
@@ -252,7 +254,7 @@ def cleanup_proxmox_kernels() -> list[str]:
         )
         if failure:
             return [failure]
-        check_proxmox_update_safety()
+        check_proxmox_update_safety(allow_inactive_storage=True)
         return []
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
         log_event(logger, "Proxmox kernel cleanup stopped", level=WARNING, error=str(exc))

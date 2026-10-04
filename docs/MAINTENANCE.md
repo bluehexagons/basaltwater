@@ -116,6 +116,11 @@ An APT executable launch failure also follows that reporting path. On Proxmox
 hosts the job validates supported stable repositories without rewriting them,
 and checks local node health before and after upgrading. HA and Ceph require
 operator-managed updates; see [Proxmox host safety](PROXMOX.md#host-safety-defaults).
+Inactive guest storage is logged as a warning and does not block package updates
+or kernel-only cleanup. Storage inventory failures, root/boot capacity problems,
+core-service failures, quorum loss, active tasks, and locked guests still block
+those jobs. Scheduled reboot checks and ordinary maintenance audits retain
+strict storage checks.
 APT updates, restart checks, and cleanup's APT phase acquire the local setup
 lock, deferring when setup or another maintenance job already holds it.
 

@@ -227,6 +227,7 @@ class TestProxmoxKernelCleanup(unittest.TestCase):
         self.assertTrue(any(option.endswith("kernel_cleanup_guard.py::Version=2") for option in command))
         self.assertEqual(command[command.index("--") + 1:], self.kernels)
         self.assertEqual(self.health.call_count, 3)
+        self.assertTrue(all(call.kwargs == {"allow_inactive_storage": True} for call in self.health.call_args_list))
         self.assertEqual(self.simulation.call_args.kwargs["env"]["LC_ALL"], "C")
 
     def test_unsupported_or_unhealthy_node_never_runs_purge(self):
@@ -239,7 +240,7 @@ class TestProxmoxKernelCleanup(unittest.TestCase):
         self.mutate.assert_not_called()
 
     def test_backup_starting_after_simulation_prevents_purge(self):
-        self.health.side_effect = [None, RuntimeError("active task")]
+        self.health.side_effect = [SimpleNamespace(warnings=[]), RuntimeError("active task")]
         self.assertIn("active task", cleanup_maintenance.cleanup_proxmox_kernels()[0])
         self.mutate.assert_not_called()
 

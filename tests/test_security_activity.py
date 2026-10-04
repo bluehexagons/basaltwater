@@ -39,13 +39,13 @@ class TestSecurityActivity(unittest.TestCase):
             security_activity.record_setup_activity(record, "in_progress")
             security_activity.record_setup_activity(record, "succeeded")
 
-            window = security_activity.managed_setup_audit_window(
+            windows = security_activity.managed_setup_audit_windows(
                 now - timedelta(minutes=15),
                 datetime.now(),
             )
 
-        self.assertIsNotNone(window)
-        assert window is not None
+        self.assertEqual(len(windows), 1)
+        window = windows[0]
         self.assertLessEqual(window[0], window[1])
         self.assertGreater(window[1], now - timedelta(seconds=1))
 
@@ -66,18 +66,40 @@ class TestSecurityActivity(unittest.TestCase):
                     file_obj,
                 )
             with patch.object(security_activity, "SETUP_ACTIVITY_FILE", activity_path):
-                self.assertIsNone(
-                    security_activity.managed_setup_audit_window(
+                self.assertEqual(
+                    security_activity.managed_setup_audit_windows(
                         now - timedelta(minutes=15), now
-                    )
+                    ), []
                 )
                 os.unlink(activity_path)
                 os.symlink("missing", activity_path)
-                self.assertIsNone(
-                    security_activity.managed_setup_audit_window(
+                self.assertEqual(
+                    security_activity.managed_setup_audit_windows(
                         now - timedelta(minutes=15), now
-                    )
+                    ), []
                 )
+
+    def test_repeated_setups_keep_separate_windows_and_second_precision(self) -> None:
+        from dataclasses import replace
+
+        now = datetime(2026, 10, 4, 18)
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            security_activity, "SETUP_ACTIVITY_FILE", os.path.join(directory, "activity.json"),
+        ), patch.object(security_activity, "_timestamp", side_effect=[
+            "2026-10-04T13:00:00.500000", "2026-10-04T13:10:00.500000",
+            "2026-10-04T16:00:00.500000", "2026-10-04T16:10:00.500000",
+        ]):
+            first = self._record()
+            security_activity.record_setup_activity(first, "in_progress")
+            security_activity.record_setup_activity(first, "succeeded")
+            second = replace(first, operation_id="setup-2")
+            security_activity.record_setup_activity(second, "in_progress")
+            security_activity.record_setup_activity(second, "failed")
+            windows = security_activity.managed_setup_audit_windows(now - timedelta(days=1), now)
+        self.assertEqual(windows, [
+            (datetime(2026, 10, 4, 13), datetime(2026, 10, 4, 13, 10, 1)),
+            (datetime(2026, 10, 4, 16), datetime(2026, 10, 4, 16, 10, 1)),
+        ])
 
 
 if __name__ == "__main__":

@@ -361,11 +361,11 @@ def collect_maintenance_report(
     host: ProxmoxHost, *, command_runner: CommandRunner | None = None,
     allow_inactive_storage: bool = False,
 ) -> ProxmoxMaintenanceReport:
-    """Collect a read-only audit, optionally tolerating restart storage outages.
+    """Collect a read-only audit, optionally tolerating storage outages.
 
     Explicit setup restarts can help recover unavailable or stale storage and
-    may stop a storage provider guest. Normal audits and scheduled maintenance
-    keep the strict default.
+    may stop a storage provider guest. Package updates and kernel-only cleanup
+    also tolerate inactive guest storage; normal audits keep the strict default.
     """
     report = ProxmoxMaintenanceReport(host_name=host.name, address=host.address)
     run_command = command_runner or _run
@@ -483,7 +483,7 @@ def collect_maintenance_report(
                         if allow_inactive_storage:
                             report.warnings.append(
                                 f"Storage {storage_name} is inactive; "
-                                "explicit restart can proceed, but dependent guests and jobs "
+                                "dependent guests and jobs "
                                 "may be unavailable until storage returns"
                             )
                         else:

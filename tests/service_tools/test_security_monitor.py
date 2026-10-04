@@ -126,7 +126,7 @@ class TestSecurityMonitor(unittest.TestCase):
         ), patch.object(
             security_monitor, "_load_state", return_value={"last_run": prior_cursor}
         ), patch.object(
-            security_monitor, "managed_setup_audit_window", return_value=window
+            security_monitor, "managed_setup_audit_windows", return_value=[window]
         ), patch.object(
             security_monitor, "_check_fail2ban", return_value=security_monitor.Fail2banScan()
         ) as fail2ban, patch.object(
@@ -138,7 +138,7 @@ class TestSecurityMonitor(unittest.TestCase):
         ), patch.object(security_monitor, "_save_state"):
             self.assertEqual(security_monitor.main(), 0)
 
-        self.assertEqual(auditd.call_args.kwargs["excluded_window"], window)
+        self.assertEqual(auditd.call_args.kwargs["excluded_windows"], [window])
         self.assertEqual(auditd.call_args.args[0], fail2ban.call_args.args[0])
         self.assertEqual(auditd.call_args.args[0], ssh.call_args.args[0])
 
@@ -378,7 +378,7 @@ type=PATH msg=audit(1766400300.100:2): name=\"/etc/passwd\"
         setup_end = datetime.fromtimestamp(1766400001)
 
         events = security_monitor._parse_audit_events(
-            "identity", output, (setup_start, setup_end)
+            "identity", output, [(setup_start, setup_end)]
         )
 
         self.assertEqual(events[0]["event_count"], 1)
@@ -393,7 +393,7 @@ type=PATH msg=audit(08/22/2026 12:00:00.100:1): name=\"/etc/passwd\"
         events = security_monitor._parse_audit_events(
             "identity",
             output,
-            (datetime(2026, 8, 22, 11, 59), datetime(2026, 8, 22, 12, 1)),
+            [(datetime(2026, 8, 22, 11, 59), datetime(2026, 8, 22, 12, 1))],
         )
 
         self.assertEqual(events, [])

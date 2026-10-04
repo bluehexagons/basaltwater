@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from logging import ERROR
+from logging import ERROR, WARNING
 
 # Add lib directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -125,7 +125,9 @@ def _update_packages(notification_configs) -> int:
     proxmox = is_proxmox_host()
     if proxmox:
         check_proxmox_installation()
-        check_proxmox_update_safety()
+        report = check_proxmox_update_safety(allow_inactive_storage=True)
+        for warning in report.warnings:
+            log_event(logger, "Proxmox maintenance warning", level=WARNING, warning=warning)
 
     refreshed = (
         update_package_lists(repair_sources=False) if proxmox else update_package_lists()
@@ -144,7 +146,7 @@ def _update_packages(notification_configs) -> int:
     if proxmox:
         # Recheck after downloading indexes: a backup or migration may have begun.
         check_proxmox_upgrade_candidate()
-        check_proxmox_update_safety()
+        check_proxmox_update_safety(allow_inactive_storage=True)
     success, output = upgrade_packages()
     if not success:
         send_notification_safe(
@@ -160,7 +162,7 @@ def _update_packages(notification_configs) -> int:
 
     if proxmox:
         check_proxmox_installation()
-        check_proxmox_update_safety()
+        check_proxmox_update_safety(allow_inactive_storage=True)
     log_event(logger, "APT package update completed successfully")
     return 0
 

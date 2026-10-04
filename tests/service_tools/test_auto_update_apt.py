@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
@@ -116,7 +117,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
 
     def test_health_rechecked_after_refresh_and_after_upgrade(self) -> None:
         events = []
-        self.health.side_effect = lambda: events.append("health")
+        self.health.side_effect = lambda **_: events.append("health") or SimpleNamespace(warnings=[])
         self.refresh.side_effect = lambda **_: events.append("refresh") or True
         self.upgrade.side_effect = lambda: (events.append("upgrade") or True, "")
         self.assertEqual(auto_update_apt.main(), 0)
@@ -124,6 +125,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.refresh.assert_called_once_with(repair_sources=False)
         self.candidate.assert_called_once()
         self.assertEqual(self.installation.call_count, 2)
+        self.assertTrue(all(call.kwargs == {"allow_inactive_storage": True} for call in self.health.call_args_list))
 
     def test_busy_setup_defers_all_package_commands(self) -> None:
         with patch.object(auto_update_apt, "maintenance_lock", side_effect=lambda: nullcontext(False)):
@@ -133,7 +135,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.upgrade.assert_not_called()
 
     def test_new_backup_after_refresh_prevents_upgrade(self) -> None:
-        self.health.side_effect = [None, RuntimeError("1 active Proxmox task(s)")]
+        self.health.side_effect = [SimpleNamespace(warnings=[]), RuntimeError("1 active Proxmox task(s)")]
         self.assertEqual(auto_update_apt.main(), 1)
         self.upgrade.assert_not_called()
         self.assertIn("active Proxmox task", self.notify.call_args.kwargs["message"])
@@ -145,7 +147,7 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.upgrade.assert_not_called()
 
     def test_post_upgrade_failure_is_not_reported_as_success(self) -> None:
-        self.health.side_effect = [None, None, RuntimeError("Core service pveproxy is failed")]
+        self.health.side_effect = [SimpleNamespace(warnings=[]), None, RuntimeError("Core service pveproxy is failed")]
         self.assertEqual(auto_update_apt.main(), 1)
         self.upgrade.assert_called_once()
         self.assertIn("pveproxy", self.notify.call_args.kwargs["message"])

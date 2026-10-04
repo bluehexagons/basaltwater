@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
-from lib.security_activity import managed_setup_audit_window
+from lib.security_activity import managed_setup_audit_windows
 from lib.streamed_process import run_streamed
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_network_ip
@@ -217,18 +217,20 @@ def _audit_record_timestamp(record: str) -> datetime | None:
 def _parse_audit_events(
     key: str,
     output: str,
-    excluded_window: tuple[datetime, datetime] | None = None,
+    excluded_windows: list[tuple[datetime, datetime]] | None = None,
 ) -> list[JSONDict]:
     """Summarise ausearch records without forwarding raw audit log text."""
-    records = [record for record in output.split('----') if 'type=' in record]
-    if excluded_window:
-        window_start, window_end = excluded_window
+    records = [
+        record for record in output.split('----')
+        if 'type=' in record and not re.search(r'\btype=CONFIG_CHANGE\b', record)
+    ]
+    if excluded_windows:
         records = [
             record
             for record in records
             if (
                 (timestamp := _audit_record_timestamp(record)) is None
-                or not window_start <= timestamp <= window_end
+                or not any(start <= timestamp <= end for start, end in excluded_windows)
             )
         ]
     if not records:
@@ -324,7 +326,7 @@ def _ausearch_events(
     key: str,
     since: datetime,
     until: datetime,
-    excluded_window: tuple[datetime, datetime] | None = None,
+    excluded_windows: list[tuple[datetime, datetime]] | None = None,
 ) -> tuple[list[JSONDict], str | None]:
     """Return summarised auditd events for a key and any collection error."""
     ausearch = _audit_tool('ausearch')
@@ -337,7 +339,7 @@ def _ausearch_events(
     def finish_record() -> None:
         nonlocal summary, record_bytes
         if record_lines:
-            events = _parse_audit_events(key, ''.join(record_lines), excluded_window)
+            events = _parse_audit_events(key, ''.join(record_lines), excluded_windows)
             if events:
                 summary = _merge_audit_event(summary, events[0])
         record_lines.clear()
@@ -376,7 +378,7 @@ def _ausearch_events(
 def _check_auditd(
     since: datetime,
     until: datetime,
-    excluded_window: tuple[datetime, datetime] | None = None,
+    excluded_windows: list[tuple[datetime, datetime]] | None = None,
 ) -> tuple[list[JSONDict], bool, list[str]]:
     """Return triggered keys, critical status, and collection errors."""
     if not _audit_tool('ausearch'):
@@ -398,7 +400,7 @@ def _check_auditd(
     has_critical = False
     errors: list[str] = []
     for key in _CRITICAL_KEYS + _INFO_KEYS:
-        key_events, error = _ausearch_events(key, since, until, excluded_window)
+        key_events, error = _ausearch_events(key, since, until, excluded_windows)
         if error:
             errors.append(error)
         if key_events:
@@ -1093,18 +1095,18 @@ def main() -> int:
     fail2ban_scan = _check_fail2ban(since, now)
     bans, unbans = fail2ban_scan.bans, fail2ban_scan.unbans
     ban_count, unban_count = fail2ban_scan.ban_count, fail2ban_scan.unban_count
-    audit_exclusion = managed_setup_audit_window(since, now)
-    if audit_exclusion:
+    audit_exclusions = managed_setup_audit_windows(since, now)
+    for start, end in audit_exclusions:
         log_event(
             logger,
             "Excluding auditd events from a managed basaltwater setup window",
-            audit_window_start=audit_exclusion[0].isoformat(),
-            audit_window_end=audit_exclusion[1].isoformat(),
+            audit_window_start=start.isoformat(),
+            audit_window_end=end.isoformat(),
         )
     audit_results, audit_critical, audit_errors = _check_auditd(
         since,
         now,
-        excluded_window=audit_exclusion,
+        excluded_windows=audit_exclusions,
     )
     audit_events = [_normalise_audit_event(event) for event in audit_results]
     audit_keys = _audit_event_keys(audit_events)

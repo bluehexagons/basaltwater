@@ -630,7 +630,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
                 content = file_obj.read()
             self.assertIn('Environment="HOME=/home/agent workspace"', content)
             self.assertIn("Group=1002", content)
-            self.assertIn("SupplementaryGroups=www-data", content)
+            self.assertIn("SupplementaryGroups=www-data systemd-journal", content)
             self.assertIn("RuntimeDirectoryMode=0711", content)
             self.assertIn("--socket-group 33", content)
             self.assertIn("ProtectControlGroups=true", content)
@@ -1423,8 +1423,8 @@ class WebPanelEventTest(unittest.TestCase):
         )
 
         with patch(
-            "common.service_tools.web_panel_audit_export.managed_setup_audit_window",
-            return_value=setup_window,
+            "common.service_tools.web_panel_audit_export.managed_setup_audit_windows",
+            return_value=[setup_window],
         ) as mock_window:
             snapshot = collect_audit_snapshot(now=now)
 
@@ -1440,6 +1440,20 @@ class WebPanelEventTest(unittest.TestCase):
             local_now - timedelta(hours=24),
             local_now,
         )
+
+    def test_rule_configuration_is_not_module_execution(self) -> None:
+        from common.service_tools.web_panel_audit_export import _parse_record
+        from security.service_tools.security_monitor import _parse_audit_events
+
+        record = (
+            'type=CONFIG_CHANGE msg=audit(1766400000.1:1): op=add_rule key="modules"\n'
+            'type=SYSCALL msg=audit(1766400000.1:1): syscall=sendto exe="/usr/sbin/auditctl"\n'
+        )
+        self.assertIsNone(_parse_record("modules", record))
+        self.assertEqual(_parse_audit_events("modules", record), [])
+        actual = 'type=SYSCALL msg=audit(1766400000.1:2): syscall=finit_module exe="/usr/sbin/modprobe"\n'
+        self.assertIsNotNone(_parse_record("modules", actual))
+        self.assertEqual(_parse_audit_events("modules", actual)[0]["event_count"], 1)
 
     @patch("common.service_tools.web_panel_audit_export.shutil.which")
     @patch("common.service_tools.web_panel_audit_export.subprocess.run")

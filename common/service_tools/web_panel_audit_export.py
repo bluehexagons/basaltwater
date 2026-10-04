@@ -23,7 +23,7 @@ if SOURCE_ROOT not in sys.path:
 
 from common.web_panel_events import WEB_PANEL_AUDIT_SNAPSHOT
 from lib.atomic_io import write_json_atomic
-from lib.security_activity import managed_setup_audit_window
+from lib.security_activity import managed_setup_audit_windows
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -178,17 +178,17 @@ def _local_naive(value: datetime) -> datetime:
 
 def _timestamp_in_window(
     timestamp: datetime,
-    window: tuple[datetime, datetime] | None,
+    windows: list[tuple[datetime, datetime]],
 ) -> bool:
     """Return whether an audit event occurred during managed setup."""
 
-    if window is None:
-        return False
     local_timestamp = _local_naive(timestamp)
-    return window[0] <= local_timestamp <= window[1]
+    return any(start <= local_timestamp <= end for start, end in windows)
 
 
 def _parse_record(key: str, record: str) -> JSONDict | None:
+    if re.search(r"\btype=CONFIG_CHANGE\b", record):
+        return None
     timestamp = _record_timestamp(record)
     if timestamp is None:
         return None
@@ -246,7 +246,7 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
 
     local_generated = _local_naive(generated)
     since = local_generated - timedelta(hours=24)
-    setup_window = managed_setup_audit_window(since, local_generated)
+    setup_windows = managed_setup_audit_windows(since, local_generated)
     suppressed_setup_events = 0
     events: list[JSONDict] = []
     for key in _AUDIT_KEYS:
@@ -274,10 +274,14 @@ def collect_audit_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
         for record in output.split("----"):
             if "type=" not in record:
                 continue
+            # ausearch -k also matches rule keys inside CONFIG_CHANGE records.
+            # Those describe audit-rule edits, not execution of the keyed rule.
+            if re.search(r"\btype=CONFIG_CHANGE\b", record):
+                continue
             timestamp = _record_timestamp(record)
             if timestamp is None:
                 continue
-            if _timestamp_in_window(timestamp, setup_window):
+            if _timestamp_in_window(timestamp, setup_windows):
                 suppressed_setup_events += 1
                 continue
             event = _parse_record(key, record)

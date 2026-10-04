@@ -77,8 +77,12 @@ cannot read raw audit logs.
 | Excluded | Raw records, command arguments, and `proctitle` |
 | Stale state | Older than 15 minutes is degraded |
 
-Setup activity is omitted and counted in the page notice. Missing audit
-coverage and failed collection are warnings, not a clean result. A setup rerun
+Setup activity is omitted and counted in the page notice. Up to 64 recent setup
+attempts retain separate bounded windows, including failed runs; activity between
+runs remains visible. Window boundaries account for audit timestamps rounded to
+seconds. Audit-rule configuration records are excluded from keyed activity
+because their rule keys do not indicate a protected-file or module operation.
+Missing audit coverage and failed collection are warnings, not a clean result. A setup rerun
 reloads managed audit rules even if their file has not changed. VM and hardware
 setup fails when the required auditd service cannot start or its rules cannot
 load. Audit collection resolves packaged commands from system directories even
@@ -116,7 +120,11 @@ the panel shows up to 100 newest matching entries. Each collection is limited
 to five seconds and 64 KiB, with at most two concurrent requests. Empty,
 unavailable, timed-out, or truncated results are shown explicitly. Logs can
 contain sensitive application data; redaction covers common credentials and
-keys but cannot identify every secret.
+keys but cannot identify every secret. The panel service receives the
+`systemd-journal` supplementary group so system logs are readable without sudo.
+This is scoped to the service unit rather than the setup user's login groups;
+processes launched by the panel also inherit it. Rerun setup to apply the unit
+change to an existing installation.
 
 T3 Code's **Update to latest** action uses the supported user-service updater
 and readiness checks. **Admin controls** provides separately approved Debian
