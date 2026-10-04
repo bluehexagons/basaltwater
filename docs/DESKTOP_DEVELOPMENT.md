@@ -225,9 +225,64 @@ For comparisons across revisions, provide a project capture harness to
 worktrees. The harness must apply those settings and write one PNG to its
 requested output path. See [visual comparisons](VISUAL_COMPARISONS.md).
 
+## Media touch-ups for games and websites
+
+For a small everyday tool set, select `--inkscape --gimp --av-tools` on your
+usual Debian setup command. Inkscape covers vector assets; GIMP covers raster
+cleanup; the existing conversion bundle supplies FFmpeg/ffprobe, ImageMagick
+and ExifTool. Add the other editors only for work that needs them. All five
+editors use Debian's configured APT versions, even with `--flatpak`; CachyOS
+uses native packages. See [software support and flags](WORKSTATIONS.md#desktop-software-support-and-flags).
+
+| Editor and flag | Typical touch-up | Editable source | Delivery examples |
+| --- | --- | --- | --- |
+| [Inkscape](https://inkscape.org/) `--inkscape` | Icons, logos, vector UI, SVG geometry | SVG | SVG, transparent PNG |
+| [GIMP](https://www.gimp.org/about/) `--gimp` | Crops, retouching, alpha edges, image composition | XCF | PNG, JPEG, WebP |
+| [Krita](https://krita.org/en/features/) `--krita` | Sprite painting, textures, brush edits | KRA | PNG, exported frame sequences |
+| [Audacity](https://www.audacityteam.org/features/trim/) `--audacity` | Sound effect trims, fades, level adjustments | AUP3 | WAV, Ogg, other project-supported audio |
+| [Shotcut](https://www.shotcut.org/features/) `--shotcut` | Clip trims, timelines, simple video titles | MLT plus linked media | Project-supported video container/codecs |
+
+Launch a native editor through the shared desktop, for example:
+
+```bash
+basaltw desktop exec -- inkscape /absolute/project/assets/icon.svg
+basaltw desktop exec -- gimp /absolute/project/assets/banner.xcf
+```
+
+Complete edits autonomously: save an editable task copy, export delivery assets,
+reopen both, then inspect the actual game or website using them. Report the
+source/export paths and the checks performed; human handoff is optional when
+requested. Follow the desktop skill's `references/media.md` for application
+workflows and export checks. Package discovery alone does not prove editing,
+rendering or audio readiness.
+
+For repeatable SVG-to-PNG export, check the installed `inkscape --help` and use
+explicit page bounds, output path and size; width preserves the page aspect ratio:
+
+```bash
+inkscape /absolute/project/assets/icon.svg --export-area-page \
+  --export-type=png --export-width=256 \
+  --export-filename=/absolute/artifacts/icon.png
+ffprobe -v error -show_format -show_streams -of json /absolute/artifacts/clip.mp4
+```
+
+Preserve SVG `viewBox`, linked images and required fonts; check raster alpha,
+color profile, dimensions and atlas frame boundaries. Keep texture maps' color
+space and channel meanings intact. Inspect exports at the game/UI's intended
+scale rather than relying on editor zoom. Debian may provide ImageMagick 6's
+`identify`/`convert` instead of `magick`; discover the installed commands first.
+GIMP scripting differs between major versions, so inspect the installed API
+before automating it.
+
+Audio and video exports need duration, channel/sample-rate, codec and frame-rate
+checks, plus representative playback when available. Default RDP audio
+redirection is disabled; silence in the remote desktop is not evidence that a
+file lacks audio. Report the limit when only waveform, metadata or decoded
+sample checks were possible. Use short CPU exports on emulated graphics before
+attempting a large video timeline.
+
 ## Other applications
 
-Krita and GIMP support raster editing; Inkscape supports vector editing;
 FreeCAD and KiCad support CAD work; Kdenlive and Shotcut support video editing;
 Audacity, Ardour and LMMS support audio work; Scribus supports page layout;
 OBS supports recording. The manifest exposes these workflows only when the

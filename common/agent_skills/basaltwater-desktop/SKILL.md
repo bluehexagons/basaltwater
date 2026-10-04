@@ -1,6 +1,6 @@
 ---
 name: basaltwater-desktop
-description: Use native graphical applications, including autonomous Blender model touch-ups, in the VM's shared XRDP desktop. Prefer available T3 Code or Playwright tools for browser testing.
+description: Use native graphical applications for autonomous Blender model edits and image, vector, audio or video asset touch-ups in the VM's shared XRDP desktop. Prefer available T3 Code or Playwright tools for browser testing.
 metadata:
   managed-by: basaltwater
 ---
@@ -36,6 +36,13 @@ using the project's intended preferences, add-ons and embedded-script policy.
 Combine viewport interaction with `bpy` for repeatable changes, verify saved or
 exported results, and report the completed artifacts. Human handoff is optional
 when requested; autonomous Blender tasks do not require human review.
+
+For game and website media touch-ups, read [media workflows](references/media.md).
+Debian selects native Inkscape, GIMP, Krita, Audacity and Shotcut with
+`--inkscape`, `--gimp`, `--krita`, `--audacity` and `--shotcut`; these use the
+configured Debian release even with `--flatpak`. Keep the tool set small and
+add `--av-tools` for repeatable conversion and inspection. Save editable sources,
+export delivery assets, reopen them and check the consuming project autonomously.
 
 For a deliberate background rendering check, `basaltw agent blender smoke --json`
 retains private scene/PNG/settings/log evidence from a small Cycles CPU render.

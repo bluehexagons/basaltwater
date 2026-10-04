@@ -27,6 +27,7 @@ from .apps_steps import (
     install_office_apps,
     install_editor,
     install_blender,
+    install_media_apps,
 )
 
 __all__ = [
@@ -45,4 +46,5 @@ __all__ = [
     'install_office_apps',
     'install_editor',
     'install_blender',
+    'install_media_apps',
 ]

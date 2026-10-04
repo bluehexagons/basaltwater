@@ -238,6 +238,118 @@ class TestDesktopApps(unittest.TestCase):
             install_editor(config)
 
 
+class TestMediaApps(unittest.TestCase):
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_selected_debian_editors_install_and_verify_without_recommends(self, execute, probe):
+        from desktop.apps_steps import install_media_apps
+
+        for package in ("inkscape", "gimp", "krita", "audacity", "shotcut"):
+            with self.subTest(package=package):
+                execute.reset_mock()
+                probe.reset_mock()
+                execute.return_value = Mock(returncode=0)
+                probe.side_effect = [Mock(returncode=1, stdout=""),
+                                     Mock(returncode=0, stdout="install ok installed")]
+                config = SetupConfig(
+                    host="vm", username="agent", system_type="agent_vm",
+                    machine_type="unprivileged", use_flatpak=True,
+                    **{"install_" + package: True},
+                )
+                install_media_apps(config)
+                execute.assert_called_once_with(
+                    ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package],
+                    check=False,
+                )
+                self.assertEqual([call.args[0] for call in probe.call_args_list], [
+                    ["dpkg-query", "-W", "-f=${Status}", package],
+                    ["dpkg-query", "-W", "-f=${Status}", package],
+                ])
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_rerun_retains_installed_editors(self, execute, probe):
+        from desktop.apps_steps import install_media_apps
+
+        probe.return_value = Mock(returncode=0, stdout="install ok installed")
+        install_media_apps(SetupConfig(
+            host="vm", username="agent", system_type="agent_vm",
+            install_inkscape=True, install_gimp=True,
+        ))
+        execute.assert_not_called()
+        self.assertEqual([call.args[0][-1] for call in probe.call_args_list], ["inkscape", "gimp"])
+
+    @patch("lib.remote_utils.subprocess.run")
+    @patch("lib.remote_utils.run")
+    def test_unverified_or_failed_installation_stops_before_next_editor(self, execute, probe):
+        from desktop.apps_steps import install_media_apps
+
+        for returncode in (0, 1):
+            with self.subTest(returncode=returncode):
+                execute.reset_mock()
+                execute.return_value = Mock(returncode=returncode)
+                probe.return_value = Mock(returncode=1, stdout="")
+                with self.assertRaisesRegex(RuntimeError, "Inkscape installation failed"):
+                    install_media_apps(SetupConfig(
+                        host="vm", username="agent", system_type="agent_vm",
+                        install_inkscape=True, install_gimp=True,
+                    ))
+                execute.assert_called_once()
+                self.assertIn("inkscape", execute.call_args.args[0])
+
+    def test_plan_is_opt_in_across_standard_debian_profiles(self):
+        from desktop.apps_steps import install_media_apps
+        from lib.system_types import get_steps_for_system_type
+
+        for profile in (
+            "agent_vm", "agent_workstation", "agent_code_vm", "workstation_desktop",
+            "workstation_dev", "pc_dev", "control_plane", "server_dev", "server_web", "server_lite",
+        ):
+            with self.subTest(profile=profile):
+                config = SetupConfig(host="vm", username="agent", system_type=profile)
+                self.assertNotIn(install_media_apps, [step for _, step in get_steps_for_system_type(config)])
+                config.install_inkscape = True
+                config.install_gimp = True
+                functions = [step for _, step in get_steps_for_system_type(config)]
+                self.assertEqual(functions.count(install_media_apps), 1)
+                if profile == "agent_vm":
+                    self.assertFalse(config.include_desktop)
+                    self.assertFalse(config.enable_rdp)
+                    self.assertFalse(config.install_python)
+                    self.assertFalse(config.install_node)
+
+    def test_flags_round_trip_on_debian_and_patch_can_clear_them(self):
+        import basaltwater
+        import shlex
+        from lib.arg_parser import create_setup_argument_parser
+
+        flags = ["--inkscape", "--gimp", "--krita", "--audacity", "--shotcut"]
+        parser, _, _ = basaltwater.create_basaltwater_parser()
+        args = parser.parse_args(["setup", "agent_vm", "vm", "agent", "--timezone", "UTC", *flags])
+        config = SetupConfig.from_args(args, args.system_type)
+        saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+        remote = create_setup_argument_parser("test", for_remote=True)
+        parsed_remote = remote.parse_args(shlex.split(" ".join(config.to_remote_args())))
+        for flag in flags:
+            field = "install_" + flag.removeprefix("--")
+            with self.subTest(flag=flag):
+                self.assertTrue(getattr(saved, field))
+                self.assertTrue(getattr(parsed_remote, field))
+                self.assertIn(flag, config.to_setup_command())
+                patch_args = parser.parse_args(["patch", "vm", "agent", "--no-" + flag[2:]])
+                self.assertIs(getattr(patch_args, field), False)
+        omitted_patch = parser.parse_args(["patch", "vm", "agent"])
+        self.assertIsNone(omitted_patch.install_inkscape)
+
+    def test_dedicated_profiles_reject_unsupported_media_flags(self):
+        for profile in ("server_proxmox", "server_wsl"):
+            for package in ("inkscape", "gimp", "krita", "audacity", "shotcut"):
+                with self.subTest(profile=profile, package=package):
+                    with self.assertRaisesRegex(ValueError, "Debian workstation/server profile"):
+                        SetupConfig(host="vm", username="agent", system_type=profile,
+                                    **{"install_" + package: True})
+
+
 class TestBrowserSteps(unittest.TestCase):
     def setUp(self):
         home_patcher = patch(

@@ -218,6 +218,10 @@ def extend_package_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]])
 
         steps.append(("Installing Blender (Debian package)", install_blender))
 
+    from plugins.desktop import extend_desktop_media_steps
+
+    extend_desktop_media_steps(config, steps)
+
     if config.enable_mdns or config.clear_mdns:
         steps.append(("Configuring mDNS hostname discovery", configure_mdns))
 

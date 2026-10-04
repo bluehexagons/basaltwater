@@ -531,16 +531,16 @@ list. Neither preview is a completed live setup.
 | `--obs` | CachyOS `agent_cachyos` only: install native OBS Studio |
 | `--blender` / `--no-blender` | Select Blender for graphical or headless use: Debian APT package on standard server/workstation profiles; native package on CachyOS `agent_cachyos` |
 | `--kdenlive` | CachyOS `agent_cachyos` only: install native Kdenlive |
-| `--krita` | CachyOS `agent_cachyos` only: install native Krita |
-| `--inkscape` | CachyOS `agent_cachyos` only: install native Inkscape |
+| `--krita` / `--no-krita` | Select Krita for painting, sprites and textures; Debian APT or native CachyOS package |
+| `--inkscape` / `--no-inkscape` | Select Inkscape for SVG/vector asset editing; Debian APT or native CachyOS package |
 | `--scribus` | CachyOS `agent_cachyos` only: install native Scribus |
-| `--audacity` | CachyOS `agent_cachyos` only: install native Audacity |
+| `--audacity` / `--no-audacity` | Select Audacity for sound effect and audio touch-ups; Debian APT or native CachyOS package |
 | `--ardour` | CachyOS `agent_cachyos` only: install native Ardour |
 | `--lmms` | CachyOS `agent_cachyos` only: install native LMMS |
 | `--freecad` | CachyOS `agent_cachyos` only: install native FreeCAD |
 | `--kicad` | CachyOS `agent_cachyos` only: install native KiCad |
-| `--shotcut` | CachyOS `agent_cachyos` only: install native Shotcut |
-| `--gimp` | CachyOS `agent_cachyos` only: install native GIMP |
+| `--shotcut` / `--no-shotcut` | Select Shotcut for short video edits; Debian APT or native CachyOS package |
+| `--gimp` / `--no-gimp` | Select GIMP for raster image touch-ups; Debian APT or native CachyOS package |
 | `--remmina` | CachyOS `agent_cachyos` only: install native Remmina and common desktop plugins |
 | `--sysadmin-tools` | CachyOS `agent_cachyos` only: install native desktop and network sysadmin tools |
 | `--material-maker` | CachyOS only: reviewed AUR Material Maker binary package; retain an installed source package |
@@ -556,6 +556,19 @@ package maintenance owns updates. `--flatpak` does not change this source.
 See [desktop software support and flags](WORKSTATIONS.md#desktop-software-support-and-flags)
 for the application support table and [Blender workflows](DESKTOP_DEVELOPMENT.md#blender)
 for background rendering and native desktop checks.
+
+Debian also accepts `--inkscape`, `--gimp`, `--krita`, `--audacity` and
+`--shotcut` on standard server/workstation profiles. These optional asset
+editors use the configured release's APT packages, without recommended extras;
+`--flatpak` does not change their source. Reruns retain installed packages and
+fail when a requested installation cannot be verified. Their `--no-*` forms
+clear saved install selections without uninstalling software. The dedicated
+Proxmox and WSL profiles reject these editor flags. Start with
+`--inkscape --gimp --av-tools` for common game and website asset touch-ups,
+adding the other editors when needed. Installation does not enable a desktop
+on a headless profile; interactive work also needs `--desktop` or a workstation
+profile. See [media touch-ups](DESKTOP_DEVELOPMENT.md#media-touch-ups-for-games-and-websites)
+for autonomous edit/export/validation workflows.
 
 The CachyOS-only gaming and desktop application flags use packages in the
 workstation's configured repositories, except the explicit AUR selections noted

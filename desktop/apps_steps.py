@@ -15,6 +15,13 @@ from desktop.browser_steps import is_flatpak_app_installed
 
 
 FLATPAK_REMOTE = "flathub"
+DEBIAN_MEDIA_APPS = (
+    ("install_inkscape", "Inkscape", "inkscape"),
+    ("install_gimp", "GIMP", "gimp"),
+    ("install_krita", "Krita", "krita"),
+    ("install_audacity", "Audacity", "audacity"),
+    ("install_shotcut", "Shotcut", "shotcut"),
+)
 MICROSOFT_KEY_URL = "https://packages.microsoft.com/keys/microsoft.asc"
 MICROSOFT_KEY_FINGERPRINT = "BC528686B50D79E339D3721CEB3E94ADBE1229CF"
 VSCODE_KEYRING = "/usr/share/keyrings/basaltwater-microsoft.gpg"
@@ -74,6 +81,18 @@ def install_blender(config: SetupConfig) -> None:
         "apt-get install -y -qq python3-numpy",
     ):
         raise RuntimeError("Blender NumPy support installation failed")
+
+
+def install_media_apps(config: SetupConfig) -> None:
+    """Install only selected Debian asset editors, without recommended extras."""
+    for field, label, package in DEBIAN_MEDIA_APPS:
+        if not getattr(config, field):
+            continue
+        if not install_package(
+            label, package,
+            ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package],
+        ):
+            raise RuntimeError(f"{label} installation failed")
 
 
 def install_remmina(config: SetupConfig) -> None:

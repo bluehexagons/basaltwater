@@ -52,16 +52,28 @@ class TestAgentEnvironment(unittest.TestCase):
             patch.object(agent_workspace, "_repository_root", return_value=self.directory),
             patch.object(agent_workspace, "_effective_home", return_value=self.directory),
             patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
-            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/" + name if name in ("blender", "krita") else None),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/" + name if name in (
+                "blender", "krita", "gimp", "inkscape", "audacity", "shotcut",
+                "ffprobe", "convert", "identify", "exiftool",
+            ) else None),
             patch.object(agent_environment.subprocess, "run") as execute,
         ):
             result = agent_environment.inspect_environment(self.directory)
-        self.assertEqual(set(result["desktop_applications"]), {"blender", "krita"})
+        self.assertEqual(set(result["desktop_applications"]), {
+            "blender", "krita", "gimp", "inkscape", "audacity", "shotcut",
+        })
         blender = result["desktop_applications"]["blender"]
         self.assertEqual(blender["executable"], "/bin/blender")
         self.assertEqual(blender["readiness"], "unverified")
         self.assertIn("background rendering", blender["workflows"])
         self.assertTrue(any("--background" in instruction for instruction in blender["instructions"]))
+        for name in ("krita", "gimp", "inkscape", "audacity", "shotcut"):
+            with self.subTest(application=name):
+                application = result["desktop_applications"][name]
+                self.assertEqual(application["readiness"], "unverified")
+                self.assertTrue(any("export" in instruction for instruction in application["instructions"]))
+        for name in ("ffprobe", "convert", "identify", "exiftool"):
+            self.assertEqual(result["tools"][name], "/bin/" + name)
         self.assertEqual(result["desktop_skills"], [str(skill)])
         execute.assert_not_called()
 

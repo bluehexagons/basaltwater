@@ -23,6 +23,7 @@ PLUGIN = PluginDefinition(
         "configure_default_browser",
         "install_editor",
         "install_blender",
+        "install_media_apps",
         "install_smbclient",
         "configure_dark_theme",
         "install_browser",
@@ -119,6 +120,14 @@ def extend_desktop_browser_and_office_steps(
         steps.append(("Installing Office", install_office_apps))
 
 
+def extend_desktop_media_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
+    """Select Debian asset editors independently of desktop-session installation."""
+    from desktop.apps_steps import DEBIAN_MEDIA_APPS, install_media_apps
+
+    if any(getattr(config, field) for field, _label, _package in DEBIAN_MEDIA_APPS):
+        steps.append(("Installing media asset editors (Debian packages)", install_media_apps))
+
+
 def get_custom_step_functions() -> Mapping[str, StepFunc]:
     """Return plugin-owned custom step functions exported by the desktop capability."""
 
@@ -128,6 +137,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         configure_xfce_for_rdp,
         harden_xrdp,
         install_blender,
+        install_media_apps,
         install_browser,
         install_desktop,
         install_editor,
@@ -144,6 +154,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "configure_default_browser": configure_default_browser,
         "install_editor": install_editor,
         "install_blender": install_blender,
+        "install_media_apps": install_media_apps,
         "install_smbclient": install_smbclient,
         "configure_dark_theme": configure_dark_theme,
         "install_browser": install_browser,

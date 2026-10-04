@@ -59,8 +59,9 @@ defaults to Geany; `--editor vscode` replaces that editor default.
 ## Desktop software support and flags
 
 Application installation and desktop access are separate choices. Debian's
-standard workstation and server profiles accept `--blender`, including the
-headless `agent_vm`. Blender is opt-in on every profile. To edit interactively,
+standard workstation and server profiles accept `--blender`, `--inkscape`,
+`--gimp`, `--krita`, `--audacity` and `--shotcut`, including the headless
+`agent_vm`. These applications are opt-in on every profile. To edit interactively,
 use a workstation profile or select `--desktop` on a standard server profile;
 `--rdp` enables remote access to the shared desktop. Background rendering needs
 neither flag. Dedicated Proxmox host and Ubuntu WSL profiles have their own
@@ -70,6 +71,11 @@ and the existing CachyOS desktop.
 | Software or capability | Debian setup | CachyOS `agent_cachyos` setup |
 | --- | --- | --- |
 | Blender | `--blender`: Debian APT `blender` package | `--blender`: native `blender` plus `libdecor` |
+| Inkscape: SVG icons, logos and vector UI assets | `--inkscape`: APT `inkscape` | `--inkscape`: native package |
+| GIMP: raster crops, alpha cleanup and image touch-ups | `--gimp`: APT `gimp` | `--gimp`: native package |
+| Krita: painting, sprite and texture touch-ups | `--krita`: APT `krita` | `--krita`: native package |
+| Audacity: sound effect trims, fades and level adjustments | `--audacity`: APT `audacity` | `--audacity`: native package |
+| Shotcut: short clips, trailers and cutscene edits | `--shotcut`: APT `shotcut` | `--shotcut`: native package |
 | Godot | `--godot`: verified upstream stable release; optional `--godot-bundle web` or `--godot-bundle publishing` | `--godot`: native package or existing executable |
 | Graphical editor | `--editor geany` (Debian package) or `--editor vscode` (Microsoft APT source) | Use the existing desktop's editor |
 | Desktop browser | Repeat `--browser NAME`; first becomes the default | Use the existing desktop's browser |
@@ -77,7 +83,7 @@ and the existing CachyOS desktop.
 | Remmina | Included with `pc_dev`; otherwise `--apt-install remmina` with desired plugins | `--remmina` includes common desktop plugins |
 | Media conversion and metadata | `--av-tools`: ImageMagick, FFmpeg/ffprobe, ExifTool | `--av-tools`: native equivalents |
 | OpenGL diagnostics and tracing | `--gl-tools`: Mesa utilities, apitrace | `--gl-tools`: native equivalents |
-| Other native creative apps | Repeat `--apt-install PACKAGE` for packages available in the configured Debian repositories | `--gimp`, `--krita`, `--inkscape`, `--scribus`, `--kdenlive`, `--shotcut`, `--audacity`, `--ardour`, `--lmms`, `--freecad`, `--kicad`, `--obs` |
+| Other native creative apps | Repeat `--apt-install PACKAGE` for packages available in the configured Debian repositories | `--scribus`, `--kdenlive`, `--ardour`, `--lmms`, `--freecad`, `--kicad`, `--obs` |
 | Gaming, streaming and publishing | Godot publishing bundle where applicable; other packages are explicit choices | `--gaming`, `--sunshine`, `--moonlight`, `--material-maker`, `--etcher`, `--butler`, `--steamcmd` |
 | Additional packages | Repeat `--apt-install PACKAGE` or `--flatpak-install APP_ID` | Use native package management; `--sysadmin-tools` selects the reviewed administration bundle |
 
@@ -87,6 +93,25 @@ backports source, or dedicated Blender update timer. It remains APT-managed;
 an already installed Debian package is retained on rerun, with updates following
 the host's normal package maintenance. `--flatpak` does not change Blender's
 installation source. A failed package installation stops the requested step.
+
+The five media editor flags follow the same Debian package-source and rerun
+policy. They install without recommended extras to keep optional dependencies
+small. Choose `--inkscape --gimp --av-tools` for routine game and website
+asset touch-ups; add Krita for painting and sprite work, Audacity for audio
+editing, or Shotcut for timeline video edits. Each remains separately opt-in.
+These choices do not enable language runtimes or change desktop/RDP settings.
+
+```bash
+# Add to your usual graphical VM setup command, retaining its other options
+basaltw setup agent_code_vm 10.0.0.25 agent --lan-access \
+  --inkscape --gimp --av-tools
+
+# Optional painting, sound and video editors
+# --krita --audacity --shotcut
+```
+
+Read [media touch-up workflows](DESKTOP_DEVELOPMENT.md#media-touch-ups-for-games-and-websites)
+for editable source formats, repeatable exports and autonomous validation.
 
 Add Blender to your usual setup command, retaining its other desired options:
 
@@ -103,7 +128,9 @@ basaltw setup agent_cachyos localhost --blender
 
 Preview a command with `--dry-run` before applying it. On Debian, the selection
 is saved for subsequent setup/deploy operations; `--no-blender` in a patch
-disables the install selection without uninstalling the package. CachyOS setup
+disables the install selection without uninstalling the package. The media
+editors likewise support `--no-inkscape`, `--no-gimp`, `--no-krita`,
+`--no-audacity` and `--no-shotcut`. CachyOS setup
 requires the complete desired selection on each explicit rerun; see
 [CachyOS software](CACHYOS_SOFTWARE.md) for package sources and publishing limits.
 Installing a package does not qualify its renderer, add-ons or GPU support.

@@ -31,14 +31,44 @@ DESKTOP_APPLICATIONS = {
             "Use a native desktop session to validate interactive editing; background rendering does not verify UI or GPU readiness.",
         ],
     },
-    "krita": {"workflows": ["raster painting", "texture editing"]},
-    "gimp": {"workflows": ["raster image editing"]},
-    "inkscape": {"workflows": ["SVG editing", "vector asset export"]},
+    "krita": {
+        "workflows": ["raster painting", "texture editing", "sprite touch-ups"],
+        "instructions": [
+            "Open project assets with basaltw desktop exec -- krita /absolute/project/asset.kra. Preserve a layered KRA source and export the required game or web image separately.",
+            "Follow the desktop skill's media reference. Verify alpha, dimensions, sprite frame boundaries and texture seams in the saved export and consuming project.",
+        ],
+    },
+    "gimp": {
+        "workflows": ["raster image editing", "image touch-ups"],
+        "instructions": [
+            "Open project assets with basaltw desktop exec -- gimp /absolute/project/asset.xcf. Save editable layers as XCF and export delivery images separately; check the installed version before scripting.",
+            "Follow the desktop skill's media reference. Reopen the export and check crop, alpha edges, dimensions and color appearance in the game or website.",
+        ],
+    },
+    "inkscape": {
+        "workflows": ["SVG editing", "vector asset export"],
+        "instructions": [
+            "Edit SVG assets with basaltw desktop exec -- inkscape /absolute/project/asset.svg. Preserve an editable SVG and resolve linked images and fonts before delivery.",
+            "Export reproducibly: inkscape /absolute/project/asset.svg --export-area-page --export-type=png --export-filename=/absolute/artifact/asset.png. Check inkscape --help for version-specific options and verify viewBox, dimensions and alpha in the consuming project.",
+        ],
+    },
     "freecad": {"workflows": ["parametric CAD", "3D model inspection"]},
     "kicad": {"workflows": ["schematic editing", "PCB inspection"]},
     "kdenlive": {"workflows": ["video editing"]},
-    "shotcut": {"workflows": ["video editing"]},
-    "audacity": {"workflows": ["audio editing"]},
+    "shotcut": {
+        "workflows": ["video editing", "short clip touch-ups"],
+        "instructions": [
+            "Open a timeline with basaltw desktop exec -- shotcut /absolute/project/clip.mlt. Keep the MLT project and its linked media; export the requested clip separately.",
+            "Follow the desktop skill's media reference. Use ffprobe to check export duration, dimensions, frame rate and codecs, then inspect representative frames and audio in the consuming project.",
+        ],
+    },
+    "audacity": {
+        "workflows": ["audio editing", "sound effect touch-ups"],
+        "instructions": [
+            "Edit sound effects with basaltw desktop exec -- audacity /absolute/project/sound.wav. Save an AUP3 project and export the game's or website's required audio format separately.",
+            "Follow the desktop skill's media reference. Verify trim, fades, clipping, loop boundaries, sample rate and channels; a silent RDP session does not establish that the export lacks audio.",
+        ],
+    },
     "ardour": {"workflows": ["audio production"]},
     "lmms": {"workflows": ["music production"]},
     "scribus": {"workflows": ["page layout", "PDF production"]},
@@ -47,7 +77,8 @@ DESKTOP_APPLICATIONS = {
 TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
-    "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "magick",
+    "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
+    "magick", "convert", "identify", "exiftool",
     "rg", "jq", "aws", "basaltwater-web", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"

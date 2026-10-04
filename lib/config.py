@@ -613,16 +613,11 @@ class SetupConfig:
             self.install_gaming,
             self.install_obs,
             self.install_kdenlive,
-            self.install_krita,
-            self.install_inkscape,
             self.install_scribus,
-            self.install_audacity,
             self.install_ardour,
             self.install_lmms,
             self.install_freecad,
             self.install_kicad,
-            self.install_shotcut,
-            self.install_gimp,
             self.install_remmina,
             self.install_sysadmin_tools,
             self.install_material_maker,
@@ -633,10 +628,18 @@ class SetupConfig:
         if self.system_type != "agent_cachyos" and any(cachyos_native_software):
             raise ValueError(
                 "--gaming, --sunshine, --moonlight, --obs, "
-                "--kdenlive, --krita, --inkscape, --scribus, --audacity, "
-                "--ardour, --lmms, --freecad, --kicad, --shotcut, --gimp, "
+                "--kdenlive, --scribus, --ardour, --lmms, --freecad, --kicad, "
                 "--remmina, --sysadmin-tools, --material-maker, --etcher, "
                 "--butler, and --steamcmd require the agent_cachyos profile"
+            )
+
+        if self.system_type in {"server_proxmox", "server_wsl"} and any((
+            self.install_inkscape, self.install_gimp, self.install_krita,
+            self.install_audacity, self.install_shotcut,
+        )):
+            raise ValueError(
+                "--inkscape, --gimp, --krita, --audacity, and --shotcut require "
+                "a Debian workstation/server profile or agent_cachyos"
             )
 
         if self.enable_syncthing and self.syncthing_admin is None:
