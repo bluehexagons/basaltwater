@@ -22,8 +22,10 @@ DESKTOP_APPLICATIONS = {
     "blender": {
         "workflows": ["3D scene editing", "background rendering", "Python scene automation"],
         "instructions": [
-            "Render without a desktop: blender --background scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
+            "Render without a desktop: blender --background --disable-autoexec scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
+            "Check a small isolated Cycles CPU render: basaltw agent blender smoke --json. It retains a blend scene, PNG, settings and logs; UI and GPU readiness remain unverified.",
             "Load the blend file before output overrides; put the render action last. Record camera, frame, resolution, render engine and device.",
+            "For Python scene automation, put --python-exit-code 1 before --python SCRIPT so script errors fail the command. Blender uses its bundled Python, not the host's Python packages.",
             "Use a native desktop session to validate interactive editing; background rendering does not verify UI or GPU readiness.",
         ],
     },

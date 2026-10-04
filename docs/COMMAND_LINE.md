@@ -71,6 +71,7 @@ basaltw upgrade
 basaltw refresh [--dry-run] [CACHYOS_SETUP_FLAGS...]
 basaltw user rename <host> <new_username> [options]
 basaltw agent manifest [REPOSITORY] [--json]
+basaltw agent blender smoke [--output NEW_DIRECTORY] [--timeout SECONDS] [--json]
 basaltw agent visuals compare BEFORE.png AFTER.png [options]
 basaltw agent visuals capture --before REV --after REV --settings JSON [options] -- COMMAND...
 basaltw agent doctor [HOST USER] [options]
@@ -846,11 +847,13 @@ and Git LFS need persistent access.
 Select the relevant command below; this is a catalog, not a sequence to run.
 Manifest is read-only; doctor is read-only unless `--fix` or `--record` is
 selected. Visual comparisons write private evidence; revision captures run a
-project command in new worktrees. Updates, workspace creation, and maintenance
+project command in new worktrees. Blender smoke renders a bundled scene and
+retains private evidence. Updates, workspace creation, and maintenance
 holds also change state:
 
 ```bash
 basaltw agent manifest --json
+basaltw agent blender smoke --json
 basaltw agent visuals compare before.png after.png --json
 basaltw agent visuals capture --before HEAD~1 --after HEAD --settings ~/capture-settings.json --json -- ./tools/capture-scene --settings '{settings}' --output '{output}'
 basaltw agent doctor
@@ -883,6 +886,20 @@ applications or check authentication. Commit optional project declarations in
 `basaltwater-agent.json`; undeclared mappings remain unknown. See
 [environment manifests](AGENT_ENVIRONMENT.md) and
 [desktop development](DESKTOP_DEVELOPMENT.md), including Blender instructions.
+
+`agent blender smoke` deliberately runs the active PATH's Blender without a
+desktop, using a bundled 128 × 128 Cycles CPU scene, eight samples, a fixed seed,
+two render threads and disabled denoising. It isolates configuration, scripts,
+data and cache paths and disables blend-file Python auto-execution. It retains
+`scene.blend`, `render.png`, `settings.json`, `blender.log` and `report.json` in
+a new mode-`0700` directory under `~/.local/state/basaltwater/blender/`.
+`--output NEW_DIRECTORY` selects a destination with an existing parent; an
+existing destination is rejected. `--timeout` accepts 1–600 seconds, default
+120; timed-out processes are terminated through the managed command runner.
+The command exits nonzero for startup, Python, rendering or artifact-validation
+failures and retains available failure evidence. `--json` prints the report.
+Success verifies this CPU render path; desktop editing, Eevee, add-ons and GPU
+backends remain separate checks. See [Blender workflows](DESKTOP_DEVELOPMENT.md#blender).
 
 `agent visuals compare` embeds two PNGs and optional `--before-settings` and
 `--after-settings` JSON in a standalone viewer with synchronized zoom/scroll,

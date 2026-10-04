@@ -26,10 +26,14 @@ profiles. It uses the configured Debian release's APT package even with
 [desktop software support table](https://github.com/bluehexagons/basaltwater/blob/main/docs/WORKSTATIONS.md#desktop-software-support-and-flags)
 for supported applications and setup flags.
 
-When Blender is detected, the manifest provides a background-render recipe.
+When Blender is detected, run `basaltw agent blender smoke --json` for a
+deliberate small Cycles CPU check with private scene/PNG/settings/log evidence.
+This does not verify UI or GPU readiness. Read [Blender workflows](references/blender.md)
+when rendering, automating scenes or testing Blender's UI; it covers software
+graphics, embedded Python and isolated preferences.
 Use background rendering for repeatable output checks and this shared desktop
 for interactive editing checks; launch with
-`basaltw desktop exec -- blender /absolute/project/scene.blend`.
+`basaltw desktop exec -- blender --disable-autoexec /absolute/project/scene.blend`.
 Record scene, camera, frame, resolution, engine
 and device alongside PNG captures. Compare results with `basaltw agent visuals
 compare`; use a project harness with `visuals capture` for isolated revisions.

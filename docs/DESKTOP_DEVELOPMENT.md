@@ -22,11 +22,41 @@ configured release and follows normal host package updates. CachyOS's
 for other applications, flags and desktop access choices. Check
 `blender --version` before using version-specific scene APIs or add-ons.
 
+### Check rendering after setup
+
+Run a deliberate smoke check as the coding account:
+
+```bash
+basaltw agent blender smoke --json
+# Optional: choose a new evidence directory with an existing parent
+basaltw agent blender smoke --output /absolute/artifacts/blender-check --timeout 120
+```
+
+This renders a bundled scene with Cycles on CPU at 128 × 128, eight samples,
+seed 0, two render threads and no denoising. It uses factory startup and private
+configuration, scripts, data, cache and temporary directories, so the check
+does not depend on personal startup files or add-ons. No desktop is required.
+The default evidence directory is a unique private run under
+`~/.local/state/basaltwater/blender/`. Existing output directories are rejected;
+`--timeout` accepts 1–600 seconds (default 120).
+
+Inspect `render.png`, `scene.blend`, `settings.json`, `blender.log` and
+`report.json`. Success requires Blender to exit successfully, record completion
+with the expected settings, and produce a PNG of the expected dimensions and
+a blend scene. The report records the executable, argv, Blender/Python versions,
+camera, frame, renderer, device, samples, seed and elapsed times. Startup errors,
+Python exceptions, timeouts and missing artifacts fail the check and retain
+available evidence. A successful CPU check leaves UI and GPU readiness
+unverified. This is a smoke fixture, not a performance benchmark or a project
+capture harness; low sample counts can produce visible noise.
+
+### Project renders and Python
+
 Blender can render a project without opening its UI:
 
 ```bash
 mkdir -p /absolute/ignored/artifact-directory
-blender --background /absolute/project/scene.blend \
+blender --background --disable-autoexec /absolute/project/scene.blend \
   --render-output /absolute/ignored/artifact-directory/render- \
   --render-format PNG --render-frame 1
 ```
@@ -39,6 +69,16 @@ to set the scene, camera, frame, resolution, seed and render engine explicitly.
 See Blender's official [command-line rendering](https://docs.blender.org/manual/en/latest/advanced/command_line/render.html)
 and [argument reference](https://docs.blender.org/manual/en/latest/advanced/command_line/arguments.html).
 
+`--disable-autoexec` disables automatic embedded Python, including scripted
+drivers. A trusted project that relies on those drivers needs an explicitly
+chosen auto-execution policy; do not silently change its rendering semantics.
+An explicitly supplied `--python SCRIPT` still runs. Without
+`--python-exit-code`, a Python exception can leave the process with exit status
+zero. Blender runs its bundled Python; packages installed for the host's
+`python3` or a project virtual environment are not automatically available in
+`bpy` scripts. Query `sys.version` inside Blender and keep add-on dependencies
+under the project's documented Blender environment.
+
 Keep generated files in a declared, ignored artifact directory. Record the
 Blender version, scene/camera, frame, dimensions, engine, CPU/GPU device and
 render settings alongside each capture. A background render is evidence about
@@ -46,8 +86,30 @@ that render path; test interactive editing in the native desktop separately.
 Do not select a GPU backend merely because Blender is installed. Use the
 project's established backend and inspect a deliberate smoke render's logs.
 
-Compare PNG results with `basaltw agent visuals compare`. For comparisons
-across revisions, provide a project capture harness to
+### Software graphics and interactive checks
+
+Emulated VM graphics commonly render in software. Prefer Cycles CPU for a
+small initial background check; Eevee's graphics context and shader compilation
+can add considerable startup time. EGL warnings alone do not prove failure:
+Blender can recover through another context. Check exit status, logs and the
+actual rendered image together. Conversely, `blender --version` alone proves
+neither context creation nor rendering. Do not change drivers, install an
+upstream Blender build or force a GPU backend solely to suppress a warning.
+
+Test opening, editing and rendering through the native desktop separately.
+Blender's custom UI may expose no AT-SPI controls; use recent application
+screenshots and desktop input when accessibility inspection is unavailable.
+Prefer `bpy` for repeatable scene changes. Test launches can show the first-run
+Quick Setup dialog even with `--factory-startup`; use a private
+`BLENDER_USER_CONFIG` directory before completing it so personal preferences
+remain untouched. Factory startup is for isolated tests; ordinary project work
+may require the user's configured add-ons and preferences.
+
+Compare PNG results with `basaltw agent visuals compare`. Compare decoded
+pixels for Blender captures: PNG metadata can include the blend
+file's path, capture date and render timings, so whole-file hashes can differ
+even when the pixels match. Review metadata as well when sharing captures.
+For comparisons across revisions, provide a project capture harness to
 `basaltw agent visuals capture`; it runs the same settings in two managed
 worktrees. The harness must apply those settings and write one PNG to its
 requested output path. See [visual comparisons](VISUAL_COMPARISONS.md).
