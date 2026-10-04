@@ -109,6 +109,14 @@ restarts the application or desktop.
 Verify task results with ordinary file tools: compare saved text, inspect an
 export, or reopen the output. There is no separate artifact-verification service.
 
+## Pointer moves and clicks
+
+Pointer moves verify the destination before clicks and accept repeated moves or
+clicks at the current position. An unconfirmed destination fails without clicking;
+inspect the desktop before retrying. Updating this behavior requires a new desktop
+session because the supervisor retains the code loaded at login. Save work and
+use normal logout when changing sessions.
+
 ## Pace text for custom editors
 
 Some custom editors, including Blender's Python Console, can drop characters

@@ -35,6 +35,16 @@ On an existing VM, an administrator can run `apt-get install python3-numpy`
 without rerunning desktop setup or ending the shared session. Verify an actual
 export and import; a render check does not exercise this dependency.
 
+Debian Blender can report `Draco mesh compression is not available` with an
+`ERROR` prefix while successfully exporting an uncompressed glTF/GLB. The
+optional Blender Draco backend is unavailable on the tested Debian installation;
+ordinary exports work with `export_draco_mesh_compression_enable=False` (the
+default). Check operator completion, the output file and a fresh import instead
+of treating that line alone as export failure. Assets requiring
+`KHR_draco_mesh_compression` need a separately qualified compatible backend;
+do not silently remove a project's compression requirement or substitute an
+unrelated Draco library. Keep Debian's Blender package for ordinary asset work.
+
 ### Model touch-ups on the shared desktop
 
 Use a desktop-capable profile such as `agent_code_vm` or `agent_workstation`

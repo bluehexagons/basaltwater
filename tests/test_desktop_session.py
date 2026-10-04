@@ -135,6 +135,45 @@ class DesktopControlTests(unittest.TestCase):
         geometry.assert_not_called()
 
     @patch.object(runtime, "run_tool")
+    def test_repeated_pointer_moves_and_clicks_do_not_wait_for_motion(self, tool):
+        def respond(argv):
+            if argv[1] == "mousemove":
+                # Reproduce xdotool --sync blocking when already at (10, 20).
+                if "--sync" in argv:
+                    raise subprocess.TimeoutExpired(argv, 8)
+                return "X=10\nY=20\nSCREEN=0\nWINDOW=291"
+            return ""
+
+        tool.side_effect = respond
+        lease = self.acquire()
+        for kind in ("move", "move", "click", "click"):
+            result = self.session.handle({"action": "input", **lease,
+                "geometry": [1280, 720], "kind": kind, "x": 10, "y": 20})
+            self.assertEqual(result["geometry"], [1280, 720])
+        self.assertEqual(sum(call.args[0][1] == "click" for call in tool.call_args_list), 2)
+
+    @patch.object(runtime, "run_tool")
+    def test_unconfirmed_pointer_destination_never_clicks(self, tool):
+        lease = self.acquire()
+        for location in ("X=11\nY=20", "X=10\nY=21", "X=10", "invalid"):
+            with self.subTest(location=location):
+                tool.reset_mock()
+                tool.return_value = location
+                with self.assertRaisesRegex(RuntimeError, "Pointer did not reach"):
+                    self.session.handle({"action": "input", **lease,
+                        "geometry": [1280, 720], "kind": "click", "x": 10, "y": 20})
+                self.assertEqual(tool.call_count, 1)
+
+    @patch.object(runtime, "run_tool")
+    def test_invalid_pointer_coordinates_never_move(self, tool):
+        lease = self.acquire()
+        for x, y in ((-1, 20), (1280, 20), (10, 720), (True, 20)):
+            with self.subTest(x=x, y=y), self.assertRaisesRegex(ValueError, "outside"):
+                self.session.handle({"action": "input", **lease,
+                    "geometry": [1280, 720], "kind": "move", "x": x, "y": y})
+        tool.assert_not_called()
+
+    @patch.object(runtime, "run_tool")
     def test_invalid_click_does_not_even_move_pointer(self, tool):
         with self.assertRaisesRegex(ValueError, "Button"):
             self.session.handle({"action": "input", **self.acquire(), "geometry": [1280, 720],

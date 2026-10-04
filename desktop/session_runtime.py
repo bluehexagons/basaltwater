@@ -479,7 +479,15 @@ class DesktopSession:
                 button = payload.get("button", 1)
                 if kind == "click" and (type(button) is not int or button not in range(1, 8)):
                     raise ValueError("Button must be 1 through 7 (4–7 scroll)")
-                run_tool(["xdotool", "mousemove", "--sync", str(x), str(y)])
+                # --sync waits for a position change and hangs on a no-op move.
+                # Query on the same X connection to flush the move and verify
+                # its destination before any click, without waiting for motion.
+                location = run_tool(["xdotool", "mousemove", str(x), str(y),
+                                     "getmouselocation", "--shell"])
+                actual_x = re.search(r"^X=(\d+)$", location, re.MULTILINE)
+                actual_y = re.search(r"^Y=(\d+)$", location, re.MULTILINE)
+                if actual_x is None or actual_y is None or (int(actual_x[1]), int(actual_y[1])) != (x, y):
+                    raise RuntimeError("Pointer did not reach the requested coordinates; inspect the desktop before retrying")
                 if kind == "click":
                     run_tool(["xdotool", "click", str(button)])
             else:

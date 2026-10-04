@@ -9,6 +9,16 @@ If export/import reports `No module named 'numpy'`, check this package: a CPU
 render does not exercise it. An administrator can install the missing package
 without rerunning desktop setup. Verify an exported asset by importing it again.
 
+On Debian, `ERROR Draco mesh compression is not available` can accompany a
+successful uncompressed glTF/GLB export: the optional Blender Draco backend
+is absent on the tested installation. Use
+`export_draco_mesh_compression_enable=False` for ordinary exports and check
+operator completion, output and fresh import before deciding they failed.
+Assets requiring `KHR_draco_mesh_compression` need a separately qualified
+compatible backend. Preserve project requirements; do not silently drop required
+compression, replace Debian Blender or substitute an unrelated Draco library
+just to suppress this message.
+
 ## Touch up models on the desktop
 
 Agentic native editing is a primary use case on desktop VMs: model touch-ups,
