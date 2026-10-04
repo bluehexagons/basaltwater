@@ -62,15 +62,24 @@ Preserve credentials, sessions, application data,
 and repositories; do not substitute blanket cache deletion or orphan-package
 removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md#cleanup-during-setup).
 
-Managed Playwright and KDE input/screenshot automation are not installed.
+Managed Playwright is not installed. Native KDE automation is explicitly
+started with `basaltw desktop --native start` and requires the owner's portal
+consent for one monitor plus keyboard/pointer access. Selecting desktop apps
+installs its Python GObject, AT-SPI, GStreamer/PipeWire and GTK3 dependencies;
+setup does not start control or install an autostart service. Check dependencies
+with `basaltw desktop --native doctor` from KDE.
 Run `basaltw agent manifest` in the project to discover active tools, installed
 desktop applications, workflow instructions and declared deployment mappings.
-When Blender is detected, use its background-render guidance for repeatable
-output checks; validate editing behavior in the existing native desktop.
+Use `basaltwater-cachyos-desktop` for autonomous Blender model/material/UV work
+and Inkscape, GIMP, Krita, Audacity and Shotcut asset edits. It covers trusted
+application scripting, editable task copies, exports and reopen/consumer checks,
+with references for the other supported native applications. The manifest
+provides direct native launch commands on CachyOS rather than XRDP commands.
 See the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md).
 For browser checks, use tools actually available in the session or the project's
-own test commands. For GUI-only validation, launch the application in the user's
-desktop session and arrange human testing. Do not assume XRDP, X11 automation,
+own test commands. Complete scripting/export tasks autonomously. For required
+GUI-only validation, use the user-approved native portal/AT-SPI tools; report
+unavailable checks accurately. Do not assume XRDP, X11 automation,
 a managed gateway, remote pairing, or VM maintenance services exist here.
 
 Start desktop prerequisite diagnosis with `basaltw local cachyos-doctor --json`
@@ -130,6 +139,6 @@ absent. Preserve the selected helper's review prompts and source policy.
 It is mutually exclusive with
 `--web-interface t3code`, which selects a separate managed web environment.
 Use `basaltwater-cachyos-t3code` for switching, pairing, and Connect commands.
-This profile does not install machine-use automation. Keep its agent, workspace,
+Native control is a separate, task-scoped opt-in. Keep its agent, workspace,
 and readiness checks when using the desktop app; verify a real provider thread
 and terminal in T3 after setup.

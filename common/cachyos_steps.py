@@ -25,7 +25,10 @@ from lib.validation import validate_arch_package_name, validate_filesystem_path
 from lib.vendor_installer import install as install_vendor_tool
 
 
-CACHYOS_SKILLS = ("basaltwater-cachyos-workstation", "basaltwater-cachyos-workspace")
+CACHYOS_SKILLS = (
+    "basaltwater-cachyos-workstation", "basaltwater-cachyos-workspace",
+    "basaltwater-cachyos-desktop",
+)
 CACHYOS_T3_SKILL = "basaltwater-cachyos-t3code"
 T3_SERVICE = "basaltwater-cachyos-t3.service"
 _MARKER = "# Managed by basaltwater CachyOS setup"
@@ -53,6 +56,10 @@ CACHYOS_SYSADMIN_PACKAGES = (
     ("dig", "bind"),
     ("virt-manager", "virt-manager"),
     ("wireshark", "wireshark-qt"),
+)
+CACHYOS_AUTOMATION_PACKAGES = (
+    "python-gobject", "at-spi2-core", "gstreamer", "gst-plugins-base",
+    "gst-plugin-pipewire", "gtk3", "libxkbcommon",
 )
 
 
@@ -189,6 +196,8 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     for field, _command, package in CACHYOS_DESKTOP_PACKAGES:
         if getattr(config, field):
             packages.append(package)
+    if any(getattr(config, field) for field, _, _ in CACHYOS_DESKTOP_PACKAGES):
+        packages.extend(CACHYOS_AUTOMATION_PACKAGES)
     if config.install_remmina:
         packages.extend(("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret"))
     if config.install_blender:
@@ -433,7 +442,8 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
             print("  WARNING: Codex login/configuration check failed; run `codex login status` locally, "
                   "then `codex login` if needed. Existing credentials were retained.")
     print("  Provider authentication: use each provider's local login; existing credentials retained")
-    print("  KDE automation and managed Playwright: not installed")
+    print("  KDE automation: opt in with basaltw desktop --native start and approve the portal dialog")
+    print("  Managed Playwright: not installed")
 
 
 def reconcile_cachyos_user_cache(config: SetupConfig) -> None:

@@ -17,6 +17,15 @@ their `readiness` remains `unverified`. Discovery never launches a window,
 renderer, device probe, or audio session. `desktop_skills` links available local
 desktop instructions; it does not establish that a desktop session is attached.
 
+`desktop_backend` distinguishes CachyOS `native-session` from Debian
+`shared-xrdp`; `automation_command` is respectively `basaltw desktop --native`
+or `basaltw desktop`. Each application's `launch_argv` begins with the active
+executable on CachyOS, and with `basaltw desktop exec --` on Debian. Append
+literal document arguments; manifest launch guidance uses the same routing.
+CachyOS skills cover native application scripts/exports and explicitly started,
+user-approved [KDE Wayland automation](CACHYOS_DESKTOP.md). Discovery does not
+request consent or query desktop contents.
+
 Projects can commit an optional `basaltwater-agent.json` at their Git root.
 This discovery file is separate from the `basaltwater.json` deployment manifest
 and does not change CI or deployment behavior. For example:

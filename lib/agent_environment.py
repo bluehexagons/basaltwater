@@ -13,6 +13,7 @@ import urllib.parse
 
 from lib import agent_workspace
 from lib.atomic_io import read_json_file
+from lib.cachyos import is_cachyos
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -22,44 +23,55 @@ DESKTOP_APPLICATIONS = {
     "blender": {
         "workflows": ["3D model touch-ups", "3D scene editing", "background rendering", "Python scene automation"],
         "instructions": [
-            "Use the native desktop for model touch-ups, material/UV edits and scene work: basaltw desktop exec -- blender /absolute/project/model.blend. Follow the desktop skill and the project's add-on/script policy.",
+            "Use the native desktop for model touch-ups, material/UV edits and scene work: {launch_prefix}blender /absolute/project/model.blend. Follow the desktop skill and the project's add-on/script policy.",
             "Complete model edits autonomously: combine viewport editing with bpy, verify a saved task copy by reopening it, and report saved/exported artifacts. Human handoff is optional when requested.",
             "Render without a desktop: blender --background --disable-autoexec scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
             "Check a small isolated Cycles CPU render: basaltw agent blender smoke --json. It retains a blend scene, PNG, settings and logs; UI and GPU readiness remain unverified.",
             "Load the blend file before output overrides; put the render action last. Record camera, frame, resolution, render engine and device.",
             "For Python scene automation, put --python-exit-code 1 before --python SCRIPT so script errors fail the command. Query Blender's Python environment; Debian builds use system libraries and upstream builds may bundle Python. Project virtual environments are not automatically used.",
             "Use a native desktop session to validate interactive editing; background rendering does not verify UI or GPU readiness.",
+            "For glTF/GLB and OBJ/MTL, preserve materials, UVs and companion textures; reimport from a relocated export directory. Query Blender's NumPy dependency and qualify Draco separately when compression is required.",
         ],
     },
     "krita": {
         "workflows": ["raster painting", "texture editing", "sprite touch-ups"],
         "instructions": [
-            "Open project assets with basaltw desktop exec -- krita /absolute/project/asset.kra. Preserve a layered KRA source and export the required game or web image separately.",
+            "Open project assets with {launch_prefix}krita /absolute/project/asset.kra. Preserve a layered KRA source and export the required game or web image separately.",
             "Follow the desktop skill's media reference. Verify alpha, dimensions, sprite frame boundaries and texture seams in the saved export and consuming project.",
         ],
     },
     "gimp": {
         "workflows": ["raster image editing", "image touch-ups"],
         "instructions": [
-            "Open project assets with basaltw desktop exec -- gimp /absolute/project/asset.xcf. Save editable layers as XCF and export delivery images separately; check the installed version before scripting.",
+            "Open project assets with {launch_prefix}gimp /absolute/project/asset.xcf. Save editable layers as XCF and export delivery images separately; check the installed version before scripting.",
             "Follow the desktop skill's media reference. Reopen the export and check crop, alpha edges, dimensions and color appearance in the game or website.",
         ],
     },
     "inkscape": {
         "workflows": ["SVG editing", "vector asset export"],
         "instructions": [
-            "Edit SVG assets with basaltw desktop exec -- inkscape /absolute/project/asset.svg. Preserve an editable SVG and resolve linked images and fonts before delivery.",
-            "If a panel forces the window beyond a small desktop, hide it before input or capture. Inspect the actual window bounds; agent-created desktops default to 1600x900 after updating Basaltwater.",
+            "Edit SVG assets with {launch_prefix}inkscape /absolute/project/asset.svg. Preserve an editable SVG and resolve linked images and fonts before delivery.",
+            "If a panel forces the window beyond the desktop, hide it before input or capture. Inspect the actual window bounds and current display geometry.",
+            "For repeatable object edits, discover inkscape --action-list, select existing IDs and export to a task copy with --actions/--batch-process. Verify saved SVG geometry and a fresh PNG export; CLI success alone does not verify the requested edit.",
             "Export reproducibly: inkscape /absolute/project/asset.svg --export-area-page --export-type=png --export-filename=/absolute/artifact/asset.png. Check inkscape --help for version-specific options and verify viewBox, dimensions and alpha in the consuming project.",
         ],
     },
-    "freecad": {"workflows": ["parametric CAD", "3D model inspection"]},
-    "kicad": {"workflows": ["schematic editing", "PCB inspection"]},
-    "kdenlive": {"workflows": ["video editing"]},
+    "freecad": {
+        "workflows": ["parametric CAD", "3D model inspection"],
+        "instructions": ["Preserve an FCStd task copy, constraints and linked parts. Recompute and reopen before exporting STEP/STL; check units and geometry in the consuming application."],
+    },
+    "kicad": {
+        "workflows": ["schematic editing", "PCB inspection"],
+        "instructions": ["Keep the KiCad project, schematic, board and library references together. Use the installed kicad-cli help for repeatable ERC/DRC and fabrication exports; inspect reported violations and exported layers."],
+    },
+    "kdenlive": {
+        "workflows": ["video editing"],
+        "instructions": ["Keep the editable .kdenlive project and linked media. Check profile, frame rate and render range; reopen the project and verify the completed export with ffprobe and representative frames/audio."],
+    },
     "shotcut": {
         "workflows": ["video editing", "short clip touch-ups"],
         "instructions": [
-            "Open a timeline with basaltw desktop exec -- shotcut /absolute/project/clip.mlt. Keep the MLT project and its linked media; export the requested clip separately.",
+            "Open a timeline with {launch_prefix}shotcut /absolute/project/clip.mlt. Keep the MLT project and its linked media; export the requested clip separately.",
             "Shotcut needs a Qt display even for --version/--help; use QT_QPA_PLATFORM=offscreen for terminal-only queries, not UI validation. For isolated tests use --appdata /absolute/private/profile --noupgrade. Check Export's From selection (Source versus Timeline) and wait for the job to finish.",
             "Follow the desktop skill's media reference. Use ffprobe to check export duration, dimensions, frame rate and codecs, then inspect representative frames and audio in the consuming project.",
         ],
@@ -67,15 +79,31 @@ DESKTOP_APPLICATIONS = {
     "audacity": {
         "workflows": ["audio editing", "sound effect touch-ups"],
         "instructions": [
-            "Edit sound effects with basaltw desktop exec -- audacity /absolute/project/sound.wav. Save an AUP3 project and export the game's or website's required audio format separately.",
+            "Edit sound effects with {launch_prefix}audacity /absolute/project/sound.wav. Save an AUP3 project and export the game's or website's required audio format separately.",
             "A title wait can match the startup splash. Inspect the document and dismiss the Welcome dialog through observed controls; prefer accessible Effect menus and Export Audio controls. Scripting is optional and disabled by default.",
-            "Follow the desktop skill's media reference. Verify trim, fades, clipping, loop boundaries, sample rate and channels; a silent RDP session does not establish that the export lacks audio.",
+            "Follow the desktop skill's media reference. Verify trim, fades, clipping, loop boundaries, sample rate and channels; unavailable desktop playback does not establish that the export lacks audio.",
         ],
     },
-    "ardour": {"workflows": ["audio production"]},
-    "lmms": {"workflows": ["music production"]},
-    "scribus": {"workflows": ["page layout", "PDF production"]},
-    "obs": {"workflows": ["desktop recording"]},
+    "ardour": {
+        "workflows": ["audio production"],
+        "instructions": ["Preserve the session directory, audio and plugin references. Export the intended range with explicit sample rate/channels; verify signal and clipping. Audio-device and plugin readiness need separate checks."],
+    },
+    "lmms": {
+        "workflows": ["music production"],
+        "instructions": ["Keep MMP/MMPZ sources, samples and plugin references. Export with explicit loop/range, sample rate and quality; check duration, peaks and representative playback."],
+    },
+    "scribus": {
+        "workflows": ["page layout", "PDF production"],
+        "instructions": ["Keep the editable SLA and linked images/fonts. Run document preflight, export the required PDF profile and inspect page size, bleed, fonts and rendered pages."],
+    },
+    "obs": {
+        "workflows": ["desktop recording"],
+        "instructions": ["Use a task-specific scene/profile and explicitly selected capture source. Verify a short recording's video and audio; Wayland screen selection can require portal consent. Preserve existing recordings and streaming configuration."],
+    },
+    "remmina": {
+        "workflows": ["remote desktop connections"],
+        "instructions": ["Use the project's intended connection and native protocol plugin. Test connectivity and Secret Service integration without copying credentials; installation does not create a remote desktop server."],
+    },
 }
 TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
@@ -224,12 +252,21 @@ def inspect_environment(repository: str) -> dict[str, object]:
         name: {**recipe, "missing_tools": [tool for tool in recipe["requires"] if not tools[tool]]}
         for name, recipe in project["recipes"].items()
     }
+    native_desktop = is_cachyos()
+    launch_prefix = "" if native_desktop else "basaltw desktop exec -- "
     desktop = {
-        name: {**guidance, "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
+        name: {**guidance,
+               "instructions": [instruction.format(launch_prefix=launch_prefix)
+                                for instruction in guidance.get("instructions", [])],
+               "launch_argv": ([tools[name]] if native_desktop else ["basaltw", "desktop", "exec", "--", tools[name]]),
+               "desktop_backend": "native-session" if native_desktop else "shared-xrdp",
+               "automation_command": "basaltw desktop --native" if native_desktop else "basaltw desktop",
+               "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
         for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
     }
     desktop_skills = [
-        path for name in ("basaltwater-desktop", "basaltwater-cachyos-workstation")
+        path for name in (("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
+                         if native_desktop else ("basaltwater-desktop",))
         if os.path.isfile(path := os.path.join(home, ".agents", "skills", name, "SKILL.md"))
     ]
     state = agent_workspace._worktree_record(root)

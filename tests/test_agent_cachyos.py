@@ -449,6 +449,8 @@ class CachyOSSetupTests(unittest.TestCase):
             self.assertEqual((skill_root / "basaltwater-vm-triage/SKILL.md").read_text(), "personal content\n")
             for name in steps.CACHYOS_SKILLS:
                 self.assertTrue((skill_root / name / "SKILL.md").is_file())
+            for name in ("blender.md", "media.md"):
+                self.assertTrue((skill_root / "basaltwater-cachyos-desktop/references" / name).is_file())
             self.assertFalse((skill_root / steps.CACHYOS_T3_SKILL).exists())
 
     def test_existing_repository_is_checked_but_never_pulled(self):

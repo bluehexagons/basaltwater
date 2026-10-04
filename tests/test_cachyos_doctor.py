@@ -142,7 +142,10 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(records["package.kwin"]["version"], "6.0.0-1")
         for name in ("browser.playwright", "desktop.portal", "desktop.accessibility"):
             self.assertEqual(records[name]["state"], "deferred")
-            self.assertFalse(records[name]["selected"])
+        self.assertFalse(records["browser.playwright"]["selected"])
+        for name in ("desktop.portal", "desktop.accessibility"):
+            self.assertIsNone(records[name]["selected"])
+            self.assertIn("--native", records[name]["reason"])
         for item in records.values():
             self.assertIsNone(item["last_verified"])
             self.assertIsNone(item["interactive_required"])

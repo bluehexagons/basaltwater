@@ -7,10 +7,12 @@ version, add-ons, desktop session, audio devices or graphics backend.
 
 Use the local desktop skill listed by the manifest before native UI work.
 Managed Debian VMs can provide a shared XRDP desktop and `basaltw desktop`
-tools. CachyOS workstations use their existing native desktop; do not assume
-XRDP, X11, screenshot automation or the VM gateway exists there. If automation
-is unavailable, prepare the project and ask for human validation in the native
-application. Use the collaborative browser policy for web applications.
+tools. CachyOS workstations use their existing KDE Wayland desktop with
+explicit `basaltw desktop --native` [portal automation](CACHYOS_DESKTOP.md).
+The owner approves one monitor plus keyboard/pointer access; setup never
+starts control. Complete scripting, editable-source and export checks
+autonomously and report any unavailable UI checks. Use the collaborative
+browser policy for web applications.
 
 ## Blender
 
@@ -258,6 +260,13 @@ requested. Follow the desktop skill's `references/media.md` for application
 workflows and export checks. Package discovery alone does not prove editing,
 rendering or audio readiness.
 
+On CachyOS launch the executable directly in KDE, or use
+`basaltw desktop --native exec -- APPLICATION /absolute/task/file` after
+portal consent. The CachyOS desktop skill covers the same Blender model/UV/
+material and media workflows with native package/API differences. Its
+`references/native-control.md` explains selected-monitor capture, paced input,
+PID-scoped accessibility, human pause and task shutdown.
+
 For repeatable SVG-to-PNG export, check the installed `inkscape --help` and use
 explicit page bounds, output path and size; width preserves the page aspect ratio:
 
@@ -320,6 +329,16 @@ and verify the completed job and artifact. The desktop skill's media reference
 contains the tested workflow details.
 
 ## Other applications
+
+CachyOS live qualification on 2026-10-04 passed Blender 5.2.2 CPU rendering,
+native edit/save/reopen, textured glTF/GLB/OBJ relocation/reimport and a
+Draco-compressed GLB round trip. Inkscape 1.4.4 passed object actions,
+native pointer/keyboard editing, an accessible coordinate-field edit and
+SVG save/reopen queries with transparent PNG export. GIMP 3.2.6 passed an
+isolated XCF save and PNG export. Krita 6.0.4 isolated CLI export failed
+offscreen with X `BadWindow` and timed out in the native session; this path
+remains unqualified. These fixtures do not establish all codecs, Qt controls,
+GPU backends or audio playback. See the [qualification record](plans/CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md).
 
 FreeCAD and KiCad support CAD work; Kdenlive and Shotcut support video editing;
 Audacity, Ardour and LMMS support audio work; Scribus supports page layout;

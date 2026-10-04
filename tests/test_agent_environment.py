@@ -23,6 +23,7 @@ class TestAgentEnvironment(unittest.TestCase):
         self.git = self.enterContext(patch.object(
             agent_workspace, "_git", return_value=subprocess.CompletedProcess([], 0, "", ""),
         ))
+        self.cachyos = self.enterContext(patch.object(agent_environment, "is_cachyos", return_value=False))
 
     def declaration(self, **fields) -> None:
         self.file.write_text(json.dumps({"version": 1, **fields}), encoding="utf-8")
@@ -42,6 +43,33 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIsNone(result["tools"]["yarn"])
         self.assertEqual(result["desktop_applications"], {})
         self.assertEqual(result["desktop_skills"], [])
+        execute.assert_not_called()
+
+    def test_cachyos_uses_native_launches_and_skills_without_xrdp_instructions(self) -> None:
+        self.cachyos.return_value = True
+        names = ("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation", "basaltwater-desktop")
+        for name in names:
+            skill = Path(self.directory, ".agents/skills", name, "SKILL.md")
+            skill.parent.mkdir(parents=True)
+            skill.write_text("Local guidance")
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/usr/bin/" + name),
+            patch.object(agent_environment.subprocess, "run") as execute,
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+        self.assertEqual(result["desktop_skills"], [
+            str(Path(self.directory, ".agents/skills", name, "SKILL.md")) for name in names[:2]
+        ])
+        for name, application in result["desktop_applications"].items():
+            with self.subTest(application=name):
+                self.assertEqual(application["launch_argv"], ["/usr/bin/" + name])
+                self.assertEqual(application["desktop_backend"], "native-session")
+                self.assertEqual(application["readiness"], "unverified")
+                self.assertTrue(application["instructions"])
+                self.assertNotIn("basaltw desktop", " ".join(application["instructions"]))
         execute.assert_not_called()
 
     def test_desktop_discovery_provides_workflows_without_claiming_readiness(self) -> None:
@@ -65,6 +93,8 @@ class TestAgentEnvironment(unittest.TestCase):
         blender = result["desktop_applications"]["blender"]
         self.assertEqual(blender["executable"], "/bin/blender")
         self.assertEqual(blender["readiness"], "unverified")
+        self.assertEqual(blender["launch_argv"], ["basaltw", "desktop", "exec", "--", "/bin/blender"])
+        self.assertEqual(blender["desktop_backend"], "shared-xrdp")
         self.assertIn("background rendering", blender["workflows"])
         self.assertTrue(any("--background" in instruction for instruction in blender["instructions"]))
         for name in ("krita", "gimp", "inkscape", "audacity", "shotcut"):

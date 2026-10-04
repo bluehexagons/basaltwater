@@ -4,7 +4,9 @@
 CachyOS KDE Plasma workstation**. It uses the existing desktop account and is
 intended for bare metal machines, including workstations with dedicated GPUs.
 It does not provision CachyOS VMs or containers and does not extend the
-general server profiles. KDE automation and managed Playwright are deferred.
+general server profiles. KDE capture/input is available through explicitly
+started, user-approved [native desktop automation](CACHYOS_DESKTOP.md).
+Managed Playwright remains deferred.
 
 Support targets the **latest fully updated CachyOS rolling release**, not older
 ISO defaults or generic Arch installations. Update through CachyOS's normal
@@ -696,10 +698,21 @@ place. Deferred cleanup can run on a later setup invocation.
 
 ## Skills, diagnostics, and boundaries
 
-Codex and OpenCode receive the CachyOS workstation, workspace, and (when T3 is
+Codex and OpenCode receive the CachyOS workstation, workspace, desktop, and (when T3 is
 selected) T3 skills under `~/.agents/skills`. Standard VM, XRDP, gateway,
 browser-automation, and Godot-web skills are not installed. Personal skills are
-preserved. KDE automation remains a future, separately selected capability.
+preserved. The desktop skill covers autonomous Blender/Inkscape and other
+application edits, scripting, editable sources and verified exports. The manifest
+uses direct native launch commands instead of Debian XRDP commands.
+
+Selecting a supported desktop application installs Python GObject, AT-SPI,
+GStreamer, its base/PipeWire plugins and GTK3 prerequisites. Setup starts no
+control helper. From KDE, use `basaltw desktop --native doctor`, then
+`basaltw desktop --native start`; the owner must select one monitor and allow
+keyboard/pointer access in KDE's portal dialog. `handoff` provides human
+pause/resume/stop controls. `stop` closes only automation, preserving KDE and
+applications. Sessions expire after 15 minutes and retain no saved portal grant.
+See [native control and limitations](CACHYOS_DESKTOP.md).
 
 The read-only desktop doctor reports package versions, user-bus sockets, and
 PipeWire, WirePlumber, the `t3code-bin` package, and managed/upstream T3 unit state.

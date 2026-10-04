@@ -13,9 +13,10 @@ from lib.validation import validate_filesystem_path
 
 
 def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser("desktop", help="Start and use the shared desktop as its owner")
+    parser = subparsers.add_parser("desktop", help="Use the shared Debian desktop or opt in to native CachyOS automation")
+    parser.add_argument("--native", action="store_true", help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
     commands = parser.add_subparsers(dest="desktop_command", required=True)
-    for name in ("status", "start", "logout", "windows", "doctor", "handoff"):
+    for name in ("status", "start", "stop", "logout", "windows", "doctor", "handoff"):
         commands.add_parser(name).add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
     screenshot = commands.add_parser("screenshot")
@@ -89,25 +90,34 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
+    backend = runtime
+    if getattr(args, "native", False):
+        from desktop import native_session
+        backend = native_session
     try:
         command = args.desktop_command
+        control_command = "basaltw desktop --native" if backend is not runtime else "basaltw desktop"
         if command == "status":
-            result = runtime.status()
+            result = backend.status()
         elif command == "start":
-            result = runtime.start()
+            result = backend.start()
+        elif command == "stop":
+            if backend is runtime:
+                raise RuntimeError("Stop closes a native portal session; use --native stop, or logout for a Debian desktop")
+            result = backend.request({"action": "stop"})
         elif command == "control":
-            result = runtime.request({"action": args.operation})
+            result = backend.request({"action": args.operation})
         elif command == "doctor":
-            result = client.doctor()
+            result = backend.doctor() if backend is not runtime else client.doctor()
         else:
-            current = runtime.status()
+            current = backend.status()
             if current["state"] != "running":
                 state = current["state"]
                 if state == "stopped":
-                    raise RuntimeError("Desktop is stopped; run 'basaltw desktop start' first")
+                    raise RuntimeError(f"Desktop is stopped; run '{control_command} start' first")
                 if state == "starting":
-                    raise RuntimeError("Desktop is starting; run 'basaltw desktop start' to wait for readiness")
-                raise RuntimeError(f"Desktop is {state}; inspect 'basaltw desktop status' before retrying")
+                    raise RuntimeError(f"Desktop is starting; run '{control_command} start' to wait for readiness")
+                raise RuntimeError(f"Desktop is {state}; inspect '{control_command} status' before retrying")
             payload = {"action": command, "generation": current["generation"]}
             wait_title = getattr(args, "wait_window", None)
             baseline = []
@@ -116,32 +126,34 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     raise ValueError("Window title must be a nonempty string of at most 512 characters")
                 if not 0 < args.timeout <= 120:
                     raise ValueError("Wait timeout must be greater than zero and at most 120 seconds")
-                baseline = runtime.request({"action": "windows", "generation": current["generation"]})["windows"]
+                baseline = backend.request({"action": "windows", "generation": current["generation"]})["windows"]
             if command == "smoke":
+                if backend is not runtime:
+                    raise RuntimeError("The Geany XRDP smoke check is Debian-only; use native application edit/save/reopen checks")
                 from desktop.smoke import run_smoke_check
                 result = run_smoke_check(current["generation"])
             elif command == "windows":
-                result = runtime.request(payload)
+                result = backend.request(payload)
             elif command == "inspect":
                 if args.root is not None and args.generation is None:
                     raise ValueError("Scoped inspection requires --generation from the observation")
-                result = runtime.request({**payload, "generation": args.generation or current["generation"],
+                result = backend.request({**payload, "generation": args.generation or current["generation"],
                     **{name: getattr(args, name) for name in ("pid", "name", "role", "root")}})
             elif command == "wait-element":
-                result = client.wait_for_element(args.generation,
+                result = client.wait_for_element(args.generation, backend=backend,
                     **{name: getattr(args, name) for name in ("pid", "name", "role", "state", "text", "timeout", "root")})
             elif command == "launch-status":
-                result = runtime.request({**payload, "launch": args.launch, "generation": args.generation})
+                result = backend.request({**payload, "launch": args.launch, "generation": args.generation})
             elif command == "wait":
-                result = client.wait_for_window(args.generation or current["generation"],
+                result = client.wait_for_window(args.generation or current["generation"], backend=backend,
                     **{name: getattr(args, name) for name in ("window", "title", "pid", "condition", "timeout")})
             elif command == "sequence":
-                result = client.run_sequence(args.path, args.generation)
+                result = client.run_sequence(args.path, args.generation, backend=backend)
             elif command == "screenshot":
                 payload["output"] = str(Path(args.output).absolute()) if args.output else client.artifact_path()
                 payload["window"] = args.window
                 payload["active_window"] = args.active_window
-                result = runtime.request(payload)
+                result = backend.request(payload)
             else:
                 if command == "exec":
                     payload["argv"] = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
@@ -152,6 +164,9 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     payload.update(action="exec", argv=["xdg-open", str(path.parent if args.reveal else path)], cwd=str(Path.cwd()))
                 elif command == "handoff":
                     payload.update(action="exec", argv=["/usr/bin/python3", str(Path(runtime.__file__).with_name("handoff.py"))])
+                    if backend is not runtime:
+                        payload["argv"] = ["/usr/bin/python3", str(Path(runtime.__file__).with_name("native_handoff.py"))]
+                        payload["cwd"] = str(Path.cwd())
                 elif command == "window":
                     payload.update({name: getattr(args, name) for name in
                                     ("generation", "identity", "window", "operation", "x", "y", "width", "height")})
@@ -160,20 +175,20 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                     ("generation", "operation", "ref", "action_name", "text")})
                 elif command == "input":
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
-                    payload["delay_ms"] = args.delay_ms
+                    payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
                     client.validate_text_delay(payload)
-                lease = runtime.request({"action": "acquire", "generation": payload["generation"]})
+                lease = backend.request({"action": "acquire", "generation": payload["generation"]})
                 payload["lease"] = lease["lease"]
                 try:
-                    result = client.send_action(payload)
+                    result = client.send_action(payload, backend=backend)
                 finally:
                     try:
-                        runtime.request({"action": "release", "generation": payload["generation"], "lease": lease["lease"]})
+                        backend.request({"action": "release", "generation": payload["generation"], "lease": lease["lease"]})
                     except (OSError, RuntimeError):
                         pass  # Logout or human takeover may have revoked the lease.
                 if wait_title:
                     try:
-                        observed = client.wait_for_window(current["generation"], title=wait_title,
+                        observed = client.wait_for_window(current["generation"], title=wait_title, backend=backend,
                                                           timeout=args.timeout, launch=result["launch"])
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         result["error"] = str(exc)  # Preserve launch identity for inspection after timeout.

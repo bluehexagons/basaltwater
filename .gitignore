@@ -208,5 +208,7 @@ __marimo__/
 
 # Local state written by the managed installation channel controller.
 .basaltwater/
+# The default installed source prefix also contains native T3 user state.
+/cachyos-t3/
 state/
 artifacts/

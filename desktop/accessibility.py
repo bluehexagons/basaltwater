@@ -196,6 +196,39 @@ def inspect_application(payload: dict[str, Any], api: Any) -> tuple[dict[str, An
 
 def perform(payload: dict[str, Any], api: Any) -> dict[str, Any]:
     operation = payload.get("operation", "inspect")
+    if operation == "windows":
+        desktop = api.get_desktop(0)
+        windows = []
+        truncated = False
+        deadline = time.monotonic() + 5
+        count = desktop.get_child_count()
+        for index in range(min(count, 64)):
+            if time.monotonic() >= deadline:
+                truncated = True
+                break
+            try:
+                application = desktop.get_child_at_index(index)
+                pid = application.get_process_id()
+                # Return only showing top-level windows; custom canvases may
+                # expose no AT-SPI window at all. Never claim complete coverage.
+                for child in range(min(application.get_child_count(), 32)):
+                    node = application.get_child_at_index(child)
+                    row = describe(node, [child], api, describe(application, [], api, "")["ref"])
+                    if row["protected"] or "showing" not in row["states"]:
+                        continue
+                    windows.append({"id": f"{pid}/{row['ref']}", "identity": row["ref"],
+                        "pid": pid, "title": row["name"], "class": application.get_name()[:256],
+                        "visible": True, "accessible_ref": row["ref"]})
+                    if len(windows) >= 64:
+                        truncated = True
+                        break
+            except api.Error:
+                truncated = True
+            if truncated or len(json.dumps(windows).encode()) > MAX_OUTPUT - 2048:
+                truncated = True
+                break
+        return {"windows": windows, "active_window": None, "truncated": True,
+                "coverage": "AT-SPI top-level windows only; custom applications may be absent"}
     if operation not in ("inspect", "invoke", "set-text", "focus"):
         raise ValueError("Unknown accessibility operation")
     if operation != "inspect":

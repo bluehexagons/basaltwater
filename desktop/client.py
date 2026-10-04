@@ -30,14 +30,14 @@ def artifact_path() -> str:
 def wait_for_window(generation: str, *, window: str | None = None,
                     title: str | None = None, pid: int | None = None,
                     condition: str = "visible", timeout: float = 15,
-                    launch: str | None = None) -> dict[str, Any]:
+                    launch: str | None = None, backend=runtime) -> dict[str, Any]:
     """Poll outside the supervisor so human pause stays available while waiting."""
     if type(timeout) not in (int, float) or not 0 < timeout <= 120:
         raise ValueError("Wait timeout must be greater than zero and at most 120 seconds")
     if condition not in ("present", "visible", "absent", "active"):
         raise ValueError("Unknown window wait condition")
     if window is not None:
-        window = runtime.normalize_window_id(window)
+        window = backend.normalize_window_id(window)
     if title is not None and (not isinstance(title, str) or not title or len(title) > 512):
         raise ValueError("Window title must be a nonempty string of at most 512 characters")
     if pid is not None and (type(pid) is not int or pid <= 0):
@@ -48,10 +48,10 @@ def wait_for_window(generation: str, *, window: str | None = None,
     while True:
         launch_status = None
         if launch:
-            launch_status = runtime.request({"action": "launch-status", "generation": generation, "launch": launch})
+            launch_status = backend.request({"action": "launch-status", "generation": generation, "launch": launch})
             if launch_status["returncode"] not in (None, 0):
                 raise RuntimeError(f"Application exited with code {launch_status['returncode']} before becoming ready")
-        result = runtime.request({"action": "windows", "generation": generation})
+        result = backend.request({"action": "windows", "generation": generation})
         if result["generation"] != generation:
             raise RuntimeError("Desktop session changed while waiting")
         matches = [item for item in result["windows"]
@@ -76,7 +76,7 @@ def wait_for_window(generation: str, *, window: str | None = None,
 
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,
                      role: str | None = None, state: str = "present", text: str | None = None,
-                     timeout: float = 15, root: str | None = None) -> dict[str, Any]:
+                     timeout: float = 15, root: str | None = None, backend=runtime) -> dict[str, Any]:
     """Poll semantic observations without a lease; require an unambiguous match."""
     query = {"action": "inspect", "generation": generation, "pid": pid, "name": name, "role": role}
     if root is not None:
@@ -92,7 +92,7 @@ def wait_for_element(generation: str, *, pid: int, name: str | None = None,
         raise ValueError("Text wait requires at most 256 characters and a non-absent state")
     deadline = time.monotonic() + timeout
     while True:
-        result = runtime.request(query)
+        result = backend.request(query)
         if result["generation"] != generation:
             raise RuntimeError("Desktop session changed while waiting")
         matches = result["elements"]
@@ -160,13 +160,13 @@ def validate_text_delay(payload: dict[str, Any]) -> None:
         raise ValueError("Paced text exceeds 20 seconds; use shorter verified commands")
 
 
-def send_action(payload: dict[str, Any], *, deadline: float | None = None) -> dict[str, Any]:
+def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     validate_text_delay(payload)
     delay = payload.get("delay_ms")
     request = {name: value for name, value in payload.items() if name != "delay_ms"}
     if delay is None:
-        return runtime.request(request)
+        return backend.request(request)
     deadline = time.monotonic() + 20 if deadline is None else deadline
     submitted = 0
     result: dict[str, Any] = {"generation": payload["generation"], "geometry": payload["geometry"]}
@@ -177,7 +177,7 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None) -> di
             if time.monotonic() >= deadline:
                 raise RuntimeError("Paced typing exceeded its 20-second budget")
             # Every character rechecks generation, geometry, pause and the same lease.
-            result = runtime.request({**request, "text": character})
+            result = backend.request({**request, "text": character})
             submitted += 1
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**result, "error": f"{exc}; inspect input before retrying; the last character may have arrived",
@@ -185,9 +185,9 @@ def send_action(payload: dict[str, Any], *, deadline: float | None = None) -> di
     return {**result, "submitted_characters": submitted}
 
 
-def run_sequence(path: str, generation: str) -> dict[str, Any]:
+def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, Any]:
     validate_filesystem_path(path, must_exist=True)
-    if Path(path).stat().st_size > runtime.MAX_MESSAGE:
+    if Path(path).stat().st_size > backend.MAX_MESSAGE:
         raise ValueError("Desktop sequence is too large")
     steps = json.loads(Path(path).read_text())
     if not isinstance(steps, list) or not 1 <= len(steps) <= 20:
@@ -197,12 +197,12 @@ def run_sequence(path: str, generation: str) -> dict[str, Any]:
                 or "generation" in step or "lease" in step):
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded leases or generations")
         validate_text_delay(step)
-    lease = runtime.request({"action": "acquire", "generation": generation})
+    lease = backend.request({"action": "acquire", "generation": generation})
     results = []
     deadline = time.monotonic() + 20
     try:
         for step in steps:
-            result = send_action({**step, "generation": generation, "lease": lease["lease"]}, deadline=deadline)
+            result = send_action({**step, "generation": generation, "lease": lease["lease"]}, deadline=deadline, backend=backend)
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),
                         "results": results, "failed_action": result}
@@ -212,6 +212,6 @@ def run_sequence(path: str, generation: str) -> dict[str, Any]:
         return {"generation": generation, "error": str(exc), "completed": len(results), "results": results}
     finally:
         try:
-            runtime.request({"action": "release", "generation": generation, "lease": lease["lease"]})
+            backend.request({"action": "release", "generation": generation, "lease": lease["lease"]})
         except (OSError, RuntimeError, ValueError):
             pass

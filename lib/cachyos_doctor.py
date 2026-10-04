@@ -29,6 +29,7 @@ PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
     "xdg-desktop-portal", "xdg-desktop-portal-kde", "at-spi2-core",
     "python-gobject", "t3code-bin", *BROWSER_PACKAGES,
+    "gstreamer", "gst-plugins-base", "gst-plugin-pipewire", "gtk3", "libxkbcommon",
 )
 _NAME = re.compile(r"[a-z][a-z0-9_.-]{0,63}", re.ASCII)
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.:+_~\-]{0,127}", re.ASCII)
@@ -315,11 +316,11 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         ):
             record(name, state, reason)
 
-    for name, origin in (("browser.playwright", "user-session"),
-                         ("desktop.accessibility", "user-session"),
+    record("browser.playwright", "deferred", "Managed Playwright is not installed on CachyOS.", selected=False)
+    for name, origin in (("desktop.accessibility", "user-session"),
                          ("desktop.portal", "portal")):
-        record(name, "deferred", "Managed capability not released; CachyOS live qualification is required.",
-               origin=origin, selected=False)
+        record(name, "deferred", "Task-scoped automation requires basaltw desktop --native doctor/start from KDE and portal consent; this inventory does not start or verify it.",
+               origin=origin)
     return {"schema_version": SCHEMA_VERSION, "observed_at": observed_at,
             "capabilities": [record.to_dict() for record in records]}
 

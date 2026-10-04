@@ -1,7 +1,8 @@
 # CachyOS agentic desktop qualification record
 
 Status: **current workstation's running stack tested and accepted by its owner**
-(2026-09-27). Fresh-install, interruption/recovery, and unimplemented automation
+(2026-09-27), with native desktop/application evidence added on 2026-10-04.
+Fresh-install, interruption/recovery, and broader automation
 cases below remain separate. Unit tests do not satisfy those live cases.
 Copy the record for each disposable CachyOS installation; keep private evidence locally
 and commit only reviewed, redacted results. Do not record credentials, personal
@@ -36,6 +37,48 @@ web/desktop switch, or automated portal/input qualification is implied by
 acceptance of the currently running stack.
 
 ## Environment
+
+### Native application/control evidence — 2026-10-04
+
+The owner approved KDE portal consent for this task. Tests ran from source
+after the Blender compression fix `8d68852`, on CachyOS x86-64 bare metal
+with the existing NVIDIA stack: Plasma/KWin `6.7.5-1.1`, PipeWire `1:1.6.9-1`,
+WirePlumber `0.5.18-1.1`, portal `1.22.1-2.1`, KDE portal `6.7.5-1.1`,
+AT-SPI `2.60.7-1.1`, Python GObject `3.56.3-1` and GTK3 `1:3.24.52-1.1`.
+The owner selected one 2560×1440 monitor plus keyboard/pointer access.
+
+| Check | Observed result |
+| --- | --- |
+| Portal capture/input | Private selected-monitor PNG; pointer clicks and paced keyboard/text input passed. |
+| Human handoff | Pause button blocked subsequent input; explicit resume worked; Stop button closed portal/helper while KDE stayed running. |
+| Blender 5.2.2 LTS | CPU smoke passed after fixing the new default compression false failure. Native console script edited a task cube, saved/reopened the blend and verified the change; viewport capture inspected. |
+| Blender interchange | Textured glTF, GLB and OBJ/MTL moved out of the source directory and imported into fresh scenes with UVs, materials, loaded texture pixels and expected shape. Draco-compressed GLB export/import also passed. |
+| Inkscape 1.4.4 | ID-based translate, SVG geometry query/reopen and transparent 256×144 PNG passed. Native pointer/keyboard move/save and AT-SPI coordinate-field set-text/activate/save passed; fresh query confirmed x=40. |
+| GIMP 3.2.6 | Private GIMP3 batch loaded the PNG and saved XCF plus PNG successfully. Native UI was not exercised. |
+| Krita 6.0.4 | Isolated offscreen CLI export failed with X BadWindow; native-session CLI export timed out after 30 seconds. No KRA export readiness claim. |
+
+The agent harness inherited `NO_AT_BRIDGE=1`. A task-only GTK accessibility
+environment exposed Inkscape's controls; native launches now enable GTK/Qt
+accessibility per process, without changing global desktop preferences.
+GStreamer lacked `pngenc`; capture uses raw RGBA and bounded stdlib PNG encoding.
+Blender's optional MeshOptimizer bridge was absent but ordinary and Draco
+exports passed. Inkscape's startup ICC/accelerator warnings were nonfatal.
+
+Private synthetic files, screenshots and reports were retained locally;
+personal desktop captures are not committed. Only task test instances were
+closed. No failed system/user units were observed. Existing broad saved UFW
+allows and non-loopback T3 exposure were recorded without changing policy.
+The installed source checkout contained managed `cachyos-t3/` marker/lock
+state, making `upgrade` refuse a dirty worktree. The source ignore rule now
+excludes that runtime directory; a local Git exclusion unblocks older installs
+without deleting the state.
+Audacity, Scribus, Ardour, LMMS, FreeCAD and KiCad were absent; their workflows
+are documented and discovered when installed, without claiming live coverage.
+Shotcut, Kdenlive, OBS and Remmina package presence was observed without a new
+editing/recording/connection check. No GPU backend, audio playback, Qt semantic
+workflow, logout/reboot/second-login or additional hardware qualification is
+implied. Denial/cancellation, owner loss, lease expiry and stale-reference
+handling have mocked contract tests; live coverage above remains distinct.
 
 Record source commit, date, operator, bare metal versus VM, CachyOS/Plasma/KWin
 versions, CPU variant, GPU/driver/compositor combination, portal backend,
@@ -87,11 +130,11 @@ marking a package query successful or by using unrestricted desktop tools.
 | T3 access | Local pairing, private-LAN pairing from another device, T3 Connect link/status/unlink, service restart and logout behavior | Not run |
 | Browser | Pinned runtime pair, isolated local page interaction/capture, strict HTTPS, origin restrictions including redirects and subresources | Not implemented |
 | Browser recovery | Interrupted update retains old pair; bounded private artifacts and task profile cleanup | Not implemented |
-| GTK/Qt AT-SPI | Controlled editor save, slow dialog, foreign-window/stale-reference rejection, secret-field redaction | Not implemented |
-| Portal capture | User-approved selected screen; private bounded artifact; denial and cancellation | Not implemented |
-| Portal input | Explicit device selection, revocation, pause, lease expiry, logout cleanup, no privileged fallback | Not implemented |
+| GTK/Qt AT-SPI | Controlled editor save, slow dialog, foreign-window/stale-reference rejection, secret-field redaction | Inkscape GTK edits passed; wider GTK/Qt and lifecycle cases pending |
+| Portal capture | User-approved selected screen; private bounded artifact; denial and cancellation | Selected-monitor capture passed; denial/cancellation mocked |
+| Portal input | Explicit device selection, revocation, pause, lease expiry, logout cleanup, no privileged fallback | Input, human pause/resume and explicit stop passed; expiry/owner loss mocked; logout pending |
 | Clipboard | Separate opt-in and bounds; protected content excluded | Not implemented |
-| Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Not implemented |
+| Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Blender/Inkscape and GIMP batch paths above passed; remaining matrix pending |
 | Recovery | Safe reruns, exact managed cleanup, concurrent human application use | Not implemented |
 | Collaboration | Schema-aware unavailable/deferred/pending UI, private artifact access, no additional control channel | Not implemented |
 

@@ -4,7 +4,10 @@ Status: native setup and the current workstation's running desktop/tool stack
 are tested and accepted by its owner as of 2026-09-27. The
 [qualification record](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md) distinguishes
 that live evidence from pending fresh-install and interruption/recovery cases.
-Machine-use features still require their own implementation and qualification.
+Task-scoped native portal capture/input and Inkscape AT-SPI edits were
+implemented and live-tested on this workstation on 2026-10-04. See the
+[native desktop guide](../CACHYOS_DESKTOP.md) for the released scope. Broader
+browser, Qt, hardware and lifecycle gates remain open.
 
 ## Objective
 
@@ -46,15 +49,17 @@ authority for CachyOS desktop qualification and feature delivery.
   pin its package and matching upstream
   Chromium revision under a private user-owned prefix. Never run Playwright's
   Debian-oriented `install-deps` or `--with-deps` on CachyOS.
-- Keep machine-use features disabled unless selected during setup. No default
+- Keep machine-use features disabled unless explicitly selected. The native
+  desktop slice uses `desktop --native start` plus KDE consent per task;
+  selected application packages install only prerequisites. No default
   screen capture, input injection, clipboard export, remote bind, credential
   copying, or unattended background agent.
 - Treat the T3 Code desktop app as a client and collaboration surface. Do not
   build a competing custom desktop controller into it; local browser and
   desktop capabilities should report status and artifacts through existing
   interfaces.
-- The existing `basaltw desktop` command remains the XRDP/X11 workflow
-  until a separate Wayland implementation is qualified. Do not silently route
+- The existing `basaltw desktop` command remains the XRDP/X11 workflow;
+  `basaltw desktop --native` explicitly selects Wayland. Do not silently route
   CachyOS sessions through X11-only tools such as `xdotool`.
 
 ## Capability decisions to make first
@@ -385,7 +390,7 @@ desktop-control implementation.
   daily use, supplemented by the live audit and a real T3/Codex thread/terminal.
   Fresh-install, failure/recovery, and new firewall acceptance remain separate.
   Use the [qualification checklist](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
-  to record evidence. No machine-use flag has been enabled.
+  to record evidence. The later native-control slice is recorded below.
 - The initial native package, workspace, user-service, private-LAN pairing, and
   T3 Connect guidance is implemented; live service and hardware qualification
   remain open.
@@ -394,10 +399,24 @@ desktop-control implementation.
   setup-time package/user-cache cleanup are implemented and covered by mocked
   tests. Provider tasks are accepted on the current workstation; fresh setup
   and live mode switching remain to qualify.
-- Browser runtime/isolation, selection persistence, full host/application
-  diagnostics, AT-SPI operations, portal leases/input/capture, application
-  workflows and their recovery, and web-panel integration remain unimplemented. This
-  milestone is the P0 portable foundation, not completion of P0 or the project.
+- Added a CachyOS desktop skill with Blender/model/interchange, Inkscape,
+  raster/audio/video and other supported application workflows. Manifest
+  launch arguments and guidance use the native session rather than XRDP.
+- Added explicit `desktop --native` task control through KDE RemoteDesktop/
+  ScreenCast, private same-user sockets, 15-minute lifetime, 30-second leases,
+  bounded capture, paced input, PID-scoped AT-SPI and GTK human handoff.
+  Setup installs prerequisites with selected applications without starting
+  control. This slice uses the portal's supported Notify input methods;
+  EIS, clipboard and compositor window control remain future work.
+- Live selected-monitor capture, pointer/keyboard input, Blender native
+  edit/save/reopen, Inkscape keyboard and accessible-field edits, pause and
+  explicit stop passed on the current KDE/NVIDIA workstation. Blender CPU
+  rendering and textured interchange (including Draco GLB) also passed.
+  Mocked tests cover denial/timeouts, portal owner loss, stale observations,
+  pause/expiry, input release failures and private artifact handling.
+- Browser runtime/isolation, general desired-state selection persistence,
+  broader Qt/application and lifecycle qualification, EIS/clipboard and
+  web-panel integration remain open. This is not completion of the plan.
 
 ## Open decisions and issue slices
 

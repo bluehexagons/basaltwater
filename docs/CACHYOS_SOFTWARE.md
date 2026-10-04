@@ -23,6 +23,11 @@ basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
 | GIMP | `--gimp` | Repository `gimp` (current GIMP 3, not a GIMP 2 compatibility setup) |
 | Inkscape | `--inkscape` | Repository `inkscape` |
 | Krita | `--krita` | Repository `krita`; no forced Qt version or Python-plugin extras |
+| Audio editors | `--audacity`, `--ardour`, `--lmms` | Corresponding native repository packages |
+| Video editors | `--shotcut`, `--kdenlive` | Corresponding native repository packages |
+| Scribus | `--scribus` | Repository `scribus` |
+| Engineering editors | `--freecad`, `--kicad` | Corresponding native repository packages |
+| OBS | `--obs` | Repository `obs-studio`; no automatic capture or recording |
 | Remmina | `--remmina` | Repository `remmina`, `freerdp`, `libvncserver`, `spice-gtk`, `gtk-vnc`, `libsecret` |
 | Sunshine | `--sunshine` | CachyOS repository `sunshine`; does not start or enable it |
 | Moonlight | `--moonlight` | Repository `moonlight-qt`; command is `moonlight` |
@@ -41,6 +46,15 @@ records selected software metadata without launching a GUI or publisher.
 With an existing saved setup, add these options using
 `basaltw refresh --material-maker --etcher --butler --steamcmd`; add `--dry-run`
 to preview the combined selection. Older CLIs need `basaltw upgrade` first.
+
+Desktop application selections also install Python GObject, AT-SPI,
+GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation.
+Setup does not start input/capture. The [native desktop guide](CACHYOS_DESKTOP.md)
+and managed `basaltwater-cachyos-desktop` skill cover autonomous application
+editing, scripting, editable sources, exports and reopen/consumer checks.
+Use `basaltw agent manifest --json` for installed applications and actual
+launch arguments. Native UI work uses `basaltw desktop --native start`
+with the owner's KDE portal consent, preserving the existing desktop.
 
 ## AUR review and existing installations
 
