@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 import sys
 import threading
@@ -10,6 +11,25 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from desktop import native_session
+
+
+def describe(status: dict) -> str:
+    """Describe whether the portal session currently permits agent input."""
+    if "error" in status:
+        return "Native desktop control unavailable: " + str(status["error"])
+    if status.get("stopped") or status.get("state") == "stopped":
+        return "Automation stopped; KDE and applications are preserved"
+    if status.get("state") == "awaiting-consent":
+        return "Waiting for KDE consent: " + status.get("detail", "Approve the selected-monitor/input dialog")
+    if status.get("state") == "failed":
+        return "Native desktop control failed: " + status.get("detail", "Inspect desktop status")
+    if status.get("state") != "running":
+        return "Native desktop control unavailable: " + status.get("detail", "Inspect desktop status")
+    if status.get("expires_in", 0) <= 0:
+        return "Automation expired; start a new session with KDE consent"
+    if status.get("paused"):
+        return "Agent input paused — you have control"
+    return "Agent input enabled (" + str(status["expires_in"]) + " seconds remaining)"
 
 
 def main():
@@ -28,19 +48,24 @@ def main():
     row = Gtk.Box(spacing=8)
     layout.pack_start(row, False, False, 0)
     busy = threading.Event()
+    pending: deque[str] = deque()
 
     def show(result):
-        text = result.get("error") or ("Automation stopped; KDE and applications are preserved" if result.get("stopped") or result.get("state") == "stopped" else
-            "Agent input paused — you have control" if result.get("paused") else
-            "Agent input enabled (" + str(result.get("expires_in", 0)) + " seconds remaining)")
-        label.set_text(text)
+        label.set_text(describe(result))
         busy.clear()
+        if pending:
+            request(pending.popleft())
         return False
 
     def request(action):
         if busy.is_set():
+            if action != "status":
+                pending.append(action)
+                label.set_text("Control request pending: " + action)
             return
         busy.set()
+        if action != "status":
+            label.set_text("Updating desktop control: " + action)
 
         def work():
             try:

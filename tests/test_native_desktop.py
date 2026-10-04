@@ -10,12 +10,15 @@ import os
 from pathlib import Path
 import subprocess
 import struct
+import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from desktop import native_session as native
+from desktop import native_handoff
 from desktop import client
 from desktop.portal import Portal, REMOTE, SCREENCAST
 from lib import desktop_cli
@@ -164,6 +167,69 @@ class NativeControlTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"request expired"):
             self.session.handle({**self.payload,"deadline":time.monotonic()-1,"action":"input","kind":"text","text":"late"})
         self.portal.notify.assert_not_called()
+
+
+class NativeHandoffTests(unittest.TestCase):
+    def test_only_live_running_session_reports_enabled_input(self):
+        cases = [
+            ({"state": "awaiting-consent", "detail": "Approve KDE"}, "Waiting for KDE consent: Approve KDE"),
+            ({"state": "failed", "detail": "Permission denied", "paused": True}, "Native desktop control failed: Permission denied"),
+            ({"state": "stopped", "paused": True}, "Automation stopped; KDE and applications are preserved"),
+            ({"stopped": True}, "Automation stopped; KDE and applications are preserved"),
+            ({"state": "running", "expires_in": 0}, "Automation expired; start a new session with KDE consent"),
+            ({"state": "running", "expires_in": 30, "paused": True}, "Agent input paused — you have control"),
+            ({"state": "running", "expires_in": 30}, "Agent input enabled (30 seconds remaining)"),
+            ({"error": "Socket closed"}, "Native desktop control unavailable: Socket closed"),
+            ({}, "Native desktop control unavailable: Inspect desktop status"),
+        ]
+        for status, expected in cases:
+            with self.subTest(status=status):
+                self.assertEqual(native_handoff.describe(status), expected)
+
+    def test_human_requests_wait_for_poll_instead_of_being_discarded(self):
+        gtk, glib = Mock(), Mock()
+        label = Mock()
+        gtk.Label.side_effect = [label, Mock()]
+        buttons = [Mock(), Mock(), Mock()]
+        gtk.Button.side_effect = buttons
+        workers, responses = [], []
+        glib.idle_add.side_effect = lambda callback, result: responses.append((callback, result))
+
+        def thread(*, target, daemon):
+            return Mock(start=lambda: workers.append(target))
+
+        def interact():
+            # The initial status poll is still in flight when the human clicks.
+            for button in (buttons[0], buttons[2]):
+                button.connect.call_args.args[1](button)
+            self.assertEqual(len(workers), 1)
+            self.assertEqual(label.set_text.call_args.args, ("Control request pending: stop",))
+            # Another poll must neither start nor displace the queued controls.
+            glib.timeout_add_seconds.call_args.args[1]()
+            workers.pop(0)()
+            callback, result = responses.pop(0)
+            callback(result)
+            self.assertEqual(label.set_text.call_args.args, ("Updating desktop control: pause",))
+            workers.pop(0)()
+            callback, result = responses.pop(0)
+            callback(result)
+            self.assertEqual(label.set_text.call_args.args, ("Updating desktop control: stop",))
+            workers.pop(0)()
+            callback, result = responses.pop(0)
+            callback(result)
+            self.assertEqual(label.set_text.call_args.args, ("Automation stopped; KDE and applications are preserved",))
+            self.assertFalse(workers)
+
+        gtk.main.side_effect = interact
+        with patch.dict(sys.modules, {"gi": Mock(), "gi.repository": SimpleNamespace(Gtk=gtk, GLib=glib)}), \
+                patch.object(native_handoff.threading, "Thread", side_effect=thread), \
+                patch.object(native, "status", return_value={"state": "running", "expires_in": 30}) as status, \
+                patch.object(native, "request", side_effect=[
+                    {"state": "running", "expires_in": 30, "paused": True}, {"stopped": True}
+                ]) as request:
+            self.assertEqual(native_handoff.main(), 0)
+        status.assert_called_once_with()
+        self.assertEqual(request.call_args_list, [call({"action": "pause"}), call({"action": "stop"})])
 
 
 class NativeCliTests(unittest.TestCase):

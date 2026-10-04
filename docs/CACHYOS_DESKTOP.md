@@ -77,10 +77,13 @@ include personal content; review evidence before sharing it.
 
 ## Pause, stop and limitations
 
-The handoff window provides Pause, Resume and Stop. `control pause` revokes
-the current operation lease and blocks launches, input and semantic mutations;
-observation remains available. In-flight bounded operations may finish before
-pause is processed. Honor human pause; do not resume it automatically.
+The handoff window provides Pause, Resume and Stop and reports pending consent,
+failed sessions and expiration without claiming input is enabled. Human control
+requests wait in order behind an in-flight status poll or control request.
+`control pause` revokes the current operation lease and blocks launches, input
+and semantic mutations; observation remains available. In-flight bounded
+operations may finish before pause is processed. Honor human pause; do not
+resume it automatically.
 `basaltw desktop --native stop` closes the portal/helper without logging out
 KDE or closing applications. Sessions expire after 15 minutes; revocation,
 portal/bus loss or disappearance of the session socket stops control.
