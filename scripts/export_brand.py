@@ -67,7 +67,7 @@ def export_assets(assets: Path) -> None:
             header=f'<header><p class="eyebrow">Basaltwater identity</p><h1>{heading}</h1></header>',
             content=content, navigation=tuple((url, label, url if url == filename else None) for url, label, _ in navigation),
             footer='<footer>Review specimen · Apache-2.0 assets · bluehexagons</footer>')
-        (assets / filename).write_text(document, encoding="utf-8")
+        (assets / filename).write_text(document + "\n", encoding="utf-8")
     state = panel.WebPanelState({
         "title": "Workshop", "host": "workshop.example.test", "username": "operator",
         "system_type": "server_dev", "features": {},
@@ -93,6 +93,7 @@ def export_assets(assets: Path) -> None:
             {"label": "Maintenance", "value": "No reboot pending", "description": "Automatic package updates are scheduled"},
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
+        patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
     ):
         (assets / "panel.html").write_text(panel.render_page(state) + "\n", encoding="utf-8")
 

@@ -35,6 +35,13 @@ and endpoints without a readiness check. Audit totals include warning/error
 events while retaining collection warnings. These summaries reuse the displayed
 records; they do not start extra service or log queries.
 
+**Agent activity** shows the panel's running and queued prompts, enabled
+schedules, drafts, automatically paused tasks, and latest finished run. It
+includes the next scheduled task and active-run timing at page load. Open a
+run link to view that report directly in Agents. Counts use private saved panel
+state without launching diagnostics or prompts; other terminal-agent sessions
+are not included. Missing task storage and scheduler errors remain explicit.
+
 ## Install and sign in
 
 HTTPS is recommended:
@@ -218,7 +225,10 @@ without a home and show diagnostics with prompt execution unavailable.
 5. Set **Maximum runtime** in whole minutes, from 1 minute to 7 days (default
    30 minutes). Waiting and sleeping count toward this wall-clock limit. This
    is a duration cap, not an exact cost or token budget.
-6. Choose once, hourly, daily, or weekly. **Run now** queues an immediate run
+6. Choose once, hourly, daily, weekly, or **Custom interval**. Custom intervals
+   accept 1–43,200 whole minutes (30 days): 360 means every 6 hours; 20,160 means
+   every 2 weeks. The custom field applies only when Custom interval is selected.
+   **Run now** queues an immediate run
    and enables repetition when selected. **Create schedule** starts after one
    interval. **Save draft** stores an inactive task, including a one-time
    prompt, without running it or enabling repetition. Drafts can be prepared
@@ -317,7 +327,9 @@ and CLI startup errors count as failed runs. A completed CLI process does not
 prove the requested task succeeded; review its output and validation evidence.
 
 Once tasks are saved, the screen leads with their status; expand **Create a
-prompt task** to add another, or select a saved task's **Edit** link.
+prompt task** to add another, or select a saved task's **Edit** link. Selecting
+a template, editing, duplicating, or reusing settings puts the selected form
+before the saved-task list.
 Pausing stops future work and clears a queued run; cancel an active run
 separately. Cancellation stops processes, but does not undo completed edits.
 Run history retains the prompt and settings used, timestamps, duration, exit
@@ -331,9 +343,14 @@ and timing without automatic reloads that would discard a prompt draft.
 The scheduler belongs to the panel service, so it runs without T3 Code while
 the panel is running. Tasks persist across panel and host restarts. After
 downtime, each overdue schedule runs at most once, then advances to its next
-interval. Runs interrupted by a restart are labelled for review. The initial
-runner executes serially and does not create isolated Git worktrees: choose
-a dedicated checkout when work could overlap another agent session.
+interval. Deadlines crossed while a task is running are skipped, preserving its
+cadence without immediately starting another run of that task. An explicit
+Run now request remains available. Changing the elapsed interval resets the next
+deadline to a full interval from saving; editing other settings keeps the existing
+deadline. Paused tasks and drafts remain inactive after edits. These are elapsed
+intervals rather than calendar times. Runs interrupted by a restart are labelled
+for review. The runner executes serially and does not create isolated Git
+worktrees: choose a dedicated checkout when work could overlap another agent session.
 
 **Check agent readiness** collects versions and local credential metadata for
 Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and

@@ -23,6 +23,17 @@ An endpoint without a readiness result remains not checked. Audit warning/error
 counts cover the displayed snapshot, which can be incomplete or capped at 100
 events; collection health remains visible beside the counts.
 
+The dashboard's Agent activity section reads bounded saved task state without
+launching diagnostics, tools, or prompts. It counts panel tasks only: active and
+queued runs, enabled schedules, drafts, automatically paused tasks, and saved
+tasks whose latest retained outcome failed or was interrupted. Removed tasks
+do not contribute to the attention count. The latest finished run remains
+available while retained, including after its task is removed. Missing storage
+is shown as unavailable; a scheduler error is displayed alongside saved counts.
+Run links use `GET /agents?run=RUN_ID` and an in-page anchor to open the selected
+report; an evicted record produces a notice. IDs use the same strict
+32-character format as other task views. Opening a report changes no state.
+
 ## Notification ingest
 
 The receiver is opt-in, HTTPS-only, and available at
@@ -202,9 +213,15 @@ Basic Auth and the panel's CSRF token. The fixed form routes are
 `/actions/agent-diagnostics`; duplicate and unknown fields are rejected.
 Tasks accept a name, prompt, working directory, optional model and reasoning
 effort, maximum runtime, execution mode, command-network and temporary-write
-choices, web-search mode, Codex session retention, a fixed interval, and a
-0–10 consecutive-failure limit (default 3). No executable or arbitrary CLI
+choices, web-search mode, Codex session retention, a preset or custom interval,
+and a 0–10 consecutive-failure limit (default 3). No executable or arbitrary CLI
 arguments can be supplied through a form.
+
+The form parser accepts at most 18 fields. A custom schedule uses
+`interval=custom` and `repeat_minutes` from 1 to 43,200 whole minutes; preset
+intervals normalize the custom value to zero. Older saved presets receive that
+default without changing their deadlines. The runtime cap is independent of
+the repeat interval.
 
 The starting catalog combines universal templates with integration templates
 filtered by existing manifest feature flags, configured service/access labels,
@@ -255,13 +272,20 @@ State lives in `~/.local/state/basaltwater/prompt-tasks/tasks.json` (0600) below
 a private directory (0700). A lifetime process lock prevents a second panel
 scheduler from executing the same tasks. The scheduler runs with the panel
 service, checks due work every 15 seconds, persists a claim before execution,
-and executes serially. Next-run deadlines use elapsed hourly/daily/weekly
-intervals rather than local calendar times; timestamps display in UTC. An
-overdue task runs once, then advances beyond the current time. A run-now request
-before the normal deadline does not move that deadline. Resume schedules a full
+and executes serially. Next-run deadlines use elapsed hourly/daily/weekly or
+custom minute intervals rather than local calendar times; timestamps display
+in UTC. An overdue task runs once, then advances beyond the current time. A
+run-now request before the normal deadline does not move that deadline unless the run crosses
+it. At completion, failure, or cancellation, deadlines crossed during that run
+advance to the next future point on the existing cadence; they do not queue an
+immediate catch-up run. Other queued work is retained. Resume schedules a full
 interval from the resume time. Pause clears queued work and stops repetition;
 cancel stops the active process group. Restarted runs become interrupted and
 are not automatically retried as the same run.
+
+Changing the elapsed interval while editing resets the next deadline to a full
+interval from saving. Other edits preserve it. Editing never enables a paused
+task or draft, and switching to Once disables repetition.
 
 Draft creation persists settings with repetition and queueing disabled; it
 does not require Codex to be installed. One-time drafts can be queued later;

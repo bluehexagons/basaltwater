@@ -14,6 +14,13 @@ from common.service_tools import web_panel_jobs as jobs
 
 
 class DashboardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Agent activity has its own temporary-state integration tests. Other
+        # dashboard checks must not read the developer account's private tasks.
+        snapshot = patch.object(panel.AgentTasks, "snapshot", return_value={"tasks": [], "runs": []})
+        snapshot.start()
+        self.addCleanup(snapshot.stop)
+
     def test_host_snapshot_reports_load_swap_inodes_and_kernel(self) -> None:
         def proc_file(path: str, **_kwargs: object) -> StringIO:
             if path == "/proc/uptime":

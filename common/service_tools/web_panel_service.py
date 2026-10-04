@@ -36,7 +36,7 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
-from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agents
+from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
@@ -989,7 +989,7 @@ select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); ou
 .sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
   box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
 .sidebar a[href^="/#"]:active { background: var(--accent-soft); }
-body:has(main :target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
+body:has(main :is(#services-heading, #audit-heading, #notifications-heading, #access-heading, #trust, #maintenance-heading):target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
 body:has(#services-heading:target) .sidebar a[href="/#services-heading"],
 body:has(#audit-heading:target) .sidebar a[href="/#audit-heading"],
 body:has(#notifications-heading:target) .sidebar a[href="/#notifications-heading"],
@@ -1123,6 +1123,9 @@ meter::-webkit-meter-suboptimum-value { background: var(--warning); }
 meter::-webkit-meter-even-less-good-value { background: var(--bad); }
 meter::-moz-meter-bar { background: var(--accent); }
 .metric-value.warning { color: var(--warning); }
+.agent-activity-notes { display: flex; flex-wrap: wrap; gap: 4px 20px; align-items: center;
+  margin-top: 8px; color: var(--muted); font-size: .8rem; }
+.agent-activity-notes p { margin: 0; }
 .trust-panel {
   padding: 17px 18px 18px;
 }
@@ -1943,8 +1946,7 @@ def render_page(state: WebPanelState) -> str:
 <h2 id="overview-heading">System overview</h2></div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl></section>
-<div class="action"><div><strong>Agent tasks</strong><p>Review system health and logs, plan maintenance, or prepare local data work.</p></div>
-<a class="refresh-link" href="/agent-tools">Open agent tools →</a></div>
+{render_agent_activity(state)}
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
 <h2 id="services-heading">Web services</h2></div>
 <span class="count">{service_count}</span></div><div class="grid">{service_cards}</div></section>
@@ -2099,7 +2101,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=17,
+                max_num_fields=18,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
@@ -2154,7 +2156,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "csrf", "id", "title", "prompt", "directory", "mode", "interval", "model",
                 "custom_model", "network", "submit", "effort", "timeout_minutes",
                 "web_search", "session_history", "temporary_files",
-                "failure_limit",
+                "failure_limit", "repeat_minutes",
             },
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):

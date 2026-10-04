@@ -54,8 +54,13 @@ stop the local process group without undoing edits or remote actions. They do
 not guarantee cancellation of work owned by an external MCP server or broker.
 Maintenance holds are separate, shared account state and are not automatic.
 
-Schedules run only while the panel service is running. A missed interval produces
-at most one catch-up run; a restarted active run is marked interrupted. The
+Schedules run only while the panel service is running. Preset or custom elapsed
+intervals are independent of the runtime cap; custom intervals accept 1 minute
+to 30 days. Downtime produces at most one catch-up run per overdue schedule.
+Intervals crossed during a run are skipped on its existing cadence instead of
+immediately repeating the task. Changing the elapsed interval resets its next
+deadline; editing other settings preserves it and does not activate a draft or paused
+schedule. A restarted active run is marked interrupted. The
 default failure limit pauses repetition after three failed or interrupted runs.
 Codex exiting successfully means the process completed, not that checks passed:
 a report of blocked or unhealthy checks can still have a completed status and
