@@ -419,6 +419,8 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                     outside = home / "private.json"
                     original = '{"private": "must not be copied"}'
                     outside.write_text(original, encoding="utf-8")
+                    # Make the later content verification advance atime on relatime mounts.
+                    os.utime(outside, ns=(0, outside.stat().st_mtime_ns))
                     if kind == "symlink":
                         path.symlink_to(outside)
                     elif kind == "hardlink":
@@ -437,8 +439,9 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                         write.assert_not_called()
                         chown.assert_not_called()
                     self.assertFalse(agent_cli._opencode_browser_registration(str(home)))
-                    self.assertEqual(outside.read_text(encoding="utf-8"), original)
+                    # Verify metadata before our own read updates the hard-linked inode's atime.
                     self.assertEqual(path.lstat(), original_stat)
+                    self.assertEqual(outside.read_text(encoding="utf-8"), original)
 
     def test_codex_registration_does_not_match_command_in_another_section(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
