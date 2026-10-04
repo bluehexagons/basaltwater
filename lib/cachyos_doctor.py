@@ -183,9 +183,15 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         selected_packages = {"t3code-bin": config.t3code_desktop} if config is not None else {}
         selected_packages.update({package: False for package in BROWSER_PACKAGES})
         if config is not None:
-            from common.cachyos_steps import CACHYOS_DESKTOP_PACKAGES, CACHYOS_SYSADMIN_PACKAGES
+            from common.cachyos_steps import (
+                CACHYOS_AUTOMATION_PACKAGES, CACHYOS_DESKTOP_PACKAGES,
+                CACHYOS_SYSADMIN_PACKAGES, desktop_automation_requested,
+            )
             from common.cachyos_software import selected_software
 
+            selected_packages.update({
+                package: desktop_automation_requested(config) for package in CACHYOS_AUTOMATION_PACKAGES
+            })
             for command, packages in selected_software(config):
                 version = None
                 for package in packages:

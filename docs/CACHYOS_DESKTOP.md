@@ -24,17 +24,22 @@ basaltw desktop --native screenshot --output /absolute/task/observe-1.png
 `start` returns `awaiting-consent` while the owner answers KDE. Wait for
 `running` before interaction. Basaltwater cannot grant portal permission.
 Cancelled, denied or incomplete consent does not enable usable control.
+If the helper reports a failed session, `start` and `status` return a nonzero
+exit code with the failure detail; pending consent remains a normal start state.
 The combined [RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)/
 [ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)
 session shares exactly one selected monitor and requests both input devices.
 There is no saved grant or automatic control at login.
 
-Selecting any supported desktop application during setup installs
+Selecting a supported desktop application during setup, including Godot,
+Material Maker, Moonlight or the sysadmin GUI tools, installs
 `python-gobject`, `at-spi2-core`, `gstreamer`, `gst-plugins-base`,
 `gst-plugin-pipewire`, `gtk3` and `libxkbcommon`. Setup never starts the helper or changes
 KDE preferences, account groups or graphics drivers. The default
 `basaltw desktop` backend continues to address Debian XRDP; `--native` explicitly
 selects KDE. No root access, global input daemon or remote listener is needed.
+The CachyOS doctor and setup receipt mark these prerequisites as selected;
+missing packages appear as failures without starting automation.
 
 ## Observe and edit
 

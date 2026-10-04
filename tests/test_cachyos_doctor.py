@@ -166,6 +166,25 @@ class DoctorTests(unittest.TestCase):
             else:
                 self.assertEqual(command[:4], ["/usr/bin/systemctl", "--user", "--no-pager", "is-active"])
 
+    def test_selected_automation_dependencies_report_missing_packages_as_failures(self):
+        from common.cachyos_steps import CACHYOS_AUTOMATION_PACKAGES
+        from lib.config import SetupConfig
+
+        def probe(command, uid):
+            if command[0] == "/usr/bin/pacman" and command[-1] in CACHYOS_AUTOMATION_PACKAGES:
+                return "error", ""
+            return self.healthy_probe(command, uid)
+
+        self.probe.side_effect = probe
+        with patch.object(doctor.shutil, "which", return_value=None):
+            for selected in (False, True):
+                config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                                     install_material_maker=selected)
+                records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+                for package in CACHYOS_AUTOMATION_PACKAGES:
+                    self.assertEqual(records["package." + package]["selected"], selected)
+                    self.assertEqual(records["package." + package]["state"], "failed" if selected else "deferred")
+
     def test_desktop_package_does_not_require_managed_web_service(self):
         def probe(command, uid):
             if command[-1] == "basaltwater-cachyos-t3.service":

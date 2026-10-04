@@ -198,7 +198,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                       existing_window_ids=[item["id"] for item in observed["windows"] if item["id"] in previous],
                                       window_association="title substring; inspect PID/class before acting")
         print(json.dumps(result, indent=2))
-        return 1 if "error" in result or result.get("healthy") is False else 0
+        return int("error" in result or result.get("healthy") is False or result.get("state") == "failed")
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1

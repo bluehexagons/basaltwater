@@ -63,6 +63,14 @@ CACHYOS_AUTOMATION_PACKAGES = (
 )
 
 
+def desktop_automation_requested(config: SetupConfig) -> bool:
+    """Include prerequisites for graphical tools outside the desktop package table."""
+    return any(getattr(config, field) for field, _, _ in CACHYOS_DESKTOP_PACKAGES) or any((
+        config.install_godot, config.install_material_maker,
+        config.install_moonlight, config.install_sysadmin_tools,
+    ))
+
+
 def _home(config: SetupConfig) -> Path:
     return Path(pwd.getpwnam(config.username).pw_dir)
 
@@ -196,7 +204,7 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     for field, _command, package in CACHYOS_DESKTOP_PACKAGES:
         if getattr(config, field):
             packages.append(package)
-    if any(getattr(config, field) for field, _, _ in CACHYOS_DESKTOP_PACKAGES):
+    if desktop_automation_requested(config):
         packages.extend(CACHYOS_AUTOMATION_PACKAGES)
     if config.install_remmina:
         packages.extend(("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret"))

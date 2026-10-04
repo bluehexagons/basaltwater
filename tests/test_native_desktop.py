@@ -167,6 +167,31 @@ class NativeControlTests(unittest.TestCase):
 
 
 class NativeCliTests(unittest.TestCase):
+    def test_native_start_and_status_report_failed_consent_without_claiming_success(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        for command in ("start", "status"):
+            args = parser.parse_args(["desktop", "--native", command])
+            for state, expected in (("awaiting-consent", 0), ("running", 0), ("failed", 1)):
+                with self.subTest(command=command, state=state), \
+                        patch.object(native, command, return_value={"state": state, "detail": "portal result"}), \
+                        patch.object(desktop_cli.runtime, command) as xrdp, redirect_stdout(StringIO()) as output:
+                    self.assertEqual(desktop_cli.run_desktop_command(args), expected)
+                    self.assertEqual(json.loads(output.getvalue())["detail"], "portal result")
+                    xrdp.assert_not_called()
+
+    def test_default_start_keeps_debian_backend_when_cachyos_is_detected(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "start"])
+        with patch("lib.cachyos.is_cachyos", return_value=True), \
+                patch.object(native, "start") as portal, \
+                patch.object(desktop_cli.runtime, "start", return_value={"state": "running"}) as xrdp, \
+                redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+        xrdp.assert_called_once_with()
+        portal.assert_not_called()
+
     def test_session_check_rejects_foreign_socket_ssh_and_non_kde(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(native,"runtime_directory",return_value=Path(directory,"native")), patch.object(native.os,"getuid",return_value=1000), patch.object(native.os,"geteuid",return_value=1000), patch("lib.cachyos.is_cachyos",return_value=True), patch("lib.cachyos_doctor._owned_socket",return_value=True) as owned, patch.dict(os.environ,{"XDG_SESSION_TYPE":"wayland","XDG_CURRENT_DESKTOP":"KDE","WAYLAND_DISPLAY":"wayland-0"},clear=True):
             self.assertEqual(native.check_session(),"wayland-0")
@@ -253,6 +278,29 @@ class NativePackageTests(unittest.TestCase):
             self.assertFalse(set(steps.CACHYOS_AUTOMATION_PACKAGES) & set(steps.cachyos_packages(base)))
             base.install_inkscape = True
             self.assertTrue(set(steps.CACHYOS_AUTOMATION_PACKAGES) <= set(steps.cachyos_packages(base)))
+
+    def test_individual_graphical_selections_include_automation_dependencies(self):
+        from common import cachyos_steps as steps
+        from lib.config import SetupConfig
+
+        for field in ("install_godot", "install_material_maker", "install_moonlight", "install_sysadmin_tools"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(steps, "_home", return_value=Path(directory)), \
+                    patch.object(steps.shutil, "which", return_value="/usr/bin/tool"):
+                config = SetupConfig(host="localhost", username="human", system_type="agent_cachyos",
+                                     **{field: True})
+                self.assertTrue(set(steps.CACHYOS_AUTOMATION_PACKAGES) <= set(steps.cachyos_packages(config)))
+
+    def test_publishing_cli_selections_do_not_require_desktop_automation(self):
+        from common import cachyos_steps as steps
+        from lib.config import SetupConfig
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(steps, "_home", return_value=Path(directory)), \
+                patch.object(steps.shutil, "which", return_value=None):
+            config = SetupConfig(host="localhost", username="human", system_type="agent_cachyos",
+                                 install_butler=True, install_steamcmd=True)
+            self.assertFalse(set(steps.CACHYOS_AUTOMATION_PACKAGES) & set(steps.cachyos_packages(config)))
 
 
 if __name__ == "__main__":
