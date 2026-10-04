@@ -14,6 +14,12 @@ application. Use the collaborative browser policy for web applications.
 
 ## Blender
 
+Agent-assisted desktop work is a primary Blender use case on agentic desktop
+VMs: touching up 3D models, adjusting materials and UVs, assembling scenes and
+preparing assets for export. Support includes opening an existing model,
+making targeted edits in the native application and verifying saved or exported
+results autonomously. Human handoff is optional and applies when requested.
+
 Select `--blender` in a Debian workstation or standard server setup, including
 `agent_vm` for headless use. It installs Debian's APT `blender` package for the
 configured release and follows normal host package updates. CachyOS's
@@ -21,6 +27,38 @@ configured release and follows normal host package updates. CachyOS's
 [desktop software support table](WORKSTATIONS.md#desktop-software-support-and-flags)
 for other applications, flags and desktop access choices. Check
 `blender --version` before using version-specific scene APIs or add-ons.
+
+### Model touch-ups on the shared desktop
+
+Use a desktop-capable profile such as `agent_code_vm` or `agent_workstation`
+with `--blender`. On a headless profile, add `--desktop xfce` for the shared
+native desktop; `--blender` itself selects the application. Follow the local
+desktop skill's launch, observation, control and handoff rules.
+
+Work from a task copy or versioned `.blend` file and inspect the model before
+editing. Preserve the project's object identities, hierarchy, modifiers,
+materials, UVs, rigging and external asset references as appropriate to the
+requested change. Open that working file with
+`basaltw desktop exec -- blender /absolute/project/model.blend`, using the
+project's intended add-ons and embedded-script policy.
+
+Combine viewport inspection and native editing with `bpy` automation where it
+makes changes repeatable. Check the active editor, selected object and mode
+before shortcuts or context-sensitive operators. Blender's custom UI may have
+no AT-SPI controls; screenshots and desktop input still support agentic editing.
+Use current observations for each interaction and inspect the changed geometry
+or materials from views relevant to the task.
+
+Save a checkpoint, reopen the saved task copy and verify the requested edit and
+its required dependencies. Check an exported asset when export is part of the
+task. Retain useful before/after viewport evidence alongside the saved file.
+Complete autonomous tasks by reporting the saved/exported paths, changes and
+validation results; human review is not a completion gate. If human handoff is
+requested, leave the working scene available and pause agent control when
+transferring the shared desktop.
+
+Desktop readiness therefore includes an edit/save/reopen workflow on the target
+VM. The background CPU smoke check below supplies additional rendering evidence.
 
 ### Check rendering after setup
 
@@ -99,9 +137,9 @@ upstream Blender build or force a GPU backend solely to suppress a warning.
 Test opening, editing and rendering through the native desktop separately.
 Blender's custom UI may expose no AT-SPI controls; use recent application
 screenshots and desktop input when accessibility inspection is unavailable.
-Prefer `bpy` for repeatable scene changes. Test launches can show the first-run
-Quick Setup dialog even with `--factory-startup`; use a private
-`BLENDER_USER_CONFIG` directory before completing it so personal preferences
+Use `bpy` alongside native editing for repeatable scene changes. Test launches
+can show the first-run Quick Setup dialog even with `--factory-startup`; use a
+private `BLENDER_USER_CONFIG` directory before completing it so personal preferences
 remain untouched. Factory startup is for isolated tests; ordinary project work
 may require the user's configured add-ons and preferences.
 

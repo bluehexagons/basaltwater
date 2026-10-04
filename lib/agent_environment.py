@@ -20,8 +20,10 @@ from lib.validators import validate_host
 PROJECT_FILE = "basaltwater-agent.json"
 DESKTOP_APPLICATIONS = {
     "blender": {
-        "workflows": ["3D scene editing", "background rendering", "Python scene automation"],
+        "workflows": ["3D model touch-ups", "3D scene editing", "background rendering", "Python scene automation"],
         "instructions": [
+            "Use the native desktop for model touch-ups, material/UV edits and scene work: basaltw desktop exec -- blender /absolute/project/model.blend. Follow the desktop skill and the project's add-on/script policy.",
+            "Complete model edits autonomously: combine viewport editing with bpy, verify a saved task copy by reopening it, and report saved/exported artifacts. Human handoff is optional when requested.",
             "Render without a desktop: blender --background --disable-autoexec scene.blend --render-output /absolute/artifact/render- --render-format PNG --render-frame 1",
             "Check a small isolated Cycles CPU render: basaltw agent blender smoke --json. It retains a blend scene, PNG, settings and logs; UI and GPU readiness remain unverified.",
             "Load the blend file before output overrides; put the render action last. Record camera, frame, resolution, render engine and device.",

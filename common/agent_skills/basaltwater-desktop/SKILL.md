@@ -1,6 +1,6 @@
 ---
 name: basaltwater-desktop
-description: Use native graphical applications in the VM's shared XRDP desktop, with human handoff. Prefer available T3 Code or Playwright tools for browser testing.
+description: Use native graphical applications, including autonomous Blender model touch-ups, in the VM's shared XRDP desktop. Prefer available T3 Code or Playwright tools for browser testing.
 metadata:
   managed-by: basaltwater
 ---
@@ -26,14 +26,20 @@ profiles. It uses the configured Debian release's APT package even with
 [desktop software support table](https://github.com/bluehexagons/basaltwater/blob/main/docs/WORKSTATIONS.md#desktop-software-support-and-flags)
 for supported applications and setup flags.
 
-When Blender is detected, run `basaltw agent blender smoke --json` for a
-deliberate small Cycles CPU check with private scene/PNG/settings/log evidence.
-This does not verify UI or GPU readiness. Read [Blender workflows](references/blender.md)
-when rendering, automating scenes or testing Blender's UI; it covers software
-graphics, embedded Python and isolated preferences.
-Use background rendering for repeatable output checks and this shared desktop
-for interactive editing checks; launch with
-`basaltw desktop exec -- blender --disable-autoexec /absolute/project/scene.blend`.
+Agentic Blender desktop editing is a primary workflow: model touch-ups,
+material/UV adjustments, scene work and asset preparation, usually completed
+fully autonomously. Read
+[Blender workflows](references/blender.md) for native edit/save/reopen checks,
+software graphics, embedded Python and isolated test preferences. Launch the
+working scene with `basaltw desktop exec -- blender /absolute/project/scene.blend`
+using the project's intended preferences, add-ons and embedded-script policy.
+Combine viewport interaction with `bpy` for repeatable changes, verify saved or
+exported results, and report the completed artifacts. Human handoff is optional
+when requested; autonomous Blender tasks do not require human review.
+
+For a deliberate background rendering check, `basaltw agent blender smoke --json`
+retains private scene/PNG/settings/log evidence from a small Cycles CPU render.
+Desktop editing readiness requires its own edit/save/reopen check.
 Record scene, camera, frame, resolution, engine
 and device alongside PNG captures. Compare results with `basaltw agent visuals
 compare`; use a project harness with `visuals capture` for isolated revisions.

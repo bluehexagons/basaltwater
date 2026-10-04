@@ -61,7 +61,7 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertEqual(blender["executable"], "/bin/blender")
         self.assertEqual(blender["readiness"], "unverified")
         self.assertIn("background rendering", blender["workflows"])
-        self.assertIn("--background", blender["instructions"][0])
+        self.assertTrue(any("--background" in instruction for instruction in blender["instructions"]))
         self.assertEqual(result["desktop_skills"], [str(skill)])
         execute.assert_not_called()
 

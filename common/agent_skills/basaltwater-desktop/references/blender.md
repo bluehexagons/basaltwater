@@ -4,6 +4,34 @@ Use Debian's configured-release APT package selected by `--blender`; normal
 package maintenance owns updates. Check `blender --version` before using
 version-specific APIs. Installation or PATH discovery does not verify rendering.
 
+## Touch up models on the desktop
+
+Agentic native editing is a primary use case on desktop VMs: model touch-ups,
+material and UV adjustments, scene assembly and asset preparation. Use this
+skill's shared-desktop lifecycle, observation and control rules. Complete these
+tasks autonomously by default; use human-handoff rules only for a requested
+transfer of control.
+
+Work in a task copy or versioned `.blend` file. Inspect the model and its
+dependencies first; preserve object identities, hierarchy, modifiers,
+materials, UVs and rigging as appropriate to the requested change. Launch the
+working scene through `basaltw desktop exec -- blender /absolute/project/model.blend`
+with the project's intended preferences, add-ons and embedded-script policy.
+
+Use native selection, viewport inspection and editing for visual work, and
+`bpy` where it makes scene changes repeatable. Check the active editor, object
+selection and mode before shortcuts or context-sensitive operators. Blender's
+custom UI can be absent from AT-SPI; fresh application screenshots and desktop
+input remain usable. Inspect geometry or materials from task-relevant views.
+
+Save a checkpoint and reopen the saved task copy to verify the edit and required
+dependencies. Verify exports when requested and retain useful before/after
+viewport evidence. Report the saved/exported paths, edits and validation results
+to complete autonomous work; do not wait for human review unless requested.
+For a requested handoff, leave the working scene available and pause agent
+control when transferring the shared desktop. Desktop readiness includes this
+edit/save/reopen workflow; a CPU render alone leaves it unverified.
+
 ## Establish a CPU baseline
 
 For a deliberate rendering check, run `basaltw agent blender smoke --json`.
@@ -51,12 +79,7 @@ packages are not automatically available; inspect `sys.version` inside Blender
 and follow the project's Blender dependency recipe. Use absolute output paths
 and resolve external assets relative to the blend file when necessary.
 
-## Test the UI separately
-
-Use this skill's shared-desktop lifecycle and control rules. Prefer `bpy` for
-repeatable scene changes. Blender's custom UI can be absent from AT-SPI, so use
-fresh application screenshots and desktop input when inspection is unavailable.
-Verify changes by inspecting saved scene/export files as well as screenshots.
+## Isolate disposable UI experiments
 
 For disposable UI experiments, launch with a new private `BLENDER_USER_CONFIG`
 directory, `--factory-startup` and `--disable-autoexec`. Quick Setup can still
