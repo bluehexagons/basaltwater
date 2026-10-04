@@ -54,6 +54,12 @@ and a private `GIMP3_DIRECTORY` for disposable GIMP batch checks where supported
 Krita's CLI exposes `--export --export-filename`; confirm local help and use
 isolated configuration/resources for tests instead of altering the user's profile.
 
+On the tested Krita 6.0.4, isolated CLI exports failed offscreen with X
+`BadWindow` and timed out after 30 seconds in the native session. Treat that
+path as unqualified: inspect task documents through the user-approved native
+UI, save/export through observed controls and verify the files. Do not repeat
+an offscreen failure as a readiness check or alter personal settings to hide it.
+
 Preserve sprite grids, transparent padding, pivots and atlas dimensions. Use
 nearest-neighbor scaling when required by pixel art. Inspect alpha against light
 and dark backgrounds; keep data-map channel meanings and color space intact,
