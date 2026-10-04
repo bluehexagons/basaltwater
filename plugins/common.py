@@ -141,6 +141,7 @@ def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     """Return the standard final verification steps for built-in setup flows."""
 
     from common.setup_maintenance import run_setup_maintenance
+    from common.game_development_steps import record_game_development_selection
     from common.steps import (
         check_restart_required,
         configure_static_network,
@@ -151,6 +152,7 @@ def get_final_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     if config.static_ipv4 or config.static_ipv6:
         steps.append(("Staging static network configuration", configure_static_network))
     steps.append(("Ensuring python command alias", ensure_python_alias))
+    steps.append(("Reconciling native game development selection", record_game_development_selection))
     steps.append(("Running setup maintenance", run_setup_maintenance))
     steps.append(("Checking if restart required", check_restart_required))
     return steps
@@ -184,6 +186,10 @@ def extend_runtime_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]])
         steps.append(("Installing image, audio, and video tools", install_av_tools))
     if config.install_gl_tools:
         steps.append(("Installing OpenGL tools", install_gl_tools))
+    if config.install_game_dev:
+        from common.game_development_steps import install_game_development
+
+        steps.append(("Installing native game and Animator development prerequisites", install_game_development))
     if config.install_godot:
         from common.godot_steps import (
             configure_auto_update_godot,

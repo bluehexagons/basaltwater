@@ -70,12 +70,16 @@ _DEVELOPMENT_ISSUES = frozenset(
         "node_default_missing",
         "node_npm_missing",
         "node_pnpm_missing",
+        "native_selection_unsafe",
+        "native_command_missing",
+        "native_module_missing",
     )
 )
 _DEVELOPMENT_TOOLCHAIN_FIELDS = {
     "godot": ("installed", "healthy", "version", "export_templates", "web_templates"),
     "go": ("installed", "healthy", "version", "gofmt", "cgo_enabled", "c_compiler"),
     "node": ("installed", "healthy", "version", "npm", "pnpm", "corepack"),
+    "native": ("installed", "healthy", "selected"),
 }
 
 
@@ -263,6 +267,8 @@ def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
             ),
         }
     if capability == "development":
+        from lib.game_development import NATIVE_COMMANDS, NATIVE_MODULES, SOURCE_MODULES, _VERSION
+
         raw_toolchains = _safe_mapping(record.get("toolchains"))
         raw_issues = record.get("issues")
         issues = (
@@ -274,20 +280,31 @@ def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
             if isinstance(raw_issues, list)
             else []
         )
+        toolchains = {
+            name: {field: toolchain.get(field) for field in fields if field in toolchain}
+            for name, fields in _DEVELOPMENT_TOOLCHAIN_FIELDS.items()
+            if isinstance(toolchain := raw_toolchains.get(name), dict)
+        }
+        if "native" in toolchains:
+            native = raw_toolchains["native"]
+            toolchains["native"].update({
+                "installed": native.get("installed") is True,
+                "healthy": native.get("healthy") is True,
+                "selected": native.get("selected") if type(native.get("selected")) is bool else None,
+                "commands": {name: value for name, value in _safe_mapping(native.get("commands")).items()
+                             if name in NATIVE_COMMANDS and type(value) is bool},
+                "modules": {name: value for name, value in _safe_mapping(native.get("modules")).items()
+                            if name in NATIVE_MODULES and (value is None or isinstance(value, str) and _VERSION.fullmatch(value))},
+                "project_bootstrap_required": [name for name in native.get("project_bootstrap_required", [])
+                                               if isinstance(name, str) and name in SOURCE_MODULES]
+                if isinstance(native.get("project_bootstrap_required"), list) else [],
+            })
         return {
             "capability": "development",
             "installed": record.get("installed") is True,
             "healthy": record.get("healthy") is True,
             "issues": issues,
-            "toolchains": {
-                name: {
-                    field: toolchain.get(field)
-                    for field in fields
-                    if field in toolchain
-                }
-                for name, fields in _DEVELOPMENT_TOOLCHAIN_FIELDS.items()
-                if isinstance(toolchain := raw_toolchains.get(name), dict)
-            },
+            "toolchains": toolchains,
         }
     return None
 

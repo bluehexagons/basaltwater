@@ -16,6 +16,7 @@ import sys
 import tempfile
 
 from lib.atomic_io import read_json_file
+from lib.node_runtime_ownership import mark_runtime, runtime_owner
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
 
@@ -192,6 +193,20 @@ class NodeSelection:
         return environment
 
 
+def _probe_environment(directory: str) -> dict[str, str]:
+    # npm rejects loading one path as both user and global configuration.
+    user_config = Path(directory) / "user.npmrc"
+    global_config = Path(directory) / "global.npmrc"
+    user_config.write_text("")
+    global_config.write_text("")
+    return {
+        "PATH": os.defpath, "HOME": directory, "LC_ALL": "C",
+        "COREPACK_ENABLE_NETWORK": "0", "COREPACK_ENABLE_PROJECT_SPEC": "0",
+        "NPM_CONFIG_USERCONFIG": str(user_config), "NPM_CONFIG_GLOBALCONFIG": str(global_config),
+        "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+    }
+
+
 def select_node(project: str = ".", *, version: str | None = None,
                 nvm_dir: str | None = None) -> NodeSelection:
     pin, source, engines = project_requirements(project)
@@ -219,7 +234,9 @@ def select_node(project: str = ".", *, version: str | None = None,
         executable = shutil.which("node")
         actual = None
         if executable:
-            result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=10, check=False)
+            with tempfile.TemporaryDirectory(prefix="basaltwater-node-selection-", dir="/tmp") as probe:
+                result = subprocess.run([executable, "--version"], cwd=probe, env=_probe_environment(probe),
+                                        capture_output=True, text=True, timeout=10, check=False)
             if result.returncode == 0:
                 actual = _version(result.stdout)
         if actual is None or not satisfies(actual, requirement) or (engines and not satisfies(actual, engines)):
@@ -234,19 +251,66 @@ def select_node(project: str = ".", *, version: str | None = None,
                          requirement, engines, str(nvm_root))
 
 
+def inspect_project_node(project: str, *, version: str | None = None) -> dict[str, object]:
+    """Check the selected interpreter/npm without running project scripts."""
+    selection = select_node(project, version=version)
+    npm_requirement = None
+    current = Path(project).resolve()
+    for directory in (current, *current.parents):
+        package_path = directory / "package.json"
+        if os.path.lexists(package_path):
+            package = read_json_file(str(package_path))
+            engines = package.get("engines", {}) if isinstance(package, dict) else None
+            if not isinstance(engines, dict):
+                raise ValueError("Invalid package engines for project Node diagnosis")
+            npm_requirement = engines.get("npm")
+            if npm_requirement is not None:
+                if not isinstance(npm_requirement, str):
+                    raise ValueError("Invalid npm engine requirement")
+                satisfies((0, 0, 0), npm_requirement)
+            break
+        if os.path.lexists(directory / ".git"):
+            break
+    tools: dict[str, str | None] = {"node": None, "npm": None}
+    issues: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="basaltwater-project-node-", dir="/tmp") as probe:
+        environment = selection.environment(_probe_environment(probe))
+        for name in tools:
+            try:
+                command = Path(selection.executable).with_name(name)
+                result = subprocess.run([str(command), "--version"], cwd=probe, env=environment,
+                                        capture_output=True, text=True, timeout=10, check=False)
+                if result.returncode == 0:
+                    tools[name] = ".".join(map(str, _version(result.stdout)))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+            if tools[name] is None:
+                issues.append("project_" + name + "_unusable")
+    if tools["node"] and tools["node"] != selection.version:
+        issues.append("project_node_version_mismatch")
+    if tools["npm"] and npm_requirement and not satisfies(_version(tools["npm"]), npm_requirement):
+        issues.append("project_npm_engine_mismatch")
+    return {
+        "healthy": not issues, "selection": asdict(selection), "tools": tools, "issues": issues,
+        "maintenance_owner": runtime_owner(selection.nvm_dir, selection.version),
+        "npm_requirement": npm_requirement,
+    }
+
+
 def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("node", help="Select and run project-specific Node runtimes")
     commands = parser.add_subparsers(dest="node_command", required=True)
-    for name in ("status", "env", "exec", "install"):
+    for name in ("status", "doctor", "env", "exec", "install"):
         command = commands.add_parser(name, help={
             "status": "Inspect the runtime selected for a project",
+            "doctor": "Probe the project's selected Node/npm outside repository configuration",
             "env": "Print shell exports for the selected runtime",
             "exec": "Run a command with the selected runtime",
             "install": "Install an explicit project runtime through managed NVM",
         }[name])
         command.add_argument("--project", default=".")
         command.add_argument("--version", help="Override the project pin with a version or range")
-        if name == "status":
+        if name in {"status", "doctor"}:
             command.add_argument("--json", action="store_true")
         if name == "exec":
             command.add_argument("argv", nargs=argparse.REMAINDER)
@@ -257,6 +321,12 @@ def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
 
 def run_node_command(args: argparse.Namespace) -> int:
     try:
+        if args.node_command == "doctor":
+            report = inspect_project_node(args.project, version=args.version)
+            print(json.dumps(report, indent=2) if args.json else
+                  f"Project Node {report['selection']['version']}: "
+                  + ("healthy" if report["healthy"] else ", ".join(report["issues"])))
+            return 0 if report["healthy"] else 1
         if args.node_command == "install":
             pin, _, _ = project_requirements(args.project)
             version = args.version or pin
@@ -270,14 +340,23 @@ def run_node_command(args: argparse.Namespace) -> int:
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
                     raise ValueError("Package managers require an exact npm@VERSION, pnpm@VERSION, or yarn@VERSION")
+            # An existing maintenance install becomes a project runtime before
+            # NVM or package-manager work can race with automatic cleanup.
+            try:
+                existing = select_node(args.project, version=version, nvm_dir=str(nvm.parent))
+            except ValueError:
+                existing = None
+            if existing and Path(existing.executable).is_relative_to(nvm.parent.absolute() / "versions/node"):
+                mark_runtime(nvm.parent, existing.version, owner="project")
             result = subprocess.run([
                 "/bin/bash", "--noprofile", "--norc", "-c",
                 '. "$1" --no-use && nvm install "$2"', "basaltwater-node-install", str(nvm), version,
             ], check=False)
             if result.returncode:
                 return result.returncode
+            selection = select_node(args.project, version=version, nvm_dir=str(nvm.parent))
+            mark_runtime(nvm.parent, selection.version, owner="project")
             if managers:
-                selection = select_node(args.project, version=version)
                 environment = selection.environment()
                 environment['npm_config_engine_strict'] = 'true'
                 npm = Path(selection.executable).with_name('npm')

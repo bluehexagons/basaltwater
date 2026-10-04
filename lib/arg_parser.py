@@ -758,7 +758,7 @@ def add_setup_arguments(
         "--game-dev", dest="install_game_dev",
         action=argparse.BooleanOptionalAction if not for_remote else "store_true",
         default=None if not for_remote else False,
-        help="Install native game libraries, build/debug tools, Xvfb, and Electron prerequisites (agent_cachyos)",
+        help="Install native game build/debug tools, headers, captures, and Electron prerequisites (Debian or agent_cachyos)",
     )
     parser.add_argument("--python", dest="install_python",
                         action=argparse.BooleanOptionalAction if not for_remote else "store_true",

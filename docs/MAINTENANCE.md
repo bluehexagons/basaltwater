@@ -130,12 +130,20 @@ and a failed self-update prevents the tool-upgrade phase from running.
 
 Node.js and uv use a conservative default policy:
 
-- Node.js follows the LTS track by default. An already-installed non-LTS track
-  is treated as an explicit choice and remains on that track. Global npm
-  package versions are preserved when the runtime changes. If package migration
-  fails (including failed npm inventory commands or malformed inventory),
-  the updater restores the previous default and removes only the
-  incomplete new runtime. A later setup rerun verifies the promised
+- Node.js follows the LTS track by default. Updating an already-installed
+  latest track requires `BASALTWATER_NODE_UPDATE_LATEST=1` in the Node updater's
+  service environment; a project's newer installed major never opts the host
+  into that track. Global npm package versions are preserved when the runtime
+  changes. Cleanup and rollback may remove only runtimes created and marked by
+  automatic maintenance. Preexisting versions, missing or invalid ownership
+  records, and project runtimes protected by `basaltw node install` are retained.
+  If package migration fails (including failed npm inventory commands or
+  malformed inventory), the updater restores the previous default and removes
+  the incomplete target only when it owns that runtime. Project protection and
+  removal/migration share a per-user lock; a runtime claimed by a project during
+  an update keeps its existing global tools. A busy or unsafe lock defers the
+  operation with an error instead of waiting or removing an unprotected target.
+  A later setup rerun verifies the promised
   Node/npm/PNPM baseline by running each version command and repairs it if a
   manual change left one unavailable or unusable. Setup fails visibly when the
   repaired baseline still cannot run instead of leaving a false-success state.

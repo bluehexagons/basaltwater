@@ -144,10 +144,13 @@ one in place.
 
 ## Day-two operation
 
-For native game development and baseline-compatible packaging, add
-`--container-tools --debug-tools` to a Debian VM setup. The first installs
-rootless Podman and its helpers; the second adds native debugging, compiler
-cache, and Ninja tools. See [project tooling](PROJECT_TOOLING.md).
+For native game and Animator development, add `--game-dev` to a Debian VM
+setup. It provides build tools, dependency headers, shader checks, headless
+captures, debugging/cache tools, and Electron runtime libraries. Project-owned
+SDL bootstraps and compiler pins still apply. Add `--container-tools` for
+baseline-compatible packaging through rootless Podman; `--debug-tools` is the
+smaller debugging bundle when the full game bundle is unnecessary. See
+[project tooling](PROJECT_TOOLING.md).
 `--python` adds uv for isolated Python tools. `--av-tools` and `--gl-tools`
 provide media inspection and OpenGL tracing; these are separate from GPU
 acceleration, which depends on the virtual hardware and graphics driver.

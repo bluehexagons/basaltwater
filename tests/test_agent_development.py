@@ -105,6 +105,7 @@ class AgentDevelopmentReadinessTests(unittest.TestCase):
                 "_inspect_node_development",
                 return_value=healthy_node,
             ),
+            patch("lib.game_development.inspect_native_development", return_value=absent),
         ):
             result = agent_cli.inspect_development_readiness("/home/agent")
 

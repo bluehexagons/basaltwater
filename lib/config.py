@@ -609,10 +609,10 @@ class SetupConfig:
         if self.install_data_analysis_tools:
             self.install_python = True
 
-        if self.system_type != "agent_cachyos" and (
-            self.install_node_versions or self.install_game_dev
-        ):
-            raise ValueError("--node-versions and --game-dev require the agent_cachyos profile")
+        if self.system_type != "agent_cachyos" and self.install_node_versions:
+            raise ValueError("--node-versions requires the agent_cachyos profile; Debian --node already prepares NVM")
+        if self.install_game_dev and self.system_type in {"server_proxmox", "server_wsl", "custom_steps"}:
+            raise ValueError("--game-dev requires a Debian workstation/server or agent_cachyos profile")
 
         cachyos_native_software = (
             self.install_sunshine,

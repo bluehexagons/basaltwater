@@ -58,9 +58,10 @@ class CachyOSDevelopmentTests(unittest.TestCase):
         self.assertEqual(remote, original)
         for flag in ("--no-game-dev", "--no-node-versions"):
             self.assertFalse(getattr(self.config(flag), "install_" + flag[5:].replace("-", "_")))
-        for field in ("install_game_dev", "install_node_versions"):
-            with self.assertRaisesRegex(ValueError, "require the agent_cachyos"):
-                SetupConfig(host="example.com", username="human", system_type="agent_code_vm", **{field: True})
+        with self.assertRaisesRegex(ValueError, "requires the agent_cachyos"):
+            SetupConfig(host="example.com", username="human", system_type="agent_code_vm", install_node_versions=True)
+        with self.assertRaisesRegex(ValueError, "Debian workstation/server"):
+            SetupConfig(host="example.com", username="human", system_type="server_wsl", install_game_dev=True)
 
     def test_game_bundle_supplies_headers_debugging_capture_and_animator_libraries(self):
         with patch.object(steps.shutil, "which", return_value="/usr/bin/available"):

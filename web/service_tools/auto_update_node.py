@@ -3,8 +3,8 @@
 Auto-update Node.js
 
 This script updates Node.js via nvm on the LTS track by default. Global npm
-package upgrades are opt-in by policy. If a non-LTS/latest Node.js track is
-already installed, it is kept current as an explicit user opt-in.
+package upgrades and the latest Node track require explicit policy opt-ins.
+Only runtimes created by this updater may be removed automatically.
 
 Logs to: /var/log/basaltwater/web/auto_update_node.log
 """
@@ -34,6 +34,9 @@ from lib.update_policy import (
     npm_freshness_args,
 )
 from lib.remote_utils import CommandTimeoutError, run as run_command
+from lib.node_runtime_ownership import (
+    LATEST_UPDATE_ENV, mark_runtime, runtime_directory, runtime_lock, runtime_owner,
+)
 
 # Initialize centralized logger
 logger = get_service_logger('auto_update_node', 'web', use_syslog=True)
@@ -302,8 +305,14 @@ def rollback_target_version(
                 f"{alias_action} failed; retained {normalized_target}: {details}",
             )
 
-    uninstall_command = ["nvm", "uninstall", normalized_target]
-    uninstall_result = run_nvm_command(uninstall_command)
+    try:
+        with runtime_lock(get_nvm_dir()):
+            if runtime_owner(get_nvm_dir(), normalized_target) != "automatic":
+                return True, None  # Restore the alias but retain preexisting/project runtimes.
+            uninstall_command = ["nvm", "uninstall", normalized_target]
+            uninstall_result = run_nvm_command(uninstall_command)
+    except (OSError, ValueError) as exc:
+        return False, f"Retained incomplete Node.js {normalized_target}: {exc}"
     uninstall_action = f"Removed incomplete Node.js {normalized_target}"
     if not log_subprocess_result(
         logger,
@@ -326,11 +335,20 @@ def install_target_version(
     source_version: str = "",
 ) -> tuple[bool, MaybeStr]:
     """Install the latest Node.js version for a track and migrate global packages."""
+    try:
+        existed = runtime_directory(get_nvm_dir(), target_version).exists()
+    except (OSError, ValueError) as exc:
+        return False, f"Unsafe Node runtime directory: {exc}"
     result = run_nvm_command(["nvm", "install", target_version])
     action = "Installed latest Node.js version" if update_track == "latest" else "Installed latest Node.js LTS"
     if not log_subprocess_result(logger, action, result, failure_level=ERROR):
         details = result.stderr.strip() or result.stdout.strip() or action
         return False, details
+    if not existed:
+        try:
+            mark_runtime(get_nvm_dir(), target_version, owner="automatic")
+        except (OSError, ValueError) as exc:
+            return False, f"Failed to record Node runtime ownership; runtime retained: {exc}"
 
     if update_track == "lts" and not set_default_lts_alias():
         rolled_back, rollback_error = rollback_target_version(
@@ -346,10 +364,14 @@ def install_target_version(
         return False, details
 
     if source_version and normalize_node_version(source_version) != normalize_node_version(target_version):
-        migrated, migration_error = reinstall_global_packages(
-            source_version,
-            target_version,
-        )
+        try:
+            with runtime_lock(get_nvm_dir()):
+                if runtime_owner(get_nvm_dir(), target_version) != "automatic":
+                    migrated, migration_error = False, "Retained project/preexisting target; skipped global package migration"
+                else:
+                    migrated, migration_error = reinstall_global_packages(source_version, target_version)
+        except (OSError, ValueError) as exc:
+            migrated, migration_error = False, f"Global package migration deferred: {exc}"
         if not migrated:
             rolled_back, rollback_error = rollback_target_version(
                 update_track,
@@ -373,7 +395,15 @@ def cleanup_old_versions(candidates: list[str], keep_versions: set[str]) -> tupl
     for version in sorted({normalize_node_version(candidate) for candidate in candidates if normalize_node_version(candidate)}):
         if version in normalized_keep:
             continue
-        result = run_nvm_command(["nvm", "uninstall", version])
+        try:
+            with runtime_lock(get_nvm_dir()):
+                if runtime_owner(get_nvm_dir(), version) != "automatic":
+                    log_event(logger, "Retained explicit or preexisting Node runtime", version=version)
+                    continue
+                result = run_nvm_command(["nvm", "uninstall", version])
+        except (OSError, ValueError) as exc:
+            failures.append(f"Retained {version}: {exc}")
+            continue
         if not log_subprocess_result(logger, f"Removed outdated Node.js {version}", result, failure_level=ERROR):
             details = result.stderr.strip() or result.stdout.strip() or f"nvm uninstall {version} failed"
             failures.append(f"{version}: {details}")
@@ -433,7 +463,8 @@ def main() -> int:
         return 1
     
     current_lts = get_current_lts_version()
-    latest_version = get_latest_version()
+    latest_enabled = os.environ.get(LATEST_UPDATE_ENV, "0").lower() in {"1", "true", "yes"}
+    latest_version = get_latest_version() if latest_enabled else ""
     current_version = get_current_version()
     installed_versions = get_installed_versions()
     if current_version and current_version not in installed_versions:
@@ -452,10 +483,11 @@ def main() -> int:
         return 1
 
     installed_lts = select_installed_lts_version(installed_versions, current_lts)
-    installed_latest = select_installed_latest_track_version(installed_versions, current_lts, latest_version)
+    installed_latest = (select_installed_latest_track_version(installed_versions, current_lts, latest_version)
+                        if latest_enabled else "")
     cleanup_candidates: list[str] = []
     keep_versions = {current_lts}
-    latest_status = "not installed"
+    latest_status = "not installed" if latest_enabled else "disabled by policy"
 
     lts_source = installed_lts or current_version
     if installed_lts == current_lts:

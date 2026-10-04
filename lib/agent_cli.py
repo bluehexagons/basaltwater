@@ -1875,12 +1875,15 @@ def _inspect_godot_development(home: str) -> JSONDict:
 
 
 def inspect_development_readiness(home: Optional[str] = None) -> JSONDict:
-    """Inventory managed Godot, Go, and Node development toolchains."""
+    """Inventory managed runtimes and selected native development prerequisites."""
+    from lib.game_development import inspect_native_development
+
     user_home = os.path.abspath(home or os.path.expanduser("~"))
     toolchains = {
         "godot": _inspect_godot_development(user_home),
         "go": _inspect_go_development(),
         "node": _inspect_node_development(user_home),
+        "native": inspect_native_development(),
     }
     installed = any(bool(result["installed"]) for result in toolchains.values())
     issues = [

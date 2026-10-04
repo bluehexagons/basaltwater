@@ -3,18 +3,38 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from web.service_tools import auto_update_node
 from lib.update_policy import DEPENDENCY_MIN_AGE_DAYS_ENV, ECOSYSTEM_AUTO_UPGRADE_ENV
+from lib.node_runtime_ownership import LATEST_UPDATE_ENV, mark_runtime, runtime_owner
 
 
 class TestAutoUpdateNode(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        self.nvm = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        stack.enter_context(patch.object(auto_update_node, "get_nvm_dir", return_value=str(self.nvm)))
+        stack.enter_context(patch.dict(os.environ, {LATEST_UPDATE_ENV: "0"}))
+
+        def installed_marker(nvm_dir, version, *, owner):
+            # Mocked NVM success supplies the files a real install would create.
+            directory = auto_update_node.runtime_directory(nvm_dir, version)
+            (directory / "bin").mkdir(parents=True, exist_ok=True)
+            (directory / "bin/node").write_text("fixture")
+            mark_runtime(nvm_dir, version, owner=owner)
+
+        stack.enter_context(patch.object(auto_update_node, "mark_runtime", side_effect=installed_marker))
+
     @patch("web.service_tools.auto_update_node.run_nvm_command")
     def test_invalid_package_inventory_rolls_back_without_removing_source(self, mock_run):
         cases = [
@@ -192,13 +212,71 @@ stable -> 22.3 (-> v22.3.0) (default)
         mock_notify,
         _cleanup,
     ):
-        result = auto_update_node.main()
+        with patch.dict(os.environ, {LATEST_UPDATE_ENV: "1"}):
+            result = auto_update_node.main()
         self.assertEqual(result, 0)
         mock_install.assert_called_once_with("latest", "v22.2.0", "v22.1.0")
         mock_set_default.assert_called_once()
         mock_update_packages.assert_called_once()
         mock_notify.assert_called_once()
         self.assertIn("Success", mock_notify.call_args.kwargs["subject"])
+
+        mock_install.reset_mock()
+        with patch.dict(os.environ, {LATEST_UPDATE_ENV: "0"}):
+            self.assertEqual(auto_update_node.main(), 0)
+        mock_install.assert_not_called()
+        _latest.assert_called_once()  # A newer project major alone causes no latest-track query.
+
+    def test_cleanup_preserves_legacy_and_project_runtimes(self):
+        for version in ("v22.23.2", "v24.20.0", "v24.21.0", "v26.10.0"):
+            directory = auto_update_node.runtime_directory(self.nvm, version)
+            (directory / "bin").mkdir(parents=True)
+            (directory / "bin/node").write_text("fixture")
+        mark_runtime(self.nvm, "v24.20.0", owner="automatic")
+        mark_runtime(self.nvm, "v26.10.0", owner="automatic")
+        mark_runtime(self.nvm, "v26.10.0", owner="project")
+        with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run:
+            self.assertEqual(auto_update_node.cleanup_old_versions(
+                ["v22.23.2", "v24.20.0", "v24.21.0", "v26.10.0"], {"v24.21.0"}), (True, None))
+        run.assert_called_once_with(["nvm", "uninstall", "v24.20.0"])
+        self.assertEqual(runtime_owner(self.nvm, "v26.10.0"), "project")
+
+    def test_rollback_restores_alias_without_removing_existing_target(self):
+        with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run:
+            self.assertEqual(auto_update_node.rollback_target_version("lts", "v24.21.0", "v24.20.0"), (True, None))
+        run.assert_called_once_with(["nvm", "alias", "default", "v24.20.0"])
+
+    def test_lock_failures_retain_runtimes_and_report_errors(self):
+        with patch.object(auto_update_node, "runtime_lock", side_effect=ValueError("operation is active")), \
+                patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run:
+            success, details = auto_update_node.rollback_target_version("lts", "v24.21.0", "v24.20.0")
+            self.assertFalse(success)
+            self.assertIn("Retained incomplete", details)
+            self.assertIn("operation is active", details)
+            run.assert_called_once_with(["nvm", "alias", "default", "v24.20.0"])
+            run.reset_mock()
+            success, details = auto_update_node.cleanup_old_versions(["v24.20.0"], {"v24.21.0"})
+            self.assertFalse(success)
+            self.assertIn("Retained v24.20.0", details)
+            run.assert_not_called()
+
+    def test_preexisting_target_keeps_its_global_tools_during_automatic_installation(self):
+        directory = auto_update_node.runtime_directory(self.nvm, "v24.21.0")
+        (directory / "bin").mkdir(parents=True)
+        (directory / "bin/node").write_text("fixture")
+        for owner in (None, "project"):
+            with self.subTest(owner=owner):
+                if owner:
+                    mark_runtime(self.nvm, "v24.21.0", owner=owner)
+                with patch.object(auto_update_node, "run_nvm_command", return_value=subprocess.CompletedProcess([], 0)) as run, \
+                        patch.object(auto_update_node, "reinstall_global_packages") as migrate:
+                    success, details = auto_update_node.install_target_version("lts", "v24.21.0", "v24.20.0")
+                self.assertFalse(success)
+                self.assertIn("skipped global package migration", details)
+                self.assertEqual(runtime_owner(self.nvm, "v24.21.0"), owner)
+                migrate.assert_not_called()
+                self.assertIn(["nvm", "alias", "default", "v24.20.0"], [call.args[0] for call in run.call_args_list])
+                self.assertFalse(any("uninstall" in call.args[0] for call in run.call_args_list))
 
     @patch("web.service_tools.auto_update_node.cleanup_old_versions", return_value=(True, None))
     @patch("web.service_tools.auto_update_node.send_notification_safe")
