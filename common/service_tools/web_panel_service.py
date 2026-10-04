@@ -39,6 +39,7 @@ from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agents
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
+from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
 from lib.agent_tasks import AgentTasks
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
@@ -1562,7 +1563,8 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
                 html.escape(record["description"]),
                 '<a href="/logs?service={}">Inspect service</a>'.format(
                     urllib.parse.quote(record["unit"], safe=""),
-                ) if record.get("unit") else "",
+                ) + tool_link("logs", "Prepare agent review", service=record["unit"])
+                if record.get("unit") else "",
             )
             for record in health
         )
@@ -1579,7 +1581,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
 <p class="endpoint">This checks fixed system services and the panel user's T3 Code service. It does not prove public DNS, TLS, or application readiness.</p>
-{content}'''
+{tool_link("checkup", "Prepare a system checkup")}{content}'''
     footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Local service status · {state.manifest['host']}",
@@ -1941,6 +1943,8 @@ def render_page(state: WebPanelState) -> str:
 <h2 id="overview-heading">System overview</h2></div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl></section>
+<div class="action"><div><strong>Agent tasks</strong><p>Review system health and logs, plan maintenance, or prepare local data work.</p></div>
+<a class="refresh-link" href="/agent-tools">Open agent tools →</a></div>
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
 <h2 id="services-heading">Web services</h2></div>
 <span class="count">{service_count}</span></div><div class="grid">{service_cards}</div></section>
@@ -2009,6 +2013,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, query), "text/html")
             return
+        if path == "/agent-tools":
+            try:
+                query = parse_tools_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid agent tool view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_tools(self.state, _PAGE_STYLE, query), "text/html")
+            return
         if path == "/admin":
             try:
                 query = parse_admin_query(parsed.query)
@@ -2068,7 +2080,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path == WEB_PANEL_NOTIFICATION_ENDPOINT:
             self._handle_notification_ingest()
             return
-        agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics"}
+        agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
         if path != "/actions/t3-update" and path not in agent_paths | admin_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
@@ -2135,6 +2147,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
     def _handle_agent_action(self, path: str, values: dict[str, list[str]]) -> None:
         allowed = {
+            "/actions/agent-tool/prepare": {"csrf", *FORM_FIELDS},
             "/actions/agent-diagnostics": {"csrf"},
             "/actions/agent-task": {"csrf", "id", "action"},
             "/actions/agent-task/save": {
@@ -2146,6 +2159,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid agent action\n", "text/plain")
+            return
+        if path == "/actions/agent-tool/prepare":
+            inputs = {key: entries[0] for key, entries in values.items() if key != "csrf"}
+            try:
+                submitted = prepare_tool(inputs, self.state.agent_tasks.home)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_tools(
+                    self.state, _PAGE_STYLE, {}, error=str(exc), submitted=inputs,
+                ), "text/html")
+                return
+            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {}, submitted=submitted, prepared=True), "text/html")
             return
         if path == "/actions/agent-diagnostics":
             if not self.state.agent_diagnostics.trigger():

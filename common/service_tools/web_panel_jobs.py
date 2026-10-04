@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
 from common.service_tools.web_panel_storage import render_storage
+from common.service_tools.web_panel_agent_tools import tool_link
 
 
 _PROPERTIES = (
@@ -163,7 +164,8 @@ def render_jobs(
             url = "/logs?" + urllib.parse.urlencode({"service": job["service"], "window": "24h", "priority": "7"})
             content += f'''<section class="event" aria-label="{html.escape(job['label'], quote=True)}">
 <div class="event-head"><h2>{html.escape(job['label'])}</h2><div>{timer_badge}<span class="badge {result_tone}">{html.escape(job['status'])}</span></div></div>
-<dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a></section>'''
+<dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a>
+{tool_link("job", "Prepare agent job review", service=job["service"], window="24h", priority="4")}</section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
         content += render_storage()
@@ -171,7 +173,7 @@ def render_jobs(
 <p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>
 <p class="endpoint">A snapshot of managed system timers. Times use the host timezone; interval deadlines are approximate. Inactive job services are normal between runs. Results may reset after a reboot or service-manager reload.</p>
-{content}'''
+{tool_link("maintenance", "Prepare an agent maintenance plan")}{content}'''
     footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Scheduled jobs · {host}",

@@ -26,6 +26,7 @@ REQUIRED_WHEEL_PATHS = (
     "lib/admin_actions.py",
     "common/service_tools/admin_job.py",
     "common/service_tools/web_panel_admin.py",
+    "common/service_tools/web_panel_agent_tools.py",
     "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
     "common/agent_skills/basaltwater-t3code/references/updates.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
@@ -142,6 +143,7 @@ def _smoke_installed_wheel(
                 "import web.service_tools.webhook_manager"
                 "; import common.service_tools.admin_job"
                 "; import common.service_tools.web_panel_admin"
+                "; import common.service_tools.web_panel_agent_tools"
             ),
         ],
         check=True,

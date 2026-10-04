@@ -393,7 +393,7 @@ def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> st
     return "".join(groups)
 
 
-def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None) -> str:
+def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
     manager: AgentTasks = state.agent_tasks
@@ -447,6 +447,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
                 defaults["interval"] = "once"
     if submitted:
         defaults.update(submitted)
+    if prepared:
+        source_note = "Prepared from Agent tools. No task has been saved or queued. Review the prompt, model, runtime, permissions, and repetition before submitting."
     editing = bool(defaults["id"])
     alert = f'<aside class="status failed" role="alert"><strong>Agent tools need attention</strong><p>{_escape(error or manager.error)}</p></aside>' if error or manager.error else ""
     if not ready:
@@ -465,7 +467,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     model_options = "".join(f'<option value="{_escape(key)}"{" selected" if key == defaults["model"] else ""}>{_escape(label)}</option>' for key, label in models)
     effort_options = "".join(f'<option value="{key}"{" selected" if key == defaults["effort"] else ""}>{label}</option>' for key, label in [("", "Configured default")] + [(level, "Extra high (xhigh)" if level == "xhigh" else "Maximum (max)" if level == "max" else level.capitalize()) for level in EFFORTS])
     search_options = "".join(f'<option value="{key}"{" selected" if key == defaults["web_search"] else ""}>{label}</option>' for key, label in zip(WEB_SEARCH_MODES, ("Disabled", "Cached results", "Live web search")))
-    composer = f'''<div class="agent-panel"><h2>{"Edit prompt task" if editing else "New prompt task"}</h2>
+    composer = f'''<div class="agent-panel"><h2>{"Edit prompt task" if editing else "Review prepared task" if prepared else "New prompt task"}</h2>
 {f'<p class="agent-help">{source_note}</p>' if source_note else ''}
 <form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
@@ -491,7 +493,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <a href="/agents">Clear form</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected. Save draft stores the task without running or scheduling it.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
-    helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
+    helper = f'''<aside class="agent-panel"><h2>Start from a template</h2><p class="agent-help">Use <a class="refresh-link" href="/agent-tools">Agent tools</a> to prepare system reviews, workspace cleanup, or data imports and exports with explicit source and output paths.</p><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
 <details><summary>Execution limits</summary><p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. Schedules run while this panel service is running; missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></aside>'''
     rows = []
     for task in tasks:
@@ -538,7 +540,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     if active:
         elapsed = _run_seconds(active, now)
         active_html = f'''<aside class="agent-panel agent-active" role="status"><strong>Running: {_escape(active['task']['title'])}</strong><p class="agent-help">{_duration(elapsed)} elapsed · {_duration(max(0, active['task']['timeout_minutes'] * 60 - elapsed))} remaining at page load · <code>{_escape(active['task']['directory'])}</code></p><p class="agent-help">Refresh status for updated timing. Other work stays queued until this run finishes.</p></aside>'''
-    content = f'''{alert}{_render_run_summary(tasks, runs, now)}{active_html}{task_section + workbench if tasks else workbench + task_section}
+    content = f'''{alert}{_render_run_summary(tasks, runs, now)}{active_html}{task_section + workbench if tasks and not prepared else workbench + task_section}
 <section aria-labelledby="agent-diagnostics-heading"><div class="section-heading"><h2 id="agent-diagnostics-heading">Runtime diagnostics</h2><span class="count">Loaded on request</span></div>{diagnostics_html}{t3_html}</section>
 <section aria-labelledby="agent-history-heading"><div class="section-heading"><h2 id="agent-history-heading">Run history</h2><span class="count">Latest {len(runs)} runs</span></div><div class="agent-history">{''.join(history) or '<p class="empty">No prompt runs have been recorded.</p>'}</div></section>'''
     return render_document(title=f"Agents · {state.manifest['host']}", style=style + _STYLE,

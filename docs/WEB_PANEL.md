@@ -12,6 +12,7 @@ under the panel account; no T3 Code installation is required.
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
+| Prepare system and data tasks | Agent tools | Contextual checkups, maintenance plans, log and job reviews, cleanup, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
 | Receive remote notifications | Notifications | Recent accepted events and an optional sender endpoint |
@@ -123,6 +124,73 @@ through the panel. The refresh check validates local state without fetching;
 it does not preview upstream code changes. No credentials are copied and no
 interactive login is started by refresh. The screen explains unavailable
 actions rather than granting wider privileges.
+
+## Agent tools
+
+Open **Agent tools** from the sidebar or dashboard to prepare guided tasks for
+the existing Codex runner. Admin controls offers checkups, maintenance planning,
+and disk reviews. Service diagnostics and local service cards carry the selected
+service into a log review; scheduled job cards carry the job into a timer review.
+These shortcuts open a setup form and never run a prompt automatically.
+
+| Tool | Result | Suggested repeat / cap |
+| --- | --- | --- |
+| System checkup | Evidence-backed resource, service, update, backup, and agent readiness findings | Daily / 20 minutes |
+| Plan system maintenance | Prioritized repairs with prerequisites, interruption risks, commands, and verification steps for operator review | Weekly / 30 minutes |
+| Review service logs | Grouped errors, likely causes, and next checks for a fixed service and rolling time window | Daily / 15 minutes |
+| Review a scheduled job | Timer and process evidence, missed runs, failures, and possible overlap | Once / 15 minutes |
+| Review disk cleanup | Space consumers, ownership, retention implications, and cleanup candidates | Weekly / 15 minutes |
+| Check data quality | Aggregate schema, encoding, missing-value, duplicate, and consistency findings | Weekly / 20 minutes |
+| Import and normalize data | A new CSV, JSON, or JSONL dataset with count/type and round-trip validation | Once / 30 minutes |
+| Export a dataset | A local directory bundle with checksums, a manifest, and offline restore instructions | Once / 30 minutes |
+| Quarantine old workspace files | Reversible moves from a dedicated cache/build folder with a manifest and rollback instructions | Once / 15 minutes |
+
+Select **Set up task**, fill in its inputs, then **Prepare prompt for review**.
+The resulting Agents form shows the full prompt and normal model, effort,
+runtime, permission, failure-limit, and repetition controls. Choose **Run now**,
+**Create schedule**, or **Save draft** only after reviewing it. Preparation
+neither saves nor queues a task. Reports and saved execution settings appear in
+**Agents → Run history**. There is no separate scheduler or T3 Code dependency.
+
+System tools inspect and recommend changes. Repairs remain operator actions
+through separately approved **Admin controls** or the administrator console.
+Log reviews read at most 100 recent entries at run time using the selected
+service, time window, and severity; message-text searches are not copied.
+Repeated reviews use a rolling window and may report the same event again.
+They report inaccessible evidence rather than seeking elevated access.
+
+Data tools require an existing dedicated working directory inside the panel
+account's home. Source and output paths must be below it; relative paths are
+resolved against that directory. Hidden paths, credential-file paths, symlink
+paths, and overlapping source/output paths are rejected during preparation.
+Stage an explicit local dataset first. Import requires an existing `.csv`,
+`.json`, or `.jsonl` file and converts to the chosen output format; it does not
+load a live application or database. Export packages a selected local file or
+directory with ordinary attachments; it does not upload to remote storage.
+Data read by the agent may be sent to its configured model provider.
+
+Writing data tasks use workspace mode with command network and temporary writes
+off. Their prompts require fresh private run directories, preserved sources,
+checksums, manifests, and validation before claiming success. Data reads are
+bounded in the prompt to 500 files and 100 MiB; credentials, hidden files,
+symlinks, mount crossings, imported code, archives, and live databases are
+excluded. Imports stop for ambiguous or lossy conversions rather than silently
+repairing records. Repeating tasks produce new output without purging old
+bundles; monitor output growth separately.
+
+Quarantine requires a dedicated disposable cache/build folder and a minimum
+age of 1–3650 days (default 7). Its prompt limits each run to 100 eligible
+ordinary files, skips tracked, open, sensitive, and uncertain files, and
+requires non-overwriting moves on the same filesystem. It never permanently
+deletes or automatically purges quarantine. Moving files into quarantine does
+not free disk space; use the disk review to plan actual reclamation.
+
+These task-specific limits and revalidation requirements guide the agent; the
+runner enforces the selected Codex sandbox, runtime, and output limits. The
+workbench is not a deterministic migration or cleanup engine. Review the
+manifest and results, and retain an independent backup for valuable data.
+Editing a prepared prompt changes its instructions; saved tasks retain that
+exact text for later runs.
 
 ## Agent prompt tasks
 

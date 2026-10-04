@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_agent_tools import tool_link
 
 SYSTEM_UNITS = {
     "nginx.service": "Web gateway",
@@ -335,6 +336,7 @@ def render_diagnostics(
 <div><label for="message-filter">Message contains</label><input id="message-filter" name="search" type="search" maxlength="120" value="{html.escape(query.search, quote=True)}" placeholder="Optional text"></div>
 <button name="load" value="1" type="submit">Load diagnostics</button></form>
 <p class="endpoint">Only logs readable by the panel account are included. System and user journals have separate permissions. Messages are supplied by services; review them before sharing.</p>
+{tool_link("logs", "Prepare agent log review", service=query.service, window=query.window, priority=query.priority)}
 {content}<details><summary>Continue inspection over SSH</summary>
 <p>Run on this host for the same filters. System logs may require administrator access; user logs belong to the signed-in Linux user.</p>
 <pre><code>{html.escape(ssh_command)}</code></pre></details>'''

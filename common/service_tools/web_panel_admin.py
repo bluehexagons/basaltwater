@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
 from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_agent_tools import tool_link
 from lib.admin_actions import ADMIN_ACTIONS, action_spec
 from lib.privilege_client import exchange
 from lib.privilege_policy import ID_PATTERN
@@ -196,6 +197,7 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         for label, value in (("Result", status), ("Started", _timestamp(latest.get("started"))), ("Finished", _timestamp(latest.get("finished")) if latest.get("finished") is not None else "—"), ("Exit code", latest.get("exit_code") if latest.get("exit_code") is not None else "—")):
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
+    body += '<section aria-label="Agent maintenance tools"><h2>Agent maintenance tools</h2><div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
     body += _request_history(snapshot, csrf)
     action = query.get("action")
     if action:
