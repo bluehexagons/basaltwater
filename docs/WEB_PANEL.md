@@ -131,8 +131,10 @@ follow the recorded branch, or `main` when no branch was recorded. The previous
 source is retained for recovery. Writable or unidentified source trees are
 rejected. The refresh check validates local state without fetching;
 it does not preview upstream code changes. No credentials are copied and no
-interactive login is started by refresh. The screen explains unavailable
-actions rather than granting wider privileges.
+interactive login is started by refresh. Saved coding-agent selections are
+retained even if profile defaults change, including a selection with no agents.
+Legacy records without a saved selection still use profile defaults.
+The screen explains unavailable actions rather than granting wider privileges.
 
 ## Agent tools
 

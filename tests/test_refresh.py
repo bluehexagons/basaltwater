@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack, nullcontext
+from dataclasses import replace
 import io
 import json
 import os
@@ -15,8 +16,9 @@ import unittest
 from unittest.mock import patch
 
 from lib import refresh
-from lib.config import SetupConfig
+from lib.config import AGENT_TOOLS, SetupConfig
 from lib.channel_manager import ChannelError
+from lib.plugin_registry import get_system_type_definition
 
 
 class DebianRefreshTests(unittest.TestCase):
@@ -255,6 +257,46 @@ class DebianSavedStateTests(unittest.TestCase):
         self.assertTrue(config.install_python)
         self.assertEqual(config.agent_repos, ["https://github.com/example/project.git"])
         self.assertEqual(self.path.read_bytes(), before)
+
+    def test_saved_agents_survive_new_profile_defaults_and_target_reparse(self):
+        from lib.arg_parser import create_setup_argument_parser
+        from remote_setup import config_from_remote_args
+
+        definition = get_system_type_definition("server_lite")
+        for selected in ([], ["gh"], ["gh", "codex"]):
+            with self.subTest(selected=selected):
+                self.save(agent_tools=selected)
+                before = self.path.read_bytes()
+                for defaults in (tuple(AGENT_TOOLS), ()):
+                    with patch("lib.config.get_system_type_definition", return_value=replace(
+                        definition, default_agent_tools=defaults,
+                    )):
+                        config = refresh._debian_setup()
+                        self.assertEqual(config.selected_agent_tools(), selected)
+                        parser = create_setup_argument_parser("Refresh", for_remote=True, allow_steps=True)
+                        arguments = refresh.shlex.split(" ".join(config.to_remote_args()))
+                        restored = config_from_remote_args(parser.parse_args(arguments))
+                        self.assertEqual(restored.selected_agent_tools(), selected)
+                self.assertEqual(self.path.read_bytes(), before)
+
+    def test_invalid_saved_agent_exclusions_are_not_discarded(self):
+        self.save()
+        data = json.loads(self.path.read_text())
+        data["agent_tools_removed"] = ["unknown-provider"]
+        self.path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, "Unsupported removed agent tool"):
+            refresh._debian_setup()
+
+    def test_legacy_state_without_agent_selection_retains_profile_defaults(self):
+        self.save()
+        data = json.loads(self.path.read_text())
+        del data["agent_tools"]
+        self.path.write_text(json.dumps(data))
+        definition = get_system_type_definition("server_lite")
+        with patch("lib.config.get_system_type_definition", return_value=replace(
+            definition, default_agent_tools=("gh", "codex"),
+        )):
+            self.assertEqual(refresh._debian_setup().selected_agent_tools(), ["gh", "codex"])
 
     def test_transient_credentials_and_destructive_one_shot_flags_are_not_replayed(self):
         self.save()

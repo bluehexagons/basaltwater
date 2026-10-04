@@ -16,7 +16,7 @@ from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.cachyos import is_cachyos
 from lib.channel_manager import get_channel_info, managed_repository_path, switch_channel, upgrade_channel
 from lib.installation_info import INSTALLATION_METADATA_FILENAME
-from lib.config import SetupConfig
+from lib.config import AGENT_TOOLS, SetupConfig
 from lib.machine_state import SETUP_CONFIG_FILE, _validate_setup_config
 from lib.maintenance_lock import maintenance_lock
 from lib.remote_utils import read_os_release, run
@@ -143,6 +143,18 @@ def _debian_setup() -> SetupConfig:
     data = dict(data)
     system_type = data.pop("system_type")
     data.pop("host", None)
+    if "agent_tools" in data:
+        # Modern records save the complete selection, including no agents.
+        # Explicit exclusions protect both from_dict and the fresh target
+        # parser from adding providers when profile defaults change.
+        selected = set(data.get("agent_tools") or []) | {
+            tool for tool in AGENT_TOOLS if data.get("install_" + tool)
+        }
+        selected -= set(data.get("agent_tools_removed") or [])
+        data["agent_tools_removed"] = list(dict.fromkeys([
+            *(data.get("agent_tools_removed") or []),
+            *(tool for tool in AGENT_TOOLS if tool not in selected),
+        ]))
     # Use the established serialization boundary to discard transient
     # credential-copy, password, live-network, and swap-initialization intent.
     config = SetupConfig.from_dict("localhost", system_type, data)
