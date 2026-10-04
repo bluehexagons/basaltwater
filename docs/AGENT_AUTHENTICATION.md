@@ -111,7 +111,7 @@ Authentication defaults are independent for each provider:
 | Provider | Default on agent VM profiles | Override |
 | --- | --- | --- |
 | Codex | Target-owned subscription login | `--agent-auth none`, explicit `--agent-auth-file codex PATH`, or `agent auth login --method api-key` |
-| GitHub CLI | Active GitHub credentials on `agent_code_vm`; unselected on `agent_vm` and `agent_workstation` | `--git-auth active\|none`, `--git-auth-file PATH`, or interactive token input |
+| GitHub CLI | Active GitHub credentials on `agent_code_vm`; unselected on `agent_vm` and `agent_workstation` | `--git-auth active\|none`, `--git-auth-file PATH`, `--git-auth-token TOKEN`, `--git-auth-credential NAME`, or interactive token input |
 | Claude Code / OpenCode | No automatic credential import | `--agent-auth-file claude PATH` / `--agent-auth-file opencode PATH`, or authenticate on the target |
 
 Codex login and another provider's file import can be combined:
@@ -154,9 +154,18 @@ when each VM has a separate identity:
 must not be group- or world-writable, and must be no larger than 4 MiB. The
 controller does not need the corresponding agent executable.
 
-Do not combine active and file sources for GitHub. GitHub authentication
+Named workspace credentials support a separate classic or fine-grained token
+per VM: use `basaltw credentials set vm-1-github` for a hidden prompt, then
+`--git-auth-credential vm-1-github`. Only the name persists on the controller;
+each rerun resolves its token from the selected workspace. `--git-auth-token
+TOKEN` is transient command-line input. Both override GitHub's active-auth
+profile default and use the same private `hosts.yml` payload as token files.
+See [Git access](GIT_ACCESS.md) for examples and token permission guidance.
+
+Do not combine sources for GitHub. GitHub authentication
 must come from exactly one of `--git-auth`, `--git-auth-file`,
-`--agent-auth-file gh`, or the interactive token prompt.
+`--git-auth-token`, `--git-auth-credential`, `--agent-auth-file gh`, or the
+interactive token prompt.
 
 ### Interactive setup
 

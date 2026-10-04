@@ -5,7 +5,7 @@ they have different storage, rotation, and sharing rules.
 
 | Credential | Used for | Manage it with |
 | --- | --- | --- |
-| Workspace password | Syncthing administration, initial Gogs administration, Samba, SMB mounts, and managed non-GitHub Git origins | `basaltw credentials` |
+| Workspace password or token | Syncthing administration, initial Gogs administration, Samba, SMB mounts, managed non-GitHub Git origins, and explicitly selected GitHub tokens | `basaltw credentials` |
 | HomeBox initial password and API-key pepper | Inventory login and API-key verification | Target-only `/etc/homebox/secrets.json`; see [HomeBox](HOMEBOX.md) for recovery |
 | GitHub CLI authentication | Private GitHub repositories and `gh` | Git or agent auth options |
 | Coding-agent authentication | Codex, Claude Code, and OpenCode | Agent auth options |
@@ -26,8 +26,10 @@ they have different storage, rotation, and sharing rules.
 
 ## Workspace credential store
 
-The workspace store contains named passwords for Basaltwater-managed services.
-It is not read by GitHub CLI, Codex, Claude Code, or OpenCode.
+The workspace store contains named passwords and tokens for Basaltwater-managed
+services. Setup can resolve a GitHub token with `--git-auth-credential NAME`
+and install it for the target's GitHub CLI. Provider tools do not read this
+store directly; Codex, Claude Code, and OpenCode use their own authentication.
 
 ```bash
 basaltw credentials set workspace-user
@@ -56,8 +58,9 @@ Common consumers are:
 
 - managed Syncthing, using `syncthing-admin` by default;
 - initial Gogs administration when the name matches the setup user;
-- Samba shares and SMB mounts; and
-- origin-scoped Git HTTPS credentials for non-GitHub servers.
+- Samba shares and SMB mounts;
+- origin-scoped Git HTTPS credentials for non-GitHub servers; and
+- GitHub tokens explicitly selected with `--git-auth-credential NAME`.
 
 Saved setup commands and ordinary summaries omit workspace passwords. Consult
 the service-specific guide to learn whether rerunning setup rotates or

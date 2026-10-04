@@ -482,6 +482,7 @@ class SetupConfig:
     git_auth_source: MaybeStr = None
     git_auth_file: MaybeStr = None
     git_auth_token: MaybeStr = None
+    git_auth_credential: MaybeStr = None
     disable_git_auth: bool = False
     git_credentials: Optional[NestedStrList] = None
     git_ca_certificates: Optional[NestedStrList] = None
@@ -1796,6 +1797,10 @@ class SetupConfig:
             cmd_parts.append(f"--git-access {shlex.quote(self.git_access)}")
         if self.disable_git_auth:
             cmd_parts.append("--git-auth none")
+        elif self.git_auth_credential:
+            cmd_parts.append(
+                f"--git-auth-credential {shlex.quote(self.git_auth_credential)}"
+            )
         if self.disable_agent_auth:
             cmd_parts.append("--agent-auth none")
         if self.git_host != "github.com":
@@ -2173,6 +2178,8 @@ class SetupConfig:
         if (
             not data.get('disable_git_auth')
             and not data.get('git_auth_file')
+            and not data.get('git_auth_token')
+            and not data.get('git_auth_credential')
             and not _has_agent_auth_file(data.get('agent_auth_files'), 'gh')
             and 'gh' in (data.get('agent_tools') or system_defaults.default_agent_tools)
         ):
@@ -2386,9 +2393,15 @@ class SetupConfig:
         disable_git_auth = raw_git_auth_source == 'none'
         git_auth_file = _optional_str_arg(args, 'git_auth_file')
         git_auth_token = _optional_str_arg(args, 'git_auth_token')
+        git_auth_credential = _optional_str_arg(args, 'git_auth_credential')
         git_auth_source = (
             None
-            if disable_git_auth or git_auth_file or git_auth_token
+            if (
+                disable_git_auth
+                or git_auth_file is not None
+                or git_auth_token is not None
+                or git_auth_credential is not None
+            )
             else (
                 raw_git_auth_source
                 or (
@@ -2647,6 +2660,7 @@ class SetupConfig:
                 git_auth_source
                 or git_auth_file
                 or git_auth_token
+                or git_auth_credential
                 or agent_auth_files
             ),
             copy_agent_config=bool(agent_config_source),
@@ -2656,6 +2670,7 @@ class SetupConfig:
             git_auth_source=git_auth_source,
             git_auth_file=git_auth_file,
             git_auth_token=git_auth_token,
+            git_auth_credential=git_auth_credential,
             disable_git_auth=disable_git_auth,
             git_credentials=git_credentials,
             git_ca_certificates=git_ca_certificates,

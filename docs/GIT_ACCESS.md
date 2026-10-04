@@ -44,6 +44,7 @@ A private GitHub repository needs all of these:
 ```
 
 Supported sources are `--git-auth active`, `--git-auth-file PATH`,
+`--git-auth-token TOKEN`, `--git-auth-credential NAME`,
 `--agent-auth-file gh PATH`, or the interactive token prompt. Select exactly
 one. The active source reads the selected `hosts.yml` entry or asks an
 authenticated controller-local `gh` command for a keyring-backed token.
@@ -52,6 +53,39 @@ A file source may contain a `github.com` entry from `hosts.yml` or a one-line
 token. Basaltwater extracts only the selected host entry. Authenticated GitHub
 setup currently supports only `github.com`; use the managed origin flow below
 for another HTTPS Git server.
+
+To give each VM its own classic or fine-grained access token, save it with a
+hidden prompt and select the named credential:
+
+```bash
+basaltw credentials set agent-1-github
+
+basaltw setup agent_vm 192.168.0.41 agent \
+  --git-access read --git-auth-credential agent-1-github \
+  --repo https://github.com/example/private-project.git
+```
+
+`NAME` is a workspace credential name, independent of the GitHub username.
+Only that name is saved in the controller's setup configuration and reconstructed
+command. Controller reruns resolve its current token from the same workspace.
+A missing credential stops setup before target changes. A matching
+`--credential NAME TOKEN` may supply or update the workspace value during setup.
+
+Alternatively, use `--git-auth-token TOKEN` for transient command-line input,
+or put a one-line token in a protected file and use `--git-auth-file PATH`.
+Direct token values are omitted from saved setups and summaries, but your shell
+and process list may still expose them. Explicit sources replace the profile's
+active-controller-auth default without requiring controller-local `gh`.
+
+Basaltwater stages tokens directly as a private `hosts.yml` entry, avoiding
+`gh auth login --with-token` and its classic-token scope requirements. Fine-grained
+tokens remain limited to the repositories and permissions selected at GitHub;
+choose Contents read access for cloning and Contents write access for pushing,
+as described in [GitHub's token permission guide](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#pre-filling-fine-grained-personal-access-token-details-using-url-parameters).
+Other `gh` operations may require additional permissions. See the
+[GitHub CLI authentication guidance](https://cli.github.com/manual/gh_auth_login)
+for its fine-grained token limitations. `--git-access` never expands or reduces
+the token's provider-side permissions.
 
 On initial setup, Basaltwater appends a missing GitHub host entry without
 removing other hosts. It preserves an existing selected entry on ordinary

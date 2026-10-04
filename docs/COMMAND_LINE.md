@@ -736,6 +736,8 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--no-git-credentials` | Remove all Basaltwater-managed Git HTTPS credentials, helper configuration, and private CA files from the target user |
 | `--git-auth active\|none` | Seed missing active GitHub CLI host credentials, or disable a profile auth default |
 | `--git-auth-file PATH` | Seed a missing selected-host `hosts.yml` entry or one-line GitHub token from a controller-local file |
+| `--git-auth-token TOKEN` | Seed missing GitHub credentials with a classic or fine-grained access token; token is transient and omitted from saved commands |
+| `--git-auth-credential NAME` | Resolve a GitHub token from the named workspace credential; save only the name for controller reruns |
 | `--agent-auth login\|none` | Authorize Codex on the target (default for `agent_vm`, `agent_workstation`, and `agent_code_vm`), or disable Codex login; independent of GitHub auth and other providers' explicit files |
 | `--agent-auth-file TOOL PATH` | Stage one selected agent credential from a controller-local file at its canonical target path; `gh` accepts a hosts file or one-line token; setup otherwise preserves existing credentials, except for safe stale-Codex refresh; repeatable |
 | `--agent-config active` | Copy known non-secret config from the active controller; does not copy auth files |
@@ -757,6 +759,12 @@ enables the standard SSH-rate-limited UFW policy for `server_lite`.
 
 GitHub credential input requires `--git-access read` or `--git-access
 read-write`; `none` is the public/unauthenticated repository mode.
+Choose one GitHub source. For a separate fine-grained token per VM, enter it
+with `basaltw credentials set vm-1-github`, then pass
+`--git-auth-credential vm-1-github`. The name is a local reference, not a GitHub
+username. Explicit token and credential sources override active-auth profile
+defaults. Prefer a saved credential or protected token file over a token in
+shell history and process arguments. See [Git access](GIT_ACCESS.md).
 
 ### Setup completion access details
 
@@ -838,7 +846,7 @@ dependencies.
 
 Credential seeding and config copy are intentionally tool-scoped and transient:
 
-- `--git-auth`/`--git-auth-file` seed only a missing selected GitHub host entry, preserve target-managed credentials on rerun, and run `gh auth setup-git`.
+- `--git-auth`, `--git-auth-file`, `--git-auth-token`, and `--git-auth-credential` seed only a missing selected GitHub host entry, preserve target-managed credentials on rerun, and run `gh auth setup-git`. Named workspace references persist on the controller; token values and staged payloads do not enter setup history.
 - `--agent-auth login` retains or renews target Codex auth and starts device authorization when needed in a terminal. Unattended setup fails clearly when authorization is required.
 - Explicit `--agent-auth-file TOOL PATH` seeds that provider's missing credentials without requiring the tool on the controller; other providers retain their defaults. A Codex file also replaces refresh-required auth when the staged source is unambiguously current. Coding-agent active copying is removed; `--git-auth active` remains GitHub-specific and requires controller `gh` only when its token is keyring-backed.
 - `--agent-config active` copies known non-secret configuration from the active controller user.

@@ -399,5 +399,27 @@ def merge_setup_configs(
         merged_dict["enable_syncthing"] = False
         merged_dict["disable_syncthing"] = True
         merged_dict["syncthing_admin"] = None
+
+    # GitHub sources are alternatives, not fields to accumulate on a patch.
+    # The CLI preserves git_auth_source when it came only from a profile default.
+    github_sources = (
+        "git_auth_source", "git_auth_file", "git_auth_token", "git_auth_credential"
+    )
+    github_file_selected = any(
+        isinstance(spec, (list, tuple)) and len(spec) == 2 and spec[0] == "gh"
+        for spec in new_config.agent_auth_files or []
+    )
+    if (
+        new_config.disable_git_auth
+        or any(new_dict[field] is not None for field in github_sources[1:])
+        or (
+            new_config.git_auth_source is not None
+            and "git_auth_source" not in preserve_keys
+        )
+        or github_file_selected
+    ):
+        for field in github_sources:
+            merged_dict[field] = new_dict[field]
+        merged_dict["disable_git_auth"] = new_config.disable_git_auth
     
     return SetupConfig(**merged_dict)

@@ -1318,6 +1318,49 @@ def validate_agent_repositories(repositories: Optional[list[str]]) -> None:
         seen_repo_names.add(repo_name)
 
 
+def validate_github_token(value: str) -> str:
+    """Validate opaque token input without imposing classic-token scopes."""
+    if not isinstance(value, str):
+        raise ValueError("GitHub token must be a non-empty single-line value")
+    normalized = value.strip()
+    if not normalized or any(character.isspace() for character in normalized):
+        raise ValueError("GitHub token must be a non-empty single-line value")
+    validate_no_control_characters(normalized, "GitHub token")
+    return normalized
+
+
+def validate_github_auth_sources(config: Any) -> None:
+    """Reject ambiguous or malformed controller-side GitHub token sources."""
+    sources = [
+        getattr(config, field, None)
+        for field in (
+            "git_auth_source", "git_auth_file", "git_auth_token", "git_auth_credential"
+        )
+    ]
+    if sum(value is not None for value in sources) > 1 or (
+        getattr(config, "disable_git_auth", False)
+        and any(value is not None for value in sources)
+    ):
+        raise ValueError("GitHub credentials must use exactly one GitHub auth source")
+    source, path, token, credential = sources
+    if source is not None and source != "active":
+        raise ValueError("--git-auth accepts active or none")
+    if path is not None:
+        validate_filesystem_path(path)
+    if token is not None:
+        validate_github_token(token)
+    if credential is not None:
+        if (
+            not isinstance(credential, str)
+            or not credential
+            or credential != credential.strip()
+            or ":" in credential
+            or "," in credential
+        ):
+            raise ValueError("--git-auth-credential requires a non-empty credential name")
+        validate_no_control_characters(credential, "GitHub credential name")
+
+
 def validate_agent_git_settings(config: Any) -> None:
     """Validate the VM Git policy and the currently supported auth provider."""
     from lib.config import AGENT_TOOLS, GIT_ACCESS_POLICIES
@@ -1327,6 +1370,8 @@ def validate_agent_git_settings(config: Any) -> None:
         normalize_git_https_origin,
         parse_git_ca_ssh_source,
     )
+
+    validate_github_auth_sources(config)
 
     git_access = getattr(config, "git_access", "none")
     if git_access not in GIT_ACCESS_POLICIES:
@@ -1414,6 +1459,7 @@ def validate_agent_git_settings(config: Any) -> None:
         getattr(config, "git_auth_source", None)
         or getattr(config, "git_auth_file", None)
         or getattr(config, "git_auth_token", None)
+        or getattr(config, "git_auth_credential", None)
     )
     agent_auth_source = getattr(config, "agent_auth_source", None)
     github_agent_auth_requested = any(

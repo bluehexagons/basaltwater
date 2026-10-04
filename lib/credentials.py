@@ -433,10 +433,35 @@ def _resolve_named_smb_mounts(
 
 def prepare_runtime_config(config: SetupConfig, workspace: str | None = None) -> SetupConfig:
     """Return a runtime config with workspace credentials resolved."""
+    from lib.validation import (
+        validate_agent_git_settings,
+        validate_github_auth_sources,
+        validate_github_token,
+    )
+
+    validate_github_auth_sources(config)
     runtime_config = copy.deepcopy(config)
     credential_map = load_workspace_credentials(workspace)
     runtime_config.share_credentials = _resolve_share_credentials(runtime_config, credential_map) or None
     runtime_config.smb_mounts = _resolve_named_smb_mounts(runtime_config.smb_mounts, credential_map)
     runtime_config.git_ca_pems = _prepare_git_ca_pems(runtime_config, workspace)
     runtime_config.git_ca_certificates = None
+    if config.git_auth_credential is not None:
+        token = get_runtime_credential(config, config.git_auth_credential)
+        if token is None:
+            token = credential_map.get(config.git_auth_credential)
+        if token is None:
+            raise ValueError(
+                f"Missing GitHub credential: {config.git_auth_credential}. "
+                "Run basaltw credentials set NAME to enter the token securely"
+            )
+        runtime_config.git_auth_token = validate_github_token(token)
+        # Resolve the controller reference before creating the private payload.
+        runtime_config.git_auth_credential = None
+        runtime_config.copy_agent_keys = True
+    elif config.git_auth_token is not None:
+        runtime_config.git_auth_token = validate_github_token(config.git_auth_token)
+        runtime_config.copy_agent_keys = True
+    if config.git_auth_token is not None or config.git_auth_credential is not None:
+        validate_agent_git_settings(runtime_config)
     return runtime_config

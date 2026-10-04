@@ -1172,6 +1172,25 @@ def add_setup_arguments(
             metavar="PATH",
             help="Seed missing GitHub CLI credentials from a controller-local file",
         )
+        git_auth_group.add_argument(
+            "--git-auth-token",
+            dest="git_auth_token",
+            metavar="TOKEN",
+            help=(
+                "Seed missing GitHub CLI credentials with a classic or fine-grained "
+                "token; prefer --git-auth-credential or --git-auth-file to keep "
+                "secrets out of shell history and process arguments"
+            ),
+        )
+        git_auth_group.add_argument(
+            "--git-auth-credential",
+            dest="git_auth_credential",
+            metavar="NAME",
+            help=(
+                "Seed missing GitHub CLI credentials with a token from the "
+                "named workspace credential; save only the name for reruns"
+            ),
+        )
         parser.add_argument(
             "--agent-auth",
             dest="agent_auth_source",

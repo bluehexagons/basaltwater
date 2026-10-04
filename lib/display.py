@@ -461,7 +461,12 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
         print("Managed Git HTTPS credentials: remove")
     if config.agent_config_source:
         print("Agent config source: active user")
-    if config.git_auth_source or config.git_auth_file or config.git_auth_token:
+    if (
+        config.git_auth_source
+        or config.git_auth_file
+        or config.git_auth_token
+        or config.git_auth_credential
+    ):
         print("GitHub auth: supplied for this setup")
     if config.agent_auth_source or config.agent_auth_files:
         print("Agent auth: supplied for this setup")
