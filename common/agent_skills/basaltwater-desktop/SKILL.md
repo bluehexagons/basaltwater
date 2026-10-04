@@ -48,6 +48,12 @@ unsuitable and the reduced coverage is acceptable. Explain that choice.
 The desktop browser runs on the VM. It has a separate profile from Playwright
 and the client-side T3 browser. Do not copy cookies or assume shared logins.
 
+For unattended readiness checks, use `desktop status` and `desktop doctor` only
+when accessible. Starting applications, the live smoke check, screenshots, and
+input affect or capture the human's shared session and require that task scope;
+a readiness prompt does not authorize them. Honor human pause and report blocked
+checks without restarting the desktop or acquiring control through another tool.
+
 ## Lifecycle and application launch
 
 Run commands as the setup account, without sudo:

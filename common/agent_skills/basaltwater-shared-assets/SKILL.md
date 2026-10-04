@@ -10,13 +10,14 @@ metadata:
 Identify the storage layer before moving or editing large files:
 
 ```bash
-findmnt --target PATH
+findmnt --target PATH --output TARGET,SOURCE,FSTYPE
 git lfs env
 git lfs status
 ```
 
 Replace `PATH` with the asset or project path. Do not print mount credential
-files or include credentials in URLs.
+files or include credentials in URLs. Keep mount options out of evidence; they
+can contain authentication details.
 
 Keep active Git worktrees, `.git` directories, package caches, build trees,
 databases, and service state on local ext4 or xfs storage. CIFS and SSHFS have

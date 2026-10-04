@@ -31,7 +31,9 @@ tail -n 100 ~/.t3/userdata/logs/boot-service.log
 On Basaltwater-managed Debian services, startup tokens, pairing URLs, and QR
 rows are filtered before they reach this log. The first service start after
 filter installation also scrubs matching values from the prior log and its
-numbered rotations. Pairing commands still return a one-time URL directly to
+numbered rotations. This filtering does not sanitize all application or provider
+output; review and redact relevant log excerpts before sharing them.
+Pairing commands still return a one-time URL directly to
 the caller; do not paste that output into shared logs or support reports.
 
 The upstream unit is `~/.config/systemd/user/t3code.service`.
@@ -124,7 +126,9 @@ alone do not supply.
 ## Long-running work
 
 Use the `basaltwater-agent-operations` skill for bounded maintenance holds and
-redacted readiness records. Release a hold promptly after protected work.
+redacted readiness records. Holds are shared across this account's tasks;
+release one you created after protected work only when no other task depends
+on it. An unattended inspection must not create or release holds.
 
 ## Browser previews
 

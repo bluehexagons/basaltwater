@@ -12,6 +12,11 @@ report that the managed gateway was not provisioned; do not replace it with
 ad hoc Nginx or firewall changes. Never bind a development service to
 `0.0.0.0` or disable TLS verification.
 
+Publication and live forwarding change client-visible access. A local build,
+export validation, or unattended browser smoke check does not authorize them.
+For those tasks, use a documented loopback preview or local output and report
+missing capabilities rather than exposing a service.
+
 ## Choose the hosting mode
 
 - For a built static site, use `basaltwater-web publish site`. It builds common
@@ -76,8 +81,9 @@ build directory. Never add `-k`. A URL fragment such as `#/README.md` is used
 only by the browser and is not sent to Nginx; verify the underlying file URL or
 the site root separately, then use the capability-specific browser skill
 installed on the VM for rendered behavior. Client certificate enrollment is
-optional; route to managed Playwright or skip the collaborative browser layer
-when the connected T3 client does not trust the VM CA.
+optional. Follow the active session's browser policy: use managed Playwright only
+when the installed browser skill permits fallback, or report the collaborative
+coverage gap when the connected T3 client does not trust the VM CA.
 
 Remove a publication only when explicitly requested, using `basaltwater-web site
 remove NAME --yes`.

@@ -125,8 +125,14 @@ editable before submission; selecting a template does not run or schedule it.
 | Triage a service incident | Once | 20 minutes | Inspect only |
 | Check certificate expiry | Daily | 10 minutes | Inspect only |
 
-Repair and test-writing templates preserve unrelated work and leave changes
-for review. Host templates inspect existing evidence and recommend follow-up:
+Repository editing templates ask for a clean Git checkout, including untracked
+files, and leave changes for review. Their prompts tell later runs to report a
+dirty checkout and stop before editing; review and integrate the previous result
+before continuing the schedule. The templates prohibit stashing, resetting,
+cleaning, or committing existing work to clear the checkout.
+Dependency updates follow the project's package manager, lockfiles, and upgrade
+policy, with larger migrations reported for follow-up.
+Host templates inspect existing evidence and recommend follow-up:
 backup checks do not perform restores, storage reviews do not delete files,
 and certificate checks do not renew certificates or change trust. Missing
 configuration or unavailable evidence is reported explicitly. Security review
@@ -157,8 +163,11 @@ templates still require you to select a suitable checkout.
 
 GitHub CI inspection needs command network access; the runner offers that in
 workspace mode, so its prompt explicitly requests no file changes or remote
-actions. Browser checks use isolated local previews and synthetic data. Godot
-exports use a documented ignored output directory and report missing presets
+actions. Browser checks use isolated loopback previews and synthetic data, without
+creating gateway previews or forwards. A healthy managed browser installation
+does not prove that browser tools are exposed to the unattended session; missing
+tools are reported as blocked coverage. Godot exports use a documented ignored
+output directory and report missing presets
 or export templates instead of downloading them. Other integration checks
 inspect existing state and recommend follow-up without repairs or privileged
 actions. Availability filters only the starting catalog: saved tasks retain
@@ -217,6 +226,16 @@ Prompt execution uses the account's existing privileges. Host repairs that
 need elevation use the configured [privilege approval workflow](PRIVILEGE_APPROVALS.md);
 the panel does not grant root access. The templates prepare changes for review
 and do not ask the agent to commit, push, or deploy.
+
+Runs receive their saved execution settings in the prompt instructions and are
+told to report blocked checks instead of bypassing sandbox permissions, starting
+login, or waiting for an operator. Package and test tools may need a documented
+per-command cache path inside the workspace or permitted temporary directory;
+temporary writes do not grant access to caches elsewhere in the account's home.
+Prompts must keep waits within the runtime cap and avoid detaching work into
+another service. Cancellation does not undo changes or withdraw privileged
+broker requests; external integrations can own work outside the local process
+group. The [managed agent skills](AGENT_SKILLS.md) include unattended task guidance.
 
 ## Receive notifications
 

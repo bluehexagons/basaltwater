@@ -30,6 +30,11 @@ managed MCP wrapper, or expose a service.
 For `stale_processes`, restart the affected agent session so it loads the
 current launcher; repeatedly probing the old process does not repair it.
 
+A healthy doctor result verifies the installation, not exposure of its MCP tools
+to this session. This also applies to unattended panel prompts. If those tools
+are absent, report browser coverage as blocked and continue non-browser checks;
+do not invoke an unconfigured standalone browser or bypass the managed launcher.
+
 Playwright and its Chromium traffic originate on the VM. Keep development
 servers on loopback and use their reported URL. This is usually the best path
 for repeatable DOM interaction, console/network inspection, browser-engine

@@ -42,14 +42,15 @@ Firewall management requires an explicit access flag; see the workstation skill.
 Inspect service state and recent logs as the user:
 
 ```bash
-systemctl --user status basaltwater-cachyos-t3.service
-journalctl --user -u basaltwater-cachyos-t3.service -n 100
+systemctl --user status basaltwater-cachyos-t3.service --no-pager
+journalctl --user -u basaltwater-cachyos-t3.service -n 100 --no-pager
 ```
 
 Managed web-service output is filtered before systemd records it, including
 headless startup tokens, pairing URLs, and QR rows. The explicit `t3 pair`
 command still returns a one-time credential to the local caller; do not save
-its output in shared logs or support reports.
+its output in shared logs or support reports. The filter does not sanitize every
+application or provider message; review and redact log excerpts before sharing.
 
 The runtime is installed under `~/.local/share/basaltwater/cachyos-t3`, separate
 from an existing T3 desktop installation. Its data is explicitly under that

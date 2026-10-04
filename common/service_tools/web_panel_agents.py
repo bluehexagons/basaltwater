@@ -22,6 +22,12 @@ from lib.agent_tasks import (
 )
 
 
+_REPOSITORY_EDIT_PREFLIGHT = (
+    "Read this repository's agent instructions. Verify that the selected directory belongs to the intended Git checkout and inspect Git status, including untracked files. "
+    "If there are existing changes, stop and report that they need review before another editing run. Do not stash, reset, clean, commit, or switch branches to clear them. "
+)
+
+
 PROMPT_TEMPLATES = {
     "maintenance": {
         "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
@@ -31,7 +37,7 @@ PROMPT_TEMPLATES = {
     "dependencies": {
         "scope": "repository", "description": "Prepare dependency changes and validation for review each week.",
         "title": "Update repository dependencies", "mode": "workspace", "interval": "weekly", "network": True, "temporary_files": True,
-        "prompt": "Review this repository's instructions and current Git status. Preserve unrelated changes. Update dependencies using its existing package manager and lockfiles. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
+        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Update dependencies using the repository's existing package manager, lockfiles, and update policy. Prefer compatible updates within its declared constraints; report major upgrades needing separate migration work. Run the relevant checks, explain changes and compatibility concerns, and leave the result ready for review. Do not commit, push, publish, or deploy.",
     },
     "repository": {
         "scope": "repository", "description": "Inspect repository state and identify maintenance work.",
@@ -42,19 +48,19 @@ PROMPT_TEMPLATES = {
         "scope": "repository", "title": "Repair failing checks",
         "description": "Reproduce a test, lint, or build failure and prepare a focused fix.",
         "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Identify failing tests, lint checks, or builds from available local evidence. Reproduce the failure using the existing tooling, then make the smallest justified fix and rerun relevant checks. Do not weaken checks or remove tests to make them pass. If a failure cannot be reproduced or tooling is unavailable, report the missing evidence rather than guessing. Summarize the cause, changes, and validation. Do not commit, push, publish, or deploy.",
+        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Identify failing tests, lint checks, or builds from available local evidence. Reproduce the failure using the existing tooling, then make the smallest justified fix and rerun relevant checks. Do not weaken checks or remove tests to make them pass. If a failure cannot be reproduced or tooling is unavailable, report the missing evidence rather than guessing. Summarize the cause, changes, and validation. Do not commit, push, publish, or deploy.",
     },
     "regression-tests": {
         "scope": "repository", "title": "Add regression tests",
         "description": "Cover important behavior and edge cases using the existing test suite.",
         "mode": "workspace", "interval": "once", "network": False, "temporary_files": True, "timeout_minutes": 60,
-        "prompt": "Read this repository's instructions, Git status, recent changes, and existing test conventions. Preserve unrelated work. Identify a small number of important behaviors or edge cases lacking meaningful coverage. Add focused regression tests that verify observable behavior, using mocks and temporary directories for external or system operations. Avoid tests that simply mirror implementation details. Run the affected suite and report what the tests cover and any remaining gaps. Do not change production behavior, commit, push, publish, or deploy.",
+        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Read recent commits and existing test conventions. Identify a small number of important behaviors or edge cases lacking meaningful coverage. Add focused regression tests that verify observable behavior, using mocks and temporary directories for external or system operations. Avoid tests that simply mirror implementation details. Run the affected suite and report what the tests cover and any remaining gaps. Do not change production behavior, commit, push, publish, or deploy.",
     },
     "documentation": {
         "scope": "repository", "title": "Update repository documentation",
         "description": "Reconcile setup instructions, examples, and references with the code.",
         "mode": "workspace", "interval": "weekly", "network": False, "timeout_minutes": 30,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Compare its README, setup instructions, CLI or API examples, and configuration references with the current implementation. Correct concrete discrepancies and broken local references using the established documentation format. Preserve accurate content, avoid marketing copy, and do not invent capabilities or unverified results. Run existing documentation checks when available, and report changes and any examples that could not be verified. Do not change application behavior, commit, push, publish, or deploy.",
+        "prompt": _REPOSITORY_EDIT_PREFLIGHT + "Compare its README, setup instructions, CLI or API examples, and configuration references with the current implementation. Correct concrete discrepancies and broken local references using the established documentation format. Preserve accurate content, avoid marketing copy, and do not invent capabilities or unverified results. Run existing documentation checks when available, and report changes and any examples that could not be verified. Do not change application behavior, commit, push, publish, or deploy.",
     },
     "security-review": {
         "scope": "repository", "title": "Review repository security",
@@ -132,7 +138,7 @@ PROMPT_TEMPLATES = {
         "requires": "browser", "scope": "repository", "title": "Run browser smoke checks",
         "description": "Check key application flows with the managed browser tooling.",
         "mode": "workspace", "interval": "once", "network": True, "temporary_files": True, "timeout_minutes": 30,
-        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Check the managed browser capability using available Basaltwater diagnostics, then use the repository's documented local preview and configured browser tools to inspect key flows, console errors, and a narrow viewport. Use an isolated test environment and synthetic data; avoid production endpoints and real user transactions. Start a local preview only when repository instructions support it, and stop processes you start. Keep screenshots in the browser's private evidence directory and report results, URLs, and blocked checks. Do not install tools, change application code, publish, deploy, or send messages.",
+        "prompt": "Read this repository's instructions and Git status; preserve unrelated work. Check the managed browser capability using available Basaltwater diagnostics, then use the repository's documented local preview and configured browser tools to inspect key flows, console errors, and a narrow viewport. A healthy installation does not prove browser tools are exposed in this session; if unavailable, report browser coverage as blocked and continue relevant local checks. Use an isolated test environment and synthetic data; avoid production endpoints and real user transactions. Start a loopback local preview only when repository instructions support it, and stop processes you start. Do not create managed gateway previews or forwards. Keep screenshots in the browser's private evidence directory and report results, URLs, and blocked checks. Do not install tools, change application code, publish, deploy, or send messages.",
     },
     "godot-export": {
         "requires": "godot", "scope": "repository", "title": "Validate Godot web export",

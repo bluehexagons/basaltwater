@@ -11,6 +11,12 @@ Use the VM's shared Nginx HTTPS origin on TCP 8443 for static Godot web
 exports. The game does not need its own listener or firewall rule. Do not start
 a public plain-HTTP server or edit Nginx and UFW directly.
 
+Export validation and publication are separate scopes. A local-only or unattended
+export check should use the project's documented headless export command and
+ignored output directory, without running the publication steps below. Report
+missing presets or export templates instead of downloading or installing them
+unless that setup work is explicitly requested.
+
 ## Publish
 
 1. Run `basaltw agent doctor --capability development --json` and confirm
@@ -33,11 +39,12 @@ a public plain-HTTP server or edit Nginx and UFW directly.
 
    Treat the returned URL as authoritative. Do not substitute a local port or
    bypass certificate verification with `curl -k` or an equivalent option.
-6. Use the capability-specific browser skill installed on the VM. Prefer
-   VM-local Playwright for repeatable canvas and console checks when
-   collaboration is unnecessary; use T3 preview for shared, client-origin
-   evidence. Confirm that the game canvas initializes without browser console
-   errors.
+6. Use the capability-specific browser skill installed on the VM and follow the
+   active session's browser policy. In T3 sessions with `preview_*` tools, use
+   status/open and that skill's fallback conditions before selecting Playwright.
+   Outside those sessions, VM-local Playwright suits repeatable canvas and console
+   checks; T3 preview supplies shared client-origin evidence. Confirm that the
+   game canvas initializes without browser console errors.
 
 Published games are independent and remain available under their stable URLs.
 Use `basaltwater-web list` to inspect them. Remove one only when explicitly requested,
@@ -49,7 +56,8 @@ client and therefore does not necessarily share that trust store. If only the
 collaborative preview fails, inspect its snapshot and network error. For an
 explicit `ERR_CERT_AUTHORITY_INVALID`, follow the installed T3-capable browser
 skill. Client CA enrollment is optional: use VM-local Playwright when
-available, or skip the collaborative browser layer and continue VM checks.
+available and the session permits fallback, or skip the collaborative browser
+layer and continue VM checks.
 Offer the verified public CA URL and fingerprint only when the user wants
 preview access restored. If VM-local automation fails trust, report the failed
 capability; rerun the saved setup only when the task includes repairing managed

@@ -34,6 +34,11 @@ can configure GitHub's Git credential helper, rebuild an incomplete active T3
 native runtime, enable the managed service at boot, and restart it if inactive.
 It is a mutation, not an additional read-only diagnostic.
 
+For unattended inspection, omit `--fix` and `--record` and print the support
+snapshot instead of requesting an output file. If the sandbox blocks a service
+socket, log, or diagnostic probe, report that evidence as unavailable; do not
+escalate, restart a service, or use another tool to evade the restriction.
+
 ## Support snapshot
 
 Print a redacted JSON snapshot:

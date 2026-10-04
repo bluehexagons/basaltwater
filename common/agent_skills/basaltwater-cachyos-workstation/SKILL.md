@@ -47,9 +47,11 @@ Use the original manager for updates to externally managed tools.
 
 For a recognized standalone Codex installation, preview with
 `basaltw agent update --tool codex --dry-run`, then update with
-`basaltw agent update --tool codex --tools-only-readiness`. The latter avoids
-generic VM checks on this workstation. Complete package rollback snapshots are
-retained; restart provider sessions when convenient to use the new executable.
+`basaltw agent update --tool codex --tools-only-readiness`. The latter gates update
+success on the selected tools while still recording host and any expected T3
+readiness; it does not omit those observations. Complete package rollback
+snapshots are retained; restart provider sessions when convenient to use the
+new executable.
 
 Setup prunes old pacman downloads while retaining three cached versions, the
 installed version, and files accessed or modified within 30 days. It also

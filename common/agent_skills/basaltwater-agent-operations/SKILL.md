@@ -1,6 +1,6 @@
 ---
 name: basaltwater-agent-operations
-description: Check or deliberately update coding agents, rotate their credentials, or protect long work from host maintenance on a Basaltwater agent VM.
+description: Check or deliberately update coding agents, rotate their credentials, protect long work from host maintenance, or configure unattended panel prompt tasks on a Basaltwater agent VM.
 metadata:
   managed-by: basaltwater
 ---
@@ -9,6 +9,19 @@ metadata:
 
 Use the managed commands so checks, updates, and handoffs stay bounded and
 redacted.
+
+Skill examples describe available operations, not authorization to perform them.
+Keep diagnostics, repairs, credential changes, and publication within the user's
+requested scope and the active execution permissions. A denied operation is a
+blocked check; do not bypass it through another tool or an unrestricted process.
+
+## Unattended panel tasks
+
+The web panel's **Agents** screen runs saved Codex prompts independently of T3.
+Read [the unattended task guidance](references/unattended-tasks.md) when preparing
+or running recurring prompts. It covers execution permissions, isolated working
+directories, blocked checks, and review between editing runs. Inspection tasks
+must not use the update, repair, login, hold, or privilege-request examples below.
 
 For quick project discovery, run `basaltw agent manifest --json` from its
 checkout. It reports available tools, workspace/artifact conventions, and
@@ -84,13 +97,17 @@ dry run first.
 Create a hold only when work must cross the normal restart window:
 
 ```bash
-basaltw agent maintenance hold --hours 8
 basaltw agent maintenance status --json
+basaltw agent maintenance hold --hours 8
 basaltw agent maintenance release
 ```
 
-Release it when the protected work ends. Holds expire after at most 72 hours
-and do not override the host's forced-restart deadline.
+The hold is shared by this account's tasks, not owned by an individual thread.
+Inspect an existing hold before replacing it; do not shorten its deadline or
+release it while another task still depends on it. Release a hold you created
+when the protected work ends. Holds expire after at most 72 hours and do not
+override the host's forced-restart deadline. A task's runtime cap does not create
+or renew a hold automatically.
 
 ## One-time privileged actions
 
@@ -112,6 +129,12 @@ Managed `basaltwater-web` publication and owner-scoped live gateway actions
 already work without this approval flow. See
 [Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/PRIVILEGE_APPROVALS.md)
 for the supported actions and portal setup.
+
+Waiting can time out while the original request remains pending or executing.
+Inspect it with `basaltw agent privilege status REQUEST_ID --json` rather than
+submitting another request. An uncertain execution result also needs inspection
+before retrying. Cancelling a local prompt or reaching its runtime cap does not
+cancel broker requests or undo an already approved host action.
 
 If the action becomes unnecessary, use
 `basaltw agent privilege cancel REQUEST_ID --json`.

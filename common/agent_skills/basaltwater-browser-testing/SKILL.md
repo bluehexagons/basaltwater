@@ -28,8 +28,9 @@ Outside those sessions, prefer VM-local Playwright for repeatable headless inter
 DOM/console/network inspection, loopback access, canvas input, or browser-engine
 verification that does not need to be shared live with the user. It remains
 available when the T3 application is closed.
-If the client is known to be closed, go straight to Playwright; preview probes
-or service restarts add no coverage. Share selected screenshots and a short
+Outside a T3 session exposing preview tools, a known closed client needs no
+preview probes or service restarts. Within a T3 session, still use status/open
+and the fallback conditions above. Share selected screenshots and a short
 interaction record when the user needs to review the result asynchronously.
 
 Prefer the T3 collaborative preview when the user should watch or participate,
@@ -53,6 +54,12 @@ Use Playwright only when `healthy` is true. Follow the stable `issues` and
 `remediation` fields when it is not; do not install another browser stack or
 mutate the managed launcher. `stale_processes` requires restarting the affected
 agent session.
+
+A healthy installation does not establish that its MCP tools are exposed in this
+agent session. Unattended panel prompts cannot use a connected T3 thread's tools.
+Use only tools actually available to the run; if none are exposed, report browser
+coverage as blocked and continue non-browser checks. Do not bypass the managed
+launcher or restart services to make tools appear.
 
 Keep development servers on loopback. Playwright originates on the VM, so it
 can reach VM loopback and uses the VM's DNS, routes, source IP, and trust store.

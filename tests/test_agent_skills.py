@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -77,6 +78,11 @@ class ManagedAgentSkillTests(unittest.TestCase):
                     content = file_obj.read()
                 self.assertIn(f"name: {skill_name}", content)
                 self.assertIn("managed-by: basaltwater", content)
+                for source in (Path(AGENT_SKILLS_ROOT) / skill_name / "references").rglob("*.md"):
+                    relative = source.relative_to(Path(AGENT_SKILLS_ROOT) / skill_name)
+                    installed = Path(path).parent / relative
+                    self.assertEqual(installed.read_bytes(), source.read_bytes())
+                    self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
 
     def test_every_managed_skill_belongs_to_an_installer_catalog(self) -> None:
         source_names = {

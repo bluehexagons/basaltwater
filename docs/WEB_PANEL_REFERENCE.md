@@ -146,6 +146,17 @@ panel does not sandbox installed hooks or MCP servers independently. Sandboxing
 must be supported by the installed CLI and host; failures remain failed runs
 rather than falling back to unrestricted execution.
 
+The prompt preamble supplies the saved mode, command-network and temporary-write
+settings, web-search mode, runtime cap, and repeat interval. It instructs the
+agent to keep inspection read-only across tools, report blocked checks without
+escalation or interactive login, and keep waits within the remaining runtime.
+Skill examples and tool presence do not grant authority beyond the task prompt.
+These instructions guide agent behavior; they do not add an OS sandbox around
+external integrations. Repository editing templates require a clean checkout
+and stop for review when an earlier run left tracked or untracked changes. This
+is prompt guidance, not a Git lock or a runner-enforced preflight. Existing saved
+prompts retain their text; select the refreshed template to adopt its guidance.
+
 Model choices read only selector metadata from the bounded local
 `~/.codex/models_cache.json`; identity and credential fields are never exposed.
 Missing, malformed, oversized, or unavailable caches leave the configured
@@ -200,8 +211,11 @@ Limits are 32 saved tasks, 40 retained runs, a 4,000-byte prompt, and a 1 MiB
 state file. Each task has a 1–10,080 minute wall-clock limit, defaulting to 30
 minutes. Sleeping and waiting count against this limit; cancellation or expiry
 stops the process group, including child commands. A runtime limit does not
-enforce a monetary or token budget. The runner retains the last 8 KiB of output
-and stops a run after 1 MiB of output. Common credential patterns are redacted for display;
+enforce a monetary or token budget or stop work owned by another service, such
+as an external MCP server or an approved privilege-broker request. Stopping a
+local run does not withdraw such a request or undo its effects. The runner
+retains the last 8 KiB of output and stops a run after 1 MiB of output. Common
+credential patterns are redacted for display;
 raw output and exact prompt settings remain in private state. Users must avoid
 putting credentials in prompts, and output can contain application data.
 Removing a task retains its existing run history. Removing the web panel stops

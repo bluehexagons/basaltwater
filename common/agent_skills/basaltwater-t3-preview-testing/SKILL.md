@@ -11,6 +11,11 @@ This VM has T3 Code preview guidance but no managed Playwright fallback. The
 preview depends on the connected T3 application remaining open and uses that
 client's routes and certificate trust.
 
+This workflow requires preview tools exposed to the active agent session.
+Unattended panel prompts run outside the connected T3 thread and cannot borrow
+its tools. If preview tools are absent, report browser coverage as blocked and
+continue non-browser checks; an installed T3 service does not establish access.
+
 ## Preview availability
 
 Prefer this browser workflow over an installed shared desktop for ordinary web

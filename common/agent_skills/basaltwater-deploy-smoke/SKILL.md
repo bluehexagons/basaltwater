@@ -37,18 +37,20 @@ dry run when the selected Basaltwater command provides one.
 
 Check the service manager, loopback health endpoint, and public HTTPS endpoint
 as separate layers. Use the capability-specific browser skill installed on the
-VM. Prefer managed Playwright for repeatable VM-origin checks when live
-collaboration is unnecessary; prefer T3 preview when shared client-visible
-evidence or participation matters. Before using managed Playwright, run:
+VM and follow the active session's browser policy. In T3 sessions exposing
+`preview_*` tools, call status and open before applying that skill's fallback
+conditions. Outside those sessions, managed Playwright suits repeatable VM-origin
+checks, and T3 preview supplies client-visible evidence. Before using managed
+Playwright, run:
 
 ```bash
 basaltw agent doctor --capability browser
 ```
 
-If only T3 preview is installed and the application is closed or its client
-does not trust the VM certificate, skip that browser layer and continue with
-the remaining deployment checks. Do not make client certificate enrollment a
-deployment prerequisite.
+If only T3 preview is installed, establish availability through its installed
+skill. When client-origin coverage is unavailable or its certificate trust fails,
+continue the remaining deployment checks and report the browser gap. Do not make
+client certificate enrollment a deployment prerequisite.
 
 Capture the deployed commit identifier, HTTP status, and a small set of
 user-visible smoke interactions. Never dump response bodies that may contain

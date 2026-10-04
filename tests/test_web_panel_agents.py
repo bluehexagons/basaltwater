@@ -372,6 +372,52 @@ class AgentTaskTest(unittest.TestCase):
         self.assertNotIn("--ephemeral", tasks.codex_command({**task, "session_history": True}, "/test/codex"))
         self.assertIn("sandbox_workspace_write.exclude_slash_tmp=false", tasks.codex_command({**task, "temporary_files": True}, "/test/codex"))
 
+    def test_entire_template_catalog_validates_and_builds_bounded_commands(self) -> None:
+        for key, template in agents.PROMPT_TEMPLATES.items():
+            with self.subTest(template=key):
+                task = tasks.validate_task({**template, "directory": self.home}, self.home)
+                command = tasks.codex_command(task, "/test/codex")
+                sandbox = command[command.index("--sandbox") + 1]
+                self.assertEqual(sandbox, "read-only" if task["mode"] == "inspect" else "workspace-write")
+                self.assertIn('approval_policy="never"', command)
+                self.assertIn("--ephemeral", command)
+                self.assertEqual(command[-1], "-")
+                self.assertNotIn(task["prompt"], command)
+                if template["scope"] == "host":
+                    self.assertEqual(task["mode"], "inspect")
+                    self.assertFalse(task["network"])
+                    self.assertFalse(task["temporary_files"])
+                if task["mode"] == "workspace":
+                    self.assertIn("sandbox_workspace_write.network_access=" + str(task["network"]).lower(), command)
+                    self.assertIn("sandbox_workspace_write.exclude_slash_tmp=" + str(not task["temporary_files"]).lower(), command)
+
+    def test_execution_passes_saved_limits_and_scope_guidance_through_stdin(self) -> None:
+        for mode, network, temporary in (("inspect", False, False), ("workspace", False, False), ("workspace", True, True)):
+            with self.subTest(mode=mode, network=network, temporary=temporary):
+                process, selector = MagicMock(), MagicMock()
+                process.__enter__.return_value = process
+                selector.__enter__.return_value = selector
+                selector.get_map.return_value = {}
+                process.pid, process.wait.return_value = 1234, 0
+                task = {**self.values, "mode": mode, "network": network, "temporary_files": temporary,
+                        "web_search": "cached", "timeout_minutes": 120}
+                with (
+                    patch.object(tasks.os, "geteuid", return_value=1000),
+                    patch.object(tasks.subprocess, "Popen", return_value=process) as spawn,
+                    patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
+                    patch.object(tasks.os, "killpg"),
+                ):
+                    tasks.execute_prompt(task, self.home, threading.Event())
+                instruction = process.stdin.write.call_args.args[0].decode()
+                self.assertIn(f"mode={mode}; command network={str(network).lower()}", instruction)
+                self.assertIn(f"temporary writes={str(temporary).lower()}; web search=cached", instruction)
+                self.assertIn("maximum runtime=120 minutes, including waits; repeat=weekly", instruction)
+                self.assertIn("no interactive reply is available", instruction)
+                self.assertIn("read-only operations through every tool", instruction)
+                self.assertIn("Report blocked checks", instruction)
+                self.assertTrue(instruction.endswith("Task prompt:\n" + task["prompt"]))
+                self.assertNotIn(task["prompt"], spawn.call_args.args[0])
+
     def test_prompt_is_stdin_and_workspace_network_permission_is_explicit(self) -> None:
         process = MagicMock()
         process.__enter__.return_value = process

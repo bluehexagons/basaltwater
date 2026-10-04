@@ -31,6 +31,13 @@ For work targeting current remote main, fetch that ref and use `--base
 origin/main`; creating a workspace does not fetch or update the primary branch.
 Uncommitted primary-checkout changes are not included in the new worktree.
 
+For recurring panel prompts, prepare the worktree before scheduling and select
+its returned path in **Agents**. Worktree creation and removal also change the
+primary repository's Git metadata, which may be outside a task's writable
+sandbox. The panel's serial runner does not coordinate other agent sessions.
+Review changes left by one run before the next editing run; do not clear a dirty
+checkout automatically to keep a schedule running.
+
 ## Integration
 
 Commit and validate inside the returned worktree. When merging or pushing is

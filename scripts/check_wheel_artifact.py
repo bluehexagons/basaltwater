@@ -23,6 +23,7 @@ REQUIRED_WHEEL_PATHS = (
     "lib/t3code_native_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
+    "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
     "common/agent_skills/basaltwater-t3code/references/updates.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
     "common/cachyos_steps.py",
