@@ -13,7 +13,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import zlib
 
 from lib import agent_blender, agent_cli, agent_workspace
@@ -27,6 +27,22 @@ class BlenderSmokeTests(unittest.TestCase):
         self.which = self.enterContext(patch.object(agent_blender.shutil, "which", return_value="/usr/bin/blender"))
         self.run = self.enterContext(patch.object(agent_blender, "run", side_effect=self.render))
         self.enterContext(patch.object(agent_workspace, "_effective_home", return_value=str(self.home)))
+
+    def test_fixture_saves_uncompressed_regardless_of_blender_defaults(self) -> None:
+        bpy = MagicMock()
+        bpy.app.version_string = "5.2.2"
+        bpy.context.scene.name = "Scene"
+        bpy.context.scene.frame_current = 1
+        self.output.mkdir()
+        with (
+            patch.dict("sys.modules", {"bpy": bpy, "mathutils": MagicMock()}),
+            patch.object(agent_blender.blender_smoke_scene.sys, "argv", ["blender", "--", str(self.output)]),
+        ):
+            agent_blender.blender_smoke_scene.main()
+        bpy.ops.wm.save_as_mainfile.assert_called_once_with(
+            filepath=str(self.output / "scene.blend"), compress=False,
+        )
+        self.assertTrue(json.loads((self.output / "settings.json").read_text())["render_completed"])
 
     def render(self, command: list[str], **options) -> subprocess.CompletedProcess:
         directory = Path(command[-1])

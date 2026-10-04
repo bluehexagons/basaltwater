@@ -146,6 +146,8 @@ This renders a bundled scene with Cycles on CPU at 128 × 128, eight samples,
 seed 0, two render threads and no denoising. It uses factory startup and private
 configuration, scripts, data, cache and temporary directories, so the check
 does not depend on personal startup files or add-ons. No desktop is required.
+The fixture saves an uncompressed `.blend` explicitly, including on Blender 5
+where compression is enabled by default; personal save preferences are retained.
 The default evidence directory is a unique private run under
 `~/.local/state/basaltwater/blender/`. Existing output directories are rejected;
 `--timeout` accepts 1–600 seconds (default 120).

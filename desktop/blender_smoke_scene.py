@@ -60,7 +60,9 @@ def main() -> None:
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.filepath = str(directory / "render.png")
     scene.world.color = (0.08, 0.08, 0.08)
-    bpy.ops.wm.save_as_mainfile(filepath=str(directory / "scene.blend"))
+    # Blender 5 enables compression by default; the smoke verifier reads the
+    # uncompressed BLENDER header without needing a host Zstandard dependency.
+    bpy.ops.wm.save_as_mainfile(filepath=str(directory / "scene.blend"), compress=False)
     started = time.monotonic()
     bpy.ops.render.render(write_still=True)
     settings = {
