@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Basaltwater symbol"><path fill="#17232c" d="M3 12 9 9l6 3v12H3Z M17 6l6-3 6 3v18H17Z"/><path fill="none" stroke="#17657d" stroke-width="3" d="M2 28h8l6-4h14"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Basaltwater symbol">
+  <path fill="#17657d" d="M8 9l6 3v3l-6 3-6-3v-3Z M23 1l6 3v3l-6 3-6-3V4Z" />
+  <path fill="#17232c" d="M2 17l5 3v6l-5-3Z M9 20l5-3v6l-5 3Z M17 9l5 3v10l-5-3Z M24 12l5-3v10l-5 3Z" />
+  <path fill="none" stroke="#17657d" stroke-width="2" d="M2 30h8l5-3h6l4-3h5" />
+</svg>

@@ -4,17 +4,73 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 from pathlib import Path
 import sys
 import tempfile
 from unittest.mock import patch
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from common.service_tools.web_panel_templates import BRAND_PALETTES, BRAND_SYMBOL, render_document
+from common.service_tools.web_panel_templates import (
+    BRAND_ICONS, BRAND_PALETTES, BRAND_SYMBOL, BRAND_TEXTURES, NAVIGATION_ICONS,
+    brand_styles, render_document, render_icon, render_texture,
+)
 from common.service_tools import web_panel_service as panel
+
+GUIDE_STYLE = """
+.identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
+  align-items: center; gap: 32px; padding: 28px 0 12px; }
+.identity-intro h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); line-height: 1.15; }
+.identity-intro p { max-width: 540px; color: var(--muted); }
+.identity-mark { display: grid; place-items: center; padding: 20px; background: var(--panel);
+  border: 1px solid var(--accent-soft); border-radius: 16px; }
+.identity-mark svg { width: 112px; height: 112px; }
+.asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px; margin-top: 16px; }
+.asset-card { border: 1px solid var(--accent-soft); border-radius: 12px; overflow: hidden;
+  background: var(--panel); }
+.asset-card p { margin: 0; padding: 14px 20px; font-size: .85rem; color: var(--muted); }
+.asset-card a { color: var(--accent); text-underline-offset: 3px; }
+.logo-swatch { min-height: 128px; display: flex; align-items: center; justify-content: center;
+  gap: 24px; padding: 24px; }
+.logo-swatch img { max-width: 100%; height: auto; }
+.logo-swatch.light { background: #f3f8fa; }
+.logo-swatch.dark { background: #101a21; }
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
+  gap: 10px; margin-top: 16px; }
+.icon-swatch { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; min-height: 112px; padding: 16px 10px; border: 1px solid var(--accent-soft);
+  border-radius: 10px; background: var(--panel); color: var(--accent); text-decoration: none; }
+.icon-swatch:hover { background: var(--accent-soft); border-color: var(--accent); }
+.icon-swatch svg { width: 28px; height: 28px; }
+.icon-swatch span { color: var(--muted); font-size: .72rem; text-align: center; }
+.texture-swatch { min-height: 144px; background: var(--bg); }
+.texture-swatch.basalt { background-image: url(texture-basalt-light.svg); }
+.texture-swatch.water { background-image: url(texture-water-light.svg); }
+@media (prefers-color-scheme: dark) {
+  .texture-swatch.basalt { background-image: url(texture-basalt-dark.svg); }
+  .texture-swatch.water { background-image: url(texture-water-dark.svg); }
+}
+@media (max-width: 560px) {
+  .asset-grid { grid-template-columns: minmax(0, 1fr); }
+  .identity-intro { grid-template-columns: minmax(0, 1fr) 80px; gap: 16px; padding-top: 12px; }
+  .identity-mark { padding: 12px; }
+  .identity-mark svg { width: 56px; height: 56px; }
+  .logo-swatch { padding: 20px 16px; }
+}
+"""
+
+
+def write_svg(destination: Path, source: str) -> None:
+    """Write readable SVG XML without editor metadata or binary payloads."""
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+    root = ET.fromstring(source)
+    ET.indent(root, space="  ")
+    destination.write_text(ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
 
 
 def export_assets(assets: Path) -> None:
@@ -26,25 +82,67 @@ def export_assets(assets: Path) -> None:
         water = palette["brand-water"] if theme != "mono" else ink
         symbol = BRAND_SYMBOL.replace('aria-hidden="true" focusable="false"', 'role="img" aria-label="Basaltwater symbol"')
         symbol = symbol.replace("currentColor", ink).replace(f"var(--brand-water,{ink})", water)
-        (assets / f"symbol-{theme}.svg").write_text(symbol + "\n", encoding="utf-8")
+        write_svg(assets / f"symbol-{theme}.svg", symbol)
         mark = symbol.replace('viewBox="0 0 32 32"', 'viewBox="0 0 264 48"').replace('width="32" height="32"', 'width="264" height="48"')
         mark = mark.replace('aria-label="Basaltwater symbol"', 'aria-label="Basaltwater"')
-        mark = mark.replace('<path ', '<g transform="translate(0 8)"><path ', 1)
-        mark = mark.replace('</svg>', '</g><text x="44" y="33" font-family="DejaVu Sans, sans-serif" font-size="30" letter-spacing="-1.2" fill="' + ink + '">Basaltwater</text></svg>')
-        (assets / f"wordmark-{theme}.svg").write_text(mark + "\n", encoding="utf-8")
+        opening, _, artwork = mark.partition(">")
+        mark = (opening + '><g transform="translate(0 8)">' + artwork.removesuffix("</svg>")
+                + '</g><text x="44" y="33" font-family="DejaVu Sans, sans-serif" '
+                'font-size="30" letter-spacing="-1.2" fill="' + ink + '">Basaltwater</text></svg>')
+        write_svg(assets / f"wordmark-{theme}.svg", mark)
+    for name in BRAND_ICONS:
+        write_svg(assets / f"icon-{name}.svg", render_icon(name, label=name.replace("-", " ").title()))
+    for theme, palette in BRAND_PALETTES.items():
+        for name in BRAND_TEXTURES:
+            texture = render_texture(name, color=palette["accent"])
+            texture = texture.replace('aria-hidden="true"', f'role="img" aria-label="{name.title()} texture"')
+            texture = texture.replace('stroke-width="1"', 'stroke-width="1" opacity=".18"')
+            write_svg(assets / f"texture-{name}-{theme}.svg", texture)
     (assets / "palette.json").write_text(json.dumps(BRAND_PALETTES, indent=2) + "\n", encoding="utf-8")
-    from common.service_tools.web_panel_templates import brand_styles
     (assets / "theme.css").write_text(brand_styles() + "\n", encoding="utf-8")
     navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None), ("panel.html", "Web panel specimen", None))
+    icon_gallery = "".join(
+        f'<a class="icon-swatch" href="icon-{name}.svg">{render_icon(name)}'
+        f'<span>{html.escape(label)}</span></a>'
+        for label, name in NAVIGATION_ICONS.items()
+    )
     specimens = {
         "index.html": (
             "Identity guide", "Basaltwater identity",
-            '<p class="lede">The symbol uses angular columns and a waterline.</p>'
-            '<section><h2>Symbol sizes and spacing</h2><p>'
-            '<img src="symbol-light.svg" width="32" height="32" alt="Color symbol on light" style="background:white"> '
-            '<img src="symbol-mono.svg" width="16" height="16" alt="Monochrome symbol at favicon size" style="background:white">'
-            '</p><p>Leave one quarter of the symbol width clear on every side. '
-            'Use at least 16 pixels for the symbol and 176 pixels for the wordmark.</p></section>'
+            '<div class="identity-intro"><div><p class="eyebrow">Stone / structure / current</p>'
+            '<h2>Built on basalt.<br>Connected by water.</h2>'
+            '<p>Hexagonal columns, split faces, and a stepped current form a compact identity '
+            'for the machines and services in your network.</p></div>'
+            f'<div class="identity-mark">{BRAND_SYMBOL}</div></div>'
+            '<section><h2>The mark</h2><div class="asset-grid">'
+            '<div class="asset-card"><div class="logo-swatch light">'
+            '<img src="wordmark-light.svg" width="264" height="48" alt="Basaltwater on light"></div>'
+            '<p>Light surfaces · <a href="wordmark-light.svg">Wordmark SVG</a> · '
+            '<a href="symbol-light.svg">Symbol SVG</a></p></div>'
+            '<div class="asset-card"><div class="logo-swatch dark">'
+            '<img src="wordmark-dark.svg" width="264" height="48" alt="Basaltwater on dark"></div>'
+            '<p>Dark surfaces · <a href="wordmark-dark.svg">Wordmark SVG</a> · '
+            '<a href="symbol-dark.svg">Symbol SVG</a></p></div>'
+            '<div class="asset-card"><div class="logo-swatch light">'
+            '<img src="symbol-mono.svg" width="64" height="64" alt="Monochrome basalt mark"></div>'
+            '<p>One ink · <a href="symbol-mono.svg">Symbol SVG</a> · '
+            '<a href="wordmark-mono.svg">Wordmark SVG</a></p></div>'
+            '<div class="asset-card"><div class="logo-swatch light">'
+            '<img src="symbol-light.svg" width="32" height="32" alt="Symbol at 32 pixels">'
+            '<img src="symbol-mono.svg" width="16" height="16" alt="Symbol at 16 pixels"></div>'
+            '<p>32 / 16 pixels · Keep eight units of clear space around the 32-unit mark.</p></div>'
+            '</div></section>'
+            '<section><h2>Icons from the same stone</h2><p class="lede">A 24-unit grid, '
+            'consistent strokes, and angular cuts. Each tile opens its SVG.</p>'
+            f'<div class="icon-grid">{icon_gallery}</div></section>'
+            '<section><h2>Quiet textures</h2><p class="lede">Hexagonal joints and water strata. '
+            'Transparent, repeating vectors for headers and supporting surfaces.</p>'
+            '<div class="asset-grid"><div class="asset-card"><div class="texture-swatch basalt"></div>'
+            '<p>Basalt joints · <a href="texture-basalt-light.svg">Light SVG</a> · '
+            '<a href="texture-basalt-dark.svg">Dark SVG</a></p></div>'
+            '<div class="asset-card"><div class="texture-swatch water"></div>'
+            '<p>Water strata · <a href="texture-water-light.svg">Light SVG</a> · '
+            '<a href="texture-water-dark.svg">Dark SVG</a></p></div></div></section>'
             '<section><h2>States always have labels</h2><p><span class="badge success">Healthy</span> '
             '<span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p>'
             '<p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section>'
@@ -63,7 +161,8 @@ def export_assets(assets: Path) -> None:
         ),
     }
     for filename, (title, heading, content) in specimens.items():
-        document = render_document(title=title, style=panel._PAGE_STYLE,
+        specimen_style = panel._PAGE_STYLE + (GUIDE_STYLE if filename == "index.html" else "")
+        document = render_document(title=title, style=specimen_style,
             header=f'<header><p class="eyebrow">Basaltwater identity</p><h1>{heading}</h1></header>',
             content=content, navigation=tuple((url, label, url if url == filename else None) for url, label, _ in navigation),
             footer='<footer>Review specimen · Apache-2.0 assets · bluehexagons</footer>')

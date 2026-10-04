@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 168" width="192" height="168" role="img" aria-label="Basalt texture" focusable="false" class="brand-texture brand-texture-basalt">
+  <defs>
+    <pattern id="brand-basalt" width="24" height="42" patternUnits="userSpaceOnUse">
+      <path d="M12 0l12 7v14l-12 7L0 21V7Z M12 28v14" fill="none" stroke="#4dc5dd" stroke-width="1" opacity=".18" />
+    </pattern>
+  </defs>
+  <path fill="url(#brand-basalt)" d="M0 0h192v168H0Z" />
+</svg>

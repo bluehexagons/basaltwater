@@ -63,7 +63,8 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertEqual(document.count('<nav class="sidebar"'), 1)
         self.assertIn("View &lt;test&gt;", document)
         self.assertIn('href="#main"', document)
-        self.assertIn("<header>Header</header>", document)
+        self.assertIn("<header>Header<svg", document)
+        self.assertIn('class="brand-texture brand-texture-basalt"', document)
         self.assertIn("<footer>Footer</footer>", document)
 
 
