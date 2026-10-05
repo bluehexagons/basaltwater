@@ -7,7 +7,6 @@ approval flags. Steam default releases and provider post editors are handoffs.
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import re
 import shutil
@@ -15,7 +14,6 @@ import subprocess
 import sys
 import urllib.parse
 
-from lib.atomic_io import write_text_atomic
 from lib.project_manifest import load_manifest
 from lib.publishing_artifacts import checked_directory, relative_path, scan, snapshot
 from lib.publishing_languages import language_tag, parse_publishing
@@ -157,7 +155,9 @@ class Publishing:
                 raise ValueError("Language is not supported by the project manifest")
             if source:
                 original = self.store.get(db, "drafts", source)
-                if original["project"] != project_id or original["language"] != languages["source"] or original["state"] in {"superseded", "stale"}:
+                self._current_draft(db, original)
+                if (original["project"] != project_id or original["language"] != languages["source"]
+                        or original["source"] or language == languages["source"]):
                     raise ValueError("Translation must reference the current source-language draft")
             elif language != languages["source"]:
                 raise ValueError("Translations must name their source revision")
@@ -212,7 +212,8 @@ class Publishing:
             raise ValueError("Draft configuration/source is stale; create and review a new revision")
         if draft["source"]:
             source = self.store.get(db, "drafts", draft["source"])
-            if source["state"] in {"superseded", "stale", "withdrawn"}:
+            if (source["state"] in {"superseded", "stale", "withdrawn"}
+                    or source["project_revision"] != draft["project_revision"] or source["source"]):
                 raise ValueError("Translation source is stale")
         if draft["release"]:
             gate = self.store.get(db, "releases", draft["release"])
@@ -235,16 +236,20 @@ class Publishing:
             if dispatch:
                 if draft["state"] not in {"approved", "awaiting-editor"}:
                     raise ValueError("This revision has already been published or is held")
-                current = now()
-                if draft["publish_at"] and not draft["publish_at"] <= current <= draft["publish_at"] + draft["late_minutes"] * 60:
-                    raise ValueError("Publication is outside its reviewed time window")
-                if draft["release"] and self.store.get(db, "releases", draft["release"])["state"] not in {"operator-confirmed", "verified"}:
-                    raise ValueError("Release gate awaits completion")
+                self._dispatch_ready(db, draft)
                 draft["state"] = "awaiting-editor"
                 self.store.put(db, "drafts", draft)
             return {"id": draft_id, "hash": draft["hash"], "language": draft["language"], "title": draft["title"],
                     "body": draft["body"], "format": draft["format"], "editor": editor_link(project),
                     "delivery": POST_CAPABILITIES[project["provider"]], "published": False}
+
+    def _dispatch_ready(self, db, draft: dict) -> None:
+        """Apply reviewed timing and release gates to posts and bundled writing."""
+        current = now()
+        if draft["publish_at"] and not draft["publish_at"] <= current <= draft["publish_at"] + draft["late_minutes"] * 60:
+            raise ValueError("Publication is outside its reviewed time window")
+        if draft["release"] and self.store.get(db, "releases", draft["release"])["state"] not in {"operator-confirmed", "verified"}:
+            raise ValueError("Release gate awaits completion")
 
     def confirm_post_from_panel(self, draft_id: str, url: str, principal: str) -> dict:
         parsed = urllib.parse.urlsplit(url)
@@ -297,8 +302,11 @@ class Publishing:
             if language not in languages["supported"]:
                 raise ValueError("Select a configured project language")
             original = self.store.get(db, "drafts", source) if source else None
-            if original and (original["project"] != project_id or original["language"] != languages["source"]):
-                raise ValueError("Translation source must match this project's source language")
+            if original:
+                self._current_draft(db, original)
+                if (original["project"] != project_id or original["language"] != languages["source"]
+                        or original["source"] or language == languages["source"]):
+                    raise ValueError("Translation source must match this project's current source language")
             if not original and language != languages["source"]:
                 raise ValueError("Select the source revision to translate")
         prompt = (f"Prepare public release writing for project {project_id}, destination {project['target']}, language {language}. "
@@ -311,7 +319,9 @@ class Publishing:
             prompt += "\nTranslate this exact source revision, retaining meaning and terminology:\n" + original["title"] + "\n\n" + original["body"]
         if len(prompt.encode()) > 4000:
             raise ValueError("Source is too large for a panel prompt; use a VM-local draft file with your coding agent")
-        return {"title": "Publishing draft · " + project_id + " · " + language, "prompt": prompt,
+        # Project IDs and language tags have independent, longer limits. Keep
+        # the prepared task inside the Agents form's 120-byte title contract.
+        return {"title": "Publishing draft · " + project_id[:30] + " · " + language, "prompt": prompt,
                 "directory": project["repository"], "mode": "inspect", "interval": "once", "model": "", "effort": "",
                 "network": False, "web_search": "disabled", "timeout_minutes": 30, "session_history": False,
                 "temporary_files": False, "failure_limit": 3, "repeat_minutes": 0}
@@ -346,7 +356,7 @@ class Publishing:
                 raise
         return self.upload(new_id)
 
-    def _valid_artifact(self, db, artifact: dict) -> dict:
+    def _valid_artifact(self, db, artifact: dict, *, public: bool = False) -> dict:
         project = self.store.get(db, "projects", artifact["project"])
         if project_revision(project) != artifact["project_revision"]:
             raise ValueError("Project changed after preparation; prepare again")
@@ -359,7 +369,10 @@ class Publishing:
             review = artifact.get("text_reviews", {}).get(path)
             if not review:
                 raise ValueError("Bundled release notes require human review")
-            self._approved(db, self.store.get(db, "drafts", review))
+            draft = self.store.get(db, "drafts", review)
+            self._approved(db, draft)
+            if public or project["provider"] == "butler":
+                self._dispatch_ready(db, draft)
         return project
 
     def upload(self, artifact_id: str, *, job: str = "") -> dict:
@@ -477,6 +490,7 @@ class Publishing:
                 job["next_at"] = now() + job["interval"]
                 self.store.put(db, "jobs", job)
         for job in due:
+            artifact = None
             try:
                 with self.store.transaction() as db:
                     current = self.store.get(db, "jobs", job["id"])
@@ -501,6 +515,14 @@ class Publishing:
                     current.pop("last_error", None)
                     self.store.put(db, "jobs", current)
             except (OSError, RuntimeError, ValueError):
+                if artifact is not None:
+                    # A preparation rejected before queueing has no remote
+                    # effects. Do not consume the retained-build quota forever.
+                    # The remover refuses active, ambiguous or release-bound work.
+                    try:
+                        self.remove_artifact(artifact["id"])
+                    except (OSError, RuntimeError, ValueError):
+                        pass
                 with self.store.transaction() as db:
                     current = self.store.get(db, "jobs", job["id"])
                     current["failures"] += 1

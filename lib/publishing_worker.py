@@ -46,7 +46,7 @@ def upload_command(publishing: Publishing, run: dict, artifact: dict) -> list[st
     return [binary, "+login", project["username"], "+run_app_build", str(app), "+quit"]
 
 
-def receipt(output: str, service: str) -> str:
+def receipt(output: str, service: str, *, app_id: str = "") -> str:
     if service == "butler":
         for line in output.splitlines():
             try:
@@ -57,9 +57,9 @@ def receipt(output: str, service: str) -> str:
             if isinstance(result, dict) and type(result.get("buildId")) is int and result["buildId"] > 0 and not result.get("dryRun"):
                 return str(result["buildId"])
     else:
-        match = re.search(r"Successfully finished AppID [0-9]+ build \(BuildID ([0-9]+)\)", output, re.IGNORECASE)
-        if match:
-            return match[1]
+        for match in re.finditer(r"Successfully finished AppID ([0-9]+) build \(BuildID ([0-9]+)\)", output, re.IGNORECASE):
+            if (not app_id or match[1] == app_id) and int(match[2]) > 0:
+                return match[2]
     return ""
 
 
@@ -98,7 +98,7 @@ def execute(publishing: Publishing, run: dict, command: list[str], *, timeout: f
             except ProcessLookupError:
                 pass
     text = output.decode("utf-8", errors="replace")
-    build_id = receipt(text, run["project_config"]["provider"]) if code == 0 and not stopped else ""
+    build_id = receipt(text, run["project_config"]["provider"], app_id=run["project_config"]["target"]) if code == 0 and not stopped else ""
     auth_failed = any(phrase in text.lower() for phrase in ("invalid password", "no credentials", "not logged", "login failure", "steam guard", "access denied"))
     return {"state": "uploaded" if build_id else "uploaded-unverified" if code == 0 and not stopped else "unknown",
             "receipt": build_id, "exit_code": code, "finished": now(), "needs_login": auth_failed,

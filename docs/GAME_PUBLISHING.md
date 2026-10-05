@@ -62,8 +62,6 @@ Revoke access on [itch.io](https://itch.io/user/settings/api-keys) or
 
 Language declarations live in the project's `basaltwater.json`:
 
-The project manifest accepts communication languages:
-
 ```json
 {
   "version": 1,
@@ -128,6 +126,8 @@ effects and is recorded as unknown. Inspect the provider, then use the panel's
 reconciliation control. **Not submitted** permits retry only after a human
 establishes that result. A zero exit status without an identified receipt is
 uploaded-unverified, not proof that players can download the build.
+Steam upload receipts must identify the requested AppID and a nonzero BuildID;
+a success line for another app does not verify this upload.
 
 ## Unattended uploads and promotion
 
@@ -145,7 +145,10 @@ long agent prompts. Job intervals are 5–43,200 minutes. Each overdue job check
 the latest completed artifact once; missed intervals are not replayed. Three
 consecutive preparation failures pause a job. Authentication failures pause
 provider jobs, and ambiguous outcomes block automatic retries. Resume is
-explicit and accepts the current project configuration. Pause stops future
+explicit and accepts the current project configuration. Preparations rejected
+before queueing are removed automatically, including builds with unreviewed
+notes; failed polls do not consume the retained-build quota. Active, ambiguous
+and release-linked artifacts remain protected. Pause stops future
 dispatch; cancel active work separately. Detached uploads survive a panel
 restart, but scheduling requires the panel service to be running. External build
 runners can invoke `prepare`/`upload`; `publish worker` processes the queue and
@@ -187,8 +190,9 @@ operator-confirmed, not provider-verified.
    selected source revision. This opens the existing Agents form for review;
    it does not start an agent automatically. Agents return unreviewed plain text.
 2. Import the final title/body for one project and language. A translation names
-   its source revision. Select a release gate when the post claims an update is
-   live. Optional handoff timing must include `Z` or an explicit UTC offset.
+   its current source revision; old destination/language configurations and
+   translation chains are rejected. Select a release gate when the post claims
+   an update is live. Optional timing must include `Z` or an explicit UTC offset.
 3. A human reviews the exact destination and each language, side by side with
    the source. The decision defaults to changes requested. Approval binds the
    revision hash, project/language configuration, timing and release dependency.
@@ -221,7 +225,11 @@ external edit detection, rich-asset support or Steam CSV conversion yet.
 Files named `changelog*`, `release-notes*`, or `patch-notes*` in an artifact require
 an approved body matching their bytes exactly. Preparation can reuse an existing
 matching review for the same project/destination; schedules cannot approve new
-text. Use **Attach reviewed release notes**, or `publish artifact-text ARTIFACT_ID
+text. Public itch.io uploads and automatic Steam beta promotions also respect
+that review's timing window and release gate. Steam uploads may stage approved
+notes before their public release; beta promotion rechecks approval immediately
+before dispatch, and the final default release review stays manual on Steamworks.
+Use **Attach reviewed release notes**, or `publish artifact-text ARTIFACT_ID
 PATH DRAFT_ID`, to declare another public text file and attach its review.
 Projects still own human review of other player-facing game content; filename
 detection cannot prove a binary or image contains no writing.
@@ -238,7 +246,7 @@ detection cannot prove a binary or image contains no writing.
 | Per-artifact limits | 10,000 regular files, 30 GiB, relative paths up to 1,024 UTF-8 bytes |
 | Native upload limits | Six hours, 16 MiB total stream, 64 KiB parser tail; raw output is discarded |
 | Writing | Title 200 characters, body 64 KiB UTF-8; panel agent prompts 4,000 bytes |
-| Panel/CLI status | Latest 200 records per kind; panel displays 20 artifacts, 40 runs and 40 drafts |
+| Panel/CLI status | Up to 200 selected records per kind, prioritizing actionable runs/drafts/releases; includes referenced projects and translation sources; panel displays 20 artifacts, 40 runs and 40 drafts |
 
 Remove unused snapshots through the panel or `publish remove-artifact ARTIFACT_ID`.
 Active, ambiguous and release-linked artifacts cannot be removed. History,

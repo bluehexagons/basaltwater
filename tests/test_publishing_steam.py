@@ -23,6 +23,7 @@ class SteamPromotionTests(unittest.TestCase):
             self.upload.update(state="uploaded", receipt="456")
             self.publisher.store.put(db, "runs", self.upload)
         self.live = "100"
+        self.next_build = "456"
         self.calls = []
         self.native_request = steam.request
         self.request = patch.object(steam, "request", side_effect=self.api)
@@ -34,9 +35,9 @@ class SteamPromotionTests(unittest.TestCase):
         if method == "GetAppBetas":
             return {"betas": {"public": {"buildid": "10"}, "test": {"buildid": self.live}}}
         if method == "GetAppBuilds":
-            return {"builds": [{"buildid": "456"}]}
-        self.assertEqual(fields, {"appid": "123", "buildid": "456", "betakey": "test"})
-        self.live = "456"
+            return {"builds": [{"buildid": "456"}, {"buildid": self.next_build}]}
+        self.assertEqual(fields, {"appid": "123", "buildid": self.next_build, "betakey": "test"})
+        self.live = self.next_build
         return {"success": True}
 
     def get(self, kind, record):
@@ -60,6 +61,45 @@ class SteamPromotionTests(unittest.TestCase):
             work(self.publisher)
         self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
         self.assertEqual(self.get("releases", release)["state"], "preflight-failed")
+        self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
+
+    def notes_upload(self, *, release=""):
+        text = "Reviewed release notes\n"
+        draft = self.publisher.draft("steam", "en", "Notes", text, release=release)
+        self.approve(draft)
+        (self.output / "patch-notes.txt").write_text(text)
+        self.complete()
+        uploaded = self.publisher.upload(self.publisher.prepare("steam")["id"])
+        self.next_build = "789"
+        with self.publisher.store.transaction() as db:
+            uploaded.update(state="uploaded", receipt=self.next_build)
+            self.publisher.store.put(db, "runs", uploaded)
+        return uploaded, draft
+
+    def test_private_upload_can_stage_gated_notes_but_beta_promotion_waits(self):
+        gate = self.publisher.create_release(self.upload["id"])
+        uploaded, _ = self.notes_upload(release=gate["id"])
+        prepared = steam.prepare_beta(self.publisher, uploaded["id"], "test")
+        run = steam.queue_beta(self.publisher, prepared["id"])
+        with patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
+        self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
+        self.publisher.confirm_release_from_panel(gate["id"], "456", "operator")
+        prepared = steam.prepare_beta(self.publisher, uploaded["id"], "test")
+        run = steam.queue_beta(self.publisher, prepared["id"])
+        with patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "promoted")
+
+    def test_beta_promotion_rechecks_notes_review_after_private_upload(self):
+        uploaded, draft = self.notes_upload()
+        prepared = steam.prepare_beta(self.publisher, uploaded["id"], "test")
+        run = steam.queue_beta(self.publisher, prepared["id"])
+        self.publisher.review_from_panel(draft["id"], draft["hash"], "operator", approve=False)
+        with patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
         self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
 
     def test_default_aliases_rejected_before_provider_requests(self):

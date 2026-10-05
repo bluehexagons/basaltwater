@@ -29,8 +29,9 @@ that every acceptance item has been qualified.
 | Posts | Steam/itch.io reviewed exports and operator-confirmed published URLs; automatic submission is not advertised. | Qualified post adapters, remote schedule ownership, external edit detection and additional website/blog/social destinations. |
 
 Current snapshots are retained explicitly (100 maximum, 10,000 files and 30 GiB
-per artifact). Status reads the latest 200 records per kind, while history,
-reviews and deduplication records remain durable. Automatic 30-day record
+per artifact). Status selects up to 200 records per kind, prioritizes actionable
+runs/drafts/releases, and includes their project and translation-source references.
+History, reviews and deduplication records remain durable. Automatic 30-day record
 pruning and removal of successful staging are future policy work, not current
 behavior. Only exact existing reviewed text can be reused by an upload schedule.
 One-depot Steam recipes create separate app builds and cannot compose a
@@ -70,6 +71,14 @@ Resolve these as follows:
 - Bundled release notes must match an approved text body byte for byte. Projects
   remain responsible for declaring/reviewing other public writing in game assets;
   filename detection is not a proof that an arbitrary binary contains no text.
+- Translation sources must match the current destination/language configuration.
+  Public itch.io uploads and automatic Steam beta promotion recheck bundled
+  writing's approval, timing and release gates. Steam uploads may privately stage
+  reviewed writing before release; default release review stays manual.
+  Failed scheduled preparations are removed before queueing, while retention
+  protects active and uncertain work. Steam success receipts identify the requested
+  AppID. Status prioritizes recovery and retains referenced sources/projects, so
+  completed history cannot hide pending comparisons and recovery controls.
 
 
 ## Direction and decisions
@@ -96,7 +105,7 @@ defaults rather than separately requested product requirements.
 | Release controls | Support explicitly authorized beta promotion and itch.io destination-channel uploads. Steam default/public release and rollback stay manual on Steamworks. |
 | Public writing | Agents may draft/translate; every public text revision and translation requires human review. Automation publishes only the exact approved payload. |
 | Content destinations | Steam announcements and itch.io posts first; website/blog and social adapters are planned next. |
-| Languages | Project declaration in a proposed `basaltwater.json` extension, default English only. Initially test English and Spanish; allow additional language tags with explicit qualification limits. |
+| Languages | Project declaration in the accepted `basaltwater.json` extension, default English only. Initially test English and Spanish; allow additional language tags with explicit qualification limits. |
 | Initial host | Managed Debian x86_64 VM with one non-root publishing owner; Butler-only operation on supported ARM64 installations. |
 | Accounts | One active account per provider per publishing owner; many projects/destinations. Multiple simultaneous provider identities are deferred. |
 | Installation | Reuse existing installers and add an engine-independent selection; retain the Godot bundle as a convenience. |
@@ -106,16 +115,7 @@ still needs the qualification in slice 1. The first release consumes completed
 build artifacts; automated game exports can feed that interface without making
 this feature own a build system.
 
-## Existing support and missing behavior
-
-| Area | Current repository behavior | Planned addition |
-| --- | --- | --- |
-| Debian installation | `--godot-bundle publishing` installs verified Butler and user-owned SteamCMD; SteamCMD is skipped on ARM64. | Independent tool selection and consistent capability observations. |
-| CachyOS | Independent `--butler` and `--steamcmd` package selections, with their own package/update rules. | Preserve those owners; qualify management separately before claiming support. |
-| Updates | Godot maintenance updates Butler and invokes the SteamCMD self-updater. | Coordinate updates with active authentication and uploads. |
-| Authentication | Operators run native login commands as the configured account. | Guided panel login with VM-local sessions, bounded interaction, explicit status and disconnect. |
-| Panel | Host, service, agent, and maintenance views; no publishing management. | Publishing navigation, provider/project links, readiness, and operation results. |
-| Uploads | Operators invoke provider commands themselves. | Shared validated upload workflow for the panel and local CLI. |
+## Repository integration points
 
 Primary integration points are `common/godot_steps.py`,
 `common/service_tools/auto_update_godot.py`, `plugins/common.py`,

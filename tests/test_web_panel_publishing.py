@@ -89,6 +89,38 @@ class PublishingPanelTests(unittest.TestCase):
         self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.UNPROCESSABLE_ENTITY)
         self.assertNotIn("SECRET", handler._send.call_args.args[1])
 
+    def test_history_limit_keeps_pending_runs_project_and_translation_source(self):
+        en = self.publisher.draft("game", "en", "Published source", "Exact original source text")
+        self.approve(en)
+        self.publisher.export(en["id"], dispatch=True)
+        self.publisher.confirm_post_from_panel(en["id"], "https://owner.itch.io/game/devlog/1", "operator")
+        artifact = self.publisher.prepare("game")
+        run = self.publisher.upload(artifact["id"])
+        with self.publisher.store.transaction() as db:
+            run["state"] = "unknown"
+            self.publisher.store.put(db, "runs", run)
+            en = self.publisher.store.get(db, "drafts", en["id"])
+            for index in range(210):
+                self.publisher.store.put(db, "projects", {**self.project, "id": f"new-project-{index}"})
+                self.publisher.store.put(db, "drafts", {**en, "id": f"archived-draft-{index}"})
+                self.publisher.store.put(db, "runs", {**run, "id": f"finished-run-{index}", "state": "uploaded"})
+        es = self.publisher.draft("game", "es", "Traducción", "Texto traducido", source=en["id"])
+        handoff = self.publisher.draft("game", "en", "Pending editor", "Review this post")
+        self.approve(handoff)
+        self.publisher.export(handoff["id"], dispatch=True)
+        snapshot = self.publisher.status()
+        self.assertEqual(snapshot["runs"][0]["id"], run["id"])
+        self.assertIn("game", {project["id"] for project in snapshot["projects"]})
+        self.assertIn(en["id"], {draft["id"] for draft in snapshot["drafts"]})
+        handler = self.handler("/publishing")
+        handler.do_GET()
+        self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.OK)
+        page = handler._send.call_args.args[1]
+        self.assertIn(run["id"], page)
+        self.assertIn("Exact original source text", page)
+        self.assertIn(es["id"], page)
+        self.assertIn("Record published post", page)
+
     def test_insecure_page_has_no_secret_input_or_mutation_forms(self):
         self.state.manifest["panel_url"] = "http://vm.example.test/"
         page = view.render_publishing(self.state, panel._PAGE_STYLE)

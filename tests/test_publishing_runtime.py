@@ -72,6 +72,26 @@ class PublishingRuntimeTests(unittest.TestCase):
         self.assertEqual(result["receipt"], "")
         self.assertTrue(kill.called)
 
+    def test_steam_success_receipt_must_match_requested_app(self):
+        self.publisher.save_project("steam", str(self.repo), "steamcmd", "123", depot="124", username="publisher")
+        run = self.publisher.upload(self.publisher.prepare("steam")["id"])
+        for app, build, expected in (("999", "456", "uploaded-unverified"), ("123", "0", "uploaded-unverified"), ("123", "456", "uploaded")):
+            process = MagicMock()
+            process.poll.side_effect = [None, 0]
+            process.wait.return_value = 0
+            selector = MagicMock()
+            selector.get_map.return_value = {}
+            selector.select.return_value = [(SimpleNamespace(fd=42, fileobj=process.stdout), 1)]
+            output = f"Successfully finished AppID {app} build (BuildID {build})".encode()
+            with self.subTest(app=app, build=build), patch("lib.publishing_worker.subprocess.Popen") as popen, \
+                    patch("lib.publishing_worker.selectors.DefaultSelector") as select, \
+                    patch("lib.publishing_worker.os.read", return_value=output), patch("lib.publishing_worker.os.killpg"):
+                popen.return_value.__enter__.return_value = process
+                select.return_value.__enter__.return_value = selector
+                outcome = execute(self.publisher, run, ["/fake/steamcmd"])
+            self.assertEqual(outcome["state"], expected)
+            self.assertEqual(outcome["receipt"], "456" if expected == "uploaded" else "")
+
     def test_auth_failure_pauses_all_provider_jobs(self):
         job = self.publisher.schedule("game", 60)
         artifact = self.publisher.prepare("game")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,7 +12,6 @@ from unittest.mock import patch
 from lib.publishing import Publishing
 from lib.publishing_artifacts import complete_record
 from lib.publishing_auth import environment, login_view
-from lib.publishing_store import PublishingStore
 from lib.publishing_worker import receipt, upload_command, work
 
 
@@ -96,6 +94,45 @@ class PublishingTests(unittest.TestCase):
         (self.repo / "basaltwater.json").write_text('{"version":1,"components":[],"publishing":{}}')
         with self.assertRaises(ValueError):
             self.publisher.export(draft["id"])
+
+    def test_translation_and_agent_task_reject_old_destination_sources(self):
+        source = self.publisher.draft("game", "en", "Source", "Original destination")
+        self.publisher.save_project("game", str(self.repo), "butler", "owner/game:new-channel")
+        with self.assertRaises(ValueError):
+            self.publisher.draft("game", "es", "Traducción", "Destino original", source=source["id"])
+        with self.assertRaises(ValueError):
+            self.publisher.writing_task("game", "es", "Translate the source", source=source["id"])
+        current = self.publisher.draft("game", "en", "Source", "Current destination")
+        with self.assertRaises(ValueError):
+            self.publisher.draft("game", "en", "Invalid chain", "Copy", source=current["id"])
+
+    def test_prepared_writing_task_fits_agents_limits_for_long_ids_and_tags(self):
+        from lib.agent_tasks import validate_task
+
+        language = "en-" + "aaaaaaa-" * 7 + "1234"
+        project_id = "p" * 80
+        (self.repo / "basaltwater.json").write_text(json.dumps({"version": 1, "components": [], "publishing": {
+            "languages": {"source": "en", "supported": ["en", language]}}}))
+        self.publisher.save_project(project_id, str(self.repo), "butler", "owner/game:linux")
+        source = self.publisher.draft(project_id, "en", "Source", "Translate me")
+        prepared = self.publisher.writing_task(project_id, language, "Preserve meaning", source=source["id"])
+        validated = validate_task(prepared, str(self.home))
+        self.assertEqual(validated["mode"], "inspect")
+        self.assertIn(project_id, validated["prompt"])
+        self.assertIn(language, validated["prompt"])
+
+    def test_bundled_writing_honors_reviewed_time_window(self):
+        text = "Timed release notes\n"
+        (self.output / "patch-notes.txt").write_text(text)
+        self.complete()
+        draft = self.publisher.draft("game", "en", "Notes", text, publish_at=100, late_minutes=1)
+        self.approve(draft)
+        artifact = self.publisher.prepare("game")
+        for instant in (90, 170):
+            with patch("lib.publishing.now", return_value=instant), self.assertRaises(ValueError):
+                self.publisher.upload(artifact["id"])
+        with patch("lib.publishing.now", return_value=120):
+            self.assertEqual(self.publisher.upload(artifact["id"])["state"], "queued")
 
     def test_post_handoff_and_expiry_not_automatic_success(self):
         draft = self.publisher.draft("game", "en", "News", "Hello", publish_at=100, late_minutes=1)
@@ -183,6 +220,15 @@ class PublishingTests(unittest.TestCase):
         self.publisher.tick()
         self.assertEqual(self.publisher.status()["jobs"][0]["failures"], 1)
         self.assertEqual(len(self.publisher.status()["runs"]), 1)
+        for _ in range(2):
+            with self.publisher.store.transaction() as db:
+                job = self.publisher.store.get(db, "jobs", job["id"])
+                job["next_at"] = 0
+                self.publisher.store.put(db, "jobs", job)
+            self.publisher.tick()
+        self.assertEqual(self.publisher.status()["jobs"][0]["state"], "paused")
+        self.assertEqual(len(self.publisher.status()["artifacts"]), 1)
+        self.assertEqual(len(list((self.publisher.store.root / "artifacts").iterdir())), 1)
 
 
 if __name__ == "__main__":

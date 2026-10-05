@@ -163,6 +163,10 @@ def execute_beta(publishing: Publishing, run: dict) -> dict:
         return {"state": "preflight-failed", "message": message, "finished": now()}
 
     try:
+        with publishing.store.transaction() as db:
+            uploaded = publishing.store.get(db, "runs", release["run"])
+            artifact = publishing.store.get(db, "artifacts", uploaded["artifact"])
+            publishing._valid_artifact(db, artifact, public=True)
         observed = observe(publishing, project, branch, release["build_id"])
         if (release["project_revision"] != project_revision(project) or now() - release["observed_at"] > 300
                 or observed["previous_build"] != release["previous_build"]):

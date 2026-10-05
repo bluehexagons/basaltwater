@@ -119,15 +119,33 @@ class PublishingStore:
     def snapshot(self) -> dict:
         with self.transaction() as db:
             result = {}
+            actionable = {
+                "runs": ("queued", "running", "unknown", "uploaded-unverified"),
+                "drafts": ("needs-review", "changes-requested", "approved", "awaiting-editor"),
+                "releases": ("prepared-beta", "promotion-queued", "awaiting-steamworks", "unknown"),
+            }
             for kind in ("projects", "artifacts", "runs", "jobs", "drafts", "releases", "accounts"):
                 records = []
-                for row in db.execute("SELECT document FROM records WHERE kind=? ORDER BY rowid DESC LIMIT 200", (kind,)):
+                states = actionable.get(kind, ())
+                priority = "CASE WHEN json_extract(document,'$.state') IN (" + ",".join("?" for _ in states) + ") THEN 0 ELSE 1 END," if states else ""
+                for row in db.execute("SELECT document FROM records WHERE kind=? ORDER BY " + priority + " rowid DESC LIMIT 200", (kind, *states)):
                     value = json.loads(row[0])
                     if kind == "artifacts":
                         value["file_count"] = len(value.pop("entries"))
                     records.append(value)
                 result[kind] = records
-            reviews = {row[0]: {"hash": row[1], "principal": row[2], "at": row[3]} for row in db.execute("SELECT * FROM reviews")}
+            # A bounded history must still include the exact source text and
+            # project needed to interpret each selected revision or operation.
+            sources = {draft["source"] for draft in result["drafts"] if draft["source"]} - {draft["id"] for draft in result["drafts"]}
+            result["drafts"].extend(self.get(db, "drafts", source) for source in sorted(sources))
+            projects = {record["project"] for kind in ("artifacts", "runs", "jobs", "drafts", "releases") for record in result[kind]}
+            projects -= {project["id"] for project in result["projects"]}
+            result["projects"].extend(self.get(db, "projects", project) for project in sorted(projects))
+            reviews = {}
+            for draft in result["drafts"]:
+                row = db.execute("SELECT hash,principal,reviewed FROM reviews WHERE revision=?", (draft["id"],)).fetchone()
+                if row:
+                    reviews[draft["id"]] = {"hash": row[0], "principal": row[1], "at": row[2]}
         for draft in result["drafts"]:
             draft["review"] = reviews.get(draft["id"])
         return result
