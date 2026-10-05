@@ -10,6 +10,48 @@ import shutil
 import stat
 
 
+def collect_sunshine_health(probe, uid: int, *, bus_ready: bool) -> list[tuple[str, str, str]]:
+    """Observe service state and optional VA-API profiles without starting capture."""
+    unit = "app-dev.lizardbyte.app.Sunshine.service"
+    status, output = probe([
+        "/usr/bin/systemctl", "--user", "show", unit,
+        "--property=ActiveState", "--property=Result",
+    ], uid) if bus_ready else ("error", "")
+    values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    known = status == "ok" and set(values) == {"ActiveState", "Result"}
+    failed = known and (values["ActiveState"] == "failed" or values["Result"] in {
+        "core-dump", "signal", "exit-code", "timeout", "start-limit-hit", "watchdog", "resources",
+    })
+    active = known and values["ActiveState"] == "active" and values["Result"] == "success"
+    results = [("service.sunshine", "failed" if failed else "available" if active else "deferred",
+                "Sunshine user service failed; inspect its journal and encoder/capture settings locally."
+                if failed else "Sunshine user service active; capture, input, encoding, and client streaming are not verified."
+                if active else "Sunshine user service inactive or unverified; it may have been quit for this session. "
+                "Setup enables it at KDE login; inspect its service locally if streaming was expected.")]
+    if not shutil.which("vainfo", path="/usr/bin:/bin"):
+        results.append(("graphics.sunshine-vaapi", "deferred",
+                        "VA-API profiles unverified; libva-utils supplies vainfo for Intel/AMD diagnostics. "
+                        "NVIDIA uses a separate encoder; no GPU drivers were changed."))
+        return results
+    for node in sorted(Path("/dev/dri").glob("renderD[0-9]*"))[:4]:
+        try:
+            if not re.fullmatch(r"renderD[0-9]{1,6}", node.name) or not stat.S_ISCHR(node.lstat().st_mode):
+                continue
+        except OSError:
+            continue
+        status, output = probe(["/usr/bin/vainfo", "--display", "drm", "--device", str(node)], uid)
+        if status == "ok" and re.search(
+            r"^\s*VAProfileH264High\s*:\s*VAEntrypointEncSlice(?:LP)?\s*$", output, re.M,
+        ):
+            results.append(("graphics.sunshine-vaapi", "available",
+                            "VA-API reports an H.264 High encoding profile; live encoding and streaming are not verified."))
+            return results
+    results.append(("graphics.sunshine-vaapi", "deferred",
+                    "No usable H.264 High VA-API encoding profile observed; inspect GPU drivers and render-node access. "
+                    "This does not rule out NVIDIA or other encoders."))
+    return results
+
+
 def collect_t3_storage_health(home: Path, uid: int) -> list[tuple[str, str, str]]:
     """Inspect only default desktop state metadata, never token or DB contents."""
     paths = (home / ".t3", home / ".t3/userdata", home / ".t3/userdata/clerk-tokens.json")

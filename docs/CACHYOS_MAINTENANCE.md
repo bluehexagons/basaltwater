@@ -122,6 +122,81 @@ omit Git's discarded error. Resolve the reported cause, then rerun the
 same full setup command. The existing managed web service stays running if
 desktop installation fails.
 
+## Sunshine service and encoder checks
+
+Sunshine supports Intel, AMD, and NVIDIA GPUs. On Linux, Intel/AMD hardware
+encoding can use VA-API; a missing CUDA library during automatic probing does
+not establish a streaming failure on those GPUs. See the upstream
+[encoder settings](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md#encoder).
+
+`--sunshine` installs the native package and `libva-utils`, enables Sunshine at
+KDE login, and starts its user service. Setup verifies that it remains active
+across consecutive checks. The package's `Restart=on-failure` policy allows a
+normal tray-menu quit or `systemctl --user stop` to leave it stopped for that
+session. It starts again at the next KDE login; `disable --now` stops it
+persistently until setup selects Sunshine again. An already active service is
+retained without restart.
+
+This requires an active graphical desktop. Setup does not configure automatic
+login or create a display before login; remote-first machines still need KDE
+running to stream it. Setup refuses masked/custom units or drop-ins instead of
+overwriting them. Sunshine pre-login streaming needs a separate greeter-to-user
+handoff. LizardByte's [pre-login guide](https://app.lizardbyte.dev/2024-10-16-autostart-sunshine-on-boot-without-auto-login/)
+was tested on Debian with SDDM's X11 greeter; it does not qualify current
+CachyOS's Plasma Login Manager/Wayland greeter. Enabling user lingering alone
+does not create that display/session integration. Basaltwater does not configure
+pre-login streaming in this profile. Check the existing session from KDE:
+
+```fish
+basaltw local cachyos-doctor
+systemctl --user status app-dev.lizardbyte.app.Sunshine.service --no-pager
+journalctl --user -u app-dev.lizardbyte.app.Sunshine.service -n 100 --no-pager
+```
+
+With Sunshine selected in the saved setup, the doctor distinguishes an
+inactive service from failures without restarting it. It also
+checks H.264 High VA-API encoding profiles; older setups may need the diagnostic
+tool installed with `sudo pacman -S --needed libva-utils`. Select an actual render
+node from `/dev/dri` and inspect it without starting screen capture:
+
+```fish
+ls /dev/dri/renderD*
+vainfo --display drm --device /dev/dri/renderD128
+```
+
+Use your machine's node, which may differ from the example. An encoding profile
+uses `VAEntrypointEncSlice` or `VAEntrypointEncSliceLP`; `VAEntrypointVLD` is
+decoding. Profiles alone do not prove live encoding, capture, input, or Moonlight
+streaming. VA-API results do not qualify NVIDIA's separate NVENC path.
+
+For an Intel-only render-device layout with verified H.264 VA-API encoding,
+setup supplies `encoder = vaapi` when no explicit encoder setting exists and
+Sunshine is stopped. This avoids the Vulkan encoder probe that crashed on the
+audited Intel workstation. Other settings, explicit encoder selections, and
+active services are retained. Unknown/mixed GPU layouts retain automatic
+selection; setup does not install or modify graphics drivers.
+
+If logs stop at `Trying encoder [vulkan]` or `Creating encoder [h264_vulkan]`
+and the crash stack points into the Intel Mesa Vulkan driver, try the documented
+`encoder = vaapi` setting in your existing Sunshine configuration, after
+confirming VA-API support. Preserve other settings. This avoids the Vulkan
+encoder probe; it does not repair the driver or prove the VA-API path works.
+Keep capture selection separate: KDE Wayland is not a wlroots compositor,
+so a missing `wlr-export-dmabuf` interface is not an NVIDIA requirement.
+
+After addressing the reported error, the desktop owner can reset the failed
+state and retry the service:
+
+```fish
+systemctl --user reset-failed app-dev.lizardbyte.app.Sunshine.service
+systemctl --user start app-dev.lizardbyte.app.Sunshine.service
+```
+
+Keep Sunshine administration local at `https://localhost:47990`, pair a trusted
+Moonlight client, and verify video, audio, and input. Include `--lan-access` or
+explicit `--access-source` values in the full setup selection before remote
+streaming. The read-only doctor does not start capture or change encoder settings.
+
 ## Switch modes on a later setup
 
 `--t3code-desktop` and `--web-interface t3code` cannot be selected together.

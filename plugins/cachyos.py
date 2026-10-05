@@ -46,6 +46,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.cachyos_firewall import configure_firewall, firewall_requested
     from common.cachyos_software import install_software, selected_software
     from common.cachyos_development import install_cachyos_node_versions
+    from common.cachyos_sunshine import configure as configure_sunshine
 
     validate_cachyos_config(config)
     steps = [
@@ -64,6 +65,8 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         steps.append(("Installing or integrating T3 Code desktop (disables managed web service)", install_cachyos_t3_desktop))
     if config.web_interfaces:
         steps.append(("Installing or updating CachyOS T3 Code user service", install_cachyos_t3))
+    if config.install_sunshine:
+        steps.append(("Enabling Sunshine at KDE login and starting streaming host", configure_sunshine))
     steps.append(("Installing CachyOS workstation skills", install_cachyos_skills))
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     steps.append(("Pruning old CachyOS package downloads (keeps three versions and 30 days)", cleanup_cachyos_packages))

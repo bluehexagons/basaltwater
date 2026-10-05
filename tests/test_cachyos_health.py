@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 import os
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,63 @@ from lib.config import SetupConfig
 
 
 class HealthTests(unittest.TestCase):
+    def test_sunshine_failed_service_is_reported_without_launching_it(self):
+        calls = []
+
+        def probe(command, uid):
+            calls.append(command)
+            return "ok", "ActiveState=failed\nResult=core-dump\nprivate=not-published\n"
+
+        with patch.object(health.shutil, "which", return_value=None):
+            # Unexpected fields cannot be interpreted as successful observations.
+            result = health.collect_sunshine_health(probe, 1000, bus_ready=True)
+            self.assertEqual(result[0][1], "deferred")
+            result = health.collect_sunshine_health(
+                lambda *_: ("ok", "ActiveState=failed\nResult=core-dump\n"), 1000, bus_ready=True)
+            self.assertEqual(result[0][1], "failed")
+            self.assertEqual(result[1][1], "deferred")
+        self.assertEqual(calls[0], ["/usr/bin/systemctl", "--user", "show",
+                                   "app-dev.lizardbyte.app.Sunshine.service",
+                                   "--property=ActiveState", "--property=Result"])
+        self.assertNotIn("not-published", str(result))
+
+    def test_sunshine_inactive_or_unknown_is_expected_without_bus_activation(self):
+        with patch.object(health.shutil, "which", return_value=None):
+            for status, output in (("ok", "ActiveState=inactive\nResult=success\n"), ("error", "private")):
+                result = health.collect_sunshine_health(lambda *_: (status, output), 1000, bus_ready=True)
+                self.assertEqual(result[0][1], "deferred")
+            with patch("lib.cachyos_doctor._probe") as probe:
+                health.collect_sunshine_health(probe, 1000, bus_ready=False)
+                probe.assert_not_called()
+
+    def test_vaapi_encoding_profile_is_observed_without_live_encoding(self):
+        node = Path("/dev/dri/renderD128")
+        calls = []
+
+        def probe(command, uid):
+            calls.append(command)
+            return ("ok", "VAProfileH264High : VAEntrypointEncSliceLP\nprivate driver text\n") if "vainfo" in command[0] else (
+                "ok", "ActiveState=active\nResult=success\n")
+
+        with patch.object(health.shutil, "which", return_value="/usr/bin/vainfo"), \
+                patch.object(Path, "glob", return_value=[node]), \
+                patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFCHR | 0o660)):
+            result = health.collect_sunshine_health(probe, 1000, bus_ready=True)
+        self.assertEqual([state for _, state, _ in result], ["available", "available"])
+        self.assertIn(["/usr/bin/vainfo", "--display", "drm", "--device", str(node)], calls)
+        self.assertNotIn("private driver", str(result))
+        self.assertNotIn(str(node), str(result))
+
+    def test_vaapi_decode_only_errors_and_symlinks_never_establish_encoding(self):
+        node = Path("/dev/dri/renderD128")
+        with patch.object(health.shutil, "which", return_value="/usr/bin/vainfo"), \
+                patch.object(Path, "glob", return_value=[node]):
+            for mode, output in ((stat.S_IFCHR, "VAProfileH264High : VAEntrypointVLD\n"),
+                                 (stat.S_IFLNK, "VAProfileH264High : VAEntrypointEncSlice\n")):
+                with patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=mode)):
+                    result = health.collect_sunshine_health(lambda *_: ("ok", output), 1000, bus_ready=False)
+                    self.assertEqual(result[1][1], "deferred")
+
     def test_t3_permissions_are_checked_without_reading_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
@@ -102,6 +160,7 @@ class HealthTests(unittest.TestCase):
             stack.enter_context(patch.object(doctor.shutil, "which", return_value=None))
             stack.enter_context(patch.object(health, "collect_host_health", return_value=[]))
             stack.enter_context(patch.object(health, "collect_network_health", return_value=[]))
+            stack.enter_context(patch.object(health, "collect_sunshine_health", return_value=[]))
             records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
             with patch.object(doctor.shutil, "which", return_value="/fixture/node"), \
                     patch.object(doctor, "_probe", return_value=("ok", "v26.10.0\n")):

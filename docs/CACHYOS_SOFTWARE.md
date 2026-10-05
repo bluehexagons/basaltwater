@@ -13,7 +13,7 @@ or preview the complete selection if you installed only the launcher:
 ```fish
 basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs \
   --godot --material-maker --blender --gimp --inkscape --krita --remmina \
-  --sunshine --moonlight --etcher --butler --steamcmd --dry-run
+  --sunshine --moonlight --lan-access --etcher --butler --steamcmd --dry-run
 ```
 
 Remove `--dry-run` to apply the selection. Package and AUR review prompts run
@@ -33,7 +33,7 @@ in the attached KDE terminal as your desktop account.
 | Engineering editors | `--freecad`, `--kicad` | Corresponding native repository packages |
 | OBS | `--obs` | Repository `obs-studio`; no automatic capture or recording |
 | Remmina | `--remmina` | Repository `remmina`, `freerdp`, `libvncserver`, `spice-gtk`, `gtk-vnc`, `libsecret` |
-| Sunshine | `--sunshine` | CachyOS repository `sunshine`; does not start or enable it |
+| Sunshine | `--sunshine` | Repository `sunshine` plus `libva-utils`; starts its user service and enables startup at KDE login |
 | Moonlight | `--moonlight` | Repository `moonlight-qt`; command is `moonlight` |
 | Balena Etcher | `--etcher` | CachyOS repository `etcher-bin`; command is `etcher` |
 | itch.io butler | `--butler` | AUR `butler`; independent of `--godot` |
@@ -51,7 +51,8 @@ For later software additions, see [saved setup maintenance](CACHYOS_MAINTENANCE.
 
 Desktop application selections also install Python GObject, AT-SPI,
 GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation.
-Setup does not start input/capture. The [native desktop guide](CACHYOS_DESKTOP.md)
+These automation prerequisites do not start input/capture. The explicit Sunshine
+selection starts the separate streaming host. The [native desktop guide](CACHYOS_DESKTOP.md)
 and managed `basaltwater-cachyos-desktop` skill cover autonomous application
 editing, scripting, editable sources, exports and reopen/consumer checks.
 Use `basaltw agent manifest --json` for installed applications and actual
@@ -97,9 +98,12 @@ it does not need an AUR build or an unmanaged AppImage download.
   Setup does not start a remote-desktop server or replace wallet settings. The
   included plugins follow the [Arch package dependencies](https://archlinux.org/packages/extra/x86_64/remmina/).
 - Sunshine/Moonlight: review [LAN firewall policy](CACHYOS.md#optional-workstation-firewall)
-  separately. When ready, the current packaged Sunshine unit can be enabled with
-  `systemctl --user enable --now app-dev.lizardbyte.app.Sunshine.service`; this
-  creates its `sunshine.service` alias. Set credentials locally, pair Moonlight,
+  as part of the initial selection. Setup starts the packaged Sunshine unit and
+  enables it at KDE login, creating its `sunshine.service` alias. Normal quit
+  leaves it stopped for the session; an active service is retained on setup.
+  On verified Intel-only VA-API hardware, setup fills an absent encoder setting
+  with VA-API while Sunshine is stopped, preserving explicit settings.
+  Set credentials locally, pair Moonlight,
   and test video, audio, and input. Package-provided udev access rules are retained;
   Basaltwater does not add the user to `input`, apply capabilities, select GPU
   drivers, or grant capture permissions. See the

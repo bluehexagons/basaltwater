@@ -202,7 +202,7 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
 
         packages.extend(GAME_DEV_PACKAGES)
     if config.install_sunshine:
-        packages.append("sunshine")
+        packages.extend(("sunshine", "libva-utils"))
     if config.install_moonlight:
         packages.append("moonlight-qt")
     if config.install_gaming:

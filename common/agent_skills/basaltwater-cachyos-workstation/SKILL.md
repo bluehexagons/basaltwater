@@ -125,11 +125,17 @@ Keep work inside the requested project and preserve existing application setting
 
 The gaming flags use CachyOS-native packages. `--gaming` installs the gaming
 libraries, launchers, and tools bundle; `--sunshine` installs the game-stream
-host; and `--moonlight` installs the Qt client. The setup does not install
-graphics drivers, enable Sunshine, or change firewall policy. After reviewing
-network exposure, the desktop owner can start the user service with
-`systemctl --user enable --now app-dev.lizardbyte.app.Sunshine.service` and complete pairing in Sunshine's web
-UI.
+host plus `libva-utils`, enables it at KDE login, and starts its user service;
+`--moonlight` installs the Qt client. A normal Sunshine tray quit or user-service
+stop leaves it stopped for that session; it returns at the next KDE login.
+Setup retains an active service without restarting it and refuses custom units,
+masks, and drop-ins. No automatic login or pre-login display is configured.
+On Intel-only systems with verified VA-API encoding, an absent encoder setting
+defaults to VA-API while Sunshine is stopped; explicit settings are preserved.
+It does not install graphics drivers. Firewall changes still require access
+flags. Include `--lan-access` or explicit sources and complete pairing through
+local Sunshine administration. The doctor checks service failures and VA-API
+profiles without starting capture; test video, audio, and input in Moonlight.
 
 Most application flags install only selected native repository packages. The
 Remmina flag includes common native RDP, VNC, SPICE, and secret plugins. The

@@ -187,6 +187,10 @@ def preflight_cachyos(config: SetupConfig) -> None:
         from common.cachyos_development import nvm_script
 
         nvm_script(Path(account.pw_dir))
+    if config.install_sunshine:
+        from common.cachyos_sunshine import preflight as preflight_sunshine
+
+        preflight_sunshine(config)
     if config.web_interfaces or config.t3code_desktop:
         from lib.remote_utils import run
 

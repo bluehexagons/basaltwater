@@ -280,6 +280,18 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(records["security.t3-storage"]["state"], "failed")
         self.assertTrue(records["security.t3-storage"]["selected"])
 
+    def test_selected_sunshine_includes_service_and_encoding_observations(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos", install_sunshine=True)
+        with patch.object(doctor.shutil, "which", return_value=None), \
+                patch("lib.cachyos_health.collect_sunshine_health", return_value=[
+                    ("service.sunshine", "failed", "Sunshine service failed.")]) as sunshine:
+            records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+        sunshine.assert_called_once_with(doctor._probe, 1000, bus_ready=True)
+        self.assertEqual(records["service.sunshine"]["state"], "failed")
+        self.assertTrue(records["service.sunshine"]["selected"])
+
     def test_unsupported_host_and_root_do_not_probe(self):
         self.supported.return_value = False
         report = doctor.collect_cachyos_doctor()

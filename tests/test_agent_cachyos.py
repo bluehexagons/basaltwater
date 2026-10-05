@@ -188,6 +188,7 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertIn("cachyos-gaming-meta", packages)
         self.assertIn("cachyos-gaming-applications", packages)
         self.assertIn("sunshine", packages)
+        self.assertIn("libva-utils", packages)
         self.assertIn("moonlight-qt", packages)
         self.assertIn("obs-studio", packages)
         self.assertIn("blender", packages)

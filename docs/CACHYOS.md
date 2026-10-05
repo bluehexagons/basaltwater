@@ -138,8 +138,8 @@ basaltw setup agent_cachyos localhost \
   --agent-tool opencode --node --python --git-lfs --godot \
   --av-tools --gl-tools
 
-# Gaming and game streaming
-basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight
+# Gaming and game streaming on the trusted LAN
+basaltw setup agent_cachyos localhost --gaming --sunshine --moonlight --lan-access
 
 # Preview a plan without installing packages or changing files
 basaltw setup agent_cachyos localhost --node --python --dry-run
@@ -148,13 +148,19 @@ basaltw setup agent_cachyos localhost --node --python --dry-run
 Application options install native packages from the configured CachyOS
 repositories, except the explicit AUR options `--t3code-desktop`,
 `--material-maker`, `--butler`, and `--steamcmd`. No Flatpak packages, graphics
-drivers, or application configuration are installed. See the
+drivers are installed. Most application selections only install packages;
+Sunshine's startup and conditional encoder configuration are described below. See the
 [creative and publishing software guide](CACHYOS_SOFTWARE.md) for all issue #106
 software, source policies, and post-install checks.
 `--gaming` selects CachyOS's gaming meta-packages;
-`--sunshine` and `--moonlight` install native host and client packages but do
-not open firewall ports or create credentials. Configure and pair Sunshine in
-its own web UI on a trusted network.
+`--sunshine` installs the native host plus VA-API diagnostics, enables its user
+service at KDE login, and starts it during setup. Quit Sunshine normally from
+its tray menu when you want it stopped for the session. `--moonlight` installs
+the client. Add `--lan-access` or explicit `--access-source` values for restricted
+inbound access, then configure and pair Sunshine in its local web UI.
+Sunshine supports Intel, AMD, and NVIDIA GPUs; installing its package does not
+verify capture or hardware encoding. See the
+[Sunshine checks](CACHYOS_MAINTENANCE.md#sunshine-service-and-encoder-checks) before pairing.
 
 The T3 web service selects Node automatically; both T3 modes require Codex,
 Claude, or OpenCode. Python
@@ -244,6 +250,8 @@ and permissions are preserved; setup does not recursively repair ownership.
 
 Basaltwater installs the selected provider CLIs, workspace, and T3 agent skill.
 It preserves T3 settings, history, login credentials, and desktop launchers.
+Desktop setup protects the default `~/.t3` state directories with private
+permissions, retaining their contents. Unsafe symlinks or ownership stop setup.
 Setup prints provider executable paths; if a KDE-launched T3 cannot find a
 provider, use its **Binary path** setting. Verify a thread and terminal in the
 app; a terminal CLI check does not establish GUI provider discovery. Desktop
@@ -504,8 +512,12 @@ Missing unselected browsers remain informational. It also reports failed units,
 root capacity, booted kernel module presence, firmware/encryption observations,
 non-loopback listeners, and potentially broad saved UFW rules. It never elevates
 privileges; saved firewall rules do not prove effective packet filtering.
-Update observations use existing pacman metadata, which may be stale. Setup
-prints the same host observations before installing packages.
+When Sunshine is selected, it checks the user service and, if `vainfo` is installed,
+VA-API encoding profiles without starting capture. A crashed Sunshine service is
+reported as failed; an inactive service may reflect an intentional quit.
+Update observations use existing pacman metadata, which may be stale and does not
+cover AUR releases. Setup prints the same host observations before installing
+packages.
 
 To check your first setup, record its CachyOS, Plasma, kernel, GPU/driver,
 and tool versions; authenticate an agent; complete a small edit/test task and
