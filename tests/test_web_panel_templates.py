@@ -25,7 +25,7 @@ class WebPanelTemplateTest(unittest.TestCase):
             return sum(v * weight for v, weight in zip(linear, (.2126, .7152, .0722)))
 
         for theme, palette in BRAND_PALETTES.items():
-            for background in ("bg", "panel", "accent-soft", "workspace-soft", "stone-soft", "sea-soft"):
+            for background in ("bg", "panel", "accent-soft", "workspace-soft", "stone-soft", "sea-soft", "bad-soft"):
                 for foreground in ("text", "muted", "accent", "ok", "bad", "warning", "workspace", "stone", "sea"):
                     with self.subTest(theme=theme, foreground=foreground, background=background):
                         a, b = sorted((luminance(palette[foreground]), luminance(palette[background])))

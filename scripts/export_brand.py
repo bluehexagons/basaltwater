@@ -21,6 +21,10 @@ from common.service_tools.web_panel_templates import (
     render_icon, render_texture, svg_theme_styles,
 )
 from common.service_tools import web_panel_service as panel
+from common.service_tools import web_panel_agents as agents
+from common.service_tools import web_panel_diagnostics as diagnostics
+from common.service_tools import web_panel_jobs as jobs
+from common.service_tools import web_panel_storage as storage
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -112,7 +116,9 @@ def export_assets(assets: Path) -> None:
     (assets / "theme.css").write_text(brand_styles() + "\n", encoding="utf-8")
     navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None),
                   ("panel.html", "Web panel specimen", None), ("tools.html", "Agent tools specimen", None),
-                  ("services.html", "Service artwork specimen", None))
+                  ("services.html", "Service artwork specimen", None), ("admin.html", "Administration specimen", None),
+                  ("jobs.html", "Scheduled jobs specimen", None), ("logs.html", "Diagnostics specimen", None),
+                  ("agents.html", "Agents specimen", None))
     icon_labels = {name: label for label, name in NAVIGATION_ICONS.items()}
     icon_gallery = "".join(
         f'<a class="icon-swatch tone-{ICON_TONES.get(name, "water")}" href="icon-{name}.svg">{render_icon(name)}'
@@ -173,7 +179,12 @@ def export_assets(assets: Path) -> None:
             '<span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p>'
             '<p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section>'
             '<section><h2>Identity in use</h2><p><a class="refresh-link" href="tools.html">Browse the agent tool cards</a>'
-            ' · <a class="refresh-link" href="services.html">Inspect the service artwork</a></p></section>'
+            ' · <a class="refresh-link" href="services.html">Inspect the service artwork</a></p>'
+            '<p><a class="refresh-link" href="admin.html">Review administration cards</a> · '
+            '<a class="refresh-link" href="jobs.html">Browse scheduled jobs</a> · '
+            '<a class="refresh-link" href="logs.html">Inspect diagnostics</a> · '
+            '<a class="refresh-link" href="agents.html">Review the prompt workbench</a></p>'
+            '<p>These static previews use synthetic records. Controls do not manage a host.</p></section>'
             '<section><h2>Typography and motion</h2><p>DejaVu Sans for interfaces; DejaVu Sans Mono for commands. '
             'System fallbacks remain available. No font download, JavaScript, or animation is required.</p>'
             '<pre><code>basaltw --version\nbasaltw setup server_lite example.test --dry-run</code></pre></section>',
@@ -206,6 +217,21 @@ def export_assets(assets: Path) -> None:
         ],
         "access": [{"label": "SSH", "value": "ssh operator@workshop.example.test", "description": "Verified host identity"}],
     })
+    state.csrf_token = "brand-preview-not-a-runtime-token"
+    job_rows = []
+    for service, label, status, tone, timer, result in (
+        ("auto-update-apt.service", "Package updates", "Last run failed", "error", "active", "exit-code"),
+        ("cleanup-maintenance.service", "System cleanup", "Last run succeeded", "warning", "inactive", "success"),
+        ("security-monitor.service", "Security monitoring", "Last run succeeded", "info", "active", "success"),
+    ):
+        job_rows.append({
+            "service": service, "label": label, "status": status, "tone": tone,
+            "timer": timer, "enabled": "enabled", "result": result,
+            "next": "In about 45 minutes" if timer == "active" else "Timer is not active",
+            "triggered": "2026-01-01 09:00:00 UTC", "started": "2026-01-01 09:00:01 UTC",
+            "finished": "2026-01-01 09:02:14 UTC", "exit": "1" if tone == "error" else "0",
+            "persistent": "Yes",
+        })
     with (
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
@@ -221,14 +247,41 @@ def export_assets(assets: Path) -> None:
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
+        patch.object(state.agent_tasks, "available", return_value=False),
+        patch.object(agents, "_tool_path", return_value=None),
+        patch.object(agents, "codex_models", return_value=[]),
+        patch.object(agents, "_available_templates", return_value={
+            key: template for key, template in agents.PROMPT_TEMPLATES.items() if "requires" not in template
+        }),
+        patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
+        patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows, [], absent=9)),
+        patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
+        patch.object(diagnostics, "collect_diagnostics", return_value={
+            "issues": [], "properties": {"LoadState": "loaded", "ActiveState": "active",
+                "SubState": "running", "MemoryCurrent": "41943040", "NRestarts": "0", "Result": "success"},
+            "events": [
+                {"timestamp": "2026-01-01T09:04:15+00:00", "priority": "3", "message": "Upstream connection refused while serving /review. Check the application service before reloading the gateway."},
+                {"timestamp": "2026-01-01T09:03:12+00:00", "priority": "4", "message": "Upstream response exceeded the configured timeout."},
+                {"timestamp": "2026-01-01T09:00:00+00:00", "priority": "6", "message": "Configuration test succeeded. Gateway ready for incoming connections."},
+            ],
+        }),
     ):
         pages = {
             "panel.html": panel.render_page(state),
             "tools.html": panel.render_tools(state, panel._PAGE_STYLE, {}),
             "services.html": panel.render_service_status(state, False),
+            "admin.html": panel.render_admin(state, panel._PAGE_STYLE, {}),
+            "agents.html": agents.render_agents(state, panel._PAGE_STYLE, {}),
+            "jobs.html": jobs.render_jobs(True, panel._PAGE_STYLE, state.manifest["host"]),
+            "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"]),
         }
         for name, document in pages.items():
             document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')
+            for route, filename in (("/", "panel.html"), ("/agents", "agents.html"),
+                                    ("/agent-tools", "tools.html"), ("/admin", "admin.html"),
+                                    ("/services", "services.html"), ("/jobs", "jobs.html"), ("/logs", "logs.html")):
+                document = document.replace(f'href="{route}"', f'href="{filename}"')
+                document = document.replace(f'href="{route}#', f'href="{filename}#')
             (assets / name).write_text(document + "\n", encoding="utf-8")
 
 

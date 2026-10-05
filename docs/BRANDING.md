@@ -34,7 +34,7 @@ for the favicon; scripts, remote images and embedded data remain blocked.
 
 ## Icons and textures
 
-The seventeen original [icons](brand/index.html) share a 24-unit
+The eighteen original [icons](brand/index.html) share a 24-unit
 grid and a 1.6-unit stroke. Hexagonal frames and angular cuts echo the mark,
 while keys, clocks, controls and other familiar shapes keep actions recognizable.
 The panel renders the icons inline using `render_icon()` from
@@ -43,9 +43,9 @@ display at 18 pixels in navigation; use 18–32 pixels elsewhere. Keep a visible
 text label on controls. Decorative icons have `aria-hidden="true"`; provide
 the helper's `label` argument when an icon needs its own accessible name.
 Individual `brand/icon-*.svg` exports are available for other pages and tools.
-Thirteen icons cover navigation; storage, data, import and export icons extend
-the family to agent tools. Page eyebrows, dashboard section headings, service
-cards and tool cards reuse the same geometry. `render_heading()` pairs a
+Thirteen icons cover navigation; storage, data, import, export and power icons
+extend the family to agent tools and administration. Page eyebrows, section
+headings, service cards and tool cards reuse the same geometry. `render_heading()` pairs a
 decorative icon with a visible title and preserves its optional anchor ID.
 
 The [connected basalt artwork](brand/artwork-network.svg) accompanies the
@@ -87,6 +87,7 @@ Use semantic tokens instead of copying color values into each screen.
 | `accent`, `accent-soft` | Links, actions, keyboard focus, selected backgrounds |
 | `line` | Control boundaries and separators |
 | `ok`, `warning`, `bad` | Healthy, attention, failure; always pair with text |
+| `bad-soft` | Muted rose surface for error badges |
 | `brand-water` | The symbol's current |
 | `workspace`, `workspace-soft` | Violet for agents, workspace data and hosted processes |
 | `stone`, `stone-soft` | Copper for administration, maintenance and storage tools |
@@ -97,6 +98,14 @@ resource-card edges, and softly tinted service/tool cards. Use `tone-water`,
 `tone-workspace`, `tone-stone` or `tone-sea` with `--section-ink` and
 `--section-soft` to reuse these accents. Status labels continue to use the
 separate `ok`, `warning` and `bad` tokens, with explicit text.
+
+Hover and keyboard focus emphasize the same category edges on resource cards.
+The sidebar mark links to the dashboard; the skip link remains the first keyboard
+stop. Inputs, selects and text areas share a visible focus ring. Journal entries
+use severity-colored edges and labeled badges. Job cards show the next trigger,
+last finish and boot setting first; a native disclosure contains the full run and
+timer details. Numeric values use tabular figures to make adjacent values easier
+to compare. These treatments require no JavaScript or animation.
 
 Both themes meet a 4.5:1 minimum for text, supporting text, links, and
 status labels on their page/panel/selected backgrounds. The same text contrast
@@ -128,9 +137,18 @@ directory and fails if committed exports are missing or stale, without changing
 the checkout. The generator mocks host discovery; it does not contact a service
 or read private host state. Review [identity](brand/index.html), [README](brand/readme.html),
 [web panel](brand/panel.html), [agent tools](brand/tools.html), and
-[service artwork](brand/services.html) together, for example through a loopback
+[service artwork](brand/services.html), [administration](brand/admin.html),
+[scheduled jobs](brand/jobs.html), [diagnostics](brand/logs.html) and the
+[agent workbench](brand/agents.html) together,
+for example through a loopback
 `python3 -m http.server --bind 127.0.0.1 --directory docs/brand` server.
 
 Review light/dark themes at 375 and 1280 pixels, keyboard skip-link focus,
-horizontal overflow, and the symbol at 16 pixels when changing the geometry.
+horizontal overflow, native disclosures, and the symbol at 16 pixels when
+changing the geometry. Loaded jobs and diagnostics specimens use fixed synthetic
+records; generating them never queries the service manager, journal or storage.
+Specimen navigation links to the corresponding local HTML files, including
+dashboard section anchors. Controls remain static; the previews never run tasks
+or submit host actions. The agent workbench uses unavailable execution and
+synthetic template/model data without reading local credentials or caches.
 CLI output remains readable without color; branding adds no ANSI sequences.

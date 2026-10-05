@@ -16,7 +16,8 @@
     "stone": "#80501f",
     "stone-soft": "#f8eddf",
     "sea": "#206452",
-    "sea-soft": "#e1f3ed"
+    "sea-soft": "#e1f3ed",
+    "bad-soft": "#fbeae7"
   },
   "dark": {
     "bg": "#101a21",
@@ -35,6 +36,7 @@
     "stone": "#e9b979",
     "stone-soft": "#392e23",
     "sea": "#86d5b9",
-    "sea-soft": "#203a34"
+    "sea-soft": "#203a34",
+    "bad-soft": "#362329"
   }
 }

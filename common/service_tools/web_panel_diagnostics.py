@@ -15,7 +15,7 @@ import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
 from common.service_tools.web_panel_agent_tools import tool_link
 
 SYSTEM_UNITS = {
@@ -342,8 +342,8 @@ def render_diagnostics(
             message = event["message"]
             safe_message = _redact_log_message(message) if isinstance(message, str) else "[Invalid message omitted]"
             rows.append(
-                '<li class="event"><div class="event-head"><time>{}</time><span class="badge {}">{}</span></div><pre>{}</pre></li>'.format(
-                    html.escape(event["timestamp"]), badge, severity, html.escape(safe_message),
+                '<li class="event journal-entry journal-{}"><div class="event-head"><time>{}</time><span class="badge {}">{}</span></div><pre>{}</pre></li>'.format(
+                    badge, html.escape(event["timestamp"]), badge, severity, html.escape(safe_message),
                 )
             )
         if rows:
@@ -365,10 +365,10 @@ def render_diagnostics(
                 html.escape(urllib.parse.urlencode(filters), quote=True), label,
             ))
         logs += '<p class="endpoint">{}</p>'.format(" · ".join(broader)) if broader else ""
-        content = f'''{warning}<section aria-labelledby="runtime-heading"><h2 id="runtime-heading">Runtime details</h2>
+        content = f'''{warning}<section aria-labelledby="runtime-heading">{render_heading("Runtime details", "service-status", heading_id="runtime-heading")}
 <p class="endpoint">Current values; restart counts and resource accounting depend on the service manager.</p>
 <dl class="overview-grid">{metrics}</dl></section>
-<section aria-labelledby="journal-heading"><div class="section-heading"><h2 id="journal-heading">Recent journal entries</h2><span class="count">{len(rows)} entries · newest first · UTC · maximum 100</span></div>{logs}</section>'''
+<section aria-labelledby="journal-heading"><div class="section-heading">{render_heading("Recent journal entries", "diagnostics", heading_id="journal-heading")}<span class="count">{len(rows)} entries · newest first · UTC · maximum 100</span></div>{logs}</section>'''
     ssh_command = shlex.join([
         *([] if query.service == "t3code.service" else ["sudo"]),
         *_journal_command(query), "--output=short-iso", "--utc",

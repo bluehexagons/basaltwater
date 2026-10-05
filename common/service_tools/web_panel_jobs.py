@@ -10,7 +10,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
 from common.service_tools.web_panel_storage import render_storage
 from common.service_tools.web_panel_agent_tools import tool_link
@@ -151,8 +151,8 @@ def render_jobs(
                 f'<span class="badge warning">Timer {html.escape(job["timer"])}</span> '
                 if job["timer"] != "active" else ""
             )
-            facts = "".join(
-                f'<div><dt>{label}</dt><dd>{html.escape(job[key])}</dd></div>'
+            facts = {
+                key: f'<div><dt>{label}</dt><dd>{html.escape(job[key])}</dd></div>'
                 for key, label in (
                     ("timer", "Timer state"), ("enabled", "Start at boot"),
                     ("next", "Next trigger"), ("triggered", "Last timer trigger"),
@@ -160,11 +160,12 @@ def render_jobs(
                     ("result", "Service result"), ("exit", "Process exit status"),
                     ("persistent", "Catch up missed calendar runs"),
                 )
-            )
+            }
+            primary_facts = "".join(facts.pop(key) for key in ("next", "finished", "enabled"))
             url = "/logs?" + urllib.parse.urlencode({"service": job["service"], "window": "24h", "priority": "7"})
-            content += f'''<section class="event" aria-label="{html.escape(job['label'], quote=True)}">
-<div class="event-head"><h2>{html.escape(job['label'])}</h2><div>{timer_badge}<span class="badge {result_tone}">{html.escape(job['status'])}</span></div></div>
-<dl class="job-facts">{facts}</dl><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a>
+            content += f'''<section class="event job-card" aria-label="{html.escape(job['label'], quote=True)}">
+<div class="event-head">{render_heading(job['label'], "jobs")}<div>{timer_badge}<span class="badge {result_tone}">{html.escape(job['status'])}</span></div></div>
+<dl class="job-facts">{primary_facts}</dl><details><summary>Run and timer details</summary><dl class="job-facts">{"".join(facts.values())}</dl></details><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a>
 {tool_link("job", "Prepare agent job review", service=job["service"], window="24h", priority="4")}</section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'

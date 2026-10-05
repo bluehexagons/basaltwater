@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
 
 from common.web_panel_events import WEB_PANEL_AUDIT_DIR
+from common.service_tools.web_panel_templates import render_heading
 from lib.atomic_io import read_json_file
 
 SNAPSHOT_PATH = os.path.join(WEB_PANEL_AUDIT_DIR, "storage.json")
@@ -133,7 +134,7 @@ def load_storage_snapshot(path: str = SNAPSHOT_PATH, *, now: datetime | None = N
 
 def render_storage() -> str:
     data = load_storage_snapshot()
-    body = '<section aria-labelledby="storage-heading"><h2 id="storage-heading">Storage integrity</h2>'
+    body = '<section aria-labelledby="storage-heading">' + render_heading("Storage integrity", "storage", heading_id="storage-heading")
     if not data["available"]:
         return body + '<p class="empty">Storage snapshot unavailable or stale. Inspect with basaltw scrub status HOST.</p></section>'
     body += f'<p>Snapshot: {html.escape(data["generated_at"])}. Exported every five minutes; loading this page never starts a scrub.</p>'

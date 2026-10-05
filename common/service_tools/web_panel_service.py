@@ -961,7 +961,6 @@ body { overflow-wrap: anywhere; }
   position: fixed; inset: 0 auto 0 0; width: 248px; padding: 28px 16px;
   background: var(--panel); border-right: 1px solid var(--accent-soft); overflow-y: auto;
 }
-.sidebar strong { display: block; margin: 0 8px 28px; color: var(--accent); }
 .sidebar a { display: flex; align-items: center; gap: 11px; min-height: 44px; padding: 10px 12px;
   margin: 3px 0; color: var(--muted); text-decoration: none; border-radius: 8px; font-size: .83rem; }
 .sidebar a svg { flex: none; }
@@ -991,15 +990,15 @@ select, .diagnostic-filters input { display: block; width: 100%; min-height: 44p
 select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
   box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
-.sidebar a[href^="/#"]:active { background: var(--accent-soft); }
+.sidebar a[href*="#"]:active { background: var(--section-soft); }
 body:has(main :is(#services-heading, #audit-heading, #notifications-heading, #access-heading, #trust, #maintenance-heading):target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
-body:has(#services-heading:target) .sidebar a[href="/#services-heading"],
-body:has(#audit-heading:target) .sidebar a[href="/#audit-heading"],
-body:has(#notifications-heading:target) .sidebar a[href="/#notifications-heading"],
-body:has(#access-heading:target) .sidebar a[href="/#access-heading"],
-body:has(#trust:target) .sidebar a[href="/#trust"],
-body:has(#maintenance-heading:target) .sidebar a[href="/#maintenance-heading"] {
-  background: var(--accent-soft); color: var(--accent); box-shadow: inset 3px 0 var(--accent); font-weight: 700;
+body:has(#services-heading:target) .sidebar a[href$="#services-heading"],
+body:has(#audit-heading:target) .sidebar a[href$="#audit-heading"],
+body:has(#notifications-heading:target) .sidebar a[href$="#notifications-heading"],
+body:has(#access-heading:target) .sidebar a[href$="#access-heading"],
+body:has(#trust:target) .sidebar a[href$="#trust"],
+body:has(#maintenance-heading:target) .sidebar a[href$="#maintenance-heading"] {
+  background: var(--section-soft); color: var(--section-ink); box-shadow: inset 3px 0 var(--section-ink); font-weight: 700;
 }
 .metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
 .job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
@@ -1324,7 +1323,6 @@ footer {
 @media (max-width: 900px) {
   main { margin: 0; padding: 24px 20px 48px; }
   .sidebar { position: static; width: auto; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .sidebar strong { margin: 0 8px 6px; }
   .sidebar .nav-links { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 6px;
     scrollbar-width: thin; scrollbar-color: var(--line) var(--panel); }
   .sidebar a { padding: 10px 12px; flex: none; white-space: nowrap; }

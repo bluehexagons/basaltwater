@@ -10,7 +10,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading, render_icon
 from common.service_tools.web_panel_agent_tools import tool_link
 from lib.admin_actions import ADMIN_ACTIONS, action_spec
 from lib.privilege_client import exchange
@@ -123,6 +123,8 @@ def _timestamp(value: object) -> str:
     return "Unavailable"
 
 
+_GROUP_ICONS = {"Updates": "maintenance", "Services": "service-status", "Power": "power"}
+
 _STYLE = """
 main a { color:var(--accent); }
 .admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr)); gap:12px; }
@@ -156,7 +158,7 @@ def _request_history(snapshot: dict, csrf: str) -> str:
         if status in {"pending", "approved"} and isinstance(identifier, str) and ID_PATTERN.fullmatch(identifier):
             actions += f'<form method="post" action="/actions/admin/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel request</button></form>'
         rows.append(f'<li><div class="event-head"><strong>{escape(title)}</strong><span class="badge {tone}">{escape(str(status))}</span></div><p class="event-meta">{_timestamp(row.get("created"))}</p><div class="admin-request-actions">{actions}</div></li>')
-    content = '<section aria-labelledby="requests-heading"><div class="section-heading"><h2 id="requests-heading">Recent requests</h2><span class="count">Latest 20 administration requests</span></div>'
+    content = '<section aria-labelledby="requests-heading"><div class="section-heading">' + render_heading("Recent requests", "security", heading_id="requests-heading") + '<span class="count">Latest 20 administration requests</span></div>'
     if not rows:
         return content + '<p class="empty">No administration requests available.</p></section>'
     content += f'<ol class="admin-history">{"".join(rows[:3])}</ol>'
@@ -197,7 +199,7 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         for label, value in (("Result", status), ("Started", _timestamp(latest.get("started"))), ("Finished", _timestamp(latest.get("finished")) if latest.get("finished") is not None else "—"), ("Exit code", latest.get("exit_code") if latest.get("exit_code") is not None else "—")):
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
-    body += '<section aria-label="Agent maintenance tools"><h2>Agent maintenance tools</h2><div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
+    body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
     body += _request_history(snapshot, csrf)
     action = query.get("action")
     if action:
@@ -208,12 +210,14 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         else:
             ticket = manager.ticket(action)
             confirmation = (f'<label>Confirm host name <code>{host}</code><input name="confirmation" autocomplete="off" required placeholder="{host}"></label>' if action in {"reboot", "shutdown"} else '<input type="hidden" name="confirmation" value="">')
-            body += f'''<section class="admin-card admin-review" aria-labelledby="review-heading"><h2 id="review-heading">Review: {escape(spec['title'])}</h2>
+            body += f'''<section class="admin-card admin-review" aria-labelledby="review-heading">{render_heading("Review: " + spec['title'], _GROUP_ICONS[spec['group']], heading_id="review-heading")}
 <p>{escape(spec['effect'])}</p><p>Submitting creates an approval request. Open its review link in Recent requests to approve or deny it. The request expires after the configured approval window.</p>
 <form method="post" action="/actions/admin">{csrf}<input type="hidden" name="action" value="{action}">
 <input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create approval request</button></form>
 <a class="refresh-link" href="/admin">Cancel review</a></section>'''
     for group in ("Updates", "Services", "Power"):
+        icon = _GROUP_ICONS[group]
+        tone = "water" if group == "Services" else "stone"
         cards = ""
         for key, spec in ADMIN_ACTIONS.items():
             if spec["group"] != group:
@@ -222,14 +226,14 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
             if snapshot.get("error"):
                 reason = "Approval service unavailable."
             link = f'<p>{escape(reason)}</p>' if reason else f'<a class="refresh-link" href="/admin?action={key}">Review action →</a>'
-            cards += f'<article class="admin-card"><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p>{link}</article>'
-        body += f'<section aria-label="{group}"><div class="section-heading"><h2>{group}</h2></div><div class="admin-grid">{cards}</div></section>'
+            cards += f'<article class="admin-card tone-{tone}"><span class="tool-icon">{render_icon(icon)}</span><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p>{link}</article>'
+        body += f'<section aria-label="{group}"><div class="section-heading">{render_heading(group, icon)}</div><div class="admin-grid">{cards}</div></section>'
     if state.t3_update_available():
         disabled = " disabled" if state.action_status == "running" else ""
-        body += f'''<section class="admin-card"><h2>T3 Code</h2><p>Update the installed user runtime and check readiness. Active T3 sessions may reconnect. This uses the existing account-level updater.</p>
+        body += f'''<section class="admin-card tone-workspace">{render_heading("T3 Code", "agents")}<p>Update the installed user runtime and check readiness. Active T3 sessions may reconnect. This uses the existing account-level updater.</p>
 <p role="status">{escape(state.action_message or 'No update running.')}</p>
 <form method="post" action="/actions/t3-update">{csrf}<input type="hidden" name="return" value="admin"><button{disabled}>Update T3 Code</button></form></section>'''
-    body += '<section aria-label="Inspection tools"><h2>Inspection tools</h2><div class="admin-tools"><a class="refresh-link" href="/services">Local services</a><a class="refresh-link" href="/jobs">Scheduled jobs</a><a class="refresh-link" href="/logs">Service diagnostics</a><a class="refresh-link" href="/#audit-heading">Security activity</a></div><p class="endpoint">Long jobs run outside the panel, with a six-hour limit. Refresh status to check results without automatic page reloads. For detailed failures, use the administrator SSH or console path.</p></section>'
+    body += '<section aria-label="Inspection tools">' + render_heading("Inspection tools", "diagnostics") + '<div class="admin-tools"><a class="refresh-link" href="/services">Local services</a><a class="refresh-link" href="/jobs">Scheduled jobs</a><a class="refresh-link" href="/logs">Service diagnostics</a><a class="refresh-link" href="/#audit-heading">Security activity</a></div><p class="endpoint">Long jobs run outside the panel, with a six-hour limit. Refresh status to check results without automatic page reloads. For detailed failures, use the administrator SSH or console path.</p></section>'
     return render_document(title=f"Admin controls · {state.manifest['host']}", style=style + _STYLE,
                            header=header, content=body, navigation=panel_navigation(current="admin"),
                            footer='<footer><a href="/">Back to dashboard</a><span>Separate approval for host actions</span></footer>')

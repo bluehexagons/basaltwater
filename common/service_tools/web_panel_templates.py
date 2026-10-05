@@ -18,6 +18,7 @@ BRAND_PALETTES = {
         "workspace": "#694399", "workspace-soft": "#eee7f7",
         "stone": "#80501f", "stone-soft": "#f8eddf",
         "sea": "#206452", "sea-soft": "#e1f3ed",
+        "bad-soft": "#fbeae7",
     },
     "dark": {
         "bg": "#101a21", "panel": "#17232c", "text": "#e8f5f8",
@@ -27,6 +28,7 @@ BRAND_PALETTES = {
         "workspace": "#c3a4ef", "workspace-soft": "#30283e",
         "stone": "#e9b979", "stone-soft": "#392e23",
         "sea": "#86d5b9", "sea-soft": "#203a34",
+        "bad-soft": "#362329",
     },
 }
 BRAND_SYMBOL = (
@@ -60,6 +62,7 @@ BRAND_ICONS = {
     "data": "M6 2h12l4 4v14H2V6Z M2 8h20 M2 14h20 M8 8v12 M15 8v12",
     "import": "M12 2v12 M8 10l4 4 4-4 M3 14v7h18v-7 M6 17h12",
     "export": "M12 14V2 M8 6l4-4 4 4 M3 14v7h18v-7 M6 17h12",
+    "power": "M12 2v10 M7 5l-4 4v9l9 4 9-4V9l-4-4",
 }
 NAVIGATION_ICONS = {
     "Dashboard": "dashboard", "Agents": "agents", "Agent tools": "agent-tools",
@@ -72,7 +75,7 @@ NAVIGATION_ICONS = {
 ICON_TONES = {
     "agents": "workspace", "agent-tools": "workspace", "data": "workspace",
     "import": "workspace", "export": "workspace",
-    "admin": "stone", "maintenance": "stone", "jobs": "stone", "storage": "stone",
+    "admin": "stone", "maintenance": "stone", "jobs": "stone", "storage": "stone", "power": "stone",
     "access": "sea", "security": "sea", "certificate": "sea",
 }
 PAGE_ICONS = {
@@ -164,16 +167,18 @@ def brand_styles() -> str:
         "@media(prefers-color-scheme:dark){:root{" + tokens("dark") + ";--shadow:none}}"
         'body{font-family:"DejaVu Sans",system-ui,sans-serif}'
         'code,pre{font-family:"DejaVu Sans Mono",monospace}'
-        ".sidebar strong.brand{display:flex;align-items:center;gap:8px;"
-        "font-size:17px;letter-spacing:-.04em;color:var(--text)}"
-        ".brand svg{flex:none;width:28px;height:28px}"
+        ".sidebar a.brand{display:flex;align-items:center;gap:10px;margin:0 8px 24px;padding:0;"
+        "font-size:17px;font-weight:750;letter-spacing:-.04em;color:var(--text)}"
         ".sidebar a svg{width:18px;height:18px}"
+        ".sidebar a.brand svg{flex:none;width:28px;height:28px;color:var(--text)}"
+        ".sidebar a.brand:hover{background:transparent;color:var(--accent)}"
         ":root{--section-ink:var(--accent);--section-soft:var(--accent-soft)}"
         ".tone-water{--section-ink:var(--accent);--section-soft:var(--accent-soft)}"
         ".tone-workspace{--section-ink:var(--workspace);--section-soft:var(--workspace-soft)}"
         ".tone-stone{--section-ink:var(--stone);--section-soft:var(--stone-soft)}"
         ".tone-sea{--section-ink:var(--sea);--section-soft:var(--sea-soft)}"
         ".sidebar a svg{color:var(--section-ink)}"
+        ".sidebar .nav-links a:hover{background:var(--section-soft);color:var(--section-ink)}"
         ".sidebar a[aria-current=page]{background:var(--section-soft);color:var(--section-ink);"
         "box-shadow:inset 3px 0 var(--section-ink)}"
         "header{position:relative;isolation:isolate;overflow:hidden}"
@@ -209,6 +214,23 @@ def brand_styles() -> str:
         ".access-list strong{color:var(--sea)}"
         ".badge.success{background:var(--sea-soft)}"
         ".badge.warning{background:var(--stone-soft)}"
+        ".badge.error{background:var(--bad-soft)}"
+        ".service-card:hover,.service-card:focus-visible{border-color:var(--section-ink);"
+        "background:var(--section-soft)}"
+        ".tool-card:focus-within,.admin-card:focus-within{border-color:var(--section-ink)}"
+        "button:not(:disabled):hover{background:var(--text);color:var(--panel)}"
+        ".agent-secondary:not(:disabled):hover{background:var(--accent);color:var(--panel)}"
+        "input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}"
+        ".metric-value,.job-facts dd,.admin-result dd,time{font-variant-numeric:tabular-nums}"
+        ".job-card{border-left:3px solid var(--stone)}"
+        ".job-card .job-facts dd{font-size:.9rem;font-weight:650}"
+        ".job-card>details{border-top:1px solid var(--accent-soft);margin-top:16px}"
+        ".journal-entry{border-left:3px solid var(--line)}"
+        ".journal-error{border-left-color:var(--bad)}"
+        ".journal-warning{border-left-color:var(--warning)}"
+        ".admin-grid .admin-card{background:linear-gradient(140deg,var(--section-soft),var(--panel) 55%)}"
+        ".admin-tools{margin-top:12px}"
+        "@media(max-width:900px){.sidebar a.brand{margin:0 8px 6px;min-height:36px}}"
         "@media(max-width:560px){.empty-art{gap:14px;padding:16px}"
         ".empty-art .brand-network{width:80px;height:40px}}"
         "@media(forced-colors:active){.brand svg{--brand-water:CanvasText}"
@@ -250,6 +272,9 @@ def panel_navigation(
 def render_sidebar(items: Iterable[NavigationItem]) -> str:
     """Render a navigation sidebar with one consistent accessible structure."""
 
+    items = tuple(items)
+    home = items[0][0] if items else "/"
+    home_label = "Basaltwater dashboard" if home == "/" else "Basaltwater home"
     groups = {
         "Dashboard": "Workspace", "Admin controls": "Administration", "Local service status": "Inspect",
     }
@@ -268,7 +293,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         ))
     return (
         '<nav class="sidebar" aria-label="Panel sections">'
-        f'<strong class="brand">{BRAND_SYMBOL}<span>Basaltwater</span></strong>'
+        f'<a class="brand" href="{html.escape(home, quote=True)}" aria-label="{home_label}">{BRAND_SYMBOL}<span>Basaltwater</span></a>'
         '<div class="nav-links">'
         f'{"".join(links)}</div></nav>'
     )
