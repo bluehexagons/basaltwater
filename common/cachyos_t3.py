@@ -31,6 +31,51 @@ from lib.validation import validate_filesystem_path
 DESKTOP_PACKAGE = "t3code-bin"
 
 
+def _desktop_data_paths(home: Path) -> tuple[Path, Path, Path]:
+    """Validate default desktop state without opening credential contents."""
+    root = home / ".t3"
+    userdata = root / "userdata"
+    credentials = userdata / "clerk-tokens.json"
+    validate_filesystem_path(str(credentials))
+    for parent in home.parents:
+        if parent.is_symlink():
+            raise ValueError("Unsafe T3 desktop home ancestor")
+    for path in (home, root, userdata, credentials):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            continue
+        directory = path != credentials
+        if (info.st_uid != os.getuid() or
+                not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+            raise ValueError("T3 desktop state must use owned directories and a regular credential file")
+    return root, userdata, credentials
+
+
+def _protect_desktop_data(home: Path) -> None:
+    """Protect default desktop state, preserving its files and running app."""
+    root, userdata, credentials = _desktop_data_paths(home)
+    for path in (root, userdata, credentials):
+        directory = path != credentials
+        if directory:
+            path.mkdir(mode=0o700, exist_ok=True)
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
+                                 (os.O_DIRECTORY if directory else 0))
+        except FileNotFoundError:
+            if directory:
+                raise
+            continue  # Credential file is created only by the application.
+        try:
+            info = os.fstat(descriptor)
+            if (info.st_uid != os.getuid() or
+                    not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+                raise ValueError("Unsafe T3 desktop state ownership or type")
+            os.fchmod(descriptor, 0o700 if directory else 0o600)
+        finally:
+            os.close(descriptor)
+
+
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
     prefix = home / ".local/share/basaltwater/cachyos-t3"
     unit = home / ".config/systemd/user" / T3_SERVICE
@@ -82,6 +127,8 @@ def preflight(config: SetupConfig) -> None:
     home = _home(config)
     _prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
+    if config.t3code_desktop:
+        _desktop_data_paths(home)
     if config.t3code_desktop and aur.package_version(DESKTOP_PACKAGE) is None:
         command = aur.install_command(home, DESKTOP_PACKAGE)
         if Path(command[0]).name == "shelly":
@@ -93,6 +140,7 @@ def install_desktop(config: SetupConfig) -> None:
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
+    _desktop_data_paths(home)
     version = aur.package_version(DESKTOP_PACKAGE)
     if version is None:
         command = aur.install_command(home, DESKTOP_PACKAGE)
@@ -108,6 +156,7 @@ def install_desktop(config: SetupConfig) -> None:
     owner = run(["pacman", "-Qqo", "--", executable], capture_output=True, check=False, timeout=15)
     if owner.returncode or owner.stdout.strip() != DESKTOP_PACKAGE:
         raise RuntimeError("T3 desktop executable is not owned by t3code-bin; inspect the package installation")
+    _protect_desktop_data(home)
     _directory(prefix)
     with _setup_lock(prefix):
         _check_managed_paths(home)
@@ -124,6 +173,7 @@ def install_desktop(config: SetupConfig) -> None:
         _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
     print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; updates remain with your AUR helper")
     print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
+    print("  Default ~/.t3 desktop state is private; existing credential contents retained")
     print("  Open T3 Code from KDE and verify a provider thread and terminal")
     for tool in config.selected_agent_tools():
         if tool != "gh":

@@ -16,6 +16,22 @@ from lib.cachyos import cachyos_config_from_args
 
 
 class FirewallTests(unittest.TestCase):
+    def test_privileged_capture_retains_authenticated_terminal_and_reports_errors(self):
+        command = ["sudo", "-n", "ufw", "status", "numbered"]
+
+        def stream(argv, **kwargs):
+            self.assertEqual(argv, command)
+            self.assertTrue(kwargs["interactive"])
+            self.assertEqual(kwargs["timeout"], 60)
+            kwargs["on_output"]("Status: active\n")
+            return 0
+
+        with patch.object(firewall, "run_streamed", side_effect=stream):
+            self.assertEqual(firewall._sudo_capture(command).stdout, "Status: active\n")
+        with patch.object(firewall, "run_streamed", return_value=1), \
+                self.assertRaises(firewall.CommandExecutionError):
+            firewall._sudo_capture(command)
+
     def config(self, *options):
         parser, _, _ = basaltwater.create_basaltwater_parser()
         return cachyos_config_from_args(parser.parse_args([
@@ -131,6 +147,11 @@ class FirewallTests(unittest.TestCase):
             stack.enter_context(patch.object(firewall, "preflight_firewall"))
             stack.enter_context(patch.object(firewall, "is_dry_run", return_value=False))
             stack.enter_context(patch.object(firewall, "run", side_effect=run))
+            def stream(command, **kwargs):
+                result = run(command)
+                kwargs["on_output"](result.stdout)
+                return result.returncode
+            stack.enter_context(patch.object(firewall, "run_streamed", side_effect=stream))
             for source in ("192.168.1.0/24", "10.3.0.0/24"):
                 config = self.config("--t3code-desktop", "--sunshine", "--access-source", source)
                 firewall.configure_firewall(config)
@@ -157,10 +178,12 @@ class FirewallTests(unittest.TestCase):
     def test_command_failure_never_opens_new_sources(self):
         with patch.object(firewall, "preflight_firewall"), \
                 patch("common.cachyos_steps.install_missing_packages"), \
-                patch.object(firewall, "run", side_effect=[CompletedProcess([], 0, ""), RuntimeError("fixture")]) as run:
+                patch.object(firewall, "run", return_value=CompletedProcess([], 0, "")) as run, \
+                patch.object(firewall, "run_streamed", side_effect=RuntimeError("fixture")) as stream:
             with self.assertRaises(RuntimeError):
                 firewall._configure_firewall(self.config("--t3code-desktop", "--access-source", "10.1.2.3"))
             self.assertFalse(any("allow" in call.args[0] for call in run.call_args_list))
+            self.assertFalse(any("allow" in call.args[0] for call in stream.call_args_list))
 
 
 if __name__ == "__main__":

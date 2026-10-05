@@ -8,10 +8,12 @@ import re
 import fcntl
 import os
 from pathlib import Path
+from subprocess import CompletedProcess
 
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_firewall
-from lib.remote_utils import is_dry_run, run
+from lib.remote_utils import CommandExecutionError, is_dry_run, run
+from lib.streamed_process import run_streamed
 from lib.validation import validate_network_ip_or_cidr
 
 
@@ -26,6 +28,28 @@ GUARDED = (("tcp", "3773"), ("udp", "3773"), ("tcp", "3389"),
            ("udp", "47998:48000"))
 STREAMING = (("tcp", "47984"), ("tcp", "47989"), ("tcp", "48010"),
              ("udp", "47998:48000"))
+
+
+def _sudo_capture(command: list[str]) -> CompletedProcess[str]:
+    """Capture noninteractive sudo output without losing its authenticated tty."""
+    output: list[str] = []
+    size = 0
+
+    def collect(chunk: str) -> None:
+        nonlocal size
+        size += len(chunk.encode("utf-8"))
+        if size > 1024 * 1024:
+            raise RuntimeError("Firewall command output exceeded its limit")
+        output.append(chunk)
+
+    # The normal captured runner creates a new session. That discards the tty
+    # timestamp established by sudo -v and makes sudo -n fail on CachyOS.
+    # Streaming can retain the controlling tty while collecting command output.
+    code = run_streamed(command, timeout=60, interactive=True, on_output=collect)
+    result = CompletedProcess(command, code, "".join(output), "")
+    if code:
+        raise CommandExecutionError(" ".join(command), code, result.stdout, result=result)
+    return result
 
 
 def firewall_requested(config: SetupConfig) -> bool:
@@ -116,8 +140,7 @@ def _configure_firewall(config: SetupConfig) -> None:
     preflight_firewall(config)
 
     def ufw(*arguments: str):
-        return run(["sudo", "-n", "env", "LC_ALL=C", "ufw", *arguments],
-                   capture_output=True, timeout=60)
+        return _sudo_capture(["sudo", "-n", "env", "LC_ALL=C", "ufw", *arguments])
 
     # UFW insert/prepend skips equivalent rules, even with a different action.
     # A non-positional deny replaces an exact legacy allow in place. Retain
@@ -166,8 +189,7 @@ def _configure_firewall(config: SetupConfig) -> None:
     ufw("default", "allow", "outgoing")
     ufw("default", "deny", "routed")
     ufw("--force", "enable")
-    run(["sudo", "-n", "systemctl", "enable", "--now", "ufw.service"],
-        capture_output=True, timeout=60)
+    _sudo_capture(["sudo", "-n", "systemctl", "enable", "--now", "ufw.service"])
     verify_rule_order(ufw("status", "numbered").stdout, guarded)
     print("  UFW restricts new T3/Sunshine connections to: " + (", ".join(sources) or "local only"))
     print("  Sunshine administration and legacy RDP remain local; unrelated rules are retained. "

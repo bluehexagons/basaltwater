@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +16,42 @@ from lib.config import SetupConfig
 
 
 class HealthTests(unittest.TestCase):
+    def test_t3_permissions_are_checked_without_reading_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            self.assertEqual(health.collect_t3_storage_health(home, os.getuid())[0][1], "deferred")
+            root = home / ".t3"
+            root.mkdir(mode=0o700)
+            userdata = root / "userdata"
+            userdata.mkdir(mode=0o700)
+            token = userdata / "clerk-tokens.json"
+            with patch.object(Path, "read_text", side_effect=AssertionError("Must not open data")):
+                self.assertEqual(health.collect_t3_storage_health(home, os.getuid())[0][1], "available")
+                token.write_text("private token fixture")
+                token.chmod(0o666)
+                advisory = health.collect_t3_storage_health(home, os.getuid())
+                self.assertEqual(advisory[0][1], "deferred")
+                self.assertIn("private parent directories", advisory[0][2])
+                token.chmod(0o600)
+                self.assertEqual(health.collect_t3_storage_health(home, os.getuid())[0][1], "available")
+                root.chmod(0o755)
+                result = health.collect_t3_storage_health(home, os.getuid())
+                self.assertEqual(result[0][1], "failed")
+                self.assertNotIn(temporary, str(result))
+                self.assertNotIn("private token fixture", str(result))
+
+    def test_t3_symlink_and_foreign_ownership_are_not_followed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            root = home / ".t3"
+            outside = home / "outside"
+            outside.mkdir(mode=0o700)
+            root.symlink_to(outside)
+            self.assertEqual(health.collect_t3_storage_health(home, os.getuid())[0][1], "failed")
+            root.unlink()
+            root.mkdir(mode=0o700)
+            self.assertEqual(health.collect_t3_storage_health(home, os.getuid() + 1)[0][1], "failed")
+
     def test_listeners_and_saved_rules_are_advisory_and_redacted(self):
         output = "LISTEN 0 511 0.0.0.0:3773 0.0.0.0:*\nLISTEN 0 511 127.0.0.1:47990 0.0.0.0:*\n"
         rules = "-A ufw-user-input -p tcp --dport 3773 -j ACCEPT\n# private-personal-data\n"

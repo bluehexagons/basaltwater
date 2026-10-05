@@ -338,6 +338,64 @@ class T3InstallTests(unittest.TestCase):
         self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay",
                                        "/usr/bin/t3code"} for _, cmd in self.events))
 
+    def test_desktop_state_is_private_before_first_launch(self):
+        t3.install_desktop(self.desktop_config())
+        for path in (self.home / ".t3", self.home / ".t3/userdata"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
+        self.assertFalse((self.home / ".t3/userdata/clerk-tokens.json").exists())
+
+    def test_existing_credentials_are_protected_without_reading_or_replacing_data(self):
+        userdata = self.home / ".t3/userdata"
+        userdata.mkdir(parents=True)
+        token = userdata / "clerk-tokens.json"
+        token.write_text("credential fixture")
+        token.chmod(0o666)
+        database = userdata / "state.sqlite"
+        database.write_text("history fixture")
+        database.chmod(0o644)
+        inode = token.stat().st_ino
+        actual_read = Path.read_text
+
+        def read(path, *args, **kwargs):
+            self.assertNotIn(path, (token, database))
+            return actual_read(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read):
+            t3.install_desktop(self.desktop_config())
+        self.assertEqual(token.stat().st_ino, inode)
+        self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(token.read_text(), "credential fixture")
+        self.assertEqual(database.read_text(), "history fixture")
+        self.assertEqual(database.stat().st_mode & 0o777, 0o644)
+
+    def test_unsafe_desktop_state_stops_before_package_install_or_permission_changes(self):
+        self.desktop_version = None
+        root = self.home / ".t3"
+        root.mkdir(mode=0o755)
+        root.chmod(0o755)
+        outside = self.home / "personal"
+        outside.mkdir(mode=0o755)
+        userdata = root / "userdata"
+        userdata.symlink_to(outside)
+        for operation in (t3.preflight, t3.install_desktop):
+            with self.assertRaisesRegex(ValueError, "owned directories"):
+                operation(self.desktop_config())
+        self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+        self.assertTrue(userdata.is_symlink())
+        self.assertFalse(any(cmd[0] == "/usr/bin/shelly" for _, cmd in self.events))
+        userdata.unlink()
+        userdata.mkdir()
+        token = userdata / "clerk-tokens.json"
+        token.symlink_to(outside / "missing-token")
+        with self.assertRaises(ValueError):
+            t3._protect_desktop_data(self.home)
+        self.assertTrue(token.is_symlink())
+
+    def test_foreign_owned_desktop_state_is_refused(self):
+        with patch.object(t3.os, "getuid", return_value=os.getuid() + 1), self.assertRaises(ValueError):
+            t3._protect_desktop_data(self.home)
+        self.assertFalse((self.home / ".t3").exists())
+
     def test_missing_desktop_prefers_shelly_with_review_prompts(self):
         self.desktop_version = None
         t3.install_desktop(self.desktop_config())
@@ -388,7 +446,17 @@ class T3InstallTests(unittest.TestCase):
         cache = self.home / ".cache/Shelly"
         cache.mkdir(parents=True)
         # Model a cache owned by another UID without changing real ownership.
-        with patch.object(t3.os, "getuid", return_value=os.getuid() + 1), \
+        actual_stat = Path.stat
+
+        def cache_stat(path, *args, **kwargs):
+            info = actual_stat(path, *args, **kwargs)
+            if path == cache:
+                fields = list(info)
+                fields[4] = os.getuid() + 1
+                return os.stat_result(fields)
+            return info
+
+        with patch.object(Path, "stat", cache_stat), \
                 self.assertRaisesRegex(RuntimeError, "root-owned Shelly cache"):
             t3.preflight(self.desktop_config())
         with patch.object(t3.os, "access", return_value=False), \

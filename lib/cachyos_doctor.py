@@ -357,7 +357,11 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                     if config is not None and config.t3code_desktop and name == "service.t3code" else
                     "User unit not observed active; inspect with systemctl --user. Selection may be unknown."), selected=selected)
 
-        from lib.cachyos_health import collect_host_health, collect_network_health
+        from lib.cachyos_health import collect_host_health, collect_network_health, collect_t3_storage_health
+
+        if config is not None and config.t3code_desktop:
+            for name, state, reason in collect_t3_storage_health(Path(pwd.getpwuid(uid).pw_dir), uid):
+                record(name, state, reason, selected=True)
 
         for name, state, reason in collect_host_health(_probe, uid) + collect_network_health(
             _probe, uid, config.web_interface_port if config is not None else 3773,

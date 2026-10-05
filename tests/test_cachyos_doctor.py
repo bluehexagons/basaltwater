@@ -265,6 +265,21 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(records["service.t3code"]["state"], "deferred")
         self.assertIn("Selection may be unknown", records["service.t3code"]["reason"])
 
+    def test_selected_desktop_includes_storage_metadata(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             t3code_desktop=True, agent_tools=["codex"])
+        with tempfile.TemporaryDirectory() as home, \
+                patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=home)), \
+                patch.object(doctor.shutil, "which", return_value=None), \
+                patch("lib.cachyos_health.collect_t3_storage_health", return_value=[
+                    ("security.t3-storage", "failed", "Unsafe permissions.")]) as storage:
+            records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+        storage.assert_called_once_with(Path(home), 1000)
+        self.assertEqual(records["security.t3-storage"]["state"], "failed")
+        self.assertTrue(records["security.t3-storage"]["selected"])
+
     def test_unsupported_host_and_root_do_not_probe(self):
         self.supported.return_value = False
         report = doctor.collect_cachyos_doctor()

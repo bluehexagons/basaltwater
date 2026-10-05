@@ -7,6 +7,32 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import stat
+
+
+def collect_t3_storage_health(home: Path, uid: int) -> list[tuple[str, str, str]]:
+    """Inspect only default desktop state metadata, never token or DB contents."""
+    paths = (home / ".t3", home / ".t3/userdata", home / ".t3/userdata/clerk-tokens.json")
+    for index, path in enumerate(paths):
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            if index == 2:
+                break  # Login may not have created this optional file yet.
+            return [("security.t3-storage", "deferred", "Default T3 desktop state not created yet.")]
+        except OSError:
+            return [("security.t3-storage", "deferred", "Default T3 desktop state permissions unavailable.")]
+        correct_type = stat.S_ISREG(info.st_mode) if index == 2 else stat.S_ISDIR(info.st_mode)
+        if info.st_uid != uid or not correct_type or (index < 2 and info.st_mode & 0o077):
+            return [("security.t3-storage", "failed",
+                     "Default T3 desktop state has unsafe ownership, type, or permissions; "
+                     "inspect ~/.t3 locally and rerun desktop setup after resolving unsafe paths.")]
+        if index == 2 and info.st_mode & 0o077:
+            return [("security.t3-storage", "deferred",
+                     "The Clerk token file has permissive mode bits, but private parent directories block "
+                     "other users. Desktop setup restricts it; the app may recreate it with permissive settings.")]
+    return [("security.t3-storage", "available",
+             "Default T3 desktop state directories and any Clerk token file are private; contents were not read.")]
 
 
 def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
@@ -25,7 +51,8 @@ def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
     status, output = probe(["/usr/bin/pacman", "-Qu"], uid)
     count = len(output.strip().splitlines()) if output.strip() else 0
     add("health.updates", "deferred",
-        f"{count} updates in local sync metadata; use the normal full CachyOS update workflow. Metadata may be stale."
+        f"{count} repository updates in local sync metadata; use the normal full CachyOS update workflow. "
+        "Metadata may be stale; AUR updates are not checked."
         if status == "ok" else "Update freshness unknown; check through the normal CachyOS update workflow.")
     try:
         capacity = shutil.disk_usage("/")

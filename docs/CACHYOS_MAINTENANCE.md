@@ -61,6 +61,16 @@ the warning remains, check which environment the other PC is connected to;
 desktop and managed web runtimes have separate update workflows. If the AUR
 recipe lags upstream, keep the package manager's ownership and review policy.
 
+Desktop setup creates or protects the default `~/.t3` and `~/.t3/userdata`
+directories with mode `0700`, and an existing `clerk-tokens.json` with `0600`.
+It retains their contents and refuses symlinks, foreign ownership, and unexpected
+file types. Private parent directories protect credentials and session databases
+even if the app later creates a file with permissive settings. The read-only
+`basaltw local cachyos-doctor` checks these permissions when desktop mode is saved;
+it never opens tokens or databases. A permissive token file inside private parents
+is advisory; exposed directories or unsafe ownership/types are failures.
+Custom T3 state locations require separate inspection.
+
 ## AUR download failures
 
 Shelly's generic source-download failure can hide the underlying Git error:
