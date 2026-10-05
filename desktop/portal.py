@@ -101,7 +101,7 @@ class Portal:
             self.progress("RemoteDesktop.version", False)
             version = self.call("org.freedesktop.DBus.Properties", "Get", "(ss)", (REMOTE, "version")).unpack()[0]
             if version < 2:
-                raise RuntimeError("This portal does not support persistent RemoteDesktop grants; use start without --remember")
+                raise RuntimeError("This portal does not support persistent RemoteDesktop grants; use revoke to remove the opt-in, then start without --remember")
         created = self.response(REMOTE, "CreateSession", "(a{sv})", (),
             {"session_handle_token": v("s", "bw" + secrets.token_hex(12))})
         self.session = created["session_handle"]

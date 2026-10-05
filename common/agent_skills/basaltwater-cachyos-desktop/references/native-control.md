@@ -14,8 +14,9 @@ Stages/errors also remain in the private runtime `helper.log` across restarts.
 
 The task helper uses a private same-user Unix socket, no network listener,
 privileged input daemon, systemd service or login autostart. Its default
-15-minute lifetime starts when control is ready; it closes on stop, portal revocation,
-bus loss or loss of the session socket.
+15-minute lifetime starts when control is ready; pending consent does not consume
+it and remains subject to the portal response timeout. It closes on stop, portal
+revocation, bus loss or loss of the session socket.
 It is an account-local control channel, not a sandbox against other programs
 already running as this account.
 
@@ -28,6 +29,9 @@ The private grant record lives in `~/.local/state/basaltwater/native-desktop`
 (0700 directory, 0600 file), outside projects and logs. Tokens are single-use;
 the returned replacement is saved without exposing it in status or arguments.
 An interrupted restore keeps its consumed identifier solely for revocation.
+Plain `start` preserves the saved opt-in and human pause even without a reusable
+token, requesting fresh owner approval if needed. Use `revoke` to remove the
+opt-in before starting temporary access.
 
 `renew --generation GEN --seconds SECONDS` accepts 60–28800 seconds, requires
 running, unpaused, unexpired control, and cannot resume a human pause. Human

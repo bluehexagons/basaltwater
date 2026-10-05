@@ -140,7 +140,9 @@ def start(*, remember=False, session_seconds=SESSION_SECONDS):
         os.fchmod(log_fd, 0o600)
         with os.fdopen(log_fd, "w") as log:
             argv = ["/usr/bin/python3", "-m", "desktop.native_session", "--serve", "--session-seconds", str(session_seconds)]
-            if remember or native_grants.metadata()["grant_saved"]:
+            # An interrupted single-use restore can leave no reusable token.
+            # Keep the owner's opt-in and saved pause until explicit revocation.
+            if remember or native_grants.metadata()["remember_requested"]:
                 argv.append("--remember")
             process = subprocess.Popen(argv,
                 cwd=str(Path(__file__).resolve().parents[1]), env=env, stdin=subprocess.DEVNULL,
@@ -264,7 +266,7 @@ class NativeSession:
                 "max_session_seconds": MAX_SESSION_SECONDS,
                 "geometry": self.geometry,
                 "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
-                "expires_in": max(0, int(self.until - time.monotonic())),
+                "expires_in": max(0, int(self.until - time.monotonic())) if self.state == "running" else 0,
                 "control_active": self.lease is not None and time.monotonic() < self.lease_until,
                 "detail": self.detail}
 
@@ -685,7 +687,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
     def tick():
         from lib.cachyos_doctor import _owned_socket
         display = os.environ["WAYLAND_DISPLAY"]
-        if time.monotonic() >= session.until or not _owned_socket(folder.parent / display, os.getuid()):
+        if (session.state == "running" and time.monotonic() >= session.until
+                or not _owned_socket(folder.parent / display, os.getuid())):
             session.close()
         if session.stopping.is_set():
             loop.quit()

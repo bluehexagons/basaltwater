@@ -565,6 +565,22 @@ class NativeGrantTests(unittest.TestCase):
         portal.revoke_token.assert_any_call("consumed-token")
         self.assertIsNone(native_grants.load())
 
+    def test_plain_start_keeps_remembered_pause_after_interrupted_restoration(self):
+        native_grants.enable()
+        native_grants.save_token("consumed-token")
+        native_grants.set_paused(True)
+        native_grants.consume()
+        runtime = self.home / "runtime"
+        runtime.mkdir(mode=0o700)
+        stopped = {"state": "stopped", **native_grants.metadata()}
+        with patch.object(native, "runtime_directory", return_value=runtime), \
+                patch.object(native, "check_session"), \
+                patch.object(native, "status", side_effect=[stopped, stopped, {"state": "initializing"}]), \
+                patch.object(native.subprocess, "Popen", return_value=Mock()) as launch:
+            native.start()
+        self.assertIn("--remember", launch.call_args.args[0])
+        self.assertTrue(native_grants.metadata()["paused"])
+
     def test_unsafe_grants_and_invalid_tokens_are_rejected(self):
         native_grants.enable()
         folder = native_grants.directory()
@@ -648,6 +664,41 @@ class NativeReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["state"], "stopped")
             self.assertEqual(receipt["last_failure"]["stage"], "connecting")
             self.assertIn("Portal bus initialization failed", output.getvalue())
+
+    def test_session_lifetime_starts_after_slow_consent_and_still_expires(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
+            folder = Path(directory)
+            clock = [100.0]
+            glib, portal = Mock(), Mock(restore_token=None)
+            workers = []
+            def thread(*, target, **kwargs):
+                return Mock(start=lambda: workers.append(target))
+            def approve(**kwargs):
+                constructor.call_args.kwargs["progress"]("Start.response", True)
+                clock[0] += 61
+                self.assertTrue(glib.timeout_add.call_args.args[1]())
+                receipt = json.loads((folder / "status.json").read_text())
+                self.assertEqual(receipt["state"], "awaiting-consent")
+                self.assertEqual(receipt["expires_in"], 0)
+                return 17, [1280, 720]
+            def loop():
+                workers[1]()
+                receipt = json.loads((folder / "status.json").read_text())
+                self.assertEqual(receipt["state"], "running")
+                self.assertEqual(receipt["expires_in"], 60)
+                clock[0] += 61
+                self.assertFalse(glib.timeout_add.call_args.args[1]())
+            portal.start.side_effect = approve
+            glib.MainLoop.return_value.run.side_effect = loop
+            with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
+                    patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}), \
+                    patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                    patch("desktop.portal.Portal", return_value=portal) as constructor, \
+                    patch("lib.cachyos_doctor._owned_socket", return_value=True), \
+                    patch.object(native.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
+                    patch.object(native.os, "chmod"), patch.object(native.threading, "Thread", side_effect=thread):
+                self.assertEqual(native.serve(session_seconds=60), 0)
 
 
 class NativePackageTests(unittest.TestCase):

@@ -65,6 +65,9 @@ The private record is `~/.local/state/basaltwater/native-desktop/grant.json`
 (directory 0700, file 0600). Tokens are consumed once and replaced with the
 returned token. An interrupted restore retains the consumed identifier only for
 revocation, never for reuse. Tokens stay out of logs, status and process arguments.
+Plain `start` keeps the saved opt-in even when restoration was interrupted or
+KDE returned no token; a new owner approval may be needed. Use `revoke` to remove
+the opt-in before switching back to temporary access.
 Human pause persists across restored sessions; agents must not resume it.
 `stop` retains the grant, while `revoke` closes control, deletes only its
 `remote-desktop` PermissionStore entries and removes the private record. Store
@@ -74,8 +77,10 @@ prevent subsequent restoration.
 
 Session lifetime defaults to 900 seconds from readiness. `--session-seconds`
 and `renew --seconds` accept 60–28800 seconds, at most eight hours per explicit
-start/renewal. Renewal requires the current generation and a running, unpaused,
-unexpired session; it does not grant new devices or extend operation leases.
+start/renewal. Initialization and pending consent use the portal's bounded
+response timeout without consuming that lifetime. Renewal requires the current
+generation and a running, unpaused, unexpired session; it does not grant new
+devices or extend operation leases.
 After expiration use `start` and observe the new generation/capture. There is
 no timer that renews control or resumes a pause automatically.
 
