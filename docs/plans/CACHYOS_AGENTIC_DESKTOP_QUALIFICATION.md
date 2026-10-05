@@ -1,7 +1,8 @@
 # CachyOS agentic desktop qualification record
 
 Status: **current workstation's running stack tested and accepted by its owner**
-(2026-09-27), with native desktop/application evidence added on 2026-10-04.
+(2026-09-27), with native desktop/application evidence added on 2026-10-04
+and reusable-grant/held-input evidence on 2026-10-05.
 Fresh-install, interruption/recovery, and broader automation
 cases below remain separate. Unit tests do not satisfy those live cases.
 Copy the record for each disposable CachyOS installation; keep private evidence locally
@@ -105,10 +106,33 @@ legacy artifact paths from capability. Discovery still launches no applications.
 Read-only checks found RemoteDesktop interface version 2 and ScreenCast version
 5 on this workstation, with portal 1.22.1 and KDE portal 6.7.5. Opt-in persistent
 grants, single-use token handling, owner revocation, pause across restoration,
-and bounded session renewal have mocked contract tests. These checks do not
-qualify prompt-free restoration, a new live held-button/game interaction,
-logout/login behavior or grant revocation on this hardware. Record those
-results separately after explicit initial KDE monitor/device approval.
+and bounded session renewal have mocked contract tests.
+
+The owner then approved one 2256×1504 monitor, keyboard/pointer access and KDE's
+remember option. Live checks used installed source `e1ef6a8`, launched from the
+active T3 Code session. KDE attributed the restored session to T3 Code (Alpha).
+The disposable GTK3 fixture measured press/release timing and rejected presses
+shorter than 80 ms; no game code or personal application was modified.
+
+| Check | Observed result |
+| --- | --- |
+| Initial persistent approval | Helper reached `running`; a saved grant and its portal PermissionStore record were present. Grant directory/file modes were 0700/0600. |
+| Repeated restoration | Two stop/start cycles with plain `start --session-seconds 28800`, without `--remember`, reached `running` without another owner approval. Both reported `restore_attempted` and `grant_saved`. |
+| Native holds | `--hold-ms 120` produced a 122.20 ms pointer press and 122.00 ms Return press; both actuated the fixture. A default click measured 3.50 ms and was rejected. After restoration, pointer/Return measured 119.51/122.57 ms and actuated. |
+| Client cancellation | Terminating the client during a requested 5000 ms Return hold released the key after 222.95 ms, 21.30 ms after termination. The abandoned operation lease expired within its existing 30-second bound. |
+| Diagnostic pause | Agent-issued test pause interrupted a requested 5000 ms Return hold after 490.76 ms. Measured interruption latency included the pause CLI's startup. |
+| Pause across restoration | The paused state survived stop/start; input and renewal were rejected. Only the agent's diagnostic pause was explicitly cleared for subsequent testing. |
+| Generation and renewal | The previous generation was rejected. An unpaused current generation renewed to 28800 seconds without changing generation. |
+| Cleanup | Only the disposable fixture was closed. Helper stopped, no active control remained, and the saved grant was retained for future owner-authorized tasks. |
+
+Private screenshots, fixture sources and timing/status reports remain in the
+ignored local `artifacts/fast21-native-feedback/` directory. Grant tokens were
+not included in reports, command arguments or committed evidence. These results
+qualify restoration from the active T3 context and a synthetic held-input
+workflow on this workstation. They do not qualify another application identity,
+the actual Fast21 game, logout/login, reboot, monitor changes, denial/cancellation
+of the initial prompt, or live grant revocation. Revocation remains covered by
+mocked contracts; the owner-approved grant was kept for future autonomous use.
 
 ## P0 prerequisite gate
 
@@ -153,7 +177,8 @@ marking a package query successful or by using unrestricted desktop tools.
 | Browser recovery | Interrupted update retains old pair; bounded private artifacts and task profile cleanup | Not implemented |
 | GTK/Qt AT-SPI | Controlled editor save, slow dialog, foreign-window/stale-reference rejection, secret-field redaction | Inkscape GTK edits passed; wider GTK/Qt and lifecycle cases pending |
 | Portal capture | User-approved selected screen; private bounded artifact; denial and cancellation | Selected-monitor capture passed; denial/cancellation mocked |
-| Portal input | Explicit device selection, revocation, pause, lease expiry, logout cleanup, no privileged fallback | Input, human pause/resume and explicit stop passed; expiry/owner loss mocked; logout pending |
+| Portal input | Explicit device selection, revocation, pause, lease expiry, logout cleanup, no privileged fallback | Input, holds, client cancellation, human pause/resume, abandoned lease expiry and explicit stop passed; owner loss/active expiry mocked; logout pending |
+| Portal grant restoration | Initial owner approval, repeated restoration, pause preservation, bounded renewal and owner revocation | Repeated T3 restoration, pause preservation and renewal passed; revocation mocked; logout/reboot and other application identities pending |
 | Clipboard | Separate opt-in and bounds; protected content excluded | Not implemented |
 | Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Blender/Inkscape and GIMP batch paths above passed; remaining matrix pending |
 | Recovery | Safe reruns, exact managed cleanup, concurrent human application use | Not implemented |
