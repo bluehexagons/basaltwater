@@ -138,7 +138,12 @@ def _probe(command: list[str], uid: int) -> tuple[str, str]:
         return "output-limit", ""
     except (OSError, RuntimeError, subprocess.SubprocessError):
         return "error", ""
-    return ("ok" if code == 0 else "error"), "".join(output) if code == 0 else ""
+    text = "".join(output)
+    # pacman's query returns 1 when its filter finds no upgrades. Accept only
+    # this exact read-only query with no output; diagnostics still mean failure.
+    if command == ["/usr/bin/pacman", "-Qu"] and code == 1 and not text:
+        return "ok", ""
+    return ("ok" if code == 0 else "error"), text if code == 0 else ""
 
 
 def _owned_socket(path: Path, uid: int) -> bool:

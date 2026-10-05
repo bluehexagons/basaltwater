@@ -38,6 +38,29 @@ access or the GUI's provider environment. If needed, set T3's Codex **Binary
 path** to the absolute launcher path printed by setup, typically
 `/home/USER/.local/bin/codex`; keep that stable path across updates.
 
+## T3 desktop updates
+
+The desktop's embedded server uses the installed `t3code-bin` version. A newer
+client can report a server update even when Basaltwater setup succeeded:
+`setup` and `refresh` retain an installed desktop package. `pacman -Qu` checks
+repository sync metadata and does not check AUR releases.
+
+Update through the same AUR helper that installed the package. On a workstation
+using CachyOS's default Shelly, run as your desktop user and complete its normal
+package-review and sudo prompts:
+
+```fish
+pacman -Q t3code-bin
+shelly update aur t3code-bin
+pacman -Q t3code-bin
+```
+
+Finish active work and quit/reopen T3 Code afterward to load the updated embedded
+server. Installing a package does not update an already running process. If
+the warning remains, check which environment the other PC is connected to;
+desktop and managed web runtimes have separate update workflows. If the AUR
+recipe lags upstream, keep the package manager's ownership and review policy.
+
 ## AUR download failures
 
 Shelly's generic source-download failure can hide the underlying Git error:

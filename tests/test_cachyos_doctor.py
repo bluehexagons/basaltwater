@@ -80,6 +80,18 @@ class ProbeTests(unittest.TestCase):
         with patch.object(doctor, "run_streamed", side_effect=stream):
             self.assertEqual(doctor._probe(["/usr/bin/pacman"], 1000), ("output-limit", ""))
 
+    def test_empty_upgrade_query_is_success_but_other_exit_one_results_fail(self):
+        with patch.object(doctor, "run_streamed", return_value=1):
+            self.assertEqual(doctor._probe(["/usr/bin/pacman", "-Qu"], 1000), ("ok", ""))
+            self.assertEqual(doctor._probe(["/usr/bin/pacman", "-Q", "--", "missing"], 1000), ("error", ""))
+
+        def stream(_command, **kwargs):
+            kwargs["on_output"]("error: private database path\n")
+            return 1
+
+        with patch.object(doctor, "run_streamed", side_effect=stream):
+            self.assertEqual(doctor._probe(["/usr/bin/pacman", "-Qu"], 1000), ("error", ""))
+
     def test_errors_never_publish_raw_output(self):
         for error, expected in ((FileNotFoundError("secret"), "missing"),
                                 (TimeoutError("secret"), "error"),
