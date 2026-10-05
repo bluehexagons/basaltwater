@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import ExitStack
 import io
 import json
+import os
 from pathlib import Path
 import shlex
 import stat
@@ -27,7 +28,7 @@ class GameDevelopmentTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        self.receipt = self.root / "game-development.json"
+        self.receipt = self.root / "public-development/game-development.json"
         stack.enter_context(patch.object(steps, "SELECTION_PATH", self.receipt))
         stack.enter_context(patch.object(development, "SELECTION_PATH", self.receipt))
         stack.enter_context(patch.object(steps, "is_dry_run", return_value=False))
@@ -90,6 +91,7 @@ class GameDevelopmentTests(unittest.TestCase):
 
     def test_receipt_validation_is_explicit_and_no_selection_is_inferred(self):
         self.assertFalse(development.game_development_selected())
+        self.receipt.parent.mkdir()
         self.receipt.write_text('{"schema_version":1,"selected":true}')
         metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
         with patch.object(Path, "lstat", return_value=metadata):
@@ -99,6 +101,34 @@ class GameDevelopmentTests(unittest.TestCase):
         metadata.st_mode = stat.S_IFLNK | 0o777
         with patch.object(Path, "lstat", return_value=metadata):
             self.assertIsNone(development.game_development_selected())
+
+    def test_selection_remains_readable_with_a_private_runtime_directory_and_umask(self):
+        private = self.root / "private-runtime"
+        private.mkdir(mode=0o700)
+        previous_umask = os.umask(0o077)
+        try:
+            steps.record_game_development_selection(self.config)
+        finally:
+            os.umask(previous_umask)
+        self.assertEqual(private.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.receipt.parent.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.receipt.stat().st_mode & 0o777, 0o644)
+        metadata = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0)
+        with patch.object(Path, "lstat", return_value=metadata):
+            self.assertTrue(development.game_development_selected())
+
+    def test_unsafe_selection_paths_are_not_overwritten(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        self.receipt.parent.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "Unsafe"):
+            steps.record_game_development_selection(self.config)
+        self.assertFalse((outside / self.receipt.name).exists())
+        self.receipt.parent.unlink()
+        self.receipt.parent.mkdir()
+        self.receipt.mkdir()
+        with self.assertRaisesRegex(ValueError, "Unsafe"):
+            steps.record_game_development_selection(self.config)
 
     def test_native_inventory_distinguishes_project_bootstrap_from_broken_host(self):
         def probe(command, **options):

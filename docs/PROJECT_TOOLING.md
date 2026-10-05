@@ -232,6 +232,11 @@ readiness failure. Missing project-built SDL modules are listed separately in
 `project_bootstrap_required`. Other hosts still receive the inventory without
 being required to install this bundle. Removing the selection retains installed
 packages; an invalid selection record is reported for explicit repair.
+The non-secret selection lives in
+`/var/lib/basaltwater-development/game-development.json`, readable by coding
+users while the main `/var/lib/basaltwater` runtime state remains private to
+root. Rerun saved setup with `sudo basaltw refresh` to reconcile installations
+that previously stored this flag inside the private runtime directory.
 
 ## Build for an older release baseline
 

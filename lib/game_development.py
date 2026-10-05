@@ -12,7 +12,9 @@ import subprocess
 from lib.atomic_io import read_json_file
 
 
-SELECTION_PATH = Path("/var/lib/basaltwater/game-development.json")
+# Coding users need this non-secret flag for readiness checks. The main
+# /var/lib/basaltwater state directory is deliberately private to root.
+SELECTION_PATH = Path("/var/lib/basaltwater-development/game-development.json")
 DEBIAN_GAME_PACKAGES = (
     "build-essential", "cmake", "ninja-build", "python3", "pkg-config",
     "gdb", "strace", "valgrind", "ccache", "clang-format", "clang-tidy", "glslang-tools",

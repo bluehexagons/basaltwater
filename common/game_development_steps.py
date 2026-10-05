@@ -9,7 +9,7 @@ from lib.atomic_io import write_json_atomic
 from lib.config import SetupConfig
 from lib.game_development import DEBIAN_GAME_PACKAGES, SELECTION_PATH
 from lib.remote_utils import is_dry_run, run
-from lib.validation import validate_package_name
+from lib.validation import validate_filesystem_path, validate_package_name
 
 
 def install_game_development(config: SetupConfig) -> None:
@@ -36,8 +36,19 @@ def record_game_development_selection(config: SetupConfig) -> None:
         return
     if not config.install_game_dev and not os.path.lexists(SELECTION_PATH):
         return
-    if SELECTION_PATH.is_symlink() or SELECTION_PATH.parent.is_symlink():
+    validate_filesystem_path(str(SELECTION_PATH))
+    for directory in (SELECTION_PATH.parent, *SELECTION_PATH.parent.parents):
+        if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+            raise ValueError("Unsafe game development selection directory")
+    if SELECTION_PATH.is_symlink() or (SELECTION_PATH.exists() and not SELECTION_PATH.is_file()):
         raise ValueError("Unsafe game development selection path")
+    directory = SELECTION_PATH.parent
+    directory.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if directory.stat().st_uid != os.geteuid():
+        raise ValueError("Game development selection directory must belong to the setup user")
+    # Only this dedicated directory contains public selection metadata. Keep
+    # it traversable even when setup runs under a restrictive root umask.
+    directory.chmod(0o755)
     write_json_atomic(str(SELECTION_PATH), {
         "schema_version": 1, "selected": bool(config.install_game_dev),
     }, mode=0o644)
