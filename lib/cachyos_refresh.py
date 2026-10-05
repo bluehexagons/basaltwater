@@ -171,9 +171,13 @@ def save_successful_setup(config: SetupConfig) -> None:
 
     try:
         report = collect_cachyos_doctor(config=config)
+        for observation in report["capabilities"]:
+            if observation["name"] == "notifications.webhook":
+                observation["state"] = "deferred"
+                observation["reason"] = "This setup's webhook result is pending; consult last-notification.json after delivery."
         receipt = {
             "schema_version": 1,
-            "completed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "completed_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
             "source": source_metadata(_probe, os.getuid()),
             "arguments": arguments,
             "observations": report["capabilities"],

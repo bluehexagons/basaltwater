@@ -128,6 +128,37 @@ class HealthTests(unittest.TestCase):
         self.assertTrue(all(state == "deferred" for _, state, _ in result))
         self.assertIn("unknown", result[-1][2])
 
+    def test_broad_allows_behind_full_protocol_guards_are_distinguished(self):
+        rules = "\n".join([
+            "-A ufw-user-input -p tcp --dport 3773 -s 192.168.68.0/22 -j ACCEPT",
+            "-A ufw-user-input -p tcp --dport 3773 -j DROP",
+            "-A ufw-user-input -p udp --dport 3773 -j DROP",
+            "-A ufw-user-input -p tcp --dport 3773 -j ACCEPT",
+            "-A ufw-user-input -p udp --dport 3773 -j ACCEPT",
+        ])
+        with patch.object(Path, "read_text", return_value=rules):
+            result = health.collect_network_health(lambda *_: ("ok", ""), 1000)[-1]
+        self.assertEqual(result[1], "deferred")
+        self.assertIn("follow covering deny", result[2])
+        self.assertIn("privileged verification", result[2])
+        self.assertEqual(health._saved_remote_allows(rules.replace("ufw-user", "ufw6-user"),
+                                                 "ufw6-user-input", 3773), (False, True))
+        for broken in (rules.replace("-p udp --dport 3773 -j DROP", "-p udp --dport 3389 -j DROP"),
+                       "-A ufw-user-input -j ACCEPT\n" + rules,
+                       rules.replace("--dport 3773 -j DROP", "--dport 3773 -d 192.168.68.57 -j DROP"),
+                       rules.replace("--dport 3773 -j DROP", "--dport 3773 -i wlan0 -j DROP")):
+            self.assertTrue(health._saved_remote_allows(broken, "ufw-user-input", 3773)[0])
+
+    def test_firewall_range_all_port_and_udp_allows_are_checked_only_in_input_chains(self):
+        for rule in ("-p tcp -m multiport --dports 3000:5000", "", "-p udp --dport 47999",
+                     "-p tcp --dport 47989", "-p tcp --dport 4001"):
+            self.assertTrue(health._saved_remote_allows(
+                f"-A ufw-user-input {rule} -j ACCEPT", "ufw-user-input", 4001)[0])
+        for rule in ("-A ufw-user-output -p tcp --dport 3773 -j ACCEPT",
+                     "-A ufw-user-input -p tcp --dport 1716 -j ACCEPT",
+                     "-A ufw-user-input -p tcp --dport 3773 -s 192.168.68.0/22 -j ACCEPT"):
+            self.assertEqual(health._saved_remote_allows(rule, "ufw-user-input", 3773), (False, False))
+
     def test_host_failures_are_bounded_summaries_not_raw_names(self):
         def probe(command, uid):
             if "--failed" in command:

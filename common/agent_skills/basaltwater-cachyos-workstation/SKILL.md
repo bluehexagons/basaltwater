@@ -114,9 +114,14 @@ An available package, socket, or bus owner is only a prerequisite observation;
 it does not verify automation or permission. Treat null selection/permission
 fields as unknown and keep live qualification separate from observation time.
 The doctor also checks saved selections, selected CLIs, host health, listeners,
-and saved UFW rules. Effective firewall rules require privileged verification;
+and saved UFW input rules, accounting for earlier unconditional denies, port
+ranges, and Sunshine UDP. Effective firewall rules require privileged verification;
 local update metadata may be stale. Successful setup writes a private diagnostic
 receipt at `~/.local/state/basaltwater/cachyos/last-report.json`.
+Webhook attempts write a separate private `last-notification.json` with delivery
+status and selection/policy digest, without URLs or tokens. Doctor reads it
+without sending an event. Acceptance does not prove receiver processing; missing,
+older, suppressed, or different-selection evidence leaves delivery unverified.
 
 For explicitly requested firewall management, retain the full setup selection
 and add `--lan-access` for the single private default-route LAN, or

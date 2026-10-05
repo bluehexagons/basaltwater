@@ -292,6 +292,28 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(records["service.sunshine"]["state"], "failed")
         self.assertTrue(records["service.sunshine"]["selected"])
 
+    def test_webhook_observations_use_local_receipts_without_sending(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             notify_specs=[["webhook", "https://receiver.example/private_hook"]])
+        with patch.object(doctor.shutil, "which", return_value=None), \
+                patch("lib.notifications._open_webhook_request") as send, \
+                patch("lib.cachyos_notification_state.collect_notification_health") as receipt:
+            for state in ("available", "failed", "deferred"):
+                receipt.return_value = (state, "Local delivery evidence.")
+                records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+                self.assertEqual(records["notifications.webhook"]["state"], state)
+                self.assertTrue(records["notifications.webhook"]["selected"])
+                self.assertNotIn("private_hook", json.dumps(records))
+                receipt.assert_called_with(config)
+            receipt.reset_mock()
+            config.notify_specs = None
+            records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+            self.assertNotIn("notifications.webhook", records)
+            receipt.assert_not_called()
+            send.assert_not_called()
+
     def test_unsupported_host_and_root_do_not_probe(self):
         self.supported.return_value = False
         report = doctor.collect_cachyos_doctor()

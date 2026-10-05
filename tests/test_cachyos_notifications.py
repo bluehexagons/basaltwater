@@ -17,6 +17,7 @@ import basaltwater
 import remote_setup
 from lib import cachyos_refresh as refresh
 from lib import notifications
+from lib import cachyos_notification_state as notification_state
 from lib.arg_parser import create_setup_argument_parser
 from lib.cachyos import cachyos_config_from_args, validate_cachyos_config
 from lib.remote_utils import is_dry_run, set_dry_run
@@ -43,7 +44,7 @@ class CachyOSNotificationTests(unittest.TestCase):
         }))
         self.execute = stack.enter_context(patch.object(refresh.os, "execv"))
         self.preflight = stack.enter_context(patch("lib.cachyos.preflight_cachyos"))
-        stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
+        self.doctor = stack.enter_context(patch("lib.cachyos_doctor.collect_cachyos_doctor", return_value={"capabilities": []}))
         stack.enter_context(patch("lib.cachyos_health.source_metadata", return_value={"commit": "fixture"}))
         stack.enter_context(patch.object(remote_setup.socket, "gethostname", return_value="workstation"))
         self.step = MagicMock()
@@ -92,6 +93,11 @@ class CachyOSNotificationTests(unittest.TestCase):
         self.assertEqual(refresh.load_saved_setup()[1].notify_specs, [["webhook", TARGET]])
         self.assertEqual(stat.S_IMODE(self.record.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.record.parent.stat().st_mode), 0o700)
+        evidence = self.record.with_name("last-notification.json")
+        self.assertEqual(stat.S_IMODE(evidence.stat().st_mode), 0o600)
+        self.assertNotIn(TOKEN, evidence.read_text())
+        self.assertNotIn("panel.example", evidence.read_text())
+        self.assertEqual(notification_state.collect_notification_health(config)[0], "available")
 
     def test_failure_notifies_once_without_forwarding_exception_secrets_or_saving(self):
         refresh.save_successful_setup(self.config("--node"))
@@ -138,10 +144,40 @@ class CachyOSNotificationTests(unittest.TestCase):
     def test_dry_run_and_no_targets_send_nothing(self):
         self.assertEqual(remote_setup.run_cachyos_setup(self.webhook_config("--dry-run")), 0)
         self.assertFalse(self.record.exists())
+        self.assertFalse(self.record.with_name("last-notification.json").exists())
         self.step.assert_not_called()
         self.assertEqual(remote_setup.run_cachyos_setup(self.config()), 0)
         self.request.assert_not_called()
         self.assertFalse(is_dry_run())
+
+    def test_receipt_writer_failure_preserves_setup_result_and_hides_exception(self):
+        for setup_fails in (False, True):
+            with self.subTest(setup_fails=setup_fails):
+                error = ValueError("original setup failure")
+                self.step.side_effect = error if setup_fails else None
+                with patch.object(notification_state, "record_notification_result",
+                                  side_effect=RuntimeError("secret receipt error " + TARGET)), \
+                        patch("sys.stderr", new_callable=io.StringIO) as output:
+                    if setup_fails:
+                        with self.assertRaises(ValueError) as caught:
+                            remote_setup.run_cachyos_setup(self.webhook_config())
+                        self.assertIs(caught.exception, error)
+                    else:
+                        self.assertEqual(remote_setup.run_cachyos_setup(self.webhook_config()), 0)
+                self.assertIn("Could not record", output.getvalue())
+                self.assertNotIn("secret receipt", output.getvalue())
+                self.assertNotIn(TOKEN, output.getvalue())
+
+    def test_setup_report_marks_its_notification_pending_until_delivery(self):
+        self.doctor.return_value = {"capabilities": [{
+            "name": "notifications.webhook", "state": "available", "reason": "Prior setup accepted.",
+        }]}
+        remote_setup.run_cachyos_setup(self.webhook_config())
+        report = json.loads(self.record.with_name("last-report.json").read_text())
+        observation = report["observations"][0]
+        self.assertEqual(observation["state"], "deferred")
+        self.assertIn("pending", observation["reason"])
+        self.assertEqual(notification_state.collect_notification_health(self.webhook_config())[0], "available")
 
     def test_levels_and_identical_targets_use_shared_delivery_policy(self):
         for level, success_calls, failure_calls in (("normal", 1, 1), ("verbose", 1, 1),
@@ -152,11 +188,51 @@ class CachyOSNotificationTests(unittest.TestCase):
                 self.request.reset_mock()
                 self.assertEqual(remote_setup.run_cachyos_setup(config), 0)
                 self.assertEqual(self.request.call_count, success_calls)
+                evidence = json.loads(self.record.with_name("last-notification.json").read_text())
+                self.assertEqual(evidence["target_count"], 1)
+                self.assertEqual(evidence["delivery"], "delivered" if success_calls else "suppressed")
                 self.request.reset_mock()
                 self.step.side_effect = RuntimeError("fixture failure")
                 with self.assertRaises(RuntimeError):
                     remote_setup.run_cachyos_setup(config)
                 self.assertEqual(self.request.call_count, failure_calls)
+
+    def test_notification_receipts_do_not_qualify_other_targets_or_later_setups(self):
+        config = self.webhook_config()
+        self.assertEqual(notification_state.collect_notification_health(config)[0], "deferred")
+        remote_setup.run_cachyos_setup(config)
+        changed = self.config("--notify", "webhook", "https://other.example/hook")
+        self.assertEqual(notification_state.collect_notification_health(changed)[0], "deferred")
+        refresh.save_successful_setup(config)
+        state, reason = notification_state.collect_notification_health(config)
+        self.assertEqual(state, "deferred")
+        self.assertIn("predates", reason)
+        notification_state.record_notification_result(config, success=False, delivered=False)
+        self.assertEqual(notification_state.collect_notification_health(config)[0], "failed")
+
+    def test_invalid_and_unsafe_delivery_receipts_never_claim_success(self):
+        config = self.webhook_config()
+        remote_setup.run_cachyos_setup(config)
+        evidence = self.record.with_name("last-notification.json")
+        before = json.loads(evidence.read_text())
+        for field, invalid in (("schema_version", True), ("delivery", "secret invalid"),
+                               ("recorded_at", "secret invalid"), ("recorded_at", "2000-01-01T00:00:00"),
+                               ("target_count", True), ("configuration_digest", "secret invalid")):
+            evidence.write_text(json.dumps({**before, field: invalid}))
+            state, reason = notification_state.collect_notification_health(config)
+            self.assertEqual(state, "failed")
+            self.assertNotIn("secret", reason)
+        evidence.write_text(json.dumps(before))
+        evidence.chmod(0o644)
+        self.assertEqual(notification_state.collect_notification_health(config)[0], "failed")
+        evidence.unlink()
+        outside = self.home / "outside.json"
+        outside.write_text("preserve")
+        evidence.symlink_to(outside)
+        with patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertEqual(remote_setup.run_cachyos_setup(config), 0)
+        self.assertIn("Could not record", output.getvalue())
+        self.assertEqual(outside.read_text(), "preserve")
 
     def test_mailbox_mixed_targets_and_invalid_urls_fail_before_any_action(self):
         for options in (("--notify", "mailbox", "ops@example.com"),

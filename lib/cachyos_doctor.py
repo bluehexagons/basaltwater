@@ -367,6 +367,11 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         if config is not None and config.t3code_desktop:
             for name, state, reason in collect_t3_storage_health(Path(pwd.getpwuid(uid).pw_dir), uid):
                 record(name, state, reason, selected=True)
+        if config is not None and config.notify_specs:
+            from lib.cachyos_notification_state import collect_notification_health
+
+            state, reason = collect_notification_health(config)
+            record("notifications.webhook", state, reason, selected=True)
 
         for name, state, reason in collect_host_health(_probe, uid) + collect_network_health(
             _probe, uid, config.web_interface_port if config is not None else 3773,

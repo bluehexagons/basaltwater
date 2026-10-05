@@ -207,6 +207,11 @@ not install the Debian maintenance/security notification jobs or monitor Sunshin
 
 Successful setup saves targets and policy in the private local selection and
 receipt for later refresh. Displayed refresh commands redact webhook URLs.
+Setup also writes a private `last-notification.json` beside the selection,
+recording whether delivery succeeded, failed, or was suppressed by policy.
+It contains no webhook URLs or tokens. `basaltw local cachyos-doctor` reads this
+evidence without sending a test event. Receiver acceptance does not verify
+downstream processing; older setups without this record remain unverified.
 For an existing setup, see [notification maintenance](CACHYOS_MAINTENANCE.md#webhook-notifications).
 
 ## Codex-only agent setup
@@ -547,8 +552,10 @@ The doctor loads the validated saved selection: a missing selected T3 package,
 inactive selected web service, or broken selected CLI is reported as failed.
 Missing unselected browsers remain informational. It also reports failed units,
 root capacity, booted kernel module presence, firmware/encryption observations,
-non-loopback listeners, and potentially broad saved UFW rules. It never elevates
-privileges; saved firewall rules do not prove effective packet filtering.
+non-loopback listeners, and potentially broad saved UFW input rules, including
+port ranges and Sunshine UDP. It distinguishes broad allows preceded by covering
+unconditional denies from uncovered or unparsed rules needing review. It never
+elevates privileges; saved rules do not prove effective packet filtering.
 When Sunshine is selected, it checks the user service and, if `vainfo` is installed,
 VA-API encoding profiles without starting capture. A crashed Sunshine service is
 reported as failed; an inactive service may reflect an intentional quit.

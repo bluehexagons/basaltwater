@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import platform
 import re
+import shlex
 import shutil
 import stat
 
@@ -121,6 +122,61 @@ def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
     return observations
 
 
+def _saved_remote_allows(content: str, chain: str, port: int) -> tuple[bool, bool]:
+    """Classify saved broad input allows; only unconditional denies cover them."""
+    targets = {(protocol, number) for protocol, numbers in (
+        ("tcp", {3773, port, 3389, 47984, 47989, 47990, 48010}),
+        ("udp", {3773, 3389, 47998, 47999, 48000}),
+    ) for number in numbers}
+    denied = set()
+    broad = guarded = False
+    for line in content.splitlines():
+        if not line.startswith("-A " + chain + " "):
+            continue
+        try:
+            tokens = shlex.split(line)
+        except ValueError:
+            broad = True  # Cannot establish coverage of malformed input rules.
+            continue
+        if len(tokens) % 2 or "!" in tokens:
+            broad = True  # Negation/unsupported syntax needs local review.
+            continue
+        pairs = list(zip(tokens[::2], tokens[1::2]))
+        values = dict(pairs)
+        if values.get("-s", "") not in ("", "0.0.0.0/0", "::/0"):
+            continue
+        protocol = values.get("-p", "all")
+        matching = {item for item in targets if protocol in (item[0], "all")}
+        ports = values.get("--dport", values.get("--dports"))
+        if ports is not None:
+            ranges = []
+            for part in ports.split(","):
+                if not re.fullmatch(r"[0-9]{1,5}(?::[0-9]{1,5})?", part):
+                    break
+                low, _, high = part.partition(":")
+                bounds = (int(low), int(high or low))
+                if not 1 <= bounds[0] <= bounds[1] <= 65535:
+                    break
+                ranges.append(bounds)
+            else:
+                matching = {item for item in matching if any(low <= item[1] <= high for low, high in ranges)}
+            if len(ranges) != len(ports.split(",")):
+                broad = True
+                continue
+        action = values.get("-j")
+        if action == "ACCEPT" and matching:
+            broad |= bool(matching - denied)
+            guarded |= bool(matching & denied)
+        elif action in {"DROP", "REJECT"} and all(
+            key in {"-A", "-p", "--dport", "--dports", "-s", "-j", "-m", "--comment"}
+            and (key != "-m" or value in {"multiport", "comment"}) for key, value in pairs
+        ):
+            # Destination, interface, state, or other conditions cannot prove
+            # that a deny covers every packet matched by a later broad allow.
+            denied.update(matching)
+    return broad, guarded
+
+
 def collect_network_health(probe, uid: int, port: int = 3773) -> list[tuple[str, str, str]]:
     status, output = probe(["/usr/bin/ss", "-H", "-lnt"], uid)
     results = []
@@ -139,7 +195,7 @@ def collect_network_health(probe, uid: int, port: int = 3773) -> list[tuple[str,
                         "Binding does not establish remote reachability or authentication."
                         if exposed else "No non-loopback listener observed on the checked ports."
                         if status == "ok" else "Listener state unavailable."))
-    broad = False
+    broad = guarded = False
     readable = True
     for path in (Path("/etc/ufw/user.rules"), Path("/etc/ufw/user6.rules")):
         try:
@@ -147,15 +203,17 @@ def collect_network_health(probe, uid: int, port: int = 3773) -> list[tuple[str,
         except OSError:
             readable = False
             continue
-        for line in content.splitlines():
-            if (line.startswith("-A ufw") and " -j ACCEPT" in line
-                    and not re.search(r"(?:^| )-s (?!0\.0\.0\.0/0 |::/0 )", line)
-                    and re.search(r"--dports? (?:" + str(port) + r"|3389|47984(?::47990)?|47990|48010)(?: |$)", line)):
-                broad = True
+        unguarded, covered = _saved_remote_allows(
+            content, "ufw6-user-input" if path.name == "user6.rules" else "ufw-user-input", port,
+        )
+        broad |= unguarded
+        guarded |= covered
     results.append(("network.firewall", "deferred",
-                    "Unrestricted saved UFW allow rules exist for remote-access ports; earlier deny rules may override them. "
+                    "Unrestricted or unparsed saved UFW input rules may permit remote-access ports without covering earlier denies. "
                     "Verify effective rules with sudo ufw status verbose."
-                    if broad else "Saved UFW rules inspected; effective firewall policy requires privileged verification."
+                    if broad else "Broad saved remote-access allows follow covering deny rules in the user input chains; "
+                    "effective firewall policy still requires privileged verification."
+                    if guarded and readable else "Saved UFW rules inspected; effective firewall policy requires privileged verification."
                     if readable else "Saved firewall rules unreadable; effective firewall policy is unknown."))
     return results
 

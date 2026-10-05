@@ -315,8 +315,21 @@ software/access selection and new targets, or omit `--notify` to remove them.
 
 Targets, including any credentials in the URL, are retained in the user-owned
 `0600` `last-setup.json` and `last-report.json`; keep both private. A receiver
-failure warns without failing an otherwise successful setup. Verify the event
-in the receiver after applying the flags. See the
+failure warns without failing an otherwise successful setup.
+
+The separate `0600` `last-notification.json` records aggregate delivery status,
+target count, timestamp, and a digest of the target selection and policy. It
+contains no endpoint URLs, tokens, or exception text. Run
+`basaltw local cachyos-doctor` to inspect this evidence without contacting
+receivers. Delivered means every configured target accepted the setup event;
+failed can include partial delivery, and suppressed means the level required
+no delivery. The doctor defers records from different selections or older
+completed setups. Setups made before this record was introduced have no
+historical delivery evidence. The setup report marks its own notification
+pending because delivery happens after the report is saved.
+
+Verify the event in the receiver after applying the flags; an accepted request
+does not prove downstream processing. See the
 [notification guide](NOTIFICATIONS.md) for payload, TLS, token, and retry details.
 
 ## Reruns, updates, and repositories

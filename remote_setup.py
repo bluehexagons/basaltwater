@@ -589,6 +589,26 @@ def _run_main() -> int:
     return 0
 
 
+def _send_cachyos_setup_notification(config: SetupConfig, *, success: bool, errors: list[str] | None = None) -> None:
+    """Deliver and record the local result without changing the setup outcome."""
+    try:
+        host = socket.gethostname()
+    except OSError:
+        host = config.host
+    delivered = _send_setup_notification(
+        notify_specs=config.notify_specs, system_type=config.system_type,
+        host=host, success=success, errors=errors,
+        notification_level=config.notification_level,
+        strict_https=config.notification_strict_https,
+    )
+    try:
+        from lib.cachyos_notification_state import record_notification_result
+
+        record_notification_result(config, success=success, delivered=delivered)
+    except Exception:
+        print("  ⚠ Could not record webhook delivery metadata; setup outcome retained.", file=sys.stderr)
+
+
 def run_cachyos_setup(config: SetupConfig) -> int:
     """Apply only the local workstation plugin, as the existing desktop user."""
     from lib.cachyos import preflight_cachyos, validate_cachyos_config
@@ -615,23 +635,15 @@ def run_cachyos_setup(config: SetupConfig) -> int:
                 function(config)
         except Exception as exc:
             if config.notify_specs and not config.dry_run:
-                _send_setup_notification(
-                    notify_specs=config.notify_specs, system_type=config.system_type,
-                    host=socket.gethostname(), success=False,
+                _send_cachyos_setup_notification(
+                    config, success=False,
                     # Do not forward arbitrary command output or personal
                     # paths/credentials in a setup exception to the receiver.
                     errors=[f"{current_step} failed ({type(exc).__name__}); inspect local setup output."],
-                    notification_level=config.notification_level,
-                    strict_https=config.notification_strict_https,
                 )
             raise
         if config.notify_specs:
-            _send_setup_notification(
-                notify_specs=config.notify_specs, system_type=config.system_type,
-                host=socket.gethostname(), success=True,
-                notification_level=config.notification_level,
-                strict_https=config.notification_strict_https,
-            )
+            _send_cachyos_setup_notification(config, success=True)
         print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
         return 0
     finally:
