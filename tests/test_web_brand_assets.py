@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from common.service_tools import web_panel_agents as agents
 from lib.agent_tasks import AgentTasks
+from lib.agent_git_settings import AgentGitSettings
 from scripts.export_brand import export_assets
 
 
@@ -37,6 +38,7 @@ class BrandAssetTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch("subprocess.run", side_effect=AssertionError("Host command during asset export")),
             patch.object(AgentTasks, "_load", side_effect=AssertionError("Private task storage read")),
+            patch.object(AgentGitSettings, "_read", side_effect=AssertionError("Private account settings read")),
             patch.object(agents.AgentDiagnostics, "snapshot", side_effect=AssertionError("Host diagnostic state read")),
             patch.object(agents, "inspect_agent_tools", side_effect=AssertionError("Agent credential inspection")),
         ):

@@ -1111,6 +1111,12 @@ def add_setup_arguments(
             "matching workspace password; repeat for additional origins"
         ),
     )
+    parser.add_argument("--git-name", dest="git_author_name", metavar="NAME",
+                        help="Set the target user's global Git commit name; saved per VM")
+    parser.add_argument("--git-email", dest="git_author_email", metavar="EMAIL",
+                        help="Set the target user's global Git commit email; saved per VM")
+    parser.add_argument("--git-identity", dest="git_identity_source", choices=("active", "none"),
+                        help="Fill missing Git identity from the controller (default: active); none disables automatic identity setup")
     if not for_remote:
         parser.add_argument(
             "--git-ca-certificate",

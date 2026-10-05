@@ -146,6 +146,40 @@ T3 Code's **Update to latest** action uses the supported user-service updater
 and readiness checks. **Admin controls** provides separately approved Debian
 package upgrades and a full Basaltwater refresh.
 
+## Git and credentials
+
+`GET /credentials` reads only public author fields from the account's standard
+global Git files and the presence of a stored `github.com` token. It does not
+contact providers, read repository-local settings, follow Git includes, run
+credential helpers, or return credential contents. A `saved` query accepts only
+the finite `identity`, `github`, or `removed` result labels; all other fields and
+duplicates are rejected.
+
+The fixed CSRF-protected POST routes are `/actions/credentials/identity`
+(`name`, `email`), `/actions/credentials/github` (`token`), and
+`/actions/credentials/github-remove` (`confirmation=remove`). They use the normal
+16 KiB body limit, reject unknown/duplicate fields, validate author fields and
+single-line tokens, and cap tokens at 8,192 characters. Token replacement and
+removal require both an HTTPS manifest URL and the HTTPS scheme supplied by
+the local Nginx proxy. Responses and redirects contain no submitted token,
+vendor output, or arbitrary exception details. No credential history is stored.
+
+Editing requires the current UID to match the configured non-root account and
+its owned home. Paths must have no symlink components, must be regular bounded
+files (1 MiB maximum), and must not be writable by other users. Existing GitHub
+credential files must also be private. Writes use private temporary files and
+atomic replacement with mode `0600`; locks and concurrent-content checks avoid
+overwriting another update. The panel modifies fixed identity/helper keys in a
+staged Git config and preserves unrelated settings. GitHub replacement requires
+Git and GitHub CLI; it directly stores the token without a classic-scope login
+probe. Only the selected host entry is replaced or removed. Token removal does
+not revoke provider credentials or clear a keyring or environment.
+
+These settings belong to this VM account, not the controller's credential store.
+Ordinary controller setup preserves seeded target values; explicit saved author
+overrides are reapplied on reruns. The page provides the existing device-login
+command for agent subscription sessions rather than copying renewable sessions.
+
 ## Administration controls
 
 `GET /admin` reads bounded broker status and recent requests. Its optional

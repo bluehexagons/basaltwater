@@ -920,7 +920,7 @@ def _active_git_identity(local_home: str) -> dict[str, str]:
 
 
 def _stage_git_identity(payload_dir: str, local_home: str) -> None:
-    """Stage the minimal non-secret Git identity paired with GitHub auth."""
+    """Stage only the controller's public commit name and email."""
 
     identity = _active_git_identity(local_home)
     if not identity:
@@ -968,9 +968,9 @@ def _stage_active_agent_config(config: SetupConfig, payload_dir: str, local_home
 def prepare_agent_payload(config: SetupConfig, payload_dir: str) -> None:
     config.github_auth_payload = False
     config.git_identity_payload = False
-    if not (config.copy_agent_config or config.copy_agent_keys):
+    if not (config.copy_agent_config or config.copy_agent_keys or config.has_agent_features()):
         return
-    if not config.selected_agent_tools():
+    if (config.copy_agent_config or config.copy_agent_keys) and not config.selected_agent_tools():
         raise ValueError("Agent credentials or config require at least one --agent-tool")
 
     print(f"\n{'='*60}")
@@ -1008,7 +1008,7 @@ def prepare_agent_payload(config: SetupConfig, payload_dir: str) -> None:
     github_auth = os.path.isfile(
         os.path.join(payload_dir, "secrets", "gh", "hosts.yml")
     )
-    if github_auth:
+    if config.git_identity_source != "none":
         _stage_git_identity(payload_dir, local_home)
     config.github_auth_payload = github_auth
     config.git_identity_payload = os.path.isfile(
@@ -1373,7 +1373,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             os.makedirs(deploy_dir, exist_ok=True)
             prepare_deployments(config, deploy_dir)
 
-        if config.copy_agent_config or config.copy_agent_keys:
+        if config.copy_agent_config or config.copy_agent_keys or config.has_agent_features():
             agent_payload_dir = os.path.join(build_dir, AGENT_PAYLOAD_DIRNAME)
             prepare_agent_payload(config, agent_payload_dir)
             config.agent_payload = True

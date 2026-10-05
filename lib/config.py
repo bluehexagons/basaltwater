@@ -479,6 +479,9 @@ class SetupConfig:
     agent_repos: Optional[StrList] = None
     git_access: str = "none"
     git_host: str = "github.com"
+    git_author_name: MaybeStr = None
+    git_author_email: MaybeStr = None
+    git_identity_source: MaybeStr = None
     git_auth_source: MaybeStr = None
     git_auth_file: MaybeStr = None
     git_auth_token: MaybeStr = None
@@ -699,6 +702,14 @@ class SetupConfig:
             raise ValueError(
                 f"git_access must be one of: {', '.join(GIT_ACCESS_POLICIES)}"
             )
+        from lib.validation import validate_git_author_email, validate_git_author_name
+
+        if self.git_author_name is not None:
+            self.git_author_name = validate_git_author_name(self.git_author_name)
+        if self.git_author_email is not None:
+            self.git_author_email = validate_git_author_email(self.git_author_email)
+        if self.git_identity_source not in {None, "active", "none"}:
+            raise ValueError("git_identity_source must be active or none")
         if not isinstance(self.git_host, str) or not self.git_host or any(
             character.isspace() or ord(character) < 32 for character in self.git_host
         ):
@@ -859,6 +870,8 @@ class SetupConfig:
             or self.git_access != "none"
             or self.agent_workspace
             or self.install_git_lfs
+            or self.git_author_name is not None
+            or self.git_author_email is not None
             or self.privilege_broker_port is not None
         )
 
@@ -1240,6 +1253,14 @@ class SetupConfig:
             args.append(f"--git-access {shlex.quote(self.git_access)}")
         if self.git_host != "github.com":
             args.append(f"--git-host {shlex.quote(self.git_host)}")
+        for flag, value in (
+            ("--git-name", self.git_author_name),
+            ("--git-email", self.git_author_email),
+            ("--git-identity", self.git_identity_source),
+        ):
+            if value is not None:
+                separator = "=" if value.startswith("-") else " "
+                args.append(f"{flag}{separator}{shlex.quote(value)}")
         for origin, username in self.git_credentials or []:
             args.append(
                 "--git-credential "
@@ -1805,6 +1826,14 @@ class SetupConfig:
             cmd_parts.append("--agent-auth none")
         if self.git_host != "github.com":
             cmd_parts.append(f"--git-host {shlex.quote(self.git_host)}")
+        for flag, value in (
+            ("--git-name", self.git_author_name),
+            ("--git-email", self.git_author_email),
+            ("--git-identity", self.git_identity_source),
+        ):
+            if value is not None:
+                separator = "=" if value.startswith("-") else " "
+                cmd_parts.append(f"{flag}{separator}{shlex.quote(value)}")
         if self.clear_git_credentials:
             cmd_parts.append("--no-git-credentials")
         else:
@@ -2667,6 +2696,9 @@ class SetupConfig:
             agent_repos=agent_repos,
             git_access=git_access,
             git_host=git_host,
+            git_author_name=_optional_str_arg(args, 'git_author_name'),
+            git_author_email=_optional_str_arg(args, 'git_author_email'),
+            git_identity_source=_optional_str_arg(args, 'git_identity_source'),
             git_auth_source=git_auth_source,
             git_auth_file=git_auth_file,
             git_auth_token=git_auth_token,

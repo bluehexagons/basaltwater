@@ -1195,27 +1195,51 @@ def _set_git_identity_value(config: SetupConfig, key: str, value: str) -> None:
 
 
 def _configure_git_identity(config: SetupConfig) -> None:
-    """Fill missing target Git author fields from controller or GitHub identity."""
+    """Apply explicit overrides, then seed missing public author fields."""
+
+    overrides = {
+        field: value for field, value in (
+            ("name", config.git_author_name), ("email", config.git_author_email),
+        ) if value is not None
+    }
+    if config.git_identity_source == "none" and not overrides:
+        return
 
     existing = {
         "name": _configured_git_identity_value(config, "user.name"),
         "email": _configured_git_identity_value(config, "user.email"),
     }
-    missing = [field for field, value in existing.items() if value is None]
+    missing = [field for field, value in existing.items() if value is None or field in overrides]
     if not missing:
         print("  Existing Git author identity retained")
         return
 
-    identity = _git_identity_payload()
-    if any(field not in identity for field in missing):
-        github_identity = _github_git_identity(config)
-        for field in missing:
-            identity.setdefault(field, github_identity[field])
+    identity = _git_identity_payload() if config.git_identity_source != "none" else {}
+    identity.update(overrides)
+    if config.git_identity_source != "none" and any(field not in identity for field in missing):
+        try:
+            github_identity = _github_git_identity(config)
+        except RuntimeError:
+            github_identity = {}
+        for field, value in github_identity.items():
+            identity.setdefault(field, value)
 
     keys = {"name": "user.name", "email": "user.email"}
     for field in missing:
-        _set_git_identity_value(config, keys[field], identity[field])
-    print("  Configured Git author identity")
+        if field in identity:
+            _set_git_identity_value(config, keys[field], identity[field])
+    if any(field not in identity for field in missing):
+        print("  Git author identity is incomplete; set --git-name and --git-email or use Git & credentials in the web panel")
+    else:
+        print("  Configured Git author identity")
+
+
+def configure_git_commit_identity(config: SetupConfig) -> None:
+    """Apply explicit target-side identity settings without a controller payload."""
+    if is_dry_run():
+        print("  [DRY-RUN] Would configure Git commit name and email")
+        return
+    _configure_git_identity(config)
 
 
 def _payload_host_entry(source: str, host: str) -> str:
@@ -1294,6 +1318,8 @@ def copy_agent_tooling_payload(config: SetupConfig) -> None:
     """Apply config, reconcile credentials, and remove the uploaded payload."""
     if not os.path.isdir(REMOTE_AGENT_PAYLOAD_DIR):
         print("  No agent configuration payload found")
+        if config.git_author_name is not None or config.git_author_email is not None:
+            configure_git_commit_identity(config)
         return
 
     if is_dry_run():
@@ -1364,6 +1390,12 @@ def copy_agent_tooling_payload(config: SetupConfig) -> None:
         if config.install_gh and os.path.isfile(gh_credentials):
             _merge_github_credentials(config, gh_credentials)
             _configure_github_git_credentials(config)
+        if (
+            config.git_identity_payload
+            or config.git_author_name is not None
+            or config.git_author_email is not None
+            or (config.install_gh and os.path.isfile(os.path.join(user_home, ".config", "gh", "hosts.yml")))
+        ):
             _configure_git_identity(config)
     finally:
         if os.path.isdir(REMOTE_AGENT_PAYLOAD_DIR):

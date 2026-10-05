@@ -68,6 +68,7 @@ NAVIGATION_ICONS = {
     "Dashboard": "dashboard", "Agents": "agents", "Agent tools": "agent-tools",
     "Web services": "web-services", "Security activity": "security",
     "Notifications": "notifications", "Access": "access", "Admin controls": "admin",
+    "Git & credentials": "access",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics",
@@ -81,6 +82,7 @@ ICON_TONES = {
 PAGE_ICONS = {
     "dashboard": "dashboard", "agents": "agents", "agent-tools": "agent-tools",
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
+    "credentials": "access",
 }
 
 # Small repeating tiles; no raster, external resource, filter or embedded data.
@@ -247,6 +249,7 @@ def panel_navigation(
         ("/", "Dashboard", "dashboard"),
         ("/agents", "Agents", "agents"),
         ("/agent-tools", "Agent tools", "agent-tools"),
+        ("/credentials", "Git & credentials", "credentials"),
         ("/#services-heading", "Web services", None),
         ("/#audit-heading", "Security activity", None),
         ("/#notifications-heading", "Notifications", None),

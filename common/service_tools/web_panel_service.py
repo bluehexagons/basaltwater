@@ -46,6 +46,8 @@ from common.service_tools.web_panel_templates import (
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
 from lib.agent_tasks import AgentTasks
+from lib.agent_git_settings import AgentGitSettings
+from common.service_tools.web_panel_credentials import parse_credentials_query, render_credentials
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
     WEB_PANEL_INGEST_TOKEN,
@@ -728,6 +730,7 @@ class WebPanelState:
         self._service_health_at = float("-inf")
         self._service_health_lock = threading.Lock()
         self.agent_tasks = AgentTasks(agent_home)
+        self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
         self.agent_diagnostics = AgentDiagnostics(
             self.agent_tasks.home, manifest["features"].get("t3_update") is True,
@@ -735,6 +738,10 @@ class WebPanelState:
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
+
+    def credential_transport_available(self) -> bool:
+        url = _safe_url(self.manifest.get("panel_url"))
+        return bool(url and urllib.parse.urlsplit(url).scheme == "https")
 
     def notification_ingest_url(self) -> str | None:
         """Return the complete administrator-only sender URL, when available."""
@@ -2149,6 +2156,14 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, render_admin(self.state, _PAGE_STYLE, query), "text/html")
             return
+        if path == "/credentials":
+            try:
+                query = parse_credentials_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid account settings view\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_credentials(self.state, _PAGE_STYLE, query), "text/html")
+            return
         if path == "/logs":
             try:
                 query = parse_diagnostic_query(parsed.query)
@@ -2202,7 +2217,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
-        if path != "/actions/t3-update" and path not in agent_paths | admin_paths:
+        credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
+        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2235,6 +2251,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in admin_paths:
             self._handle_admin_action(path, values)
             return
+        if path in credential_paths:
+            self._handle_credential_action(path, values)
+            return
         if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["dashboard"])[0] not in {"agents", "admin", "dashboard"}:
             self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
             return
@@ -2243,6 +2262,42 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", {"agents": "/agents", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _handle_credential_action(self, path: str, values: dict[str, list[str]]) -> None:
+        action = path.rsplit("/", 1)[-1]
+        fields = {"identity": {"csrf", "name", "email"}, "github": {"csrf", "token"}, "github-remove": {"csrf", "confirmation"}}
+        if set(values) != fields[action] or any(len(entries) != 1 for entries in values.values()):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid account settings action\n", "text/plain")
+            return
+        if action != "identity" and (
+            not self.state.credential_transport_available() or self.headers.get("X-Forwarded-Proto", "").lower() != "https"
+        ):
+            self._send(HTTPStatus.FORBIDDEN, "Secure transport required for credential changes\n", "text/plain")
+            return
+        try:
+            if action == "identity":
+                self.state.git_settings.set_identity(values["name"][0], values["email"][0])
+            elif action == "github":
+                if len(values["token"][0]) > 8192:
+                    raise ValueError("GitHub token exceeds the size limit")
+                self.state.git_settings.set_github_token(values["token"][0])
+            else:
+                if values["confirmation"] != ["remove"]:
+                    raise ValueError("Confirm removal of the stored entry")
+                self.state.git_settings.remove_github_token()
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+            # Submitted secrets and command output must never reach a response.
+            errors = {
+                "identity": "Use a non-empty name without angle brackets and a valid email address. Check Git installation and account file permissions, then retry.",
+                "github": "Use a non-empty single-line token. Check Git/GitHub CLI installation and account file permissions. Existing tokens are never shown; re-enter a token to retry.",
+                "github-remove": "Confirm removal and check credential file ownership, mode 0600, and symlinks, then retry.",
+            }
+            self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_credentials(self.state, _PAGE_STYLE, {}, error=errors[action]), "text/html")
+            return
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/credentials?saved=" + {"identity": "identity", "github": "github", "github-remove": "removed"}[action])
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 

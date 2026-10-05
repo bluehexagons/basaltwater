@@ -140,7 +140,8 @@ host commands, task-storage reads, and credential inspection.
 directory and fails if committed exports are missing or stale, without changing
 the checkout. The generator mocks host discovery; it does not contact a service
 or read private host state. Review [identity](brand/index.html), [README](brand/readme.html),
-[web panel](brand/panel.html), [agent tools](brand/tools.html), and
+[web panel](brand/panel.html), [agent tools](brand/tools.html),
+[Git and credentials](brand/credentials.html), and
 [service artwork](brand/services.html), [administration](brand/admin.html),
 [scheduled jobs](brand/jobs.html), [diagnostics](brand/logs.html) and the
 [agent workbench](brand/agents.html) together,

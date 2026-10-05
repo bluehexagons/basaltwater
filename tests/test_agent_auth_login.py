@@ -415,10 +415,11 @@ class SetupLoginTests(unittest.TestCase):
         parser = create_setup_argument_parser('test')
         config = SetupConfig.from_args(parser.parse_args(['vm.example', 'agent']), 'agent_vm')
         self.assertFalse(config.copy_agent_keys)
-        with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_local_user_home') as home:
+        with tempfile.TemporaryDirectory() as directory, patch.object(setup_common, '_local_user_home', return_value=directory), patch.object(setup_common, '_active_git_identity', return_value={}) as identity, patch.object(setup_common, '_stage_github_auth') as github:
             setup_common.prepare_agent_payload(config, directory)
             self.assertEqual(list(Path(directory).iterdir()), [])
-        home.assert_not_called()
+        identity.assert_called_once_with(directory)
+        github.assert_not_called()
 
     def test_controller_propagates_login_only_when_input_and_output_are_terminals(self):
         for stdin_tty, stdout_tty, expected in ((True, True, 'login'), (False, True, 'check'), (True, False, 'check')):

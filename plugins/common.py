@@ -245,6 +245,7 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         copy_agent_tooling_payload,
         clone_agent_repositories,
         configure_codex_auth_maintenance,
+        configure_git_commit_identity,
         run_codex_auth_maintenance,
         install_agent_cli_launcher,
         install_agent_workflow_skills,
@@ -278,10 +279,16 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
     if config.install_opencode:
         steps.append(("Installing OpenCode", install_opencode))
 
+    # Git must be installed before payload seeding configures its identity/helper.
+    if config.has_agent_features() or config.git_credentials or config.git_ca_pems or config.clear_git_credentials:
+        steps.append(("Installing Git for agent repositories", install_git_for_agent_repositories))
+
     # Install provider configuration and credentials before starting an
     # interface that probes those providers during its initial discovery.
     if config.agent_payload:
         steps.append(("Copying agent tool configuration", copy_agent_tooling_payload))
+    elif config.git_author_name is not None or config.git_author_email is not None:
+        steps.append(("Configuring Git commit identity", configure_git_commit_identity))
 
     # Claude's copied configuration can contain an older managed skill catalog.
     # Refresh after payload seeding so the current source owns managed guidance.
@@ -306,17 +313,6 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
                 run_codex_auth_maintenance,
             )
         )
-
-    git_needed = bool(
-        config.agent_repos
-        or config.install_git_lfs
-        or config.git_credentials
-        or config.git_ca_pems
-        or config.clear_git_credentials
-        or (config.web_interfaces and config.git_access != "none")
-    )
-    if git_needed:
-        steps.append(("Installing Git for agent repositories", install_git_for_agent_repositories))
 
     if config.git_credentials or config.git_ca_pems or config.clear_git_credentials:
         from common.git_credential_steps import configure_git_https_credentials

@@ -13,6 +13,7 @@ under the panel account; no T3 Code installation is required.
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
+| Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Prepare system and data tasks | Agent tools | Contextual checkups, maintenance plans, log and job reviews, cleanup, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
@@ -118,6 +119,37 @@ password for [privilege approvals](PRIVILEGE_APPROVALS.md).
 With `--ssl`, the panel uses a suitable existing certificate or the managed VM
 CA. Enroll that CA on your client when required; see [Client CA trust](CLIENT_CA_TRUST.md).
 Without TLS, Basic Auth crosses the network as plaintext.
+
+## Git and credential settings
+
+Open **Git & credentials** to set the setup account's commit name and email.
+Changes apply immediately to its global Git config; repository overrides still
+take precedence. New agent VMs receive missing author fields from the controller
+even when GitHub credentials are not copied. Use `--git-name` and `--git-email`
+on setup or patch to save an explicit per-VM override on the controller, or
+`--git-identity none` to disable automatic identity seeding. Explicit controller
+overrides are reapplied on reruns, so update them too after changing a VM's
+identity in the panel.
+
+On an HTTPS panel, paste a classic or fine-grained GitHub token into **New GitHub
+access token**, then select **Save or replace token**. The panel privately replaces
+this account's `github.com` entry and configures the GitHub CLI credential helper
+for Git HTTPS access. Other GitHub host entries remain intact. Tokens are never
+prefilled or shown in responses; failed submissions require re-entry. Select the
+repositories and provider-side permissions the VM needs; saving a token confirms
+storage, not provider acceptance. Test the intended repository separately.
+
+**Remove stored GitHub access** removes the `github.com` file entry after its
+checkbox is selected. It does not revoke the provider token or remove separate
+keyring/environment credentials. Revoke the token at GitHub when appropriate.
+HTTP panels keep token controls disabled; use an HTTPS setup or the existing
+SSH credential-import command. Git identity editing remains available.
+
+The page edits only the non-root setup account running the panel, with owned
+files and safe paths. Root-profile panels show controller guidance because
+their dedicated service account has no user home. Agent subscription sign-in
+continues through the existing target-owned device login flow, linked from this
+page and documented in [Agent authentication](AGENT_AUTHENTICATION.md).
 
 ## Agent VM approvals
 

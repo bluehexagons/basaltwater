@@ -89,13 +89,38 @@ the token's provider-side permissions.
 
 On initial setup, Basaltwater appends a missing GitHub host entry without
 removing other hosts. It preserves an existing selected entry on ordinary
-reruns. When authentication succeeds, it runs `gh auth setup-git` and fills
-missing global `user.name` and `user.email` from the controller or authenticated
-account. It does not copy the controller's complete `.gitconfig`.
+reruns. When authentication succeeds, it runs `gh auth setup-git`.
 
 Use `basaltw agent auth set HOST USER --tool gh ...` for deliberate
 replacement. See [Agent authentication](AGENT_AUTHENTICATION.md) for status,
 rotation, and file portability.
+
+## Commit identity on each VM
+
+Agent setup installs Git before applying credentials and copies the controller's
+global `user.name` and `user.email` into missing target fields. This works even
+when no GitHub credentials or agent configuration are copied. Only those two
+public values are transferred; the complete `.gitconfig` stays on the controller.
+Existing target identity is retained. An authenticated GitHub account can fill
+remaining missing fields, including a GitHub noreply email when needed.
+
+Set a different identity for a VM during setup or patch:
+
+```bash
+basaltw patch HOST USER --git-name 'VM Author' --git-email author@example.net
+```
+
+These explicit values replace the selected global fields and are saved in the
+VM's controller configuration for reruns. A repository's own identity still takes
+precedence. `--git-identity none` disables automatic controller/GitHub identity
+seeding; explicit `--git-name` and `--git-email` remain supported. If neither the
+controller nor GitHub supplies a complete identity, setup reports the missing
+configuration instead of inventing an author or failing an otherwise usable VM.
+
+The web panel's **Git & credentials** page edits the VM account's commit identity
+and saves, replaces, or removes its GitHub token. Token changes require HTTPS.
+Panel edits apply immediately; explicit controller overrides still apply on
+future setup reruns. See [web-panel account settings](WEB_PANEL.md#git-and-credential-settings).
 
 ## Self-hosted HTTPS and Git LFS
 

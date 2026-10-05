@@ -117,6 +117,7 @@ def export_assets(assets: Path) -> None:
     (assets / "theme.css").write_text(brand_styles() + "\n", encoding="utf-8")
     navigation = (("index.html", "Identity", "identity"), ("readme.html", "README specimen", None),
                   ("panel.html", "Web panel specimen", None), ("tools.html", "Agent tools specimen", None),
+                  ("credentials.html", "Git & credentials specimen", None),
                   ("services.html", "Service artwork specimen", None), ("admin.html", "Administration specimen", None),
                   ("jobs.html", "Scheduled jobs specimen", None), ("logs.html", "Diagnostics specimen", None),
                   ("agents.html", "Agents specimen", None))
@@ -185,6 +186,7 @@ def export_assets(assets: Path) -> None:
             '<a class="refresh-link" href="jobs.html">Browse scheduled jobs</a> · '
             '<a class="refresh-link" href="logs.html">Inspect diagnostics</a> · '
             '<a class="refresh-link" href="agents.html">Review the prompt workbench</a></p>'
+            '<p><a class="refresh-link" href="credentials.html">Manage Git identity and credentials</a></p>'
             '<p>These static previews use synthetic records. Controls do not manage a host.</p></section>'
             '<section><h2>Typography and motion</h2><p>DejaVu Sans for interfaces; DejaVu Sans Mono for commands. '
             'System fallbacks remain available. No font download, JavaScript, or animation is required.</p>'
@@ -266,6 +268,11 @@ def export_assets(assets: Path) -> None:
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
         patch.object(state.agent_tasks, "available", return_value=False),
         patch.object(state.agent_diagnostics, "snapshot", return_value={"status": "not_loaded"}),
+        patch.object(state.git_settings, "snapshot", return_value={
+            "available": True, "name": "Workshop Operator", "email": "operator@example.test",
+            "git_error": "", "github_error": "", "github_present": True,
+        }),
+        patch.object(state, "credential_transport_available", return_value=True),
         patch.object(agents, "_tool_path", return_value=None),
         patch.object(agents, "codex_models", return_value=[]),
         patch.object(agents, "_available_templates", return_value={
@@ -290,6 +297,7 @@ def export_assets(assets: Path) -> None:
             "services.html": panel.render_service_status(state, False),
             "admin.html": panel.render_admin(state, panel._PAGE_STYLE, {}),
             "agents.html": agents.render_agents(state, panel._PAGE_STYLE, {}),
+            "credentials.html": panel.render_credentials(state, panel._PAGE_STYLE, {}),
             "jobs.html": jobs.render_jobs(True, panel._PAGE_STYLE, state.manifest["host"]),
             "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"]),
         }
@@ -297,6 +305,7 @@ def export_assets(assets: Path) -> None:
             document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')
             for route, filename in (("/", "panel.html"), ("/agents", "agents.html"),
                                     ("/agent-tools", "tools.html"), ("/admin", "admin.html"),
+                                    ("/credentials", "credentials.html"),
                                     ("/services", "services.html"), ("/jobs", "jobs.html"), ("/logs", "logs.html")):
                 document = document.replace(f'href="{route}"', f'href="{filename}"')
                 document = document.replace(f'href="{route}#', f'href="{filename}#')
