@@ -6,6 +6,13 @@ task commands or services below are implemented by this plan. The
 [roadmap](ROADMAP.md) continues to own project priority, including P0 execution
 and state guarantees and P1 observation contracts.
 
+The panel now provides [saved and scheduled Codex prompts](../WEB_PANEL.md#agent-prompt-tasks)
+and [guided host/data tasks](../WEB_PANEL.md#agent-tools) without T3 Code.
+Those account-level workflows are implemented. This proposal still covers the
+separate fleet evidence store, fixed operations recipes, provider budgets, and
+incident/recovery contracts below; it does not describe the panel runner's
+current CLI or scheduling semantics.
+
 ## Recommendation
 
 Build a small **background operations assistant** that can run without T3 Code,
@@ -47,7 +54,7 @@ they are enabled or healthy on any particular live host.
 | [Recurring maintenance](../MAINTENANCE.md) and [storage operations](../STORAGE_OPERATIONS.md) | Timers, per-operation cadence, locks, bounded holds, and failure reporting | A durable task history and explicit missed-run, budget, and cancellation policies |
 | [Notifications](../NOTIFICATIONS.md) | Schema-v2 event IDs, incident grouping, structured facts, and existing destinations | Durable evidence intake; delivery is currently best effort and notification levels can suppress events |
 | [Security monitoring](../../security/service_tools/security_monitor.py) | SSH/fail2ban summaries, protected-file evidence, source health, and certificate observations | Cross-event explanation and bounded follow-up investigation |
-| [Web panel](../WEB_PANEL_REFERENCE.md) | Authenticated views, sanitized audit export, bounded diagnostics, and scheduled-job status | Persistent task results and source coverage beyond the latest panel snapshots |
+| [Web panel](../WEB_PANEL_REFERENCE.md) and [prompt tasks](../WEB_PANEL.md#agent-prompt-tasks) | Authenticated views, sanitized audit export, bounded diagnostics, saved Codex tasks, serial scheduling, and retained run history | Fleet evidence retention, fixed recipe contracts, model budgets, and source coverage beyond the latest panel snapshots |
 | [Sysadmin operations](../SYSADMIN.md) and [Proxmox operations](../PROXMOX.md) | Existing health, service, resource, and maintenance observations | A shared, versioned evidence envelope with freshness and provenance |
 | [Deployment safety](../DEPLOYMENT_SAFETY.md) and [recovery roadmap](ROADMAP.md#p2-recovery-as-a-first-class-workflow) | Existing backups and verification boundaries | Supported isolated restoration and application-specific assertions |
 

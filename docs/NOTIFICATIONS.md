@@ -63,7 +63,7 @@ for adding targets to an existing setup, disabling delivery, and replacing targe
 The web panel can receive and display notifications from other managed
 machines. The receiver is disabled by default and requires HTTPS.
 Install the panel first if it is not already present; see
-[Install the panel](WEB_PANEL.md#install-the-panel).
+[Install and sign in](WEB_PANEL.md#install-and-sign-in).
 
 ### 1. Enable the receiver
 

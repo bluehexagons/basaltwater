@@ -65,11 +65,19 @@ basaltw agent doctor --all-capabilities --json
 The comprehensive check inventories every default terminal client but requires
 only those currently installed. Use explicit `--tool` flags when an absent
 client should make readiness fail; each selected tool is then required.
-The development capability inventories Godot, Go, and Node independently, so
-an unselected toolchain is informational while a broken installed baseline is
+The development capability inventories Godot, Go, Node, and native game tooling
+independently. An unselected toolchain is informational; a broken baseline is
 unhealthy. `node_pnpm_missing` means the promised `--node` baseline is broken,
 not that pnpm is optional. Rerun the saved setup to repair and verify Node,
 npm, and pnpm together; do not install a separate package manager ad hoc.
+
+Debian `--game-dev` selects compilers, build/debug tools, and native dependency
+headers without installing a desktop or distro SDL. The `native` inventory
+reports that selection, fixed commands, and pkg-config modules. Missing SDL3 or
+SDL3_image appears in `project_bootstrap_required`; build the project's required
+versions rather than treating their absence as a broken host baseline.
+See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/PROJECT_TOOLING.md)
+for native bootstrap, repository Node versions, and capability limits.
 
 Preview terminal-agent updates before applying them as the account that owns
 the installation. Apply an update only when the user requested it:

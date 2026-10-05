@@ -108,8 +108,10 @@ To stop the service persistently, use
 `systemctl --user disable --now basaltwater-cachyos-t3.service`.
 Omitting the web-interface flag on a later setup does not uninstall the service.
 
-This profile does not install the VM gateway, device-pairing helpers, managed
-Playwright, or KDE automation. Do not use VM-specific T3 repair/update commands
-for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_MAINTENANCE.md)
+This profile does not install the VM gateway, VM device-pairing helpers, or
+managed Playwright. Selected native applications install KDE automation
+prerequisites; use `basaltwater-cachyos-desktop` for task-scoped portal consent
+and control. T3 setup does not start desktop control. Do not use VM-specific T3
+repair/update commands for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_MAINTENANCE.md)
 for deliberate runtime updates (also in the installed checkout at
 `~/.local/share/basaltwater/docs/CACHYOS_MAINTENANCE.md`).

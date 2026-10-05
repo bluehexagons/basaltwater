@@ -8,6 +8,10 @@ Task-scoped native portal capture/input and Inkscape AT-SPI edits were
 implemented and live-tested on this workstation on 2026-10-04. See the
 [native desktop guide](../CACHYOS_DESKTOP.md) for the released scope. Broader
 browser, Qt, hardware and lifecycle gates remain open.
+Reusable portal grants, bounded renewal, and interruptible held input were
+implemented and live-tested on 2026-10-05, including actual Fast21 gameplay.
+Grant cleanup recovery and physical-key troubleshooting have documented
+follow-ups; live revocation and logout/reboot qualification remain open.
 
 ## Objective
 
@@ -424,9 +428,12 @@ Resolve these in order and record the result in the relevant issue or plan:
 
 1. Use pinned Playwright-managed Chromium as the explicit user-runtime
    exception above; qualify CachyOS dependencies before enabling setup.
-2. Portal permission lifetime and whether restored permission tokens are ever
-   enabled by default. Default to no restored permission tokens; consent and
-   a fresh lease are required for each control session.
+2. Broader portal restoration and revocation qualification. Persistence is
+   implemented through explicit owner opt-in with `start --remember`; plain
+   starts reuse that saved selection and any single-use token, preserve human
+   pause, and require fresh consent when restoration is unavailable. Each
+   operation still needs its bounded lease. Persistence is off until selected;
+   live revocation, logout/reboot, and other application identities remain open.
 3. The minimum reliable GTK/Qt application matrix for AT-SPI.
 4. Whether any uinput fallback can meet the security boundary; default answer is
    no until demonstrated otherwise.

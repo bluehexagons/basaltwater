@@ -17,12 +17,13 @@ class AgentSkillContractTest(unittest.TestCase):
     def test_fenced_managed_commands_parse_without_executing_operations(self) -> None:
         parsers = {"basaltw": create_basaltwater_parser()[0], "basaltwater-web": gateway_parser()}
         checked: set[str] = set()
+        checked_shells: set[str] = set()
         with patch("subprocess.run", side_effect=AssertionError("Examples must not execute")), patch(
             "subprocess.Popen", side_effect=AssertionError("Examples must not launch processes"),
         ):
             for path in sorted(Path(AGENT_SKILLS_ROOT).rglob("*.md")):
-                blocks = re.findall(r"(?m)^\s*```bash\n(.*?)^\s*```", path.read_text(encoding="utf-8"), re.S)
-                for block in blocks:
+                blocks = re.findall(r"(?m)^\s*```(bash|sh|fish)\n(.*?)^\s*```", path.read_text(encoding="utf-8"), re.S)
+                for shell, block in blocks:
                     for line in block.replace("\\\n", " ").splitlines():
                         tokens = shlex.split(line.strip())
                         if not tokens or tokens[0] not in parsers:
@@ -35,7 +36,9 @@ class AgentSkillContractTest(unittest.TestCase):
                         with self.subTest(path=path, command=line):
                             parsers[tokens[0]].parse_args(argv)
                         checked.add(tokens[0])
+                        checked_shells.add(shell)
         self.assertEqual(checked, set(parsers))
+        self.assertTrue({"bash", "fish"}.issubset(checked_shells))
 
     def test_markdown_references_resolve_to_shipped_resources_or_repository_docs(self) -> None:
         repository = Path(__file__).resolve().parents[1]

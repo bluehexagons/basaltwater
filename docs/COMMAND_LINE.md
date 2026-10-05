@@ -281,6 +281,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `server_dev` | Development server |
 | `server_web` | Web server |
 | `server_lite` | Lightweight server |
+| `server_wsl` | Local Ubuntu tools inside Windows 11 WSL 2; see [Windows WSL](WINDOWS_WSL.md) |
 | `server_proxmox` | Proxmox host server |
 | `custom_steps` | Run an explicitly selected step list for advanced or development workflows |
 
@@ -571,6 +572,8 @@ list. Neither preview is a completed live setup.
 | Flag | Description |
 |------|-------------|
 | `--node` | Install nvm + Node.js + PNPM |
+| `--node-versions VERSION` / `--no-node-versions` | CachyOS only: prepare project-selected user-local NVM runtimes; repeatable, independent of the native `--node` selection |
+| `--game-dev` / `--no-game-dev` | Select native game build/debug tools and dependency headers on Debian or CachyOS; Debian leaves SDL versions to project bootstrap; see [Project tooling](PROJECT_TOOLING.md) and [CachyOS game development](CACHYOS_GAME_DEVELOPMENT.md) |
 | `--go` | Install Go |
 | `--python` | Install Python aliases + uv |
 | `--data-analysis` | Install the larger Python analysis bundle: NumPy, pandas, SciPy, Matplotlib, JupyterLab, and csvkit; also enables `--python` |
@@ -580,7 +583,7 @@ list. Neither preview is a completed live setup.
 | `--godot-bundle BUNDLE` | Add `web` or `publishing`; repeatable and automatically enables `--godot` |
 | `--publishing-tool TOOL` | Independently install `butler` or `steamcmd` on Debian for a non-root user; repeatable, no Godot requirement; SteamCMD requires x86_64 |
 | `--gaming` | CachyOS `agent_cachyos` only: install the native gaming libraries, launchers, and tools bundle |
-| `--sunshine` | CachyOS `agent_cachyos` only: install the native Sunshine game-stream host package |
+| `--sunshine` | CachyOS `agent_cachyos` only: install Sunshine and enable/start its existing user service for the graphical session; pairing and stream configuration remain interactive |
 | `--moonlight` | CachyOS `agent_cachyos` only: install the native Moonlight Qt game-stream client package |
 | `--obs` | CachyOS `agent_cachyos` only: install native OBS Studio |
 | `--blender` / `--no-blender` | Select Blender for graphical or headless use: Debian APT package on standard server/workstation profiles; native package on CachyOS `agent_cachyos` |
@@ -629,7 +632,7 @@ workstation's configured repositories, except the explicit AUR selections noted
 above. They do not install Flatpak packages, graphics drivers, open firewall ports, or configure application
 credentials. The sysadmin bundle also leaves libvirt service access and packet
 capture permissions to the user. See the [CachyOS workstation guide](CACHYOS.md)
-for the post-install Sunshine service and pairing steps.
+for Sunshine service discovery, pairing, and explicitly selected firewall access.
 
 On CachyOS, `--godot` uses the native package or retains an existing executable;
 there are no managed Godot update timers or `--godot-bundle` options. Use the
@@ -839,8 +842,7 @@ Repeat `--godot-bundle` to give that same target account web-export and
 publishing commands without changing its agent configuration.
 
 Any setup with agent features installs a managed `~/.local/bin/basaltw`
-launcher for the target user. On a remote setup it
-use the source
+launcher for the target user. On a remote setup it uses the source
 deployed under `/opt/basaltwater`, so diagnostics and deliberate agent updates
 work directly from an SSH, desktop, or T3 Code terminal without a separate
 Basaltwater installation on the VM. An existing executable with that name is
@@ -995,11 +997,17 @@ Codex doctor result unhealthy.
 `--capability browser` additionally verifies managed launchers, MCP registration
 for installed compatible agents, and a local Chromium interaction/rendering
 smoke test.
-`--capability development` inventories managed Godot, Go, and nvm/Node
-toolchains. It verifies that installed engines and compilers run, reports
-whether matching Godot export templates are visible, checks that Go includes
+`--capability development` inventories managed Godot, Go, nvm/Node, and native
+game-development toolchains. It verifies installed engines and compilers,
+reports whether matching Godot export templates are visible, checks that Go includes
 `gofmt` and a compiler when CGO is enabled, and ensures Node retains the
 npm/PNPM baseline promised by `--node`.
+The native inventory reports saved `--game-dev` selection, fixed compiler/build/
+debug commands, and pkg-config module versions without launching graphics or
+project scripts. A selected baseline fails when required commands or host
+modules are missing. Missing project-owned SDL3/SDL3_image is reported in
+`project_bootstrap_required` and does not fail host readiness. Unsafe selection
+state remains an explicit failure. See [Debian native tooling](PROJECT_TOOLING.md#debian-native-game-development).
 Absent optional toolchains do not fail the capability.
 `--capability t3code` checks the managed service, native runtime, pairing helper,
 endpoint, provider authentication, Git identity and credential helper, and the

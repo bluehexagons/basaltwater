@@ -1,7 +1,7 @@
 # One shared desktop session per machine
 
-Status: implementation in progress, 2026-09-12. XRDP retained per user decision.
-Runtime, CLI, setup wiring, migration guards, and managed skills are implemented;
+Status: runtime, CLI, setup wiring, migration guards, managed skills and bounded
+AT-SPI inspection/actions are implemented. XRDP is retained per user decision;
 disposable-VM qualification remains open. See [the operator guide](../XRDP.md)
 for the implemented behavior and live smoke procedure. The acceptance criteria
 below remain qualification targets, not a claim that live testing has passed.
@@ -141,7 +141,7 @@ Locking preserves the session; reconnecting must not bypass the lock.
 
 ## Agent interface and shared control
 
-Proposed command shapes, subject to the existing CLI conventions:
+Implemented command examples:
 
 ```text
 basaltw desktop status --json
@@ -190,16 +190,18 @@ skills:
 
 | Task | Preferred system |
 | --- | --- |
-| Routine browser testing, DOM assertions, console/network inspection, repeatable interactions, or VM-loopback access | Healthy managed VM-local Playwright. |
-| Browser work the human should watch or participate in, or verification of the connected client's routes/trust | Available T3 Code collaborative browser. |
+| Browser work in a T3 session exposing collaborative preview tools | T3 preview status, then open if no automation-capable tab is attached. |
+| Browser work outside T3 preview sessions, including repeatable VM-loopback checks | Healthy managed VM-local Playwright when its tools are exposed. |
 | Native GUI application work, desktop/window behavior, OS dialogs, or an explicit request to operate the human's shared desktop | Shared desktop tools. |
 | File edits, builds, service checks, or tasks with a suitable CLI/API | Existing shell, API, or domain-specific tools. |
 
-Browser testing should almost always use the available browser systems. Keep
-the existing choice between T3 collaboration and Playwright based on the task;
-do not introduce a mandatory T3-first probe when Playwright is the appropriate
-tool. A running desktop or an installed graphical browser is not a reason to
-switch routine web testing to desktop screenshots and clicks.
+Browser testing follows the active session's policy. In T3 sessions with
+preview tools, fallback requires absent tools, an explicit user request for a
+different browser, or an explicit unsupported/unavailable error from
+`preview_open`. Navigation, capture, timeout and certificate failures alone do
+not permit switching; inspect and correct actionable errors. Outside those
+sessions, use the installed capability skill to choose the browser. A running
+desktop is not a reason to switch routine web testing to desktop input.
 
 Use the desktop browser only when the task explicitly concerns that browser
 session or desktop integration, the user requests it, or the preferred browser
@@ -346,7 +348,7 @@ suitable shell/API tools and T3/Playwright browser testing remains unchanged.
 | Refinement | Delivered scope and follow-on work |
 | --- | --- |
 | Window management | Focus/move/resize/maximize/minimize/restore and normal close, requiring generation and current window identity. Desktop/panel windows are excluded. Title/PID/class/X-ID fingerprints reduce stale targeting but cannot guarantee against ID reuse. |
-| Semantic accessibility | Deferred: prototype bounded read-only AT-SPI role/name/state trees first; qualify GTK, Qt and office applications independently. Omit password values and cap depth, nodes and time. Add semantic actions only after identity, pause and verification contracts work. |
+| Semantic accessibility | Delivered: bounded PID-scoped AT-SPI trees, dialog/subtree references, action/text/focus operations and waits, with password omission, stale-reference rejection and pause/generation checks. The [Geany smoke workflow](../DESKTOP_AUTOMATION.md#small-geany-check) verifies disposable edit/save/scoped-dialog behavior; wider GTK/Qt/office qualification remains open. |
 | Readiness waits | Present/visible/active/absent polling outside the supervisor and lease. Incomplete inventories cannot establish absence. Document/export readiness needs application adapters. |
 | Launch results | Session-local launch token, PID, running/exited state, optional title wait and pre-existing window detection. Retain latest 128 records. Title matches do not prove process ownership or document readiness. |
 | Visible human handoff | Application-menu control window with status and pause/resume; closing preserves pause. Permanent tray indicator and optional task labels deferred pending desktop-specific qualification. |

@@ -10,7 +10,7 @@ help:
 	@echo "  make test-verbose      Run all tests with full verbose output"
 	@echo "  make test TEST=name    Run specific test file (e.g., TEST=test_scrub_par2)"
 	@echo "  make compile           Check all Python files compile"
-	@echo "  make docs-check        Check documented CLI entry points"
+	@echo "  make docs-check        Check CLI documentation and local Markdown links"
 	@echo "  make brand-check       Check generated identity assets are current"
 	@echo "  make package-check     Check package launcher metadata"
 	@echo "  make artifact-check    Build, install, and smoke-test the wheel"
@@ -30,6 +30,7 @@ check: compile docs-check brand-check package-check artifact-check test
 
 docs-check:
 	@python3 scripts/check_cli_docs.py
+	@python3 scripts/check_doc_links.py
 
 brand-check:
 	@python3 scripts/export_brand.py --check

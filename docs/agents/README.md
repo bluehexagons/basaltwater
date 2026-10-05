@@ -22,6 +22,8 @@ managed machine.
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
 | Configure a coding VM from an example | [Agentic VMs](../AGENTIC_VMS.md) | [Privilege approvals](../PRIVILEGE_APPROVALS.md) |
 | Set up agent tools on a CachyOS KDE desktop | [First setup in fish](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |
+| Control native applications in an existing CachyOS session | [KDE Wayland control](../CACHYOS_DESKTOP.md) | [Desktop development workflows](../DESKTOP_DEVELOPMENT.md) |
+| Prepare native game builds and project Node versions | [Project tooling](../PROJECT_TOOLING.md) | [CachyOS game development](../CACHYOS_GAME_DEVELOPMENT.md) |
 | Choose default, passwordless-sudo, or hardened operation | [Agentic coding security](../AGENT_SECURITY.md) | [Workstations](../WORKSTATIONS.md) |
 | Choose a credential workflow | [Credentials overview](../CREDENTIALS.md) | [SSH authentication](../SSH.md) |
 | Seed, rotate, or recover coding-agent auth | [Agent authentication](../AGENT_AUTHENTICATION.md) | [Credentials overview](../CREDENTIALS.md) |
