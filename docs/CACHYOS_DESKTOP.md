@@ -139,6 +139,25 @@ and the skill's Blender/media references explain native API differences,
 texture companions, export formats and render settings. Monitor captures can
 include personal content; review evidence before sharing it.
 
+## Diagnose missing physical keys
+
+Stop native control first and check its status. Compare the physical key in
+multiple applications, then check the active keyboard layout and shortcuts.
+For an input comparison, use a disposable test field that records only the
+affected keys, verify its focus immediately before input, and inspect its
+press/release log. A successful portal key press does not establish that the
+physical keyboard is working. Device names also do not establish how many
+physical keyboards are attached.
+
+Check other input providers, including streaming software with virtual
+keyboards. On 2026-10-05, physical P failed across applications while a portal
+P press worked. Stopping native control and reconnecting the physical keyboard
+did not restore it; restarting the idle Sunshine user service did, as confirmed
+by the owner. This suggests stale virtual input state, but the exact state and
+trigger were not established. Check for an active stream before restarting
+Sunshine, preserve its configuration and pairings, and do not automatically
+restart unrelated input services on every input failure.
+
 ## Pause, stop and limitations
 
 The handoff window provides Pause, Resume, Stop and Revoke and reports pending consent,
