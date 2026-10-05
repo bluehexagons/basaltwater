@@ -1,14 +1,51 @@
 # Game publishing from managed VMs
 
-Status: finalized feature plan, 2026-10-05. Documentation only; implementation
-has not started. This plan owns Butler and SteamCMD management through the
+Status: implementation in progress, 2026-10-05. This plan owns Butler and SteamCMD management through the
 existing web panel, VM-local authentication, and manual or unattended uploads.
 The companion [release and communications plan](GAME_RELEASE_COMMUNICATIONS.md)
 extends it with build promotion, posts, translations, human review, and
 publication. Steam default-branch release remains manual on Steamworks.
 Existing installation support remains documented in [Godot](../GODOT.md) and
 [CachyOS software](../CACHYOS_SOFTWARE.md). Priority: unscheduled; this work
-does not displace the roadmap's reliability priorities.
+does not displace the roadmap's reliability priorities. Implementation is now
+authorized; live account login, uploads, and provider qualification require
+operator-selected test destinations. See [the operator guide](../GAME_PUBLISHING.md)
+for the delivered capabilities and remaining qualification boundaries.
+
+## Implementation review findings
+
+The review identified missing executable contracts for completed artifacts,
+review authority, scheduler ownership, interrupted workers, and post delivery.
+Resolve these as follows:
+
+- Completion records are atomically written UTF-8 JSON with exactly `version: 1`,
+  repository-relative `path`, internal `build_id`, and `digest`. The digest is
+  SHA-256 of compact, key-sorted UTF-8 JSON describing the path-sorted file list:
+  each entry has `path`, `size`, file `sha256`, and boolean `executable`.
+  `basaltw publish complete` produces the record after a successful build.
+  Keep it outside the artifact; a changed source fails snapshot verification.
+- Authoritative reviews live in private VM control state, outside repository
+  drafts. Approval exists only through the authenticated panel action and binds
+  the exact project configuration, destination, language, text, source revision,
+  timing window, and release gate. Translation/source edits invalidate reviews.
+  This enforces the managed workflow, not isolation from unrestricted same-user code.
+- The existing panel scheduler owns publishing polling. It uses a separate
+  deterministic callback so long agent prompts cannot delay publication polling.
+  Only one panel scheduler holds the process lease. Upload supervisors detach
+  from the panel, share provider locks with logins, and preserve dispatch intent.
+  Provider lock descriptors stay with native processes if a supervisor exits.
+- Steam and itch.io post adapters initially advertise reviewed plain-text export
+  and human-editor handoff, not automatic delivery. Provider formatting/imports
+  require a final human check in the editor. Do not invent a write API or claim
+  browser qualification from mocked tests. Additional automated adapters remain
+  gated on live qualification.
+- Publication times use an explicit UTC instant; the default allowed lateness is
+  60 minutes, configurable from 1 minute to 24 hours per reviewed revision.
+  Expired jobs are held. Upload success does not satisfy a Steam release gate.
+- Bundled release notes must match an approved text body byte for byte. Projects
+  remain responsible for declaring/reviewing other public writing in game assets;
+  filename detection is not a proof that an arbitrary binary contains no text.
+
 
 ## Direction and decisions
 

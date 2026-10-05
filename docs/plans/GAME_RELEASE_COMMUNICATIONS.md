@@ -1,8 +1,8 @@
 # Game releases, posts, and translations
 
-Status: planned extension of [game publishing](GAME_PUBLISHING.md), 2026-10-05.
-Documentation only; no implementation or provider changes are authorized by
-this planning work. The parent plan owns installation, authentication, uploads,
+Status: implementation in progress alongside [game publishing](GAME_PUBLISHING.md),
+2026-10-05. Implementation is authorized; live provider changes are not part of
+the mocked development checks. The parent plan owns installation, authentication, uploads,
 jobs, and delivery ordering. This document owns build promotion, release
 coordination, writing, translation, human review, and post publication inside
 the same web panel.
@@ -149,9 +149,8 @@ optional top-level `publishing` section, with a `languages` object:
 }
 ```
 
-This is a proposed fragment to merge into a complete manifest, not a currently
-accepted manifest. Today's version-1 parser rejects unknown top-level fields.
-Implement this as an explicitly documented additive version-1 extension across
+This fragment merges into a complete manifest. The version-1 parser now accepts
+it as an additive extension across
 `lib/project_manifest.py`, initialization/serialization, validation, and all
 consumers; older Basaltwater versions will reject it and must be upgraded.
 Existing manifests without the section remain unchanged. Allow a manifest with
