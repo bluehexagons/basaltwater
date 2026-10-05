@@ -162,6 +162,9 @@ basaltw node install --version 26.10.0 --package-manager npm@12.1.0
 as well as NVM. `node exec` retains the current working directory; `--project`
 only selects metadata. Selection does not alter NVM's default alias. Installation
 runs NVM in a child shell; an existing default alias remains NVM-managed.
+An exact version that conflicts with project Node engines is rejected before
+NVM preparation or installation. Major/minor pins and aliases are checked
+against the engines once NVM resolves the installed version.
 Package-manager installation is optional and explicit, checks Node engine
 compatibility, and runs outside the checkout's package-manager policy.
 This explicit installation enables only the selected tools' own setup scripts

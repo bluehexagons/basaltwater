@@ -99,6 +99,7 @@ class NodeToolchainTests(unittest.TestCase):
 
     def test_install_package_managers_use_selected_runtime_and_validate_before_mutation(self):
         (self.nvm / 'nvm.sh').write_text('# managed NVM')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=26'}}))
         args = argparse.Namespace(node_command='install', project=str(self.project), version='26.10.0',
                                   package_manager=['pnpm@12.6.0'])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
@@ -157,6 +158,28 @@ class NodeToolchainTests(unittest.TestCase):
                     self.assertEqual(run_node_command(args), 1)
             bootstrap.assert_not_called()
             run.assert_not_called()
+
+    def test_incompatible_exact_pin_never_prepares_nvm_or_installs_runtime(self):
+        (self.project / '.node-version').write_text('20.20.2')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=22'}}))
+        for installed_nvm in (False, True):
+            if installed_nvm:
+                (self.nvm / 'nvm.sh').write_text('# existing NVM')
+            for version in (None, '20.20.2', 'v20.20.2'):
+                args = argparse.Namespace(node_command='install', project=str(self.project), version=version,
+                                          package_manager=[])
+                with self.subTest(installed_nvm=installed_nvm, version=version), \
+                        patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                        patch('lib.cachyos.is_cachyos', return_value=True), \
+                        patch('lib.node_toolchain.shutil.which', return_value=None), \
+                        patch('common.cachyos_development.prepare_project_node_versions',
+                              return_value=self.nvm / 'nvm.sh') as bootstrap, \
+                        patch('lib.node_toolchain.subprocess.run',
+                              return_value=subprocess.CompletedProcess([], 0)) as run:
+                    self.assertEqual(run_node_command(args), 1)
+                    bootstrap.assert_not_called()
+                    run.assert_not_called()
+                    self.assertIsNone(runtime_owner(self.nvm, '20.20.2'))
 
     def test_missing_nvm_on_other_hosts_and_preparation_failure_stop_runtime_install(self):
         args = argparse.Namespace(node_command='install', project=str(self.project), version='22',

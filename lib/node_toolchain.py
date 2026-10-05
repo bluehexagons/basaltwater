@@ -309,7 +309,10 @@ def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:
             "install": "Install an explicit project runtime through managed NVM",
         }[name])
         command.add_argument("--project", default=".")
-        command.add_argument("--version", help="Override the project pin with a version or range")
+        command.add_argument("--version", help=(
+            "Install a stable version, major/minor pin, node, or lts/*" if name == "install"
+            else "Override the project pin with a version or range"
+        ))
         if name in {"status", "doctor"}:
             command.add_argument("--json", action="store_true")
         if name == "exec":
@@ -331,9 +334,11 @@ def run_node_command(args: argparse.Namespace) -> int:
             pin, _, engines = project_requirements(args.project)
             version = args.version or pin
             if not version or not re.fullmatch(r"v?\d+(?:\.\d+){0,2}|node|lts/[a-z*]+", version):
-                raise ValueError("Install requires --version with a stable version, major, node, or lts/*")
+                raise ValueError("Install requires --version with a stable version, major/minor pin, node, or lts/*")
             if engines:
                 satisfies((0, 0, 0), engines)
+                if _VERSION.fullmatch(version) and not satisfies(_version(version), engines):
+                    raise ValueError(f"Requested Node {version!r} does not satisfy project engines {engines!r}")
             managers = args.package_manager
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
