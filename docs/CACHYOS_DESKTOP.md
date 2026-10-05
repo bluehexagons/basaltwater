@@ -24,6 +24,8 @@ basaltw desktop --native screenshot --output /absolute/task/observe-1.png
 `start` first reports `initializing`, with the current `portal_stage`. Only
 after KDE accepts the Start request does it report `awaiting-consent`, meaning
 a portal response is pending; this does not prove that a dialog is visible.
+`consent_expires_in` and the handoff window show the approximate seconds left
+in the two-minute response wait. This deadline is separate from session lifetime.
 Wait for `running` before interaction. Basaltwater cannot grant portal permission.
 Cancelled, denied or incomplete consent does not enable usable control.
 If the helper reports a failed session, `start` and `status` return a nonzero

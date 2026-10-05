@@ -10,6 +10,7 @@ BUS_NAME = "org.freedesktop.portal.Desktop"
 OBJECT = "/org/freedesktop/portal/desktop"
 REMOTE = "org.freedesktop.portal.RemoteDesktop"
 SCREENCAST = "org.freedesktop.portal.ScreenCast"
+RESPONSE_SECONDS = 120
 
 
 class Portal:
@@ -76,7 +77,7 @@ class Portal:
             if returned != path:
                 raise RuntimeError("Portal returned an unexpected request handle")
             self.progress(method + ".response", method == "Start")
-            if not event.wait(120):
+            if not event.wait(RESPONSE_SECONDS):
                 raise RuntimeError(f"Portal {method} response timed out; inspect status before retrying")
             if self.cancelled.is_set():
                 raise RuntimeError("Portal session closed while waiting for " + method)

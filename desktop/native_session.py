@@ -86,6 +86,7 @@ def status():
         return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
                 "paused": True, "control_active": False, "expires_in": 0,
+                "consent_expires_in": None,
                 "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
 
@@ -235,6 +236,7 @@ class NativeSession:
         self.generation = secrets.token_hex(16)
         self.state = "initializing"
         self.portal_stage = "connecting"
+        self.consent_until = None
         self.detail = "Initializing the portal; no consent request has been confirmed"
         self.last_failure = None
         self.receipt = receipt
@@ -261,6 +263,8 @@ class NativeSession:
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
                 "backend": "portal", "origin": "portal", "paused": self.paused,
                 "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
+                "consent_expires_in": (max(0, int(self.consent_until - time.monotonic()))
+                                       if self.state == "awaiting-consent" and self.consent_until is not None else None),
                 "remember_requested": self.remember, "grant_saved": self.grant_saved,
                 "restore_attempted": self.restore_attempted, "session_seconds": self.session_seconds,
                 "max_session_seconds": MAX_SESSION_SECONDS,
@@ -275,11 +279,13 @@ class NativeSession:
             write_json_atomic(str(self.receipt), self.snapshot_status())
 
     def progress(self, stage, pending=False):
+        from desktop.portal import RESPONSE_SECONDS
         with self.lock:
             if self.stopping.is_set():
                 raise RuntimeError("Native initialization was stopped")
             self.portal_stage = stage
             self.state = "awaiting-consent" if pending else "initializing"
+            self.consent_until = time.monotonic() + RESPONSE_SECONDS if pending else None
             self.detail = ("KDE accepted Start; waiting for its response. A visible dialog is unverified; "
                            "inspect KDE if approval is requested." if pending else "Initializing portal stage: " + stage)
             print(datetime.now(timezone.utc).isoformat(), self.detail, flush=True)

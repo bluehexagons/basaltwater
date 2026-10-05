@@ -9,6 +9,8 @@ are missing, use the workstation setup skill rather than replacing system Python
 
 `initializing` reports the current `portal_stage`. `awaiting-consent` means KDE
 accepted Start and a response is pending, not that a visible dialog is verified.
+`consent_expires_in` shows the approximate seconds left in the two-minute wait;
+it is separate from session lifetime and also appears in the handoff window.
 After helper exit, `status.last_failure` retains the stage, timestamp and detail.
 Stages/errors also remain in the private runtime `helper.log` across restarts.
 

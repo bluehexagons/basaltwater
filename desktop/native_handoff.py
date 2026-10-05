@@ -20,7 +20,9 @@ def describe(status: dict) -> str:
     if status.get("stopped") or status.get("state") == "stopped":
         return "Automation stopped; KDE and applications are preserved"
     if status.get("state") == "awaiting-consent":
-        return "Waiting for KDE response: " + status.get("detail", "Check whether KDE requests approval")
+        seconds = status.get("consent_expires_in")
+        remaining = f" ({seconds} seconds remaining)" if type(seconds) is int else ""
+        return "Waiting for KDE response" + remaining + ": " + status.get("detail", "Check whether KDE requests approval")
     if status.get("state") == "initializing":
         return "Initializing native control: " + status.get("portal_stage", "connecting")
     if status.get("state") == "failed":
@@ -45,6 +47,8 @@ def main():
     layout = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     window.add(layout)
     label = Gtk.Label(label="Checking native automation…")
+    label.set_line_wrap(True)
+    label.set_max_width_chars(80)
     layout.pack_start(label, False, False, 0)
     layout.pack_start(Gtk.Label(label="Pause blocks agent input. Your keyboard and mouse keep working."), False, False, 0)
     row = Gtk.Box(spacing=8)

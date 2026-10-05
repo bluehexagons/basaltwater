@@ -130,9 +130,50 @@ ignored local `artifacts/fast21-native-feedback/` directory. Grant tokens were
 not included in reports, command arguments or committed evidence. These results
 qualify restoration from the active T3 context and a synthetic held-input
 workflow on this workstation. They do not qualify another application identity,
-the actual Fast21 game, logout/login, reboot, monitor changes, denial/cancellation
-of the initial prompt, or live grant revocation. Revocation remains covered by
+the actual Fast21 game (checked in the follow-up below), logout/login, reboot,
+monitor changes, denial/cancellation of the initial prompt, or live grant revocation.
+Revocation remains covered by
 mocked contracts; the owner-approved grant was kept for future autonomous use.
+
+### Fast21 native game follow-up — 2026-10-05
+
+Reviewed the enhancement commits through `08343cb`, then ran the actual Fast21
+game from the active T3 context on the NVIDIA RTX 3080 Ti workstation. The owner
+approved a reusable grant for one 2560×1440 monitor and both input devices.
+Plasma/KWin were `6.7.5-1.1`, portal `1.22.1-2.1`, KDE portal `6.7.5-1.1`,
+PipeWire `1:1.6.9-1` and WirePlumber `0.5.18-1.1`. Godot was the CachyOS
+`4.7.2.stable.arch_linux.ed1daf0bf` build using Vulkan on the existing GPU.
+
+An earlier request closed before approval, with stage/detail retained after
+helper exit; the owner reported possibly seeing it late and authorized retry.
+The retry reached `running` and saved a grant. Gameplay checks used source
+`a1708dd`, isolated game save/settings data and disabled Steam integration.
+
+| Check | Observed result |
+| --- | --- |
+| Animated physical buttons | Immediate keyboard Hit and pointer Stand taps left the hand unchanged; 120 ms holds actuated both. The game's animation threshold was preserved. |
+| Actual hand resolution | Hit on 10+2 drew 9, then pointer Stand won against dealer 18. After restoration, held Hit started a new hand and held Stand on 7 won against dealer bust 23. |
+| Grant restoration | Stop/plain start reached `running`, reported `restore_attempted` and saved the replacement grant; no additional owner approval was requested by the agent. Capture and held gameplay input worked afterward. |
+| Generation/renewal | Old generation rejected before input; current generation renewed for 1800 seconds without changing identity. |
+| Save/menu consistency | Menu displayed eight games and five wins, matching save data. JSON also recorded three losses, three hits, five stands and two perfect 21s. |
+| Cleanup | Disposable game closed and helper stopped; KDE and personal applications preserved, reusable grant retained. |
+
+The review fixed two restart issues in `a1708dd`: saved opt-in/pause survives a
+consumed token after interrupted restoration, and pending consent no longer
+consumes session lifetime. Both regressions failed before the fix; the default
+suite then passed 5030 tests (two skipped). Consent status/handoff now also show
+an approximate response countdown, with mocked coverage for its separation
+from session lifetime and clearing after helper exit. The final default suite
+passed 5032 tests (two skipped); desktop/agent suites passed 1242 and CLI
+documentation checks passed.
+
+Fast21 passed 3542 headless assertions and the smallest relevant graphical
+suite, `BlackjackGameScene`, passed 535. The game and graphical suite retained
+the separately tracked seven-texture shutdown warning; no runtime gameplay
+errors were logged. Private evidence is in Fast21's ignored local
+`artifacts/basaltwater-review-2026-10-05/` directory. These checks add actual
+game integration coverage; live revocation, logout/reboot, other application
+identities, monitor/scaling changes, audio and physical controllers remain pending.
 
 ## P0 prerequisite gate
 
@@ -180,7 +221,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | Portal input | Explicit device selection, revocation, pause, lease expiry, logout cleanup, no privileged fallback | Input, holds, client cancellation, human pause/resume, abandoned lease expiry and explicit stop passed; owner loss/active expiry mocked; logout pending |
 | Portal grant restoration | Initial owner approval, repeated restoration, pause preservation, bounded renewal and owner revocation | Repeated T3 restoration, pause preservation and renewal passed; revocation mocked; logout/reboot and other application identities pending |
 | Clipboard | Separate opt-in and bounds; protected content excluded | Not implemented |
-| Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Blender/Inkscape and GIMP batch paths above passed; remaining matrix pending |
+| Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Blender/Inkscape, GIMP batch and Fast21 held-input gameplay paths above passed; remaining matrix pending |
 | Recovery | Safe reruns, exact managed cleanup, concurrent human application use | Not implemented |
 | Collaboration | Schema-aware unavailable/deferred/pending UI, private artifact access, no additional control channel | Not implemented |
 

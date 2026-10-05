@@ -236,6 +236,7 @@ class NativeHandoffTests(unittest.TestCase):
     def test_only_live_running_session_reports_enabled_input(self):
         cases = [
             ({"state": "awaiting-consent", "detail": "Approve KDE"}, "Waiting for KDE response: Approve KDE"),
+            ({"state": "awaiting-consent", "detail": "Approve KDE", "consent_expires_in": 45}, "Waiting for KDE response (45 seconds remaining): Approve KDE"),
             ({"state": "initializing", "portal_stage": "CreateSession.request"}, "Initializing native control: CreateSession.request"),
             ({"state": "failed", "detail": "Permission denied", "paused": True}, "Native desktop control failed: Permission denied"),
             ({"state": "stopped", "paused": True}, "Automation stopped; KDE and applications are preserved"),
@@ -642,6 +643,31 @@ class NativeReceiptTests(unittest.TestCase):
                 path.symlink_to(Path(directory, "other"))
                 with self.assertRaisesRegex(RuntimeError, "Unsafe"):
                     native.status()
+
+    def test_pending_consent_reports_its_own_deadline_separately_from_session_expiry(self):
+        with redirect_stdout(StringIO()), patch.object(native.time, "monotonic", return_value=100.0) as clock:
+            session = native.NativeSession(None, session_seconds=60)
+            self.assertIsNone(session.snapshot_status()["consent_expires_in"])
+            session.progress("Start.response", True)
+            self.assertEqual(session.snapshot_status()["consent_expires_in"], 120)
+            self.assertEqual(session.snapshot_status()["expires_in"], 0)
+            clock.return_value = 161.0
+            self.assertEqual(session.snapshot_status()["consent_expires_in"], 59)
+            clock.return_value = 221.0
+            self.assertEqual(session.snapshot_status()["consent_expires_in"], 0)
+            session.close()
+            self.assertIsNone(session.snapshot_status()["consent_expires_in"])
+
+    def test_stopped_helper_does_not_replay_an_old_consent_countdown(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(StringIO()):
+            session = native.NativeSession(None, receipt=Path(directory, "status.json"))
+            session.progress("Start.response", True)
+            with patch.object(native, "runtime_directory", return_value=Path(directory)), \
+                    patch.object(native, "request", side_effect=FileNotFoundError):
+                result = native.status()
+            self.assertEqual(result["state"], "stopped")
+            self.assertEqual(result["last_state"], "awaiting-consent")
+            self.assertIsNone(result["consent_expires_in"])
 
     def test_helper_constructor_failure_is_logged_and_retained_before_any_consent(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
