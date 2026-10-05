@@ -30,6 +30,14 @@ navigation becomes a horizontal scrollable row. Light and dark themes follow
 the device preference. Memory and disk meters retain numeric values, and
 service states have text labels as well as color.
 
+Agent tools and Admin controls use grouped lists with aligned actions rather
+than large option cards. Category links jump directly to system or data tools,
+and to updates, services, or power controls. Tool rows show permissions and
+suggested repetition/runtime; admin rows retain the full action effects and
+explain unavailable controls. Rows wrap on smaller screens, with touch-sized
+links. Dashboard metrics and service summaries use compact layouts while
+keeping status labels, endpoint URLs, and numeric values visible.
+
 The compact dashboard header shows the host, setup profile, and account.
 Service totals distinguish responding endpoints, endpoints needing attention,
 and endpoints without a readiness check. Audit totals include warning/error

@@ -1014,7 +1014,7 @@ body:has(#maintenance-heading:target) .sidebar a[href$="#maintenance-heading"] {
 .job-facts dd { margin: 4px 0 0; }
 .job-load { margin-bottom: 14px; }
 .badge.success { color: var(--ok); }
-header { margin-bottom: 24px; padding: 20px 24px; border: 1px solid var(--accent-soft);
+header { margin-bottom: 18px; padding: 16px 20px; border: 1px solid var(--accent-soft);
   border-top: 3px solid var(--accent); border-radius: 12px;
   background: radial-gradient(ellipse at top right, var(--accent-soft), transparent 65%), var(--panel); }
 .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -1055,7 +1055,7 @@ h1 {
 }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; font-weight: 650; }
-section { margin-top: 24px; }
+section { margin-top: 20px; }
 .section-heading {
   display: flex;
   align-items: end;
@@ -1065,17 +1065,45 @@ section { margin-top: 24px; }
 }
 h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .count { color: var(--muted); font-size: .75rem; }
+.catalog-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px;
+  margin: 14px 0 0; color: var(--muted); font-size: .85rem; }
+.catalog-nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); text-underline-offset: 4px; }
+.action-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); }
+.action-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.action-row:first-child { border-top-left-radius: 9px; border-top-right-radius: 9px; }
+.action-row:last-child { border-bottom: 0; border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
+.action-copy { min-width: 0; }
+.action-copy h3 { margin: 0; font-size: .9rem; }
+.action-copy p { margin: 3px 0 0; color: var(--muted); font-size: .82rem; }
+.action-meta { display: grid; gap: 2px; color: var(--muted); font-size: .75rem; }
+.action-meta strong { color: var(--section-ink); font-weight: 650; }
+.tool-row { grid-template-columns: 34px minmax(0, 1fr) 200px auto; }
+.row-action { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: .85rem; white-space: nowrap; }
+.action-unavailable { max-width: 220px; margin: 0; color: var(--warning); font-size: .82rem; }
+@media (max-width: 1150px) {
+  .tool-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .tool-row .action-meta { grid-column: 2; display: flex; flex-wrap: wrap; gap: 2px 12px; }
+  .tool-row .row-action { grid-column: 3; grid-row: 1 / 3; }
+}
+@media (max-width: 650px) {
+  .action-row, .tool-row { grid-template-columns: 34px minmax(0, 1fr); gap: 6px 10px; padding: 10px 12px; }
+  .action-icon { align-self: start; }
+  .action-row .row-action, .action-row .action-unavailable { grid-column: 2; grid-row: auto; justify-self: start; }
+  .action-unavailable { max-width: none; }
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 10px;
 }
+.service-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); }
 .card {
   display: flex;
-  min-height: 116px;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
@@ -1086,7 +1114,9 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
 .card:hover { border-color: var(--accent); background: linear-gradient(var(--accent-soft), var(--panel)); }
 .card strong { font-size: .9rem; letter-spacing: -.02em; }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.service-kind { color: var(--muted); font-size: .65rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.service-title { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.service-kind { color: var(--muted); font-size: .72rem; }
+.service-detail { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .service-arrow { color: var(--accent); font-size: 1.2rem; }
 .card:focus-visible, button:focus-visible, summary:focus-visible {
   outline: 3px solid var(--accent);
@@ -1113,15 +1143,15 @@ h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
   margin: 0;
 }
 .metric {
-  min-height: 110px;
-  padding: 12px 14px;
+  min-height: 92px;
+  padding: 10px 12px;
   border: 1px solid var(--accent-soft);
   border-radius: 12px;
   background: var(--panel);
   box-shadow: var(--shadow);
 }
 .metric dt { color: var(--muted); font-size: .82rem; }
-.metric dd { margin: 5px 0 0; }
+.metric dd { margin: 3px 0 0; }
 .metric-value { display: block; font-size: 1.15rem; font-weight: 750; letter-spacing: -.035em; }
 .metric-description { display: block; margin-top: 4px; color: var(--muted); font-size: .75rem; }
 .host-overview { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -1338,6 +1368,9 @@ footer {
 }
 @media (min-width: 901px) and (max-width: 1150px) {
   .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1151px) {
+  .host-overview:has(> .metric:nth-child(6):last-child) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 700px) {
   .host-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1862,17 +1895,18 @@ def render_page(state: WebPanelState) -> str:
             "HTTPS service": ("service-status", "workspace"),
         }.get(kind, ("web-services", "water"))
         service_cards += (
-            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="service-kind">{}{}</span>'
-            '<span class="service-arrow" aria-hidden="true">&#8599;</span></span><strong>{}</strong>'
-            '{}{}<span class="card-url">{}</span></a>'
+            '<a class="card service-card tone-{}" href="{}"><span class="card-top"><span class="action-icon">{}</span>'
+            '<span class="service-title"><strong>{}</strong><span class="service-kind">{}</span></span>'
+            '<span class="service-arrow" aria-hidden="true">&#8599;</span></span>'
+            '<span class="service-detail">{}{}</span><span class="card-url">{}</span></a>'
         ).format(
             category,
             html.escape(record["url"], quote=True),
             render_icon(icon),
-            kind,
             html.escape(label),
-            f'<span class="card-description">{html.escape(description)}</span>' if description else "",
+            kind,
             status_html,
+            f'<span class="card-description">{html.escape(description)}</span>' if description else "",
             html.escape(record["url"]),
         )
     service_cards = service_cards or (
@@ -2030,7 +2064,7 @@ def render_page(state: WebPanelState) -> str:
 {render_agent_activity(state)}
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
-<span class="count">{service_count}</span></div><div class="grid">{service_cards}</div></section>
+<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>
 {audit_section}{notification_section}
 <section aria-labelledby="access-heading"><div class="section-heading"><div>
 {render_heading("Access", "access", heading_id="access-heading")}</div>

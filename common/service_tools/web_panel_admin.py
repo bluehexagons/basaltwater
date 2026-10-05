@@ -127,9 +127,7 @@ _GROUP_ICONS = {"Updates": "maintenance", "Services": "service-status", "Power":
 
 _STYLE = """
 main a { color:var(--accent); }
-.admin-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr)); gap:12px; }
 .admin-card { display:flex; flex-direction:column; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
-.admin-card h3 { margin:0 0 8px; font-size:1rem; }
 .admin-card p { color:var(--muted); font-size:.85rem; margin:8px 0; }
 .admin-card .refresh-link { min-height:44px; margin-top:auto; }
 .admin-review { border-left:4px solid var(--warning); margin-bottom:24px; }
@@ -200,7 +198,11 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
     body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
-    body += _request_history(snapshot, csrf)
+    # Keep existing requests near the top for approvals; empty history can follow
+    # the controls so it does not displace the actions the user came to find.
+    history = _request_history(snapshot, csrf)
+    if snapshot.get("requests"):
+        body += history
     action = query.get("action")
     if action:
         spec = action_spec(action)
@@ -215,19 +217,24 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
 <form method="post" action="/actions/admin">{csrf}<input type="hidden" name="action" value="{action}">
 <input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create approval request</button></form>
 <a class="refresh-link" href="/admin">Cancel review</a></section>'''
+    body += '<nav class="catalog-nav" aria-label="Administration categories"><span>Jump to</span><a href="#admin-updates">Updates</a><a href="#admin-services">Services</a><a href="#admin-power">Power</a></nav>'
     for group in ("Updates", "Services", "Power"):
         icon = _GROUP_ICONS[group]
         tone = "water" if group == "Services" else "stone"
-        cards = ""
+        rows = []
         for key, spec in ADMIN_ACTIONS.items():
             if spec["group"] != group:
                 continue
             reason = unavailable_reason(snapshot, key)
             if snapshot.get("error"):
                 reason = "Approval service unavailable."
-            link = f'<p>{escape(reason)}</p>' if reason else f'<a class="refresh-link" href="/admin?action={key}">Review action →</a>'
-            cards += f'<article class="admin-card tone-{tone}"><span class="tool-icon">{render_icon(icon)}</span><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p>{link}</article>'
-        body += f'<section aria-label="{group}"><div class="section-heading">{render_heading(group, icon)}</div><div class="admin-grid">{cards}</div></section>'
+            link = f'<p class="action-unavailable">{escape(reason)}</p>' if reason else f'<a class="refresh-link row-action" aria-label="Review action: {escape(spec["title"], quote=True)}" href="/admin?action={key}">Review action <span aria-hidden="true">→</span></a>'
+            rows.append(f'<li class="action-row admin-row tone-{tone}"><span class="action-icon">{render_icon(icon)}</span><div class="action-copy"><h3>{escape(spec["title"])}</h3><p>{escape(spec["effect"])}</p></div>{link}</li>')
+        identifier = "admin-" + group.lower()
+        heading = render_heading(group, icon, heading_id=identifier)
+        body += f'<section aria-labelledby="{identifier}"><div class="section-heading">{heading}<span class="count">{len(rows)} actions</span></div><ul class="action-list">{"".join(rows)}</ul></section>'
+    if not snapshot.get("requests"):
+        body += history
     if state.t3_update_available():
         disabled = " disabled" if state.action_status == "running" else ""
         body += f'''<section class="admin-card tone-workspace">{render_heading("T3 Code", "agents")}<p>Update the installed user runtime and check readiness. Active T3 sessions may reconnect. This uses the existing account-level updater.</p>

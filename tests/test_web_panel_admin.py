@@ -56,7 +56,7 @@ class AdminScreenTests(unittest.TestCase):
             exchange.assert_not_called()
         self.assertIn("optional privilege approval service", document)
         self.assertIn('href="/logs"', document)
-        self.assertNotIn("Review action →", document)
+        self.assertNotIn('href="/admin?action=', document)
 
     def test_one_time_review_ticket_prevents_repeated_submission(self):
         ticket = self.manager.ticket("refresh")
@@ -108,7 +108,7 @@ class AdminScreenTests(unittest.TestCase):
             document = render_admin(self.state, _PAGE_STYLE, {})
         self.assertIn("Cancel request", document)
         self.assertIn("Open approval review", document)
-        self.assertNotIn("Review action →", document)
+        self.assertNotIn('href="/admin?action=', document)
         self.assertNotIn('name="approve"', document)
 
     def handler(self, path, values):

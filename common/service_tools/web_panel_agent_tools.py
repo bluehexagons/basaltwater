@@ -228,10 +228,8 @@ def prepare_tool(values: dict[str, str], home: str) -> dict[str, Any]:
 
 
 _STYLE = """
-.tool-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,270px),1fr)); gap:12px; }
 .tool-card { padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:12px; }
-.tool-grid .tool-card { display:flex; flex-direction:column; } .tool-grid .refresh-link { margin-top:auto; min-height:44px; }
-.tool-card h3 { margin:0 0 6px; font-size:1rem; } .tool-card p { margin:6px 0; color:var(--muted); font-size:.85rem; }
+.tool-card p { margin:6px 0; color:var(--muted); font-size:.85rem; }
 .tool-form { display:grid; gap:14px; max-width:800px; } .tool-form label { font-weight:650; }
 .tool-form input { display:block; width:100%; min-height:44px; margin-top:6px; padding:9px;
   color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:8px; font:inherit; }
@@ -248,7 +246,7 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
     tool = values.get("tool", "")
     escape = html.escape
     body = f'<aside class="status failed" role="alert">{escape(error)}</aside>' if error else ""
-    body += '<p class="endpoint">Prepare a prompt here, review its scope and execution settings in Agents, then run, schedule, or save a draft. Preparing never launches work. Results appear in Agents → Run history.</p>'
+    body += '<p class="endpoint">Choose a tool, then review and run or schedule its prompt in Agents. Preparing never launches work.</p>'
     if tool in TOOLS:
         title, description, group, mode, interval, timeout = TOOLS[tool]
         fields = ""
@@ -271,10 +269,10 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
 <p>{mode_label} · suggested {interval} · {timeout} minute cap · command network off</p>
 <form class="tool-form" method="post" action="/actions/agent-tool/prepare"><input type="hidden" name="csrf" value="{escape(state.csrf_token, quote=True)}"><input type="hidden" name="tool" value="{tool}">
 {fields}<button>Prepare prompt for review</button></form></section>'''
-    catalog = ""
+    catalog = '<nav class="catalog-nav" aria-label="Tool categories"><span>Jump to</span><a href="#system-tools">System</a><a href="#data-tools">Data and workspace</a></nav>'
     for group in ("System", "Data and workspace"):
         tone = "stone" if group == "System" else "workspace"
-        cards = []
+        rows = []
         for key, (title, description, section, mode, interval, timeout) in TOOLS.items():
             if section != group:
                 continue
@@ -282,9 +280,11 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
             icon = {"checkup": "service-status", "maintenance": "maintenance", "logs": "diagnostics",
                     "job": "jobs", "storage": "storage", "data-audit": "data",
                     "data-import": "import", "data-export": "export", "cleanup": "storage"}[key]
-            cards.append(f'<article class="tool-card tone-{tone}"><span class="tool-icon">{render_icon(icon)}</span><h3>{escape(title)}</h3><p>{escape(description)}</p><p>{"Inspect only" if mode == "inspect" else "Workspace changes"} · {interval} · {timeout} min</p><a class="refresh-link" href="{escape(url, quote=True)}">Set up task →</a></article>')
-        heading = render_heading(group, "maintenance" if group == "System" else "data")
-        catalog += f'<section aria-label="{group}"><div class="section-heading">{heading}</div><div class="tool-grid">{"".join(cards)}</div></section>'
+            mode_label = "Inspect only" if mode == "inspect" else "Workspace changes"
+            rows.append(f'<li class="action-row tool-row tone-{tone}"><span class="action-icon">{render_icon(icon)}</span><div class="action-copy"><h3>{escape(title)}</h3><p>{escape(description)}</p></div><div class="action-meta"><strong>{mode_label}</strong><span>Suggested {interval} · {timeout} min cap</span></div><a class="refresh-link row-action" aria-label="Set up task: {escape(title, quote=True)}" href="{escape(url, quote=True)}">Set up task <span aria-hidden="true">→</span></a></li>')
+        identifier = "system-tools" if group == "System" else "data-tools"
+        heading = render_heading(group, "maintenance" if group == "System" else "data", heading_id=identifier)
+        catalog += f'<section aria-labelledby="{identifier}"><div class="section-heading">{heading}<span class="count">{len(rows)} tools</span></div><ul class="action-list">{"".join(rows)}</ul></section>'
     body += f'<details><summary>Choose another agent tool</summary>{catalog}</details>' if tool in TOOLS else catalog
     body += '<p class="endpoint">Host repairs remain separately approved in <a href="/admin">Admin controls</a>. These tools prepare account-level work with the existing Codex runner. T3 Code is optional. Filesystem and data-handling constraints in the prompt guide the agent; review its results and keep an independent backup for valuable data.</p>'
     header = f'<header class="dashboard-header"><div><p class="eyebrow">System and data tasks</p><h1>Agent tools</h1><p class="lede">Prepare agent work on <code>{escape(state.manifest["host"])}</code>.</p></div><a class="refresh-link" href="/agents">View tasks and results</a></header>'
