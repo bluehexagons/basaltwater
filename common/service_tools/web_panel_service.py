@@ -48,6 +48,9 @@ from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_
 from lib.agent_tasks import AgentTasks
 from lib.agent_git_settings import AgentGitSettings
 from common.service_tools.web_panel_credentials import parse_credentials_query, render_credentials
+from common.service_tools.web_panel_publishing import FIELDS as PUBLISHING_FIELDS, publishing_action, render_publishing
+from lib.publishing import Publishing
+from lib.publishing_auth import PublishingAuth
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
     WEB_PANEL_INGEST_TOKEN,
@@ -729,7 +732,9 @@ class WebPanelState:
         self._service_health: list[dict[str, str]] = []
         self._service_health_at = float("-inf")
         self._service_health_lock = threading.Lock()
-        self.agent_tasks = AgentTasks(agent_home)
+        self.publishing = Publishing(agent_home)
+        self.publishing_auth = PublishingAuth(self.publishing)
+        self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
         self.agent_diagnostics = AgentDiagnostics(
@@ -738,6 +743,13 @@ class WebPanelState:
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
+
+    def publishing_tick(self) -> None:
+        self.publishing.tick()
+        with self.publishing.store.transaction() as db:
+            queued = any(run["state"] == "queued" for run in self.publishing.store.records(db, "runs"))
+        if queued:
+            self.publishing.start_worker()
 
     def credential_transport_available(self) -> bool:
         url = _safe_url(self.manifest.get("panel_url"))
@@ -2164,6 +2176,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, render_credentials(self.state, _PAGE_STYLE, query), "text/html")
             return
+        if path == "/publishing":
+            if parsed.query:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid publishing query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_publishing(self.state, _PAGE_STYLE), "text/html")
+            return
         if path == "/logs":
             try:
                 query = parse_diagnostic_query(parsed.query)
@@ -2218,7 +2236,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         agent_paths = {"/actions/agent-task/save", "/actions/agent-task", "/actions/agent-diagnostics", "/actions/agent-tool/prepare"}
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
-        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths:
+        publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
+        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths | publishing_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2228,7 +2247,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = -1
-        if not 0 <= length <= _MAX_REQUEST_BYTES:
+        request_limit = 128 * 1024 if path in publishing_paths else _MAX_REQUEST_BYTES
+        if not 0 <= length <= request_limit:
             self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid request\n", "text/plain")
             return
         try:
@@ -2254,6 +2274,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path in credential_paths:
             self._handle_credential_action(path, values)
             return
+        if path in publishing_paths:
+            self._handle_publishing_action(path, values)
+            return
         if set(values) - {"csrf", "return"} or any(len(entries) != 1 for entries in values.values()) or values.get("return", ["dashboard"])[0] not in {"agents", "admin", "dashboard"}:
             self._send(HTTPStatus.BAD_REQUEST, "Invalid update action\n", "text/plain")
             return
@@ -2262,6 +2285,31 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", {"agents": "/agents", "admin": "/admin"}.get(values.get("return", [""])[0], "/"))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _handle_publishing_action(self, path: str, values: dict[str, list[str]]) -> None:
+        if os.geteuid() == 0 or not self.state.credential_transport_available() or self.headers.get("X-Forwarded-Proto", "").lower() != "https":
+            self._send(HTTPStatus.FORBIDDEN, "Secure transport required for publishing changes\n", "text/plain")
+            return
+        action = path.rsplit("/", 1)[-1]
+        if set(values) - {"csrf", *PUBLISHING_FIELDS[action]} or any(len(entries) != 1 for entries in values.values()):
+            self._send(HTTPStatus.BAD_REQUEST, "Invalid publishing action\n", "text/plain")
+            return
+        try:
+            result = publishing_action(self.state, action, {key: entries[0] for key, entries in values.items() if key != "csrf"})
+        except (KeyError, OSError, RuntimeError, ValueError, http.client.HTTPException, subprocess.SubprocessError):
+            self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_publishing(self.state, _PAGE_STYLE, error=
+                "The publishing action could not complete. Check the selected project's configuration, review status, time window and saved operation history. Authentication inputs are never echoed; re-enter them to retry."), "text/html")
+            return
+        if result is not None:
+            if action == "writing-task":
+                self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {}, submitted=result, prepared=True), "text/html")
+            else:
+                self._send_json(HTTPStatus.OK, result)
+            return
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/publishing")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -2516,6 +2564,7 @@ def main() -> int:
         server.serve_forever(poll_interval=0.5)
     finally:
         state.agent_tasks.close()
+        state.publishing_auth.close()
         server.server_close()
         if args.socket:
             try:

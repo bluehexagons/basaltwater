@@ -532,6 +532,11 @@ class TestGodotSetup(unittest.TestCase):
 
 
 class TestGodotAutoUpdater(unittest.TestCase):
+    def setUp(self):
+        publishing_update = patch.object(auto_update_godot, "update_registered_publishing_tools", return_value=False)
+        publishing_update.start()
+        self.addCleanup(publishing_update.stop)
+
     @patch(
         "common.service_tools.auto_update_godot.update_registered_godot_bundles",
         return_value=False,

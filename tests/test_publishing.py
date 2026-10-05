@@ -165,6 +165,25 @@ class PublishingTests(unittest.TestCase):
         self.assertEqual(receipt('{"type":"result","value":{"buildId":42}}', "butler"), "42")
         self.assertEqual(receipt("Successfully finished AppID 123 build (BuildID 456)", "steamcmd"), "456")
 
+    def test_scheduled_upload_reuses_exact_review_and_new_text_is_held(self):
+        text = "Reviewed notes\n"
+        (self.output / "patch-notes.txt").write_text(text)
+        draft = self.publisher.draft("game", "en", "Patch notes", text)
+        self.approve(draft)
+        self.complete()
+        job = self.publisher.schedule("game", 5)
+        self.publisher.tick()
+        self.assertEqual(self.publisher.status()["runs"][0]["state"], "queued")
+        self.publisher.cancel(self.publisher.status()["runs"][0]["id"])
+        (self.output / "patch-notes.txt").write_text("New unreviewed notes")
+        self.complete()
+        with self.publisher.store.transaction() as db:
+            job["next_at"] = 0
+            self.publisher.store.put(db, "jobs", job)
+        self.publisher.tick()
+        self.assertEqual(self.publisher.status()["jobs"][0]["failures"], 1)
+        self.assertEqual(len(self.publisher.status()["runs"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

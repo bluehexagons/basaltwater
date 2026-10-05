@@ -9,6 +9,7 @@ they have different storage, rotation, and sharing rules.
 | HomeBox initial password and API-key pepper | Inventory login and API-key verification | Target-only `/etc/homebox/secrets.json`; see [HomeBox](HOMEBOX.md) for recovery |
 | GitHub CLI authentication | Private GitHub repositories and `gh` | Git or agent auth options |
 | Coding-agent authentication | Codex, Claude Code, and OpenCode | Agent auth options |
+| Game publishing sessions and optional Steam beta API key | Butler uploads, SteamCMD builds and optional beta promotion | Publishing in the VM HTTPS panel; credentials stay VM-local |
 | Target account password | Unix login and optional RDP login | `--password` or a hidden setup prompt |
 | Device-enrollment password | Protected provider-pairing portal | Device-pairing options |
 | Browser website session | Sites opened through browser automation | The site or a scoped secret flow; Basaltwater does not copy it |
@@ -22,6 +23,7 @@ they have different storage, rotation, and sharing rules.
 | Authorize or recover Codex on a VM | [Target-owned subscription or API-key login](AGENT_AUTHENTICATION.md#authorize-codex-on-a-target) |
 | Configure GitHub or another HTTPS Git server | [Git access and authentication](GIT_ACCESS.md) |
 | Configure the pairing portal | [Protected device pairing](DEVICE_PAIRING.md) |
+| Authenticate game publishers without controller credential copies | [VM game publishing](GAME_PUBLISHING.md#install-and-authenticate) |
 | Diagnose SSH login | [SSH authentication](SSH.md) |
 
 ## Workspace credential store

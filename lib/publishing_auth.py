@@ -17,7 +17,7 @@ import urllib.parse
 
 from lib.publishing import Publishing, provider
 from lib.publishing_store import file_lock, now, private_directory, private_file
-from lib.validators import validate_username
+from lib.validators import validate_steam_account_name
 
 
 def environment(home: Path, *, login: bool = False) -> dict[str, str]:
@@ -34,7 +34,9 @@ def executable(service: str, home: Path) -> str:
     binary = shutil.which(provider(service), path=environment(home)["PATH"])
     if not binary:
         raise RuntimeError("Publishing tool is not installed")
-    return binary
+    # SteamCMD derives its installation root and native binary name from $0.
+    # The managed PATH launcher is a symlink named steamcmd to steamcmd.sh.
+    return str(Path(binary).resolve(strict=True))
 
 
 def credential_paths(service: str, home: Path) -> Path:
@@ -98,8 +100,7 @@ class PublishingAuth:
         if os.geteuid() == 0:
             raise RuntimeError("Logins require a non-root publishing account")
         if service == "steamcmd":
-            validate_username(username)
-            if not re.fullmatch(r"[A-Za-z0-9_]{2,64}", username):
+            if not validate_steam_account_name(username):
                 raise ValueError("Invalid Steam account name")
         credential_paths(service, self.publishing.home)
         binary = executable(service, self.publishing.home)
@@ -107,6 +108,7 @@ class PublishingAuth:
         lease = file_lock(root / (service + ".lock"))
         lease_fd = lease.__enter__()
         session_id = self.publishing.store.new_id()
+        master = slave = None
         try:
             master, slave = pty.openpty()
             attributes = termios.tcgetattr(slave)
@@ -118,11 +120,15 @@ class PublishingAuth:
                                        env=environment(self.publishing.home, login=True), umask=0o077, pass_fds=(lease_fd,))
             os.close(slave)
         except BaseException:
+            for descriptor in (master, slave):
+                if descriptor is not None:
+                    os.close(descriptor)
             lease.__exit__(None, None, None)
             raise
         session = {"id": session_id, "provider": service, "username": username, "state": "running", "started": now(),
                    "master": master, "process": process, "challenge": "waiting", "message": "Starting native login"}
         with self._lock:
+            self._sessions = {key: value for key, value in self._sessions.items() if value["state"] == "running"}
             self._sessions[session_id] = session
         threading.Thread(target=self._run, args=(session, lease), daemon=True, name="publishing-login").start()
         return session_id
@@ -197,11 +203,13 @@ class PublishingAuth:
                 session.update(state="failed", challenge="none", message="Native login could not finish; check the VM terminal and file permissions.")
                 session.pop("link", None)
         finally:
-            self._kill(process)
-            process.wait(timeout=5)
-            os.close(session["master"])
-            output = ""
-            lease.__exit__(None, None, None)
+            try:
+                self._kill(process)
+                process.wait(timeout=5)
+            finally:
+                os.close(session["master"])
+                output = ""
+                lease.__exit__(None, None, None)
 
     def close(self) -> None:
         with self._lock:
@@ -221,6 +229,7 @@ class PublishingAuth:
                 for path in (native / "config").iterdir():
                     private_file(path)
                     path.unlink()
+                (root / "steam-api.key").unlink(missing_ok=True)
             with self.publishing.store.transaction() as db:
                 self.publishing.store.put(db, "accounts", {"id": service, "state": "needs-login", "observed_at": now()})
                 for job in self.publishing.store.records(db, "jobs"):

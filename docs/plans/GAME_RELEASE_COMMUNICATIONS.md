@@ -1,11 +1,27 @@
 # Game releases, posts, and translations
 
-Status: implementation in progress alongside [game publishing](GAME_PUBLISHING.md),
+Status: initial implementation delivered alongside [game publishing](GAME_PUBLISHING.md),
 2026-10-05. Implementation is authorized; live provider changes are not part of
 the mocked development checks. The parent plan owns installation, authentication, uploads,
 jobs, and delivery ordering. This document owns build promotion, release
 coordination, writing, translation, human review, and post publication inside
 the same web panel.
+
+The [operator guide](../GAME_PUBLISHING.md) records the delivered scope: exact
+retained itch.io channel uploads, optional Steam beta preparation/promotion,
+manual Steamworks default-release gates, immutable plain-text drafts, agent
+writing-task preparation, source/translation comparisons, human review,
+scheduled editor handoffs and operator-confirmed post URLs. English/Spanish
+structural tests cover both translation directions. Live account behavior and
+provider rendering still require qualification.
+
+The remaining design below includes rich assets, rendered provider previews,
+terminology/placeholder validation, Steam CSV locale mapping, qualified automatic
+post adapters, remote schedules, external edit detection, campaigns and broader
+destinations. These are explicit follow-on work. The current beta parser fails
+closed on unknown API response schemas; its local lease cannot prevent a
+concurrent external Steamworks branch update. Default/public API paths are
+excluded regardless of qualification.
 
 ## Product contract
 
@@ -135,7 +151,7 @@ where supported; do not claim a transactional reversal of a public release.
 
 ## Project language configuration
 
-Use `basaltwater.json` for non-secret project language declarations. Propose an
+Use `basaltwater.json` for non-secret project language declarations. The supported
 optional top-level `publishing` section, with a `languages` object:
 
 ```json

@@ -32,7 +32,7 @@ documentation link for coding agents.
 | `index.html` at root, `public/`, `static/`, or `html/` | Ready static site |
 
 Override inference with `--kind node-site`, `node-package`, `node-service`,
-`go-service`, `full-stack`, or `static`. Conflicting package-manager declarations
+`go-service`, `full-stack`, `static`, or `publishing`. Conflicting package-manager declarations
 or multiple Go main packages require explicit review. Custom layouts need a
 hand-written manifest.
 
@@ -64,7 +64,7 @@ invoke a reviewed shell script explicitly when shell behavior is needed.
 }
 ```
 
-An empty `components` array requires at least one CI workflow and cannot be
+An empty `components` array requires a CI workflow or publishing metadata and cannot be
 deployed as a website. The initializer honors npm/pnpm/yarn declarations and
 lockfiles, uses `build` or `compile`, and prefers `check` over `test`. Review
 whether a project's check already builds or whether its default test is
@@ -76,15 +76,21 @@ of those hooks. Older manifests without `ci` use component hooks during the CI
 build stage. See [webhook CI/CD](CICD.md) for script overrides, generation when
 missing, and remote publishing limits.
 
-## Planned publishing language declarations
+## Publishing language declarations
 
-The [release and communications plan](plans/GAME_RELEASE_COMMUNICATIONS.md#project-language-configuration)
-proposes `publishing.languages` in `basaltwater.json` for public communications.
-Projects would default to English only, with English/Spanish qualified first
-and additional language tags allowed. This section is not accepted by today's
-strict manifest parser. The plan covers schema/consumer changes, publishing-only
-projects, panel editing, and keeping credentials and human approvals outside
-the repository. These settings would not assert in-game localization support.
+Version 1 accepts `publishing.languages` for public communications. Missing
+settings default to English only. For English and Spanish use
+`{"publishing":{"languages":{"source":"en","supported":["en","es"]}}}`
+in a complete manifest. Additional validated language tags are accepted;
+English/Spanish workflows have structural tests, with live provider rendering
+still requiring qualification. These settings do not assert in-game localization.
+
+`basaltw manifest init --kind publishing` creates a metadata-only game manifest
+with `components: []`. Edit and commit language settings in the repository;
+the panel reads them without changing the manifest. Credentials, schedules and
+human approvals stay in private VM state. Older Basaltwater versions reject
+the extension and need upgrading. See [VM game publishing](GAME_PUBLISHING.md)
+for uploads, translations and review.
 
 ## Select a project Node version
 

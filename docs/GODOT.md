@@ -204,21 +204,23 @@ client, so ARM64 targets receive Butler and report that SteamCMD was skipped.
 Because SteamCMD updates its own user-owned installation, the publishing
 bundle requires a non-root setup account.
 
-Basaltwater does not collect, stage, or persist publishing credentials. Sign in
-as the configured account only when needed:
+Publishing credentials stay in the configured VM account's native stores.
+Manage sign-in through **Publishing** in the existing HTTPS panel, or use the
+interactive VM CLI fallback as that account:
 
 ```bash
-butler login
-steamcmd +login YOUR_STEAM_ACCOUNT
+basaltw publish auth login butler
+basaltw publish auth login steamcmd --username YOUR_STEAM_ACCOUNT
 ```
 
-Authentication and build-upload management in the existing web panel, including
-unattended and scheduled uploads with VM-local sessions, are scoped in the
-[game publishing plan](plans/GAME_PUBLISHING.md). Those controls are planned;
-the current bundle installs tools and leaves login/uploads to native commands.
-The [release and communications extension](plans/GAME_RELEASE_COMMUNICATIONS.md)
-also plans promotion and human-reviewed posts/translations, with Steam's final
-default-branch release remaining manual on Steamworks.
+The [game publishing guide](GAME_PUBLISHING.md) covers completed-build uploads,
+unattended schedules, promotion, reviewed translations and post-editor handoffs.
+Steam's final default/public release stays manual on Steamworks. An independent
+`--publishing-tool butler` or `--publishing-tool steamcmd` selection installs
+the same tooling without Godot, using the same maintenance timer and account
+locks. Direct native commands remain available but require coordination with
+managed operations. Live account/upload and provider rendering qualification
+remain outstanding.
 
 Combine `web` with an explicit browser or the existing Playwright integration
 when exported games need browser smoke tests. The origin and publisher are

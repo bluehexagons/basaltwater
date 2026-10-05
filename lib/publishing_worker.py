@@ -117,6 +117,10 @@ def work(publishing: Publishing) -> None:
                 if run["state"] == "running":
                     run.update(state="unknown", message="Supervisor interrupted; reconcile before retrying", finished=now())
                     publishing.store.put(db, "runs", run)
+                    if run.get("release"):
+                        release = publishing.store.get(db, "releases", run["release"])
+                        release["state"] = "unknown"
+                        publishing.store.put(db, "releases", release)
         while True:
             with publishing.store.transaction() as db:
                 queued = [run for run in publishing.store.records(db, "runs") if run["state"] == "queued"]
@@ -132,13 +136,23 @@ def work(publishing: Publishing) -> None:
                                 continue
                             if run["job"] and publishing.store.get(db, "jobs", run["job"])["state"] != "enabled":
                                 continue
-                            artifact = publishing.store.get(db, "artifacts", run["artifact"])
                             try:
-                                publishing._valid_artifact(db, artifact)
-                                command = upload_command(publishing, run, artifact)
+                                if run["operation"] == "promote-beta":
+                                    from lib.publishing_steam import beta_branch
+
+                                    beta_branch(publishing.store.get(db, "releases", run["release"])["branch"])
+                                    command = []
+                                else:
+                                    artifact = publishing.store.get(db, "artifacts", run["artifact"])
+                                    publishing._valid_artifact(db, artifact)
+                                    command = upload_command(publishing, run, artifact)
                             except (OSError, RuntimeError, ValueError):
                                 run.update(state="preflight-failed", message="Check authentication, tool installation, configuration and artifact reviews", finished=now())
                                 publishing.store.put(db, "runs", run)
+                                if run.get("release"):
+                                    release = publishing.store.get(db, "releases", run["release"])
+                                    release["state"] = "preflight-failed"
+                                    publishing.store.put(db, "releases", release)
                                 db.execute("DELETE FROM dispatches WHERE identity=?", (run["identity"],))
                                 if run["job"]:
                                     job = publishing.store.get(db, "jobs", run["job"])
@@ -149,12 +163,21 @@ def work(publishing: Publishing) -> None:
                             run.update(state="running", started=now())
                             publishing.store.put(db, "runs", run)
                         try:
-                            outcome = execute(publishing, run, command, lease_fd=lease_fd)
+                            if run["operation"] == "promote-beta":
+                                from lib.publishing_steam import execute_beta
+
+                                outcome = execute_beta(publishing, run)
+                            else:
+                                outcome = execute(publishing, run, command, lease_fd=lease_fd)
                         except Exception:
                             outcome = {"state": "unknown", "message": "Worker interrupted; inspect provider state before retrying", "finished": now()}
                         with publishing.store.transaction() as db:
                             run.update(outcome)
                             publishing.store.put(db, "runs", run)
+                            if run.get("release") and outcome["state"] == "unknown":
+                                release = publishing.store.get(db, "releases", run["release"])
+                                release["state"] = "unknown"
+                                publishing.store.put(db, "releases", release)
                             for job in publishing.store.records(db, "jobs"):
                                 project = publishing.store.get(db, "projects", job["project"])
                                 if (outcome.get("needs_login") and project["provider"] == run["project_config"]["provider"]

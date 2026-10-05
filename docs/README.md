@@ -23,6 +23,7 @@ overview.
 | Install Basaltwater or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
+| Upload game builds and review release writing | [VM game publishing](GAME_PUBLISHING.md) | [Web panel](WEB_PANEL.md), [Project manifests](PROJECT_TOOLING.md) |
 | Add coding tools to an existing CachyOS KDE workstation | [CachyOS local setup](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md) |
 | Prepare a Windows 11 Ubuntu WSL build machine | [Ubuntu WSL](WINDOWS_WSL.md) | [Machine types](MACHINE_TYPES.md) |
 | Deploy an application or publish an internal site | [Deployments](DEPLOYMENTS.md) | [Internal web](INTERNAL_WEB.md), [CI/CD](CICD.md) |
@@ -87,6 +88,7 @@ automation, T3 Code, skills, and hardening.
 | [T3 Code server](T3_CODE.md) | Headless service, deliberate updates, pairing, remote clients, and security boundaries |
 | [Managed agent workflow skills](AGENT_SKILLS.md) | Codex/OpenCode/Claude skills, complete bundles, capability routing, and reconciliation |
 | [Godot Engine](GODOT.md) | Verified graphical/headless installation, web/publishing bundles, agent access, and updates |
+| [VM game publishing](GAME_PUBLISHING.md) | Butler/SteamCMD accounts, unattended uploads, promotion, reviewed translations and provider-editor handoffs |
 
 ## Services, deployments, and data
 
@@ -122,7 +124,9 @@ authentication and uploads in the existing web panel, including unattended and
 scheduled publishing with VM-local sessions. Its [release and communications
 extension](plans/GAME_RELEASE_COMMUNICATIONS.md) adds promotion, human-reviewed
 posts/translations, and publication; Steam default release stays manual.
-Tool installation exists today; these planned workflows are not implemented.
+The [operator guide](GAME_PUBLISHING.md) covers the implemented workflows and
+remaining provider qualification; automated post delivery and richer adapters
+remain planned.
 
 The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
 Debian-based operating environment built around basaltwater. It is not a

@@ -274,16 +274,19 @@ documented roadmap values rather than accepted CLI choices.
 The [game publishing plan](GAME_PUBLISHING.md), finalized 2026-10-05, extends
 the installed Butler/SteamCMD tools with authentication and upload management
 inside the existing web panel, plus unattended and scheduled uploads using
-VM-local sessions. This is unscheduled implementation work, distinct from the
-delivered Godot publishing-tool bundle. It includes engine-independent tool
-selection, shared update ownership, provider qualification, and integration
-with the existing scheduler; it does not reorder P0/P1 work.
+VM-local sessions. The initial implementation now includes independent tool
+selection, shared maintenance leases, native panel login, durable uploads and
+panel-owned polling. Live provider qualification remains open; this work does
+not reorder P0/P1 priorities. The [operator guide](../GAME_PUBLISHING.md) records
+the current contract and limits.
 The [release and communications extension](GAME_RELEASE_COMMUNICATIONS.md)
 adds build promotion and human-reviewed writing, translation, and publication.
 Steam default-branch release stays manual on Steamworks. Steam announcements
-and itch.io posts come first, with website/blog and social adapters planned
-afterward. Proposed manifest language settings default to English only; Spanish
-is the initial tested translation target, and other language tags remain allowed.
+and itch.io posts currently use reviewed exports and tracked human editor
+handoffs; automatic post submission, rich assets, website/blog and social
+adapters remain follow-on work. Supported manifest language settings default
+to English only; English/Spanish structural tests cover both translation
+directions, and other validated language tags remain allowed.
 
 ## Small improvements to land continuously
 

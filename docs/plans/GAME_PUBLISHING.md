@@ -1,6 +1,7 @@
 # Game publishing from managed VMs
 
-Status: implementation in progress, 2026-10-05. This plan owns Butler and SteamCMD management through the
+Status: initial implementation delivered, live qualification open, 2026-10-05.
+This plan owns Butler and SteamCMD management through the
 existing web panel, VM-local authentication, and manual or unattended uploads.
 The companion [release and communications plan](GAME_RELEASE_COMMUNICATIONS.md)
 extends it with build promotion, posts, translations, human review, and
@@ -11,6 +12,30 @@ does not displace the roadmap's reliability priorities. Implementation is now
 authorized; live account login, uploads, and provider qualification require
 operator-selected test destinations. See [the operator guide](../GAME_PUBLISHING.md)
 for the delivered capabilities and remaining qualification boundaries.
+
+## Delivered scope and remaining work
+
+The [operator guide](../GAME_PUBLISHING.md) is the current executable contract.
+The design below preserves the broader feature direction; it does not claim
+that every acceptance item has been qualified.
+
+| Area | Initial implementation | Next boundary |
+| --- | --- | --- |
+| Tool setup and maintenance | Independent repeatable Debian `--publishing-tool`; legacy Godot selection retained; one shared updater and provider leases across registered owners. | Live Debian reruns/ARM64 checks and separate CachyOS qualification. |
+| Authentication and panel | Same-panel Publishing page, bounded native PTY login, HTTPS-only mutations, VM-local sessions, local disconnect and terminal fallback. | Remote native login/prompt and cached-session qualification; bounded online identity checks. |
+| Builds and jobs | Completion records, private retained snapshots, fixed upload commands, durable dispatch ledger, cancellation/reconciliation, deterministic panel-owned interval jobs. | Live receipt/schema qualification, richer inventory/progress and sanitized notifications; schedule editing/removal and explicit safe re-upload. |
+| Promotion and releases | Exact itch.io channel re-upload, optional observed Steam beta API promotion, manual Steamworks release/rollback records and dependent gates. | Live beta API response qualification; coordinated multi-depot recipes and stronger external-concurrency observations. |
+| Writing and translations | Language manifest extension, agent prompt preparation, immutable plain-text drafts, side-by-side English/Spanish reviews, exact human approval and timed exports/handoffs. | Provider rendering, rich assets, terminology/placeholder checks and Steam localization CSV round trips. |
+| Posts | Steam/itch.io reviewed exports and operator-confirmed published URLs; automatic submission is not advertised. | Qualified post adapters, remote schedule ownership, external edit detection and additional website/blog/social destinations. |
+
+Current snapshots are retained explicitly (100 maximum, 10,000 files and 30 GiB
+per artifact). Status reads the latest 200 records per kind, while history,
+reviews and deduplication records remain durable. Automatic 30-day record
+pruning and removal of successful staging are future policy work, not current
+behavior. Only exact existing reviewed text can be reused by an upload schedule.
+One-depot Steam recipes create separate app builds and cannot compose a
+multi-depot release. Steam's beta API has no conditional update guarantee;
+the local lock cannot prevent a concurrent Steamworks change by another actor.
 
 ## Implementation review findings
 
@@ -276,8 +301,9 @@ authentication needs without soliciting or reading credential values.
 Implement one local publishing library with small Butler and SteamCMD adapters.
 The panel and CLI share validation, observations, locks, and operation records.
 The proposed namespace is `basaltw publish` with `status`, `auth`, `projects`,
-`prepare`, `upload`, `jobs`, `runs`, and `cancel` actions. These names are design
-targets, not currently supported commands. JSON output contains only sanitized results.
+`prepare`, `upload`, `jobs`, `runs`, and `cancel` actions. These commands are
+implemented; the operator guide documents exact arguments and limits. JSON
+output contains sanitized results.
 Promotion, release records, and editorial actions extend this namespace when
 their slices land; no machine-facing action can grant human text approval.
 
@@ -292,9 +318,9 @@ state primitives; do not execute uploads through the panel's LLM task runner.
 | Tool installation | Existing managed paths and installer ownership; extract shared publishing installation/update helpers without creating a second updater. |
 | Native credentials | Existing provider-native locations under the publishing user's home; private files/directories, never in Basaltwater controller credentials or project manifests. |
 | Optional promotion/post credentials | VM-only publisher API key or separately authenticated provider website session where needed; no controller transfer, manifest secret, or reuse of SteamCMD tokens as website credentials. |
-| Project settings | Versioned, non-secret VM-local records under `~/.config/basaltwater/publishing/`; project paths and destination IDs, no passwords or tokens. |
-| Publishing jobs | Versioned non-secret records in the same publishing configuration, integrated with the existing scheduler; source, destination, cadence, configuration revision, failure policy, and enabled state. |
-| Run records | Private bounded records under `~/.local/state/basaltwater/publishing/`; identity, artifact digest, destination, timestamps, tool version, outcome, and provider reference. |
+| Project settings | Private VM-local SQLite records under `~/.local/share/basaltwater/publishing/`; project paths and destination IDs, no passwords or tokens. |
+| Publishing jobs | Non-secret records in the same database, integrated with the existing scheduler; source, destination, cadence, configuration revision, failure count, and enabled state. |
+| Run records | Private durable records in the same database; identity, artifact digest, destination, timestamps, outcome and provider reference. Status reads are bounded; retention pruning is deferred. |
 | Prepared content | Private per-run snapshots outside repositories and credential roots; retained while active/uncertain, with explicit cleanup and a bounded retention policy. |
 | Interactive state | VM memory and private runtime resources only; discarded on cancellation, expiry, or restart. |
 
@@ -366,8 +392,9 @@ and need the same protection as the original VM; support bundles exclude them.
 
 ## Delivery sequence and acceptance
 
-Each slice gets focused mocked tests and a documentation update. The plan
-authorizes no implementation, package installation, login, or live upload now.
+Each slice gets focused mocked tests and a documentation update. Implementation
+is authorized. Live account login and uploads remain separate qualification on
+operator-selected destinations; development tests do not mutate provider state.
 
 | Slice | Work | Exit criteria |
 | --- | --- | --- |

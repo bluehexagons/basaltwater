@@ -12,7 +12,7 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.publishing_store import digest, identifier, private_directory
 from lib.validation import validate_filesystem_path
 
-MAX_FILES = 100000
+MAX_FILES = 10000
 MAX_BYTES = 30 * 1024 ** 3
 _PRIVATE_NAMES = {".git", ".ssh", ".config", ".env", "butler_creds", "config.vdf", "loginusers.vdf", "ssfn"}
 
@@ -53,6 +53,8 @@ def scan(source: Path, destination: Path | None = None) -> list[dict]:
         for name in sorted(files):
             relative = (Path(directory).relative_to(source) / name).as_posix()
             validate_filesystem_path(relative, must_exist=False)
+            if len(relative.encode()) > 1024:
+                raise ValueError("Artifact paths exceed the 1024-byte limit")
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root_fd)
             with os.fdopen(fd, "rb") as stream:
                 before = os.fstat(stream.fileno())

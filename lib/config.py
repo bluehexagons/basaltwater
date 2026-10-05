@@ -440,6 +440,7 @@ class SetupConfig:
     install_butler: bool = False
     install_steamcmd: bool = False
     godot_bundles: Optional[StrList] = None
+    publishing_tools: Optional[StrList] = None
     install_gh: bool = False
     install_codex: bool = False
     install_claude: bool = False
@@ -694,6 +695,11 @@ class SetupConfig:
             raise ValueError("notification_strict_https must be boolean")
         validate_syncthing_settings(self)
         selected_godot_bundles = list(dict.fromkeys(self.godot_bundles or []))
+        from lib.publishing_config import validate_publishing_tools
+
+        self.publishing_tools = validate_publishing_tools(self.publishing_tools) or None
+        if self.publishing_tools and (self.username == "root" or self.system_type in {"server_proxmox", "server_wsl", "agent_cachyos"}):
+            raise ValueError("--publishing-tool requires a non-root Debian workstation/server user; CachyOS uses --butler / --steamcmd")
         self.godot_bundles = selected_godot_bundles or None
         if self.godot_bundles:
             self.install_godot = True
@@ -873,6 +879,7 @@ class SetupConfig:
             or self.git_author_name is not None
             or self.git_author_email is not None
             or self.privilege_broker_port is not None
+            or self.publishing_tools
         )
 
     def effective_web_ports(self) -> list[int]:
@@ -1210,6 +1217,8 @@ class SetupConfig:
             args.append("--steamcmd")
         for bundle in self.godot_bundles or []:
             args.append(f"--godot-bundle {shlex.quote(bundle)}")
+        for tool in self.publishing_tools or []:
+            args.append(f"--publishing-tool {shlex.quote(tool)}")
 
         for tool in self.selected_agent_tools():
             args.append(f"--agent-tool {shlex.quote(tool)}")
@@ -1738,6 +1747,8 @@ class SetupConfig:
             cmd_parts.append("--steamcmd")
         for bundle in self.godot_bundles or []:
             cmd_parts.append(f"--godot-bundle {shlex.quote(bundle)}")
+        for tool in self.publishing_tools or []:
+            cmd_parts.append(f"--publishing-tool {shlex.quote(tool)}")
 
         selected_agent_tools = self.selected_agent_tools()
         default_agent_tools = list(system_type_defaults.default_agent_tools)
@@ -2639,6 +2650,11 @@ class SetupConfig:
             godot_bundles=(
                 getattr(args, 'godot_bundles', None)
                 if isinstance(getattr(args, 'godot_bundles', None), list)
+                else None
+            ),
+            publishing_tools=(
+                getattr(args, 'publishing_tools', None)
+                if isinstance(getattr(args, 'publishing_tools', None), list)
                 else None
             ),
             agent_tools=agent_tools,

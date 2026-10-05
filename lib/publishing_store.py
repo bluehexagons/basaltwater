@@ -67,7 +67,7 @@ class PublishingStore:
 
     def __init__(self, home: str | None = None):
         self.home = Path(home or Path.home()).absolute()
-        validate_filesystem_path(str(self.home), must_exist=True)
+        validate_filesystem_path(str(self.home), must_exist=False)
         self.root = self.home / ".local/share/basaltwater/publishing"
 
     @contextmanager
@@ -106,7 +106,8 @@ class PublishingStore:
     def put(connection, kind: str, value: dict) -> dict:
         identifier(value["id"])
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
-        if len(encoded.encode()) > 256 * 1024:
+        limit = 32 * 1024 * 1024 if kind == "artifacts" else 256 * 1024
+        if len(encoded.encode()) > limit:
             raise ValueError("Publishing record exceeds size limit")
         connection.execute("INSERT OR REPLACE INTO records VALUES(?,?,?)", (kind, value["id"], encoded))
         return value
@@ -117,7 +118,15 @@ class PublishingStore:
 
     def snapshot(self) -> dict:
         with self.transaction() as db:
-            result = {kind: self.records(db, kind) for kind in ("projects", "artifacts", "runs", "jobs", "drafts", "releases", "accounts")}
+            result = {}
+            for kind in ("projects", "artifacts", "runs", "jobs", "drafts", "releases", "accounts"):
+                records = []
+                for row in db.execute("SELECT document FROM records WHERE kind=? ORDER BY rowid DESC LIMIT 200", (kind,)):
+                    value = json.loads(row[0])
+                    if kind == "artifacts":
+                        value["file_count"] = len(value.pop("entries"))
+                    records.append(value)
+                result[kind] = records
             reviews = {row[0]: {"hash": row[1], "principal": row[2], "at": row[3]} for row in db.execute("SELECT * FROM reviews")}
         for draft in result["drafts"]:
             draft["review"] = reviews.get(draft["id"])
