@@ -498,7 +498,7 @@ footer {
 <form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="brand-preview-not-a-runtime-token"><input type="hidden" name="id" value="">
 <div class="agent-fields"><label>Task name<input name="title" value="" maxlength="120" required placeholder="Weekly dependency update"></label>
-<label>Working directory<input name="directory" value="/home/agent" required placeholder="~/repos/project"></label></div>
+<label>Working directory<input name="directory" value="/home/operator" required placeholder="~/repos/project"></label></div>
 <label>Prompt<textarea name="prompt" maxlength="4000" required placeholder="Describe the task and what a successful result should include."></textarea></label>
 <div class="agent-fields"><label>Model<select name="model"><option value="" selected>Configured default</option></select></label><label>Reasoning effort<select name="effort"><option value="" selected>Configured default</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high (xhigh)</option><option value="max">Maximum (max)</option><option value="ultra">Ultra</option></select></label></div>
 <p class="agent-help">Model choices use Codex's local cache; availability and effort support depend on your account and model. Use Additional options for a custom model ID.</p>

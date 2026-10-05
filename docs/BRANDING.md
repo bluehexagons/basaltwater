@@ -45,7 +45,7 @@ the helper's `label` argument when an icon needs its own accessible name.
 Individual `brand/icon-*.svg` exports are available for other pages and tools.
 Thirteen icons cover navigation; storage, data, import, export and power icons
 extend the family to agent tools and administration. Page eyebrows, section
-headings, service cards and tool cards reuse the same geometry. `render_heading()` pairs a
+headings, service summaries and tool rows reuse the same geometry. `render_heading()` pairs a
 decorative icon with a visible title and preserves its optional anchor ID.
 
 The [connected basalt artwork](brand/artwork-network.svg) accompanies the
@@ -94,7 +94,7 @@ Use semantic tokens instead of copying color values into each screen.
 | `sea`, `sea-soft` | Green for access, trust and published sites |
 
 Category accents appear on navigation icons, headers, section icon tiles,
-resource-card edges, and softly tinted service/tool cards. Use `tone-water`,
+resource-card edges, service surfaces, and tool/admin row edges. Use `tone-water`,
 `tone-workspace`, `tone-stone` or `tone-sea` with `--section-ink` and
 `--section-soft` to reuse these accents. Status labels continue to use the
 separate `ok`, `warning` and `bad` tokens, with explicit text.
@@ -132,7 +132,11 @@ symbol and accent. No sibling product identity is included in this release.
 
 Run `python3 scripts/export_brand.py` to regenerate the logo, icons, textures,
 tokens and static specimens. The generator renders the existing panel with synthetic
-data. `make brand-check` (also part of `make check`) renders into a temporary
+data and a fixed `/home/operator` account directory, independent of the account
+or clock running the export. Diagnostic state is synthetic too. Regression tests
+compare every exported asset under root and developer account fixtures and block
+host commands, task-storage reads, and credential inspection.
+`make brand-check` (also part of `make check`) renders into a temporary
 directory and fails if committed exports are missing or stale, without changing
 the checkout. The generator mocks host discovery; it does not contact a service
 or read private host state. Review [identity](brand/index.html), [README](brand/readme.html),

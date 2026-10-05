@@ -217,7 +217,7 @@ def export_assets(assets: Path) -> None:
             {"label": "HTTPS service: review", "url": "https://workshop.example.test:8446/", "description": "not responding"},
         ],
         "access": [{"label": "SSH", "value": "ssh operator@workshop.example.test", "description": "Verified host identity"}],
-    })
+    }, agent_home="/home/operator")
     state.csrf_token = "brand-preview-not-a-runtime-token"
     job_rows = []
     for service, label, status, tone, timer, result in (
@@ -265,6 +265,7 @@ def export_assets(assets: Path) -> None:
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
         patch.object(state.agent_tasks, "available", return_value=False),
+        patch.object(state.agent_diagnostics, "snapshot", return_value={"status": "not_loaded"}),
         patch.object(agents, "_tool_path", return_value=None),
         patch.object(agents, "codex_models", return_value=[]),
         patch.object(agents, "_available_templates", return_value={
