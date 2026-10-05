@@ -526,8 +526,11 @@ GStreamer, its base/PipeWire plugins and GTK3 prerequisites. Setup starts no
 control helper. From KDE, use `basaltw desktop --native doctor`, then
 `basaltw desktop --native start`; the owner must select one monitor and allow
 keyboard/pointer access in KDE's portal dialog. `handoff` provides human
-pause/resume/stop controls. `stop` closes only automation, preserving KDE and
-applications. Sessions expire after 15 minutes and retain no saved portal grant.
+pause/resume/stop/revoke controls. `stop` closes only automation, preserving KDE
+and applications. The default lifetime is 15 minutes, with explicit renewal up
+to eight hours. `start --remember` opts into a reusable portal grant where KDE
+supports it, after initial owner approval. Human pause persists across restored
+sessions; `revoke` removes saved access. There is no login autostart.
 See [native control and limitations](CACHYOS_DESKTOP.md).
 
 The read-only desktop doctor reports package versions, user-bus sockets, and

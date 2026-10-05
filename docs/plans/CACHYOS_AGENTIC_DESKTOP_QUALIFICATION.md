@@ -89,6 +89,27 @@ the latest fully updated rolling release, recording Shelly and Plasma Login
 Manager versions alongside the KDE Wayland stack; older ISO defaults are not
 a separate support target.
 
+### Fast21 feedback and grant contracts — 2026-10-05
+
+The Fast21 audit reported a first portal attempt that stopped without useful
+logs, followed by successful owner-approved control. The first failure's cause
+was not recovered. It also found native key/button taps too short for the
+game's press animation and VM/browser assumptions in the agent manifest.
+
+The implementation now reports initialization separately from a pending Start
+response, retains failure stage/detail in private status and logs, and accepts
+bounded, interruptible key/button holds. The manifest describes native
+authentication and prefers the active session's browser provider, distinguishing
+legacy artifact paths from capability. Discovery still launches no applications.
+
+Read-only checks found RemoteDesktop interface version 2 and ScreenCast version
+5 on this workstation, with portal 1.22.1 and KDE portal 6.7.5. Opt-in persistent
+grants, single-use token handling, owner revocation, pause across restoration,
+and bounded session renewal have mocked contract tests. These checks do not
+qualify prompt-free restoration, a new live held-button/game interaction,
+logout/login behavior or grant revocation on this hardware. Record those
+results separately after explicit initial KDE monitor/device approval.
+
 ## P0 prerequisite gate
 
 Run `basaltw local cachyos-doctor --json` from a terminal in the disposable

@@ -17,12 +17,18 @@ import subprocess
 import threading
 import time
 
-from desktop import accessibility, client, session_runtime
+from desktop import accessibility, client, native_grants, session_runtime
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 
 MAX_MESSAGE = 65536
 SESSION_SECONDS = 900
+MAX_SESSION_SECONDS = 28800
+
+
+def validate_session_seconds(seconds):
+    if type(seconds) is not int or not 60 <= seconds <= MAX_SESSION_SECONDS:
+        raise ValueError("Native session lifetime must be 60–28800 seconds (at most 8 hours)")
 
 
 def runtime_directory(*, create=False):
@@ -76,10 +82,11 @@ def status():
                 raise ValueError("Invalid native status receipt")
         except FileNotFoundError:
             pass
-        return {**receipt, "last_state": receipt.get("state"), "state": "stopped",
+        grant = native_grants.metadata()
+        return {**receipt, **grant, "last_state": receipt.get("state"), "state": "stopped",
                 "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
                 "paused": True, "control_active": False, "expires_in": 0,
-                "interactive_required": True,
+                "interactive_required": None if grant["grant_saved"] else True,
                 "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
 
 
@@ -102,9 +109,13 @@ def check_session():
     return display
 
 
-def start():
+def start(*, remember=False, session_seconds=SESSION_SECONDS):
+    validate_session_seconds(session_seconds)
     current = status()
     if current["state"] != "stopped":
+        if (remember and not current.get("remember_requested")
+                or session_seconds != SESSION_SECONDS and session_seconds != current.get("session_seconds")):
+            raise ValueError("Native session is already active; use renew for its lifetime, or stop/start --remember for reusable grants")
         return current
     check_session()
     folder = runtime_directory(create=True)
@@ -114,13 +125,24 @@ def start():
         current = status()
         if current["state"] != "stopped":
             return current
+        helper_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(helper_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Previous native helper is still stopping; inspect status before retrying start") from exc
+        finally:
+            os.close(helper_fd)
         env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus",
                    XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
         env.pop("AT_SPI_BUS_ADDRESS", None)
         log_fd = os.open(folder / "helper.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
         os.fchmod(log_fd, 0o600)
         with os.fdopen(log_fd, "w") as log:
-            process = subprocess.Popen(["/usr/bin/python3", "-m", "desktop.native_session", "--serve"],
+            argv = ["/usr/bin/python3", "-m", "desktop.native_session", "--serve", "--session-seconds", str(session_seconds)]
+            if remember or native_grants.metadata()["grant_saved"]:
+                argv.append("--remember")
+            process = subprocess.Popen(argv,
                 cwd=str(Path(__file__).resolve().parents[1]), env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=log, start_new_session=True)
         deadline = time.monotonic() + 3
@@ -134,6 +156,31 @@ def start():
         raise RuntimeError("Native helper start is pending; inspect desktop status before retrying")
     except BlockingIOError as exc:
         raise RuntimeError("A native start is already pending; inspect status") from exc
+    finally:
+        os.close(fd)
+
+
+def revoke():
+    """Close current control and remove its saved grant through the portal store."""
+    folder = runtime_directory(create=True)
+    fd = os.open(folder / "start.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            return request({"action": "revoke"})
+        except (FileNotFoundError, ConnectionRefusedError):
+            with native_grants.locked():
+                data = native_grants.load()
+                if data and (data["token"] or data["consumed"]):
+                    from desktop.portal import Portal
+                    portal = Portal(lambda: None)
+                    try:
+                        for token in dict.fromkeys(filter(None, [data["token"], data["consumed"]])):
+                            portal.revoke_token(token)
+                    finally:
+                        portal.close()
+            native_grants.forget()
+            return {"stopped": True, "grant_saved": False, "remember_requested": False, "desktop_preserved": True}
     finally:
         os.close(fd)
 
@@ -180,7 +227,8 @@ def keysyms(chord):
 
 
 class NativeSession:
-    def __init__(self, portal, *, receipt=None):
+    def __init__(self, portal, *, receipt=None, remember=False, session_seconds=SESSION_SECONDS, paused=False):
+        validate_session_seconds(session_seconds)
         self.portal = portal
         self.generation = secrets.token_hex(16)
         self.state = "initializing"
@@ -191,10 +239,15 @@ class NativeSession:
         self.input_active = False
         self.input_released = threading.Event()
         self.input_released.set()
-        self.paused = False
+        self.remember = remember
+        self.grant_saved = False
+        self.restore_attempted = False
+        self.revoke_requested = False
+        self.session_seconds = session_seconds
+        self.paused = paused
         self.lease = None
         self.lease_until = 0
-        self.until = time.monotonic() + SESSION_SECONDS
+        self.until = time.monotonic() + session_seconds
         self.geometry = None
         self.captured = 0
         self.elements = {}
@@ -206,7 +259,11 @@ class NativeSession:
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
                 "backend": "portal", "origin": "portal", "paused": self.paused,
                 "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
-                "geometry": self.geometry, "interactive_required": self.state == "awaiting-consent",
+                "remember_requested": self.remember, "grant_saved": self.grant_saved,
+                "restore_attempted": self.restore_attempted, "session_seconds": self.session_seconds,
+                "max_session_seconds": MAX_SESSION_SECONDS,
+                "geometry": self.geometry,
+                "interactive_required": False if self.state == "running" else (None if self.restore_attempted or self.state == "initializing" else True),
                 "expires_in": max(0, int(self.until - time.monotonic())),
                 "control_active": self.lease is not None and time.monotonic() < self.lease_until,
                 "detail": self.detail}
@@ -228,7 +285,11 @@ class NativeSession:
 
     def fail(self, error):
         with self.lock:
-            self.state, self.detail = "failed", str(error)[:2048]
+            detail = str(error)
+            token = self.portal.restore_token if self.portal else None
+            if isinstance(token, str) and token:
+                detail = detail.replace(token, "[redacted grant]")
+            self.state, self.detail = "failed", detail[:2048]
             self.last_failure = {"stage": self.portal_stage, "detail": self.detail,
                                  "at": datetime.now(timezone.utc).isoformat()}
             print(self.last_failure["at"], "Native control failed at", self.portal_stage, self.detail, flush=True)
@@ -264,21 +325,62 @@ class NativeSession:
                 self.paused = True
                 self.lease = None
                 self.elements.clear()
+                if self.remember:
+                    native_grants.set_paused(True)
                 self.record()
                 return self.snapshot_status()
             if action == "resume":
+                if self.remember:
+                    native_grants.set_paused(False)
                 self.paused = False
                 self.record()
                 return self.snapshot_status()
             if action == "stop":
                 self.close()
                 return {"stopped": True, "desktop_preserved": True}
+            if action == "revoke":
+                self.revoke_requested = True
+                self.close()
+                data = native_grants.load()
+                tokens = [self.portal.restore_token] if self.portal else []
+                if data:
+                    tokens.extend([data["token"], data["consumed"]])
+                if self.portal:
+                    self.lock.release()
+                    try:
+                        self.input_released.wait(4)
+                        self.portal.close()
+                        for token in dict.fromkeys(filter(None, tokens)):
+                            self.portal.revoke_token(token)
+                    finally:
+                        self.lock.acquire()
+                elif any(tokens):
+                    from desktop.portal import Portal
+                    portal = Portal(lambda: None)
+                    try:
+                        for token in dict.fromkeys(filter(None, tokens)):
+                            portal.revoke_token(token)
+                    finally:
+                        portal.close()
+                native_grants.forget()
+                self.remember, self.grant_saved = False, False
+                self.record()
+                return {"stopped": True, "grant_saved": False, "remember_requested": False, "desktop_preserved": True}
             if time.monotonic() >= payload.get("deadline", float("inf")):
                 raise RuntimeError("Native request expired; observe before retrying")
             if payload.get("generation") != self.generation:
                 raise ValueError("Native session changed; observe again")
             if self.state != "running" or time.monotonic() >= self.until:
                 raise RuntimeError("Native control is not ready; inspect desktop status and the KDE permission dialog")
+            if action == "renew":
+                seconds = payload.get("seconds", SESSION_SECONDS)
+                validate_session_seconds(seconds)
+                if self.paused:
+                    raise RuntimeError("Human paused native control; renewal cannot resume it")
+                self.session_seconds = seconds
+                self.until = time.monotonic() + seconds
+                self.record()
+                return self.snapshot_status()
             if action == "release":
                 if payload.get("lease") == self.lease:
                     self.lease = None
@@ -433,6 +535,7 @@ class NativeSession:
                         try:
                             self.portal.notify("NotifyPointerButton", "iu", code, 0)
                         except Exception as exc:
+                            self.fail("Pointer release failed; native control stopped")
                             self.close()
                             raise RuntimeError("Pointer release failed; native control stopped") from exc
         elif kind in ("key", "text"):
@@ -459,6 +562,7 @@ class NativeSession:
                         except Exception as exc:
                             release_error = exc
                     if release_error is not None:
+                        self.fail("Key release failed; native control stopped")
                         self.close()
                         raise RuntimeError("Key release failed; native control stopped") from release_error
         else:
@@ -466,12 +570,16 @@ class NativeSession:
         return {"generation": self.generation, "geometry": self.geometry}
 
 
-def serve():
+def serve(*, remember=False, session_seconds=SESSION_SECONDS):
     check_session()
     folder = runtime_directory(create=True)
     lock_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    session = NativeSession(None, receipt=folder / "status.json")
+    if remember:
+        native_grants.enable()
+    grant = native_grants.metadata()
+    session = NativeSession(None, receipt=folder / "status.json", remember=remember,
+                            session_seconds=session_seconds, paused=grant["paused"] if remember else False)
     session.record()
     try:
         from desktop.portal import Portal
@@ -498,12 +606,26 @@ def serve():
                 if session.stopping.is_set():
                     portal.close()
                     return
-            node, size = portal.start()
+            def save_token(token):
+                with session.lock:
+                    if session.revoke_requested:
+                        portal.revoke_token(token)
+                        return
+                    native_grants.save_token(token)
+                    session.grant_saved = True
+                    session.record()
+            if remember:
+                previous = native_grants.load()
+                if previous and previous["consumed"]:
+                    portal.revoke_token(previous["consumed"])
+            token = native_grants.consume() if remember else None
+            session.restore_attempted = token is not None
+            node, size = portal.start(remember=remember, restore_token=token, save_token=save_token)
             with session.lock:
                 if session.stopping.is_set():
                     return
                 session.node, session.logical_size = node, size
-                session.until = time.monotonic() + SESSION_SECONDS
+                session.until = time.monotonic() + session_seconds
                 session.state, session.detail = "running", "User-approved selected-monitor capture and input"
                 session.portal_stage = "ready"
                 print(datetime.now(timezone.utc).isoformat(), session.detail, flush=True)
@@ -516,6 +638,7 @@ def serve():
     def connected(connection):
         with connection:
             connection.settimeout(15)
+            payload = {}
             try:
                 _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
                 if uid != os.getuid():
@@ -533,14 +656,19 @@ def serve():
                     payload["_cancelled"] = cancelled
                 result = session.handle(payload)
             except Exception as exc:
+                if payload.get("action") == "revoke":
+                    session.fail(exc)
+                    session.close()
                 result = {"error": str(exc)}
             try:
                 connection.sendall(json.dumps(result).encode() + b"\n")
             except OSError:
                 pass
 
+    workers = []
+
     def accepting(server):
-        workers = []
+        nonlocal workers
         while not session.stopping.is_set():
             workers = [worker for worker in workers if worker.is_alive()]
             try:
@@ -571,7 +699,8 @@ def serve():
         server.settimeout(.25)
         signal.signal(signal.SIGTERM, lambda *_: session.close())
         signal.signal(signal.SIGINT, lambda *_: session.close())
-        threading.Thread(target=accepting, args=(server,), daemon=True).start()
+        accepting_thread = threading.Thread(target=accepting, args=(server,), daemon=True)
+        accepting_thread.start()
         threading.Thread(target=initialize, daemon=True).start()
         GLib.timeout_add(250, tick)
         try:
@@ -581,10 +710,21 @@ def serve():
             session.input_released.wait(26)
             if session.portal:
                 session.portal.close()
+            # Complete revocation and its response before daemon workers exit.
+            accepting_thread.join(1)
+            deadline = time.monotonic() + 14
+            for worker in tuple(workers):
+                worker.join(max(0, deadline - time.monotonic()))
             path.unlink(missing_ok=True)
             os.close(lock_fd)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(serve())
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--serve", action="store_true", required=True)
+    parser.add_argument("--remember", action="store_true")
+    parser.add_argument("--session-seconds", type=int, default=SESSION_SECONDS)
+    options = parser.parse_args()
+    raise SystemExit(serve(remember=options.remember, session_seconds=options.session_seconds))

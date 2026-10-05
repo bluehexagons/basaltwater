@@ -70,7 +70,14 @@ recent and coordinates within the selected monitor; new files are never
 overwritten. Restart the portal after monitor/scaling/resolution changes.
 Honor human pause without automatically resuming it. Stop with
 `basaltw desktop --native stop` when finished; KDE and applications keep running.
-The portal session expires after 15 minutes and is never restored at login.
+The default lifetime is 15 minutes; explicit starts/renewals allow up to eight
+hours. For unattended future work, the owner can opt in once with `start
+--remember` and approve KDE's monitor/device and persistence choices. Later
+`start` calls reuse the saved grant where KDE permits; inspect status and never
+claim a prompt is absent based only on a token. Human pause persists across
+restoration and must not be resumed automatically. `renew --generation GEN
+--seconds 28800` cannot renew paused or expired control. Owner `revoke` removes
+saved access; `stop` preserves it. No session starts or renews at login.
 Package/portal observations in `basaltw local cachyos-doctor --json` do not
 grant or prove automation. Report unavailable checks accurately.
 

@@ -16,8 +16,16 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("desktop", help="Use the shared Debian desktop or opt in to native CachyOS automation")
     parser.add_argument("--native", action="store_true", help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
     commands = parser.add_subparsers(dest="desktop_command", required=True)
-    for name in ("status", "start", "stop", "logout", "windows", "doctor", "handoff"):
+    for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
         commands.add_parser(name).add_argument("--json", action="store_true")
+    starting = commands.add_parser("start")
+    starting.add_argument("--json", action="store_true")
+    starting.add_argument("--remember", action="store_true", help="Native opt-in to a reusable KDE grant; initial approval remains required")
+    starting.add_argument("--session-seconds", type=int, default=900, help="Native lifetime, 60–28800 seconds; default 900")
+    renewal = commands.add_parser("renew", help="Renew a running native session without resuming human pause")
+    renewal.add_argument("--generation", required=True)
+    renewal.add_argument("--seconds", type=int, default=900)
+    renewal.add_argument("--json", action="store_true")
     commands.add_parser("smoke", help="Live Geany edit/save/dialog check in an isolated test instance")
     screenshot = commands.add_parser("screenshot")
     screenshot.add_argument("--output", help="New PNG path; defaults to private Pictures/basaltwater artifact storage")
@@ -101,7 +109,21 @@ def run_desktop_command(args: argparse.Namespace) -> int:
         if command == "status":
             result = backend.status()
         elif command == "start":
-            result = backend.start()
+            if backend is runtime:
+                if args.remember or args.session_seconds != 900:
+                    raise ValueError("Persistent grants and session lifetime require --native")
+                result = backend.start()
+            else:
+                result = backend.start(remember=args.remember, session_seconds=args.session_seconds)
+        elif command == "revoke":
+            if backend is runtime:
+                raise ValueError("Portal grant revocation requires --native")
+            result = backend.revoke()
+        elif command == "renew":
+            if backend is runtime:
+                raise ValueError("Portal session renewal requires --native")
+            backend.validate_session_seconds(args.seconds)
+            result = backend.request({"action": "renew", "generation": args.generation, "seconds": args.seconds})
         elif command == "stop":
             if backend is runtime:
                 raise RuntimeError("Stop closes a native portal session; use --native stop, or logout for a Debian desktop")

@@ -28,7 +28,7 @@ def describe(status: dict) -> str:
     if status.get("state") != "running":
         return "Native desktop control unavailable: " + status.get("detail", "Inspect desktop status")
     if status.get("expires_in", 0) <= 0:
-        return "Automation expired; start a new session with KDE consent"
+        return "Automation expired; start and inspect KDE permission status"
     if status.get("paused"):
         return "Agent input paused — you have control"
     return "Agent input enabled (" + str(status["expires_in"]) + " seconds remaining)"
@@ -71,14 +71,19 @@ def main():
 
         def work():
             try:
-                result = native_session.status() if action == "status" else native_session.request({"action": action})
+                if action == "status":
+                    result = native_session.status()
+                elif action == "revoke":
+                    result = native_session.revoke()
+                else:
+                    result = native_session.request({"action": action})
             except (OSError, ValueError, RuntimeError) as exc:
                 result = {"error": str(exc)}
             GLib.idle_add(show, result)
 
         threading.Thread(target=work, daemon=True).start()
 
-    for title, action in (("Pause agents", "pause"), ("Resume agents", "resume"), ("Stop automation", "stop")):
+    for title, action in (("Pause agents", "pause"), ("Resume agents", "resume"), ("Stop automation", "stop"), ("Revoke saved access", "revoke")):
         button = Gtk.Button(label=title)
         button.connect("clicked", lambda _button, operation=action: request(operation))
         row.pack_start(button, False, False, 0)

@@ -19,7 +19,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 from desktop import native_session as native
-from desktop import native_handoff
+from desktop import native_grants, native_handoff
 from desktop import client
 from desktop.portal import Portal, REMOTE, SCREENCAST
 from lib import desktop_cli
@@ -214,6 +214,23 @@ class NativeControlTests(unittest.TestCase):
             self.session.handle({**self.payload,"deadline":time.monotonic()-1,"action":"input","kind":"text","text":"late"})
         self.portal.notify.assert_not_called()
 
+    def test_renewal_is_bounded_and_cannot_restore_paused_expired_or_old_session(self):
+        result = self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 28800})
+        self.assertGreater(result["expires_in"], 28790)
+        for seconds in (0, 59, 28801, True, "900"):
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": seconds})
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.session.handle({"action": "renew", "generation": "old", "seconds": 900})
+        self.session.handle({"action": "pause"})
+        deadline = self.session.until
+        with self.assertRaisesRegex(RuntimeError, "paused"):
+            self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 900})
+        self.assertEqual(self.session.until, deadline)
+        self.session.until = time.monotonic() - 1
+        with self.assertRaisesRegex(RuntimeError, "not ready"):
+            self.session.handle({"action": "renew", "generation": self.session.generation, "seconds": 900})
+
 
 class NativeHandoffTests(unittest.TestCase):
     def test_only_live_running_session_reports_enabled_input(self):
@@ -223,7 +240,7 @@ class NativeHandoffTests(unittest.TestCase):
             ({"state": "failed", "detail": "Permission denied", "paused": True}, "Native desktop control failed: Permission denied"),
             ({"state": "stopped", "paused": True}, "Automation stopped; KDE and applications are preserved"),
             ({"stopped": True}, "Automation stopped; KDE and applications are preserved"),
-            ({"state": "running", "expires_in": 0}, "Automation expired; start a new session with KDE consent"),
+            ({"state": "running", "expires_in": 0}, "Automation expired; start and inspect KDE permission status"),
             ({"state": "running", "expires_in": 30, "paused": True}, "Agent input paused — you have control"),
             ({"state": "running", "expires_in": 30}, "Agent input enabled (30 seconds remaining)"),
             ({"error": "Socket closed"}, "Native desktop control unavailable: Socket closed"),
@@ -237,7 +254,7 @@ class NativeHandoffTests(unittest.TestCase):
         gtk, glib = Mock(), Mock()
         label = Mock()
         gtk.Label.side_effect = [label, Mock()]
-        buttons = [Mock(), Mock(), Mock()]
+        buttons = [Mock(), Mock(), Mock(), Mock()]
         gtk.Button.side_effect = buttons
         workers, responses = [], []
         glib.idle_add.side_effect = lambda callback, result: responses.append((callback, result))
@@ -280,6 +297,22 @@ class NativeHandoffTests(unittest.TestCase):
 
 
 class NativeCliTests(unittest.TestCase):
+    def test_persistent_start_and_renewal_arguments_reach_only_native_backend(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "--native", "start", "--remember", "--session-seconds", "28800"])
+        with patch.object(native, "start", return_value={"state": "initializing"}) as start, redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+        start.assert_called_once_with(remember=True, session_seconds=28800)
+        args = parser.parse_args(["desktop", "--native", "renew", "--generation", "current", "--seconds", "3600"])
+        with patch.object(native, "request", return_value={"state": "running"}) as request, redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(args), 0)
+        request.assert_called_once_with({"action": "renew", "generation": "current", "seconds": 3600})
+        args = parser.parse_args(["desktop", "start", "--remember"])
+        with patch.object(desktop_cli.runtime, "start") as xrdp, redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+        xrdp.assert_not_called()
+
     def test_native_start_and_status_report_failed_consent_without_claiming_success(self):
         parser = argparse.ArgumentParser()
         desktop_cli.add_desktop_subparser(parser.add_subparsers())
@@ -353,6 +386,8 @@ class PortalContractTests(unittest.TestCase):
         self.portal.pending = set()
         self.portal.waiters = set()
         self.portal.cancelled = threading.Event()
+        self.portal.close_lock = threading.RLock()
+        self.portal.restore_token = None
         self.portal.progress = Mock()
         self.portal.closed = Mock()
         self.portal.session = None
@@ -405,8 +440,162 @@ class PortalContractTests(unittest.TestCase):
         self.portal.owner_changed(None,None,None,None,None,Mock(unpack=lambda:("portal",":1.42","")))
         self.portal.closed.assert_called_once()
 
+    def test_restore_options_are_remote_desktop_only_and_returned_token_is_saved(self):
+        self.portal.GLib.Variant.side_effect = lambda signature, values: (signature, values)
+        self.portal.bus.call_with_unix_fd_list_sync.return_value = (Mock(unpack=lambda: (0,)), Mock(get=lambda _: 42))
+        save = Mock()
+        with patch.object(self.portal, "call", return_value=Mock(unpack=lambda: (2,))), \
+                patch.object(self.portal, "response", side_effect=[{"session_handle": "session"}, {}, {},
+                    {"devices": 3, "streams": [(17, {"size": [1280, 720]})], "restore_token": "new-token"}]) as response:
+            self.assertEqual(self.portal.start(remember=True, restore_token="old-token", save_token=save), (17, [1280, 720]))
+        devices = response.call_args_list[1].args[-1]
+        self.assertEqual(devices["persist_mode"], ("u", 2))
+        self.assertEqual(devices["restore_token"], ("s", "old-token"))
+        sources = response.call_args_list[2].args[-1]
+        self.assertNotIn("persist_mode", sources)
+        self.assertNotIn("restore_token", sources)
+        save.assert_called_once_with("new-token")
+
+    def test_unsupported_persistence_fails_before_requesting_consent(self):
+        with patch.object(self.portal, "call", return_value=Mock(unpack=lambda: (1,))), \
+                patch.object(self.portal, "response") as response, self.assertRaisesRegex(RuntimeError, "does not support"):
+            self.portal.start(remember=True)
+        response.assert_not_called()
+
+    def test_revocation_targets_only_its_grant_and_retains_state_on_store_errors(self):
+        class StoreError(Exception):
+            pass
+        self.portal.GLib.Error = StoreError
+        self.portal.GLib.Variant.side_effect = lambda signature, values: (signature, values)
+        self.portal.revoke_token("private-token")
+        self.assertEqual(self.portal.bus.call_sync.call_args.args[3:5], ("Delete", ("(ss)", ("remote-desktop", "private-token"))))
+        self.portal.bus.call_sync.side_effect = StoreError("private-token")
+        self.portal.Gio.DBusError.get_remote_error.return_value = "org.freedesktop.portal.Error.NotFound"
+        self.portal.revoke_token("private-token")
+        self.portal.Gio.DBusError.get_remote_error.return_value = "org.freedesktop.DBus.Error.ServiceUnknown"
+        with self.assertRaisesRegex(RuntimeError, "saved state retained") as error:
+            self.portal.revoke_token("private-token")
+        self.assertNotIn("private-token", str(error.exception))
+
+    def test_close_releases_pipewire_descriptor_only_once(self):
+        self.portal.fd = 42
+        self.portal.session = "session"
+        with patch("desktop.portal.os.close") as close, patch.object(self.portal, "call") as calls:
+            self.portal.close()
+            self.portal.close()
+        close.assert_called_once_with(42)
+        calls.assert_called_once_with("org.freedesktop.portal.Session", "Close", "()", (), path="session")
+
+
+class NativeGrantTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(native_grants.Path, "home", return_value=self.home))
+
+    def test_tokens_are_private_consumed_once_rotated_and_omitted_from_metadata(self):
+        native_grants.enable()
+        native_grants.save_token("first-token")
+        folder = native_grants.directory()
+        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((folder / "grant.json").stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("first-token", json.dumps(native_grants.metadata()))
+        self.assertEqual(native_grants.consume(), "first-token")
+        self.assertFalse(native_grants.metadata()["grant_saved"])
+        self.assertEqual(native_grants.load()["consumed"], "first-token")
+        native_grants.save_token("next-token")
+        self.assertEqual(native_grants.consume(), "next-token")
+        self.assertIsNone(native_grants.consume())
+
+    def test_saved_pause_survives_restart_and_cannot_be_resumed_by_renewal(self):
+        native_grants.enable()
+        native_grants.save_token("token")
+        session = native.NativeSession(Mock(), remember=True)
+        session.handle({"action": "pause"})
+        self.assertTrue(native_grants.metadata()["paused"])
+        restored = native.NativeSession(Mock(), remember=True, paused=native_grants.metadata()["paused"])
+        restored.state = "running"
+        with self.assertRaisesRegex(RuntimeError, "paused"):
+            restored.handle({"action": "acquire", "generation": restored.generation})
+        with self.assertRaisesRegex(RuntimeError, "paused"):
+            restored.handle({"action": "renew", "generation": restored.generation})
+        restored.handle({"action": "resume"})
+        self.assertFalse(native_grants.metadata()["paused"])
+
+    def test_stop_retains_grant_but_revoke_deletes_portal_permission_and_saved_token(self):
+        native_grants.enable()
+        native_grants.save_token("saved-token")
+        portal = Mock(restore_token="saved-token")
+        session = native.NativeSession(portal, remember=True)
+        session.close()
+        self.assertTrue(native_grants.metadata()["grant_saved"])
+        result = session.handle({"action": "revoke"})
+        self.assertTrue(result["stopped"])
+        self.assertFalse(result["grant_saved"])
+        portal.revoke_token.assert_called_once_with("saved-token")
+        self.assertIsNone(native_grants.load())
+        with self.assertRaisesRegex(RuntimeError, "revoked"):
+            native_grants.save_token("late-token")
+
+    def test_failed_revocation_keeps_token_for_offline_retry(self):
+        native_grants.enable()
+        native_grants.save_token("saved-token")
+        portal = Mock(restore_token="saved-token")
+        portal.revoke_token.side_effect = RuntimeError("Portal store unavailable")
+        session = native.NativeSession(portal, remember=True)
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            session.handle({"action": "revoke"})
+        self.assertTrue(session.stopping.is_set())
+        self.assertTrue(native_grants.metadata()["grant_saved"])
+        portal.revoke_token.side_effect = None
+        runtime = self.home / "runtime"
+        runtime.mkdir(mode=0o700)
+        with patch.object(native, "runtime_directory", return_value=runtime), \
+                patch.object(native, "request", side_effect=FileNotFoundError), \
+                patch("desktop.portal.Portal", return_value=portal):
+            self.assertFalse(native.revoke()["grant_saved"])
+        self.assertIsNone(native_grants.load())
+
+    def test_consumed_token_remains_revocable_after_interrupted_restore(self):
+        native_grants.enable()
+        native_grants.save_token("consumed-token")
+        native_grants.consume()
+        portal = Mock(restore_token=None)
+        session = native.NativeSession(portal, remember=True)
+        session.handle({"action": "revoke"})
+        portal.revoke_token.assert_any_call("consumed-token")
+        self.assertIsNone(native_grants.load())
+
+    def test_unsafe_grants_and_invalid_tokens_are_rejected(self):
+        native_grants.enable()
+        folder = native_grants.directory()
+        path = folder / "grant.json"
+        for token in ("", "bad\ntoken", "x" * 4097, True):
+            with self.subTest(token_type=type(token).__name__), self.assertRaises(ValueError):
+                native_grants.save_token(token)
+        path.chmod(0o644)
+        with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+            native_grants.load()
+        path.unlink()
+        path.symlink_to(self.home / "other")
+        with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+            native_grants.load()
+        path.unlink()
+        folder.chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, "0700"):
+            native_grants.enable()
+
+    def test_failure_receipts_redact_the_private_restore_token(self):
+        session = native.NativeSession(Mock(restore_token="private-token"))
+        with redirect_stdout(output := StringIO()):
+            session.fail(RuntimeError("Failed restoring private-token"))
+        self.assertNotIn("private-token", output.getvalue())
+        self.assertNotIn("private-token", json.dumps(session.snapshot_status()))
+
 
 class NativeReceiptTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.object(native_grants, "metadata", return_value={"remember_requested": False, "grant_saved": False, "paused": False}))
+
     def test_initializing_and_last_failure_remain_available_after_helper_exit(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
             receipt = Path(directory, "status.json")
@@ -437,6 +626,28 @@ class NativeReceiptTests(unittest.TestCase):
                 path.symlink_to(Path(directory, "other"))
                 with self.assertRaisesRegex(RuntimeError, "Unsafe"):
                     native.status()
+
+    def test_helper_constructor_failure_is_logged_and_retained_before_any_consent(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
+            folder = Path(directory)
+            glib = Mock()
+            workers = []
+            def thread(*, target, **kwargs):
+                return Mock(start=lambda: workers.append(target))
+            def loop():
+                workers[1]()  # Initializer; the accepting worker never touches real sockets.
+                self.assertFalse(glib.timeout_add.call_args.args[1]())
+            glib.MainLoop.return_value.run.side_effect = loop
+            with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
+                    patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
+                    patch("desktop.portal.Portal", side_effect=RuntimeError("Portal bus initialization failed")), \
+                    patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
+                    patch.object(native.os, "chmod"), patch.object(native.threading, "Thread", side_effect=thread):
+                self.assertEqual(native.serve(), 0)
+            receipt = json.loads((folder / "status.json").read_text())
+            self.assertEqual(receipt["state"], "stopped")
+            self.assertEqual(receipt["last_failure"]["stage"], "connecting")
+            self.assertIn("Portal bus initialization failed", output.getvalue())
 
 
 class NativePackageTests(unittest.TestCase):

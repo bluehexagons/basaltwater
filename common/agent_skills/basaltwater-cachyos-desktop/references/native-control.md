@@ -13,11 +13,30 @@ After helper exit, `status.last_failure` retains the stage, timestamp and detail
 Stages/errors also remain in the private runtime `helper.log` across restarts.
 
 The task helper uses a private same-user Unix socket, no network listener,
-privileged input daemon, saved grant, systemd service or login autostart. Its
+privileged input daemon, systemd service or login autostart. Its default
 15-minute lifetime starts when control is ready; it closes on stop, portal revocation,
-bus loss or loss of the session socket. Starting again needs fresh consent.
+bus loss or loss of the session socket.
 It is an account-local control channel, not a sandbox against other programs
 already running as this account.
+
+For autonomous future sessions the owner may opt in with `start --remember
+--session-seconds 28800`, explicitly approving one monitor, keyboard, pointer
+and KDE's persistence option. This requires RemoteDesktop version 2. Later
+`start` calls use the saved token; KDE may decline restoration or require a new
+prompt. `grant_saved` and `restore_attempted` do not verify prompt-free access.
+The private grant record lives in `~/.local/state/basaltwater/native-desktop`
+(0700 directory, 0600 file), outside projects and logs. Tokens are single-use;
+the returned replacement is saved without exposing it in status or arguments.
+An interrupted restore keeps its consumed identifier solely for revocation.
+
+`renew --generation GEN --seconds SECONDS` accepts 60–28800 seconds, requires
+running, unpaused, unexpired control, and cannot resume a human pause. Human
+pause persists across grant restoration. After expiry use `start`, inspect
+the new generation and recapture; initial or withdrawn grants need owner
+approval. There is no automatic renewal or login control. `stop` keeps a grant;
+owner `revoke` closes control, deletes only its portal PermissionStore entries
+and removes the saved record, including while stopped. Retry reported store
+errors; never work around revocation with a different input service.
 
 ## Observe, act, verify
 
@@ -70,8 +89,8 @@ scripting when these limits matter.
 
 ## Human control and shutdown
 
-Open `handoff` while control is enabled to give the owner Pause, Resume and
-Stop buttons. `control pause` revokes the current 30-second operation lease
+Open `handoff` while control is enabled to give the owner Pause, Resume,
+Stop and Revoke saved access buttons. `control pause` revokes the current 30-second operation lease
 and blocks input, launches and semantic mutations. Observation remains
 available. In-flight operations can finish before pause is processed (bounded
 capture/accessibility timeouts); pause is not emergency compositor isolation.

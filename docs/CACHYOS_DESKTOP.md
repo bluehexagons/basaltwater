@@ -35,7 +35,49 @@ The same stages and errors are appended to
 The combined [RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)/
 [ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)
 session shares exactly one selected monitor and requests both input devices.
-There is no saved grant or automatic control at login.
+Ordinary first-time `start` uses no persistence. Nothing starts control at login.
+
+## Reuse an approved grant
+
+For unattended future tasks, opt in once from the graphical user's session:
+
+```fish
+basaltw desktop --native start --remember --session-seconds 28800
+# The owner approves one monitor and both input devices, including KDE's restore option.
+basaltw desktop --native status
+# Later tasks can restore that grant; KDE may still require approval:
+basaltw desktop --native start
+basaltw desktop --native renew --generation GEN --seconds 28800
+# Owner-controlled removal, including when the helper is stopped:
+basaltw desktop --native revoke
+```
+
+`--remember` requires RemoteDesktop portal version 2 and requests `persist_mode
+2`. KDE can refuse persistence or ignore an invalid/withdrawn token and ask
+again. `grant_saved` reports a returned token, and `restore_attempted` reports
+its submission; neither proves that restoration will avoid a prompt.
+`interactive_required` is `null` when approval cannot yet be determined, and
+`false` only for established running control. No grant
+is manufactured and no global input service replaces the portal. The desktop
+owner makes the initial monitor/device and persistence choices.
+
+The private record is `~/.local/state/basaltwater/native-desktop/grant.json`
+(directory 0700, file 0600). Tokens are consumed once and replaced with the
+returned token. An interrupted restore retains the consumed identifier only for
+revocation, never for reuse. Tokens stay out of logs, status and process arguments.
+Human pause persists across restored sessions; agents must not resume it.
+`stop` retains the grant, while `revoke` closes control, deletes only its
+`remote-desktop` PermissionStore entries and removes the private record. Store
+errors retain state for retry. The handoff window also offers Revoke saved access.
+KDE's own session controls can stop active sharing, and withdrawn permissions
+prevent subsequent restoration.
+
+Session lifetime defaults to 900 seconds from readiness. `--session-seconds`
+and `renew --seconds` accept 60–28800 seconds, at most eight hours per explicit
+start/renewal. Renewal requires the current generation and a running, unpaused,
+unexpired session; it does not grant new devices or extend operation leases.
+After expiration use `start` and observe the new generation/capture. There is
+no timer that renews control or resumes a pause automatically.
 
 Selecting a supported desktop application during setup, including Godot,
 Material Maker, Moonlight or the sysadmin GUI tools, installs
@@ -89,7 +131,7 @@ include personal content; review evidence before sharing it.
 
 ## Pause, stop and limitations
 
-The handoff window provides Pause, Resume and Stop and reports pending consent,
+The handoff window provides Pause, Resume, Stop and Revoke and reports pending consent,
 failed sessions and expiration without claiming input is enabled. Human control
 requests wait in order behind an in-flight status poll or control request.
 `control pause` revokes the current operation lease and blocks launches, input
@@ -97,7 +139,7 @@ and semantic mutations; observation remains available. In-flight bounded
 operations may finish before pause is processed. Honor human pause; do not
 resume it automatically.
 `basaltw desktop --native stop` closes the portal/helper without logging out
-KDE or closing applications. Sessions expire after 15 minutes; revocation,
+KDE or closing applications. Sessions expire after their configured lifetime; revocation,
 portal/bus loss or disappearance of the session socket stops control.
 
 The private helper socket permits only the same desktop account. It does not
