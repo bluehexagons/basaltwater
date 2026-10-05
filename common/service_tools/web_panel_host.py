@@ -61,6 +61,11 @@ def _count(value: object) -> int | None:
     return value if isinstance(value, int) and 0 <= value <= 2**64 - 1 else None
 
 
+def _percentage(used: int, total: int) -> int:
+    """Round usage up without losing precision in large filesystem counters."""
+    return min(100, (used * 100 + total - 1) // total)
+
+
 def _filesystem(record: object) -> dict[str, str] | None:
     if not isinstance(record, dict) or record.get("fstype") not in LOCAL_FILESYSTEM_TYPES:
         return None
@@ -82,10 +87,10 @@ def _filesystem(record: object) -> dict[str, str] | None:
         and total > 0 and used + available <= total
     )
     # As in df, reserved blocks are excluded from space available to users.
-    percent = min(100, math.ceil(used * 100 / (used + available))) if capacity and used + available else None
+    percent = _percentage(used, used + available) if capacity and used + available else None
     inode_total, inode_used, inode_free = (_count(record.get(key)) for key in ("ino.total", "ino.used", "ino.avail"))
     inode_percent = (
-        min(100, math.ceil(inode_used * 100 / inode_total))
+        _percentage(inode_used, inode_total)
         if inode_total and inode_used is not None and inode_free is not None
         and inode_used + inode_free <= inode_total else None
     )

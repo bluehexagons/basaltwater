@@ -48,7 +48,9 @@ records; they do not start extra service or log queries.
 filesystems rather than assuming all storage belongs to `/`. Each row shows
 its mount point, device, filesystem type, space available to ordinary users,
 and inode use. Space percentages exclude reserved blocks from the available
-capacity, as `df` does. Usage at or above 80% is highlighted; 95% is critical.
+capacity, as `df` does. Percentages round up using integer counters so large
+filesystems retain accurate values. Usage at or above 80% is highlighted;
+95% is critical.
 Full inode tables are highlighted even when byte capacity remains available.
 Read-only mounts have a text label. Filesystems without a fixed inode count
 show **Not reported**, while failed measurements show **Unavailable**.

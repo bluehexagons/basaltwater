@@ -62,6 +62,19 @@ class HostSnapshotTest(unittest.TestCase):
         ]})
         self.assertEqual({row["label"] for row in rows}, {"/", "/srv", "/home"})
 
+    def test_large_counters_round_up_without_float_precision_loss(self) -> None:
+        unit = 2**54
+        total = 100 * unit
+        for used, percent in ((0, 0), (79 * unit, 79), (79 * unit + 1, 80),
+                              (95 * unit + 1, 96), (total, 100)):
+            with self.subTest(used=used):
+                row = self._collect({"filesystems": [_mount(
+                    size=total, used=used, avail=total - used,
+                    **{"ino.total": total, "ino.used": used, "ino.avail": total - used},
+                )]})[0]
+                self.assertEqual(row["percent"], str(percent))
+                self.assertEqual(row["inode_percent"], str(percent))
+
     def test_omits_virtual_remote_container_layers_and_invalid_mounts(self) -> None:
         rows = self._collect({"filesystems": [
             _mount(), _mount("/proc", "proc", fstype="proc"),
