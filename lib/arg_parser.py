@@ -17,6 +17,7 @@ from lib.config import (
     WEB_INTERFACES,
 )
 from lib.notifications import NOTIFICATION_LEVELS
+from lib.publishing_config import PUBLISHING_TOOLS
 
 
 class CommaSeparatedChoicesAction(argparse.Action):
@@ -858,6 +859,9 @@ def add_setup_arguments(
             "(currently: web, publishing; also enables --godot)"
         ),
     )
+
+    parser.add_argument("--publishing-tool", dest="publishing_tools", action="append", choices=PUBLISHING_TOOLS,
+                        help="Install a Debian VM publishing tool independently of Godot; repeat for butler and steamcmd")
 
     # Agent VM tooling. Values add to narrow profile defaults; --no-agent-tool
     # provides an explicit opt-out for an individual default.

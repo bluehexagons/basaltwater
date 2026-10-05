@@ -17,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 
 from lib.agent_cli import _tool_path
 from lib.atomic_io import write_text_atomic
@@ -302,7 +303,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event) -> 
 class AgentTasks:
     """Persist prompts and history; execute one job at a time while the panel runs."""
 
-    def __init__(self, home: str | None = None) -> None:
+    def __init__(self, home: str | None = None, *, background_tick: Callable[[], None] | None = None) -> None:
         self.home = os.path.realpath(home or os.path.expanduser("~"))
         self.parent = Path(self.home) / ".local/state/basaltwater/prompt-tasks"
         self.path = self.parent / "tasks.json"
@@ -314,6 +315,9 @@ class AgentTasks:
         self._lease: int | None = None
         self._state: dict[str, Any] | None = None
         self.error = ""
+        self.background_error = ""
+        self._background_tick = background_tick
+        self._background_thread: threading.Thread | None = None
 
     def available(self) -> bool:
         try:
@@ -592,6 +596,9 @@ class AgentTasks:
                 self._save()
             self._thread = threading.Thread(target=self._loop, daemon=True, name="agent-prompts")
             self._thread.start()
+            if self._background_tick is not None:
+                self._background_thread = threading.Thread(target=self._background_loop, daemon=True, name="panel-publishing")
+                self._background_thread.start()
         except (OSError, RuntimeError, ValueError) as exc:
             self.error = str(exc)
             self.close()
@@ -607,12 +614,31 @@ class AgentTasks:
             self._wake.wait(timeout=15)
             self._wake.clear()
 
+    def _background_loop(self) -> None:
+        """Use the same process lease without blocking behind long agent runs."""
+        while not self._stop.is_set():
+            try:
+                assert self._background_tick is not None
+                self._background_tick()
+                self.background_error = ""
+            except Exception:
+                # Native/provider output and submitted secrets cannot become
+                # generic prompt diagnostics. Publishing has its own status.
+                self.background_error = "Publishing polling is unavailable; inspect Publishing on the VM"
+            self._stop.wait(timeout=15)
+
     def close(self) -> None:
         self._stop.set()
         self._cancel.set()
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=6)
+        if self._background_thread is not None:
+            self._background_thread.join(timeout=6)
+        if any(thread is not None and thread.is_alive() for thread in (self._thread, self._background_thread)):
+            # Retain ownership while work is still exiting. Process termination
+            # releases the lease; another panel must not race this scheduler.
+            return
         if self._lease is not None:
             os.close(self._lease)
             self._lease = None

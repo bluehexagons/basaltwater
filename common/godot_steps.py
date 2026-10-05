@@ -1222,18 +1222,9 @@ def _install_selected_godot_bundles(
             web_access_sources or [],
         ) or changed
     if "publishing" in bundles:
-        _butler_tag, butler_changed, _butler_sha256 = (
-            install_or_update_butler_release()
-        )
-        changed = butler_changed or changed
-        if detect_release_arch() == "amd64":
-            run(
-                "apt-get -o DPkg::Lock::Timeout=60 install -y -qq "
-                "lib32gcc-s1 lib32stdc++6",
-                check=True,
-            )
-        for username in users:
-            changed = install_or_update_steamcmd(username) or changed
+        from common.publishing_steps import install_selected_tools
+
+        changed = install_selected_tools({user: ["butler", "steamcmd"] for user in users}) or changed
     return changed
 
 
@@ -1295,11 +1286,13 @@ def install_godot_bundles(config: SetupConfig) -> None:
     _register_godot_bundles(config)
 
 
-def update_registered_godot_bundles() -> bool:
+def update_registered_godot_bundles(*, include_publishing: bool = True) -> bool:
     """Reconcile saved Godot bundles during the weekly Godot update."""
     from common.godot_web_steps import discover_local_web_identities
 
     bundles, users, web_identities = _validated_registered_bundles()
+    if not include_publishing:
+        bundles = [bundle for bundle in bundles if bundle != "publishing"]
     web_access_sources = _validated_registered_web_access_sources()
     if not bundles:
         return False

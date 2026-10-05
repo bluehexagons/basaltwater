@@ -13,6 +13,7 @@ Related pages:
 - [`PROJECT_TOOLING.md`](./PROJECT_TOOLING.md) for project manifests and Node runtime selection
 - [`WORKSTATIONS.md`](./WORKSTATIONS.md) for desktop profiles and application choices
 - [`GODOT.md`](./GODOT.md) for graphical/headless Godot installation and updates
+- [`GAME_PUBLISHING.md`](./GAME_PUBLISHING.md) for VM publishing accounts, uploads, promotion and reviewed writing
 - [`SYNCTHING.md`](./SYNCTHING.md) for private peer and folder synchronization
 - [`MACHINE_TYPES.md`](./MACHINE_TYPES.md) for machine type behavior
 - [`CREDENTIALS.md`](./CREDENTIALS.md) for the credential workflow map
@@ -64,6 +65,7 @@ basaltw node status [--project PATH] [--version VERSION_OR_RANGE] [--json]
 basaltw node env [--project PATH] [--version VERSION_OR_RANGE]
 basaltw node exec [--project PATH] [--version VERSION_OR_RANGE] -- COMMAND...
 basaltw node install [--project PATH] [--version VERSION] [--package-manager NAME@VERSION]...
+basaltw publish <command> ... [--json]
 basaltw desktop <command> ...
 basaltw firmware <audit|update> [options]
 basaltw channel [CHANNEL]
@@ -201,7 +203,7 @@ without executing project scripts. `--dry-run` previews the proposal; normal
 initialization writes it only when no manifest exists. Existing manifests are
 validated and preserved. Review inferred commands, outputs, service settings,
 and routes before committing the proposal. `--kind` accepts `auto`, `node-site`,
-`node-package`, `node-service`, `go-service`, `full-stack`, or `static`.
+`node-package`, `node-service`, `go-service`, `full-stack`, `static`, or `publishing`.
 `manifest validate` checks an existing manifest without modifying it. Both
 subcommands support JSON output.
 
@@ -217,6 +219,48 @@ managed NVM. Repeat `--package-manager NAME@VERSION` to install exact npm, pnpm,
 or yarn versions for that runtime. See [Project tooling](PROJECT_TOOLING.md)
 for selection precedence, supported ranges, initialization examples, and
 per-runtime package-manager behavior.
+
+## VM game publishing
+
+Run `publish` on the VM as its publishing account. Commands emit JSON and use
+VM-local sessions; no controller credential transfer is involved.
+
+```text
+basaltw publish status|projects|jobs|runs
+basaltw publish project ID REPOSITORY butler OWNER/GAME:CHANNEL [--record PATH]
+basaltw publish project ID REPOSITORY steamcmd APP_ID --depot DEPOT_ID --username ACCOUNT
+basaltw publish complete REPOSITORY ARTIFACT_SUBDIRECTORY INTERNAL_BUILD_ID [--record PATH]
+basaltw publish prepare PROJECT_ID
+basaltw publish upload ARTIFACT_ID [--wait]
+basaltw publish cancel RUN_ID
+basaltw publish worker
+basaltw publish schedule PROJECT_ID [--interval MINUTES]
+basaltw publish job JOB_ID pause|resume|remove
+basaltw publish job JOB_ID edit --interval MINUTES
+basaltw publish draft PROJECT_ID JSON_FILE
+basaltw publish export DRAFT_ID [--handoff]
+basaltw publish artifact-text ARTIFACT_ID PATH DRAFT_ID
+basaltw publish remove-artifact ARTIFACT_ID
+basaltw publish promote-itch ARTIFACT_ID DESTINATION_PROJECT
+basaltw publish release RUN_ID [--branch BRANCH]
+basaltw publish beta-prepare RUN_ID BRANCH
+basaltw publish beta-promote RELEASE_ID
+basaltw publish auth login|logout butler|steamcmd [--username ACCOUNT]
+```
+
+`auth` requires a human non-root terminal and accepts no secret arguments.
+The HTTPS panel provides guided login and the sole managed human approval
+action. `draft` cannot import approval fields. `export --handoff` respects the
+reviewed timing window and release gate; it never publishes remotely.
+`schedule` rejects another non-removed job for the same project. `job edit`
+changes cadence without resuming or accepting changed project settings. Pause,
+edit and removal cancel queued scheduled uploads; running uploads require their
+separate cancellation action. Removal keeps job/run history and receipts.
+Steam default/public release and rollback always use the manual Steamworks
+handoff. Optional beta promotion requires a separately configured VM-local
+publisher key and observed branch/build state. Live provider qualification
+remains open. See [VM game publishing](GAME_PUBLISHING.md) for the completed-build
+contract, unattended job ownership, exact-text review, recovery and limits.
 
 ## Setup at a glance
 
@@ -532,6 +576,7 @@ list. Neither preview is a completed live setup.
 | `--gl-tools` | Install the minimal OpenGL inspection and debugging bundle: Mesa utilities and apitrace |
 | `--godot` | Install the newest stable verified Godot Engine release for graphical or headless use |
 | `--godot-bundle BUNDLE` | Add `web` or `publishing`; repeatable and automatically enables `--godot` |
+| `--publishing-tool TOOL` | Independently install `butler` or `steamcmd` on Debian for a non-root user; repeatable, no Godot requirement; SteamCMD requires x86_64 |
 | `--gaming` | CachyOS `agent_cachyos` only: install the native gaming libraries, launchers, and tools bundle |
 | `--sunshine` | CachyOS `agent_cachyos` only: install the native Sunshine game-stream host package |
 | `--moonlight` | CachyOS `agent_cachyos` only: install the native Moonlight Qt game-stream client package |

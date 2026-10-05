@@ -23,6 +23,8 @@ PLUGIN = PluginDefinition(
         "ensure_python_alias",
         "install_godot",
         "install_godot_bundles",
+        "install_publishing_tools",
+        "configure_auto_update_publishing",
         "install_github_cli",
         "install_codex",
         "configure_codex_auth_maintenance",
@@ -204,6 +206,11 @@ def extend_runtime_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]])
                 (f"Installing Godot bundles ({bundle_names})", install_godot_bundles)
             )
         steps.append(("Configuring Godot auto-update", configure_auto_update_godot))
+    if config.publishing_tools:
+        from common.publishing_steps import configure_auto_update_publishing, install_publishing_tools
+
+        steps.append(("Installing independent publishing tools", install_publishing_tools))
+        steps.append(("Configuring publishing tool auto-update", configure_auto_update_publishing))
 
 
 def extend_package_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:
@@ -415,6 +422,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         setup_user,
         update_and_upgrade_packages,
     )
+    from common.publishing_steps import configure_auto_update_publishing, install_publishing_tools
     from common.agent_steps import (
         copy_agent_tooling_payload,
         clone_agent_repositories,
@@ -453,6 +461,8 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "ensure_python_alias": ensure_python_alias,
         "install_godot": install_godot,
         "install_godot_bundles": install_godot_bundles,
+        "install_publishing_tools": install_publishing_tools,
+        "configure_auto_update_publishing": configure_auto_update_publishing,
         "install_github_cli": install_github_cli,
         "install_codex": install_codex,
         "configure_codex_auth_maintenance": configure_codex_auth_maintenance,

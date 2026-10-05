@@ -43,6 +43,28 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIsNone(result["tools"]["yarn"])
         self.assertEqual(result["desktop_applications"], {})
         self.assertEqual(result["desktop_skills"], [])
+        self.assertEqual(result["publishing"]["tools"], {"butler": None, "steamcmd": None})
+        self.assertEqual(result["publishing"]["readiness"], "unverified")
+        execute.assert_not_called()
+
+    def test_publishing_discovery_and_guidance_never_inspect_authentication(self) -> None:
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/" + name if name in ("butler", "steamcmd") else None),
+            patch.object(agent_environment.subprocess, "run") as execute,
+            patch("lib.publishing_auth.credential_paths", side_effect=AssertionError("Authentication inspection")),
+            patch("http.client.HTTPSConnection", side_effect=AssertionError("Provider request")),
+            redirect_stdout(output := StringIO()),
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+            self.assertEqual(agent_environment.run_manifest_command(argparse.Namespace(repository=self.directory, json=False)), 0)
+        self.assertEqual(result["publishing"]["tools"], {"butler": "/bin/butler", "steamcmd": "/bin/steamcmd"})
+        self.assertEqual(result["publishing"]["readiness"], "unverified")
+        self.assertIn("Publishing tools: butler, steamcmd", output.getvalue())
+        self.assertIn("human review", output.getvalue())
+        self.assertIn("manual on Steamworks", output.getvalue())
         execute.assert_not_called()
 
     def test_cachyos_uses_native_launches_and_skills_without_xrdp_instructions(self) -> None:
@@ -110,6 +132,7 @@ class TestAgentEnvironment(unittest.TestCase):
     def test_summary_includes_application_specific_instructions(self) -> None:
         result = {
             "tools": {"blender": "/bin/blender"},
+            "publishing": {"tools": {"butler": None, "steamcmd": None}, "readiness": "unverified"},
             "desktop_applications": {"blender": {**agent_environment.DESKTOP_APPLICATIONS["blender"], "readiness": "unverified"}},
             "desktop_skills": [],
             "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "browser_evidence": self.directory, "artifact_directories": []},

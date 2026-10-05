@@ -1,14 +1,93 @@
 # Game publishing from managed VMs
 
-Status: finalized feature plan, 2026-10-05. Documentation only; implementation
-has not started. This plan owns Butler and SteamCMD management through the
+Status: initial implementation delivered, live qualification open, 2026-10-05.
+This plan owns Butler and SteamCMD management through the
 existing web panel, VM-local authentication, and manual or unattended uploads.
 The companion [release and communications plan](GAME_RELEASE_COMMUNICATIONS.md)
 extends it with build promotion, posts, translations, human review, and
 publication. Steam default-branch release remains manual on Steamworks.
 Existing installation support remains documented in [Godot](../GODOT.md) and
 [CachyOS software](../CACHYOS_SOFTWARE.md). Priority: unscheduled; this work
-does not displace the roadmap's reliability priorities.
+does not displace the roadmap's reliability priorities. Implementation is now
+authorized; live account login, uploads, and provider qualification require
+operator-selected test destinations. See [the operator guide](../GAME_PUBLISHING.md)
+for the delivered capabilities and remaining qualification boundaries.
+
+## Delivered scope and remaining work
+
+The [operator guide](../GAME_PUBLISHING.md) is the current executable contract.
+The design below preserves the broader feature direction; it does not claim
+that every acceptance item has been qualified.
+
+| Area | Initial implementation | Next boundary |
+| --- | --- | --- |
+| Tool setup and maintenance | Independent repeatable Debian `--publishing-tool`; legacy Godot selection retained; one shared updater and provider leases across registered owners. | Live Debian reruns/ARM64 checks and separate CachyOS qualification. |
+| Authentication and panel | Same-panel Publishing page, bounded native PTY login, HTTPS-only mutations, VM-local sessions, local disconnect and terminal fallback. | Remote native login/prompt and cached-session qualification; bounded online identity checks. |
+| Builds and jobs | Completion records, private retained snapshots, fixed upload commands, durable dispatch ledger, cancellation/reconciliation, deterministic panel-owned interval jobs with pause/resume, interval editing and removal. | Live receipt/schema qualification, richer inventory/progress and sanitized notifications; Run now and explicit safe re-upload. |
+| Promotion and releases | Exact itch.io channel re-upload, optional observed Steam beta API promotion, manual Steamworks release/rollback records and dependent gates. | Live beta API response qualification; coordinated multi-depot recipes and stronger external-concurrency observations. |
+| Writing and translations | Language manifest extension, agent prompt preparation, immutable plain-text drafts, side-by-side English/Spanish reviews, exact human approval and timed exports/handoffs. | Provider rendering, rich assets, terminology/placeholder checks and Steam localization CSV round trips. |
+| Posts | Steam/itch.io reviewed exports and operator-confirmed published URLs; automatic submission is not advertised. | Qualified post adapters, remote schedule ownership, external edit detection and additional website/blog/social destinations. |
+
+Current snapshots are retained explicitly (100 maximum, 10,000 files and 30 GiB
+per artifact). Status selects up to 200 records per kind, prioritizes
+enabled/paused jobs and actionable runs/drafts/releases, and includes their project
+and translation-source references.
+History, reviews and deduplication records remain durable. Automatic 30-day record
+pruning and removal of successful staging are future policy work, not current
+behavior. Only exact existing reviewed text can be reused by an upload schedule.
+One-depot Steam recipes create separate app builds and cannot compose a
+multi-depot release. Steam's beta API has no conditional update guarantee;
+the local lock cannot prevent a concurrent Steamworks change by another actor.
+
+## Implementation review findings
+
+The review identified missing executable contracts for completed artifacts,
+review authority, scheduler ownership, interrupted workers, and post delivery.
+Resolve these as follows:
+
+- Completion records are atomically written UTF-8 JSON with exactly `version: 1`,
+  repository-relative `path`, internal `build_id`, and `digest`. The digest is
+  SHA-256 of compact, key-sorted UTF-8 JSON describing the path-sorted file list:
+  each entry has `path`, `size`, file `sha256`, and boolean `executable`.
+  `basaltw publish complete` produces the record after a successful build.
+  Keep it outside the artifact; a changed source fails snapshot verification.
+- Authoritative reviews live in private VM control state, outside repository
+  drafts. Approval exists only through the authenticated panel action and binds
+  the exact project configuration, destination, language, text, source revision,
+  timing window, and release gate. Translation/source edits invalidate reviews.
+  This enforces the managed workflow, not isolation from unrestricted same-user code.
+- The existing panel scheduler owns publishing polling. It uses a separate
+  deterministic callback so long agent prompts cannot delay publication polling.
+  Only one panel scheduler holds the process lease. Upload supervisors detach
+  from the panel, share provider locks with logins, and preserve dispatch intent.
+  Provider lock descriptors stay with native processes if a supervisor exits.
+- Steam and itch.io post adapters initially advertise reviewed plain-text export
+  and human-editor handoff, not automatic delivery. Provider formatting/imports
+  require a final human check in the editor. Do not invent a write API or claim
+  browser qualification from mocked tests. Additional automated adapters remain
+  gated on live qualification.
+- Publication times use an explicit UTC instant; the default allowed lateness is
+  60 minutes, configurable from 1 minute to 24 hours per reviewed revision.
+  Expired jobs are held. Upload success does not satisfy a Steam release gate.
+- Bundled release notes must match an approved text body byte for byte. Projects
+  remain responsible for declaring/reviewing other public writing in game assets;
+  filename detection is not a proof that an arbitrary binary contains no text.
+- Translation sources must match the current destination/language configuration.
+  Public itch.io uploads and automatic Steam beta promotion recheck bundled
+  writing's approval, timing and release gates. Steam uploads may privately stage
+  reviewed writing before release; default release review stays manual.
+  Failed scheduled preparations are removed before queueing, while retention
+  protects active and uncertain work. Steam success receipts identify the requested
+  AppID. Status prioritizes recovery and retains referenced sources/projects, so
+  completed history cannot hide pending comparisons and recovery controls.
+- Schedule creation rejects another non-removed job for the same project.
+  Interval edits preserve enabled/paused state, destination authority and failures;
+  edits and resume reset the next deadline to a full interval from the action.
+  Pause, edits and removal atomically cancel queued scheduled runs and invalidate
+  an in-flight preparation before queueing. Running/uncertain uploads retain their
+  own cancellation/reconciliation controls. Removed job records and receipts are
+  retained; provider authentication failure/logout cannot resurrect those jobs.
+
 
 ## Direction and decisions
 
@@ -34,7 +113,7 @@ defaults rather than separately requested product requirements.
 | Release controls | Support explicitly authorized beta promotion and itch.io destination-channel uploads. Steam default/public release and rollback stay manual on Steamworks. |
 | Public writing | Agents may draft/translate; every public text revision and translation requires human review. Automation publishes only the exact approved payload. |
 | Content destinations | Steam announcements and itch.io posts first; website/blog and social adapters are planned next. |
-| Languages | Project declaration in a proposed `basaltwater.json` extension, default English only. Initially test English and Spanish; allow additional language tags with explicit qualification limits. |
+| Languages | Project declaration in the accepted `basaltwater.json` extension, default English only. Initially test English and Spanish; allow additional language tags with explicit qualification limits. |
 | Initial host | Managed Debian x86_64 VM with one non-root publishing owner; Butler-only operation on supported ARM64 installations. |
 | Accounts | One active account per provider per publishing owner; many projects/destinations. Multiple simultaneous provider identities are deferred. |
 | Installation | Reuse existing installers and add an engine-independent selection; retain the Godot bundle as a convenience. |
@@ -44,16 +123,7 @@ still needs the qualification in slice 1. The first release consumes completed
 build artifacts; automated game exports can feed that interface without making
 this feature own a build system.
 
-## Existing support and missing behavior
-
-| Area | Current repository behavior | Planned addition |
-| --- | --- | --- |
-| Debian installation | `--godot-bundle publishing` installs verified Butler and user-owned SteamCMD; SteamCMD is skipped on ARM64. | Independent tool selection and consistent capability observations. |
-| CachyOS | Independent `--butler` and `--steamcmd` package selections, with their own package/update rules. | Preserve those owners; qualify management separately before claiming support. |
-| Updates | Godot maintenance updates Butler and invokes the SteamCMD self-updater. | Coordinate updates with active authentication and uploads. |
-| Authentication | Operators run native login commands as the configured account. | Guided panel login with VM-local sessions, bounded interaction, explicit status and disconnect. |
-| Panel | Host, service, agent, and maintenance views; no publishing management. | Publishing navigation, provider/project links, readiness, and operation results. |
-| Uploads | Operators invoke provider commands themselves. | Shared validated upload workflow for the panel and local CLI. |
+## Repository integration points
 
 Primary integration points are `common/godot_steps.py`,
 `common/service_tools/auto_update_godot.py`, `plugins/common.py`,
@@ -239,8 +309,9 @@ authentication needs without soliciting or reading credential values.
 Implement one local publishing library with small Butler and SteamCMD adapters.
 The panel and CLI share validation, observations, locks, and operation records.
 The proposed namespace is `basaltw publish` with `status`, `auth`, `projects`,
-`prepare`, `upload`, `jobs`, `runs`, and `cancel` actions. These names are design
-targets, not currently supported commands. JSON output contains only sanitized results.
+`prepare`, `upload`, `jobs`, `runs`, and `cancel` actions. These commands are
+implemented; the operator guide documents exact arguments and limits. JSON
+output contains sanitized results.
 Promotion, release records, and editorial actions extend this namespace when
 their slices land; no machine-facing action can grant human text approval.
 
@@ -255,9 +326,9 @@ state primitives; do not execute uploads through the panel's LLM task runner.
 | Tool installation | Existing managed paths and installer ownership; extract shared publishing installation/update helpers without creating a second updater. |
 | Native credentials | Existing provider-native locations under the publishing user's home; private files/directories, never in Basaltwater controller credentials or project manifests. |
 | Optional promotion/post credentials | VM-only publisher API key or separately authenticated provider website session where needed; no controller transfer, manifest secret, or reuse of SteamCMD tokens as website credentials. |
-| Project settings | Versioned, non-secret VM-local records under `~/.config/basaltwater/publishing/`; project paths and destination IDs, no passwords or tokens. |
-| Publishing jobs | Versioned non-secret records in the same publishing configuration, integrated with the existing scheduler; source, destination, cadence, configuration revision, failure policy, and enabled state. |
-| Run records | Private bounded records under `~/.local/state/basaltwater/publishing/`; identity, artifact digest, destination, timestamps, tool version, outcome, and provider reference. |
+| Project settings | Private VM-local SQLite records under `~/.local/share/basaltwater/publishing/`; project paths and destination IDs, no passwords or tokens. |
+| Publishing jobs | Non-secret records in the same database, integrated with the existing scheduler; source, destination, cadence, configuration revision, failure count, and enabled state. |
+| Run records | Private durable records in the same database; identity, artifact digest, destination, timestamps, outcome and provider reference. Status reads are bounded; retention pruning is deferred. |
 | Prepared content | Private per-run snapshots outside repositories and credential roots; retained while active/uncertain, with explicit cleanup and a bounded retention policy. |
 | Interactive state | VM memory and private runtime resources only; discarded on cancellation, expiry, or restart. |
 
@@ -329,8 +400,9 @@ and need the same protection as the original VM; support bundles exclude them.
 
 ## Delivery sequence and acceptance
 
-Each slice gets focused mocked tests and a documentation update. The plan
-authorizes no implementation, package installation, login, or live upload now.
+Each slice gets focused mocked tests and a documentation update. Implementation
+is authorized. Live account login and uploads remain separate qualification on
+operator-selected destinations; development tests do not mutate provider state.
 
 | Slice | Work | Exit criteria |
 | --- | --- | --- |

@@ -381,7 +381,7 @@ class DeploymentOrchestrator:
                 )
             reserved.add(port)
             resolved.append(replace(component, port=port))
-        return Manifest(version=manifest.version, components=resolved, ci=manifest.ci)
+        return replace(manifest, components=resolved)
 
     def _app_unit_names(self, dest_path: str) -> set[str]:
         app_fragment = self._sanitize_user_part(os.path.basename(dest_path.rstrip("/")))
@@ -612,7 +612,9 @@ class DeploymentOrchestrator:
         optimization, kept out for a small, auditable surface.
         """
         if not manifest.components:
-            raise ValueError('This manifest contains CI workflows only; there are no deployment components')
+            if manifest.ci and not manifest.publishing:
+                raise ValueError('This manifest contains CI workflows only; there are no deployment components')
+            raise ValueError('This metadata-only manifest has no deployment components')
         dest_path = self.get_deployment_path(domain, path, git_url)
         parent_dir = os.path.dirname(dest_path)
         if parent_dir and not os.path.exists(parent_dir):

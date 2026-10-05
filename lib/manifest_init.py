@@ -15,7 +15,7 @@ from lib.project_manifest import MANIFEST_FILENAME, load_manifest, parse_manifes
 from lib.validation import validate_filesystem_path
 
 
-KINDS = ("auto", "node-site", "node-package", "node-service", "go-service", "full-stack", "static")
+KINDS = ("auto", "node-site", "node-package", "node-service", "go-service", "full-stack", "static", "publishing")
 GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/PROJECT_TOOLING.md"
 _SITE_TOOLS = {"vite", "astro", "react-scripts", "@angular/cli", "@sveltejs/kit"}
 _SERVER_TOOLS = {"express", "fastify", "koa", "next", "nuxt", "@nestjs/core"}
@@ -138,6 +138,12 @@ def propose_manifest(repository: str = ".", *, kind: str = "auto") -> dict:
         raise ValueError("Manifest repository must be a directory")
     if kind not in KINDS:
         raise ValueError(f"Unknown project kind: {kind}")
+    if kind == "publishing":
+        manifest = {"version": 1, "components": [], "publishing": {"languages": {"source": "en", "supported": ["en"]}}}
+        parse_manifest(manifest)
+        return {"kind": kind, "manifest": manifest, "guidance": [
+            "Add Spanish or other communication languages explicitly; every public revision requires human review.",
+            "This manifest has no deployment components; publishing accounts, reviews and jobs stay on the VM."], "guide": GUIDE}
     package = _package(root)
     go = _go_entrypoint(root)
     frontend = next(((path, metadata) for name in ("frontend", "client", "web")
@@ -263,7 +269,7 @@ def run_project_manifest_command(args: argparse.Namespace) -> int:
             manifest = load_manifest(args.repository)
             if manifest is None:
                 raise ValueError("No basaltwater.json found; run basaltw manifest init")
-            result = {"status": "valid", "components": len(manifest.components), "ci_stages": list(manifest.ci)}
+            result = {"status": "valid", "components": len(manifest.components), "ci_stages": list(manifest.ci), "publishing": manifest.publishing}
         if args.json:
             print(json.dumps(result, indent=2))
         else:

@@ -14,6 +14,7 @@ under the panel account; no T3 Code installation is required.
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
+| Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
 | Prepare system and data tasks | Agent tools | Contextual checkups, maintenance plans, log and job reviews, cleanup, and local data work |
 | Administer the host | Admin controls | Approved package updates, Basaltwater refresh, service maintenance, and host power controls |
 | Review audit activity | Audit activity | Sanitized recent events and collection health |
@@ -456,18 +457,25 @@ another service. Cancellation does not undo changes or withdraw privileged
 broker requests; external integrations can own work outside the local process
 group. The [managed agent skills](AGENT_SKILLS.md) include unattended task guidance.
 
-## Planned game publishing controls
+## Game publishing controls
 
-The [game publishing plan](plans/GAME_PUBLISHING.md) defines a Publishing
-section in this same panel for Butler/SteamCMD information and links,
-authentication, project destinations, manual uploads, and unattended or
-scheduled uploads. The [release and communications plan](plans/GAME_RELEASE_COMMUNICATIONS.md)
-adds promotion, drafts, translations, a human review queue, and post publication.
-Steam default-branch release remains a human action on Steamworks. Project
-languages default to English, with English/Spanish tested first and additional
-languages configurable. Provider sessions stay on the VM. These controls are
-not implemented yet; current tool installation and native login instructions
-are in the [Godot guide](GODOT.md).
+Open **Publishing** for Butler/SteamCMD installation information, documentation
+links, native login challenges, destinations, retained builds and upload history.
+The same page manages unattended upload jobs, agent writing-task preparation,
+draft imports, side-by-side translations, exact human review and post receipts.
+Changes and login forms require HTTPS and a non-root panel account. Page loads
+read local observations without running providers or uploading anything.
+
+Steam default/public release and rollback remain human actions on Steamworks.
+Optional beta promotion uses a separate VM-local publisher key and fresh branch
+observations. Steam announcements and itch.io posts export reviewed plain text
+for human editor handoffs; a scheduled handoff is not automatic publication.
+Languages come from `basaltwater.json`, default to English, and initially have
+English/Spanish structural tests. Each public language revision requires human
+review. Provider sessions remain on the VM.
+
+Use the [publishing operator guide](GAME_PUBLISHING.md) for setup, CLI commands,
+review and release gates, limits, recovery, and outstanding live qualification.
 
 ## Receive notifications
 

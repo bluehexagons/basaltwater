@@ -30,6 +30,11 @@ def validate_username(username: str) -> bool:
     return isinstance(username, str) and bool(re.fullmatch(pattern, username))
 
 
+def validate_steam_account_name(username: str) -> bool:
+    """Accept bounded SteamCMD account tokens independently of Unix usernames."""
+    return isinstance(username, str) and bool(re.fullmatch(r"[A-Za-z0-9_]{2,64}", username))
+
+
 def validate_github_login(login: str) -> bool:
     """Return whether a login follows GitHub's public account-name rules."""
     pattern = r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"

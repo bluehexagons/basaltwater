@@ -16,6 +16,17 @@ from lib.setup_common import prepare_deployments
 
 
 class DeploymentProjectToolingTests(unittest.TestCase):
+    def test_publishing_metadata_survives_port_resolution_and_cannot_deploy_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            metadata = {"languages": {"source": "en", "supported": ["en", "es"]}}
+            manifest = Manifest(1, [], publishing=metadata)
+            orchestrator = DeploymentOrchestrator(base_dir=directory)
+            with patch.object(orchestrator, "_get_used_ports", return_value=set()):
+                self.assertEqual(orchestrator._resolve_manifest_ports(manifest, directory).publishing, metadata)
+            with patch("lib.deployment.run") as run, self.assertRaisesRegex(ValueError, "metadata-only"):
+                orchestrator.deploy_manifest(manifest, directory, "example.test", "/", "https://example.test/game.git", None)
+            run.assert_not_called()
+
     def test_ci_only_manifest_cannot_replace_a_release(self):
         manifest = Manifest(1, [], {'test': [WorkflowStep(['true'])]})
         with tempfile.TemporaryDirectory() as directory:

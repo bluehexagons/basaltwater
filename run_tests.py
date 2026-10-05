@@ -61,6 +61,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "tests/test_workspace_cli.py",
     ),
     "core": (
+        "tests/test_publishing*.py",
         "tests/test_rename_migration.py",
         "tests/test_arg_parser_hosted.py",
         "tests/test_development_tool_bundles.py",

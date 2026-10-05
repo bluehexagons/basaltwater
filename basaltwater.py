@@ -58,6 +58,7 @@ from lib.channel_manager import (
 from lib.cicd_cli import add_cicd_subparser, run_cicd_command
 from lib.manifest_init import add_project_manifest_subparser, run_project_manifest_command
 from lib.node_toolchain import add_node_subparser, run_node_command
+from lib.publishing_cli import add_publishing_subparser, run_publishing_command
 from lib.completions import run_completion_setup
 from lib.config_cleanup import run_cleanup
 from lib.config import WEB_PANEL_DEFAULT_PORT_SENTINEL, SetupConfig
@@ -173,6 +174,7 @@ def _build_basaltwater_epilog() -> str:
     cicd connect|status|test    Connect and inspect build/app deployment trust
     manifest init|validate      Initialize or validate project build/deploy settings
     node status|env|exec|install Select a project-specific Node runtime
+    publish status|prepare|upload Manage VM publishing and reviewed release writing
 
 Sysadmin Shortcuts:
     mount <host:path> <local>   Mount a remote directory via sshfs
@@ -632,6 +634,7 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     add_cicd_subparser(subparsers)
     add_project_manifest_subparser(subparsers)
     add_node_subparser(subparsers)
+    add_publishing_subparser(subparsers)
 
     shell_parser = subparsers.add_parser(
         "shell",
@@ -2437,6 +2440,8 @@ def main() -> int:
         return run_project_manifest_command(args)
     elif args.command == "node":
         return run_node_command(args)
+    elif args.command == "publish":
+        return run_publishing_command(args)
     elif args.command in {"mount", "umount", "health", "ssh", "push", "pull", "key", "ssh-key", "df", "fan", "svc", "logs", "upgrade", "reachable", "user"}:
         return run_sysadmin_command(args)
     elif args.command == "shell":

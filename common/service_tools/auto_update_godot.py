@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auto-update the verified official Godot Engine release."""
+"""Maintain Godot and independently selected game publishing tools."""
 
 from __future__ import annotations
 
@@ -16,46 +16,51 @@ from common.godot_steps import (
 )
 from lib.logging_utils import get_service_logger, log_event
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
+from common.publishing_steps import PUBLISHING_TOOL_STATE, update_registered_publishing_tools
 
 
 logger = get_service_logger("auto_update_godot", "common", use_syslog=True)
 
 
 def main() -> int:
-    """Update Godot to the newest stable release when it is installed."""
+    """Maintain installed game tools without requiring the Godot engine."""
     notification_configs = load_notification_configs_from_state(logger)
-    if not os.path.exists(GODOT_BINARY_LINK):
-        log_event(logger, "Godot not found, skipping update")
+    if not os.path.exists(GODOT_BINARY_LINK) and not os.path.exists(PUBLISHING_TOOL_STATE):
+        log_event(logger, "Game tooling not registered, skipping update")
         return 0
 
     try:
-        tag_name, engine_changed, _archive_sha256 = install_or_update_godot_release()
-        bundle_changed = update_registered_godot_bundles()
+        tag_name, engine_changed = "publishing tools", False
+        bundle_changed = False
+        if os.path.exists(GODOT_BINARY_LINK):
+            tag_name, engine_changed, _archive_sha256 = install_or_update_godot_release()
+            bundle_changed = update_registered_godot_bundles(include_publishing=False)
+        bundle_changed = update_registered_publishing_tools() or bundle_changed
     except Exception as exc:
         details = str(exc)
-        log_event(logger, "Godot update failed", level=ERROR, stderr=details)
+        log_event(logger, "Game tooling update failed", level=ERROR, stderr=details)
         send_notification_safe(
             notification_configs,
-            subject="Error: Godot update failed",
+            subject="Error: Game tooling update failed",
             job="auto_update_godot",
             status="error",
-            message="Failed to install the latest stable Godot release",
+            message="Failed to maintain registered game tools",
             details=details,
             logger=logger,
         )
         return 1
 
     if not engine_changed and not bundle_changed:
-        log_event(logger, "Godot tooling already up to date", target_version=tag_name)
+        log_event(logger, "Game tooling already up to date", target_version=tag_name)
         return 0
 
-    log_event(logger, "Godot tooling updated successfully", target_version=tag_name)
+    log_event(logger, "Game tooling updated successfully", target_version=tag_name)
     send_notification_safe(
         notification_configs,
-        subject="Success: Godot updated",
+        subject="Success: Game tooling updated",
         job="auto_update_godot",
         status="good",
-        message=f"Godot tooling updated to {tag_name}",
+        message=f"Registered game tools updated ({tag_name})",
         logger=logger,
     )
     return 0

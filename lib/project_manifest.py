@@ -26,6 +26,7 @@ from lib.validation import (
     validate_systemd_exec_command,
 )
 from lib.validators import validate_host
+from lib.publishing_languages import parse_publishing
 
 MANIFEST_FILENAME = "basaltwater.json"
 SUPPORTED_VERSION = 1
@@ -153,6 +154,7 @@ class Manifest:
     version: int
     components: list[Component]
     ci: dict[str, list[WorkflowStep]] = field(default_factory=dict)
+    publishing: dict = field(default_factory=dict)
 
 
 def load_manifest(repo_path: str) -> Optional[Manifest]:
@@ -235,7 +237,7 @@ def parse_manifest(data: object) -> Manifest:
     if not isinstance(data, dict):
         raise ValueError(f"{MANIFEST_FILENAME} must be a JSON object")
 
-    _reject_unknown_keys(data, {"version", "components", "ci"}, MANIFEST_FILENAME)
+    _reject_unknown_keys(data, {"version", "components", "ci", "publishing"}, MANIFEST_FILENAME)
 
     version = data.get("version")
     if type(version) is not int or version != SUPPORTED_VERSION:
@@ -244,9 +246,10 @@ def parse_manifest(data: object) -> Manifest:
         )
 
     ci = _parse_ci(data.get("ci", {}))
+    publishing = parse_publishing(data["publishing"]) if "publishing" in data else {}
     components_raw = data.get("components")
-    if not isinstance(components_raw, list) or (not components_raw and not ci):
-        raise ValueError("'components' must be a non-empty array unless CI workflows are declared")
+    if not isinstance(components_raw, list) or (not components_raw and not ci and not publishing):
+        raise ValueError("'components' must be a non-empty array unless CI or publishing is declared")
     if len(components_raw) > 100:
         raise ValueError("'components' must contain at most 100 entries")
 
@@ -259,7 +262,7 @@ def parse_manifest(data: object) -> Manifest:
         seen.add(component.name)
         components.append(component)
 
-    return Manifest(version=version, components=components, ci=ci)
+    return Manifest(version=version, components=components, ci=ci, publishing=publishing)
 
 
 def _parse_ci(data: object) -> dict[str, list[WorkflowStep]]:
