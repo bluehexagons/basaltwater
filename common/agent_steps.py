@@ -1436,8 +1436,9 @@ def clone_agent_repositories(config: SetupConfig) -> None:
                 check=False,
                 capture_output=True,
             )
-            actual_url = (result.stdout or "").strip().rstrip("/")
-            if result.returncode != 0 or actual_url != git_url.rstrip("/"):
+            actual_url = (result.stdout or "").strip().rstrip("/").removesuffix(".git")
+            expected_url = git_url.rstrip("/").removesuffix(".git")
+            if result.returncode != 0 or actual_url != expected_url:
                 raise RuntimeError(
                     f"Existing repository {destination} has a different origin; refusing to overwrite it"
                 )

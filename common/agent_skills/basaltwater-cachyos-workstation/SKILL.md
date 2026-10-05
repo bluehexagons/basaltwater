@@ -70,9 +70,11 @@ not prepare NVM on CachyOS. Custom NVM installations keep their own manager.
 Add `--blender --git-lfs` for source assets. Game development also selects KDE
 automation prerequisites for native Animator work, but starts no input/capture.
 Use the [game development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_GAME_DEVELOPMENT.md)
-for package scope and sibling workflows. This development setup does not
-reproduce Debian compiler/formatter pins or support release builds; difficult
-checks can run on the project's Debian validation host.
+for package scope and sibling workflows. Both OS profiles support game
+development; Debian also covers validation, builds, publishing, and services.
+This desktop bundle does not reproduce Debian compiler/formatter pins or
+prepare a release SDK. Use the project's separately prepared SDK and ABI gates
+for release packages on either host; record where each validation check ran.
 
 For a recognized standalone Codex installation, preview with
 `basaltw agent update --tool codex --dry-run`, then update with

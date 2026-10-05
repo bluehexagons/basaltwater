@@ -12,6 +12,40 @@ basaltw node doctor --json
 basaltw node exec -- npm test
 ```
 
+## Related checkouts and host roles
+
+CachyOS workstations and Debian hosts both support game development. CachyOS
+provides the interactive KDE, game, Animator, and asset-authoring environment;
+Debian also provides validation, builds, CI, publishing, and server workloads.
+Use the profile and diagnostics for the actual OS. A successful host doctor
+establishes prerequisites; each repository still owns its validation gates.
+Release binaries retain the project's SDK and ABI requirements on either OS.
+
+Both profiles clone primary repositories under `~/repos` by default. Set
+`--agent-workspace /absolute/path` to choose another root. Keep related
+checkouts as siblings using their repository basenames, such as `antistatic`,
+`antistatic-animator`, `antistatic-assets`, and `basaltwater`. Project examples
+using `../NAME` assume this layout; discover the actual checkout before use.
+Managed worktrees can live elsewhere: use `git worktree list` to locate the
+primary checkout and pass explicit source/game-root options where supported.
+Each worktree needs its own ignored dependencies and build products.
+
+Repeated `--repo HTTPS_URL` options clone missing repositories. Existing
+checkouts must match the requested origin; a trailing `.git` or slash does not
+change that identity. Different owners, hosts, or transports remain distinct.
+Setup preserves existing branches and worktree contents without pulling,
+resetting, installing project dependencies, or running repository scripts.
+Adding a checkout to T3 Code is a separate operation in the selected desktop
+or web environment; use its Add project UI or supported project CLI with the
+absolute checkout path. Preserve application state and register each checkout
+once. The development checkout of Basaltwater and its managed installed source
+are separate; `basaltw upgrade` updates the installed CLI on its chosen channel.
+
+See [CachyOS game development](CACHYOS_GAME_DEVELOPMENT.md) for the Antistatic
+inventory and [Debian native tooling](#debian-native-game-development) for its
+host bundle. Basaltwater and adjacent source repositories remain optional for
+ordinary project builds and immutable tagged package installs.
+
 ## Initialize a manifest
 
 `manifest init [REPOSITORY]` inspects project files without executing scripts,

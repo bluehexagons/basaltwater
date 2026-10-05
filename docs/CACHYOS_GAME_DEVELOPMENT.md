@@ -2,9 +2,11 @@
 
 Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation.
 This setup supports editing and running the core game, its direct TypeScript
-dependencies, Blender source assets, and Antistatic Animator. Debian remains
-the authoritative check/test and release-build environment; reproducing its
-compiler, formatter, graphics, or packaged-runtime baseline here is unnecessary.
+dependencies, Blender source assets, and Antistatic Animator. Both CachyOS and
+Debian support game development; Debian also covers validation, builds,
+publishing, and servers. Release packages use the game's pinned SDK and ABI
+gates on either OS. Rolling desktop tools need not reproduce Debian's reviewed
+compiler, formatter, graphics, or packaged-runtime baseline.
 
 For a first installation, use the [fish installer](CACHYOS.md#quick-start)
 with the options below after `--local-setup agent_cachyos`. If the launcher is
@@ -13,11 +15,12 @@ normal desktop account, without `sudo`:
 
 ```fish
 basaltw setup agent_cachyos localhost --t3code-desktop \
-  --node --node-versions --python --git-lfs --game-dev --blender --dry-run
+  --node --python --git-lfs --game-dev --blender --dry-run
 ```
 
 Remove `--dry-run` to apply. `--node` and `--python` select the general language
-tools; `--node-versions` prepares the separate project runtime manager.
+tools. Project runtime installs prepare NVM on demand; optionally add
+`--node-versions` to prepare it during setup.
 See [local setup](CACHYOS.md) for T3 modes and package prompts, and
 [maintenance](CACHYOS_MAINTENANCE.md) for later changes to a saved selection.
 
@@ -60,8 +63,13 @@ Antistatic and Animator intentionally use different development pins. Their
 `package.json` engines and `.nvmrc` files remain authoritative; do not copy the
 workstation's rolling Node version into project or release metadata.
 
-`--node-versions` prepares `~/.nvm` with Basaltwater's declared vendor installer
-policy. Existing NVM installations are verified and retained. Custom `NVM_DIR`
+`basaltw node install` prepares missing `~/.nvm` on demand with Basaltwater's
+declared vendor installer policy, then installs the project pin. Agents can
+use it directly when a project needs another runtime; users do not need to
+select `--node-versions` beforehand. That setup flag remains available to
+prepare NVM ahead of time. On-demand preparation retains the saved workstation
+selection and does not rerun package, service, or agent setup.
+Existing NVM installations are retained. Custom `NVM_DIR`
 installations remain usable through their original manager: omit this setup
 flag for them. Incomplete or unsafe default directories require explicit repair.
 Preparation uses NVM's documented
@@ -101,18 +109,24 @@ and project policy disabled; these host probes do not establish project readines
 
 ## Repositories and native authoring
 
-Keep these checkouts beside one another under the workspace root:
+Keep these primary checkouts beside one another under `~/repos`, or the root
+selected with `--agent-workspace /absolute/path`:
 
 - `antistatic`, the game.
 - `antistatic-animator`, the Electron authoring tool.
 - `capacitor`, `easing`, `trace`, and `antistatic-translations`, direct packages.
 - `antistatic-assets`, editable Blender sources.
+- `basaltwater`, an optional source checkout for host-tool development and
+  references; the installed CLI uses its own managed source directory.
 
 Use repeated `--repo HTTPS_URL` during setup to clone missing repositories.
 Authenticate private repositories locally first. Setup retains existing
 checkouts; it does not pull them, install project dependencies, or run their
 scripts. Each checkout's `AGENTS.md` owns its maintenance and validation rules.
 No website, sandbox, database, or matchmaking server is required for this setup.
+See [project workspace conventions](PROJECT_TOOLING.md#related-checkouts-and-host-roles)
+for existing origins, managed worktrees, and separate T3 project registration.
+Cloning a sibling does not change the tagged dependency installed by `npm ci`.
 
 Use Animator's Electron mode for native file access and live sync. Its Vite
 browser mode remains useful when an available browser can reach the local URL.
@@ -126,3 +140,7 @@ It never launches the game or Animator, builds repository code, or tests the GPU
 Run the game's doctor/build and open Animator after setup. Difficult native,
 formatter, screenshot, and full-suite validation can remain on the Debian VM;
 record the host on which a check actually ran.
+
+Use the game's [environment guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development-environments.md)
+for capture display isolation and fresh-checkout lobby test preparation. These
+checks belong to the game and work independently of Basaltwater.

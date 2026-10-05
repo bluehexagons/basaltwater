@@ -326,7 +326,9 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
                 raise ValueError(f"Existing destination is not a repository root: {destination}")
             result = _user_run(["git", "-C", str(destination), "remote", "get-url", "origin"],
                                home, capture_output=True, check=False)
-            if result.returncode or result.stdout.strip().rstrip("/") != repository.rstrip("/"):
+            actual_url = result.stdout.strip().rstrip("/").removesuffix(".git")
+            expected_url = repository.rstrip("/").removesuffix(".git")
+            if result.returncode or actual_url != expected_url:
                 raise ValueError(f"Existing repository has a different origin: {destination}")
             validate_filesystem_path(str(destination), must_exist=True, check_writable=True)
             result = _user_run(["git", "-C", str(destination), "rev-parse", "--absolute-git-dir"],
