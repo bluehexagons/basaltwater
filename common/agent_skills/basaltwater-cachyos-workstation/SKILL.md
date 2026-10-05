@@ -40,6 +40,18 @@ version-manager, and system-package installations keep their original manager.
 Existing Codex configuration and credentials are retained; custom `CODEX_HOME`
 is unsupported when Codex is selected. Authentication uses local provider login.
 
+Optional `--notify webhook URL` targets send the result of local setup and
+refresh through the shared JSON webhook sender. `mailbox` is unsupported;
+no notification timer or Debian maintenance/security jobs are installed.
+Repeat targets as needed. `normal`/`verbose` sends success and failure;
+`warning`/`error` sends failures, and `off` pauses delivery. Previews send nothing.
+`--notification-strict-https` verifies certificates/hostnames; the default
+accepts self-signed certificates. Preserve targets through refresh, which
+merges additions; a full explicit setup replaces the selection. Webhook URLs
+can contain credentials and remain in the private saved selection and receipt.
+Displayed refresh commands redact them. Delivery failure warns without changing
+the setup result. Inspect local output for full setup error details.
+
 Packages use pacman, not APT. Basaltwater installs missing packages using the
 existing sync database. Leave full OS updates to the user's CachyOS workflow;
 never repair an installation failure with a partial `pacman -Sy` upgrade.

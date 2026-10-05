@@ -40,6 +40,7 @@ _OPTIONS = {
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
+    "notify_specs", "notification_level", "notification_strict_https",
 }
 _CONTROLLER_OPTIONS = {"restart_if_needed", "wait_for_restart"}
 _CONFIG_OPTIONS = (_OPTIONS - {"no_agent_tools"}) | {
@@ -108,6 +109,16 @@ def validate_cachyos_config(config: SetupConfig) -> None:
         raise ValueError("agent_cachyos supports existing bare-metal workstations only")
     if not validate_username(config.username) or config.username == "root":
         raise ValueError("Run agent_cachyos as your existing non-root desktop user")
+    from lib.notifications import (
+        normalize_notification_level, normalize_notification_strict_https,
+        validate_notification_args,
+    )
+
+    validate_notification_args(config.notify_specs)
+    if any(kind != "webhook" for kind, _ in config.notify_specs or []):
+        raise ValueError("agent_cachyos supports webhook notifications only; mailbox is unsupported")
+    normalize_notification_level(config.notification_level)
+    normalize_notification_strict_https(config.notification_strict_https)
     if config.web_interfaces:
         host = config.web_interface_host if config.web_interface_host is not None else "127.0.0.1"
         if not isinstance(host, str) or not host:

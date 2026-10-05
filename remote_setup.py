@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import signal
+import socket
 import sys
 import time
 
@@ -199,16 +200,21 @@ def _send_setup_notification(
 ) -> bool:
     """Send the setup result and make best-effort delivery failures visible."""
 
-    delivered = send_setup_notification(
-        notify_specs=notify_specs,
-        system_type=system_type,
-        host=host,
-        success=success,
-        errors=errors,
-        friendly_name=friendly_name,
-        notification_level=notification_level,
-        strict_https=strict_https,
-    )
+    try:
+        delivered = send_setup_notification(
+            notify_specs=notify_specs,
+            system_type=system_type,
+            host=host,
+            success=success,
+            errors=errors,
+            friendly_name=friendly_name,
+            notification_level=notification_level,
+            strict_https=strict_https,
+        )
+    except Exception:
+        # Delivery must neither fail a completed setup nor mask its original
+        # error. Exception text can contain a receiver URL or bearer token.
+        delivered = False
     if not delivered:
         print(
             "  ⚠ Setup notification delivery was incomplete; check the saved "
@@ -585,20 +591,47 @@ def _run_main() -> int:
 
 def run_cachyos_setup(config: SetupConfig) -> int:
     """Apply only the local workstation plugin, as the existing desktop user."""
-    from lib.cachyos import preflight_cachyos
+    from lib.cachyos import preflight_cachyos, validate_cachyos_config
 
     previous_dry_run = is_dry_run()
     set_dry_run(config.dry_run)
     try:
-        preflight_cachyos(config)
-        steps = get_steps_for_system_type(config)
-        if config.dry_run:
-            print("CachyOS local workstation plan (hardware checks deferred until apply)")
-            _print_dry_run_plan(steps)
-            return 0
-        for name, function in steps:
-            print(f"\n{name}", flush=True)
-            function(config)
+        # Reject invalid/unsupported targets before any notification or setup
+        # action, including for callers that bypass the public CLI parser.
+        validate_cachyos_config(config)
+        current_step = "Checking workstation prerequisites"
+        try:
+            preflight_cachyos(config)
+            steps = get_steps_for_system_type(config)
+            if config.dry_run:
+                print("CachyOS local workstation plan (hardware checks deferred until apply)")
+                _print_dry_run_plan(steps)
+                if config.notify_specs:
+                    print("[DRY-RUN] Would send the setup result to configured webhooks, subject to notification level")
+                return 0
+            for name, function in steps:
+                current_step = name
+                print(f"\n{name}", flush=True)
+                function(config)
+        except Exception as exc:
+            if config.notify_specs and not config.dry_run:
+                _send_setup_notification(
+                    notify_specs=config.notify_specs, system_type=config.system_type,
+                    host=socket.gethostname(), success=False,
+                    # Do not forward arbitrary command output or personal
+                    # paths/credentials in a setup exception to the receiver.
+                    errors=[f"{current_step} failed ({type(exc).__name__}); inspect local setup output."],
+                    notification_level=config.notification_level,
+                    strict_https=config.notification_strict_https,
+                )
+            raise
+        if config.notify_specs:
+            _send_setup_notification(
+                notify_specs=config.notify_specs, system_type=config.system_type,
+                host=socket.gethostname(), success=True,
+                notification_level=config.notification_level,
+                strict_https=config.notification_strict_https,
+            )
         print("\nCachyOS coding setup complete. Authenticate providers locally before starting work.")
         return 0
     finally:

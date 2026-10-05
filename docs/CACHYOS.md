@@ -129,6 +129,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access`, or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access` closes managed access |
+| Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
 
 Examples:
 
@@ -147,7 +148,7 @@ basaltw setup agent_cachyos localhost --node --python --dry-run
 
 Application options install native packages from the configured CachyOS
 repositories, except the explicit AUR options `--t3code-desktop`,
-`--material-maker`, `--butler`, and `--steamcmd`. No Flatpak packages, graphics
+`--material-maker`, `--butler`, and `--steamcmd`. No Flatpak packages or graphics
 drivers are installed. Most application selections only install packages;
 Sunshine's startup and conditional encoder configuration are described below. See the
 [creative and publishing software guide](CACHYOS_SOFTWARE.md) for all issue #106
@@ -171,6 +172,42 @@ and pnpm for `--node`, and Python and uv for `--python`. A missing or broken
 companion tool makes setup incomplete even if the main runtime works.
 On CachyOS, `--av-tools` includes FFmpeg, ImageMagick, and ExifTool;
 `--gl-tools` includes Mesa/Vulkan diagnostics and apitrace.
+
+## Optional webhook notifications
+
+Add webhook targets to your initial setup selection to receive its completion
+or failure result. For example, after installing the launcher:
+
+```fish
+basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs \
+  --notify webhook 'https://hooks.example.net/infra' \
+  --notification-level normal --notification-strict-https
+```
+
+CachyOS supports only `webhook` targets; `mailbox` is rejected before setup
+actions. Repeat `--notify webhook URL` for multiple receivers. Delivery uses
+Basaltwater's [schema-version-2 JSON payload](NOTIFICATIONS.md#webhook-api),
+bounded retries, and optional HTTPS fragment-carried bearer token. The payload
+identifies this workstation by its hostname. A Basaltwater web panel's full
+sender link can be used as the URL; quote it in fish and treat it as a credential.
+
+`normal` and `verbose` send successful and failed setup results. `warning` and
+`error` send failures; `off` suppresses delivery while retaining targets. Dry
+runs send nothing. Invalid options are rejected locally without sending an
+event. Validated setup preflight or step failures send the failing phase and
+exception type; inspect local output for details. Delivery failure prints a
+warning and preserves the setup outcome.
+
+HTTPS accepts self-signed certificates by default, matching other Basaltwater
+senders. `--notification-strict-https` verifies the receiver certificate and
+hostname using the normal CA trust store. Notifications need outbound access
+only; no listener, mail transport, or notification timer is installed. The
+CachyOS integration sends setup results, including those from refresh; it does
+not install the Debian maintenance/security notification jobs or monitor Sunshine.
+
+Successful setup saves targets and policy in the private local selection and
+receipt for later refresh. Displayed refresh commands redact webhook URLs.
+For an existing setup, see [notification maintenance](CACHYOS_MAINTENANCE.md#webhook-notifications).
 
 ## Codex-only agent setup
 

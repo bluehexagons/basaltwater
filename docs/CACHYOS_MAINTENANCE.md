@@ -285,6 +285,40 @@ See the upstream [T3 installation guide](https://github.com/pingdotgg/t3code/blo
 and [remote-access guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md)
 for current provider, client, and T3 Connect requirements.
 
+## Webhook notifications
+
+To add setup-result webhooks while keeping your saved software and access
+selection, first upgrade the installed CLI so it recognizes these new flags:
+
+```fish
+basaltw upgrade
+basaltw refresh --notify webhook 'https://hooks.example.net/infra' \
+  --notification-level normal --notification-strict-https --dry-run
+basaltw refresh --notify webhook 'https://hooks.example.net/infra' \
+  --notification-level normal --notification-strict-https
+```
+
+Replace the example URL with your receiver's full link. Webhooks send setup
+success/failure results; no background notification jobs are installed.
+`mailbox` is unsupported. The preview sends nothing and hides webhook URLs in
+the displayed command. The actual refresh retains the full URL for delivery
+and saves it privately only after setup succeeds. A failed run can notify the
+targets provided for that attempt, while retaining the previous saved selection.
+
+Repeatable `--notify` adds targets without exact duplicates. Omitted options
+preserve saved targets, level, and HTTPS policy. Use
+`basaltw refresh --notification-level off` to pause delivery; restore `normal`
+to receive completion/failure results again. `warning` or `error` keeps only
+failures. `--no-notification-strict-https` restores self-signed compatibility.
+To replace or remove targets, run a full explicit `setup` with the desired
+software/access selection and new targets, or omit `--notify` to remove them.
+
+Targets, including any credentials in the URL, are retained in the user-owned
+`0600` `last-setup.json` and `last-report.json`; keep both private. A receiver
+failure warns without failing an otherwise successful setup. Verify the event
+in the receiver after applying the flags. See the
+[notification guide](NOTIFICATIONS.md) for payload, TLS, token, and retry details.
+
 ## Reruns, updates, and repositories
 
 ### Upgrade and repeat your last setup
@@ -310,8 +344,9 @@ and channel (when available), selected tool/package versions, and diagnostic
 observations including warnings. It is informational, not replay input. A
 receipt failure warns without discarding a successful saved selection.
 It saves supported setup options, including provider selections/exclusions,
-T3 mode, optional tools, repositories, workspace, and web bind/port. It does
-not copy authentication files or save provider credentials. The record is
+T3 mode, optional tools, repositories, workspace, web bind/port, and webhook
+targets/policy. It does not copy authentication files or save provider
+credentials; webhook URLs may themselves contain receiver credentials. The record is
 written only after all setup steps, including cleanup, succeed. A failed or
 interrupted run and a dry run leave the previous successful selection intact.
 Saved commands explicitly include or exclude every currently supported agent,
@@ -337,7 +372,7 @@ basaltw refresh --material-maker --etcher --butler --steamcmd
 
 Refresh accepts the supported CachyOS setup flags (`refresh --help` lists them).
 Unspecified options are preserved. Boolean and single-value options override
-saved values; repeatable repositories and access sources are added without
+saved values; repeatable repositories, access sources, and webhook targets are added without
 duplicates. Agent selections/exclusions override their saved opposite for that
 provider. `--no-access-source` clears saved explicit sources; combine it with
 `--no-lan-access` to close managed remote access. Selecting a T3 mode replaces

@@ -36,6 +36,28 @@ scheduled jobs, and other outbound notifications saved on that system.
 Use strict mode when the network is not already trusted or the receiver's
 identity must be authenticated.
 
+## CachyOS workstation webhooks
+
+The local `agent_cachyos` profile supports webhook notifications for setup
+completion and failure, including setup repeated by `refresh`. It rejects
+`mailbox` and does not install scheduled maintenance/security notification jobs.
+Include targets in your initial selection:
+
+```fish
+basaltw setup agent_cachyos localhost --node --python --git-lfs \
+  --notify webhook 'https://hooks.example.net/infra' \
+  --notification-level normal --notification-strict-https
+```
+
+The JSON payload, bearer-token URL fragment, retries, and delivery levels below
+apply to CachyOS webhooks too. Dry runs send nothing. Setup failures report the
+failing phase and exception type, retaining detailed output locally.
+Successful setup stores webhook URLs and policy in the private user-owned
+local selection and receipt; displayed refresh commands redact URLs. Use
+`refresh`, rather than generic remote-host `patch`, `info`, or `cmd`, to retain
+or change that selection. See [CachyOS notification maintenance](CACHYOS_MAINTENANCE.md#webhook-notifications)
+for adding targets to an existing setup, disabling delivery, and replacing targets.
+
 ## Send notifications to a Basaltwater web panel
 
 The web panel can receive and display notifications from other managed
@@ -101,7 +123,7 @@ For enablement, disablement, rotation, retention, and API limits, see
 > Treat the full fragment-bearing URL as a credential. Do not paste it into
 > tickets, logs, or shared terminal output. It remains in the sender's saved
 > setup state because scheduled jobs need it. Scheduled jobs also receive a
-> root-owned `/etc/basaltwater/notifications.json` subset containing the
+> root-owned `/etc/basaltwater/notifications.json` subset on Debian containing the
 > notification targets, level, and HTTPS policy, so they do not need access to
 > the full root-only setup state.
 

@@ -16,6 +16,7 @@ from lib.arg_parser import add_setup_arguments
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.cachyos import _OPTIONS, cachyos_config_from_args, is_cachyos, preflight_cachyos, validate_cachyos_config
 from lib.channel_manager import ChannelError, get_channel_info, managed_repository_path, upgrade_channel
+from lib.command_display import redacted_setup_parts
 from lib.config import AGENT_TOOLS, SetupConfig
 from lib.remote_utils import is_dry_run
 from lib.validation import validate_filesystem_path
@@ -79,7 +80,11 @@ def _merge_overrides(arguments: list[str], overrides: dict[str, list[str]]) -> t
             raise ValueError(f"Unsupported refresh override: {name}")
         value = getattr(additions, name)
         if isinstance(value, list):
-            value = list(dict.fromkeys([*(getattr(saved, name) or []), *value]))
+            combined = [*(getattr(saved, name) or []), *value]
+            value = []
+            for item in combined:
+                if item not in value:
+                    value.append(item)
         setattr(saved, name, value)
     # Saved provider exclusions are explicit. A new selection must override
     # its old opposite, without losing exclusions for the other providers.
@@ -212,7 +217,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
             if not info.get("channel") or info.get("installation_type") == "setup-snapshot":
                 raise ValueError("refresh requires an installation with a managed upgrade channel")
             print(f"[DRY-RUN] Would upgrade Basaltwater on channel {info['channel']}; no fetch or checkout")
-            print("Saved setup: " + shlex.join(["basaltw", *arguments]))
+            print("Saved setup: " + " ".join(redacted_setup_parts(config.to_setup_command())))
             from remote_setup import run_cachyos_setup
 
             return run_cachyos_setup(replace(config, dry_run=True))
@@ -220,7 +225,7 @@ def run_refresh_command(args: argparse.Namespace) -> int:
         info = upgrade_channel(repository)
         print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}")
         print("Repeating the saved setup with the updated code:", flush=True)
-        print(shlex.join(["basaltw", *arguments]), flush=True)
+        print(" ".join(redacted_setup_parts(config.to_setup_command())), flush=True)
         # Never resolve basaltw through PATH: it could select a different copy.
         # exec preserves the terminal for sudo/AUR prompts and the setup exit code.
         entry = str(Path(repository) / "basaltwater.py")
