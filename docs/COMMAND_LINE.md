@@ -572,7 +572,7 @@ list. Neither preview is a completed live setup.
 | Flag | Description |
 |------|-------------|
 | `--node` | Install nvm + Node.js + PNPM |
-| `--node-versions VERSION` / `--no-node-versions` | CachyOS only: prepare project-selected user-local NVM runtimes; repeatable, independent of the native `--node` selection |
+| `--node-versions` / `--no-node-versions` | CachyOS only: prepare user-local NVM without selecting a Node version; independent of native `--node`; use `basaltw node install` for each project pin |
 | `--game-dev` / `--no-game-dev` | Select native game build/debug tools and dependency headers on Debian or CachyOS; Debian leaves SDL versions to project bootstrap; see [Project tooling](PROJECT_TOOLING.md) and [CachyOS game development](CACHYOS_GAME_DEVELOPMENT.md) |
 | `--go` | Install Go |
 | `--python` | Install Python aliases + uv |
