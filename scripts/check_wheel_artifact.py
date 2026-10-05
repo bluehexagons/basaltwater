@@ -31,6 +31,8 @@ REQUIRED_WHEEL_PATHS = (
     "common/agent_skills/basaltwater-t3code/references/updates.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
     "common/cachyos_steps.py",
+    "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
+    "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
     "common/agent_skills/basaltwater-cachyos-workstation/SKILL.md",
     "common/agent_skills/basaltwater-cachyos-workspace/SKILL.md",
     "common/agent_skills/basaltwater-cachyos-t3code/SKILL.md",

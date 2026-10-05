@@ -32,6 +32,22 @@ class WheelArtifactTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "generated Python artifacts"):
                 check_wheel_artifact._check_wheel_contents(wheel)
 
+    def test_rejects_missing_native_desktop_guidance(self) -> None:
+        resources = (
+            "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
+            "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
+        )
+        for missing in resources:
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                wheel = Path(directory) / "basaltwater.whl"
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    for name in check_wheel_artifact.REQUIRED_WHEEL_PATHS:
+                        if name != missing:
+                            archive.writestr(name, "")
+                with self.assertRaisesRegex(RuntimeError, "missing required runtime files") as error:
+                    check_wheel_artifact._check_wheel_contents(wheel)
+                self.assertIn(missing, str(error.exception))
+
     def test_build_uses_clean_temporary_source_copy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir) / "checkout"
