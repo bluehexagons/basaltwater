@@ -60,8 +60,11 @@ Use the original manager for updates to externally managed tools.
 For native game and Animator development, `--game-dev` supplies CMake/native
 libraries, debugging/caching tools, Xvfb/xauth and Electron host libraries.
 `--node-versions` prepares user-local NVM without choosing a runtime or changing
-shell defaults. Use `basaltw node install` and `basaltw node status` in each
-project to follow its committed pin; `basaltw node exec -- COMMAND` works from
+shell defaults. Use `basaltw node install` when a project needs its committed
+pin; it prepares missing user-local NVM on demand, so an earlier
+`--node-versions` selection is unnecessary. It keeps saved workstation options
+intact and does not rerun full setup. Check with `basaltw node status` in each
+project; `basaltw node exec -- COMMAND` works from
 Fish and agent shells too. `--node` alone retains system/PATH runtimes and does
 not prepare NVM on CachyOS. Custom NVM installations keep their own manager.
 Add `--blender --git-lfs` for source assets. Game development also selects KDE

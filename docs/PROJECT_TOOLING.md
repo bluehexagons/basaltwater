@@ -143,6 +143,16 @@ cleanup or rollback. Selection and diagnostics are read-only. Use an explicit
 install when a project adopts a runtime created by maintenance. See
 [maintenance policy](MAINTENANCE.md) for LTS and optional latest-track updates.
 
+On CachyOS, `node install` prepares missing user-local NVM through the same
+vendor installer and checks as `--node-versions`, then installs the requested
+runtime. Agents can run it when a project pin is missing without requiring a
+full workstation setup or an earlier flag selection. Preparation runs as the
+local desktop account, keeps shell profiles and the saved workstation selection
+intact, and refuses unsafe, incomplete, or missing custom NVM installations.
+An existing custom NVM remains usable. Other hosts still require NVM through
+their normal setup. `--node-versions` remains available to prepare NVM ahead of
+time without downloading a runtime.
+
 `node doctor` checks the selected Node executable and its bundled npm against
 `engines.npm`, when declared. It runs version probes in a private temporary
 directory with repository scripts, user/global npm configuration, inherited

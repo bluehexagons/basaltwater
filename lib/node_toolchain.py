@@ -328,18 +328,26 @@ def run_node_command(args: argparse.Namespace) -> int:
                   + ("healthy" if report["healthy"] else ", ".join(report["issues"])))
             return 0 if report["healthy"] else 1
         if args.node_command == "install":
-            pin, _, _ = project_requirements(args.project)
+            pin, _, engines = project_requirements(args.project)
             version = args.version or pin
             if not version or not re.fullmatch(r"v?\d+(?:\.\d+){0,2}|node|lts/[a-z*]+", version):
                 raise ValueError("Install requires --version with a stable version, major, node, or lts/*")
-            nvm = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
-            if not nvm.is_file():
-                raise ValueError("Managed NVM is unavailable; reconcile the host's saved Node setup "
-                                 "(--node-versions on agent_cachyos)")
+            if engines:
+                satisfies((0, 0, 0), engines)
             managers = args.package_manager
             for manager in managers:
                 if not re.fullmatch(r"(?:npm|pnpm|yarn)@\d+\.\d+\.\d+", manager):
                     raise ValueError("Package managers require an exact npm@VERSION, pnpm@VERSION, or yarn@VERSION")
+            nvm = Path(os.environ.get("NVM_DIR") or Path.home() / ".nvm") / "nvm.sh"
+            validate_filesystem_path(str(nvm))
+            if not nvm.is_file():
+                from lib.cachyos import is_cachyos
+
+                if not is_cachyos():
+                    raise ValueError("Managed NVM is unavailable; reconcile the host's saved Node setup")
+                from common.cachyos_development import prepare_project_node_versions
+
+                nvm = prepare_project_node_versions()
             # An existing maintenance install becomes a project runtime before
             # NVM or package-manager work can race with automatic cleanup.
             try:
@@ -399,7 +407,7 @@ def run_node_command(args: argparse.Namespace) -> int:
             result = subprocess.run(argv, env=selection.environment(), check=False)
             return result.returncode
         return 0
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(exc)}))
         else:

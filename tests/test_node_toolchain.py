@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import argparse
+from contextlib import ExitStack
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -119,6 +120,72 @@ class NodeToolchainTests(unittest.TestCase):
             args.package_manager = ['pnpm@latest; touch injected']
             self.assertEqual(run_node_command(args), 1)
             run.assert_not_called()
+
+    def test_install_prepares_missing_nvm_on_cachyos_then_installs_the_project_pin(self):
+        (self.project / '.nvmrc').write_text('22')
+        args = argparse.Namespace(node_command='install', project=str(self.project), version=None,
+                                  package_manager=[])
+
+        def prepare():
+            script = self.nvm / 'nvm.sh'
+            script.write_text('# prepared NVM')
+            return script
+
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.cachyos.is_cachyos', return_value=True), \
+                patch('common.cachyos_development.prepare_project_node_versions', side_effect=prepare) as bootstrap, \
+                patch('lib.node_toolchain.subprocess.run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            self.assertEqual(run_node_command(args), 0)
+        bootstrap.assert_called_once_with()
+        self.assertEqual(run.call_args.args[0][-2:], [str(self.nvm / 'nvm.sh'), '22'])
+        self.assertEqual(runtime_owner(self.nvm, '22.23.2'), 'project')
+
+    def test_invalid_install_inputs_never_prepare_nvm_or_run_commands(self):
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='22',
+                                  package_manager=[])
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('common.cachyos_development.prepare_project_node_versions') as bootstrap, \
+                patch('lib.node_toolchain.subprocess.run') as run:
+            for version, managers, engines in (
+                ('22; injected', [], '>=22'),
+                ('22', ['pnpm@latest'], '>=22'),
+                ('22', [], 'invalid'),
+            ):
+                with self.subTest(version=version, managers=managers, engines=engines):
+                    args.version, args.package_manager = version, managers
+                    (self.project / 'package.json').write_text(json.dumps({'engines': {'node': engines}}))
+                    self.assertEqual(run_node_command(args), 1)
+            bootstrap.assert_not_called()
+            run.assert_not_called()
+
+    def test_missing_nvm_on_other_hosts_and_preparation_failure_stop_runtime_install(self):
+        args = argparse.Namespace(node_command='install', project=str(self.project), version='22',
+                                  package_manager=[])
+        for cachyos, failure in ((False, None), (True, RuntimeError('NVM installation failed'))):
+            with self.subTest(cachyos=cachyos), patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                    patch('lib.cachyos.is_cachyos', return_value=cachyos), \
+                    patch('common.cachyos_development.prepare_project_node_versions', side_effect=failure) as bootstrap, \
+                    patch('lib.node_toolchain.subprocess.run') as run:
+                self.assertEqual(run_node_command(args), 1)
+                self.assertEqual(bootstrap.call_count, int(cachyos))
+                run.assert_not_called()
+
+    def test_existing_custom_nvm_and_read_only_commands_never_prepare_nvm(self):
+        (self.project / '.nvmrc').write_text('22')
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}))
+            bootstrap = stack.enter_context(patch('common.cachyos_development.prepare_project_node_versions'))
+            stack.enter_context(patch('lib.node_toolchain.subprocess.run',
+                                     return_value=subprocess.CompletedProcess([], 0, 'v22.23.2')))
+            for command in ('status', 'env', 'doctor', 'exec'):
+                args = argparse.Namespace(node_command=command, project=str(self.project), version=None,
+                                          json=True, argv=['--', 'node', '--version'])
+                self.assertEqual(run_node_command(args), 0)
+            (self.nvm / 'nvm.sh').write_text('# existing custom NVM')
+            args = argparse.Namespace(node_command='install', project=str(self.project), version=None,
+                                      package_manager=[])
+            self.assertEqual(run_node_command(args), 0)
+            bootstrap.assert_not_called()
 
     def test_project_doctor_uses_selected_tools_without_inherited_code_or_project_policy(self):
         (self.project / '.nvmrc').write_text('22')

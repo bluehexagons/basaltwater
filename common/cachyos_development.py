@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import pwd
 import shutil
 import stat
 
@@ -94,6 +95,19 @@ def install_cachyos_node_versions(config: SetupConfig) -> None:
             raise RuntimeError("User-local NVM installation failed; rerun --node-versions after repair")
     verify_node_versions(home)
     print("  NVM ready; use basaltw node install from each project to install its pin")
+
+
+def prepare_project_node_versions() -> Path:
+    """Prepare NVM for an explicit project install without replaying host setup."""
+    from lib.cachyos import preflight_cachyos
+
+    account = pwd.getpwuid(os.getuid())
+    config = SetupConfig(host="localhost", username=account.pw_name,
+                         system_type="agent_cachyos", install_node_versions=True)
+    preflight_cachyos(config)
+    print("Preparing user-local NVM for this project install")
+    install_cachyos_node_versions(config)
+    return nvm_script(Path(account.pw_dir))
 
 
 def report_game_dev_readiness(config: SetupConfig) -> None:

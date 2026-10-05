@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -120,6 +121,43 @@ class CachyOSDevelopmentTests(unittest.TestCase):
             development.install_cachyos_node_versions(self.config("--node-versions"))
         install.assert_not_called()
         self.assertEqual(script.read_text(), "# fixture\n")
+
+    def test_project_preparation_uses_the_existing_installer_without_replaying_setup(self):
+        account = SimpleNamespace(pw_name='human', pw_dir=str(self.home))
+
+        def install(tool, **kwargs):
+            (self.home / '.nvm/nvm.sh').write_text('# fixture\n')
+            self.assertEqual(tool, 'nvm')
+            self.assertEqual(kwargs['environment']['PROFILE'], '/dev/null')
+            return 0
+
+        with patch.object(development.pwd, 'getpwuid', return_value=account), \
+                patch('lib.cachyos.preflight_cachyos') as preflight, \
+                patch.object(steps, 'install_vendor_tool', side_effect=install), \
+                patch.object(steps, '_user_run', return_value=subprocess.CompletedProcess([], 0)), \
+                patch('remote_setup.run_cachyos_setup') as full_setup, \
+                patch('lib.cachyos_refresh.save_successful_setup') as save:
+            self.assertEqual(development.prepare_project_node_versions(), self.home / '.nvm/nvm.sh')
+        config = preflight.call_args.args[0]
+        self.assertEqual(config.username, 'human')
+        self.assertTrue(config.install_node_versions)
+        self.assertFalse(config.selected_agent_tools())
+        full_setup.assert_not_called()
+        save.assert_not_called()
+
+    def test_project_preparation_enforces_preflight_and_custom_nvm_boundaries(self):
+        account = SimpleNamespace(pw_name='human', pw_dir=str(self.home))
+        with patch.object(development.pwd, 'getpwuid', return_value=account), \
+                patch('lib.cachyos.preflight_cachyos', side_effect=ValueError('Run locally')) as preflight, \
+                patch.object(steps, 'install_vendor_tool') as install:
+            with self.assertRaisesRegex(ValueError, 'Run locally'):
+                development.prepare_project_node_versions()
+            install.assert_not_called()
+            preflight.side_effect = None
+            with patch.dict(os.environ, {'NVM_DIR': str(self.home / 'custom')}), \
+                    self.assertRaisesRegex(ValueError, 'custom NVM_DIR'):
+                development.prepare_project_node_versions()
+            install.assert_not_called()
 
     def test_failed_install_and_unloadable_nvm_stop_setup(self):
         with patch.object(steps, "install_vendor_tool", return_value=1), \

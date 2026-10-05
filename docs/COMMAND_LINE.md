@@ -215,7 +215,9 @@ retaining the current working directory; `--project` selects metadata rather
 than changing directories. These commands do not download a missing runtime.
 
 `node install` explicitly installs the requested version or project pin through
-managed NVM. Repeat `--package-manager NAME@VERSION` to install exact npm, pnpm,
+managed NVM. On CachyOS it prepares missing user-local NVM on demand, without
+requiring an earlier `--node-versions` selection or a full setup rerun.
+Repeat `--package-manager NAME@VERSION` to install exact npm, pnpm,
 or yarn versions for that runtime. See [Project tooling](PROJECT_TOOLING.md)
 for selection precedence, supported ranges, initialization examples, and
 per-runtime package-manager behavior.
