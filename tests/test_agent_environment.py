@@ -93,7 +93,7 @@ class TestAgentEnvironment(unittest.TestCase):
                 self.assertTrue(application["instructions"])
                 self.assertNotIn("basaltw desktop", " ".join(application["instructions"]))
         self.assertEqual(result["host_profile"], "cachyos-workstation")
-        self.assertEqual(result["health_command"], "basaltw doctor --json")
+        self.assertEqual(result["health_command"], "basaltw local cachyos-doctor --json")
         self.assertIn("native CachyOS workstation", result["publishing"]["instructions"][0])
         self.assertIn("interactive terminal login", result["publishing"]["instructions"][0])
         self.assertNotIn("on this VM", " ".join(result["publishing"]["instructions"]))

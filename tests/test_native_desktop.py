@@ -12,6 +12,7 @@ import subprocess
 import struct
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -83,6 +84,50 @@ class NativeControlTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,"revoked"):
             self.session.handle({**self.payload,"action":"input","kind":"text","text":"a"})
         self.assertEqual(self.portal.notify.call_args.args, ("NotifyKeyboardKeysym","iu",ord("a"),0))
+
+    def test_hold_keeps_press_before_release_for_requested_duration(self):
+        clock = [time.monotonic()]
+        delivered = []
+        self.portal.notify.side_effect = lambda *args: delivered.append((clock[0], args))
+        with patch.object(native.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(self.session.stopping, "wait", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+            self.session.handle({**self.payload, "action": "input", "kind": "key", "key": "Return", "hold_ms": 120})
+        self.assertGreaterEqual(delivered[-1][0] - delivered[0][0], .119)
+        self.assertEqual(delivered[-1][1][-1], 0)
+
+    def test_pause_interrupts_held_pointer_and_releases_before_new_control(self):
+        pressed = threading.Event()
+        errors = []
+        self.portal.notify.side_effect = lambda *args: pressed.set() if args == ("NotifyPointerButton", "iu", 272, 1) else None
+        def work():
+            try:
+                self.session.handle({**self.payload, "action": "input", "kind": "click", "x": 1, "y": 1, "hold_ms": 5000})
+            except RuntimeError as exc:
+                errors.append(str(exc))
+        worker = threading.Thread(target=work)
+        worker.start()
+        try:
+            self.assertTrue(pressed.wait(1))
+            self.session.handle({"action": "pause"})
+            worker.join(1)
+            self.assertFalse(worker.is_alive())
+            self.assertIn("paused", errors[0])
+            self.assertEqual(self.portal.notify.call_args.args, ("NotifyPointerButton", "iu", 272, 0))
+            self.assertFalse(self.session.input_active)
+        finally:
+            self.session.close()
+            worker.join(1)
+
+    def test_cancelled_hold_releases_all_keys_and_invalid_holds_deliver_nothing(self):
+        cancelled = Mock(side_effect=[False, False, False, True])
+        with patch.object(native, "keysyms", return_value=[100, 101]), self.assertRaisesRegex(RuntimeError, "disconnected"):
+            self.session.handle({**self.payload, "action": "input", "kind": "key", "key": "ctrl+s", "hold_ms": 100, "_cancelled": cancelled})
+        self.assertEqual(self.portal.notify.call_args_list[-2:], [call("NotifyKeyboardKeysym", "iu", 101, 0), call("NotifyKeyboardKeysym", "iu", 100, 0)])
+        self.portal.reset_mock()
+        for hold in (-1, 5001, True, "120"):
+            with self.subTest(hold=hold), self.assertRaises(ValueError):
+                self.session.handle({**self.payload, "action": "input", "kind": "click", "x": 1, "y": 1, "hold_ms": hold})
+        self.portal.notify.assert_not_called()
 
     def test_failed_release_still_releases_modifiers_and_stops_control(self):
         self.portal.notify.side_effect = [None, None, RuntimeError("release failed"), None]
@@ -172,7 +217,8 @@ class NativeControlTests(unittest.TestCase):
 class NativeHandoffTests(unittest.TestCase):
     def test_only_live_running_session_reports_enabled_input(self):
         cases = [
-            ({"state": "awaiting-consent", "detail": "Approve KDE"}, "Waiting for KDE consent: Approve KDE"),
+            ({"state": "awaiting-consent", "detail": "Approve KDE"}, "Waiting for KDE response: Approve KDE"),
+            ({"state": "initializing", "portal_stage": "CreateSession.request"}, "Initializing native control: CreateSession.request"),
             ({"state": "failed", "detail": "Permission denied", "paused": True}, "Native desktop control failed: Permission denied"),
             ({"state": "stopped", "paused": True}, "Automation stopped; KDE and applications are preserved"),
             ({"stopped": True}, "Automation stopped; KDE and applications are preserved"),
@@ -258,6 +304,13 @@ class NativeCliTests(unittest.TestCase):
         xrdp.assert_called_once_with()
         portal.assert_not_called()
 
+    def test_stopped_helper_with_retained_failure_is_reported_as_error(self):
+        parser = argparse.ArgumentParser()
+        desktop_cli.add_desktop_subparser(parser.add_subparsers())
+        args = parser.parse_args(["desktop", "--native", "status"])
+        with patch.object(native, "status", return_value={"state": "stopped", "last_failure": {"detail": "Bus unavailable"}}), redirect_stdout(StringIO()):
+            self.assertEqual(desktop_cli.run_desktop_command(args), 1)
+
     def test_session_check_rejects_foreign_socket_ssh_and_non_kde(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(native,"runtime_directory",return_value=Path(directory,"native")), patch.object(native.os,"getuid",return_value=1000), patch.object(native.os,"geteuid",return_value=1000), patch("lib.cachyos.is_cachyos",return_value=True), patch("lib.cachyos_doctor._owned_socket",return_value=True) as owned, patch.dict(os.environ,{"XDG_SESSION_TYPE":"wayland","XDG_CURRENT_DESKTOP":"KDE","WAYLAND_DISPLAY":"wayland-0"},clear=True):
             self.assertEqual(native.check_session(),"wayland-0")
@@ -297,6 +350,9 @@ class PortalContractTests(unittest.TestCase):
         self.portal.Gio = Mock()
         self.portal.GLib = Mock()
         self.portal.pending = set()
+        self.portal.waiters = set()
+        self.portal.cancelled = threading.Event()
+        self.portal.progress = Mock()
         self.portal.closed = Mock()
         self.portal.session = None
         self.portal.fd = None
@@ -324,6 +380,20 @@ class PortalContractTests(unittest.TestCase):
         self.assertEqual(calls.call_args.args[:2],("org.freedesktop.portal.Request","Close"))
         self.assertFalse(self.portal.pending)
 
+    def test_initialization_error_never_claims_pending_consent(self):
+        with patch.object(self.portal, "call", side_effect=RuntimeError("Bus unavailable")), self.assertRaisesRegex(RuntimeError, "Bus unavailable"):
+            self.portal.response(REMOTE, "Start", "(osa{sv})", ("session", ""), {})
+        self.portal.progress.assert_called_once_with("Start.request", False)
+
+    def test_bus_loss_wakes_pending_portal_response(self):
+        def call(*args, **kwargs):
+            path = self.portal.bus.signal_subscribe.call_args.args[3]
+            self.portal.disconnected()
+            return Mock(unpack=lambda: (path,))
+        with patch.object(self.portal, "call", side_effect=call), self.assertRaisesRegex(RuntimeError, "closed while waiting"):
+            self.portal.response(REMOTE, "Start", "(osa{sv})", ("session", ""), {})
+        self.assertFalse(self.portal.waiters)
+
     def test_incomplete_device_consent_never_opens_pipewire(self):
         with patch.object(self.portal,"response",side_effect=[{"session_handle":"session"},{},{},{"devices":1,"streams":[(17,{"size":[1280,720]})]}]) as response, self.assertRaisesRegex(RuntimeError,"keyboard and pointer"):
             self.portal.start()
@@ -333,6 +403,39 @@ class PortalContractTests(unittest.TestCase):
     def test_portal_owner_loss_revokes_control(self):
         self.portal.owner_changed(None,None,None,None,None,Mock(unpack=lambda:("portal",":1.42","")))
         self.portal.closed.assert_called_once()
+
+
+class NativeReceiptTests(unittest.TestCase):
+    def test_initializing_and_last_failure_remain_available_after_helper_exit(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output := StringIO()):
+            receipt = Path(directory, "status.json")
+            session = native.NativeSession(None, receipt=receipt)
+            self.assertEqual(session.state, "initializing")
+            session.progress("CreateSession.request")
+            session.fail(RuntimeError("Bus unavailable"))
+            session.close()
+            with patch.object(native, "runtime_directory", return_value=Path(directory)), \
+                    patch.object(native, "request", side_effect=FileNotFoundError):
+                result = native.status()
+            self.assertEqual(result["state"], "stopped")
+            self.assertFalse(result["helper_running"])
+            self.assertEqual(result["last_failure"]["stage"], "CreateSession.request")
+            self.assertEqual(result["last_failure"]["detail"], "Bus unavailable")
+            self.assertIn("Bus unavailable", output.getvalue())
+            self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+
+    def test_exposed_or_linked_receipt_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "status.json")
+            path.write_text("{}")
+            with patch.object(native, "runtime_directory", return_value=Path(directory)), \
+                    patch.object(native, "request", side_effect=FileNotFoundError):
+                with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+                    native.status()
+                path.unlink()
+                path.symlink_to(Path(directory, "other"))
+                with self.assertRaisesRegex(RuntimeError, "Unsafe"):
+                    native.status()
 
 
 class NativePackageTests(unittest.TestCase):

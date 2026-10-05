@@ -17,7 +17,8 @@ import subprocess
 import threading
 import time
 
-from desktop import accessibility, session_runtime
+from desktop import accessibility, client, session_runtime
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path
 
 MAX_MESSAGE = 65536
@@ -64,8 +65,22 @@ def status():
     try:
         return request({"action": "status"})
     except (FileNotFoundError, ConnectionRefusedError):
-        return {"state": "stopped", "desktop": "kde-wayland", "backend": "portal",
-                "interactive_required": True, "detail": "Run desktop start and approve KDE's selected-monitor/input dialog"}
+        path = runtime_directory() / "status.json"
+        receipt = {}
+        try:
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise RuntimeError("Unsafe native status receipt")
+            receipt = read_json_file(str(path), max_bytes=16384)
+            if not isinstance(receipt, dict):
+                raise ValueError("Invalid native status receipt")
+        except FileNotFoundError:
+            pass
+        return {**receipt, "last_state": receipt.get("state"), "state": "stopped",
+                "desktop": "kde-wayland", "backend": "portal", "helper_running": False,
+                "paused": True, "control_active": False, "expires_in": 0,
+                "interactive_required": True,
+                "detail": receipt.get("detail") if receipt.get("last_failure") else "Run desktop start; KDE may request selected-monitor/input approval"}
 
 
 def check_session():
@@ -102,7 +117,7 @@ def start():
         env = dict(os.environ, DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus",
                    XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
         env.pop("AT_SPI_BUS_ADDRESS", None)
-        log_fd = os.open(folder / "helper.log", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        log_fd = os.open(folder / "helper.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
         os.fchmod(log_fd, 0o600)
         with os.fdopen(log_fd, "w") as log:
             process = subprocess.Popen(["/usr/bin/python3", "-m", "desktop.native_session", "--serve"],
@@ -165,11 +180,17 @@ def keysyms(chord):
 
 
 class NativeSession:
-    def __init__(self, portal):
+    def __init__(self, portal, *, receipt=None):
         self.portal = portal
         self.generation = secrets.token_hex(16)
-        self.state = "awaiting-consent"
-        self.detail = "Approve the KDE dialog for one monitor, keyboard and pointer"
+        self.state = "initializing"
+        self.portal_stage = "connecting"
+        self.detail = "Initializing the portal; no consent request has been confirmed"
+        self.last_failure = None
+        self.receipt = receipt
+        self.input_active = False
+        self.input_released = threading.Event()
+        self.input_released.set()
         self.paused = False
         self.lease = None
         self.lease_until = 0
@@ -184,10 +205,34 @@ class NativeSession:
     def snapshot_status(self):
         return {"state": self.state, "generation": self.generation, "desktop": "kde-wayland",
                 "backend": "portal", "origin": "portal", "paused": self.paused,
+                "helper_running": True, "portal_stage": self.portal_stage, "last_failure": self.last_failure,
                 "geometry": self.geometry, "interactive_required": self.state == "awaiting-consent",
                 "expires_in": max(0, int(self.until - time.monotonic())),
                 "control_active": self.lease is not None and time.monotonic() < self.lease_until,
                 "detail": self.detail}
+
+    def record(self):
+        if self.receipt:
+            write_json_atomic(str(self.receipt), self.snapshot_status())
+
+    def progress(self, stage, pending=False):
+        with self.lock:
+            if self.stopping.is_set():
+                raise RuntimeError("Native initialization was stopped")
+            self.portal_stage = stage
+            self.state = "awaiting-consent" if pending else "initializing"
+            self.detail = ("KDE accepted Start; waiting for its response. A visible dialog is unverified; "
+                           "inspect KDE if approval is requested." if pending else "Initializing portal stage: " + stage)
+            print(datetime.now(timezone.utc).isoformat(), self.detail, flush=True)
+            self.record()
+
+    def fail(self, error):
+        with self.lock:
+            self.state, self.detail = "failed", str(error)[:2048]
+            self.last_failure = {"stage": self.portal_stage, "detail": self.detail,
+                                 "at": datetime.now(timezone.utc).isoformat()}
+            print(self.last_failure["at"], "Native control failed at", self.portal_stage, self.detail, flush=True)
+            self.record()
 
     def close(self):
         with self.lock:
@@ -196,8 +241,11 @@ class NativeSession:
             self.lease = None
             self.elements.clear()
             self.stopping.set()
+            self.record()
 
     def guard(self, payload):
+        if callable(payload.get("_cancelled")) and payload["_cancelled"]():
+            raise RuntimeError("Native input client disconnected; pressed inputs released")
         if time.monotonic() >= payload.get("deadline", float("inf")):
             raise RuntimeError("Native request expired; observe before retrying")
         if self.state != "running" or time.monotonic() >= self.until:
@@ -216,9 +264,11 @@ class NativeSession:
                 self.paused = True
                 self.lease = None
                 self.elements.clear()
+                self.record()
                 return self.snapshot_status()
             if action == "resume":
                 self.paused = False
+                self.record()
                 return self.snapshot_status()
             if action == "stop":
                 self.close()
@@ -236,11 +286,13 @@ class NativeSession:
             if action == "acquire":
                 if self.paused:
                     raise RuntimeError("Human paused native control")
-                if self.lease and time.monotonic() < self.lease_until:
+                if self.input_active or (self.lease and time.monotonic() < self.lease_until):
                     raise RuntimeError("Native control is leased by another operation")
                 self.lease = secrets.token_hex(16)
                 self.lease_until = time.monotonic() + 30
                 return {"generation": self.generation, "lease": self.lease, "expires_in": 30}
+            if self.input_active:
+                raise RuntimeError("A native input is still releasing; observe before retrying")
             if action == "inspect":
                 pid = payload.get("pid")
                 accessibility.validate_query(payload)
@@ -299,7 +351,13 @@ class NativeSession:
                     del self.launches[next(iter(self.launches))]
                 return {"generation": self.generation, "pid": process.pid, "launch": launch}
             if action == "input":
-                return self.input(payload)
+                self.input_active = True
+                self.input_released.clear()
+                try:
+                    return self.input(payload)
+                finally:
+                    self.input_active = False
+                    self.input_released.set()
             raise ValueError("This operation is unavailable on KDE Wayland; use observed accessible controls or portal input")
 
     def capture(self, payload):
@@ -337,7 +395,19 @@ class NativeSession:
         finally:
             os.close(fd)
 
+    def hold(self, milliseconds, payload):
+        """Keep human stop/pause responsive while a bounded input is pressed."""
+        deadline = time.monotonic() + milliseconds / 1000
+        while time.monotonic() < deadline:
+            self.lock.release()
+            try:
+                self.stopping.wait(min(.02, max(0, deadline - time.monotonic())))
+            finally:
+                self.lock.acquire()
+            self.guard(payload)
+
     def input(self, payload):
+        hold_ms = client.validate_hold(payload)
         if self.geometry is None or payload.get("geometry") != self.geometry or time.monotonic() - self.captured > 60:
             raise ValueError("Capture the selected monitor again before input; geometry must match a recent screenshot")
         kind = payload.get("kind")
@@ -358,6 +428,7 @@ class NativeSession:
                     code = {1:272, 2:274, 3:273}[button]
                     try:
                         self.portal.notify("NotifyPointerButton", "iu", code, 1)
+                        self.hold(hold_ms, payload)
                     finally:
                         try:
                             self.portal.notify("NotifyPointerButton", "iu", code, 0)
@@ -379,6 +450,7 @@ class NativeSession:
                     for key in chord:
                         pressed.append(key)
                         self.portal.notify("NotifyKeyboardKeysym", "iu", key, 1)
+                    self.hold(hold_ms, payload)
                 finally:
                     release_error = None
                     for key in reversed(pressed):
@@ -396,32 +468,49 @@ class NativeSession:
 
 def serve():
     check_session()
-    from desktop.portal import Portal
-    from gi.repository import GLib
-
     folder = runtime_directory(create=True)
     lock_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    session = NativeSession(None)
-    portal = Portal(session.close)
-    session.portal = portal
+    session = NativeSession(None, receipt=folder / "status.json")
+    session.record()
+    try:
+        from desktop.portal import Portal
+        from gi.repository import GLib
+    except Exception as exc:
+        session.fail(exc)
+        session.close()
+        os.close(lock_fd)
+        return 1
     path = folder / "control.sock"
     path.unlink(missing_ok=True)
     loop = GLib.MainLoop()
 
+    def portal_closed():
+        if not session.stopping.is_set():
+            session.fail("Portal session closed or permission revoked")
+        session.close()
+
     def initialize():
         try:
+            portal = Portal(portal_closed, progress=session.progress)
+            with session.lock:
+                session.portal = portal
+                if session.stopping.is_set():
+                    portal.close()
+                    return
             node, size = portal.start()
             with session.lock:
                 if session.stopping.is_set():
                     return
                 session.node, session.logical_size = node, size
+                session.until = time.monotonic() + SESSION_SECONDS
                 session.state, session.detail = "running", "User-approved selected-monitor capture and input"
+                session.portal_stage = "ready"
+                print(datetime.now(timezone.utc).isoformat(), session.detail, flush=True)
+                session.record()
         except Exception as exc:
-            with session.lock:
-                session.state, session.detail = "failed", str(exc)
-            # Retain an actionable status briefly, then discard the session.
-            session.stopping.wait(10)
+            if not session.stopping.is_set():
+                session.fail(exc)
             session.close()
 
     def connected(connection):
@@ -433,6 +522,15 @@ def serve():
                     raise PermissionError("Only the owning desktop user may control this session")
                 payload = session_runtime.receive(connection)
                 payload.setdefault("deadline", time.monotonic() + 14)
+                if payload.get("action") == "input":
+                    def cancelled():
+                        import select
+                        try:
+                            ready, _, _ = select.select([connection], [], [], 0)
+                            return bool(ready) and connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b""
+                        except OSError:
+                            return True
+                    payload["_cancelled"] = cancelled
                 result = session.handle(payload)
             except Exception as exc:
                 result = {"error": str(exc)}
@@ -480,7 +578,9 @@ def serve():
             loop.run()
         finally:
             session.close()
-            portal.close()
+            session.input_released.wait(26)
+            if session.portal:
+                session.portal.close()
             path.unlink(missing_ok=True)
             os.close(lock_fd)
     return 0

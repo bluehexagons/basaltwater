@@ -84,6 +84,7 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     action.add_argument("--key")
     action.add_argument("--text")
     action.add_argument("--delay-ms", type=int, help="Pace text characters by 1–100 ms (20-second budget); useful for Blender's console")
+    action.add_argument("--hold-ms", type=int, help="Native key/button press duration, 0–5000 ms; e.g. 120 for game buttons")
     action.add_argument("--x", type=int)
     action.add_argument("--y", type=int)
     action.add_argument("--button", type=int, default=1)
@@ -177,6 +178,10 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                     payload.update({name: getattr(args, name) for name in ("generation", "geometry", "kind", "key", "text", "x", "y", "button")})
                     payload["delay_ms"] = (10 if backend is not runtime and args.kind == "text" and args.delay_ms is None else args.delay_ms)
                     client.validate_text_delay(payload)
+                    payload["hold_ms"] = args.hold_ms
+                    client.validate_hold(payload)
+                    if args.hold_ms is not None and backend is runtime:
+                        raise ValueError("Hold duration requires --native")
                 lease = backend.request({"action": "acquire", "generation": payload["generation"]})
                 payload["lease"] = lease["lease"]
                 try:
@@ -198,7 +203,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                                       existing_window_ids=[item["id"] for item in observed["windows"] if item["id"] in previous],
                                       window_association="title substring; inspect PID/class before acting")
         print(json.dumps(result, indent=2))
-        return int("error" in result or result.get("healthy") is False or result.get("state") == "failed")
+        return int("error" in result or result.get("healthy") is False or result.get("state") == "failed"
+                   or (result.get("state") == "stopped" and bool(result.get("last_failure"))))
     except (OSError, ValueError, RuntimeError, KeyError, subprocess.SubprocessError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1

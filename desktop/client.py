@@ -160,9 +160,25 @@ def validate_text_delay(payload: dict[str, Any]) -> None:
         raise ValueError("Paced text exceeds 20 seconds; use shorter verified commands")
 
 
+def validate_hold(payload: dict[str, Any]) -> int:
+    """Bound native button/chord holds separately from character pacing."""
+    hold = payload.get("hold_ms")
+    if hold is None:
+        return 0
+    if (payload.get("action") != "input" or payload.get("kind") not in ("key", "click")
+            or (payload.get("kind") == "click" and payload.get("button", 1) not in (1, 2, 3))):
+        raise ValueError("Hold duration applies only to key chords and pointer buttons 1–3")
+    if type(hold) is not int or not 0 <= hold <= 5000:
+        raise ValueError("Hold duration must be an integer from 0 to 5000 milliseconds")
+    return hold
+
+
 def send_action(payload: dict[str, Any], *, deadline: float | None = None, backend=runtime) -> dict[str, Any]:
     """Pace text with short revocable requests, including on existing supervisors."""
     validate_text_delay(payload)
+    validate_hold(payload)
+    if payload.get("hold_ms") is not None and backend is runtime:
+        raise ValueError("Hold duration requires the native desktop backend")
     delay = payload.get("delay_ms")
     request = {name: value for name, value in payload.items() if name != "delay_ms"}
     if delay is None:
@@ -197,11 +213,16 @@ def run_sequence(path: str, generation: str, *, backend=runtime) -> dict[str, An
                 or "generation" in step or "lease" in step):
             raise ValueError("Sequences accept input, window, screenshot, and windows actions without embedded leases or generations")
         validate_text_delay(step)
+        validate_hold(step)
+        if step.get("hold_ms") is not None and backend is runtime:
+            raise ValueError("Hold duration requires the native desktop backend")
     lease = backend.request({"action": "acquire", "generation": generation})
     results = []
     deadline = time.monotonic() + 20
     try:
         for step in steps:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Desktop sequence exceeded its 20-second budget")
             result = send_action({**step, "generation": generation, "lease": lease["lease"]}, deadline=deadline, backend=backend)
             if "error" in result:
                 return {"generation": generation, "error": result["error"], "completed": len(results),

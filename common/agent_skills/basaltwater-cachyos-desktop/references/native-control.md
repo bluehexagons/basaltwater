@@ -2,14 +2,19 @@
 
 Run locally as the existing KDE user. `basaltw desktop --native doctor` checks
 session sockets and library imports without requesting permission. `start`
-opens KDE's portal dialog; only the desktop owner can select one monitor and
+requests KDE permission; only the desktop owner can select one monitor and
 allow keyboard/pointer access. Wait for `status` to report `running`. Denied,
 cancelled or incomplete consent grants no usable automation. If dependencies
 are missing, use the workstation setup skill rather than replacing system Python.
 
+`initializing` reports the current `portal_stage`. `awaiting-consent` means KDE
+accepted Start and a response is pending, not that a visible dialog is verified.
+After helper exit, `status.last_failure` retains the stage, timestamp and detail.
+Stages/errors also remain in the private runtime `helper.log` across restarts.
+
 The task helper uses a private same-user Unix socket, no network listener,
 privileged input daemon, saved grant, systemd service or login autostart. Its
-15-minute lifetime starts when launched; it closes on stop, portal revocation,
+15-minute lifetime starts when control is ready; it closes on stop, portal revocation,
 bus loss or loss of the session socket. Starting again needs fresh consent.
 It is an account-local control channel, not a sandbox against other programs
 already running as this account.
@@ -33,11 +38,16 @@ rejects snapshots older than 60 seconds or mismatched geometry/generation.
 ```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200
 basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key ctrl+s
+basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key Return --hold-ms 120
 basaltw desktop --native input text --generation GEN --geometry 2560 1440 \
   --text 'short trusted command' --delay-ms 20
 ```
 
-Keys use XKB names such as `Return`, `Shift_L`, `F4`, `ctrl+s`. Text defaults
+Keys use XKB names such as `Return`, `Shift_L`, `F4`, `ctrl+s`.
+Key chords and pointer buttons 1–3 accept `--hold-ms 0–5000`
+(default 0); use 120 ms for game buttons that actuate during a press animation.
+Pause, stop, expiry and client disconnection interrupt holds and release inputs.
+Hold duration does not apply to text or scroll buttons. Text defaults
 to 10 ms pacing. Replace the example generation, dimensions and coordinates
 with the actual screenshot values. The CLI limits text submission to 20 seconds
 and checks pause between characters. In Blender's console, load a task script through a short

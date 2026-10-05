@@ -330,7 +330,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
         "deployments": mappings,
         "current_deployment": mappings.get(state["branch"]),
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
-        "health_command": "basaltw doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
+        "health_command": "basaltw local cachyos-doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
     }
 
 

@@ -21,11 +21,17 @@ basaltw desktop --native exec -- inkscape /absolute/task/icon.svg
 basaltw desktop --native screenshot --output /absolute/task/observe-1.png
 ```
 
-`start` returns `awaiting-consent` while the owner answers KDE. Wait for
-`running` before interaction. Basaltwater cannot grant portal permission.
+`start` first reports `initializing`, with the current `portal_stage`. Only
+after KDE accepts the Start request does it report `awaiting-consent`, meaning
+a portal response is pending; this does not prove that a dialog is visible.
+Wait for `running` before interaction. Basaltwater cannot grant portal permission.
 Cancelled, denied or incomplete consent does not enable usable control.
 If the helper reports a failed session, `start` and `status` return a nonzero
 exit code with the failure detail; pending consent remains a normal start state.
+After the helper exits, `status` reports `stopped` and retains `last_failure`
+with its stage, timestamp and detail in the private runtime `status.json`.
+The same stages and errors are appended to
+`/run/user/UID/basaltwater-wayland/helper.log`; restarting does not erase it.
 The combined [RemoteDesktop](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html)/
 [ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)
 session shares exactly one selected monitor and requests both input devices.
@@ -54,12 +60,18 @@ changes to refresh portal coordinates; automatic change detection is limited.
 ```fish
 basaltw desktop --native input click --generation GEN --geometry WIDTH HEIGHT --x X --y Y
 basaltw desktop --native input key --generation GEN --geometry WIDTH HEIGHT --key ctrl+s
+basaltw desktop --native input click --generation GEN --geometry WIDTH HEIGHT --x X --y Y --hold-ms 120
 basaltw desktop --native input text --generation GEN --geometry WIDTH HEIGHT \
   --text 'short trusted command' --delay-ms 20
 basaltw desktop --native inspect --pid PID
 basaltw desktop --native element set-text --ref REF --generation GEN --text '40'
 ```
 
+Native key chords and pointer buttons 1–3 accept `--hold-ms 0–5000` (default
+0). Use a 120 ms press for game controls that actuate during a press animation.
+Hold duration is separate from `--delay-ms` text pacing. Pause, stop, expiration
+or client disconnection interrupts a hold and releases inputs; release failures
+stop control. Scroll buttons and text cannot take a hold duration.
 Text defaults to 10 ms pacing with a 20-second CLI budget. For Blender's
 console, write a trusted task script and type a short loader, inspect the
 entered command, then submit Return. Prefer bounded PID-scoped AT-SPI actions

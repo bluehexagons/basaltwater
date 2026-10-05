@@ -13,7 +13,7 @@ SCREENCAST = "org.freedesktop.portal.ScreenCast"
 
 
 class Portal:
-    def __init__(self, closed):
+    def __init__(self, closed, *, progress=None):
         import gi
         gi.require_version("Gio", "2.0")
         from gi.repository import Gio, GLib
@@ -27,8 +27,11 @@ class Portal:
         self.session = None
         self.fd = None
         self.pending = set()
+        self.waiters = set()
+        self.cancelled = threading.Event()
+        self.progress = progress or (lambda *_: None)
         self.closed = closed
-        self.bus.connect("closed", lambda *_: closed())
+        self.bus.connect("closed", lambda *_: self.disconnected())
         self.bus.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus",
             "NameOwnerChanged", "/org/freedesktop/DBus", BUS_NAME,
             Gio.DBusSignalFlags.NONE, self.owner_changed)
@@ -36,7 +39,13 @@ class Portal:
     def owner_changed(self, _bus, _sender, _path, _interface, _signal, parameters, *_):
         _name, old_owner, new_owner = parameters.unpack()
         if old_owner and old_owner != new_owner:
-            self.closed()
+            self.disconnected()
+
+    def disconnected(self):
+        self.cancelled.set()
+        for event in tuple(self.waiters):
+            event.set()
+        self.closed()
 
     def call(self, interface, method, signature, values, *, path=OBJECT):
         return self.bus.call_sync(BUS_NAME, path, interface, method,
@@ -57,20 +66,27 @@ class Portal:
         subscription = self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.portal.Request",
             "Response", path, None, self.Gio.DBusSignalFlags.NONE, receive)
         self.pending.add(path)
+        self.waiters.add(event)
         try:
+            self.progress(method + ".request", False)
             options = {**options, "handle_token": self.GLib.Variant("s", token)}
             returned = self.call(interface, method, signature, (*values, options)).unpack()[0]
             if returned != path:
                 raise RuntimeError("Portal returned an unexpected request handle")
+            self.progress(method + ".response", method == "Start")
             if not event.wait(120):
-                raise RuntimeError("Portal consent timed out; retry start when ready")
+                raise RuntimeError(f"Portal {method} response timed out; inspect status before retrying")
+            if self.cancelled.is_set():
+                raise RuntimeError("Portal session closed while waiting for " + method)
             code, fields = result[0]
             if code:
                 raise RuntimeError("Portal permission was cancelled or denied; no desktop control granted")
+            self.progress(method + ".complete", False)
             return fields
         finally:
             self.bus.signal_unsubscribe(subscription)
             self.pending.discard(path)
+            self.waiters.discard(event)
             if not result:
                 try:
                     self.call("org.freedesktop.portal.Request", "Close", "()", (), path=path)
@@ -83,7 +99,7 @@ class Portal:
             {"session_handle_token": v("s", "bw" + secrets.token_hex(12))})
         self.session = created["session_handle"]
         self.bus.signal_subscribe(BUS_NAME, "org.freedesktop.portal.Session", "Closed",
-            self.session, None, self.Gio.DBusSignalFlags.NONE, lambda *_: self.closed())
+            self.session, None, self.Gio.DBusSignalFlags.NONE, lambda *_: self.disconnected())
         self.response(REMOTE, "SelectDevices", "(oa{sv})", (self.session,),
             {"types": v("u", 3), "persist_mode": v("u", 0)})
         # Monitor only: pointer coordinates must map to the user's selected stream.
@@ -96,6 +112,7 @@ class Portal:
         size = properties.get("logical_size", properties.get("size"))
         if not isinstance(size, (tuple, list)) or len(size) != 2 or any(type(n) is not int or n <= 0 for n in size):
             raise RuntimeError("Portal did not report the selected monitor's logical size")
+        self.progress("OpenPipeWireRemote", False)
         reply, descriptors = self.bus.call_with_unix_fd_list_sync(BUS_NAME, OBJECT, SCREENCAST,
             "OpenPipeWireRemote", v("(oa{sv})", (self.session, {})), None,
             self.Gio.DBusCallFlags.NO_AUTO_START, 3000, None, None)
@@ -106,6 +123,9 @@ class Portal:
         self.call(REMOTE, method, "(oa{sv}" + signature + ")", (self.session, {}, *values))
 
     def close(self):
+        self.cancelled.set()
+        for event in tuple(self.waiters):
+            event.set()
         for path in tuple(self.pending):
             try:
                 self.call("org.freedesktop.portal.Request", "Close", "()", (), path=path)

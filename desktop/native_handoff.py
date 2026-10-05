@@ -20,7 +20,9 @@ def describe(status: dict) -> str:
     if status.get("stopped") or status.get("state") == "stopped":
         return "Automation stopped; KDE and applications are preserved"
     if status.get("state") == "awaiting-consent":
-        return "Waiting for KDE consent: " + status.get("detail", "Approve the selected-monitor/input dialog")
+        return "Waiting for KDE response: " + status.get("detail", "Check whether KDE requests approval")
+    if status.get("state") == "initializing":
+        return "Initializing native control: " + status.get("portal_stage", "connecting")
     if status.get("state") == "failed":
         return "Native desktop control failed: " + status.get("detail", "Inspect desktop status")
     if status.get("state") != "running":
