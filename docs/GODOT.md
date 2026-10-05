@@ -212,6 +212,14 @@ butler login
 steamcmd +login YOUR_STEAM_ACCOUNT
 ```
 
+Authentication and build-upload management in the existing web panel, including
+unattended and scheduled uploads with VM-local sessions, are scoped in the
+[game publishing plan](plans/GAME_PUBLISHING.md). Those controls are planned;
+the current bundle installs tools and leaves login/uploads to native commands.
+The [release and communications extension](plans/GAME_RELEASE_COMMUNICATIONS.md)
+also plans promotion and human-reviewed posts/translations, with Steam's final
+default-branch release remaining manual on Steamworks.
+
 Combine `web` with an explicit browser or the existing Playwright integration
 when exported games need browser smoke tests. The origin and publisher are
 system-wide, so browser-capable agents can test the same URL shown after

@@ -76,6 +76,16 @@ of those hooks. Older manifests without `ci` use component hooks during the CI
 build stage. See [webhook CI/CD](CICD.md) for script overrides, generation when
 missing, and remote publishing limits.
 
+## Planned publishing language declarations
+
+The [release and communications plan](plans/GAME_RELEASE_COMMUNICATIONS.md#project-language-configuration)
+proposes `publishing.languages` in `basaltwater.json` for public communications.
+Projects would default to English only, with English/Spanish qualified first
+and additional language tags allowed. This section is not accepted by today's
+strict manifest parser. The plan covers schema/consumer changes, publishing-only
+projects, panel editing, and keeping credentials and human approvals outside
+the repository. These settings would not assert in-game localization support.
+
 ## Select a project Node version
 
 Selection uses `--version` when given, otherwise the nearest `.node-version`

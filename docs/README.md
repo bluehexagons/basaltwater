@@ -117,6 +117,13 @@ Potential Android emulator and SSH-hosted iOS simulator workflows are scoped
 in the deferred [mobile agent support plan](plans/MOBILE_AGENT_SUPPORT.md).
 They are not current Basaltwater setup capabilities.
 
+The [game publishing plan](plans/GAME_PUBLISHING.md) scopes Butler/SteamCMD
+authentication and uploads in the existing web panel, including unattended and
+scheduled publishing with VM-local sessions. Its [release and communications
+extension](plans/GAME_RELEASE_COMMUNICATIONS.md) adds promotion, human-reviewed
+posts/translations, and publication; Steam default release stays manual.
+Tool installation exists today; these planned workflows are not implemented.
+
 The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
 Debian-based operating environment built around basaltwater. It is not a
 supported operating system or an implementation commitment.

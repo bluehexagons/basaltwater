@@ -424,6 +424,19 @@ another service. Cancellation does not undo changes or withdraw privileged
 broker requests; external integrations can own work outside the local process
 group. The [managed agent skills](AGENT_SKILLS.md) include unattended task guidance.
 
+## Planned game publishing controls
+
+The [game publishing plan](plans/GAME_PUBLISHING.md) defines a Publishing
+section in this same panel for Butler/SteamCMD information and links,
+authentication, project destinations, manual uploads, and unattended or
+scheduled uploads. The [release and communications plan](plans/GAME_RELEASE_COMMUNICATIONS.md)
+adds promotion, drafts, translations, a human review queue, and post publication.
+Steam default-branch release remains a human action on Steamworks. Project
+languages default to English, with English/Spanish tested first and additional
+languages configurable. Provider sessions stay on the VM. These controls are
+not implemented yet; current tool installation and native login instructions
+are in the [Godot guide](GODOT.md).
+
 ## Receive notifications
 
 Enable the HTTPS receiver on an existing panel:
