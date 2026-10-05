@@ -16,7 +16,7 @@ Issues = "https://github.com/bluehexagons/basaltwater/issues"
 
 [project.optional-dependencies]
 completion = ["argcomplete>=3.0.0"]
-dev = ["coverage>=7.0"]
+dev = ["build", "coverage>=7.0"]
 
 [project.scripts]
 basaltw = "basaltwater:main"

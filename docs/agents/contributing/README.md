@@ -47,6 +47,19 @@ operator documentation.
 
 ## Standard checks
 
+Install the development extra in an isolated environment before running the CI
+checks; it includes wheel building and coverage:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install '.[dev]'
+source .venv/bin/activate  # In fish: source .venv/bin/activate.fish
+make check
+```
+
+Use the project's environment rather than installing development dependencies
+into CachyOS's or Debian's system Python.
+
 ```bash
 python3 -m py_compile file.py
 basaltw setup server_web test.com --dry-run
