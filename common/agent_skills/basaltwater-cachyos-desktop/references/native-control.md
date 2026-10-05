@@ -93,6 +93,41 @@ desktop logout are unavailable. Never substitute a monitor screenshot for a
 requested private window capture. Use observed portal input or application
 scripting when these limits matter.
 
+## Missing or stuck physical keys
+
+Stop native control and inspect `status` before diagnosing physical input.
+Ask the owner whether the key fails across applications and with Shift. Check
+the active layout and shortcuts; do not infer multiple physical keyboards from
+Linux device names. A keyboard LED response does not prove an event reached KDE.
+
+If comparison is needed, use a disposable field that logs only the affected
+key and a working neighbor's press/release events. Ask the owner for a short
+physical sequence, then compare with one bounded portal press/release using
+existing approved access. Verify the field's focus immediately before input
+and read its log; a screenshot alone cannot prove missing events. Stop control
+afterward, retaining the saved grant. Do not collect unrelated keystrokes or
+work around device permissions with a privileged input daemon.
+
+If physical input still fails while portal input works, inspect other input
+providers, especially Sunshine's `libvirtualhid Keyboard`. A disconnected client
+does not establish that its virtual keyboard has clean state. Read user-service
+status and recent logs, and check for an active stream before a targeted restart.
+On this workstation the service is `app-dev.lizardbyte.app.Sunshine.service`
+(alias `sunshine.service`); discover the local unit rather than assuming its name.
+When Sunshine is idle and a restart is within the authorized troubleshooting
+scope, use `systemctl --user restart UNIT`, wait for it to become active, and
+have the owner retest the physical key. Preserve configuration, pairings and
+enablement. Do not interrupt an active stream without the owner's authorization.
+
+On 2026-10-05, physical P failed across applications, including a focused test
+that received O but no P. Portal P worked; stopping Basaltwater and reconnecting
+the physical keyboard did not help. Restarting idle Sunshine recreated its
+virtual keyboard and the owner confirmed physical P worked. Stale virtual input
+state is the suspected cause; the exact state and trigger were not proved, and
+no Basaltwater defect was confirmed. If a targeted restart fails, continue
+diagnosis rather than repeating it or resetting unrelated input services.
+Close only disposable test windows and keep desktop captures/logs private.
+
 ## Human control and shutdown
 
 Open `handoff` while control is enabled to give the owner Pause, Resume,

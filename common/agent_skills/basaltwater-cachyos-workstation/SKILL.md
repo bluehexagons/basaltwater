@@ -159,6 +159,17 @@ flags. Include `--lan-access` or explicit sources and complete pairing through
 local Sunshine administration. The doctor checks service failures and VA-API
 profiles without starting capture; test video, audio, and input in Moonlight.
 
+For missing or stuck physical keys, stop Basaltwater native control first and
+check layout, shortcuts and whether the failure spans applications. Inspect other
+virtual input providers: an idle Sunshine virtual keyboard can retain stale state.
+In a verified 2026-10-05 recovery, portal P worked but physical P did not;
+reconnecting the keyboard did not help, while restarting idle Sunshine restored P.
+The exact trigger was not established. Discover the user-service unit, check
+for active streams before a targeted restart, preserve pairings/configuration,
+and ask the owner to verify physical input afterward. See the
+[keyboard input recovery procedure](https://github.com/bluehexagons/basaltwater/blob/main/common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md#missing-or-stuck-physical-keys)
+for focused event comparisons and stopping conditions.
+
 Most application flags install only selected native repository packages. The
 Remmina flag includes common native RDP, VNC, SPICE, and secret plugins. The
 sysadmin bundle includes Nmap, tcpdump, DNS tools, virt-manager, and Wireshark

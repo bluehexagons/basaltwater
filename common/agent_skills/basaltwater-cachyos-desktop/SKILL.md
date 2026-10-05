@@ -81,6 +81,11 @@ saved access; `stop` preserves it. No session starts or renews at login.
 Package/portal observations in `basaltw local cachyos-doctor --json` do not
 grant or prove automation. Report unavailable checks accurately.
 
+If a physical key stops working or appears stuck, stop native control and read
+[keyboard input recovery](references/native-control.md#missing-or-stuck-physical-keys).
+Other virtual keyboards can retain input state even after a streaming client
+disconnects; a successful portal press does not prove physical input works.
+
 For web consumers use the session's collaborative browser tools and browser
 policy. A desktop editor preview does not prove browser/game rendering fidelity.
 Keep output paths, versions, export settings and useful evidence with the task;
