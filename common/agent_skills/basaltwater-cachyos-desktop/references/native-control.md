@@ -30,7 +30,7 @@ size. Recapture after layout changes. Stop/start with fresh consent after
 monitor, scaling or resolution changes to refresh portal coordinates. Input
 rejects snapshots older than 60 seconds or mismatched geometry/generation.
 
-```bash
+```fish
 basaltw desktop --native input click --generation GEN --geometry 2560 1440 --x 400 --y 200
 basaltw desktop --native input key --generation GEN --geometry 2560 1440 --key ctrl+s
 basaltw desktop --native input text --generation GEN --geometry 2560 1440 \

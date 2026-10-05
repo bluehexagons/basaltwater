@@ -13,7 +13,7 @@ Setup clones only missing repositories and never pulls or resets an existing one
 
 When concurrent work needs isolation, use the shared managed-worktree commands:
 
-```bash
+```fish
 basaltw agent workspace create ~/repos/PROJECT TASK --base HEAD --json
 basaltw agent workspace list ~/repos/PROJECT --json
 basaltw agent workspace status WORKTREE --json
@@ -25,7 +25,7 @@ unrelated work, and integrate or push only within the user's requested scope.
 
 Inspect status before cleanup, then preview removal:
 
-```bash
+```fish
 basaltw agent workspace remove WORKTREE --dry-run --json
 basaltw agent workspace remove WORKTREE --json
 ```

@@ -31,7 +31,7 @@ Read the reference for the task:
 
 Launch the active executable directly from the invoking graphical session:
 
-```bash
+```fish
 blender /absolute/project/model.blend
 inkscape /absolute/project/assets/icon.svg
 gimp /absolute/project/assets/banner.xcf
@@ -51,7 +51,7 @@ graphical session; background scripts/exports can work without it. Do not
 create XRDP, guess another session's bus/display, force X11 or install global
 input daemons. See the [native control reference](references/native-control.md).
 
-```bash
+```fish
 basaltw desktop --native doctor
 basaltw desktop --native start
 # The desktop owner selects one monitor and grants keyboard/pointer access in KDE.

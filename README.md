@@ -31,16 +31,18 @@ and checks that show whether each step worked.
 
 Install the launcher on the machine that will manage your hosts:
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sh "$installer"
-)
+  sh "$installer" "$@"
+' sh
 ```
 
-Copy the whole block; the temporary script is removed on exit.
+Copy the whole block; it works in fish, Bash, and Zsh. The explicit `sh`
+invocation handles the temporary download and removes it on exit.
 If `curl` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
 Installing the launcher does not configure a target. Use `basaltw setup ...` for
 remote hosts and `basaltw upgrade` to update the selected channel. The
@@ -73,18 +75,10 @@ agent tooling to an existing bare-metal workstation through local self-setup.
 It preserves the human account and desktop, leaves OS updates to CachyOS/the
 user, and does not support CachyOS VM/container provisioning or server setup.
 
-For Codex with the native T3 Code desktop app, use the
+For your first Codex setup with the native T3 Code desktop app, use the
 [complete CachyOS installer example](docs/CACHYOS.md#install-with-t3-code-desktop).
-With `basaltw` already installed, run as your desktop user:
-
-```bash
-basaltw setup agent_cachyos localhost --t3code-desktop
-```
-
-After a successful setup, `basaltw refresh` upgrades Basaltwater on its selected
-channel and repeats that local setup with the updated code. Preview with
-`basaltw refresh --dry-run`. See [saved CachyOS setup](docs/CACHYOS.md#upgrade-and-repeat-your-last-setup)
-for first-use and recovery details.
+The guide uses fish, CachyOS's default shell, and walks through selecting tools,
+installing the launcher, provider login, and checking the first coding task.
 
 The normal direct setup path uses `--machine auto`. Hosted Proxmox setup
 defaults to a VM; select `--machine unprivileged` for the supported LXC path.

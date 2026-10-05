@@ -11,7 +11,7 @@ keeps readiness unverified; it does not launch applications or request access.
 
 Run locally as the graphical desktop user:
 
-```bash
+```fish
 basaltw desktop --native doctor
 basaltw desktop --native start
 # Select one monitor and allow keyboard/pointer access in KDE's dialog.
@@ -51,7 +51,7 @@ outside that monitor and captures older than 60 seconds. Recapture after layout
 changes. Stop/start with fresh consent after monitor, scaling or resolution
 changes to refresh portal coordinates; automatic change detection is limited.
 
-```bash
+```fish
 basaltw desktop --native input click --generation GEN --geometry WIDTH HEIGHT --x X --y Y
 basaltw desktop --native input key --generation GEN --geometry WIDTH HEIGHT --key ctrl+s
 basaltw desktop --native input text --generation GEN --geometry WIDTH HEIGHT \

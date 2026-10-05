@@ -23,7 +23,7 @@ overview.
 | Install Basaltwater or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
-| Add coding tools to an existing CachyOS KDE workstation | [CachyOS local setup](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md) |
+| Set up coding tools on a CachyOS KDE workstation | [First setup in fish](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md), [Later maintenance](CACHYOS_MAINTENANCE.md) |
 | Prepare a Windows 11 Ubuntu WSL build machine | [Ubuntu WSL](WINDOWS_WSL.md) | [Machine types](MACHINE_TYPES.md) |
 | Deploy an application or publish an internal site | [Deployments](DEPLOYMENTS.md) | [Internal web](INTERNAL_WEB.md), [CI/CD](CICD.md) |
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |

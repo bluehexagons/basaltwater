@@ -50,13 +50,14 @@ Examples:
   sh install.sh --local-setup agent_cachyos --t3code-desktop --node --python
   sudo sh install.sh --user "$USER" --local-setup control_plane --agent-tool gh
 
-Download and run without leaving a script behind (copy the whole block):
-  (
+Download and run from fish, Bash, or Zsh (copy the whole block):
+  sh -c '
     installer=$(mktemp) || exit
-    trap 'rm -f -- "$installer"' EXIT
+    cleanup() { rm -f -- "$installer"; }
+    trap cleanup EXIT
     curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-    sh "$installer"
-  )
+    sh "$installer" "$@"
+  ' sh
 EOF
 }
 
