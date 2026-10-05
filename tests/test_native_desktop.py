@@ -765,6 +765,8 @@ class NativeReceiptTests(unittest.TestCase):
                 self.assertFalse(glib.timeout_add.call_args.args[1]())
             glib.MainLoop.return_value.run.side_effect = loop
             with patch.object(native, "check_session"), patch.object(native, "runtime_directory", return_value=folder), \
+                    patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}, clear=True), \
+                    patch("lib.cachyos_doctor._owned_socket", return_value=True), \
                     patch.dict(sys.modules, {"gi.repository": SimpleNamespace(GLib=glib)}), \
                     patch("desktop.portal.Portal", side_effect=RuntimeError("Portal bus initialization failed")), \
                     patch.object(native.socket, "socket"), patch.object(native.signal, "signal"), \
