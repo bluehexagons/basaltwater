@@ -48,6 +48,45 @@ necessarily mean that the preview detached. If preview status still works,
 inspect a snapshot and its network error. A `chrome-error://chromewebdata/`
 document with `net::ERR_CERT_AUTHORITY_INVALID` is the certificate case.
 
+### Repair a missing gateway CA file
+
+If `basaltwater-web ca --json` reports
+`{"reason": "configured CA certificate is missing", "status": "unknown"}`,
+the configured public CA file is absent or inaccessible to the calling
+account. Client enrollment cannot repair this VM-side problem. The panel
+shows the diagnostic and withholds download and installation instructions
+until the live gateway can be verified.
+
+Older shared gateway setup could configure
+`/srv/basaltwater/web/basaltwater-ca.crt` without creating it on VMs that did
+not enable Godot hosting. Shared setup now publishes the public CA for panel,
+T3 Code, and other gateway users before recording its path in the policy.
+Repeating setup restores that copy from the existing VM-local CA and repairs
+its file permissions. It does not rotate the CA or require previously enrolled
+clients to trust a new root.
+
+On a Debian VM with a saved setup, use SSH or the VM console to review and run:
+
+```bash
+sudo basaltw refresh --dry-run
+sudo basaltw refresh
+basaltwater-web ca --json
+```
+
+[Refresh](COMMAND_LINE.md#refresh-this-machine) updates the installed source
+on its selected channel and repeats the saved setup, including its normal
+package and service reconciliation. The selected channel must include the
+fix. Reload the panel after the command reports `local_ca` or `public`.
+
+If the diagnostic persists, compare the `ca_certificate` path in
+`/etc/basaltwater/internal-web/policy.json` with the public copy and check
+read/traversal permissions as the panel's service account. The original
+public CA is `/var/lib/basaltwater/internal-web-pki/ca.crt`; its directory is
+intentionally private. Keep that directory private and never expose or copy
+`ca.key`. If the original CA is also missing, investigate the VM's PKI state
+before generating a replacement, because replacing the CA invalidates
+existing client enrollment.
+
 ## Obtain and verify the public certificate
 
 The URL printed by `basaltwater-web ca` is convenient after at least one client

@@ -633,6 +633,19 @@ def _ensure_nginx() -> None:
         run("systemctl enable --now nginx", check=True)
 
 
+def _configure_ca_download(local_ca: bool) -> bool:
+    """Publish the existing public CA for every shared gateway consumer."""
+
+    validate_filesystem_path(GODOT_WEB_CA_DOWNLOAD, must_exist=False)
+    if local_ca:
+        with open(GODOT_WEB_CA_CERT, encoding="utf-8") as cert_file:
+            return _write_if_changed(GODOT_WEB_CA_DOWNLOAD, cert_file.read(), 0o644)
+    if os.path.lexists(GODOT_WEB_CA_DOWNLOAD):
+        os.unlink(GODOT_WEB_CA_DOWNLOAD)
+        return True
+    return False
+
+
 def _configure_user_roots(users: list[str]) -> bool:
     changed = False
     _ensure_managed_directory(GODOT_WEB_GAMES_ROOT, 0o755)
@@ -872,17 +885,6 @@ def configure_godot_web_host(
         _landing_page(base_url, local_ca, normalized_users),
         0o644,
     ) or changed
-    if local_ca:
-        with open(GODOT_WEB_CA_CERT, encoding="utf-8") as cert_file:
-            changed = _write_if_changed(
-                GODOT_WEB_CA_DOWNLOAD,
-                cert_file.read(),
-                0o644,
-            ) or changed
-    else:
-        if os.path.exists(GODOT_WEB_CA_DOWNLOAD):
-            os.unlink(GODOT_WEB_CA_DOWNLOAD)
-            changed = True
     changed = _write_if_changed(GODOT_WEB_URL_FILE, base_url + "\n", 0o644) or changed
     changed = _configure_nginx_site(
         render_nginx_config(cert_path, key_path),
@@ -931,6 +933,7 @@ def configure_internal_web_host(
     cert_path, key_path, local_ca, certificate_changed = _certificate_for_identities(
         normalized_identities
     )
+    certificate_changed = _configure_ca_download(local_ca) or certificate_changed
     if local_ca:
         _install_chromium_ca_trust(normalized_users)
     base_url = _base_url(normalized_identities)

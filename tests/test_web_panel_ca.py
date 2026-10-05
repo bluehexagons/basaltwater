@@ -92,6 +92,39 @@ class TestCertificateDownloadTrust(unittest.TestCase):
         self.assertNotIn("No certificate installation required", rendered)
         self.assertNotIn("sudo install", rendered)
 
+    def test_panel_preserves_missing_ca_diagnostic_and_explains_vm_repair(self):
+        with (
+            patch("common.service_tools.web_panel_service.shutil.which", return_value="/usr/bin/basaltwater-web"),
+            patch("common.service_tools.web_panel_service._run_json", return_value={
+                "status": "unknown", "reason": "configured CA certificate is missing",
+            }),
+        ):
+            trust = discover_certificate_trust()
+        self.assertEqual(trust["reason"], "configured CA certificate is missing")
+        rendered = _render_certificate_trust(trust)
+        self.assertIn("configured CA certificate is missing", rendered)
+        self.assertIn("Repair an older VM", rendered)
+        self.assertIn("sudo basaltw refresh --dry-run", rendered)
+        self.assertIn("without replacing its private key", rendered)
+        self.assertNotIn("sudo install", rendered)
+        self.assertNotIn("trust-download", rendered)
+
+    def test_unknown_diagnostic_is_bounded_and_escaped(self):
+        for reason in (None, 42, "", " \n ", '<script>alert("test")</script>' + "x" * 1000):
+            with (
+                self.subTest(reason=reason),
+                patch("common.service_tools.web_panel_service.shutil.which", return_value="/usr/bin/basaltwater-web"),
+                patch("common.service_tools.web_panel_service._run_json", return_value={"status": "unknown", "reason": reason}),
+            ):
+                trust = discover_certificate_trust()
+                rendered = _render_certificate_trust(trust)
+                self.assertLessEqual(len(trust.get("reason", "")), 512)
+                self.assertNotIn('<script>alert("test")</script>', rendered)
+                self.assertNotIn("Repair an older VM", rendered)
+                self.assertNotIn("sudo install", rendered)
+                if isinstance(reason, str) and reason.startswith("<script>"):
+                    self.assertIn("&lt;script&gt;", rendered)
+
     def test_tls_failure_cannot_reach_installation(self):
         for script in (
             _linux_trust_script("a" * 64, "https://example.invalid/ca", "  sudo install"),

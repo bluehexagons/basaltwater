@@ -290,7 +290,11 @@ def discover_certificate_trust() -> dict[str, str | bool] | None:
     if payload.get("publicly_trusted") is True:
         return {"publicly_trusted": True}
     if payload.get("status") == "unknown":
-        return {"status": "unknown"}
+        trust: dict[str, str | bool] = {"status": "unknown"}
+        reason = payload.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            trust["reason"] = " ".join(reason[:512].split())
+        return trust
     url = _safe_url(payload.get("url"))
     fingerprint = payload.get("sha256")
     parsed = urllib.parse.urlsplit(url) if url else None
@@ -1441,11 +1445,26 @@ def _render_certificate_trust(
 <div class="trust-panel-public"><strong>No certificate installation required</strong>
 <p>The shared web-hosting certificate is issued by a publicly trusted authority.</p></div></section>'''
     if trust.get("status") == "unknown":
+        reason = trust.get("reason")
+        reason_html = (
+            f'<p><strong>Gateway diagnostic:</strong> {html.escape(reason)}</p>'
+            if isinstance(reason, str) and reason else ""
+        )
+        recovery = ""
+        if reason == "configured CA certificate is missing":
+            recovery = '''<p>The gateway's public CA file is missing or inaccessible. This is a VM configuration problem; installing a certificate on this device will not repair it.</p>
+<details><summary>Repair an older VM</summary>
+<p>Shared gateway setup in older versions could omit the public CA copy. On a Debian VM with a saved setup, review and run a refresh over SSH or the VM console:</p>
+<pre><code>sudo basaltw refresh --dry-run
+sudo basaltw refresh
+basaltwater-web ca --json</code></pre>
+<p>Refresh updates Basaltwater and repeats the saved setup, including package and service updates. Gateway setup republishes the existing public CA without replacing its private key. If the diagnostic persists, check the configured CA path and permissions on the VM.</p></details>'''
         return f'''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div>
 {render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
-<div class="trust-panel-public"><strong>Certificate trust could not be verified</strong>
-<p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code> before installing a certificate on this device.</p></div></section>'''
+<div class="trust-panel-public status failed"><strong>Certificate trust could not be verified</strong>
+{reason_html}{recovery}
+<p>Check the gateway certificate and CA on the host with <code>basaltwater-web ca</code>. Once verification succeeds, reload this page for certificate download and installation instructions.</p></div></section>'''
 
     download_url = str(trust["url"])
     trust_url = html.escape(download_url, quote=True)

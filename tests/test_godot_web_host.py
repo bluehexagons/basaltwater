@@ -69,6 +69,78 @@ class TestGodotWebHost(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid internal HTTPS identity"):
             godot_web_steps.validate_web_identities(["bad host name"])
 
+    def test_shared_gateway_repairs_missing_ca_copy_without_godot_or_static_site(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            web_root = os.path.join(directory, "web")
+            ca = os.path.join(directory, "ca.crt")
+            download = os.path.join(web_root, "basaltwater-ca.crt")
+            with open(ca, "w", encoding="utf-8") as file_obj:
+                file_obj.write("existing public CA\n")
+
+            def reconcile_policy(*_args: object) -> bool:
+                # The readable copy must exist before publishing its path.
+                with open(download, encoding="utf-8") as file_obj:
+                    self.assertEqual(file_obj.read(), "existing public CA\n")
+                self.assertEqual(os.stat(download).st_mode & 0o777, 0o644)
+                return False
+
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_ROOT", web_root),
+                patch.object(godot_web_steps, "GODOT_WEB_CA_CERT", ca),
+                patch.object(godot_web_steps, "GODOT_WEB_CA_DOWNLOAD", download),
+                patch.object(godot_web_steps, "GODOT_WEB_URL_FILE", os.path.join(directory, "base-url")),
+                patch.object(godot_web_steps, "_ensure_nginx"),
+                patch.object(godot_web_steps, "discover_local_web_identities", return_value=[]),
+                patch.object(godot_web_steps, "_existing_internal_web_policy_values", return_value=([], [])),
+                patch.object(godot_web_steps, "_certificate_for_identities", return_value=("/cert", "/key", True, False)) as certificate,
+                patch.object(godot_web_steps, "_install_chromium_ca_trust"),
+                patch.object(godot_web_steps, "_configure_nginx_site") as nginx,
+                patch.object(godot_web_steps, "_configure_web_policy", side_effect=reconcile_policy),
+            ):
+                repaired = godot_web_steps.configure_internal_web_host(["192.0.2.10"], ["agent"])
+                unchanged = godot_web_steps.configure_internal_web_host(["192.0.2.10"], ["agent"])
+            self.assertTrue(repaired[-1])
+            self.assertFalse(unchanged[-1])
+            self.assertEqual(certificate.call_count, 2)
+            nginx.assert_not_called()
+            with open(ca, encoding="utf-8") as file_obj:
+                self.assertEqual(file_obj.read(), "existing public CA\n")
+
+    def test_ca_download_repairs_permissions_and_removes_stale_copy_for_public_tls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ca = os.path.join(directory, "ca.crt")
+            download = os.path.join(directory, "basaltwater-ca.crt")
+            with open(ca, "w", encoding="utf-8") as file_obj:
+                file_obj.write("public CA\n")
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_CA_CERT", ca),
+                patch.object(godot_web_steps, "GODOT_WEB_CA_DOWNLOAD", download),
+            ):
+                self.assertTrue(godot_web_steps._configure_ca_download(True))
+                os.chmod(download, 0o600)
+                self.assertFalse(godot_web_steps._configure_ca_download(True))
+                self.assertEqual(os.stat(download).st_mode & 0o777, 0o644)
+                self.assertTrue(godot_web_steps._configure_ca_download(False))
+                self.assertFalse(os.path.exists(download))
+                self.assertFalse(godot_web_steps._configure_ca_download(False))
+                self.assertTrue(os.path.exists(ca))
+
+    def test_ca_download_refuses_symlink_without_overwriting_its_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            ca = os.path.join(directory, "ca.crt")
+            download = os.path.join(directory, "basaltwater-ca.crt")
+            with open(ca, "w", encoding="utf-8") as file_obj:
+                file_obj.write("existing CA\n")
+            os.symlink(ca, download)
+            with (
+                patch.object(godot_web_steps, "GODOT_WEB_CA_CERT", ca),
+                patch.object(godot_web_steps, "GODOT_WEB_CA_DOWNLOAD", download),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "symlink"):
+                    godot_web_steps._configure_ca_download(True)
+            with open(ca, encoding="utf-8") as file_obj:
+                self.assertEqual(file_obj.read(), "existing CA\n")
+
     def test_configure_host_creates_user_publish_root_and_landing_page(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             web_root = os.path.join(temporary_dir, "web")
