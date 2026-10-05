@@ -89,7 +89,8 @@ class NativeControlTests(unittest.TestCase):
         clock = [time.monotonic()]
         delivered = []
         self.portal.notify.side_effect = lambda *args: delivered.append((clock[0], args))
-        with patch.object(native.time, "monotonic", side_effect=lambda: clock[0]), \
+        with patch.object(native, "keysyms", return_value=[0xff0d]), \
+                patch.object(native.time, "monotonic", side_effect=lambda: clock[0]), \
                 patch.object(self.session.stopping, "wait", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
             self.session.handle({**self.payload, "action": "input", "kind": "key", "key": "Return", "hold_ms": 120})
         self.assertGreaterEqual(delivered[-1][0] - delivered[0][0], .119)
