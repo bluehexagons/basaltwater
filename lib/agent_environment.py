@@ -110,18 +110,34 @@ TOOLS = (
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
     "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
     "magick", "convert", "identify", "exiftool",
-    "rg", "jq", "aws", "basaltwater-web", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
+    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"
 PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/GAME_PUBLISHING.md"
 PUBLISHING_INSTRUCTIONS = [
-    "Use Publishing in the existing HTTPS web panel for human sign-in on this VM. Never request, read or copy publishing credentials into prompts, repositories or the controller.",
-    "Use basaltw publish status --json for saved state. Tool presence and local session files do not verify provider authentication; ask the human to authenticate through the panel when needed.",
+    "Never request, read or copy publishing credentials into prompts, repositories or the controller. Tool presence does not verify provider authentication.",
     "After a completed export, use basaltw publish complete REPOSITORY ARTIFACT_SUBDIRECTORY INTERNAL_BUILD_ID, then prepare PROJECT_ID and upload ARTIFACT_ID. Upload only under the user's explicit request or standing unattended/scheduled authority.",
     "Agents may draft/translate and import unreviewed text with basaltw publish draft. Every public destination/language revision, including bundled release notes, requires human review. Do not alter approval records or click human review/confirmation controls.",
     "Steam default/public release and rollback remain manual on Steamworks. Steam announcements and itch.io posts currently use reviewed exports and human editor handoffs; do not claim an export published a post.",
-    "Butler/SteamCMD storefront uploads and basaltwater-web VM HTTPS previews are separate publishing workflows. Use the returned destination and receipt for the selected workflow.",
+    "Butler/SteamCMD storefront uploads and HTTPS game previews are separate publishing workflows. Use the returned destination and receipt for the selected workflow.",
 ]
+
+
+def _publishing_instructions(native_desktop: bool) -> list[str]:
+    if native_desktop:
+        authentication = (
+            "This is a native CachyOS workstation. Publishing management is qualified on Debian; "
+            "no VM web panel is assumed here. When authentication is needed, the owner uses "
+            "the installed provider's interactive terminal login (butler login or steamcmd +login BUILD_ACCOUNT). "
+            "Do not put passwords or tokens in command arguments."
+        )
+    else:
+        authentication = (
+            "On a Debian publishing host, use Publishing in a configured HTTPS web panel for human sign-in, "
+            "or basaltw publish auth login butler / steamcmd --username BUILD_ACCOUNT in the owner's interactive terminal. "
+            "Panel availability is unverified; use basaltw publish status --json for saved management state."
+        )
+    return [authentication, *PUBLISHING_INSTRUCTIONS]
 
 
 def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
@@ -282,11 +298,21 @@ def inspect_environment(repository: str) -> dict[str, object]:
     mappings = project["deployments"]
     return {
         "schema_version": 1,
+        "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
+        "browser": {
+            "preferred_provider": "active-session",
+            "readiness": "session-dependent",
+            "instructions": "Prefer browser tools exposed by the active agent session; in T3 Code use preview_status and preview_open before concluding the browser is unavailable.",
+            "managed_playwright": {
+                "executable": tools["basaltwater-playwright-mcp"],
+                "readiness": "unverified" if tools["basaltwater-playwright-mcp"] else "not-on-path",
+            },
+        },
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
             "readiness": "unverified", "management_command": "basaltw publish status --json",
-            "guide": PUBLISHING_GUIDE, "instructions": list(PUBLISHING_INSTRUCTIONS),
+            "guide": PUBLISHING_GUIDE, "instructions": _publishing_instructions(native_desktop),
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
@@ -295,7 +321,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
             "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
             "task_branch_pattern": "agent/TASK",
-            "browser_evidence": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
+            "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
             "artifact_directories": artifacts,
         },
         "project_source": project["source"],
@@ -304,7 +330,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
         "deployments": mappings,
         "current_deployment": mappings.get(state["branch"]),
         "undeclared_branches": [branch for branch in ("dev", "staging") if branch not in mappings],
-        "health_command": "basaltw agent doctor --all-capabilities --json",
+        "health_command": "basaltw doctor --json" if native_desktop else "basaltw agent doctor --all-capabilities --json",
     }
 
 
@@ -346,7 +372,10 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         for instruction in publishing["instructions"]:
             print(f"  {instruction}")
     print(f"Worktrees: {workspace['worktree_root']} (agent/TASK)")
-    print(f"Browser evidence: {workspace['browser_evidence']}")
+    browser = result["browser"]
+    print(f"Browser: {browser['instructions']}")
+    print(f"Managed Playwright: {browser['managed_playwright']['readiness']}")
+    print(f"Legacy browser artifacts: {workspace['legacy_browser_artifacts']} (directory convention; not a browser capability)")
     for artifact in workspace["artifact_directories"]:
         print(f"Artifact directory: {artifact['path']} ({'ignored' if artifact['ignored'] else 'not ignored'})")
     for branch, mapping in result["deployments"].items():

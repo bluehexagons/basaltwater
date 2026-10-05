@@ -17,15 +17,27 @@ their `readiness` remains `unverified`. Discovery never launches a window,
 renderer, device probe, or audio session. `desktop_skills` links available local
 desktop instructions; it does not establish that a desktop session is attached.
 
+`host_profile` distinguishes the native CachyOS workstation from the Debian
+management profile; it does not infer that a Debian host is a VM.
 `publishing` inventories Butler and SteamCMD on the active PATH and links the
-[VM publishing guide](GAME_PUBLISHING.md). Its `readiness` remains `unverified`;
+[publishing guide](GAME_PUBLISHING.md). Its `readiness` remains `unverified`;
 discovery never reads native session files, opens the publishing database, runs
 provider tools or contacts a storefront. Guidance directs human authentication
-to Publishing in the existing HTTPS panel and authorized unattended uploads to
+to a configured Debian HTTPS panel or the owner's interactive terminal. On
+CachyOS it describes native provider login and the unqualified management
+workflow, without assuming VM services. Authorized unattended uploads use
 `basaltw publish`. Agents can prepare drafts and translations, while exact public
 text approval and confirmation belong to a human. Steam default/public releases
 stay manual on Steamworks. Reviewed post exports remain human editor handoffs.
 Storefront uploads and VM HTTPS game previews are separate workflows.
+
+`browser` prefers capabilities exposed by the active agent session. T3 Code
+agents should check `preview_status`, then `preview_open` when needed. The
+manifest cannot verify session tools from a standalone CLI. Its managed
+Playwright entry reports only wrapper presence on PATH, without launching it.
+`workspace.legacy_browser_artifacts` identifies the older artifact directory
+convention; even an existing directory does not establish a browser capability.
+The reported health command uses the workstation doctor on CachyOS.
 
 `desktop_backend` distinguishes CachyOS `native-session` from Debian
 `shared-xrdp`; `automation_command` is respectively `basaltw desktop --native`

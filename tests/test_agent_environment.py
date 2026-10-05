@@ -92,7 +92,30 @@ class TestAgentEnvironment(unittest.TestCase):
                 self.assertEqual(application["readiness"], "unverified")
                 self.assertTrue(application["instructions"])
                 self.assertNotIn("basaltw desktop", " ".join(application["instructions"]))
+        self.assertEqual(result["host_profile"], "cachyos-workstation")
+        self.assertEqual(result["health_command"], "basaltw doctor --json")
+        self.assertIn("native CachyOS workstation", result["publishing"]["instructions"][0])
+        self.assertIn("interactive terminal login", result["publishing"]["instructions"][0])
+        self.assertNotIn("on this VM", " ".join(result["publishing"]["instructions"]))
+        self.assertEqual(result["browser"]["preferred_provider"], "active-session")
         execute.assert_not_called()
+
+    def test_legacy_browser_directory_does_not_claim_browser_availability(self) -> None:
+        legacy = Path(self.directory, ".local/state/basaltwater/playwright-mcp")
+        legacy.mkdir(parents=True)
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", return_value=None),
+            redirect_stdout(output := StringIO()),
+        ):
+            self.assertEqual(agent_environment.run_manifest_command(argparse.Namespace(repository=self.directory, json=False)), 0)
+            result = agent_environment.inspect_environment(self.directory)
+        self.assertEqual(result["browser"]["managed_playwright"]["readiness"], "not-on-path")
+        self.assertIn("preview_status and preview_open", output.getvalue())
+        self.assertIn("Legacy browser artifacts:", output.getvalue())
+        self.assertNotIn("Browser evidence:", output.getvalue())
 
     def test_desktop_discovery_provides_workflows_without_claiming_readiness(self) -> None:
         skill = Path(self.directory, ".agents/skills/basaltwater-desktop/SKILL.md")
@@ -135,7 +158,8 @@ class TestAgentEnvironment(unittest.TestCase):
             "publishing": {"tools": {"butler": None, "steamcmd": None}, "readiness": "unverified"},
             "desktop_applications": {"blender": {**agent_environment.DESKTOP_APPLICATIONS["blender"], "readiness": "unverified"}},
             "desktop_skills": [],
-            "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "browser_evidence": self.directory, "artifact_directories": []},
+            "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "legacy_browser_artifacts": self.directory, "artifact_directories": []},
+            "browser": {"instructions": "Use session browser", "managed_playwright": {"readiness": "not-on-path"}},
             "deployments": {}, "undeclared_branches": ["dev", "staging"],
             "required_tools": {}, "recipes": {},
             "health_command": "basaltw agent doctor --all-capabilities --json",
