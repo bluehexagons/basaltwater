@@ -12,6 +12,10 @@ upload, beta API response schemas, and provider text rendering still need
 qualification on operator-selected test destinations. No production game was
 uploaded as part of development.
 
+Coding agents can discover installed providers and workflow guidance with
+`basaltw agent manifest --json`. This [read-only inventory](AGENT_ENVIRONMENT.md)
+does not inspect credentials or establish provider readiness.
+
 ## Install and authenticate
 
 On the controller, add publishing tools independently of any game engine:
@@ -47,7 +51,9 @@ basaltw publish status --json
 
 Authentication commands require an interactive terminal. There are no password
 or token command-line arguments. An existing credential file is shown as
-present-unverified; a saved native login result is not a fresh provider check.
+present-unverified. A zero exit from native login must also leave the expected
+local session file, and is still labelled present-unverified; it is not proof
+that the provider accepted the login or a fresh account check.
 Actual uploads revalidate the session and never wait for interactive input.
 Use a provider-side build account with the needed application permissions.
 
@@ -193,7 +199,10 @@ Optional non-default beta promotion uses a separate publisher API key entered
 through Accounts. It stays in a private VM file and is not needed for uploads.
 **Observe and prepare beta promotion** checks app build history and current
 branches, records the previous BuildID, and expires after five minutes.
-**Promote** rechecks those observations and reads the branch back after dispatch.
+**Promote** rechecks those observations, then validates current project settings,
+writing reviews, timing and cancellation immediately before dispatch. It reads
+the branch back afterward. Repeated submission of the same prepared release
+returns its saved operation rather than dispatching again.
 `public`, `default`, implicit targets, unknown schemas and default aliases fail
 closed. CLI equivalents are `beta-prepare RUN_ID BRANCH` and `beta-promote
 RELEASE_ID`. API schemas need live qualification; use the Steamworks handoff
@@ -270,6 +279,7 @@ detection cannot prove a binary or image contains no writing.
 | Per-artifact limits | 10,000 regular files, 30 GiB, relative paths up to 1,024 UTF-8 bytes |
 | Native upload limits | Six hours, 16 MiB total stream, 64 KiB parser tail; raw output is discarded |
 | Writing | Title 200 characters, body 64 KiB UTF-8; panel agent prompts 4,000 bytes |
+| Publishing form transport | 256 KiB to accommodate percent-encoded UTF-8 drafts; text limits remain unchanged |
 | Panel/CLI status | Up to 200 selected records per kind, prioritizing enabled/paused jobs and actionable runs/drafts/releases; includes referenced projects and translation sources; panel displays 20 artifacts, 40 runs and 40 drafts |
 
 Remove unused snapshots through the panel or `publish remove-artifact ARTIFACT_ID`.
@@ -284,6 +294,14 @@ VM files as their owner after inspecting them. Do not delete the dispatch ledger
 to clear a failed run. Reconcile unknown results through the panel first.
 Maintenance, login and uploads share the same provider lock. Direct native CLI
 invocations outside `publish` require operator coordination.
+
+Database corruption, lock and write failures report unavailable state without
+recreating the ledger or exposing database error text. Stop publishing work
+before recovery and preserve the failing database and retained snapshots. Restore
+a consistent private backup if available, then reconcile any operations whose
+provider effects occurred after that backup before resuming schedules. Replacing
+the database with empty state would lose the authority and duplicate-detection
+records needed for safe recovery.
 
 Accounts and records stay on the panel user's VM, outside the controller and
 repository. Same-user processes and root can access native sessions and control

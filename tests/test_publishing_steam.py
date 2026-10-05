@@ -53,6 +53,67 @@ class SteamPromotionTests(unittest.TestCase):
         self.assertEqual(self.get("releases", release)["state"], "verified")
         self.assertEqual(sum(method == "SetAppBuildLive" for method, _ in self.calls), 1)
 
+    def test_repeated_promotion_submissions_return_the_saved_operation(self):
+        release = steam.prepare_beta(self.publisher, self.upload["id"], "test")
+        run = steam.queue_beta(self.publisher, release["id"])
+        self.assertEqual(steam.queue_beta(self.publisher, release["id"])["id"], run["id"])
+        with patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        with patch.object(steam, "now", return_value=release["observed_at"] + 301):
+            self.assertEqual(steam.queue_beta(self.publisher, release["id"])["id"], run["id"])
+        self.assertEqual(sum(method == "SetAppBuildLive" for method, _ in self.calls), 1)
+
+    def test_review_revoked_during_observation_prevents_promotion(self):
+        uploaded, draft = self.notes_upload()
+        release = steam.prepare_beta(self.publisher, uploaded["id"], "test")
+        run = steam.queue_beta(self.publisher, release["id"])
+
+        def revoke_after_observation(publisher, method, fields, **kwargs):
+            response = self.api(publisher, method, fields, **kwargs)
+            if method == "GetAppBuilds":
+                self.publisher.review_from_panel(draft["id"], draft["hash"], "operator", approve=False)
+            return response
+
+        with patch.object(steam, "request", side_effect=revoke_after_observation), \
+                patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
+        self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
+
+    def test_destination_changed_during_observation_prevents_promotion(self):
+        release = steam.prepare_beta(self.publisher, self.upload["id"], "test")
+        run = steam.queue_beta(self.publisher, release["id"])
+
+        def change_after_observation(publisher, method, fields, **kwargs):
+            response = self.api(publisher, method, fields, **kwargs)
+            if method == "GetAppBuilds":
+                self.publisher.save_project("steam", str(self.repo), "steamcmd", "999", depot="998", username="publisher")
+            return response
+
+        with patch.object(steam, "request", side_effect=change_after_observation), \
+                patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
+        self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
+
+    def test_preparation_expiring_during_observation_prevents_promotion(self):
+        release = steam.prepare_beta(self.publisher, self.upload["id"], "test")
+        run = steam.queue_beta(self.publisher, release["id"])
+        current = [release["observed_at"]]
+
+        def delay_observation(publisher, method, fields, **kwargs):
+            response = self.api(publisher, method, fields, **kwargs)
+            if method == "GetAppBuilds":
+                current[0] += 301
+            return response
+
+        with patch.object(steam, "request", side_effect=delay_observation), \
+                patch.object(steam, "now", side_effect=lambda: current[0]), \
+                patch("lib.publishing_worker.os.geteuid", return_value=1000):
+            work(self.publisher)
+        self.assertEqual(self.get("runs", run)["state"], "preflight-failed")
+        self.assertFalse(any(method == "SetAppBuildLive" for method, _ in self.calls))
+
     def test_changed_branch_never_dispatches_and_gate_stays_closed(self):
         release = steam.prepare_beta(self.publisher, self.upload["id"], "test")
         run = steam.queue_beta(self.publisher, release["id"])

@@ -110,9 +110,18 @@ TOOLS = (
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
     "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
     "magick", "convert", "identify", "exiftool",
-    "rg", "jq", "aws", "basaltwater-web", *DESKTOP_APPLICATIONS,
+    "rg", "jq", "aws", "basaltwater-web", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"
+PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/GAME_PUBLISHING.md"
+PUBLISHING_INSTRUCTIONS = [
+    "Use Publishing in the existing HTTPS web panel for human sign-in on this VM. Never request, read or copy publishing credentials into prompts, repositories or the controller.",
+    "Use basaltw publish status --json for saved state. Tool presence and local session files do not verify provider authentication; ask the human to authenticate through the panel when needed.",
+    "After a completed export, use basaltw publish complete REPOSITORY ARTIFACT_SUBDIRECTORY INTERNAL_BUILD_ID, then prepare PROJECT_ID and upload ARTIFACT_ID. Upload only under the user's explicit request or standing unattended/scheduled authority.",
+    "Agents may draft/translate and import unreviewed text with basaltw publish draft. Every public destination/language revision, including bundled release notes, requires human review. Do not alter approval records or click human review/confirmation controls.",
+    "Steam default/public release and rollback remain manual on Steamworks. Steam announcements and itch.io posts currently use reviewed exports and human editor handoffs; do not claim an export published a post.",
+    "Butler/SteamCMD storefront uploads and basaltwater-web VM HTTPS previews are separate publishing workflows. Use the returned destination and receipt for the selected workflow.",
+]
 
 
 def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
@@ -274,6 +283,11 @@ def inspect_environment(repository: str) -> dict[str, object]:
     return {
         "schema_version": 1,
         "tools": tools,
+        "publishing": {
+            "tools": {name: tools[name] for name in ("butler", "steamcmd")},
+            "readiness": "unverified", "management_command": "basaltw publish status --json",
+            "guide": PUBLISHING_GUIDE, "instructions": list(PUBLISHING_INSTRUCTIONS),
+        },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
         "workspace": {
@@ -324,6 +338,13 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print(f"Desktop guide: {DESKTOP_GUIDE}")
         for path in result["desktop_skills"]:
             print(f"Desktop skill: {path}")
+    publishing = result["publishing"]
+    installed = [name for name, path in publishing["tools"].items() if path]
+    print("Publishing tools: " + (", ".join(installed) if installed else "none on PATH") + " (readiness and authentication unverified)")
+    if installed:
+        print(f"Publishing guide: {publishing['guide']}")
+        for instruction in publishing["instructions"]:
+            print(f"  {instruction}")
     print(f"Worktrees: {workspace['worktree_root']} (agent/TASK)")
     print(f"Browser evidence: {workspace['browser_evidence']}")
     for artifact in workspace["artifact_directories"]:

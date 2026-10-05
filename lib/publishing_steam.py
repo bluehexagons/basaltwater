@@ -135,12 +135,14 @@ def queue_beta(publishing: Publishing, release_id: str) -> dict:
         release = publishing.store.get(db, "releases", release_id)
         beta_branch(release["branch"])
         project = publishing.store.get(db, "projects", release["project"])
-        if release["state"] != "prepared-beta" or now() - release["observed_at"] > 300 or release["project_revision"] != project_revision(project):
+        if release["project_revision"] != project_revision(project):
             raise ValueError("Promotion preparation is stale; observe and prepare again")
         identity = digest({"release": release_id, "build": release["build_id"], "branch": release["branch"]})
         old = db.execute("SELECT run FROM dispatches WHERE identity=?", (identity,)).fetchone()
         if old:
             return publishing.store.get(db, "runs", old[0])
+        if release["state"] != "prepared-beta" or now() - release["observed_at"] > 300:
+            raise ValueError("Promotion preparation is stale; observe and prepare again")
         run = {"id": publishing.store.new_id(), "project": project["id"], "project_config": project, "release": release_id,
                "identity": identity, "state": "queued", "created": now(), "job": "", "operation": "promote-beta"}
         db.execute("INSERT INTO dispatches VALUES(?,?)", (identity, run["id"]))
@@ -163,16 +165,21 @@ def execute_beta(publishing: Publishing, run: dict) -> dict:
         return {"state": "preflight-failed", "message": message, "finished": now()}
 
     try:
-        with publishing.store.transaction() as db:
-            uploaded = publishing.store.get(db, "runs", release["run"])
-            artifact = publishing.store.get(db, "artifacts", uploaded["artifact"])
-            publishing._valid_artifact(db, artifact, public=True)
         observed = observe(publishing, project, branch, release["build_id"])
-        if (release["project_revision"] != project_revision(project) or now() - release["observed_at"] > 300
-                or observed["previous_build"] != release["previous_build"]):
+        if observed["previous_build"] != release["previous_build"]:
             return preflight_failure("Branch changed or preparation expired; prepare promotion again")
         with publishing.store.transaction() as db:
             cancelled = publishing.store.get(db, "runs", run["id"]).get("cancel_requested")
+            if not cancelled:
+                # Observations can take two network deadlines. Bind dispatch
+                # to current local authority after those requests, rather than
+                # carrying an earlier approval/configuration through them.
+                uploaded = publishing.store.get(db, "runs", release["run"])
+                artifact = publishing.store.get(db, "artifacts", uploaded["artifact"])
+                current = publishing._valid_artifact(db, artifact, public=True)
+                if (current != project or release["project_revision"] != project_revision(current)
+                        or now() - release["observed_at"] > 300):
+                    raise ValueError("Promotion preparation changed or expired")
         if cancelled:
             return preflight_failure("Cancelled before promotion dispatch")
         dispatched = True

@@ -187,16 +187,15 @@ class PublishingAuth:
             if process.poll() is None:
                 self._kill(process)
             code = process.wait(timeout=5)
-            success = code == 0
-            credential_paths(session["provider"], self.publishing.home)
-            if session["provider"] == "butler":
-                success = success and credential_paths("butler", self.publishing.home).is_file()
+            native = credential_paths(session["provider"], self.publishing.home)
+            saved_session = native if session["provider"] == "butler" else native / "config/config.vdf"
+            success = code == 0 and saved_session.is_file()
             with self.publishing.store.transaction() as db:
-                self.publishing.store.put(db, "accounts", {"id": session["provider"], "state": "locally-authenticated" if success else "needs-login",
+                self.publishing.store.put(db, "accounts", {"id": session["provider"], "state": "present-unverified" if success else "needs-login",
                     "username": session["username"], "observed_at": now()})
             with self._lock:
                 session.update(state="complete" if success else "failed", challenge="none",
-                               message="Native login completed; future operations revalidate the session." if success else "Login failed or expired. Retry or use the VM terminal.")
+                               message="Native login command finished with local session files present; provider acceptance remains unverified." if success else "Login failed, expired or saved no local session. Retry or use the VM terminal.")
                 session.pop("link", None)
         except Exception:
             with self._lock:

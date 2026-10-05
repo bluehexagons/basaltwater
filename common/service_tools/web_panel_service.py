@@ -2247,7 +2247,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = -1
-        request_limit = 128 * 1024 if path in publishing_paths else _MAX_REQUEST_BYTES
+        # Percent encoding can triple a valid 64 KiB UTF-8 draft before
+        # transport. Leave bounded room for its title and revision metadata.
+        request_limit = 256 * 1024 if path in publishing_paths else _MAX_REQUEST_BYTES
         if not 0 <= length <= request_limit:
             self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid request\n", "text/plain")
             return

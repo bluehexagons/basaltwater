@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from lib.agent_tasks import AgentTasks
-from lib.publishing_auth import PublishingAuth, executable
+from lib.publishing_auth import PublishingAuth, credential_paths, executable
 from lib.publishing_store import file_lock
 from lib.publishing_worker import execute, work
 from tests import test_publishing as fixtures
@@ -115,6 +115,35 @@ class PublishingRuntimeTests(unittest.TestCase):
                 os.fstat(fd)
         with file_lock(self.publisher.store.root / "butler.lock"):
             pass
+
+    def test_zero_exit_login_requires_saved_files_and_stays_unverified(self):
+        auth = PublishingAuth(self.publisher)
+        for provider in ("steamcmd", "butler"):
+            native = credential_paths(provider, self.home)
+            saved = native / "config/config.vdf" if provider == "steamcmd" else native
+            for present in (False, True):
+                if present:
+                    saved.write_text("fixture native state")
+                    saved.chmod(0o600)
+                master, slave = os.pipe()
+                os.close(slave)
+                process = MagicMock()
+                process.poll.return_value = 0
+                process.wait.return_value = 0
+                session = {"id": provider, "provider": provider, "username": "publisher", "process": process,
+                           "master": master, "state": "running"}
+                lease = MagicMock()
+                with self.subTest(provider=provider, present=present), \
+                        patch.object(auth, "_kill"), patch("lib.publishing_auth.selectors.DefaultSelector"):
+                    auth._run(session, lease)
+                with self.publisher.store.transaction() as db:
+                    account = self.publisher.store.get(db, "accounts", provider)
+                self.assertEqual(account["state"], "present-unverified" if present else "needs-login")
+                self.assertEqual(session["state"], "complete" if present else "failed")
+                self.assertNotIn("locally-authenticated", str(account))
+                lease.__exit__.assert_called_once()
+                with self.assertRaises(OSError):
+                    os.fstat(master)
 
     def test_background_polling_does_not_release_lease_while_exiting(self):
         tasks = AgentTasks(str(self.home))

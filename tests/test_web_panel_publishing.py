@@ -70,6 +70,27 @@ class PublishingPanelTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.publisher.export(en["id"])
 
+    def test_spanish_draft_within_text_limit_survives_form_encoding(self):
+        source = self.publisher.draft("game", "en", "Source", "Translate this revision")
+        body = "¡sí! " * 8000
+        self.assertLess(len(body.encode()), 64 * 1024)
+        handler = self.handler("/actions/publishing/draft", {"csrf": self.state.csrf_token,
+            "project": "game", "language": "es", "title": "Actualización", "body": body,
+            "source": source["id"], "late_minutes": "60"})
+        self.assertGreater(int(handler.headers["Content-Length"]), 128 * 1024)
+        handler.do_POST()
+        handler._send.assert_not_called()
+        self.assertEqual(handler.send_response.call_args.args[0], panel.HTTPStatus.SEE_OTHER)
+        translated = next(row for row in self.publisher.status()["drafts"] if row["language"] == "es")
+        self.assertEqual(translated["body"], body)
+        self.assertEqual(translated["state"], "needs-review")
+        self.assertIsNone(translated["review"])
+        oversized = self.handler("/actions/publishing/draft", {"csrf": self.state.csrf_token, "body": body * 2})
+        self.assertGreater(int(oversized.headers["Content-Length"]), 256 * 1024)
+        oversized.do_POST()
+        self.assertEqual(oversized._send.call_args.args[0], panel.HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+        self.assertEqual(len(self.publisher.status()["drafts"]), 2)
+
     def test_csrf_duplicate_unknown_query_and_http_never_authenticate(self):
         valid = {"csrf": self.state.csrf_token, "provider": "butler"}
         for values, query, proto, expected in (({**valid, "csrf": "bad"}, "", "https", 403),
@@ -88,6 +109,21 @@ class PublishingPanelTests(unittest.TestCase):
         handler.do_POST()
         self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.UNPROCESSABLE_ENTITY)
         self.assertNotIn("SECRET", handler._send.call_args.args[1])
+
+    def test_corrupt_database_renders_recovery_guidance_for_get_and_post(self):
+        path = self.publisher.store.root / "state.sqlite3"
+        original = b"SECRET corrupted publishing state"
+        path.write_bytes(original)
+        handler = self.handler("/publishing")
+        handler.do_GET()
+        self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.OK)
+        self.assertIn("Publishing state is unavailable", handler._send.call_args.args[1])
+        self.assertNotIn("SECRET", handler._send.call_args.args[1])
+        handler = self.handler("/actions/publishing/prepare", {"csrf": self.state.csrf_token, "project": "game"})
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.UNPROCESSABLE_ENTITY)
+        self.assertNotIn("SECRET", handler._send.call_args.args[1])
+        self.assertEqual(path.read_bytes(), original)
 
     def test_history_limit_keeps_pending_runs_project_and_translation_source(self):
         en = self.publisher.draft("game", "en", "Published source", "Exact original source text")

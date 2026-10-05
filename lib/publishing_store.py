@@ -79,21 +79,26 @@ class PublishingStore:
             # Pre-create securely: sqlite's default file mode follows umask.
             fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             os.close(fd)
-            connection = sqlite3.connect(path, timeout=10)
             try:
-                connection.execute("PRAGMA synchronous=FULL")
-                connection.execute("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, document TEXT, PRIMARY KEY(kind,id))")
-                connection.execute("CREATE TABLE IF NOT EXISTS dispatches (identity TEXT PRIMARY KEY, run TEXT NOT NULL)")
-                connection.execute("CREATE TABLE IF NOT EXISTS reviews (revision TEXT PRIMARY KEY, hash TEXT, principal TEXT, reviewed REAL)")
-                connection.commit()
-                connection.execute("BEGIN IMMEDIATE")
-                yield connection
-                connection.commit()
-            except BaseException:
-                connection.rollback()
-                raise
-            finally:
-                connection.close()
+                connection = sqlite3.connect(path, timeout=10)
+                try:
+                    connection.execute("PRAGMA synchronous=FULL")
+                    connection.execute("CREATE TABLE IF NOT EXISTS records (kind TEXT, id TEXT, document TEXT, PRIMARY KEY(kind,id))")
+                    connection.execute("CREATE TABLE IF NOT EXISTS dispatches (identity TEXT PRIMARY KEY, run TEXT NOT NULL)")
+                    connection.execute("CREATE TABLE IF NOT EXISTS reviews (revision TEXT PRIMARY KEY, hash TEXT, principal TEXT, reviewed REAL)")
+                    connection.commit()
+                    connection.execute("BEGIN IMMEDIATE")
+                    yield connection
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+                finally:
+                    connection.close()
+            except sqlite3.Error:
+                # Disk exhaustion, corruption and SQL errors use the same
+                # bounded recovery surface as other private-state failures.
+                raise RuntimeError("Publishing database is unavailable; inspect private state and backups") from None
 
     @staticmethod
     def get(connection, kind: str, record_id: str) -> dict:

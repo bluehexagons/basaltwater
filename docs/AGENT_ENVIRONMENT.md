@@ -17,6 +17,16 @@ their `readiness` remains `unverified`. Discovery never launches a window,
 renderer, device probe, or audio session. `desktop_skills` links available local
 desktop instructions; it does not establish that a desktop session is attached.
 
+`publishing` inventories Butler and SteamCMD on the active PATH and links the
+[VM publishing guide](GAME_PUBLISHING.md). Its `readiness` remains `unverified`;
+discovery never reads native session files, opens the publishing database, runs
+provider tools or contacts a storefront. Guidance directs human authentication
+to Publishing in the existing HTTPS panel and authorized unattended uploads to
+`basaltw publish`. Agents can prepare drafts and translations, while exact public
+text approval and confirmation belong to a human. Steam default/public releases
+stay manual on Steamworks. Reviewed post exports remain human editor handoffs.
+Storefront uploads and VM HTTPS game previews are separate workflows.
+
 `desktop_backend` distinguishes CachyOS `native-session` from Debian
 `shared-xrdp`; `automation_command` is respectively `basaltw desktop --native`
 or `basaltw desktop`. Each application's `launch_argv` begins with the active
@@ -27,8 +37,8 @@ user-approved [KDE Wayland automation](CACHYOS_DESKTOP.md). Discovery does not
 request consent or query desktop contents.
 
 Projects can commit an optional `basaltwater-agent.json` at their Git root.
-This discovery file is separate from the `basaltwater.json` deployment manifest
-and does not change CI or deployment behavior. For example:
+This discovery file is separate from the `basaltwater.json` build/deployment and
+publishing manifest and does not change CI or deployment behavior. For example:
 
 ```json
 {
