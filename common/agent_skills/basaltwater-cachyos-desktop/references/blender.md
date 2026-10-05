@@ -21,7 +21,7 @@ active editor before context-sensitive operators or shortcuts.
 For scripting, a background operation can load the working file and save a new
 checkpoint without controlling a desktop window:
 
-```bash
+```fish
 blender --background --disable-autoexec /absolute/project/model.blend \
   --python-exit-code 1 --python /absolute/project/touchup.py
 ```
@@ -90,7 +90,7 @@ its PNG, scene, settings and log. UI, Eevee, GPU and asset interchange remain
 separate checks. Use the project's established renderer/backend for project
 captures; hardware presence does not establish CUDA/HIP/OneAPI support.
 
-```bash
+```fish
 blender --background --disable-autoexec /absolute/project/scene.blend \
   --render-output /absolute/artifacts/render- --render-format PNG --render-frame 1
 ```

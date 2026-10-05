@@ -6,14 +6,18 @@ workstation. Package mappings and dependencies were reviewed against the enabled
 CachyOS/Arch repositories and AUR recipes on 2026-09-27. Versions below are not
 pinned: full distro updates remain the owner's responsibility.
 
-Keep your full desired selection when rerunning setup. For example, append these
-options to your usual command (preview shown; remove `--dry-run` to apply):
+Choose your software before the first setup. Add these flags after
+`--local-setup agent_cachyos` in the [fish installer](CACHYOS.md#quick-start),
+or preview the complete selection if you installed only the launcher:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs \
   --godot --material-maker --blender --gimp --inkscape --krita --remmina \
   --sunshine --moonlight --etcher --butler --steamcmd --dry-run
 ```
+
+Remove `--dry-run` to apply the selection. Package and AUR review prompts run
+in the attached KDE terminal as your desktop account.
 
 | Application | Flag | Installation and retained ownership |
 | --- | --- | --- |
@@ -43,9 +47,7 @@ full-system update, then rerunning setup. Omitted or `--no-*` software flags sto
 managing that selection; they do not uninstall packages or remove user data.
 Successful selections are saved for `basaltw refresh`, and the doctor/receipt
 records selected software metadata without launching a GUI or publisher.
-With an existing saved setup, add these options using
-`basaltw refresh --material-maker --etcher --butler --steamcmd`; add `--dry-run`
-to preview the combined selection. Older CLIs need `basaltw upgrade` first.
+For later software additions, see [saved setup maintenance](CACHYOS_MAINTENANCE.md#upgrade-and-repeat-your-last-setup).
 
 Desktop application selections also install Python GObject, AT-SPI,
 GStreamer/base/PipeWire and GTK3 prerequisites for task-scoped automation.
@@ -66,7 +68,7 @@ or approve a package build for you. Review the PKGBUILD and dependencies. Instal
 packages are retained without requiring an AUR helper. If an unmanaged executable
 already exists but no supported package owns the installation, setup stops rather
 than replacing it: omit the flag to retain its original manager, or migrate it
-deliberately. [AUR troubleshooting](CACHYOS.md#aur-download-failures) also applies.
+deliberately. [AUR troubleshooting](CACHYOS_MAINTENANCE.md#aur-download-failures) also applies.
 Already installed packages must also have a working executable path owned by
 that package; missing commands and personal PATH shadows stop preflight.
 

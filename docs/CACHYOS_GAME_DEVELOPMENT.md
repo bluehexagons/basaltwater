@@ -6,26 +6,20 @@ dependencies, Blender source assets, and Antistatic Animator. Debian remains
 the authoritative check/test and release-build environment; reproducing its
 compiler, formatter, graphics, or packaged-runtime baseline here is unnecessary.
 
-From the normal desktop account, without `sudo`:
+For a first installation, use the [fish installer](CACHYOS.md#quick-start)
+with the options below after `--local-setup agent_cachyos`. If the launcher is
+already installed, preview your first development selection in fish as the
+normal desktop account, without `sudo`:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --t3code-desktop \
   --node --node-versions --python --git-lfs --game-dev --blender --dry-run
 ```
 
-Remove `--dry-run` to apply. Keep all desired flags when running `setup` again.
-For an existing saved selection, upgrade the CLI first if these flags are new,
-then merge the development options without replacing your other choices:
-
-```bash
-basaltw upgrade
-basaltw refresh --game-dev --node-versions --git-lfs --blender --dry-run
-basaltw refresh --game-dev --node-versions --git-lfs --blender
-```
-
-`--node` and `--python` remain separate selections; add them to refresh if they
-were not previously selected. See [local setup](CACHYOS.md) for installation,
-T3 modes, package prompts, and refresh behavior.
+Remove `--dry-run` to apply. `--node` and `--python` select the general language
+tools; `--node-versions` prepares the separate project runtime manager.
+See [local setup](CACHYOS.md) for T3 modes and package prompts, and
+[maintenance](CACHYOS_MAINTENANCE.md) for later changes to a saved selection.
 
 ## Development packages
 
@@ -77,23 +71,24 @@ Zsh, Fish, and agent shells can keep their current startup behavior.
 Install the checked-out pins deliberately, then select them for individual
 commands:
 
-```bash
+```fish
 basaltw node install --project "$HOME/repos/antistatic"
 basaltw node install --project "$HOME/repos/antistatic-animator"
 basaltw node status --project "$HOME/repos/antistatic" --json
 basaltw node status --project "$HOME/repos/antistatic-animator" --json
 
 cd "$HOME/repos/antistatic"
-. scripts/use-node.sh
-npm ci
-npm run doctor
-npm run build
+basaltw node exec -- npm ci
+basaltw node exec -- npm run doctor
+basaltw node exec -- npm run build
 
 cd "$HOME/repos/antistatic-animator"
 basaltw node exec -- npm ci
 basaltw node exec -- npm run dev:electron
 ```
 
+`basaltw node exec` selects the project runtime for each command and works in
+fish without sourcing Bash's `scripts/use-node.sh` or NVM initialization.
 Repeat `node install`/`node status` for a sibling when its own pin requires
 another runtime. An explicit `--version` can override a pin while still
 respecting its Node engines. If a project needs a different npm or another

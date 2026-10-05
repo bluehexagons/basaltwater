@@ -41,7 +41,7 @@ Firewall management requires an explicit access flag; see the workstation skill.
 
 Inspect service state and recent logs as the user:
 
-```bash
+```fish
 systemctl --user status basaltwater-cachyos-t3.service --no-pager
 journalctl --user -u basaltwater-cachyos-t3.service -n 100 --no-pager
 ```
@@ -62,7 +62,7 @@ fails, inspect the unit's PATH and the provider binary path in T3 settings.
 
 To connect a browser or desktop client, run:
 
-```bash
+```fish
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
@@ -76,7 +76,7 @@ For cloud access through T3 Connect, keep the default loopback bind and run the
 following as the desktop user. Complete the browser sign-in, restart the
 managed service, and check the saved link:
 
-```bash
+```fish
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 systemctl --user restart basaltwater-cachyos-t3.service
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
@@ -110,6 +110,6 @@ Omitting the web-interface flag on a later setup does not uninstall the service.
 
 This profile does not install the VM gateway, device-pairing helpers, managed
 Playwright, or KDE automation. Do not use VM-specific T3 repair/update commands
-for this service. Read the [CachyOS operator guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS.md)
+for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_MAINTENANCE.md)
 for deliberate runtime updates (also in the installed checkout at
-`~/.local/share/basaltwater/docs/CACHYOS.md`).
+`~/.local/share/basaltwater/docs/CACHYOS_MAINTENANCE.md`).

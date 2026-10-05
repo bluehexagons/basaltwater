@@ -5,6 +5,8 @@ from __future__ import annotations
 import glob
 import json
 import os
+from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -161,7 +163,8 @@ class TestInstallScript(unittest.TestCase):
         with open(getent_path, "w", encoding="utf-8") as file_obj:
             file_obj.write(
                 "#!/bin/sh\n"
-                f'printf "%s:x:%s:%s::%s:/bin/bash\\n" "$2" "$(id -u)" "$(id -g)" {fake_home!r}\n'
+                f'printf "%s:x:%s:%s::%s:%s\\n" "$2" "$(id -u)" "$(id -g)" {fake_home!r} '
+                '"${BASALTWATER_TEST_SHELL:-/bin/bash}"\n'
             )
         os.chmod(getent_path, 0o755)
 
@@ -813,7 +816,8 @@ class TestInstallScript(unittest.TestCase):
         self.assertIn("--setup", help_result.stdout)
         self.assertIn("--qemu-guest-agent", help_result.stdout)
         self.assertIn('installer=$(mktemp)', help_result.stdout)
-        self.assertIn("trap 'rm -f --", help_result.stdout)
+        self.assertIn('cleanup() { rm -f -- "$installer"; }', help_result.stdout)
+        self.assertIn("trap cleanup EXIT", help_result.stdout)
         self.assertNotIn("| sh", help_result.stdout)
         self.assertNotIn("sudo sh -s", help_result.stdout)
         self.assertNotIn("wget -qO-", help_result.stdout)
@@ -832,44 +836,126 @@ class TestInstallScript(unittest.TestCase):
             self.assertFalse(os.path.exists(log))
             self.assertEqual(os.listdir(home), [])
 
-    def test_documented_installer_blocks_have_valid_shell_syntax(self):
-        import re
-        from pathlib import Path
-
+    def _documented_installer_examples(self):
         for filename in ("README.md", "docs/INSTALLATION.md", "docs/CACHYOS.md"):
             document = Path(PROJECT_ROOT, filename).read_text()
-            for example in re.findall(r"```bash\n(.*?)```", document, re.S):
+            for index, example in enumerate(re.findall(r"```(?:sh|bash|fish)\n(.*?)```", document, re.S)):
                 if "installer=$(mktemp)" not in example:
                     continue
-                with self.subTest(filename=filename, example=example):
-                    result = subprocess.run(["sh", "-n"], input=example, text=True,
-                                            capture_output=True, timeout=10)
+                yield f"{filename}:{index}", example
+        help_result = subprocess.run(["sh", INSTALL_SCRIPT, "--help"], text=True,
+                                     capture_output=True, check=True, timeout=10)
+        yield "install.sh --help", help_result.stdout.split("(copy the whole block):\n", 1)[1]
+
+    def test_documented_installer_blocks_have_valid_shell_syntax(self):
+        for label, example in self._documented_installer_examples():
+            with self.subTest(example=label):
+                result = subprocess.run(["sh", "-n"], input=example, text=True,
+                                        capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
+    def test_cachyos_docs_and_skills_have_valid_fish_syntax(self):
+        root = Path(PROJECT_ROOT)
+        documents = sorted((root / "docs").glob("CACHYOS*.md"))
+        documents.extend(sorted((root / "common/agent_skills").glob("basaltwater-cachyos-*/**/*.md")))
+        for document in documents:
+            for language, example in re.findall(r"```(sh|bash|fish)\n(.*?)```", document.read_text(), re.S):
+                with self.subTest(document=document.relative_to(root), example=example):
+                    self.assertEqual(language, "fish", "CachyOS command examples should use fish")
+                    result = subprocess.run(["fish", "--no-config", "--no-execute"], input=example,
+                                            text=True, capture_output=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_documented_download_cleans_up_and_preserves_failure_status(self):
-        import re
-        from pathlib import Path
+        self._check_documented_downloads("sh")
 
-        readme = Path(PROJECT_ROOT, "README.md").read_text()
-        example = re.search(r"```bash\n(.*?)```", readme, re.S)[1]
-        for download_status, expected in ((0, 7), (22, 22)):
-            with self.subTest(download_status=download_status), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                (root / "temp").mkdir()
-                payload = root / "payload"
-                payload.write_text('#!/bin/sh\nprintf ran > "$TEST_RAN"\nexit 7\n')
-                curl = root / "curl"
+    @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
+    def test_documented_downloads_run_in_fish(self):
+        self._check_documented_downloads("fish")
+
+    @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
+    def test_cachyos_quick_starts_install_and_select_fish_without_elevation(self):
+        examples = [(label, example) for label, example in self._documented_installer_examples()
+                    if label.startswith("docs/CACHYOS.md")]
+        self.assertEqual(len(examples), 2)
+        for label, example in examples:
+            with self.subTest(example=label), tempfile.TemporaryDirectory() as directory:
+                home, log_path, environment = self._create_fixture(directory)
+                environment.update(
+                    BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="cachyos",
+                    BASALTWATER_TEST_SHELL="/usr/bin/fish", HOME=home,
+                    XDG_DATA_HOME=os.path.join(home, ".local", "share"),
+                    XDG_CONFIG_HOME=os.path.join(home, ".config"),
+                    TEST_INSTALL_SCRIPT=INSTALL_SCRIPT, TMPDIR=directory,
+                    BASALTWATER_TEST_SUDO_LOG=os.path.join(directory, "sudo.log"),
+                )
+                environment.pop("SSH_CONNECTION", None)
+                environment.pop("SSH_TTY", None)
+                curl = Path(directory, "command-bin", "curl")
                 curl.write_text('#!/bin/sh\nfor arg do target=$arg; done\n'
-                                'cp "$TEST_PAYLOAD" "$target"\nexit "$TEST_DOWNLOAD_STATUS"\n')
-                curl.chmod(0o755)
-                result = subprocess.run(["sh", "-c", example], text=True, capture_output=True, env={
-                    **os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
-                    "TMPDIR": str(root / "temp"), "TEST_PAYLOAD": str(payload),
-                    "TEST_RAN": str(root / "ran"), "TEST_DOWNLOAD_STATUS": str(download_status),
-                }, timeout=10)
-                self.assertEqual(result.returncode, expected, result.stderr)
-                self.assertEqual(list((root / "temp").iterdir()), [])
-                self.assertEqual((root / "ran").exists(), download_status == 0)
+                                'cp "$TEST_INSTALL_SCRIPT" "$target"\n')
+                result = subprocess.run(["fish", "--no-config", "-c", example],
+                                        env=environment, text=True, capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = [json.loads(line) for line in Path(log_path).read_text().splitlines()]
+                self.assertEqual(calls[0], ["bootstrap", "--shell", "fish", "--user", "testuser",
+                                            "--skip-system-packages"])
+                selection = ["setup", "agent_cachyos", "localhost", "testuser"]
+                if "--t3code-desktop" in example:
+                    selection.append("--t3code-desktop")
+                selection.extend(["--node", "--python", "--git-lfs"])
+                self.assertEqual(calls[1:], [selection])
+                self.assertTrue(Path(home, ".local", "bin", "basaltw").is_file())
+                self.assertFalse(Path(directory, "sudo.log").exists())
+
+    def _check_documented_downloads(self, shell):
+        for label, example in self._documented_installer_examples():
+            for temporary_status, download_status, installer_status in (
+                (0, 0, 0), (0, 0, 7), (0, 22, 0), (73, 0, 0),
+            ):
+                with self.subTest(shell=shell, example=label, download_status=download_status,
+                                  installer_status=installer_status, temporary_status=temporary_status), \
+                        tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    # Cleanup must quote a path containing spaces and shell punctuation.
+                    temporary = root / "temp ' downloads"
+                    temporary.mkdir()
+                    payload = root / "payload"
+                    payload.write_text('#!/bin/sh\nprintf ran > "$TEST_RAN"\n'
+                                       'for arg do printf "%s\\n" "$arg"; done > "$TEST_ARGS"\n'
+                                       'exit "$TEST_INSTALLER_STATUS"\n')
+                    curl = root / "curl"
+                    curl.write_text('#!/bin/sh\nfor arg do target=$arg; done\n'
+                                    'cp "$TEST_PAYLOAD" "$target"\nexit "$TEST_DOWNLOAD_STATUS"\n')
+                    curl.chmod(0o755)
+                    if temporary_status:
+                        mktemp = root / "mktemp"
+                        mktemp.write_text(f'#!/bin/sh\nexit {temporary_status}\n')
+                        mktemp.chmod(0o755)
+                    sudo = root / "sudo"
+                    sudo.write_text('#!/bin/sh\nexec "$@"\n')
+                    sudo.chmod(0o755)
+                    command = [shell, "-c", example] if shell == "sh" else [shell, "--no-config", "-c", example]
+                    result = subprocess.run(command, text=True, capture_output=True, env={
+                        **os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                        "HOME": str(root), "USER": "testuser", "XDG_CONFIG_HOME": str(root / "config"),
+                        "TMPDIR": str(temporary), "TEST_PAYLOAD": str(payload),
+                        "TEST_RAN": str(root / "ran"), "TEST_ARGS": str(root / "args"),
+                        "TEST_DOWNLOAD_STATUS": str(download_status),
+                        "TEST_INSTALLER_STATUS": str(installer_status),
+                    }, timeout=10)
+                    self.assertEqual(result.returncode, temporary_status or download_status or installer_status,
+                                     result.stderr)
+                    self.assertEqual(list(temporary.iterdir()), [])
+                    ran = temporary_status == download_status == 0
+                    self.assertEqual((root / "ran").exists(), ran)
+                    if ran and label.startswith("docs/CACHYOS.md"):
+                        expected = ["--local-setup", "agent_cachyos"]
+                        if "--t3code-desktop" in example:
+                            expected.append("--t3code-desktop")
+                        expected.extend(["--node", "--python", "--git-lfs"])
+                        self.assertEqual((root / "args").read_text().splitlines(), expected)
 
 
 if __name__ == "__main__":

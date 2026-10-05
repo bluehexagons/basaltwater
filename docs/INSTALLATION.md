@@ -31,7 +31,8 @@ account password and grants administrator privileges to that command. If the
 account cannot use it, ask the machine's administrator to provide access before
 following system-installation examples.
 
-The examples use `curl` and a temporary download that is removed on exit.
+The installer blocks work in fish, Bash, and Zsh by explicitly invoking `sh`.
+They use `curl` and a temporary download that is removed on exit.
 They execute only after a successful complete download. If curl is missing,
 install it through your distribution's package manager; on Debian:
 
@@ -56,25 +57,27 @@ account.
 
 Use this when you want to choose the first setup later:
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sh "$installer"
-)
+  sh "$installer" "$@"
+' sh
 ```
 
 The installer uses `sudo` for packages when needed. To install the source in
 `/opt/basaltwater` and expose a system launcher instead, use:
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" --user "$USER"
-)
+  sudo sh "$installer" "$@"
+' sh --user "$USER"
 ```
 
 ### Set up a minimal Debian control plane
@@ -82,13 +85,14 @@ The installer uses `sudo` for packages when needed. To install the source in
 This installs common administrator and Linux tools and configures the local
 machine to manage other VMs and containers:
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" --user "$USER" --local-setup control_plane
-)
+  sudo sh "$installer" "$@"
+' sh --user "$USER" --local-setup control_plane
 ```
 
 Coding agents are optional; append `--agent-tool codex`, for example, only
@@ -97,14 +101,15 @@ when wanted. If the orchestration machine is itself a Proxmox VM, add
 guest-agent package and starts and enables its systemd service during
 self-setup:
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" --user "$USER" --qemu-guest-agent \
+  sudo sh "$installer" "$@"
+' sh --user "$USER" --qemu-guest-agent \
     --local-setup control_plane
-)
 ```
 
 For an already installed orchestration host, run the equivalent command:
@@ -124,14 +129,15 @@ Console graphical login is disabled; applications and home data remain.
 See [XRDP migration and recovery](XRDP.md#migration-and-recovery) before converting
 a machine that currently relies on local graphical login.
 
-```bash
-(
+```sh
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sudo sh "$installer" --user "$USER" --local-setup agent_workstation \
+  sudo sh "$installer" "$@"
+' sh --user "$USER" --local-setup agent_workstation \
     --control-plane --desktop xfce --rdp --rdp-existing-password
-)
 ```
 
 This expects `$USER` to be an existing non-root account with an unlocked

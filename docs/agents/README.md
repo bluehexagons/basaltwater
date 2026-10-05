@@ -21,7 +21,7 @@ managed machine.
 | Compare images or capture two Git revisions | [Visual comparisons](../VISUAL_COMPARISONS.md) | [Managed workspace skills](../AGENT_SKILLS.md) |
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
 | Configure a coding VM from an example | [Agentic VMs](../AGENTIC_VMS.md) | [Privilege approvals](../PRIVILEGE_APPROVALS.md) |
-| Add agent tools to an existing CachyOS KDE desktop | [CachyOS local setup](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |
+| Set up agent tools on a CachyOS KDE desktop | [First setup in fish](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |
 | Choose default, passwordless-sudo, or hardened operation | [Agentic coding security](../AGENT_SECURITY.md) | [Workstations](../WORKSTATIONS.md) |
 | Choose a credential workflow | [Credentials overview](../CREDENTIALS.md) | [SSH authentication](../SSH.md) |
 | Seed, rotate, or recover coding-agent auth | [Agent authentication](../AGENT_AUTHENTICATION.md) | [Credentials overview](../CREDENTIALS.md) |
@@ -35,7 +35,7 @@ managed machine.
 ## Day-two checks
 
 These controller-side checks apply to the Debian-based managed stack. For
-`agent_cachyos`, use the [local checks and rerun workflow](../CACHYOS.md).
+`agent_cachyos`, use the [local maintenance reference](../CACHYOS_MAINTENANCE.md).
 
 Run these commands from the controller after setup or when an agent service
 needs attention:

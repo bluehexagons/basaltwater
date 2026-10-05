@@ -1,4 +1,4 @@
-# CachyOS coding workstation
+# Set up a CachyOS coding workstation
 
 `agent_cachyos` adds a small coding stack to an **already installed x86-64
 CachyOS KDE Plasma workstation**. It uses the existing desktop account and is
@@ -19,24 +19,26 @@ CachyOS management. See the upstream [January](https://blog.cachyos.org/blog/260
 [August 2026 release notes](https://blog.cachyos.org/blog/2608-august-release/)
 for these defaults; do not infer current packages from an older installation ISO.
 
-The current workstation's running stack has been tested through daily use and
-the September 2026 audit. See the [qualification record](plans/CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md)
-for that evidence and the separate fresh-install/recovery cases.
-
 ## Quick start
 
 Finish the normal CachyOS installation first: update the system, configure KDE,
 and install the appropriate GPU driver. Then open a terminal in your normal
-desktop session and run this as yourself (without `sudo`):
+desktop session and run this as yourself (without `sudo`).
 
-```bash
-(
+The commands on this page use **fish**, CachyOS's
+[default login shell](https://wiki.cachyos.org/configuration/post_install_setup/#changing-the-default-shell).
+Copy the whole block. The quoted download script runs explicitly under `sh`,
+so fish never has to parse POSIX assignments or traps; your login shell stays fish.
+
+```fish
+sh -c '
   installer=$(mktemp) || exit
-  trap 'rm -f -- "$installer"' EXIT
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
   curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
-  sh "$installer" --local-setup agent_cachyos \
-    --node --python --git-lfs
-)
+  sh "$installer" "$@"
+' sh --local-setup agent_cachyos \
+  --node --python --git-lfs
 ```
 
 The package step may ask for your desktop user's sudo password. Keep the
@@ -45,19 +47,10 @@ ripgrep, build tools, GitHub CLI, and Codex plus Node.js, Python, and Git LFS.
 The installer defaults to the `dev` channel while this profile is new.
 The temporary download is removed when the command exits, including on failure.
 
-The installer no longer migrates `infra_tools` user data. Any remaining old
-installation must first use the [intermediate version](BASALTWATER_MIGRATION.md).
-An existing `cachyos-t3` data directory at the default Basaltwater install path
-is retained during reinstall.
-Installer updates also carry forward managed `state`, `deployments`, and
-`worktrees` directories.
-If that path also contains other unmanaged files, move or resolve them before
-rerunning the installer.
-
 No account, password, group, sudo, provider, or Git identity changes are made.
 Log in to providers through their normal commands when needed:
 
-```bash
+```fish
 codex login
 gh auth login
 ```
@@ -81,37 +74,38 @@ Other shells need `~/.local/bin` and `~/.opencode/bin` added to PATH manually.
 
 ### Install with T3 Code desktop
 
-For Codex and the native T3 Code desktop app, add `--t3code-desktop` to the
-[quick-start installer](#quick-start), or use the commands below once the
-launcher is installed. Run as your normal KDE user, without `sudo`.
+Choose this installer instead of the basic quick start when you want Codex
+inside the native T3 Code app. Run it once from your KDE terminal as yourself:
 
-This selects Codex and GitHub CLI, installs or retains `t3code-bin`, and prepares
-the workspace and managed skills. Claude and OpenCode are not selected.
-`--node --python --git-lfs` supplies optional project tools; omit those flags
-for just the default coding tools and T3 desktop. Add `--no-agent-tool gh`
-to omit GitHub CLI too. A missing `t3code-bin` is installed using CachyOS's
-default Shelly CLI and may prompt for package review or sudo; an installed package
-stays on its current version. Setup preserves existing Codex/T3 settings and
-credentials and runs the [bounded cleanup](#cleanup-during-setup).
-
-With the launcher already installed, preview and then apply the same selection:
-
-```bash
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --dry-run
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
+```fish
+sh -c '
+  installer=$(mktemp) || exit
+  cleanup() { rm -f -- "$installer"; }
+  trap cleanup EXIT
+  curl -fsSL --max-time 120 https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.sh -o "$installer" &&
+  sh "$installer" "$@"
+' sh --local-setup agent_cachyos \
+  --t3code-desktop --node --python --git-lfs
 ```
 
-Add `--plan` before `--local-setup` for an installer-wide preview with no
-package installation, repository download, or launcher changes.
-The direct setup preview makes no changes. Adding `--dry-run` to the shell
-installer previews only its final setup phase; the installer still installs
-the launcher and prerequisites. Keep installer options such as `--channel dev`
-before `--local-setup`, and setup options such as `--t3code-desktop` after it.
+This installs the launcher, Codex, GitHub CLI, T3 desktop, and the selected
+project tools. Omit `--node --python --git-lfs` for just the default coding tools
+and T3 desktop; add `--no-agent-tool gh` to omit GitHub CLI. A missing
+`t3code-bin` is installed using CachyOS's default Shelly CLI and may prompt for
+package review or sudo.
 
-After setup, open T3 Code from KDE and verify a Codex thread and terminal.
-If the app cannot discover Codex, use the absolute provider binary path printed
-by setup. Use the desktop app's **Settings → Connections** for its connection
-settings. See [desktop mode and switching](#t3-code-desktop) for later reruns.
+For an installer-wide preview, add `--plan` before `--local-setup` in your
+chosen block. This does not install packages, download the repository, or
+change the launcher. Keep installer options such as `--channel dev` before
+`--local-setup`, and setup options after it. Adding `--dry-run` after
+`--local-setup` previews only the final setup phase; it still installs the
+launcher and prerequisites.
+
+After setup, open a new terminal, complete `codex login` and `gh auth login`,
+then open T3 Code from KDE and verify a Codex thread and terminal. If T3 cannot
+discover Codex, set its provider **Binary path** to the absolute path printed
+by setup, typically `/home/USER/.local/bin/codex`. Use
+**Settings → Connections** for desktop connection settings.
 
 ## Pick the options you need
 
@@ -133,12 +127,12 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | T3 Code desktop | `--t3code-desktop`: install or retain the upstream-listed `t3code-bin` AUR package; mutually exclusive with `--web-interface` |
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
-| Plan only | `--dry-run` |
+| Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access`, or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access` closes managed access |
 
 Examples:
 
-```bash
+```fish
 # Game and media workstation with an additional coding agent
 basaltw setup agent_cachyos localhost \
   --agent-tool opencode --node --python --git-lfs --godot \
@@ -178,7 +172,7 @@ Codex is the only coding agent installed by default. GitHub CLI (`gh`) is also
 selected for GitHub operations; Claude and OpenCode require explicit flags.
 For Codex with T3 desktop, use:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --t3code-desktop
 ```
 
@@ -206,33 +200,17 @@ supports file and OS credential stores and refreshes ChatGPT tokens during
 normal use; this profile installs no separate authentication refresher.
 See [Codex authentication](https://learn.chatgpt.com/docs/auth).
 
-For deliberate standalone updates outside setup:
-
-```bash
-basaltw agent update --tool codex --dry-run
-basaltw agent update --tool codex --tools-only-readiness
-```
-
-The update checks successful version/help commands and keeps a complete package
-snapshot for rollback, including adjacent sandbox and other runtime resources.
-It retains the latest snapshot plus any selected or running snapshots; older
-validated snapshots are pruned. Update records and backups are private under
-`~/.local/state/basaltwater`. Concurrent Basaltwater updates are refused until
-the current update finishes. `--tools-only-readiness` avoids gating CLI updates
-on the generic VM host/T3 checks, which do not qualify this desktop profile.
-Restart Codex/T3 provider sessions when convenient to use the new executable.
-Verify a real Codex task in T3 after setup; local login status does not test API
-access or the GUI's provider environment. If needed, set T3's Codex **Binary
-path** to the absolute launcher path printed by setup, typically
-`/home/USER/.local/bin/codex`; keep that stable path across updates.
+Verify a real Codex task after login; local login status does not test provider
+access or T3's GUI environment. Standalone update and rollback behavior is
+documented in [maintenance](CACHYOS_MAINTENANCE.md#codex-updates).
 
 ## T3 Code desktop
 
-Use this for an existing desktop installation or to install the
-[upstream-listed Arch package](https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md)
-on this CachyOS workstation:
+The desktop installer above selects the
+[upstream-listed Arch package](https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md).
+If you installed only the launcher, apply your first desktop selection with:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --t3code-desktop
 ```
 
@@ -275,85 +253,8 @@ Use the app's **Settings → Connections** for desktop pairing or T3 Connect,
 when supported by the installed version. The managed web-service commands below
 target a separate environment and should not be used to configure the desktop.
 
-### AUR download failures
-
-Shelly's generic source-download failure can hide the underlying Git error:
-its [3.1.6 download implementation](https://github.com/Seafoam-Labs/Shelly-ALPM/blob/v3.1.6/Shelly.PackageManager/src/aur/manager.zig)
-discards failed clone/pull output. This message alone does not establish a
-network problem. Basaltwater now includes the helper's exit status, retry
-command, and diagnostic pointers when installation fails.
-
-First inspect the version, configured source, and cache ownership as your normal
-desktop user:
-
-```bash
-pacman -Q shelly
-shelly config get AurUrl
-ls -ld -- "$HOME/.cache" "$HOME/.cache/Shelly"
-# If you configured an absolute XDG_CACHE_HOME, inspect its Shelly directory too.
-```
-
-If the reported **Shelly directory itself** is root-owned, and it is your normal
-cache directory rather than a symlink or shared location, repair just that
-directory and retry setup:
-
-```bash
-sudo chown -- "$(id -u):$(id -g)" "$HOME/.cache/Shelly"
-```
-
-Use the actual path reported by preflight for a custom cache. Do not recursively
-chown your home or delete the AUR cache; existing checkouts may contain edits.
-If another parent directory or checkout has incorrect permissions, inspect it
-separately. Setup does not assume every download failure is an ownership issue.
-
-To expose Git's own network/TLS/proxy error without building or installing,
-clone into a new temporary directory as your normal user. The URL below is for
-the default Arch AUR: replace its base with your configured `AurUrl` if different,
-so the check tests the same service as Shelly.
-
-```bash
-aur_probe=$(mktemp -d) &&
-git clone -- https://aur.archlinux.org/t3code-bin.git "$aur_probe/t3code-bin"
-```
-
-This only downloads packaging files; do not execute them for diagnosis. A
-successful clone tests access as your user, but does not rule out a Shelly cache,
-elevation, dependency, or later application-download failure. Inspect Shelly's
-session log at `/var/log/shelly.log` (may require sudo) or its unprivileged
-fallback `${XDG_STATE_HOME:-$HOME/.local/state}/shelly/shelly.log`. The log may
-still omit Git's discarded error. Resolve the reported cause, then rerun the
-same full setup command. The existing managed web service stays running if
-desktop installation fails.
-
-### Switch modes on a later setup
-
-`--t3code-desktop` and `--web-interface t3code` cannot be selected together.
-Finish active work before switching:
-
-```bash
-# Web → desktop: install/verify the package, then disable the managed web service
-basaltw setup agent_cachyos localhost --t3code-desktop
-
-# Desktop → web: quit the desktop app first to free its listening port
-basaltw setup agent_cachyos localhost --web-interface t3code
-```
-
-Desktop mode disables only the Basaltwater-owned user service and retains its
-unit, runtime, and data. Web mode stages and starts the managed service again;
-the desktop package stays installed. Omitting both flags leaves the current
-mode alone. Setup never kills the desktop app or takes over an upstream service.
-
-The web service uses `~/.local/share/basaltwater/cachyos-t3/data` explicitly,
-separate from the desktop's default `~/.t3`. Switching modes does not copy,
-delete, or merge their databases, projects, pairing identities, or Connect
-credentials. Repositories can be opened in either environment.
-Older Basaltwater web units used `~/.t3`: their next web setup starts a separate
-environment in the new directory and reports this change. The old data remains
-untouched in `~/.t3`; back it up and plan any history migration separately.
-This separation also prevents database contention if the desktop is later opened
-while the web service is running; see the
-[upstream duplicate-backend report](https://github.com/pingdotgg/t3code/issues/6097).
-A port conflict still requires quitting the desktop or choosing another web port.
+For helper errors, see [AUR download failures](CACHYOS_MAINTENANCE.md#aur-download-failures).
+For an established installation, see [switching modes](CACHYOS_MAINTENANCE.md#switch-modes-on-a-later-setup).
 
 ## T3 Code web service: host locally or on a trusted LAN
 
@@ -372,7 +273,7 @@ interface flag; desktop listeners are configured in the desktop app.
 Add `--web-interface t3code` to the [quick-start installer](#quick-start),
 or configure the default loopback service with the installed launcher:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --web-interface t3code
 systemctl --user status basaltwater-cachyos-t3.service
 ```
@@ -398,7 +299,7 @@ origin. Use `connect link` instead of `connect`: the latter may offer to install
 a second upstream `t3code.service`, while Basaltwater already owns this unit.
 Run:
 
-```bash
+```fish
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect link --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 systemctl --user restart basaltwater-cachyos-t3.service
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" connect status --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
@@ -412,7 +313,7 @@ LAN firewall rules or router forwarding, but the host must remain powered on.
 The profile does not automatically enable systemd lingering; if the service
 must stay available after logout, enable it deliberately as the desktop user:
 
-```bash
+```fish
 sudo loginctl enable-linger "$USER"
 ```
 
@@ -424,7 +325,7 @@ the installed T3 release documents support for combining the two binds.
 
 Generate a fresh native T3 pairing link with the managed runtime:
 
-```bash
+```fish
 "$HOME/.local/share/basaltwater/cachyos-t3/bin/t3" pair --base-dir "$HOME/.local/share/basaltwater/cachyos-t3/data"
 ```
 
@@ -438,9 +339,9 @@ pairing link itself.
 
 To pair a browser, desktop app, or phone on another system, bind T3 to the
 workstation's private LAN address. Find that address with `ip -4 addr`, then
-replace the example below and rerun setup:
+choose that address in your first web-service setup:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --web-interface t3code \
   --web-interface-host 192.168.1.50 --web-interface-port 3773
 systemctl --user status basaltwater-cachyos-t3.service
@@ -455,9 +356,9 @@ the VM pairing broker or configure a gateway.
 
 ### Optional workstation firewall
 
-Keep your full selection when enabling restricted LAN access:
+If you need LAN access, include its policy in your initial selection:
 
-```bash
+```fish
 basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs --lan-access
 ```
 
@@ -495,142 +396,13 @@ firewall configuration. Sunshine with custom ports also needs manual rules.
 Managed T3 ports cannot overlap the protected RDP/Sunshine TCP ports.
 Inspect `sudo ufw status verbose` and verify access from the intended client.
 
-If a previous checkout produced `has a bad unit file setting`, update
-Basaltwater and rerun setup. Validate the generated unit with:
+The service follows the desktop user's session. Setup validates its CLI,
+native terminal dependency, generated unit, and HTTP UI before reporting
+success. Check a real thread and terminal after pairing. For service errors,
+runtime updates, and activation recovery, use the
+[maintenance reference](CACHYOS_MAINTENANCE.md#web-service-updates-and-recovery).
 
-```bash
-systemd-analyze verify "$HOME/.config/systemd/user/basaltwater-cachyos-t3.service"
-```
-
-The service follows the user session; lingering is not enabled. An existing
-upstream `t3code.service` is refused without being stopped or adopted. Manage
-that unit with its original installer before selecting either T3 mode. Preflight
-checks effective systemd units in all user-unit search locations, as well as
-local files, and refuses masks or unmanaged drop-ins on the Basaltwater unit.
-Resolve those overrides before switching or updating. To stop this managed
-service persistently:
-
-```bash
-systemctl --user disable --now basaltwater-cachyos-t3.service
-```
-
-Use `journalctl --user -u basaltwater-cachyos-t3.service` for startup errors.
-The generic VM T3 pairing and update commands do not manage this unit. For a
-deliberate runtime update, finish active work and rerun setup as yourself:
-
-```bash
-basaltw setup agent_cachyos localhost --web-interface t3code
-```
-
-Keep your selected host, port, and workspace options when rerunning. Each T3
-setup stages `t3@latest` in a separate release directory, checks its CLI and
-native terminal dependency, then validates the unit before stopping the old
-service. Activation switches the CLI link and unit and starts the new runtime.
-Even an unchanged T3 version is rebuilt and restarted so a Node upgrade does
-not leave an incompatible native addon. Do not use `npm install --prefix` on
-the managed root; it bypasses staging and can replace the stable CLI link.
-
-Installation/validation failures leave the old service untouched. Activation
-failures restore the previous runtime, unit permissions, and enabled/running
-state. An interrupted activation leaves private recovery snapshots in
-`~/.local/share/basaltwater/cachyos-t3/.activation`; the next setup retries
-recovery before installing. If recovery is incomplete, retain that directory
-and both runtimes while resolving the reported service error. Changes or
-removals made to the unit or CLI link outside setup stop recovery and preserve
-the snapshots for manual inspection.
-
-Rollback covers runtime and service configuration, **not T3 database migrations**.
-Back up application data before updates that may change its schema. Successful
-updates retain the current and previous managed release, prune older marked
-releases, and leave legacy npm files and unmarked directories alone. New files
-created by the service use `UMask=0077`; existing personal data permissions are
-not changed. Missing optional-provider warnings (for example, Claude on a
-Codex-only installation) do not by themselves mean the selected provider failed.
-
-See the upstream [T3 installation guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/install.md)
-and [remote-access guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md)
-for current provider, client, and T3 Connect requirements.
-
-## Reruns, updates, and repositories
-
-### Upgrade and repeat your last setup
-
-After a successful `agent_cachyos` setup, use this from your KDE terminal as
-the same user, without `sudo`:
-
-```bash
-basaltw refresh --dry-run
-basaltw refresh
-```
-
-`refresh` upgrades Basaltwater to the latest source on the selected channel
-(`dev` follows `main`), then starts the updated code with the last successful
-setup selection. Version/commit channels remain pinned, just as with
-`basaltw upgrade`. Setup runs even if Basaltwater was already up to date.
-The dry run displays the saved command and setup plan without fetching source,
-upgrading, installing, or changing the saved selection.
-
-The private record is `~/.local/state/basaltwater/cachyos/last-setup.json`.
-The adjacent private `last-report.json` records completion time, source commit
-and channel (when available), selected tool/package versions, and diagnostic
-observations including warnings. It is informational, not replay input. A
-receipt failure warns without discarding a successful saved selection.
-It saves supported setup options, including provider selections/exclusions,
-T3 mode, optional tools, repositories, workspace, and web bind/port. It does
-not copy authentication files or save provider credentials. The record is
-written only after all setup steps, including cleanup, succeed. A failed or
-interrupted run and a dry run leave the previous successful selection intact.
-Saved commands explicitly include or exclude every currently supported agent,
-so changes to profile defaults do not select an unwanted agent during refresh.
-Records written by older versions may omit optional-agent exclusions; repeat
-your full setup command with the updated code to save those exclusions.
-
-**First use after upgrading from an older checkout:** run `basaltw upgrade`,
-then run your usual full setup command once. Older CachyOS runs did not save
-their options, so refresh cannot recover them from installed packages. For
-example, to establish the desktop selection:
-
-```bash
-basaltw setup agent_cachyos localhost --t3code-desktop --node --python --git-lfs
-```
-
-To add software without repeating your saved flags, use:
-
-```bash
-basaltw refresh --material-maker --etcher --butler --steamcmd --dry-run
-basaltw refresh --material-maker --etcher --butler --steamcmd
-```
-
-Refresh accepts the supported CachyOS setup flags (`refresh --help` lists them).
-Unspecified options are preserved. Boolean and single-value options override
-saved values; repeatable repositories and access sources are added without
-duplicates. Agent selections/exclusions override their saved opposite for that
-provider. `--no-access-source` clears saved explicit sources; combine it with
-`--no-lan-access` to close managed remote access. Selecting a T3 mode replaces
-the saved mode; switching to desktop clears the old web bind/port.
-Conflicting or invalid new options stop before upgrade. A successful setup
-saves the combined selection; after a failed attempt, repeat the added flags
-when retrying. Omitting an option does not remove it; software `--no-*` flags
-stop managing a selection, without uninstalling it.
-
-An older installed CLI cannot recognize newly added flags. Run `basaltw upgrade`
-once first to acquire this refresh interface and any new options.
-Alternatively, rerun `setup` with all desired options. That successful run
-replaces the record rather than merging with earlier selections.
-Refresh follows the same update behavior as setup: managed agent CLIs update,
-web mode updates/restarts its service, and an installed T3 desktop package is
-retained for your normal AUR update workflow. Finish active work first.
-
-Missing or invalid saved options stop refresh before the source upgrade.
-An upgrade failure prevents setup. If setup fails after a successful upgrade,
-Basaltwater stays upgraded and returns setup's failure status; resolve the
-error and repeat `refresh`, or run an explicit setup to change the selection.
-On CachyOS this repeats only the local `agent_cachyos` profile. It does not
-upgrade CachyOS itself or redeploy saved remote hosts. Debian also supports
-refresh, using its existing target-side record and root setup runner; see
-[refresh on Debian](COMMAND_LINE.md#refresh-this-machine).
-
-### Package and repository behavior
+## Package and repository behavior
 
 - Package state is checked with `pacman -Q`; missing packages use
   `pacman -S --needed`. Setup does not refresh package databases or perform a
@@ -642,17 +414,10 @@ refresh, using its existing target-side record and root setup runner; see
 - Cache cleanup runs after tool readiness. If cleanup fails, setup reports an
   incomplete result and returns nonzero; installed tools are retained. Resolve
   the cleanup error and rerun setup. This profile has no automatic cache retry.
-- Reruns retain installed software, credentials, and repositories. Omitting an
-  option does not uninstall it; existing repositories are never pulled, reset,
-  or recursively chowned. Selecting the T3 web interface on a rerun updates and
-  restarts its service; selecting desktop mode retains its installed AUR version.
-- This local profile does not save a generic host configuration for `patch`,
-  `deploy`, or `cmd`. Use `refresh` to repeat its private successful selection,
-  or repeat all desired flags when running `setup` explicitly. The T3 mode
-  marker does not replace the saved setup selection.
-- `basaltw upgrade` updates Basaltwater itself. If a CachyOS mirror or DNS
-  lookup fails, fix the resolver or mirror through CachyOS's normal maintenance
-  workflow and rerun.
+- This local profile saves a private successful selection for later maintenance,
+  rather than a generic host configuration for `patch`, `deploy`, or `cmd`.
+- If a CachyOS mirror or DNS lookup fails, fix the resolver or mirror through
+  CachyOS's normal maintenance workflow and retry your selected installer.
 - `--repo` clones only a missing repository. An existing destination must be a
   Git repository with the requested origin and must be writable by you; setup
   does not delete or repair conflicting directories.
@@ -688,7 +453,7 @@ distro cleanup or update tools. AUR build caches, including Shelly's, stay intac
 
 For a read-only package-cache inventory from this checkout:
 
-```bash
+```fish
 python3 common/cachyos_cleanup.py --dry-run
 ```
 
@@ -719,7 +484,7 @@ The read-only desktop doctor reports package versions, user-bus sockets, and
 PipeWire, WirePlumber, the `t3code-bin` package, and managed/upstream T3 unit state.
 An inactive managed T3 service is expected in desktop mode:
 
-```bash
+```fish
 basaltw local cachyos-doctor
 basaltw local cachyos-doctor --json
 ```
@@ -742,11 +507,11 @@ privileges; saved firewall rules do not prove effective packet filtering.
 Update observations use existing pacman metadata, which may be stale. Setup
 prints the same host observations before installing packages.
 
-Before calling a workstation validated, record its CachyOS, Plasma, kernel,
-GPU/driver, and tool versions; repeat setup; authenticate an agent; complete a
-small edit/test task and disposable worktree; and, when selected, test a T3
-thread, terminal command, logout/login, and the intended loopback or LAN
-listener. Test Godot, Vulkan/OpenGL, audio, and media on the actual GPU. Repeat
+To check your first setup, record its CachyOS, Plasma, kernel, GPU/driver,
+and tool versions; authenticate an agent; complete a small edit/test task and
+disposable worktree; and, when selected, test a T3 thread, terminal command,
+logout/login, and the intended loopback or LAN listener. Test Godot,
+Vulkan/OpenGL, audio, and media on the actual GPU. Repeat
 the relevant checks after a normal CachyOS update and record AMD and NVIDIA
 results separately.
 
@@ -759,3 +524,20 @@ underscore and `@` characters without loosening APT validation. The
 CLI routes directly to the CachyOS runner rather than the SSH
 host lifecycle. Keep additions explicitly allowed and independently tested;
 mock pacman, sudo, downloads, service operations, and hardware probes.
+
+## Later maintenance
+
+For an established setup, use the [maintenance reference](CACHYOS_MAINTENANCE.md)
+for updates, saved selections, mode changes, and recovery.
+
+### Upgrade and repeat your last setup
+
+See [saved setup and refresh](CACHYOS_MAINTENANCE.md#upgrade-and-repeat-your-last-setup).
+
+### AUR download failures
+
+See [helper diagnostics](CACHYOS_MAINTENANCE.md#aur-download-failures).
+
+### Switch modes on a later setup
+
+See [mode changes and data boundaries](CACHYOS_MAINTENANCE.md#switch-modes-on-a-later-setup).

@@ -26,7 +26,7 @@ SVG IDs. The following example translates a selected object and saves a separate
 editable SVG; substitute a real ID and new output path after inspecting the
 document:
 
-```bash
+```fish
 inkscape /absolute/project/icon.svg --batch-process \
   --actions='select-by-id:task-rect;transform-translate:12,0;export-type:svg;export-filename:/absolute/artifacts/edited.svg;export-do'
 inkscape /absolute/artifacts/edited.svg --query-id=task-rect --query-x
@@ -86,7 +86,7 @@ result and verify the saved file. Kdenlive similarly needs its project profile,
 media/proxy references and render range checked. Use a short CPU export as a
 baseline; GPU decode/encode needs separate qualification.
 
-```bash
+```fish
 ffprobe -v error -show_format -show_streams -of json /absolute/artifacts/clip.mp4
 ffprobe -v error -show_format -show_streams -of json /absolute/artifacts/sound.wav
 ```
