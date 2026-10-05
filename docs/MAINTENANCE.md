@@ -353,6 +353,10 @@ bounded policies:
   rollback, and every release currently executing. Older releases are removed
   only after their vendor manifest, entrypoint, ownership, and directory layout
   have been validated; unfamiliar entries are left unchanged.
+  The host doctor checks this retention policy when more than two releases
+  remain: active releases and rollback copies do not trigger an excess-release
+  warning. Unused extras, unfamiliar entries, or failed inspection still warn;
+  the doctor never removes files.
 - T3 Code numbered provider and trace log rotations are retained up to 256 MiB
   and 14 days. Current logs, terminal logs, non-numbered files, and symbolic
   links are never selected by this policy. Agent setup reruns apply both the

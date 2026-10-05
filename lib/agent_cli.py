@@ -29,6 +29,7 @@ from lib.agent_maintenance import (
 )
 from lib.agent_auth import AGENT_AUTH_TOOLS
 from lib.agent_storage import (
+    cleanup_codex_standalone_releases,
     codex_package_for_executable,
     codex_update_supported,
     prune_codex_update_backups,
@@ -1586,7 +1587,19 @@ def inspect_host_readiness(
         if size > threshold:
             warnings.append(f"{name} exceeds its diagnostic size threshold")
     if int(storage["codex_release_count"]) > 2:
-        warnings.append("more than two Codex standalone releases are retained")
+        try:
+            retention = cleanup_codex_standalone_releases(
+                user_home, os.stat(user_home).st_uid, dry_run=True,
+            )
+        except (OSError, ValueError):
+            warnings.append("Codex standalone release retention could not be inspected")
+        else:
+            if retention.errors:
+                warnings.append("Codex standalone release retention could not be inspected")
+            if retention.skipped:
+                warnings.append("unrecognized Codex standalone release entries require inspection")
+            if retention.selected:
+                warnings.append("unused Codex standalone releases exceed retention policy")
 
     t3_properties = _systemd_properties(
         _T3_SERVICE_NAME,

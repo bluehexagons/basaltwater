@@ -16,6 +16,7 @@ from lib.agent_cli import (
     inspect_host_readiness,
 )
 from lib.types import BYTES_PER_GB, BYTES_PER_MB
+from lib.agent_storage import CodexCleanupResult
 
 
 class _DiskUsage:
@@ -78,6 +79,37 @@ class TestAgentHostReadiness(unittest.TestCase):
                     self.assertEqual((result["pages_in"], result["pages_out"]), (4, 1))
         with patch("builtins.open", side_effect=OSError):
             self.assertEqual(_sample_swap_activity(), {"status": "unknown"})
+
+    def test_codex_release_warning_respects_active_and_rollback_retention(self) -> None:
+        for retention, expected in (
+            (CodexCleanupResult(found=('current', 'active', 'rollback'),
+                                retained=('current', 'active', 'rollback'), active=('active',)), []),
+            (CodexCleanupResult(selected=('unused',)), ['unused Codex standalone releases exceed retention policy']),
+            (CodexCleanupResult(errors=('unreadable process inventory',)),
+             ['Codex standalone release retention could not be inspected']),
+            (CodexCleanupResult(skipped=('unknown',)),
+             ['unrecognized Codex standalone release entries require inspection']),
+        ):
+            with (
+                self.subTest(retention=retention),
+                tempfile.TemporaryDirectory() as home,
+                patch("lib.agent_cli._read_meminfo", return_value={"MemTotal": 4 * BYTES_PER_GB}),
+                patch("lib.agent_cli._read_memory_capacity_bytes", return_value=0),
+                patch("lib.agent_cli._agent_storage_inventory", return_value={
+                    "paths": {}, "size_bytes": {}, "codex_release_count": 3,
+                }),
+                patch("lib.agent_cli.cleanup_codex_standalone_releases", return_value=retention) as inspect,
+                patch("lib.agent_cli._systemd_properties", return_value={}),
+                patch("lib.agent_cli._maintenance_status", return_value={"units": {}, "warnings": [], "errors": []}),
+                patch("lib.agent_cli.inspect_agent_maintenance", return_value={"status": "inactive"}),
+                patch("lib.agent_cli.shutil.disk_usage", return_value=_DiskUsage(
+                    32 * BYTES_PER_GB, 8 * BYTES_PER_GB, 24 * BYTES_PER_GB)),
+                patch("lib.agent_cli.os.path.exists", return_value=False),
+            ):
+                result = inspect_host_readiness(home)
+                self.assertEqual(result['warnings'], expected)
+                self.assertTrue(result['healthy'])
+                inspect.assert_called_once_with(home, os.stat(home).st_uid, dry_run=True)
 
     def test_maintenance_includes_installed_development_timers_only(self) -> None:
         def properties(
@@ -325,6 +357,8 @@ class TestAgentHostReadiness(unittest.TestCase):
                 ),
                 patch("lib.agent_cli._systemd_properties", side_effect=properties),
                 patch("lib.agent_cli.shutil.disk_usage", return_value=disk),
+                patch("lib.agent_cli.cleanup_codex_standalone_releases",
+                      return_value=CodexCleanupResult(selected=('unused',))),
                 patch("lib.agent_cli.os.path.exists", return_value=False),
             ):
                 result = inspect_host_readiness(
@@ -348,7 +382,7 @@ class TestAgentHostReadiness(unittest.TestCase):
             result["warnings"],
         )
         self.assertIn(
-            "more than two Codex standalone releases are retained",
+            "unused Codex standalone releases exceed retention policy",
             result["warnings"],
         )
 
