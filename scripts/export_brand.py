@@ -25,6 +25,7 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_storage as storage
+from common.service_tools import web_panel_host as host
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -244,6 +245,22 @@ def export_assets(assets: Path) -> None:
             {"label": "Root inodes", "value": "12% used", "description": "3,604,480 free of 4,096,000"},
             {"label": "Kernel", "value": "6.12.48+deb13", "description": "x86_64"},
             {"label": "Maintenance", "value": "No reboot pending", "description": "Automatic package updates are scheduled"},
+            {"kind": "pressure", "label": "CPU pressure", "value": "0.24% stalled", "description": "10s average · 60s 0.26% · 5m 0.21%"},
+            {"kind": "pressure", "label": "Memory pressure", "value": "0.00% stalled", "description": "10s average · 60s 0.00% · 5m 0.00%"},
+            {"kind": "pressure", "label": "I/O pressure", "value": "3.28% stalled", "description": "10s average · 60s 2.10% · 5m 1.08%"},
+            *(host._filesystem({
+                "target": target, "source": source, "fstype": fstype, "fsroot": "/",
+                "size": total * 1024**3, "used": (total - free) * 1024**3, "avail": free * 1024**3,
+                "ino.total": 1000000 if fstype == "ext4" else 0,
+                "ino.used": inodes, "ino.avail": 1000000 - inodes,
+                "options": "ro" if read_only else "rw",
+            }) for target, source, fstype, total, free, inodes, read_only in (
+                ("/", "/dev/mapper/system-root", "ext4", 64, 30, 120000, False),
+                ("/home", "/dev/mapper/system-home", "ext4", 256, 36, 430000, False),
+                ("/var", "/dev/mapper/system-var", "ext4", 32, 20, 960000, False),
+                ("/boot/efi", "/dev/nvme0n1p1", "vfat", 1, 1, 0, True),
+                ("/mnt/project archive", "/dev/mapper/archive", "ext4", 1024, 380, 340000, False),
+            )),
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),

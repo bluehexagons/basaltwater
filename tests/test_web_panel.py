@@ -990,6 +990,10 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
 
 class WebPanelRenderingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("common.service_tools.web_panel_service.collect_filesystems", return_value=[]))
+        self.enterContext(patch("common.service_tools.web_panel_service.collect_pressure", return_value=[]))
+
     @staticmethod
     def _t3_manifest() -> dict[str, object]:
         return {
@@ -1154,6 +1158,10 @@ class WebPanelRenderingTest(unittest.TestCase):
 
 
 class WebPanelEventTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.enterContext(patch("common.service_tools.web_panel_service.collect_filesystems", return_value=[]))
+        self.enterContext(patch("common.service_tools.web_panel_service.collect_pressure", return_value=[]))
+
     _t3_manifest = staticmethod(WebPanelRenderingTest._t3_manifest)
 
     @staticmethod

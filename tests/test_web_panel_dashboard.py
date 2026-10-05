@@ -15,6 +15,8 @@ from common.service_tools import web_panel_jobs as jobs
 
 class DashboardTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(panel, "collect_filesystems", return_value=[]))
+        self.enterContext(patch.object(panel, "collect_pressure", return_value=[]))
         # Agent activity has its own temporary-state integration tests. Other
         # dashboard checks must not read the developer account's private tasks.
         snapshot = patch.object(panel.AgentTasks, "snapshot", return_value={"tasks": [], "runs": []})

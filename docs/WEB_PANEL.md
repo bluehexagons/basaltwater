@@ -7,7 +7,8 @@ under the panel account; no T3 Code installation is required.
 
 | Need | Open | Result |
 | --- | --- | --- |
-| Check host health | Overview | Uptime, load average, memory, swap, root-disk and inode use, kernel, reboot state, and update timers |
+| Check host health | Overview | Uptime, load average, memory, swap, resource pressure, kernel, reboot state, and update timers |
+| Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
@@ -34,6 +35,41 @@ Service totals distinguish responding endpoints, endpoints needing attention,
 and endpoints without a readiness check. Audit totals include warning/error
 events while retaining collection warnings. These summaries reuse the displayed
 records; they do not start extra service or log queries.
+
+**Mounted storage** includes separate `/home`, `/var`, `/boot`, and data
+filesystems rather than assuming all storage belongs to `/`. Each row shows
+its mount point, device, filesystem type, space available to ordinary users,
+and inode use. Space percentages exclude reserved blocks from the available
+capacity, as `df` does. Usage at or above 80% is highlighted; 95% is critical.
+Full inode tables are highlighted even when byte capacity remains available.
+Read-only mounts have a text label. Filesystems without a fixed inode count
+show **Not reported**, while failed measurements show **Unavailable**.
+
+The snapshot probes common local filesystem types with `findmnt`, including
+ext, XFS, Btrfs, ZFS, FAT, NTFS, and a container's root overlay. It does not
+probe network filesystems, arbitrary FUSE mounts, virtual filesystems, or
+container overlay layers. Unmounted partitions are not included. Bind aliases
+of the same filesystem are deduplicated; distinct Btrfs subvolumes remain
+visible and can share the same reported capacity. Capacity is not summed
+across mounts. The view shows at most 32 filesystems, prioritizes mounts with
+high space or inode use, and explains omitted records.
+
+The inventory reads PID 1's mount table, so the panel service's filesystem
+isolation does not create extra read-only entries. Capacity measurements still
+use the panel account's access; inaccessible mount points show **Unavailable**.
+The filesystem query has a two-second timeout and a 256 KiB output-read limit.
+Missing tools, invalid data, and timeouts remain visible; root-only metrics
+remain available as a fallback. These read-only snapshots use the panel
+account's existing access and the same 30-second dashboard cache. They do not
+scan directory contents, run SMART checks, or require administrator access.
+
+**Resource pressure** shows Linux CPU, memory, and I/O stall averages over
+10, 60, and 300 seconds. These indicate time when some tasks waited for the
+resource, rather than CPU utilization or disk throughput. They can help
+explain a slow host whose memory or load averages look ordinary. Unsupported
+or unreadable kernel metrics show **Unavailable**. See the kernel's
+[pressure stall information](https://docs.kernel.org/accounting/psi.html)
+reference for the meaning of these averages.
 
 **Agent activity** shows the panel's running and queued prompts, enabled
 schedules, drafts, automatically paused tasks, and latest finished run. It

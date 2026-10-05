@@ -36,6 +36,9 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_host import (
+    FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
+)
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
 from common.service_tools.web_panel_templates import (
     BRAND_NETWORK, panel_navigation, render_document, render_favicon, render_heading, render_icon,
@@ -503,6 +506,8 @@ def collect_system_overview() -> list[dict[str, str]]:
             "value": "Reboot required" if reboot_required else "No reboot pending",
             "description": update_description,
         },
+        *collect_pressure(),
+        *collect_filesystems(),
     ]
 
 
@@ -718,6 +723,7 @@ class WebPanelState:
         self.action_started_at: float | None = None
         self._overview: list[dict[str, str]] = []
         self._overview_at = 0.0
+        self._overview_lock = threading.Lock()
         self._service_health: list[dict[str, str]] = []
         self._service_health_at = float("-inf")
         self._service_health_lock = threading.Lock()
@@ -773,14 +779,12 @@ class WebPanelState:
     def system_overview(self) -> list[dict[str, str]]:
         """Return a briefly cached host report to keep refreshes inexpensive."""
 
-        now = time.monotonic()
-        with self._lock:
+        with self._overview_lock:
+            now = time.monotonic()
             if self._overview and now - self._overview_at < _SYSTEM_OVERVIEW_CACHE_SECONDS:
                 return list(self._overview)
-        overview = collect_system_overview()
-        with self._lock:
-            self._overview = overview
-            self._overview_at = now
+            self._overview = collect_system_overview()
+            self._overview_at = time.monotonic()
             return list(self._overview)
 
     def service_health(self) -> list[dict[str, str]]:
@@ -1892,7 +1896,17 @@ def render_page(state: WebPanelState) -> str:
 
     overview = state.system_overview()
     overview_cards = ""
+    pressure_cards = ""
+    has_root_filesystem = any(
+        record.get("kind") == "filesystem" and record["label"] == "/"
+        and record["percent"] and (record["inode_percent"] or record["inode_status"] == "Not reported")
+        for record in overview
+    )
     for record in overview:
+        if record.get("kind") in {"filesystem", "filesystem_issue"}:
+            continue
+        if has_root_filesystem and record["label"] in {"Root disk", "Root inodes"}:
+            continue
         value = record["value"]
         tone = record.get("status", "") if record.get("status") in {"warning", "unavailable"} else ""
         meter = ""
@@ -1911,13 +1925,24 @@ def render_page(state: WebPanelState) -> str:
             tone = "warning"
         elif value == "Unavailable":
             tone = "unavailable"
-        overview_cards += (
+        card = (
             '<div class="metric"><dt>{}</dt><dd><span class="metric-value {}">{}</span>{}'
             '<span class="metric-description">{}</span></dd></div>'
         ).format(
             html.escape(record["label"]), tone, html.escape(value), meter,
             html.escape(record["description"]),
         )
+        if record.get("kind") == "pressure":
+            pressure_cards += card
+        else:
+            overview_cards += card
+    pressure_section = (
+        '<h3>Resource pressure</h3><p class="filesystem-note">Share of time when tasks waited for CPU, memory, or I/O. '
+        'These kernel averages measure stalls, not utilization.</p>'
+        f'<dl class="overview-grid">{pressure_cards}</dl>'
+        if pressure_cards else ""
+    )
+    filesystem_section = render_filesystems(overview, _format_bytes)
     trust_section = _render_certificate_trust(discover_certificate_trust())
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
@@ -2000,7 +2025,8 @@ def render_page(state: WebPanelState) -> str:
     body = f'''{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
-<dl class="overview-grid host-overview">{overview_cards}</dl></section>
+<dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
+{filesystem_section}
 {render_agent_activity(state)}
 <section aria-labelledby="services-heading"><div class="section-heading"><div>
 {render_heading("Web services", "web-services", heading_id="services-heading")}</div>
@@ -2013,7 +2039,7 @@ def render_page(state: WebPanelState) -> str:
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
         title=f"Web panel · {title}",
-        style=_PAGE_STYLE,
+        style=_PAGE_STYLE + FILESYSTEM_STYLE,
         header=header,
         content=body,
         navigation=panel_navigation(current="dashboard"),
