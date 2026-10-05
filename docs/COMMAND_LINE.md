@@ -235,7 +235,8 @@ basaltw publish upload ARTIFACT_ID [--wait]
 basaltw publish cancel RUN_ID
 basaltw publish worker
 basaltw publish schedule PROJECT_ID [--interval MINUTES]
-basaltw publish job JOB_ID pause|resume
+basaltw publish job JOB_ID pause|resume|remove
+basaltw publish job JOB_ID edit --interval MINUTES
 basaltw publish draft PROJECT_ID JSON_FILE
 basaltw publish export DRAFT_ID [--handoff]
 basaltw publish artifact-text ARTIFACT_ID PATH DRAFT_ID
@@ -251,6 +252,10 @@ basaltw publish auth login|logout butler|steamcmd [--username ACCOUNT]
 The HTTPS panel provides guided login and the sole managed human approval
 action. `draft` cannot import approval fields. `export --handoff` respects the
 reviewed timing window and release gate; it never publishes remotely.
+`schedule` rejects another non-removed job for the same project. `job edit`
+changes cadence without resuming or accepting changed project settings. Pause,
+edit and removal cancel queued scheduled uploads; running uploads require their
+separate cancellation action. Removal keeps job/run history and receipts.
 Steam default/public release and rollback always use the manual Steamworks
 handoff. Optional beta promotion requires a separately configured VM-local
 publisher key and observed branch/build state. Live provider qualification

@@ -134,8 +134,12 @@ def work(publishing: Publishing) -> None:
                             run = publishing.store.get(db, "runs", saved["id"])
                             if run["state"] != "queued":
                                 continue
-                            if run["job"] and publishing.store.get(db, "jobs", run["job"])["state"] != "enabled":
-                                continue
+                            if run["job"]:
+                                job = publishing.store.get(db, "jobs", run["job"])
+                                if job["state"] != "enabled" or job.get("revision", 0) != run.get("job_revision", 0):
+                                    publishing._cancel_queued(db, run)
+                                    progress = True
+                                    continue
                             try:
                                 if run["operation"] == "promote-beta":
                                     from lib.publishing_steam import beta_branch
@@ -156,8 +160,7 @@ def work(publishing: Publishing) -> None:
                                 db.execute("DELETE FROM dispatches WHERE identity=?", (run["identity"],))
                                 if run["job"]:
                                     job = publishing.store.get(db, "jobs", run["job"])
-                                    job["state"] = "paused"
-                                    publishing.store.put(db, "jobs", job)
+                                    publishing._stop_job(db, job, "paused")
                                 progress = True
                                 continue
                             run.update(state="running", started=now())
@@ -182,8 +185,7 @@ def work(publishing: Publishing) -> None:
                                 project = publishing.store.get(db, "projects", job["project"])
                                 if (outcome.get("needs_login") and project["provider"] == run["project_config"]["provider"]
                                         or job["id"] == run["job"] and outcome["state"] in {"unknown", "uploaded-unverified"}):
-                                    job["state"] = "paused"
-                                    publishing.store.put(db, "jobs", job)
+                                    publishing._stop_job(db, job, "paused")
                         progress = True
                 except RuntimeError:
                     continue

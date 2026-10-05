@@ -50,7 +50,8 @@ def add_publishing_subparser(subparsers: argparse._SubParsersAction) -> None:
     command.add_argument("--interval", type=int, default=60, help="Polling minutes; the running panel owns schedules")
     command = commands.add_parser("job")
     command.add_argument("id")
-    command.add_argument("action", choices=("pause", "resume"))
+    command.add_argument("action", choices=("pause", "resume", "remove", "edit"))
+    command.add_argument("--interval", type=int, help="New polling minutes for edit only; does not resume or accept a new destination")
     command = commands.add_parser("draft", help="Import an unreviewed draft; imported approvals are rejected")
     command.add_argument("project")
     command.add_argument("file")
@@ -111,7 +112,14 @@ def run_publishing_command(args: argparse.Namespace) -> int:
         elif name == "schedule":
             result = publisher.schedule(args.project, args.interval)
         elif name == "job":
-            publisher.job_action(args.id, args.action)
+            if args.action == "edit":
+                if args.interval is None:
+                    raise ValueError("Editing a schedule requires --interval")
+                result = publisher.edit_schedule(args.id, args.interval)
+            else:
+                if args.interval is not None:
+                    raise ValueError("--interval requires the edit action")
+                publisher.job_action(args.id, args.action)
         elif name == "draft":
             value = read_json_file(args.file, max_bytes=128 * 1024)
             allowed = {"language", "title", "body", "source", "replaces", "release", "publish_at", "late_minutes"}

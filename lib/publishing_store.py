@@ -120,6 +120,7 @@ class PublishingStore:
         with self.transaction() as db:
             result = {}
             actionable = {
+                "jobs": ("enabled", "paused"),
                 "runs": ("queued", "running", "unknown", "uploaded-unverified"),
                 "drafts": ("needs-review", "changes-requested", "approved", "awaiting-editor"),
                 "releases": ("prepared-beta", "promotion-queued", "awaiting-steamworks", "unknown"),

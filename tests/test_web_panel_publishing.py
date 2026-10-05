@@ -127,6 +127,41 @@ class PublishingPanelTests(unittest.TestCase):
         self.assertNotIn('type="password"', page)
         self.assertNotIn('method="post"', page)
 
+    def test_schedule_controls_edit_remove_and_reject_invalid_intervals(self):
+        job = self.publisher.schedule("game", 60)
+        run = self.publisher.upload(self.publisher.prepare("game")["id"], job=job["id"])
+        page = view.render_publishing(self.state, panel._PAGE_STYLE)
+        self.assertIn('href="#job-' + job["id"] + '"', page)
+        self.assertIn("Save interval", page)
+        self.assertNotIn("Schedule unattended uploads", page)
+        for interval, status in (("4", 422), ("not-a-number", 422), ("30", 303)):
+            handler = self.handler("/actions/publishing/job-edit", {"csrf": self.state.csrf_token, "job": job["id"], "interval": interval})
+            handler.do_POST()
+            response = handler._send if status == 422 else handler.send_response
+            self.assertEqual(response.call_args.args[0].value, status)
+        self.assertEqual(self.publisher.status()["runs"][0]["state"], "cancelled")
+        handler = self.handler("/actions/publishing/job", {"csrf": self.state.csrf_token, "job": job["id"], "action": "remove"})
+        handler.do_POST()
+        self.assertEqual(handler.send_response.call_args.args[0].value, 303)
+        page = view.render_publishing(self.state, panel._PAGE_STYLE)
+        self.assertIn("Schedule unattended uploads", page)
+        self.assertNotIn("Save interval", page)
+        self.assertIn("Schedule removed; prior upload history is retained", page)
+        self.assertIn(run["id"], page)
+
+    def test_removed_history_cannot_hide_an_active_schedule(self):
+        job = self.publisher.schedule("game", 60)
+        with self.publisher.store.transaction() as db:
+            for index in range(210):
+                self.publisher.store.put(db, "jobs", {**job, "id": f"removed-{index}", "state": "removed"})
+        snapshot = self.publisher.status()
+        self.assertEqual(len(snapshot["jobs"]), 200)
+        self.assertEqual(snapshot["jobs"][0]["id"], job["id"])
+        page = view.render_publishing(self.state, panel._PAGE_STYLE)
+        self.assertIn('href="#job-' + job["id"] + '"', page)
+        self.assertIn("Save interval", page)
+        self.assertNotIn("Schedule unattended uploads", page)
+
     def test_time_requires_explicit_offset_and_spanish_source_can_translate_to_english(self):
         with self.assertRaises(ValueError):
             view.utc_instant("2026-10-05T10:00:00")

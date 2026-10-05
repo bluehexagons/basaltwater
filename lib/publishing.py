@@ -24,6 +24,12 @@ PROVIDERS = ("butler", "steamcmd")
 POST_CAPABILITIES = {"steamcmd": "human-editor-handoff", "butler": "human-editor-handoff"}
 
 
+def polling_interval(minutes: int) -> int:
+    if type(minutes) is not int or not 5 <= minutes <= 43200:
+        raise ValueError("Polling interval must be 5–43200 minutes")
+    return minutes * 60
+
+
 def provider(value: str) -> str:
     if value not in PROVIDERS:
         raise ValueError("Select butler or steamcmd")
@@ -375,30 +381,47 @@ class Publishing:
                 self._dispatch_ready(db, draft)
         return project
 
-    def upload(self, artifact_id: str, *, job: str = "") -> dict:
+    def upload(self, artifact_id: str, *, job: str = "", job_revision: int | None = None) -> dict:
         with self.store.transaction() as db:
             artifact = self.store.get(db, "artifacts", artifact_id)
             project = self._valid_artifact(db, artifact)
+            scheduled = None
+            if job:
+                scheduled = self.store.get(db, "jobs", job)
+                if (scheduled["state"] != "enabled" or scheduled["project"] != project["id"]
+                        or scheduled["project_revision"] != artifact["project_revision"]
+                        or job_revision is not None and scheduled.get("revision", 0) != job_revision):
+                    raise ValueError("Schedule changed or stopped before queueing")
             identity = digest({"provider": project["provider"], "destination": project["target"],
                                "depot": project.get("depot", ""), "digest": artifact["digest"]})
             previous = db.execute("SELECT run FROM dispatches WHERE identity=?", (identity,)).fetchone()
             if previous:
                 return self.store.get(db, "runs", previous[0])
+            if scheduled is not None and any(run["project"] == project["id"] and run["state"] in {"queued", "running", "unknown", "uploaded-unverified"}
+                                             for run in self.store.records(db, "runs")):
+                raise ValueError("Resolve the project's pending upload before scheduling another")
             record = {"id": self.store.new_id(), "project": project["id"], "artifact": artifact_id, "project_config": project,
                       "identity": identity, "state": "queued", "created": now(), "job": job, "operation": "upload"}
+            if scheduled is not None:
+                record["job_revision"] = scheduled.get("revision", 0)
             db.execute("INSERT INTO dispatches VALUES(?,?)", (identity, record["id"]))
             return self.store.put(db, "runs", record)
+
+    def _cancel_queued(self, db, run: dict) -> None:
+        run.update(state="cancelled", finished=now())
+        db.execute("DELETE FROM dispatches WHERE identity=?", (run["identity"],))
+        if run.get("release"):
+            release = self.store.get(db, "releases", run["release"])
+            release["state"] = "cancelled"
+            self.store.put(db, "releases", release)
+        self.store.put(db, "runs", run)
 
     def cancel(self, run_id: str) -> None:
         with self.store.transaction() as db:
             run = self.store.get(db, "runs", run_id)
             if run["state"] == "queued":
-                run["state"] = "cancelled"
-                db.execute("DELETE FROM dispatches WHERE identity=?", (run["identity"],))
-                if run.get("release"):
-                    release = self.store.get(db, "releases", run["release"])
-                    release["state"] = "cancelled"
-                    self.store.put(db, "releases", release)
+                self._cancel_queued(db, run)
+                return
             elif run["state"] == "running":
                 run["cancel_requested"] = True
             else:
@@ -462,25 +485,54 @@ class Publishing:
                     self.store.put(db, "runs", run)
 
     def schedule(self, project_id: str, interval_minutes: int, *, enabled: bool = True) -> dict:
-        if type(interval_minutes) is not int or not 5 <= interval_minutes <= 43200:
-            raise ValueError("Polling interval must be 5–43200 minutes")
+        interval = polling_interval(interval_minutes)
         with self.store.transaction() as db:
             project = self.store.get(db, "projects", project_id)
+            if any(job["project"] == project_id and job["state"] != "removed" for job in self.store.records(db, "jobs")):
+                raise ValueError("This project already has a schedule; edit, resume or remove it")
             record = {"id": self.store.new_id(), "project": project_id, "project_revision": project_revision(project),
-                      "interval": interval_minutes * 60, "next_at": now(), "state": "enabled" if enabled else "paused", "failures": 0}
+                      "interval": interval, "next_at": now(), "state": "enabled" if enabled else "paused", "failures": 0, "revision": 0}
             return self.store.put(db, "jobs", record)
 
-    def job_action(self, job_id: str, action: str) -> None:
-        if action not in {"pause", "resume"}:
-            raise ValueError("Choose pause or resume")
+    def _stop_job(self, db, job: dict, state: str) -> None:
+        """Invalidate polling and queued work atomically; keep running receipts."""
+        if job["state"] == "removed":
+            return
+        job.update(state=state, revision=job.get("revision", 0) + 1)
+        if state == "removed":
+            job["removed_at"] = now()
+        for run in self.store.records(db, "runs"):
+            if run.get("job") == job["id"] and run["state"] == "queued":
+                self._cancel_queued(db, run)
+        self.store.put(db, "jobs", job)
+
+    def edit_schedule(self, job_id: str, interval_minutes: int) -> dict:
+        interval = polling_interval(interval_minutes)
         with self.store.transaction() as db:
             job = self.store.get(db, "jobs", job_id)
+            if job["state"] == "removed":
+                raise ValueError("Removed schedules cannot be edited")
+            # Cadence changes do not accept a new destination or clear failures.
+            self._stop_job(db, job, job["state"])
+            job.update(interval=interval, next_at=now() + interval)
+            return self.store.put(db, "jobs", job)
+
+    def job_action(self, job_id: str, action: str) -> None:
+        if action not in {"pause", "resume", "remove"}:
+            raise ValueError("Choose pause, resume or remove")
+        with self.store.transaction() as db:
+            job = self.store.get(db, "jobs", job_id)
+            if job["state"] == "removed":
+                if action == "remove":
+                    return
+                raise ValueError("Removed schedules cannot be resumed")
             if action == "resume":
                 project = self.store.get(db, "projects", job["project"])
                 job["project_revision"] = project_revision(project)
                 job["failures"] = 0
-            job["state"] = "paused" if action == "pause" else "enabled"
-            self.store.put(db, "jobs", job)
+                job.pop("last_error", None)
+                job["next_at"] = now() + job["interval"]
+            self._stop_job(db, job, {"pause": "paused", "resume": "enabled", "remove": "removed"}[action])
 
     def tick(self) -> None:
         """Called by the panel's existing scheduler owner, never an LLM task."""
@@ -495,14 +547,14 @@ class Publishing:
                 with self.store.transaction() as db:
                     current = self.store.get(db, "jobs", job["id"])
                     project = self.store.get(db, "projects", job["project"])
-                    if current["state"] != "enabled":
+                    if current["state"] != "enabled" or current.get("revision", 0) != job.get("revision", 0):
                         continue
                     if job["project_revision"] != project_revision(project):
                         raise ValueError("Project configuration changed")
                     if any(run["project"] == job["project"] and run["state"] in {"queued", "running", "unknown", "uploaded-unverified"} for run in self.store.records(db, "runs")):
                         continue
                 artifact = self.prepare(job["project"])
-                run = self.upload(artifact["id"], job=job["id"])
+                run = self.upload(artifact["id"], job=job["id"], job_revision=job.get("revision", 0))
                 # Duplicate preparations can be discarded after the durable
                 # dispatch ledger has selected the existing operation.
                 if run["artifact"] != artifact["id"]:
@@ -511,6 +563,8 @@ class Publishing:
                         db.execute("DELETE FROM records WHERE kind='artifacts' AND id=?", (artifact["id"],))
                 with self.store.transaction() as db:
                     current = self.store.get(db, "jobs", job["id"])
+                    if current["state"] != "enabled" or current.get("revision", 0) != job.get("revision", 0):
+                        continue
                     current["failures"] = 0
                     current.pop("last_error", None)
                     self.store.put(db, "jobs", current)
@@ -525,10 +579,12 @@ class Publishing:
                         pass
                 with self.store.transaction() as db:
                     current = self.store.get(db, "jobs", job["id"])
+                    if current["state"] != "enabled" or current.get("revision", 0) != job.get("revision", 0):
+                        continue
                     current["failures"] += 1
                     current["last_error"] = "Preparation or configuration failed; inspect the project and completed artifact"
                     if current["failures"] >= 3:
-                        current["state"] = "paused"
+                        self._stop_job(db, current, "paused")
                     self.store.put(db, "jobs", current)
         with self.store.transaction() as db:
             due_posts = [draft["id"] for draft in self.store.records(db, "drafts") if draft["state"] == "approved" and draft["publish_at"] and draft["publish_at"] <= now()]

@@ -23,14 +23,15 @@ that every acceptance item has been qualified.
 | --- | --- | --- |
 | Tool setup and maintenance | Independent repeatable Debian `--publishing-tool`; legacy Godot selection retained; one shared updater and provider leases across registered owners. | Live Debian reruns/ARM64 checks and separate CachyOS qualification. |
 | Authentication and panel | Same-panel Publishing page, bounded native PTY login, HTTPS-only mutations, VM-local sessions, local disconnect and terminal fallback. | Remote native login/prompt and cached-session qualification; bounded online identity checks. |
-| Builds and jobs | Completion records, private retained snapshots, fixed upload commands, durable dispatch ledger, cancellation/reconciliation, deterministic panel-owned interval jobs. | Live receipt/schema qualification, richer inventory/progress and sanitized notifications; schedule editing/removal and explicit safe re-upload. |
+| Builds and jobs | Completion records, private retained snapshots, fixed upload commands, durable dispatch ledger, cancellation/reconciliation, deterministic panel-owned interval jobs with pause/resume, interval editing and removal. | Live receipt/schema qualification, richer inventory/progress and sanitized notifications; Run now and explicit safe re-upload. |
 | Promotion and releases | Exact itch.io channel re-upload, optional observed Steam beta API promotion, manual Steamworks release/rollback records and dependent gates. | Live beta API response qualification; coordinated multi-depot recipes and stronger external-concurrency observations. |
 | Writing and translations | Language manifest extension, agent prompt preparation, immutable plain-text drafts, side-by-side English/Spanish reviews, exact human approval and timed exports/handoffs. | Provider rendering, rich assets, terminology/placeholder checks and Steam localization CSV round trips. |
 | Posts | Steam/itch.io reviewed exports and operator-confirmed published URLs; automatic submission is not advertised. | Qualified post adapters, remote schedule ownership, external edit detection and additional website/blog/social destinations. |
 
 Current snapshots are retained explicitly (100 maximum, 10,000 files and 30 GiB
-per artifact). Status selects up to 200 records per kind, prioritizes actionable
-runs/drafts/releases, and includes their project and translation-source references.
+per artifact). Status selects up to 200 records per kind, prioritizes
+enabled/paused jobs and actionable runs/drafts/releases, and includes their project
+and translation-source references.
 History, reviews and deduplication records remain durable. Automatic 30-day record
 pruning and removal of successful staging are future policy work, not current
 behavior. Only exact existing reviewed text can be reused by an upload schedule.
@@ -79,6 +80,13 @@ Resolve these as follows:
   protects active and uncertain work. Steam success receipts identify the requested
   AppID. Status prioritizes recovery and retains referenced sources/projects, so
   completed history cannot hide pending comparisons and recovery controls.
+- Schedule creation rejects another non-removed job for the same project.
+  Interval edits preserve enabled/paused state, destination authority and failures;
+  edits and resume reset the next deadline to a full interval from the action.
+  Pause, edits and removal atomically cancel queued scheduled runs and invalidate
+  an in-flight preparation before queueing. Running/uncertain uploads retain their
+  own cancellation/reconciliation controls. Removed job records and receipts are
+  retained; provider authentication failure/logout cannot resurrect those jobs.
 
 
 ## Direction and decisions

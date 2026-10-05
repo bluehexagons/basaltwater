@@ -57,7 +57,7 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
     content = '<aside class="status failed" role="alert">' + _escape(error) + '</aside>' if error else ""
     if not secure:
         content += '<p class="empty">Publishing changes and logins require the panel HTTPS address. Use the VM CLI over SSH for recovery.</p>'
-    content += '''<nav class="catalog-nav" aria-label="Publishing sections"><a href="#accounts">Accounts</a><a href="#projects">Projects</a><a href="#builds">Builds</a><a href="#writing">Writing &amp; translations</a><a href="#releases">Releases</a></nav>
+    content += '''<nav class="catalog-nav" aria-label="Publishing sections"><a href="#accounts">Accounts</a><a href="#projects">Projects</a><a href="#builds">Builds</a><a href="#jobs">Upload schedules</a><a href="#writing">Writing &amp; translations</a><a href="#releases">Releases</a></nav>
 <p>Steam default releases and rollbacks happen on Steamworks. Public writing, including each translation, requires your review. Steam announcements and itch.io posts currently use a reviewed export and human editor handoff.</p>
 <section id="accounts"><h2>Publishing accounts</h2><div class="grid">'''
     accounts = {item["id"]: item for item in snapshot["accounts"]}
@@ -100,7 +100,12 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
         content += '<p class="count">Language settings come from basaltwater.json; absent settings mean English only. English and Spanish have initial structural coverage; other languages and provider rendering require qualification.</p>'
         content += '<p><a href="' + _escape(editor_link(project)) + '">Open provider project</a></p>'
         content += form("prepare", _hidden("project", project["id"]), "Prepare completed build")
-        content += form("schedule", _hidden("project", project["id"]) + _input("interval", "Upload polling interval (minutes)", "60", kind="number"), "Schedule unattended uploads") + '</article>'
+        jobs = [job for job in snapshot["jobs"] if job["project"] == project["id"] and job["state"] != "removed"]
+        if jobs:
+            content += '<p><a href="#job-' + _escape(jobs[0]["id"]) + '">Manage unattended upload schedule</a></p>'
+        else:
+            content += form("schedule", _hidden("project", project["id"]) + _input("interval", "Upload polling interval (minutes)", "60", kind="number"), "Schedule unattended uploads")
+        content += '</article>'
     content += '<details><summary>Configure a project</summary><p>Changing a project invalidates prepared builds and writing reviews. For Steam, choose one app and depot per destination; create additional destinations for other depots.</p>'
     content += form("project", _input("id", "Project/destination ID") + _input("repository", "Project directory on this VM") +
                     _select("provider", "Provider", [("butler", "itch.io / Butler"), ("steamcmd", "Steam / SteamCMD")]) +
@@ -127,14 +132,21 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
             content += form("release", _hidden("run", run["id"]) + _input("branch", "Branch to release", "default"), "Prepare Steamworks release handoff")
             content += form("beta-prepare", _hidden("run", run["id"]) + _input("branch", "Explicit non-default beta branch"), "Observe and prepare beta promotion")
         content += '</article>'
-    content += '<h3>Unattended upload jobs</h3>'
+    content += '<h3 id="jobs">Unattended upload jobs</h3><p>Pause, removal and interval edits cancel queued uploads. Running uploads continue; cancel them separately in upload history. Changing the interval keeps the current state and schedules the next poll one full interval from saving. Resume accepts the current project configuration.</p>'
     for job in snapshot["jobs"]:
-        content += '<article class="publishing-card"><p>' + _escape(job["project"] + " · " + job["state"]) + '</p>'
+        content += '<article class="publishing-card" id="job-' + _escape(job["id"]) + '"><h4>' + _escape(job["project"] + " · " + job["state"]) + '</h4><p class="count">Job <code>' + _escape(job["id"]) + '</code></p>'
         content += '<p class="count">Every ' + str(job["interval"] // 60) + ' minutes · failures ' + str(job["failures"]) + '</p>'
-        content += '<p>Next poll: ' + _escape(datetime.fromtimestamp(job["next_at"], timezone.utc).isoformat()) + '</p>'
+        if job["state"] == "enabled":
+            content += '<p>Next poll: ' + _escape(datetime.fromtimestamp(job["next_at"], timezone.utc).isoformat()) + '</p>'
         if job.get("last_error"):
             content += '<p>' + _escape(job["last_error"]) + '</p>'
-        content += form("job", _hidden("job", job["id"]) + _hidden("action", "pause" if job["state"] == "enabled" else "resume"), "Pause" if job["state"] == "enabled" else "Resume with current project configuration") + '</article>'
+        if job["state"] == "removed":
+            content += '<p>Schedule removed; prior upload history is retained. Create a new schedule from the project to enable future uploads.</p>'
+        else:
+            content += form("job-edit", _hidden("job", job["id"]) + _input("interval", "Upload polling interval (minutes)", str(job["interval"] // 60), kind="number"), "Save interval")
+            content += form("job", _hidden("job", job["id"]) + _hidden("action", "pause" if job["state"] == "enabled" else "resume"), "Pause" if job["state"] == "enabled" else "Resume with current project configuration")
+            content += form("job", _hidden("job", job["id"]) + _hidden("action", "remove"), "Remove schedule")
+        content += '</article>'
     content += '</section><section id="writing"><h2>Writing and translations</h2><p>Draft or translate with an agent, then import the final text below. Review each language and destination separately. Exported plain text needs a final formatting check in the provider editor.</p>'
     content += form("writing-task", _select("project", "Project", project_options) + _input("language", "Draft/translation language", "es") +
                     _select("source", "Source revision for translation", source_options, optional=True) + _input("instructions", "Writing instructions / facts to use"), "Prepare agent writing task")
@@ -190,7 +202,7 @@ FIELDS = {
     "project": {"id", "repository", "provider", "target", "depot", "username", "record"}, "prepare": {"project"},
     "upload": {"artifact"}, "artifact-review": {"artifact", "path", "draft"}, "artifact-remove": {"artifact"}, "cancel": {"run"},
     "reconcile": {"run", "outcome", "receipt"}, "release": {"run", "branch"}, "release-confirm": {"release", "build_id"},
-    "schedule": {"project", "interval"}, "job": {"job", "action"}, "writing-task": {"project", "language", "source", "instructions"},
+    "schedule": {"project", "interval"}, "job": {"job", "action"}, "job-edit": {"job", "interval"}, "writing-task": {"project", "language", "source", "instructions"},
     "draft": {"project", "language", "title", "body", "source", "replaces", "release", "publish_at", "late_minutes"},
     "review": {"draft", "hash", "decision"}, "export": {"draft"}, "handoff": {"draft"}, "post-confirm": {"draft", "url", "confirmation"},
 }
@@ -250,6 +262,8 @@ def publishing_action(state, action: str, values: dict[str, str]) -> dict | None
         manager.schedule(values["project"], int(values["interval"]))
     elif action == "job":
         manager.job_action(values["job"], values["action"])
+    elif action == "job-edit":
+        manager.edit_schedule(values["job"], int(values["interval"]))
     elif action == "writing-task":
         return manager.writing_task(values["project"], values["language"], values["instructions"], source=values.get("source", ""))
     elif action == "draft":

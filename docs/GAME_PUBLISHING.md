@@ -136,6 +136,8 @@ basaltw publish schedule game-linux --interval 60
 basaltw publish jobs --json
 basaltw publish job JOB_ID pause
 basaltw publish job JOB_ID resume
+basaltw publish job JOB_ID edit --interval 30
+basaltw publish job JOB_ID remove
 basaltw publish runs --json
 basaltw publish cancel RUN_ID
 ```
@@ -145,14 +147,36 @@ long agent prompts. Job intervals are 5–43,200 minutes. Each overdue job check
 the latest completed artifact once; missed intervals are not replayed. Three
 consecutive preparation failures pause a job. Authentication failures pause
 provider jobs, and ambiguous outcomes block automatic retries. Resume is
-explicit and accepts the current project configuration. Preparations rejected
+explicit and accepts the current project configuration, clears the failure count,
+and schedules the next poll one full interval from resuming. Preparations rejected
 before queueing are removed automatically, including builds with unreviewed
 notes; failed polls do not consume the retained-build quota. Active, ambiguous
 and release-linked artifacts remain protected. Pause stops future
-dispatch; cancel active work separately. Detached uploads survive a panel
-restart, but scheduling requires the panel service to be running. External build
-runners can invoke `prepare`/`upload`; `publish worker` processes the queue and
-does not become another schedule owner.
+dispatch and cancels that schedule's queued uploads; cancel running work separately.
+Detached uploads survive a panel restart, but scheduling requires the panel
+service to be running. External build runners can invoke `prepare`/`upload`;
+`publish worker` processes the queue and does not become another schedule owner.
+
+Each project can create one schedule at a time, including a paused schedule.
+Repeated creation is rejected; use the existing job's controls instead. The panel
+shows its identifier and links directly from the project to its schedule.
+**Save interval** / `job edit --interval` accepts 5–43,200 minutes, keeps the
+current enabled/paused state, destination authority and failures, and moves the
+next poll to one full interval from saving. It cancels queued uploads for the
+previous schedule revision. It does not resume a paused job or accept changed
+project settings; use **Resume** deliberately for those actions.
+
+**Remove schedule** / `job remove` stops polling and cancels only its queued
+uploads. It keeps a removed job record, prior run history, provider receipts,
+retained snapshots and successful/uncertain duplicate-detection records. Only
+never-started queued dispatch reservations are released to permit safe retry.
+Running or uncertain uploads remain tracked and need their cancellation/reconciliation
+controls. Removed jobs cannot be edited or resumed; create a new schedule from
+the project if needed. Pause, edits and removal invalidate a poll still preparing
+a snapshot, so it cannot queue an upload after those controls return. Authentication
+failure and local logout also cancel queued scheduled work without resurrecting
+removed jobs. Existing duplicate schedules from an older version are preserved;
+pause/remove extras explicitly.
 
 For itch.io promotion, configure another channel of the same game and use
 **Promote retained artifact to channel**, or `publish promote-itch ARTIFACT_ID
@@ -246,7 +270,7 @@ detection cannot prove a binary or image contains no writing.
 | Per-artifact limits | 10,000 regular files, 30 GiB, relative paths up to 1,024 UTF-8 bytes |
 | Native upload limits | Six hours, 16 MiB total stream, 64 KiB parser tail; raw output is discarded |
 | Writing | Title 200 characters, body 64 KiB UTF-8; panel agent prompts 4,000 bytes |
-| Panel/CLI status | Up to 200 selected records per kind, prioritizing actionable runs/drafts/releases; includes referenced projects and translation sources; panel displays 20 artifacts, 40 runs and 40 drafts |
+| Panel/CLI status | Up to 200 selected records per kind, prioritizing enabled/paused jobs and actionable runs/drafts/releases; includes referenced projects and translation sources; panel displays 20 artifacts, 40 runs and 40 drafts |
 
 Remove unused snapshots through the panel or `publish remove-artifact ARTIFACT_ID`.
 Active, ambiguous and release-linked artifacts cannot be removed. History,

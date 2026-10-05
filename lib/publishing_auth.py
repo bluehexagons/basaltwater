@@ -235,5 +235,4 @@ class PublishingAuth:
                 for job in self.publishing.store.records(db, "jobs"):
                     project = self.publishing.store.get(db, "projects", job["project"])
                     if project["provider"] == service:
-                        job["state"] = "paused"
-                        self.publishing.store.put(db, "jobs", job)
+                        self.publishing._stop_job(db, job, "paused")
