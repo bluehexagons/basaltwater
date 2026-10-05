@@ -122,6 +122,9 @@ class Portal:
             {"types": v("u", 1), "multiple": v("b", False), "cursor_mode": v("u", 1)})
         started = self.response(REMOTE, "Start", "(osa{sv})", (self.session, ""), {})
         self.restore_token = started.get("restore_token") if remember else None
+        # Retain the single-use replacement before validation/cleanup can fail.
+        if self.restore_token and save_token:
+            save_token(self.restore_token)
         if started.get("devices", 0) & 3 != 3 or len(started.get("streams", [])) != 1:
             self.revoke_token(self.restore_token)
             raise RuntimeError("Select one monitor and grant keyboard and pointer access to use automation")
@@ -130,8 +133,6 @@ class Portal:
         if not isinstance(size, (tuple, list)) or len(size) != 2 or any(type(n) is not int or n <= 0 for n in size):
             self.revoke_token(self.restore_token)
             raise RuntimeError("Portal did not report the selected monitor's logical size")
-        if self.restore_token and save_token:
-            save_token(self.restore_token)
         self.progress("OpenPipeWireRemote", False)
         reply, descriptors = self.bus.call_with_unix_fd_list_sync(BUS_NAME, OBJECT, SCREENCAST,
             "OpenPipeWireRemote", v("(oa{sv})", (self.session, {})), None,

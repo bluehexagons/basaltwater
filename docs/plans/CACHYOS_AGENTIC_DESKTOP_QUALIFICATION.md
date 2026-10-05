@@ -175,6 +175,19 @@ errors were logged. Private evidence is in Fast21's ignored local
 game integration coverage; live revocation, logout/reboot, other application
 identities, monitor/scaling changes, audio and physical controllers remain pending.
 
+### Grant cleanup recovery follow-up — 2026-10-05
+
+Mocked regression checks reproduced loss of a replacement token when incomplete
+device consent or invalid monitor geometry triggered PermissionStore cleanup
+that failed. The replacement is now saved before validation and retained for
+offline revocation retry. Revocation also waits for initialization to finish,
+reloads any late replacement and preserves state if the initializer or helper
+is still stopping. Shutdown joins the initializer within a bounded wait.
+Focused desktop/agent contract checks passed 166 tests; the default suite passed
+5036 tests (two skipped), and CLI documentation checks passed. These checks use private
+temporary records and mocked portal calls; the workstation's reusable grant
+was preserved. Live revocation and logout/reboot qualification remain pending.
+
 ## P0 prerequisite gate
 
 Run `basaltw local cachyos-doctor --json` from a terminal in the disposable

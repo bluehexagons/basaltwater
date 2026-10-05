@@ -73,7 +73,10 @@ the opt-in before switching back to temporary access.
 Human pause persists across restored sessions; agents must not resume it.
 `stop` retains the grant, while `revoke` closes control, deletes only its
 `remote-desktop` PermissionStore entries and removes the private record. Store
-errors retain state for retry. The handoff window also offers Revoke saved access.
+errors retain state for retry, including replacement tokens from incomplete
+device consent or invalid monitor geometry. Revocation waits for initialization
+to finish before removing the record; if a helper is still stopping, retry
+after it exits. The handoff window also offers Revoke saved access.
 KDE's own session controls can stop active sharing, and withdrawn permissions
 prevent subsequent restoration.
 

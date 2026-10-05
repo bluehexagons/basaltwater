@@ -172,6 +172,14 @@ def revoke():
         try:
             return request({"action": "revoke"})
         except (FileNotFoundError, ConnectionRefusedError):
+            helper_fd = os.open(folder / "session.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            try:
+                try:
+                    fcntl.flock(helper_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise RuntimeError("Native helper is still stopping; retry revocation after it exits") from exc
+            finally:
+                os.close(helper_fd)
             with native_grants.locked():
                 data = native_grants.load()
                 if data and (data["token"] or data["consumed"]):
@@ -243,10 +251,11 @@ class NativeSession:
         self.input_active = False
         self.input_released = threading.Event()
         self.input_released.set()
+        self.initialization_done = threading.Event()
+        self.initialization_done.set()
         self.remember = remember
         self.grant_saved = False
         self.restore_attempted = False
-        self.revoke_requested = False
         self.session_seconds = session_seconds
         self.paused = paused
         self.lease = None
@@ -312,6 +321,14 @@ class NativeSession:
             self.stopping.set()
             self.record()
 
+    def save_restore_token(self, token):
+        with self.lock:
+            # Revocation waits for initialization before deleting saved state.
+            # A late replacement must remain available if deletion fails.
+            native_grants.save_token(token)
+            self.grant_saved = True
+            self.record()
+
     def guard(self, payload):
         if callable(payload.get("_cancelled")) and payload["_cancelled"]():
             raise RuntimeError("Native input client disconnected; pressed inputs released")
@@ -347,21 +364,23 @@ class NativeSession:
                 self.close()
                 return {"stopped": True, "desktop_preserved": True}
             if action == "revoke":
-                self.revoke_requested = True
                 self.close()
+                self.lock.release()
+                try:
+                    self.input_released.wait(4)
+                    if self.portal:
+                        self.portal.close()
+                    if not self.initialization_done.wait(4):
+                        raise RuntimeError("Native initialization is still stopping; saved state retained for revocation retry")
+                finally:
+                    self.lock.acquire()
                 data = native_grants.load()
                 tokens = [self.portal.restore_token] if self.portal else []
                 if data:
                     tokens.extend([data["token"], data["consumed"]])
                 if self.portal:
-                    self.lock.release()
-                    try:
-                        self.input_released.wait(4)
-                        self.portal.close()
-                        for token in dict.fromkeys(filter(None, tokens)):
-                            self.portal.revoke_token(token)
-                    finally:
-                        self.lock.acquire()
+                    for token in dict.fromkeys(filter(None, tokens)):
+                        self.portal.revoke_token(token)
                 elif any(tokens):
                     from desktop.portal import Portal
                     portal = Portal(lambda: None)
@@ -588,6 +607,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
     grant = native_grants.metadata()
     session = NativeSession(None, receipt=folder / "status.json", remember=remember,
                             session_seconds=session_seconds, paused=grant["paused"] if remember else False)
+    session.initialization_done.clear()
     session.record()
     try:
         from desktop.portal import Portal
@@ -614,21 +634,13 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
                 if session.stopping.is_set():
                     portal.close()
                     return
-            def save_token(token):
-                with session.lock:
-                    if session.revoke_requested:
-                        portal.revoke_token(token)
-                        return
-                    native_grants.save_token(token)
-                    session.grant_saved = True
-                    session.record()
             if remember:
                 previous = native_grants.load()
                 if previous and previous["consumed"]:
                     portal.revoke_token(previous["consumed"])
             token = native_grants.consume() if remember else None
             session.restore_attempted = token is not None
-            node, size = portal.start(remember=remember, restore_token=token, save_token=save_token)
+            node, size = portal.start(remember=remember, restore_token=token, save_token=session.save_restore_token)
             with session.lock:
                 if session.stopping.is_set():
                     return
@@ -642,6 +654,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
             if not session.stopping.is_set():
                 session.fail(exc)
             session.close()
+        finally:
+            session.initialization_done.set()
 
     def connected(connection):
         with connection:
@@ -710,7 +724,8 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
         signal.signal(signal.SIGINT, lambda *_: session.close())
         accepting_thread = threading.Thread(target=accepting, args=(server,), daemon=True)
         accepting_thread.start()
-        threading.Thread(target=initialize, daemon=True).start()
+        initializing_thread = threading.Thread(target=initialize, daemon=True)
+        initializing_thread.start()
         GLib.timeout_add(250, tick)
         try:
             loop.run()
@@ -719,6 +734,7 @@ def serve(*, remember=False, session_seconds=SESSION_SECONDS):
             session.input_released.wait(26)
             if session.portal:
                 session.portal.close()
+            initializing_thread.join(4)
             # Complete revocation and its response before daemon workers exit.
             accepting_thread.join(1)
             deadline = time.monotonic() + 14

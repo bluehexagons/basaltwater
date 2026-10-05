@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 from contextlib import redirect_stdout
 from io import StringIO
 import json
@@ -463,6 +464,35 @@ class PortalContractTests(unittest.TestCase):
             self.portal.start(remember=True)
         response.assert_not_called()
 
+    def test_rejected_grant_keeps_replacement_token_for_offline_revocation_retry(self):
+        cases = [
+            {"devices": 1, "streams": [(17, {"size": [1280, 720]})]},
+            {"devices": 3, "streams": [(17, {"size": [0, 720]})]},
+        ]
+        for fields in cases:
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(native_grants.Path, "home", return_value=Path(directory)):
+                native_grants.enable()
+                native_grants.save_token("old-token")
+                native_grants.consume()
+                runtime = Path(directory, "runtime")
+                runtime.mkdir(mode=0o700)
+                with patch.object(self.portal, "call", return_value=Mock(unpack=lambda: (2,))), \
+                        patch.object(self.portal, "response", side_effect=[{"session_handle": "session"}, {}, {},
+                            {**fields, "restore_token": "replacement-token"}]), \
+                        patch.object(self.portal, "revoke_token", side_effect=RuntimeError("Store unavailable")), \
+                        self.assertRaisesRegex(RuntimeError, "Store unavailable"):
+                    self.portal.start(remember=True, restore_token="old-token", save_token=native_grants.save_token)
+                self.assertEqual(native_grants.load()["token"], "replacement-token")
+                self.portal.bus.call_with_unix_fd_list_sync.assert_not_called()
+                retry = Mock()
+                with patch.object(native, "runtime_directory", return_value=runtime), \
+                        patch.object(native, "request", side_effect=FileNotFoundError), \
+                        patch("desktop.portal.Portal", return_value=retry):
+                    native.revoke()
+                retry.revoke_token.assert_called_once_with("replacement-token")
+                self.assertIsNone(native_grants.load())
+
     def test_revocation_targets_only_its_grant_and_retains_state_on_store_errors(self):
         class StoreError(Exception):
             pass
@@ -565,6 +595,60 @@ class NativeGrantTests(unittest.TestCase):
         session.handle({"action": "revoke"})
         portal.revoke_token.assert_any_call("consumed-token")
         self.assertIsNone(native_grants.load())
+
+    def test_revocation_reloads_replacement_saved_while_initialization_stops(self):
+        native_grants.enable()
+        native_grants.save_token("old-token")
+        native_grants.consume()
+        portal = Mock(restore_token="old-token")
+        session = native.NativeSession(portal, remember=True)
+        session.initialization_done.clear()
+        def finish():
+            portal.restore_token = "replacement-token"
+            session.save_restore_token("replacement-token")
+            session.initialization_done.set()
+        initializer = threading.Thread(target=finish)
+        portal.close.side_effect = initializer.start
+        portal.revoke_token.side_effect = RuntimeError("Store unavailable")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Store unavailable"):
+                session.handle({"action": "revoke"})
+        finally:
+            initializer.join(1)
+        self.assertFalse(initializer.is_alive())
+        self.assertEqual(native_grants.load()["token"], "replacement-token")
+        portal.revoke_token.assert_called_once_with("replacement-token")
+        portal.close.side_effect = None
+        portal.revoke_token.side_effect = None
+        session.handle({"action": "revoke"})
+        self.assertIsNone(native_grants.load())
+
+    def test_unfinished_initialization_retains_grant_and_requires_revocation_retry(self):
+        native_grants.enable()
+        native_grants.save_token("saved-token")
+        portal = Mock(restore_token="saved-token")
+        session = native.NativeSession(portal, remember=True)
+        with patch.object(session.initialization_done, "wait", return_value=False) as wait, \
+                self.assertRaisesRegex(RuntimeError, "still stopping"):
+            session.handle({"action": "revoke"})
+        wait.assert_called_once_with(4)
+        portal.revoke_token.assert_not_called()
+        self.assertEqual(native_grants.load()["token"], "saved-token")
+
+    def test_offline_revocation_waits_for_stopping_helper_before_forgetting_grant(self):
+        native_grants.enable()
+        native_grants.save_token("saved-token")
+        runtime = self.home / "runtime"
+        runtime.mkdir(mode=0o700)
+        with (runtime / "session.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch.object(native, "runtime_directory", return_value=runtime), \
+                    patch.object(native, "request", side_effect=ConnectionRefusedError), \
+                    patch("desktop.portal.Portal") as portal, \
+                    self.assertRaisesRegex(RuntimeError, "still stopping"):
+                native.revoke()
+            portal.assert_not_called()
+        self.assertEqual(native_grants.load()["token"], "saved-token")
 
     def test_plain_start_keeps_remembered_pause_after_interrupted_restoration(self):
         native_grants.enable()
