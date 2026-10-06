@@ -427,6 +427,7 @@ class SetupConfig:
     install_inkscape: bool = False
     install_scribus: bool = False
     install_audacity: bool = False
+    install_musescore: Optional[bool] = False
     install_ardour: bool = False
     install_lmms: bool = False
     install_freecad: bool = False
@@ -647,10 +648,10 @@ class SetupConfig:
 
         if self.system_type in {"server_proxmox", "server_wsl"} and any((
             self.install_inkscape, self.install_gimp, self.install_krita,
-            self.install_audacity, self.install_shotcut,
+            self.install_audacity, self.install_musescore, self.install_shotcut,
         )):
             raise ValueError(
-                "--inkscape, --gimp, --krita, --audacity, and --shotcut require "
+                "--inkscape, --gimp, --krita, --audacity, --musescore, and --shotcut require "
                 "a Debian workstation/server profile or agent_cachyos"
             )
 
@@ -1191,6 +1192,8 @@ class SetupConfig:
             args.append("--scribus")
         if self.install_audacity:
             args.append("--audacity")
+        if self.install_musescore:
+            args.append("--musescore")
         if self.install_ardour:
             args.append("--ardour")
         if self.install_lmms:
@@ -1721,6 +1724,8 @@ class SetupConfig:
             cmd_parts.append("--scribus")
         if self.install_audacity:
             cmd_parts.append("--audacity")
+        if self.install_musescore:
+            cmd_parts.append("--musescore")
         if self.install_ardour:
             cmd_parts.append("--ardour")
         if self.install_lmms:
@@ -2131,6 +2136,7 @@ class SetupConfig:
         data['install_inkscape'] = bool(self.install_inkscape)
         data['install_scribus'] = bool(self.install_scribus)
         data['install_audacity'] = bool(self.install_audacity)
+        data['install_musescore'] = bool(self.install_musescore)
         data['install_ardour'] = bool(self.install_ardour)
         data['install_lmms'] = bool(self.install_lmms)
         data['install_freecad'] = bool(self.install_freecad)
@@ -2633,6 +2639,7 @@ class SetupConfig:
             install_inkscape=getattr(args, 'install_inkscape', False) is True,
             install_scribus=getattr(args, 'install_scribus', False) is True,
             install_audacity=getattr(args, 'install_audacity', False) is True,
+            install_musescore=getattr(args, 'install_musescore', False),
             install_ardour=getattr(args, 'install_ardour', False) is True,
             install_lmms=getattr(args, 'install_lmms', False) is True,
             install_freecad=getattr(args, 'install_freecad', False) is True,

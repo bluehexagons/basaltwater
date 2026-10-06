@@ -164,7 +164,7 @@ class TestDataAnalysisReconstruction(unittest.TestCase):
         self.assertTrue(config.install_python)
         self.assertEqual(
             [call.args[0] for call in mock_check_package.call_args_list],
-            list(DATA_ANALYSIS_MARKER_PACKAGES),
+            [*DATA_ANALYSIS_MARKER_PACKAGES, "musescore3"],
         )
 
     @patch("lib.reconstruct.reconstruct_configuration")

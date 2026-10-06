@@ -416,6 +416,9 @@ def print_setup_summary(config: SetupConfig, description: Optional[str] = None) 
     if config.install_blender:
         source = "native CachyOS package" if config.system_type == "agent_cachyos" else "Debian APT package"
         print(f"Blender: Yes ({source})")
+    if config.install_musescore:
+        source = "native CachyOS package" if config.system_type == "agent_cachyos" else "Debian APT package"
+        print(f"MuseScore: Yes ({source})")
     for enabled, name in (
         (config.install_obs, "OBS Studio"),
         (config.install_kdenlive, "Kdenlive"),

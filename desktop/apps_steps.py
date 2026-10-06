@@ -20,6 +20,7 @@ DEBIAN_MEDIA_APPS = (
     ("install_gimp", "GIMP", "gimp"),
     ("install_krita", "Krita", "krita"),
     ("install_audacity", "Audacity", "audacity"),
+    ("install_musescore", "MuseScore", "musescore3"),
     ("install_shotcut", "Shotcut", "shotcut"),
 )
 MICROSOFT_KEY_URL = "https://packages.microsoft.com/keys/microsoft.asc"

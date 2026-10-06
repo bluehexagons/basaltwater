@@ -7,9 +7,12 @@ Read the parent skill for desktop input, window targeting and session lifetime.
 
 Run `basaltw agent manifest --json` in the project. Discover active executables
 with `command -v`; check installed help/version before scripting. Debian's
-`--inkscape`, `--gimp`, `--krita`, `--audacity` and `--shotcut` install its native
+`--inkscape`, `--gimp`, `--krita`, `--audacity`, `--musescore` and `--shotcut` install its native
 release packages. `--av-tools` adds FFmpeg/ffprobe, ImageMagick and ExifTool.
 These selections are opt-in and do not enable a desktop on headless profiles.
+Debian `--audio-tools` adds SoX, ALSA audio/MIDI utilities and PulseAudio clients
+through saved APT package selections; it does not change audio routing or device
+permissions. See [music and input testing](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md).
 An executable's presence is discovery, not a completed edit/export check.
 
 Choose the smallest tool for the task: Inkscape for SVG geometry and vector UI,
@@ -125,6 +128,24 @@ redirection is disabled; silent desktop playback does not prove a silent file.
 Waveforms, decoded sample measurements and metadata can validate structure and
 signal but cannot establish perceived quality. Report that limit accurately.
 The editor flags do not enable RDP audio or alter device permissions.
+
+## Scores and MIDI inspection
+
+Use `basaltw agent manifest --json` to find `desktop_applications.musescore`.
+Its executable may be `musescore3`/`mscore3` on Debian or `mscore` on CachyOS;
+launch the returned argument vector with an absolute task-copy path. Check the
+installed version before scripting. MuseScore 3 supports isolated preferences
+with `-c /absolute/task/profile` and converter exports with `-o review.pdf`;
+terminal-only queries/exports can require `QT_QPA_PLATFORM=offscreen`.
+
+Save editable MSCZ and inspection exports separately from immutable input MIDI.
+Import quantization, voices, meter, tempo, rests and ties can differ from the
+source event timeline. Reopen and inspect the result against the project's
+structured MIDI model. Do not replace the original with an exported MIDI or
+claim another application's import is an authoritative correctness check.
+Review licenses separately before shipping fonts, SoundFonts or samples from
+the editor. Synthetic microphone fixtures qualify signal processing only;
+speaker-to-microphone latency, room noise and real device gain require hardware.
 
 ## Completion evidence
 

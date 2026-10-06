@@ -34,6 +34,7 @@ _OPTIONS = {
     "install_godot", "install_sunshine", "install_moonlight", "install_gaming",
     "install_obs", "install_blender", "install_kdenlive", "install_krita",
     "install_inkscape", "install_scribus", "install_audacity", "install_ardour",
+    "install_musescore",
     "install_lmms", "install_freecad", "install_kicad", "install_shotcut",
     "install_gimp", "install_remmina", "install_sysadmin_tools",
     "install_material_maker", "install_etcher", "install_butler", "install_steamcmd",

@@ -237,6 +237,7 @@ def reconstruct_configuration(host: str = "localhost", username: str = "root") -
         "install_data_analysis_tools": detect_data_analysis_tools(),
         "install_av_tools": detect_av_tools(),
         "install_gl_tools": detect_gl_tools(),
+        "install_musescore": check_package_installed("musescore3"),
         "enable_samba": detect_samba(),
     }
 
@@ -279,6 +280,7 @@ def run_reconstruct_command(compact: bool) -> int:
             "install_data_analysis_tools": config.install_data_analysis_tools,
             "install_av_tools": config.install_av_tools,
             "install_gl_tools": config.install_gl_tools,
+            "install_musescore": config.install_musescore,
             "enable_samba": config.enable_samba,
         }
         output.update(extras)

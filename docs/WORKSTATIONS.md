@@ -60,7 +60,7 @@ defaults to Geany; `--editor vscode` replaces that editor default.
 
 Application installation and desktop access are separate choices. Debian's
 standard workstation and server profiles accept `--blender`, `--inkscape`,
-`--gimp`, `--krita`, `--audacity` and `--shotcut`, including the headless
+`--gimp`, `--krita`, `--audacity`, `--musescore` and `--shotcut`, including the headless
 `agent_vm`. These applications are opt-in on every profile. To edit interactively,
 use a workstation profile or select `--desktop` on a standard server profile;
 `--rdp` enables remote access to the shared desktop. Background rendering needs
@@ -75,6 +75,7 @@ and the existing CachyOS desktop.
 | GIMP: raster crops, alpha cleanup and image touch-ups | `--gimp`: APT `gimp` | `--gimp`: native package |
 | Krita: painting, sprite and texture touch-ups | `--krita`: APT `krita` | `--krita`: native package |
 | Audacity: sound effect trims, fades and level adjustments | `--audacity`: APT `audacity` | `--audacity`: native package |
+| MuseScore: score/MIDI inspection and review exports | `--musescore`: APT `musescore3` | `--musescore`: native `musescore` (command `mscore`) |
 | Shotcut: short clips, trailers and cutscene edits | `--shotcut`: APT `shotcut` | `--shotcut`: native package |
 | Godot | `--godot`: verified upstream stable release; optional `--godot-bundle web` or `--godot-bundle publishing` | `--godot`: native package or existing executable |
 | Graphical editor | `--editor geany` (Debian package) or `--editor vscode` (Microsoft APT source) | Use the existing desktop's editor |
@@ -82,6 +83,7 @@ and the existing CachyOS desktop.
 | LibreOffice | `--office`; `pc_dev` selects it by default | Use the existing desktop's package manager |
 | Remmina | Included with `pc_dev`; otherwise `--apt-install remmina` with desired plugins | `--remmina` includes common desktop plugins |
 | Media conversion and metadata | `--av-tools`: ImageMagick, FFmpeg/ffprobe, ExifTool | `--av-tools`: native equivalents |
+| Audio/MIDI inspection and signal processing | `--audio-tools`: SoX, ALSA utilities, PulseAudio clients; saved APT selections | Use existing desktop package management |
 | OpenGL diagnostics and tracing | `--gl-tools`: Mesa utilities, apitrace | `--gl-tools`: native equivalents |
 | Other native creative apps | Repeat `--apt-install PACKAGE` for packages available in the configured Debian repositories | `--scribus`, `--kdenlive`, `--ardour`, `--lmms`, `--freecad`, `--kicad`, `--obs` |
 | Gaming, streaming and publishing | Godot publishing bundle where applicable; other packages are explicit choices | `--gaming`, `--sunshine`, `--moonlight`, `--material-maker`, `--etcher`, `--butler`, `--steamcmd` |
@@ -94,7 +96,7 @@ an already installed Debian package is retained on rerun, with updates following
 the host's normal package maintenance. `--flatpak` does not change Blender's
 installation source. A failed package installation stops the requested step.
 
-The five media editor flags follow the same Debian package-source and rerun
+The media editor flags follow the same Debian package-source and rerun
 policy. They install without recommended extras to keep optional dependencies
 small. Choose `--inkscape --gimp --av-tools` for routine game and website
 asset touch-ups; add Krita for painting and sprite work, Audacity for audio
@@ -112,6 +114,8 @@ basaltw setup agent_code_vm 10.0.0.25 agent --lan-access \
 
 Read [media touch-up workflows](DESKTOP_DEVELOPMENT.md#media-touch-ups-for-games-and-websites)
 for editable source formats, repeatable exports and autonomous validation.
+Read [music and input development](MUSIC_DEVELOPMENT.md) for MuseScore executable
+aliases, isolated score comparisons and deterministic audio tests for Godot.
 
 Add Blender to your usual setup command, retaining its other desired options:
 
@@ -130,7 +134,7 @@ Preview a command with `--dry-run` before applying it. On Debian, the selection
 is saved for subsequent setup/deploy operations; `--no-blender` in a patch
 disables the install selection without uninstalling the package. The media
 editors likewise support `--no-inkscape`, `--no-gimp`, `--no-krita`,
-`--no-audacity` and `--no-shotcut`. CachyOS setup
+`--no-audacity`, `--no-musescore` and `--no-shotcut`. CachyOS setup
 requires the complete desired selection on each explicit rerun; see
 [CachyOS software](CACHYOS_SOFTWARE.md) for package sources and publishing limits.
 Installing a package does not qualify its renderer, add-ons or GPU support.

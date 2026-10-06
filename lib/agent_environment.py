@@ -19,6 +19,7 @@ from lib.validators import validate_host
 
 
 PROJECT_FILE = "basaltwater-agent.json"
+MUSESCORE_EXECUTABLES = ("musescore4", "mscore4", "musescore3", "mscore3", "musescore", "mscore")
 DESKTOP_APPLICATIONS = {
     "blender": {
         "workflows": ["3D model touch-ups", "3D scene editing", "background rendering", "Python scene automation"],
@@ -84,6 +85,15 @@ DESKTOP_APPLICATIONS = {
             "Follow the desktop skill's media reference. Verify trim, fades, clipping, loop boundaries, sample rate and channels; unavailable desktop playback does not establish that the export lacks audio.",
         ],
     },
+    "musescore": {
+        "workflows": ["score inspection", "MIDI notation comparison", "sheet music export"],
+        "instructions": [
+            "Inspect a licensed score or MIDI task copy with {launch_prefix}{executable} /absolute/task/score.mid. Save an editable MSCZ and export review PDF/MusicXML separately; retain the exact original MIDI bytes.",
+            "Check the installed version and --help before scripting. Debian's package is MuseScore 3; native CachyOS uses its repository version. QT_QPA_PLATFORM=offscreen permits terminal-only queries and exports, but does not verify desktop readiness.",
+            "Follow the desktop skill's media reference and MUSIC_DEVELOPMENT.md guide. MIDI import derives notation: inspect quantization, voices, tempo, meter, ties and rests. A successful PDF export does not establish musical correctness or preserve original events.",
+            "Keep exported artifacts and isolated preferences outside source assets. Do not bundle MuseScore's fonts, SoundFonts or samples without a separate provenance and license review.",
+        ],
+    },
     "ardour": {
         "workflows": ["audio production"],
         "instructions": ["Preserve the session directory, audio and plugin references. Export the intended range with explicit sample rate/channels; verify signal and clipping. Audio-device and plugin readiness need separate checks."],
@@ -110,6 +120,8 @@ TOOLS = (
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
     "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
     "magick", "convert", "identify", "exiftool",
+    "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
+    *MUSESCORE_EXECUTABLES,
     "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"
@@ -269,6 +281,8 @@ def inspect_environment(repository: str) -> dict[str, object]:
         *(name for recipe in project["recipes"].values() for name in recipe["requires"]),
     ])
     tools = {name: shutil.which(name) for name in declared_tools}
+    # Canonical project requirements resolve distro aliases without launching Qt.
+    tools["musescore"] = next((tools[name] for name in MUSESCORE_EXECUTABLES if tools[name]), None)
     requirements = {
         name: {"executable": tools[name], "status": "available" if tools[name] else "missing"}
         for name in project["required_tools"]
@@ -281,7 +295,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
     launch_prefix = "" if native_desktop else "basaltw desktop exec -- "
     desktop = {
         name: {**guidance,
-               "instructions": [instruction.format(launch_prefix=launch_prefix)
+               "instructions": [instruction.format(launch_prefix=launch_prefix, executable=tools[name])
                                 for instruction in guidance.get("instructions", [])],
                "launch_argv": ([tools[name]] if native_desktop else ["basaltw", "desktop", "exec", "--", tools[name]]),
                "desktop_backend": "native-session" if native_desktop else "shared-xrdp",

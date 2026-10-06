@@ -716,6 +716,8 @@ def add_setup_arguments(
          "Install rootless Podman and its user-namespace/network/storage helpers (Debian APT setup)"),
         ("--debug-tools", ("gdb", "strace", "valgrind", "ccache", "ninja-build"),
          "Install native debugging and build-cache tools (Debian APT setup)"),
+        ("--audio-tools", ("sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"),
+         "Install SoX and audio/MIDI inspection clients (Debian APT setup; no audio routing changes)"),
     ):
         parser.add_argument(
             flag, dest="apt_packages", action=AptToolBundleAction,
@@ -828,6 +830,7 @@ def add_setup_arguments(
         ("--inkscape", "install_inkscape", "Install Inkscape for SVG and vector asset editing (Debian APT or native CachyOS package)"),
         ("--scribus", "install_scribus", "Install the native CachyOS Scribus package"),
         ("--audacity", "install_audacity", "Install Audacity for audio touch-ups (Debian APT or native CachyOS package)"),
+        ("--musescore", "install_musescore", "Install MuseScore for score and MIDI inspection (Debian musescore3 or native CachyOS musescore package)"),
         ("--ardour", "install_ardour", "Install the native CachyOS Ardour package"),
         ("--lmms", "install_lmms", "Install the native CachyOS LMMS package"),
         ("--freecad", "install_freecad", "Install the native CachyOS FreeCAD package"),

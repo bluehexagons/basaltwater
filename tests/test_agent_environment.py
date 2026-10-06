@@ -87,7 +87,7 @@ class TestAgentEnvironment(unittest.TestCase):
         ])
         for name, application in result["desktop_applications"].items():
             with self.subTest(application=name):
-                self.assertEqual(application["launch_argv"], ["/usr/bin/" + name])
+                self.assertEqual(application["launch_argv"], [application["executable"]])
                 self.assertEqual(application["desktop_backend"], "native-session")
                 self.assertEqual(application["readiness"], "unverified")
                 self.assertTrue(application["instructions"])

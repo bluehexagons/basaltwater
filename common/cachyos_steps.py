@@ -41,6 +41,7 @@ CACHYOS_DESKTOP_PACKAGES = (
     ("install_inkscape", "inkscape", "inkscape"),
     ("install_scribus", "scribus", "scribus"),
     ("install_audacity", "audacity", "audacity"),
+    ("install_musescore", "mscore", "musescore"),
     ("install_ardour", "ardour", "ardour"),
     ("install_lmms", "lmms", "lmms"),
     ("install_freecad", "freecad", "freecad"),

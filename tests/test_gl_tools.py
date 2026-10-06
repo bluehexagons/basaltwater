@@ -131,7 +131,7 @@ class TestGLToolsReconstruction(unittest.TestCase):
         self.assertTrue(config.install_gl_tools)
         self.assertEqual(
             [call.args[0] for call in mock_check_package.call_args_list],
-            list(GL_TOOL_MARKER_PACKAGES),
+            [*GL_TOOL_MARKER_PACKAGES, "musescore3"],
         )
 
     @patch("lib.reconstruct.reconstruct_configuration")
