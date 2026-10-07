@@ -138,6 +138,14 @@ installed version before scripting. MuseScore 3 supports isolated preferences
 with `-c /absolute/task/profile` and converter exports with `-o review.pdf`;
 terminal-only queries/exports can require `QT_QPA_PLATFORM=offscreen`.
 
+In the tested Debian 3.2.3 package, `--no-synthesizer` worked for offscreen
+conversion but crashed interactive startup. Omit it from GUI launches; `--no-midi`
+alone opened the score successfully. A `--wait-window MuseScore` match can be
+the splash, so inspect launch status and the actual document before input.
+Cancelling the first-run wizard may exit the application. Qt score controls
+may expose only an AT-SPI application root even when the GTK file dialog offers
+usable filename/button references. See the [observed music-tool caveats](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md#observed-debian-desktop-caveats).
+
 Save editable MSCZ and inspection exports separately from immutable input MIDI.
 Import quantization, voices, meter, tempo, rests and ties can differ from the
 source event timeline. Reopen and inspect the result against the project's

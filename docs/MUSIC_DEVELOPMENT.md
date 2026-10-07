@@ -91,6 +91,34 @@ inspect the actual document, save MSCZ, reopen and verify separate exports.
 Offscreen conversion does not validate GUI responsiveness, perceived audio,
 musical correctness or the product's score layout.
 
+### Observed Debian desktop caveats
+
+LibreTabs exercised Debian's `musescore3` 3.2.3+dfsg2-19 on the managed XFCE
+desktop on 2026-10-07. Offscreen PDF and MusicXML conversion worked for its
+30 bundled MIDI files. GUI startup with `--no-midi --no-synthesizer` exited
+with signal 11 after the splash. The same task copy opened successfully with
+`--no-midi` alone. Keep `--no-synthesizer` confined to the tested converter
+workflow for this version; omit it from interactive launches. Initializing the
+synthesizer does not establish audible playback, and this workaround does not
+require changing host routing or enabling RDP audio. Other versions need their
+own check before adopting it.
+
+`desktop exec --wait-window MuseScore` initially matched the startup splash.
+Use its launch token with `desktop launch-status`, then inspect the document
+window before treating the editor as ready. Cancelling the first-run wizard
+exited the application and stored `firstStart=false` in the isolated profile;
+observe process exit before relaunching. Qt score controls exposed only an
+AT-SPI application root in this check, while the GTK save dialog exposed its
+filename text and Save button. Prefer those references when available and use
+fresh screenshots for the unexposed score controls.
+
+Useful follow-ups for music VMs are optional PDF page inspection tools
+(`pdfinfo`/`pdftoppm`, absent on this VM) and a reproducible, test-owned virtual
+capture route for native Godot. Neither is currently provided by `--audio-tools`.
+MuseScore's own PNG export can provide score images when a PDF rasterizer is
+unavailable. Keep hardware capture, device latency and human listening checks
+separate from these software-only workflows.
+
 ## Test input without physical devices
 
 Generate a short project-authored mono PCM WAV with documented sample rate,
