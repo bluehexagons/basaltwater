@@ -177,6 +177,45 @@ class HealthTests(unittest.TestCase):
         self.assertNotIn("secret", str(result))
         self.assertNotIn("nvme", str(result))
 
+    def test_mirror_refresh_observations_are_read_only_and_do_not_claim_freshness(self):
+        cases = [
+            ("ok", "LoadState=loaded\nActiveState=failed\nResult=exit-code\n", "failed"),
+            ("ok", "LoadState=loaded\nActiveState=inactive\nResult=timeout\n", "failed"),
+            ("ok", "LoadState=loaded\nActiveState=inactive\nResult=success\n", "available"),
+            ("ok", "LoadState=loaded\nActiveState=activating\nResult=success\n", "deferred"),
+            ("ok", "LoadState=not-found\nActiveState=inactive\nResult=success\n", "deferred"),
+            ("ok", "LoadState=masked\nActiveState=inactive\nResult=success\n", "deferred"),
+            ("ok", "LoadState=loaded\nActiveState=inactive\nResult=private-result\n", "deferred"),
+            ("ok", "LoadState=loaded\nActiveState=inactive\nResult=success\nprivate=secret\n", "deferred"),
+            ("ok", "LoadState=loaded\nActiveState=inactive\nResult=success\nResult=success\n", "deferred"),
+            ("ok", "private=secret\n", "deferred"),
+            ("error", "private=secret\n", "deferred"),
+        ]
+        for status, output, expected in cases:
+            calls = []
+
+            def probe(command, uid):
+                calls.append(command)
+                self.assertEqual(uid, 1000)
+                return (status, output) if "show" in command else ("ok", "")
+
+            with self.subTest(output=output), \
+                    patch.object(health.shutil, "disk_usage", return_value=SimpleNamespace(free=10 * 1024 ** 3)), \
+                    patch.object(Path, "is_dir", return_value=True), \
+                    patch.object(health.platform, "release", return_value="7.2-test"):
+                result = {name: (state, reason) for name, state, reason in health.collect_host_health(probe, 1000)}
+            self.assertEqual(result["health.mirrors"][0], expected)
+            self.assertIn(["/usr/bin/systemctl", "show", "cachyos-rate-mirrors.service",
+                           "--property=LoadState", "--property=ActiveState", "--property=Result"], calls)
+            self.assertFalse(any(set(command) & {"sudo", "start", "restart", "reset-failed", "journalctl"}
+                                 for command in calls))
+            self.assertNotIn("secret", str(result))
+            self.assertNotIn("private-result", str(result))
+            if expected == "available":
+                self.assertIn("freshness and connectivity are not verified", result["health.mirrors"][1])
+            elif expected == "failed":
+                self.assertIn("DNS/connectivity", result["health.mirrors"][1])
+
     def test_selected_missing_tools_packages_and_service_fail(self):
         config = SetupConfig(system_type="agent_cachyos", host="localhost", username="human",
                              web_interfaces=["t3code"], install_sunshine=True, agent_tools=["codex"])

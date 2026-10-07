@@ -16,6 +16,47 @@ Installer updates also carry forward managed `state`, `deployments`, and
 If that path also contains other unmanaged files, move or resolve them before
 rerunning the installer.
 
+## Mirror refresh failures
+
+If `health.mirrors` reports failure, inspect the distro service before changing
+package or network settings:
+
+```fish
+systemctl status cachyos-rate-mirrors.service --no-pager
+journalctl -b -u cachyos-rate-mirrors.service -n 60 --no-pager
+systemctl list-timers cachyos-rate-mirrors.timer --no-pager
+getent hosts geoip.kde.org
+getent hosts archlinux.org
+```
+
+Use the hosts named in the actual error when they differ. A successful lookup
+now does not establish that DNS worked during the failed run or that HTTPS to
+every mirror works. On the audited laptop, refresh failed during a network
+reconnection with `Could not resolve host: geoip.kde.org`; the timer's next
+scheduled attempt was nine days away. The installed
+[CachyOS service](https://github.com/CachyOS/CachyOS-PKGBUILDS/blob/master/cachyos-rate-mirrors/cachyos-rate-mirrors.service)
+has no automatic failure retry. `network-online.target` orders startup;
+[NetworkManager's wait service](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/NetworkManager-wait-online.service.html)
+does not guarantee continuous Internet or DNS availability.
+
+Once connectivity is restored, retry the existing distro service from your
+terminal, completing its normal sudo prompt:
+
+```fish
+sudo systemctl start cachyos-rate-mirrors.service
+systemctl show cachyos-rate-mirrors.service -p ActiveState -p Result
+basaltw local cachyos-doctor
+```
+
+This reranks system mirror lists. A successful oneshot normally returns to
+`ActiveState=inactive` with `Result=success`; merely clearing the failed state
+does not rerun mirror refresh. Resolve any new error in its journal. Then use
+the normal full CachyOS update workflow if needed. Do not use `pacman -Sy` or
+replace DNS servers to conceal a transient failure. Basaltwater observes the
+service without installing retries, changing distro units, or refreshing
+package databases. A service with no recorded failure does not prove that its
+mirrors or pacman sync metadata are current.
+
 ## Codex updates
 
 For deliberate standalone updates outside setup:
@@ -411,3 +452,49 @@ On CachyOS this repeats only the local `agent_cachyos` profile. It does not
 upgrade CachyOS itself or redeploy saved remote hosts. Debian also supports
 refresh, using its existing target-side record and root setup runner; see
 [refresh on Debian](COMMAND_LINE.md#refresh-this-machine).
+
+## Recorded workstation audit: 2026-10-07
+
+The audited target was a physical Surface Laptop 6 running CachyOS, not a VM.
+`systemd-detect-virt` returned `none`. Observations below were made from its
+existing KDE Wayland desktop account; no OS update, service restart, portal
+capture/input, or firewall change was performed.
+
+| Area | Observation |
+| --- | --- |
+| OS and desktop | Kernel `7.2.9-1-cachyos`, Plasma/KWin `6.7.5`, Mesa `26.2.4`; booted kernel modules present. |
+| Packages | `pacman -Dk` found no database errors; all packages required by the saved setup were installed. Selected core desktop, audio, Sunshine, and T3 packages had no missing files in `pacman -Qk`. |
+| Tools | Saved agent, language, game-development, media, graphics, and desktop commands were present. The doctor previously omitted several of those command checks; this audit added them and Remmina dependency checks. |
+| Graphics and media | `glxinfo -B` reported accelerated Intel Arc rendering; `vulkaninfo --summary` enumerated the Intel GPU. A 0.1-second FFmpeg synthetic-audio conversion to the null sink succeeded. These do not test GUI rendering, video encoding, or physical audio playback. |
+| Audio and session | PipeWire, PipeWire Pulse, WirePlumber, KWin, portal, and accessibility prerequisites were active/observed. Native control was stopped; live portal consent and input remained unverified. |
+| Capacity and clock | About 393 GiB filesystem space and 26 GiB memory available; NTP synchronized. |
+| Mirror refresh | One failed system unit, `cachyos-rate-mirrors.service`, after a DNS failure during reconnection. DNS resolved at audit time. Retry through the procedure above still requires the owner's sudo password. |
+| Updates | Local pacman sync metadata was dated October 7 and listed zero repository updates. No network refresh or AUR update check was performed; this does not establish that all software is current. |
+| Sunshine | User service active with `Result=success` and no service restarts since October 5. Earlier Vulkan crashes are covered by the existing VA-API recovery guidance. No Moonlight stream was started or qualified. |
+| Private state | Saved setup/report files were user-owned `0600`; the doctor reported private default T3 state directories and token-file permissions without reading credentials. |
+| Network | T3 and Sunshine had non-loopback TCP listeners. UFW was active; saved broad remote-access allows followed covering deny guards. Effective rules and remote reachability remained unverified because sudo required a password. |
+| Storage encryption | Root was on a direct NVMe partition without a dm-crypt layer. The tooling profile does not configure disk encryption. |
+
+The boot journal also contained an earlier `surface_aggregator` controller
+warning and libinput touch-jump reports. Their cause and impact were not
+established. If battery, resume, or touchpad problems recur, retain the local
+kernel/session journal and investigate through the distro's hardware support
+workflow; do not change drivers or power policy merely to clear a diagnostic.
+No user units were failed at audit time. The generic host summary checks unit
+failures and kernel-module presence; it does not inspect kernel warning history,
+prove hardware health, or replace application/client tests.
+
+The next local checks are the mirror retry and privileged firewall inspection:
+
+```fish
+sudo systemctl start cachyos-rate-mirrors.service
+sudo ufw status verbose
+basaltw local cachyos-doctor
+```
+
+The installed `basaltw` launcher used a separate source checkout at audit time.
+Repository fixes become available there after `basaltw upgrade` on the `dev`
+channel; an OS or full workstation refresh is unnecessary just to acquire
+these read-only diagnostic improvements. A pinned channel needs its normal
+deliberate channel update. The updated doctor was exercised directly from this
+repository against the live saved selection.

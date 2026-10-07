@@ -566,6 +566,10 @@ elevates privileges; saved rules do not prove effective packet filtering.
 When Sunshine is selected, it checks the user service and, if `vainfo` is installed,
 VA-API encoding profiles without starting capture. A crashed Sunshine service is
 reported as failed; an inactive service may reflect an intentional quit.
+`health.mirrors` separately identifies a failed CachyOS mirror refresh service
+and points to its local journal and DNS/connectivity checks. It does not contact
+mirrors, retry the service, or verify mirror freshness. See
+[mirror recovery](CACHYOS_MAINTENANCE.md#mirror-refresh-failures).
 Update observations use existing pacman metadata, which may be stale and does not
 cover AUR releases. Setup prints the same host observations before installing
 packages.

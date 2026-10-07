@@ -89,6 +89,23 @@ def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
         count = len(output.strip().splitlines()) if output.strip() else 0
         add(f"health.{scope}-units", "deferred" if status != "ok" else "failed" if count else "available",
             "Could not inspect failed units." if status != "ok" else f"{count} failed units; inspect systemctl locally.")
+    status, output = probe([
+        "/usr/bin/systemctl", "show", "cachyos-rate-mirrors.service",
+        "--property=LoadState", "--property=ActiveState", "--property=Result",
+    ], uid)
+    values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    known = (status == "ok" and len(output.splitlines()) == 3
+             and set(values) == {"LoadState", "ActiveState", "Result"}
+             and values["LoadState"] == "loaded")
+    failed = known and (values["ActiveState"] == "failed" or values["Result"] in {
+        "core-dump", "signal", "exit-code", "timeout", "start-limit-hit", "watchdog", "resources",
+    })
+    idle = known and values["ActiveState"] == "inactive" and values["Result"] == "success"
+    add("health.mirrors", "failed" if failed else "available" if idle else "deferred",
+        "CachyOS mirror refresh failed; inspect journalctl -u cachyos-rate-mirrors.service locally. "
+        "Check DNS/connectivity, then retry through CachyOS maintenance; setup does not repair mirrors."
+        if failed else "Mirror refresh service has no recorded failure; mirror freshness and connectivity are not verified."
+        if idle else "Mirror refresh service absent, running, overridden, or unverified; inspect systemctl locally.")
     # -Qu uses existing sync metadata. Never synchronize pacman's real database
     # or invoke checkupdates (which creates a temporary database) in a doctor.
     status, output = probe(["/usr/bin/pacman", "-Qu"], uid)
