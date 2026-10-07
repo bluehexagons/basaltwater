@@ -128,6 +128,18 @@ status and selection/policy digest, without URLs or tokens. Doctor reads it
 without sending an event. Acceptance does not prove receiver processing; missing,
 older, suppressed, or different-selection evidence leaves delivery unverified.
 
+For an authorized privileged check or recovery when execution policy permits,
+try KDE's existing polkit authentication agent before concluding that a missing
+sudo password blocks the agent. A scoped command such as
+`/usr/bin/pkexec --disable-internal-agent /usr/bin/ufw status verbose` lets the
+owner authenticate in KDE while the agent receives only command output. Announce
+the command's purpose before requesting authentication. If no graphical agent
+is available or authentication is rejected, use the owner's terminal instead;
+never request a password through chat or tool stdin. Keep the doctor read-only
+and unprivileged. See the
+[privileged-check procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_MAINTENANCE.md#privileged-checks-from-an-agent)
+for mirror recovery and effective firewall inspection.
+
 For explicitly requested firewall management, retain the full setup selection
 and add `--lan-access` for the single private default-route LAN, or
 `--access-source PRIVATE_IP_OR_CIDR` for fixed sources. UFW allows outgoing

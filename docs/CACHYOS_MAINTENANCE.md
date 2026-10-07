@@ -5,6 +5,41 @@ This reference covers an established Basaltwater installation. Run commands
 in fish from the KDE session as the same desktop account, without `sudo`
 unless a specific command requires elevation.
 
+## Privileged checks from an agent
+
+On an existing KDE desktop with a registered polkit authentication agent, an
+agent may request an authorized privileged command through the normal desktop
+password dialog when its execution policy permits. A failed `sudo -n` check
+alone does not establish that desktop authentication is unavailable. Announce
+the specific check and run the executable directly, for example:
+
+```fish
+/usr/bin/pkexec --disable-internal-agent /usr/bin/ufw status verbose
+```
+
+The owner enters the password only in KDE's dialog; the agent receives the
+command's output. `--disable-internal-agent` prevents a fallback password prompt
+in the agent's terminal. If no graphical agent is available or authentication
+is rejected, leave the check pending and use the owner's KDE terminal. Do not
+collect passwords in chat, tool stdin, scripts, or environment variables.
+
+For the mirror recovery described below, the scoped elevated command is:
+
+```fish
+/usr/bin/pkexec --disable-internal-agent /usr/bin/systemctl start cachyos-rate-mirrors.service
+```
+
+For effective firewall inspection, use the same invocation with
+`/usr/bin/ufw show raw` and inspect the live IPv4/IPv6 input chains and rule order.
+Authentication applies to the requested command; it does not authorize other
+system changes. This is an interactive audit/recovery procedure, separate from
+the unprivileged, read-only doctor.
+
+When copying commands into a terminal, copy only the command text. `fish` is
+the code block's language label, not a command prefix. Run each command
+separately; joining several lines with spaces passes later commands as arguments
+to the first command.
+
 ## Installer data and older installations
 
 The installer no longer migrates `infra_tools` user data. Any remaining old
@@ -39,6 +74,24 @@ has no automatic failure retry. `network-online.target` orders startup;
 [NetworkManager's wait service](https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/NetworkManager-wait-online.service.html)
 does not guarantee continuous Internet or DNS availability.
 
+The follow-up journal comparison established that this run began at 11:49:09
+on October 7, immediately after resume. NetworkManager installed DNS servers
+and completed Wi-Fi activation at 11:49:13; Internet connectivity was reported
+at 11:49:14. Both the Arch mirror-status and KDE GeoIP HTTPS endpoints returned
+HTTP 200 when checked afterward. This supports a wake-time connectivity race,
+with no evidence of a continuing DNS outage. Installed version `24-1` already
+tolerates a failed GeoIP lookup; the fatal error was the subsequent Arch
+mirror-status fetch. Setting a country would not repair that fetch.
+
+The missing retry policy is reported upstream in
+[CachyOS issue #1739](https://github.com/CachyOS/CachyOS-PKGBUILDS/issues/1739).
+[PR #1741](https://github.com/CachyOS/CachyOS-PKGBUILDS/pull/1741) proposes delayed,
+bounded retries. At the October 7 investigation, the installed service still
+had no `Restart=` setting. Track the distro fix through normal updates; local
+retry drop-ins are a separate administrator policy, outside this tooling
+profile's setup. The loaded local unit remains the authority for what actually
+runs on a workstation.
+
 Once connectivity is restored, retry the existing distro service from your
 terminal, completing its normal sudo prompt:
 
@@ -56,6 +109,86 @@ replace DNS servers to conceal a transient failure. Basaltwater observes the
 service without installing retries, changing distro units, or refreshing
 package databases. A service with no recorded failure does not prove that its
 mirrors or pacman sync metadata are current.
+
+## Surface resume and touchpad warnings
+
+The Surface Laptop 6's October 5 warning occurred during resume, in the call
+chain `spwr_notify_bat` → `spwr_battery_recheck_full` →
+`ssam_request_do_sync_with_buffer`. The assertion said the Surface Aggregator
+controller was not started; the battery event returned `-19` (`ENODEV`). The
+[upstream controller](https://github.com/torvalds/linux/blob/v7.2/drivers/platform/surface/aggregator/controller.c)
+rejects requests outside its started state. Together with the resume timing,
+this suggests a driver/event ordering race; it does not establish its exact
+trigger or an applicable fixed kernel version. Battery state was readable and
+reported present/full during the follow-up. The two later resumes in the same
+boot completed without another recorded instance of this assertion.
+The desktop owner reported no noticeable touchpad, battery, or wake problems.
+
+The touchpad messages were separate: five jumps were reported shortly after
+the October 4 boot, followed by libinput's log rate limit. Absence of later
+messages does not prove absence of later jumps. Upstream
+[libinput guidance](https://wayland.freedesktop.org/libinput/doc/latest/touchpad-jumping-cursors.html)
+explains that these messages report implausible touch coordinates that libinput
+discards. If the only symptom is the log warning, the filter is functioning as
+intended. A visible pointer jump, freeze, or broken gesture needs a focused
+device investigation.
+For this symptom-free workstation, monitoring through normal distro maintenance
+is appropriate; no hardware-specific override was justified by this audit.
+
+The installed `libinput` package already included the `045e:09af` touchpad
+quirk with pressure range `25:10` and palm threshold `500` in
+`/usr/share/libinput/30-vendor-microsoft.quirks`. That device was tagged as a
+touchpad by udev. Do not duplicate those settings in a local override just
+because older Surface guides suggest adding them. Their presence does not
+prove that pressure calibration is correct or explain coordinate jumps.
+
+Read-only follow-up commands:
+
+```fish
+journalctl -b -k -g 'PM: suspend|surface_aggregator|surface_serial_hub' --no-pager
+journalctl --user -b -g 'Touch jump|Libinput' --no-pager
+ls /sys/class/power_supply
+```
+
+Check battery/wake behavior and physical touchpad behavior with the desktop
+owner before changing kernels, firmware, or quirks. The `libinput` command-line
+debugging tools are in the separate `libinput-tools` package on this CachyOS
+installation; the missing command does not mean KWin lacks the libinput
+library. If a touchpad problem is reproducible, install those tools through
+normal pacman maintenance, identify the actual touchpad event node (numbers
+can change), and follow libinput's device-specific recording/report procedure.
+Input recording is a deliberate owner action, separate from the read-only
+doctor. Preserve the relevant journal and check distro/Surface support for the
+installed kernel and firmware instead of treating these messages as evidence
+that every Surface needs a replacement kernel.
+
+## Direct T3 access across LAN subnets
+
+`--lan-access` allows the single private default-route LAN, not every private
+address range. On the audited laptop, address `192.168.68.57/22` produced an
+allow for `192.168.68.0/22`. A new T3 connection arriving from `192.168.0.x`
+would therefore hit the covering deny on TCP 3773. The desktop backend was
+listening on `0.0.0.0:3773` and responded locally; it was not confined to
+loopback. This is the configured firewall scope, not evidence of a broken T3
+listener.
+
+For a trusted client on another subnet, confirm its actual source IP/mask and
+the destination used for direct pairing. Explicit `--access-source` values
+can add a private host or subnet to the saved setup selection. For example,
+`--access-source 192.168.0.0/24` would add that network if `/24` is its confirmed
+scope. Preview through `basaltw refresh --dry-run` with the access flag, retain
+the existing selection, and finish active work before applying refresh. Access
+sources apply to all selected managed services, including Sunshine; they are
+not a T3-only allowance.
+
+The router must also route the client to the laptop and permit traffic between
+the networks. A firewall allow on the laptop cannot create that route or bypass
+router isolation/NAT. Check for a new connection from the intended client after
+applying the desired policy. T3 Connect is separate from direct LAN pairing;
+use desktop Settings → Connections for the desktop environment rather than
+starting another backend. See the upstream
+[remote-access guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/remote-access.md)
+for connection modes and route selection.
 
 ## Codex updates
 
@@ -458,7 +591,9 @@ refresh, using its existing target-side record and root setup runner; see
 The audited target was a physical Surface Laptop 6 running CachyOS, not a VM.
 `systemd-detect-virt` returned `none`. Observations below were made from its
 existing KDE Wayland desktop account; no OS update, service restart, portal
-capture/input, or firewall change was performed.
+capture/input, or firewall change was performed in the initial read-only pass.
+The follow-up used KDE polkit authentication for the mirror retry and privileged
+firewall inspection described below.
 
 | Area | Observation |
 | --- | --- |
@@ -468,29 +603,49 @@ capture/input, or firewall change was performed.
 | Graphics and media | `glxinfo -B` reported accelerated Intel Arc rendering; `vulkaninfo --summary` enumerated the Intel GPU. A 0.1-second FFmpeg synthetic-audio conversion to the null sink succeeded. These do not test GUI rendering, video encoding, or physical audio playback. |
 | Audio and session | PipeWire, PipeWire Pulse, WirePlumber, KWin, portal, and accessibility prerequisites were active/observed. Native control was stopped; live portal consent and input remained unverified. |
 | Capacity and clock | About 393 GiB filesystem space and 26 GiB memory available; NTP synchronized. |
-| Mirror refresh | One failed system unit, `cachyos-rate-mirrors.service`, after a DNS failure during reconnection. DNS resolved at audit time. Retry through the procedure above still requires the owner's sudo password. |
+| Mirror refresh | Initially failed during wake-time network reconnection. The authenticated retry completed at 12:22:43 CDT with `ActiveState=inactive`, `Result=success`; both Arch and CachyOS mirror lists were refreshed. |
 | Updates | Local pacman sync metadata was dated October 7 and listed zero repository updates. No network refresh or AUR update check was performed; this does not establish that all software is current. |
 | Sunshine | User service active with `Result=success` and no service restarts since October 5. Earlier Vulkan crashes are covered by the existing VA-API recovery guidance. No Moonlight stream was started or qualified. |
 | Private state | Saved setup/report files were user-owned `0600`; the doctor reported private default T3 state directories and token-file permissions without reading credentials. |
-| Network | T3 and Sunshine had non-loopback TCP listeners. UFW was active; saved broad remote-access allows followed covering deny guards. Effective rules and remote reachability remained unverified because sudo required a password. |
+| Network | T3 and Sunshine had non-loopback TCP listeners. Privileged UFW status and live IPv4/IPv6 input chains confirmed active default-deny incoming policy and managed LAN allows followed by covering deny guards. Remote client reachability remained unverified. |
 | Storage encryption | Root was on a direct NVMe partition without a dm-crypt layer. The tooling profile does not configure disk encryption. |
 
 The boot journal also contained an earlier `surface_aggregator` controller
-warning and libinput touch-jump reports. Their cause and impact were not
-established. If battery, resume, or touchpad problems recur, retain the local
+warning and libinput touch-jump reports. The follow-up analysis above found no
+owner-reported symptoms; the exact driver trigger remained unproven.
+If battery, resume, or touchpad problems recur, retain the local
 kernel/session journal and investigate through the distro's hardware support
 workflow; do not change drivers or power policy merely to clear a diagnostic.
 No user units were failed at audit time. The generic host summary checks unit
 failures and kernel-module presence; it does not inspect kernel warning history,
 prove hardware health, or replace application/client tests.
 
-The next local checks are the mirror retry and privileged firewall inspection:
+The mirror retry and privileged firewall inspection completed using the scoped
+polkit commands above. The repository doctor then exited successfully with no
+failed capabilities and zero failed system/user units. Its firewall observation
+still correctly remains deferred because the doctor does not perform privileged
+inspection itself. For a later recurrence, the equivalent KDE terminal checks
+are:
 
 ```fish
 sudo systemctl start cachyos-rate-mirrors.service
+systemctl show cachyos-rate-mirrors.service -p ActiveState -p Result
 sudo ufw status verbose
+sudo ufw show raw
 basaltw local cachyos-doctor
 ```
+
+Follow-up inspection of saved rules and live UFW input chains found no additional
+unrestricted accepts for new inbound connections to the managed T3/Sunshine
+ports ahead of the guards. IPv4 allows for those services were restricted to
+`192.168.68.0/22`, ahead of deny guards; Sunshine administration port 47990 and
+IPv6 remote access had deny guards. The older broad T3 allows followed those
+guards and therefore did not reopen the managed ports. Standard loopback and
+established/related traffic accepts preceded user rules.
+KDE Connect's separate TCP/UDP range `1714:1764` remained allowed from any
+source in both families, as configured outside this profile. Decide its desired
+network scope separately. These kernel-rule observations do not qualify
+application access or replace a new connection test from the intended client.
 
 The installed `basaltw` launcher used a separate source checkout at audit time.
 Repository fixes become available there after `basaltw upgrade` on the `dev`
