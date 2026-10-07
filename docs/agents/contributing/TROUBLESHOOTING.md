@@ -29,3 +29,12 @@ that represents the action being changed. For invalid input, inspect
 
 For architecture and test expectations, see the
 [contributor guide](README.md).
+
+## Filesystem mocks on newer Python versions
+
+Do not call `Path.is_file()` from a mocked `os.path.isfile()` callback, or
+`Path.is_dir()` from a mocked `os.path.isdir()` callback. Python 3.14 delegates
+these pathlib checks to the corresponding `os.path` functions, causing recursive
+mock calls. Evaluate a temporary fixture's state before entering the patch when
+the test needs a fixed result; for changing state, capture the original function
+before patching and call it only on temporary fixture paths.

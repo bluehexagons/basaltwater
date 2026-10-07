@@ -54,7 +54,7 @@ class KernelRestartTests(unittest.TestCase):
             self.assertEqual((Path(directory) / "reboot-required.pkgs").read_text(),
                              "proxmox-kernel-7.0.14-16-pve-signed\n")
             with (
-                patch.object(setup_reboot.os.path, "isfile", side_effect=lambda path: marker.is_file()),
+                patch.object(setup_reboot.os.path, "isfile", return_value=marker.is_file()),
                 patch.object(setup_reboot.os.path, "isdir", return_value=True),
                 patch.object(setup_reboot, "can_restart_system", return_value=True),
                 patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True),
