@@ -14,10 +14,19 @@ from lib.proxmox_memory import (
     parse_swapon_output,
 )
 from lib.remote_utils import is_dry_run, run
-from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
+from lib.kernel_restart import install_kernel_restart_hook
+from lib.machine_state import can_modify_kernel
+from lib.maintenance_defaults import (
+    APT_DPKG_OPTIONS,
+    APT_LOCK_OPTIONS,
+    APT_UPDATE_OPTIONS,
+    APT_UPGRADE_SAFETY_OPTIONS,
+)
 from lib.proxmox_preflight import (
+    SUPPORTED_PVE_MAJOR,
     check_proxmox_installation,
     check_proxmox_package_state,
+    check_proxmox_update_safety,
     check_proxmox_upgrade_candidate,
 )
 
@@ -45,7 +54,10 @@ def preflight_proxmox(config: SetupConfig) -> None:
             "omit it to preserve cluster migration, replication, and console access"
         )
     if is_dry_run():
-        print("  Would verify Proxmox VE 9.2, Debian trixie, stable APT repositories, and package state")
+        print(
+            f"  Would verify Proxmox VE {SUPPORTED_PVE_MAJOR}.x, Debian trixie, "
+            "stable APT repositories, and package state"
+        )
         return
     check_proxmox_installation()
     check_proxmox_package_state()
@@ -61,6 +73,43 @@ def preflight_proxmox(config: SetupConfig) -> None:
         )
     check_proxmox_upgrade_candidate()
     print("  ✓ Supported Proxmox installation and repository access verified")
+
+
+def upgrade_proxmox_packages(config: SetupConfig) -> None:
+    """Apply current stable packages on every setup run under its target lock.
+
+    Preflight has refreshed indexes. Run directly in the setup process: starting
+    the scheduled updater would defer because setup already owns its lock.
+    """
+    del config
+    if is_dry_run():
+        print("  Would install the kernel restart hook and upgrade stable Proxmox packages")
+        return
+
+    check_proxmox_installation()
+    check_proxmox_upgrade_candidate()
+    report = check_proxmox_update_safety(allow_inactive_storage=True)
+    for warning in report.warnings:
+        print(f"  ⚠ {warning}")
+    if not can_modify_kernel():
+        raise RuntimeError("Proxmox host setup requires kernel access for restart markers")
+    # First setup must record new kernels before installing the restart timer.
+    install_kernel_restart_hook()
+    print("  Upgrading Proxmox packages (APT may wait for another package operation)...")
+    result = run(
+        ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "dist-upgrade", "-y", "-q"]
+        + APT_UPGRADE_SAFETY_OPTIONS + APT_DPKG_OPTIONS + APT_LOCK_OPTIONS,
+        check=False, capture_output=True, timeout=4 * 60 * 60,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown APT error").strip()
+        raise RuntimeError("Proxmox package upgrade failed: " + detail[-2000:])
+    check_proxmox_installation()
+    check_proxmox_upgrade_candidate(require_current=True)
+    report = check_proxmox_update_safety(allow_inactive_storage=True)
+    for warning in report.warnings:
+        print(f"  ⚠ {warning}")
+    print("  ✓ Proxmox packages upgraded and node health verified")
 
 
 def configure_proxmox_host_memory_safety(config: SetupConfig) -> None:

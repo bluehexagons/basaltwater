@@ -8,15 +8,61 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from lib import kernel_restart
+from lib import setup_reboot
 from lib.config import SetupConfig
 from common.common_steps import check_restart_required
+from common.proxmox_steps import upgrade_proxmox_packages
+from lib.proxmox_maintenance import ProxmoxMaintenanceReport
 from security.security_steps import configure_auto_restart
 
 
 class KernelRestartTests(unittest.TestCase):
+    def test_first_proxmox_upgrade_records_kernel_for_explicit_setup_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hook = Path(directory) / "basaltwater-reboot-required"
+            marker = Path(directory) / "reboot-required"
+            content = kernel_restart.KERNEL_HOOK_CONTENT.replace("/run/", directory + "/")
+            content = content.replace('$(uname -r)', "7.0.14-15-pve")
+
+            def apt_upgrade(command, **kwargs):
+                self.assertIn("dist-upgrade", command)
+                self.assertTrue(hook.is_file())
+                self.assertEqual(hook.stat().st_mode & 0o777, 0o755)
+                # Simulate the package maintainer invoking the installed hook,
+                # with all marker writes redirected to this temporary tree.
+                return subprocess.run(
+                    ["sh", str(hook), "7.0.14-16-pve"], capture_output=True, text=True,
+                    env={**os.environ, "DPKG_MAINTSCRIPT_PACKAGE": "proxmox-kernel-7.0.14-16-pve-signed"},
+                )
+
+            config = SetupConfig(username="root", host="localhost", system_type="server_proxmox")
+            with (
+                patch.object(kernel_restart, "KERNEL_HOOK", str(hook)),
+                patch.object(kernel_restart, "KERNEL_HOOK_CONTENT", content),
+                patch("common.proxmox_steps.is_dry_run", return_value=False),
+                patch("common.proxmox_steps.can_modify_kernel", return_value=True),
+                patch("common.proxmox_steps.check_proxmox_installation"),
+                patch("common.proxmox_steps.check_proxmox_upgrade_candidate"),
+                patch("common.proxmox_steps.check_proxmox_update_safety", return_value=ProxmoxMaintenanceReport("pve", "localhost")),
+                patch("common.proxmox_steps.run", side_effect=apt_upgrade),
+            ):
+                upgrade_proxmox_packages(config)
+            self.assertTrue(marker.is_file())
+            self.assertEqual((Path(directory) / "reboot-required.pkgs").read_text(),
+                             "proxmox-kernel-7.0.14-16-pve-signed\n")
+            with (
+                patch.object(setup_reboot.os.path, "isfile", side_effect=lambda path: marker.is_file()),
+                patch.object(setup_reboot.os.path, "isdir", return_value=True),
+                patch.object(setup_reboot, "can_restart_system", return_value=True),
+                patch.object(setup_reboot, "_prepare_proxmox_restart", return_value=True),
+                patch.object(setup_reboot, "_request_restart", return_value=True) as restart,
+            ):
+                self.assertEqual(setup_reboot.restart_after_setup(config), 0)
+            restart.assert_called_once_with(config, proxmox=True, restart_unit=ANY)
+
     def test_hook_is_executable_and_preserves_other_hooks_on_rerun(self):
         with tempfile.TemporaryDirectory() as directory:
             hook = Path(directory) / "basaltwater-reboot-required"

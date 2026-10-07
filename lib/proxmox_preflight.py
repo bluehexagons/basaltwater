@@ -13,7 +13,7 @@ from lib.remote_utils import read_os_release, run
 from lib.validation import validate_filesystem_path
 
 
-SUPPORTED_PVE_RELEASE = "9.2"
+SUPPORTED_PVE_MAJOR = 9
 SUPPORTED_DEBIAN_CODENAME = "trixie"
 
 
@@ -35,11 +35,11 @@ def check_proxmox_installation() -> None:
         raise RuntimeError("Proxmox setup requires Debian 13 (trixie)")
     version = run("pveversion", check=False, capture_output=True, timeout=60)
     if version.returncode != 0 or not re.match(
-        rf"^pve-manager/{re.escape(SUPPORTED_PVE_RELEASE)}(?:[.-]|/)",
+        rf"^pve-manager/{SUPPORTED_PVE_MAJOR}\.[0-9]+(?:[.-]|/)",
         (version.stdout or "").strip(),
     ):
         raise RuntimeError(
-            f"Only stable Proxmox VE {SUPPORTED_PVE_RELEASE} is supported; "
+            f"Only stable Proxmox VE {SUPPORTED_PVE_MAJOR}.x is supported; "
             "upgrade the host through Proxmox's documented procedure first"
         )
 
@@ -97,18 +97,25 @@ def _read_config(path: str, *, required: bool = False) -> str:
     return "\n".join(line for line in content.splitlines() if not line.lstrip().startswith("#"))
 
 
-def check_proxmox_upgrade_candidate() -> None:
-    """Refuse a release transition discovered after refreshing package indexes."""
+def check_proxmox_upgrade_candidate(*, require_current: bool = False) -> None:
+    """Validate the stable major and optionally require an up-to-date manager."""
     result = run("LC_ALL=C apt-cache policy pve-manager", check=False, capture_output=True, timeout=60)
     match = re.search(r"^\s*Candidate:\s*(\S+)\s*$", result.stdout or "", re.MULTILINE)
     candidate = match.group(1).split(":")[-1] if match else ""
     if result.returncode != 0 or not re.match(
-        rf"^{re.escape(SUPPORTED_PVE_RELEASE)}(?:[.-]|$)", candidate,
+        rf"^{SUPPORTED_PVE_MAJOR}\.[0-9]+(?:[.-]|$)", candidate,
     ):
         raise RuntimeError(
-            f"APT pve-manager candidate is not supported Proxmox VE {SUPPORTED_PVE_RELEASE}; "
-            "review repository selection and perform release transitions manually"
+            f"APT pve-manager candidate is not supported Proxmox VE {SUPPORTED_PVE_MAJOR}.x; "
+            "review repository selection and perform major release transitions manually"
         )
+    if require_current:
+        installed = re.search(r"^\s*Installed:\s*(\S+)\s*$", result.stdout or "", re.MULTILINE)
+        if installed is None or installed.group(1) != match.group(1):
+            raise RuntimeError(
+                "Proxmox pve-manager did not reach its APT candidate; "
+                "review package holds and dependency constraints"
+            )
 
 
 def check_proxmox_package_state() -> None:

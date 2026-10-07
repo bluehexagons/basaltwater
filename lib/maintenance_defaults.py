@@ -23,6 +23,13 @@ APT_LOCK_OPTIONS = [
 # apt-get update otherwise permits some failed indexes and stale metadata.
 APT_UPDATE_OPTIONS = ["-o", "APT::Update::Error-Mode=any"]
 
+# Keep explicit Proxmox setup and scheduled upgrades on the same APT policy.
+APT_DPKG_OPTIONS = [
+    "-o", "Dpkg::Options::=--force-confdef",
+    "-o", "Dpkg::Options::=--force-confold",
+]
+APT_UPGRADE_SAFETY_OPTIONS = ["--no-remove"]
+
 # Individual cleanup commands should never block the whole maintenance run forever.
 CLEANUP_COMMAND_TIMEOUT_SECONDS = 600
 

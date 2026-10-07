@@ -57,6 +57,8 @@ The standalone hook records `/run/reboot-required` and the package name in
 depend on unattended-upgrades and preserves existing package hooks and markers.
 Rerun setup to install or repair it; installing the hook does not itself reboot
 the machine or recreate a marker for an earlier update.
+Proxmox host setup installs this hook before its package upgrade so even a first
+setup records newly installed kernels for `--restart-if-needed`.
 
 For hosts that already have an update without a marker, setup reports
 newer fully configured Debian/Ubuntu `linux-image-*` or Proxmox kernel packages
@@ -114,7 +116,18 @@ transient failures, as a failure and do not proceed to the upgrade with stale
 indexes. The scheduled job reports the failure through its notification targets.
 An APT executable launch failure also follows that reporting path. On Proxmox
 hosts the job validates supported stable repositories without rewriting them,
-and checks local node health before and after upgrading. HA and Ceph require
+and checks local node health before and after upgrading. Proxmox VE 9.x on
+Debian trixie accepts stable point updates, including new kernel dependencies;
+the installed version and refreshed `pve-manager` candidate must remain within
+9.x. A minor-version change does not stop the job, while major release upgrades
+remain operator-managed. Update Basaltwater on the controller and rerun host
+setup to deploy this policy to existing nodes. Each Proxmox setup rerun also
+performs the upgrade immediately, without needing `--refresh-packages` or
+waiting for the daily timer. Setup runs under its existing target lock rather
+than starting the scheduled updater, which would defer for that same lock.
+Both paths verify that the installed `pve-manager` reached APT's candidate and
+report a failure if it did not. An upgrade failure stops setup before its
+optional `--restart-if-needed` workflow. HA and Ceph require
 operator-managed updates; see [Proxmox host safety](PROXMOX.md#host-safety-defaults).
 Inactive guest storage is logged as a warning and does not block package updates
 or kernel-only cleanup. Storage inventory failures, root/boot capacity problems,

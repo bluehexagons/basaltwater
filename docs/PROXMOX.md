@@ -9,7 +9,7 @@ power-state lifecycle, boot ordering, and confirmed QEMU VM destruction are
 available through the provider-neutral `basaltw vm ...` commands; see the
 command reference for the stable JSON shape.
 
-These workflows target Proxmox VE 9.2 and use its current `qm` and `pct`
+These workflows target stable Proxmox VE 9.x and use its `qm` and `pct`
 interfaces. Bridge discovery identifies Linux bridge interfaces by type, so
 explicitly named Proxmox SDN bridges are supported alongside conventional
 `vmbr*` bridges.
@@ -134,16 +134,42 @@ own its swap layout. It retains the host's permissive reverse-path filtering
 because strict filtering can drop valid routed, NATed, or bridged guest
 traffic.
 
-Setup verifies Proxmox VE 9.2 on Debian 13 (`trixie`), enabled Debian base and
+Setup verifies Proxmox VE 9.x on Debian 13 (`trixie`), enabled Debian base and
 security sources, and the stable Proxmox enterprise or no-subscription channel
 before the first profile change. Test channels and mixed official Debian or
 Proxmox suites stop setup. A strict repository refresh must succeed, including
 subscription authentication when enterprise sources are enabled. Setup
 also rejects incomplete package transactions and held core Proxmox
-packages, and checks the refreshed `pve-manager` candidate before proceeding.
+packages, and checks that the refreshed `pve-manager` candidate stays within
+9.x before proceeding. Stable point releases are accepted so a change in the
+minor version does not block kernel and other package updates.
 Repository selection stays operator-owned; setup does not switch a host to
-no-subscription or perform a release upgrade. `--harden-user` is rejected for
+no-subscription or perform a major release upgrade. `--harden-user` is rejected for
 this profile because its forwarding restrictions would interfere with root's cluster SSH.
+
+Every host setup, including a rerun, then performs a noninteractive
+`apt-get dist-upgrade --no-remove` using those refreshed indexes. This installs
+current stable Proxmox 9.x packages and their new kernel dependencies before
+applying the remaining host configuration; `--refresh-packages` is not required.
+The upgrade runs inside setup's existing target lock rather than invoking the
+scheduled updater, which would defer while that lock is held. Node health and
+package state are checked before and after the upgrade, and setup verifies that
+the installed `pve-manager` matches APT's candidate. Repository failures,
+required package removals, HA/Ceph configurations, held core packages, or failed
+health/version checks stop setup and prevent its post-setup restart.
+
+The kernel reboot-marker hook is installed before the package upgrade, including
+on first setup. To update an existing host and restart it when a new kernel
+records a reboot requirement, rerun its setup with the one-time restart flag:
+
+```bash
+basaltw setup server_proxmox 10.0.0.10 root \
+  --key ~/.ssh/proxmox_ed25519 --name pve1 --restart-if-needed
+```
+
+Add `--wait-for-restart` to verify a new boot and node health before the command
+returns. Existing kernel pins and bootloader selections are preserved, so a
+deliberately pinned older kernel can still boot after the update.
 
 SSH hardening uses an early `00-basaltwater-hardening.conf` drop-in and verifies
 the effective key-only policy with `sshd -T` for root and the setup account,
@@ -242,8 +268,10 @@ The default setup installs these recurring host-maintenance timers:
   package consistency and holds, core services, quorum, active tasks, guest
   locks, storage availability, and root/boot disk and inode headroom before
   upgrading. It repeats health checks after refreshing indexes and after
-  upgrading, and refuses an APT candidate outside the supported release. HA and Ceph configurations
-  require operator-managed updates and produce a notification instead.
+  upgrading, and accepts stable 9.x point updates while refusing an APT
+  candidate outside that major version. After upgrading, it also requires the
+  installed `pve-manager` to match APT's candidate. HA and Ceph configurations require
+  operator-managed updates and produce a notification instead.
 - `auto-restart-if-needed.timer` checks daily at 02:00 and after boot, but the
   default Proxmox policy records and reports a deferral instead of rebooting.
 - `cleanup-maintenance.timer` audits `dpkg` consistency, cleans bounded caches,

@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from common.service_tools import auto_update_apt
+from lib.proxmox_preflight import check_proxmox_upgrade_candidate
 
 
 def setUpModule() -> None:
@@ -123,7 +124,8 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.assertEqual(auto_update_apt.main(), 0)
         self.assertEqual(events, ["health", "refresh", "health", "upgrade", "health"])
         self.refresh.assert_called_once_with(repair_sources=False)
-        self.candidate.assert_called_once()
+        self.assertEqual(self.candidate.call_count, 2)
+        self.candidate.assert_called_with(require_current=True)
         self.assertEqual(self.installation.call_count, 2)
         self.assertTrue(all(call.kwargs == {"allow_inactive_storage": True} for call in self.health.call_args_list))
 
@@ -133,6 +135,38 @@ class TestProxmoxUpdateGates(unittest.TestCase):
         self.installation.assert_not_called()
         self.refresh.assert_not_called()
         self.upgrade.assert_not_called()
+
+    def test_point_release_candidate_allows_scheduled_upgrade(self) -> None:
+        self.candidate.side_effect = check_proxmox_upgrade_candidate
+        self.health.return_value = SimpleNamespace(warnings=[])
+        with patch("lib.proxmox_preflight.run", return_value=subprocess.CompletedProcess(
+            [], 0, "pve-manager:\n  Installed: 9.3.1\n  Candidate: 9.3.1\n", "",
+        )):
+            self.assertEqual(auto_update_apt.main(), 0)
+        self.refresh.assert_called_once_with(repair_sources=False)
+        self.upgrade.assert_called_once()
+        self.notify.assert_not_called()
+
+    def test_major_release_candidate_stops_scheduled_upgrade(self) -> None:
+        self.candidate.side_effect = check_proxmox_upgrade_candidate
+        self.health.return_value = SimpleNamespace(warnings=[])
+        with patch("lib.proxmox_preflight.run", return_value=subprocess.CompletedProcess(
+            [], 0, "pve-manager:\n  Candidate: 10.0.1\n", "",
+        )):
+            self.assertEqual(auto_update_apt.main(), 1)
+        self.refresh.assert_called_once_with(repair_sources=False)
+        self.upgrade.assert_not_called()
+        self.assertIn("candidate is not supported", self.notify.call_args.kwargs["message"])
+
+    def test_stale_manager_after_apt_success_is_not_reported_as_success(self) -> None:
+        self.candidate.side_effect = check_proxmox_upgrade_candidate
+        self.health.return_value = SimpleNamespace(warnings=[])
+        with patch("lib.proxmox_preflight.run", return_value=subprocess.CompletedProcess(
+            [], 0, "pve-manager:\n  Installed: 9.2.1\n  Candidate: 9.3.1\n", "",
+        )):
+            self.assertEqual(auto_update_apt.main(), 1)
+        self.upgrade.assert_called_once()
+        self.assertIn("did not reach its APT candidate", self.notify.call_args.kwargs["message"])
 
     def test_new_backup_after_refresh_prevents_upgrade(self) -> None:
         self.health.side_effect = [SimpleNamespace(warnings=[]), RuntimeError("1 active Proxmox task(s)")]

@@ -6,9 +6,9 @@ import os
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from common.proxmox_steps import preflight_proxmox
+from common.proxmox_steps import preflight_proxmox, upgrade_proxmox_packages
 from lib.apt_sources import inspect_apt_sources
 from lib.config import SetupConfig
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport
@@ -60,15 +60,29 @@ class TestProxmoxRelease(unittest.TestCase):
                          "Suites: bookworm\nComponents: pve-enterprise\nEnabled: no\n")
         check_proxmox_installation()
 
-    def test_rejects_old_unknown_and_newer_unvalidated_releases(self) -> None:
-        for version in ("pve-manager/8.4.1/x", "pve-manager/9.1.1/x", "garbage", "pve-manager/9.20.1/x"):
+    def test_accepts_point_releases_within_supported_major(self) -> None:
+        for version in ("9.0.11", "9.1.1", "9.2.1", "9.3.1", "9.20.1"):
+            with self.subTest(version=version):
+                self.command.return_value.stdout = f"pve-manager/{version}/abcdef"
+                check_proxmox_installation()
+
+    def test_rejects_other_majors_and_unknown_releases(self) -> None:
+        for version in (
+            "pve-manager/8.4.1/x", "pve-manager/10.0.1/x",
+            "pve-manager/90.2.1/x", "pve-manager/9.x.1/x", "garbage",
+        ):
             with self.subTest(version=version):
                 self.command.return_value.stdout = version
                 with self.assertRaisesRegex(RuntimeError, "Only stable Proxmox"):
                     check_proxmox_installation()
 
-    def test_upgrade_candidate_must_remain_on_supported_release(self) -> None:
-        for version, accepted in (("9.2.2", True), ("1:9.2.2", True), ("9.3.1", False), ("(none)", False)):
+    def test_upgrade_candidate_must_remain_on_supported_major(self) -> None:
+        for version, accepted in (
+            ("9.0.11", True), ("9.1.1", True), ("9.2.2", True),
+            ("1:9.2.2", True), ("9.3.1", True), ("9.20.1", True),
+            ("8.4.1", False), ("10.0.1", False), ("1:10.0.1", False),
+            ("90.2.1", False), ("9.x.1", False), ("(none)", False),
+        ):
             with self.subTest(version=version):
                 self.command.return_value.stdout = f"pve-manager:\n  Candidate: {version}\n"
                 if accepted:
@@ -91,6 +105,19 @@ class TestProxmoxRelease(unittest.TestCase):
                 self._write_sources(source)
                 with self.assertRaises(RuntimeError):
                     check_proxmox_installation()
+
+    def test_post_upgrade_manager_must_match_apt_candidate(self) -> None:
+        for installed in ("9.1.1", "(none)", None):
+            with self.subTest(installed=installed):
+                self.command.return_value.stdout = (
+                    (f"  Installed: {installed}\n" if installed is not None else "")
+                    + "  Candidate: 9.3.1\n"
+                )
+                check_proxmox_upgrade_candidate()
+                with self.assertRaisesRegex(RuntimeError, "did not reach its APT candidate"):
+                    check_proxmox_upgrade_candidate(require_current=True)
+        self.command.return_value.stdout = "  Installed: 1:9.3.1\n  Candidate: 1:9.3.1\n"
+        check_proxmox_upgrade_candidate(require_current=True)
 
 
 class TestLocalUpdateSafety(unittest.TestCase):
@@ -233,3 +260,97 @@ class TestSetupPreflight(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "--harden-user"):
             preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox", harden_user=True))
         command.assert_not_called()
+
+
+class TestSetupUpgrade(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = SetupConfig(host="pve", username="root", system_type="server_proxmox")
+        self.dry_run = self.enterContext(patch("common.proxmox_steps.is_dry_run", return_value=False))
+        self.capability = self.enterContext(patch("common.proxmox_steps.can_modify_kernel", return_value=True))
+        self.installation = self.enterContext(patch("common.proxmox_steps.check_proxmox_installation"))
+        self.candidate = self.enterContext(patch("common.proxmox_steps.check_proxmox_upgrade_candidate"))
+        self.health = self.enterContext(patch("common.proxmox_steps.check_proxmox_update_safety", return_value=
+            ProxmoxMaintenanceReport("pve", "localhost", warnings=["Storage backup is inactive"])))
+        self.hook = self.enterContext(patch("common.proxmox_steps.install_kernel_restart_hook"))
+        self.command = self.enterContext(patch("common.proxmox_steps.run", return_value=
+            subprocess.CompletedProcess([], 0, "packages upgraded", "")))
+
+    def test_every_rerun_upgrades_without_refresh_packages_flag(self) -> None:
+        self.assertFalse(self.config.refresh_packages)
+        for _ in range(2):
+            upgrade_proxmox_packages(self.config)
+        self.assertEqual(self.command.call_count, 2)
+        command = self.command.call_args.args[0]
+        self.assertEqual(command[:5], ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "dist-upgrade", "-y"])
+        for option in ("--no-remove", "DPkg::Lock::Timeout=300",
+                       "Dpkg::Options::=--force-confdef", "Dpkg::Options::=--force-confold"):
+            self.assertIn(option, command)
+        self.assertEqual(self.candidate.call_args_list, [call(), call(require_current=True)] * 2)
+
+    def test_hook_precedes_package_installation_and_post_upgrade_checks(self) -> None:
+        events = []
+        self.health.side_effect = lambda **_: events.append("health") or ProxmoxMaintenanceReport("pve", "localhost")
+        self.hook.side_effect = lambda: events.append("hook")
+        self.command.side_effect = lambda *args, **kwargs: (
+            events.append("upgrade") or subprocess.CompletedProcess([], 0, "", "")
+        )
+        upgrade_proxmox_packages(self.config)
+        self.assertEqual(events, ["health", "hook", "upgrade", "health"])
+        self.assertEqual(self.installation.call_count, 2)
+        self.assertEqual(self.health.call_args_list, [call(allow_inactive_storage=True)] * 2)
+
+    def test_upgrade_is_in_the_profile_before_version_dependent_configuration(self) -> None:
+        from plugins.proxmox import build_server_proxmox_steps
+
+        steps = build_server_proxmox_steps(self.config)
+        self.assertEqual([function for _, function in steps[:2]], [preflight_proxmox, upgrade_proxmox_packages])
+        self.assertEqual(steps[-1][0], "Checking if restart required")
+        self.assertLess(
+            [name for name, _ in steps].index("Upgrading Proxmox packages"),
+            [name for name, _ in steps].index("Configuring Proxmox memory balloon target"),
+        )
+
+    def test_dry_run_does_not_install_hook_or_inspect_or_upgrade_target(self) -> None:
+        self.dry_run.return_value = True
+        upgrade_proxmox_packages(self.config)
+        for mock in (self.installation, self.candidate, self.health, self.capability, self.hook, self.command):
+            mock.assert_not_called()
+
+    def test_unsafe_node_or_candidate_stops_before_hook_and_upgrade(self) -> None:
+        for probe in (self.installation, self.candidate, self.health):
+            with self.subTest(probe=probe):
+                probe.side_effect = RuntimeError("unsafe node or repository")
+                with self.assertRaisesRegex(RuntimeError, "unsafe node or repository"):
+                    upgrade_proxmox_packages(self.config)
+                probe.side_effect = None
+        self.hook.assert_not_called()
+        self.command.assert_not_called()
+
+    def test_kernel_access_is_required_before_installing_hook(self) -> None:
+        self.capability.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "requires kernel access"):
+            upgrade_proxmox_packages(self.config)
+        self.hook.assert_not_called()
+        self.command.assert_not_called()
+
+    def test_failed_apt_upgrade_stops_setup_before_post_upgrade_checks(self) -> None:
+        self.command.return_value = subprocess.CompletedProcess([], 100, "", "Packages need to be removed")
+        with self.assertRaisesRegex(RuntimeError, "Packages need to be removed"):
+            upgrade_proxmox_packages(self.config)
+        self.assertEqual(self.installation.call_count, 1)
+        self.candidate.assert_called_once_with()
+        self.health.assert_called_once_with(allow_inactive_storage=True)
+
+    def test_stale_manager_and_failed_post_upgrade_health_cannot_report_success(self) -> None:
+        self.candidate.side_effect = [None, RuntimeError("did not reach its APT candidate")]
+        with self.assertRaisesRegex(RuntimeError, "did not reach its APT candidate"):
+            upgrade_proxmox_packages(self.config)
+        self.candidate.side_effect = None
+        self.health.side_effect = [ProxmoxMaintenanceReport("pve", "localhost"), RuntimeError("lost quorum")]
+        with self.assertRaisesRegex(RuntimeError, "lost quorum"):
+            upgrade_proxmox_packages(self.config)
+
+    def test_setup_does_not_reacquire_its_lock_via_scheduled_updater(self) -> None:
+        with patch("lib.maintenance_lock.maintenance_lock", side_effect=AssertionError("setup owns lock")):
+            upgrade_proxmox_packages(self.config)
+        self.command.assert_called_once()

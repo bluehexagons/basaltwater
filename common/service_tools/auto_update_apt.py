@@ -26,7 +26,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger
 from lib.logging_utils import log_event
 from lib.apt_sources import ensure_debian_package_sources
-from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
+from lib.maintenance_defaults import (
+    APT_DPKG_OPTIONS,
+    APT_LOCK_OPTIONS,
+    APT_UPDATE_OPTIONS,
+    APT_UPGRADE_SAFETY_OPTIONS,
+)
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.maintenance_lock import maintenance_lock
 from lib.proxmox_preflight import (
@@ -39,15 +44,6 @@ from lib.proxmox_preflight import (
 
 # Initialize centralized logger
 logger = get_service_logger('auto_update_apt', 'security', use_syslog=True)
-
-# dpkg options to avoid interactive prompts during automated upgrades
-DPKG_OPTIONS = [
-    '-o', 'Dpkg::Options::=--force-confdef',
-    '-o', 'Dpkg::Options::=--force-confold',
-]
-APT_UPGRADE_SAFETY_OPTIONS = [
-    '--no-remove',
-]
 
 def run_apt_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     """Run an apt-get command with non-interactive settings."""
@@ -91,7 +87,7 @@ def upgrade_packages() -> tuple[bool, str]:
         Tuple of (success, output_summary).
     """
     result = run_apt_command(
-        ['dist-upgrade', '-y', '-qq'] + APT_UPGRADE_SAFETY_OPTIONS + DPKG_OPTIONS + APT_LOCK_OPTIONS
+        ['dist-upgrade', '-y', '-qq'] + APT_UPGRADE_SAFETY_OPTIONS + APT_DPKG_OPTIONS + APT_LOCK_OPTIONS
     )
     output = result.stdout.strip()
     if result.returncode != 0:
@@ -162,6 +158,7 @@ def _update_packages(notification_configs) -> int:
 
     if proxmox:
         check_proxmox_installation()
+        check_proxmox_upgrade_candidate(require_current=True)
         check_proxmox_update_safety(allow_inactive_storage=True)
     log_event(logger, "APT package update completed successfully")
     return 0
