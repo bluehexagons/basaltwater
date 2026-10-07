@@ -99,6 +99,15 @@ basaltw desktop wait --title Mousepad --condition visible --timeout 15
 basaltw desktop launch-status LAUNCH --generation GENERATION
 ```
 
+For known splash windows, add `--exclude-title Startup --stable-seconds 1`
+to `exec`/`open` with `--wait-window`, or to `wait`. Exclusions are literal,
+case-sensitive title substrings (up to 16, each at most 512 characters).
+Stability accepts 0–5 seconds, no longer than the timeout, and defaults to zero.
+It requires the same matching identities/titles/PIDs across observations;
+changes or incomplete inventories restart the interval. Polling remains usable
+during human pause and works with existing XRDP/native supervisors. Inspect the
+actual document afterward; a stable title does not prove that it loaded.
+
 Launch results include a session-local `launch` token and PID. Only the latest
 128 launches are tracked. A title match can be an existing application window;
 inspect returned PID/class and `existing_window_ids` before acting. A running

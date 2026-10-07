@@ -11,11 +11,11 @@ Retain the complete command used for your existing VM and append these options:
 
 ```bash
 # Options for a Debian workstation/server setup, including agent_code_vm
-# --musescore --audio-tools --av-tools --audacity
+# --musescore --audio-tools --pdf-tools --av-tools --audacity
 
 # Example plan only: replace the host/account and retain your existing options
 basaltw setup agent_code_vm 10.0.0.25 agent \
-  --musescore --audio-tools --av-tools --audacity --dry-run
+  --musescore --audio-tools --pdf-tools --av-tools --audacity --dry-run
 ```
 
 Save work before an actual setup rerun: Debian desktop setup can log out the
@@ -27,13 +27,15 @@ selection; do not start setup just to inspect readiness.
 | --- | --- | --- |
 | `--musescore` / `--no-musescore` | Native `musescore3`; version supplied by the configured Debian release | Native `musescore`; executable `mscore` |
 | `--audio-tools` | Expands to saved `--apt-install` selections: `sox`, `libsox-fmt-all`, `alsa-utils`, `pulseaudio-utils` | Unsupported; select native packages with the desktop's normal package manager |
+| `--pdf-tools` | Expands to saved `--apt-install poppler-utils`: `pdfinfo`, `pdftoppm`, `pdftotext` | Unsupported; select native packages with the desktop's normal package manager |
 | `--av-tools` | FFmpeg/ffprobe, ImageMagick, ExifTool | Native equivalents |
 | `--audacity` | Native audio editor | Native audio editor |
 
-The audio bundle deduplicates its own packages, preserves explicit APT
-selections and round-trips through setup/remote arguments and saved state.
-It has no `--no-audio-tools` switch: packages are ordinary APT selections after
-expansion. Removing a selection does not uninstall packages. It installs
+The audio and PDF bundles deduplicate their packages, preserve explicit APT
+selections and round-trip through setup/remote arguments and saved state.
+They have no `--no-audio-tools` or `--no-pdf-tools` switch: packages are ordinary
+APT selections after expansion. Removing a selection does not uninstall packages.
+The audio bundle installs
 clients and processing tools, not an audio daemon, virtual device, default
 routing policy, MIDI permission change or SoundFont bundle.
 
@@ -53,10 +55,12 @@ basaltw agent manifest --json
 basaltw desktop status
 basaltw desktop doctor
 command -v sox soxi arecord aplay amidi aconnect pactl paplay parecord
+command -v pdfinfo pdftoppm pdftotext
 ```
 
 The manifest includes audio utilities and a canonical `musescore` tool/desktop
-entry resolving versioned aliases. Project `required_tools` and recipe
+entry resolving versioned aliases, plus the PDF inspection tools.
+Project `required_tools` and recipe
 `requires` may use `musescore` regardless of the distro executable name.
 Use `desktop_applications.musescore.executable` or `launch_argv` when launching:
 the manifest's canonical key does not create a shell command. Versioned 4 and 3
@@ -85,6 +89,19 @@ viewing it. A PDF's notation is a derived interpretation: compare pitch,
 tempo, meter, voices, quantization, ties and rests against structured source
 data and the consuming Godot project.
 
+With `--pdf-tools` installed, inspect and render a bounded page copy:
+
+```bash
+timeout 15 pdfinfo /absolute/task/review.pdf
+timeout 30 pdftoppm -f 1 -l 1 -scale-to 1600 -singlefile -png \
+  /absolute/task/review.pdf /absolute/task/page
+```
+
+View `page.png` and compare notation against source events. Limit page ranges,
+dimensions and runtime for large files; keep the PDF and generated images in
+the task's artifact directory. Metadata and extracted text alone cannot qualify
+score layout.
+
 For GUI work use the manifest launch vector and an absolute task-copy path.
 Follow [desktop controls](DESKTOP_AUTOMATION.md) and the managed desktop skill;
 inspect the actual document, save MSCZ, reopen and verify separate exports.
@@ -104,17 +121,19 @@ require changing host routing or enabling RDP audio. Other versions need their
 own check before adopting it.
 
 `desktop exec --wait-window MuseScore` initially matched the startup splash.
-Use its launch token with `desktop launch-status`, then inspect the document
-window before treating the editor as ready. Cancelling the first-run wizard
+Add `--exclude-title Startup --stable-seconds 1` to skip that known title and
+wait for stable matching windows. Use its launch token with `desktop launch-status`,
+then inspect the document window before treating the editor as ready.
+Cancelling the first-run wizard
 exited the application and stored `firstStart=false` in the isolated profile;
 observe process exit before relaunching. Qt score controls exposed only an
 AT-SPI application root in this check, while the GTK save dialog exposed its
 filename text and Save button. Prefer those references when available and use
 fresh screenshots for the unexposed score controls.
 
-Useful follow-ups for music VMs are optional PDF page inspection tools
-(`pdfinfo`/`pdftoppm`, absent on this VM) and a reproducible, test-owned virtual
-capture route for native Godot. Neither is currently provided by `--audio-tools`.
+PDF page inspection tools were absent on this VM; `--pdf-tools` now offers them
+as an optional setup selection. A reproducible, test-owned virtual capture route
+for native Godot remains a useful follow-up and is not provided by `--audio-tools`.
 MuseScore's own PNG export can provide score images when a PDF rasterizer is
 unavailable. Keep hardware capture, device latency and human listening checks
 separate from these software-only workflows.

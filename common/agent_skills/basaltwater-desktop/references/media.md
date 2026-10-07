@@ -13,6 +13,8 @@ These selections are opt-in and do not enable a desktop on headless profiles.
 Debian `--audio-tools` adds SoX, ALSA audio/MIDI utilities and PulseAudio clients
 through saved APT package selections; it does not change audio routing or device
 permissions. See [music and input testing](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md).
+Debian `--pdf-tools` adds Poppler's `pdfinfo`, `pdftoppm` and `pdftotext`
+through saved APT selections for inspecting score/document exports.
 An executable's presence is discovery, not a completed edit/export check.
 
 Choose the smallest tool for the task: Inkscape for SVG geometry and vector UI,
@@ -141,7 +143,8 @@ terminal-only queries/exports can require `QT_QPA_PLATFORM=offscreen`.
 In the tested Debian 3.2.3 package, `--no-synthesizer` worked for offscreen
 conversion but crashed interactive startup. Omit it from GUI launches; `--no-midi`
 alone opened the score successfully. A `--wait-window MuseScore` match can be
-the splash, so inspect launch status and the actual document before input.
+the splash; add `--exclude-title Startup --stable-seconds 1`, then inspect
+launch status and the actual document before input.
 Cancelling the first-run wizard may exit the application. Qt score controls
 may expose only an AT-SPI application root even when the GTK file dialog offers
 usable filename/button references. See the [observed music-tool caveats](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md#observed-debian-desktop-caveats).
@@ -154,6 +157,18 @@ claim another application's import is an authoritative correctness check.
 Review licenses separately before shipping fonts, SoundFonts or samples from
 the editor. Synthetic microphone fixtures qualify signal processing only;
 speaker-to-microphone latency, room noise and real device gain require hardware.
+
+When PDF tools are installed, inspect metadata and render a bounded page copy:
+
+```bash
+timeout 15 pdfinfo /absolute/task/review.pdf
+timeout 30 pdftoppm -f 1 -l 1 -scale-to 1600 -singlefile -png \
+  /absolute/task/review.pdf /absolute/task/page
+```
+
+View the generated `page.png`. Limit page ranges and image dimensions before
+rasterizing large scores; retain the original PDF and keep outputs in the task's
+artifact directory. Metadata and text extraction do not verify notation layout.
 
 ## Completion evidence
 

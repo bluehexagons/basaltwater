@@ -56,6 +56,11 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     waiting.add_argument("--condition", choices=("present", "visible", "absent", "active"), default="visible")
     waiting.add_argument("--timeout", type=float, default=15)
     waiting.add_argument("--generation")
+    for waiter in (execute, opening, waiting):
+        waiter.add_argument("--exclude-title", dest="exclude_titles", action="append", metavar="TEXT",
+                            help="Ignore titles containing this literal substring; repeat up to 16 times")
+        waiter.add_argument("--stable-seconds", type=float, default=0, metavar="SECONDS",
+                            help="Require the same matching windows for 0–5 seconds (default: 0)")
     launch = commands.add_parser("launch-status")
     launch.add_argument("launch")
     launch.add_argument("--generation", required=True)
@@ -144,6 +149,14 @@ def run_desktop_command(args: argparse.Namespace) -> int:
             payload = {"action": command, "generation": current["generation"]}
             wait_title = getattr(args, "wait_window", None)
             baseline = []
+            exclude_titles = getattr(args, "exclude_titles", None)
+            stable_seconds = getattr(args, "stable_seconds", 0)
+            if command in ("exec", "open", "wait"):
+                if command != "wait" and wait_title is None and (exclude_titles or stable_seconds):
+                    raise ValueError("Window filters and stability require --wait-window")
+                if command == "wait" or wait_title is not None:
+                    client.validate_window_wait_options(timeout=args.timeout, exclude_titles=exclude_titles,
+                                                        stable_seconds=stable_seconds)
             if wait_title is not None:
                 if not wait_title or len(wait_title) > 512:
                     raise ValueError("Window title must be a nonempty string of at most 512 characters")
@@ -169,6 +182,7 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 result = backend.request({**payload, "launch": args.launch, "generation": args.generation})
             elif command == "wait":
                 result = client.wait_for_window(args.generation or current["generation"], backend=backend,
+                    exclude_titles=exclude_titles, stable_seconds=stable_seconds,
                     **{name: getattr(args, name) for name in ("window", "title", "pid", "condition", "timeout")})
             elif command == "sequence":
                 result = client.run_sequence(args.path, args.generation, backend=backend)
@@ -216,7 +230,8 @@ def run_desktop_command(args: argparse.Namespace) -> int:
                 if wait_title:
                     try:
                         observed = client.wait_for_window(current["generation"], title=wait_title, backend=backend,
-                                                          timeout=args.timeout, launch=result["launch"])
+                                                          timeout=args.timeout, launch=result["launch"],
+                                                          exclude_titles=exclude_titles, stable_seconds=stable_seconds)
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
                         result["error"] = str(exc)  # Preserve launch identity for inspection after timeout.
                     else:

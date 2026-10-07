@@ -718,6 +718,8 @@ def add_setup_arguments(
          "Install native debugging and build-cache tools (Debian APT setup)"),
         ("--audio-tools", ("sox", "libsox-fmt-all", "alsa-utils", "pulseaudio-utils"),
          "Install SoX and audio/MIDI inspection clients (Debian APT setup; no audio routing changes)"),
+        ("--pdf-tools", ("poppler-utils",),
+         "Install PDF metadata, text extraction and page rendering tools (Debian APT setup)"),
     ):
         parser.add_argument(
             flag, dest="apt_packages", action=AptToolBundleAction,

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import signal
 import subprocess
 import time
 from typing import Any
@@ -27,13 +28,32 @@ def artifact_path() -> str:
     return str(directory / f"desktop-{time.time_ns()}-{secrets.token_hex(4)}.png")
 
 
+def validate_window_wait_options(*, timeout: float, exclude_titles: list[str] | tuple[str, ...] | None = None,
+                                 stable_seconds: float = 0) -> tuple[str, ...]:
+    """Validate optional readiness filters before launching or polling."""
+    if type(timeout) not in (int, float) or not 0 < timeout <= 120:
+        raise ValueError("Wait timeout must be greater than zero and at most 120 seconds")
+    if type(stable_seconds) not in (int, float) or not 0 <= stable_seconds <= min(5, timeout):
+        raise ValueError("Window stability must be 0–5 seconds and no longer than the wait timeout")
+    if exclude_titles is None:
+        return ()
+    if not isinstance(exclude_titles, (list, tuple)) or len(exclude_titles) > 16:
+        raise ValueError("Exclude at most 16 literal window title substrings")
+    for title in exclude_titles:
+        if not isinstance(title, str) or not title or len(title) > 512:
+            raise ValueError("Excluded title must be a nonempty string of at most 512 characters")
+    return tuple(dict.fromkeys(exclude_titles))
+
+
 def wait_for_window(generation: str, *, window: str | None = None,
                     title: str | None = None, pid: int | None = None,
                     condition: str = "visible", timeout: float = 15,
-                    launch: str | None = None, backend=runtime) -> dict[str, Any]:
+                    launch: str | None = None, backend=runtime,
+                    exclude_titles: list[str] | tuple[str, ...] | None = None,
+                    stable_seconds: float = 0) -> dict[str, Any]:
     """Poll outside the supervisor so human pause stays available while waiting."""
-    if type(timeout) not in (int, float) or not 0 < timeout <= 120:
-        raise ValueError("Wait timeout must be greater than zero and at most 120 seconds")
+    excluded = validate_window_wait_options(timeout=timeout, exclude_titles=exclude_titles,
+                                           stable_seconds=stable_seconds)
     if condition not in ("present", "visible", "absent", "active"):
         raise ValueError("Unknown window wait condition")
     if window is not None:
@@ -45,18 +65,29 @@ def wait_for_window(generation: str, *, window: str | None = None,
     if window is None and title is None and pid is None:
         raise ValueError("Select a window ID, title substring, or PID to wait for")
     deadline = time.monotonic() + timeout
+    stable_since = None
+    stable_identity = None
     while True:
         launch_status = None
         if launch:
             launch_status = backend.request({"action": "launch-status", "generation": generation, "launch": launch})
             if launch_status["returncode"] not in (None, 0):
-                raise RuntimeError(f"Application exited with code {launch_status['returncode']} before becoming ready")
+                code = launch_status["returncode"]
+                if code < 0:
+                    try:
+                        reason = f"signal {signal.Signals(-code).name} ({-code})"
+                    except ValueError:
+                        reason = f"signal {-code}"
+                else:
+                    reason = f"code {code}"
+                raise RuntimeError(f"Application exited with {reason} before the requested window condition")
         result = backend.request({"action": "windows", "generation": generation})
         if result["generation"] != generation:
             raise RuntimeError("Desktop session changed while waiting")
         matches = [item for item in result["windows"]
                    if (window is None or item["id"] == window)
                    and (title is None or title in item["title"])
+                   and not any(text in item["title"] for text in excluded)
                    and (pid is None or item.get("pid") == pid)]
         if condition == "absent":
             ready = not matches and not result.get("truncated", False)
@@ -66,12 +97,30 @@ def wait_for_window(generation: str, *, window: str | None = None,
             if condition == "active":
                 matches = [item for item in matches if item["id"] == result.get("active_window")]
             ready = bool(matches)
-        if ready:
+        now = time.monotonic()
+        if not ready:
+            stable_since = None
+            stable_identity = None
+        elif stable_seconds:
+            # A title/identity change, disappearance, or incomplete inventory
+            # restarts the stability interval. Never retain control while polling.
+            identity = tuple(sorted((item["id"], item.get("identity"), item["title"], item.get("pid"))
+                                    for item in matches))
+            if result.get("truncated", False):
+                ready = False
+                stable_since = None
+                stable_identity = None
+            elif identity != stable_identity or stable_since is None:
+                stable_since = now
+                stable_identity = identity
+            if stable_since is not None:
+                ready = now - stable_since >= stable_seconds
+        if ready and (not stable_seconds or now <= deadline):
             return {"generation": generation, "condition": condition, "windows": matches,
                     "launch_status": launch_status}
-        if time.monotonic() >= deadline:
+        if now >= deadline:
             raise RuntimeError(f"Timed out waiting for window condition '{condition}'; inspect desktop status and windows")
-        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+        time.sleep(min(0.25, max(0, deadline - now)))
 
 
 def wait_for_element(generation: str, *, pid: int, name: str | None = None,

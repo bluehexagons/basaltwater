@@ -95,6 +95,35 @@ without observing the result.
 
 ## Wait and verify
 
+Window waits can exclude known splash titles and require a stable observation:
+
+```bash
+basaltw desktop exec --wait-window MuseScore --exclude-title Startup \
+  --stable-seconds 1 --timeout 20 -- musescore3 /absolute/task/input.mid
+basaltw desktop wait --title MuseScore --exclude-title Startup \
+  --stable-seconds 1 --timeout 20
+```
+
+These options also work with `desktop open --wait-window TITLE`. Repeat
+`--exclude-title` for up to 16 nonempty, case-sensitive literal substrings of
+at most 512 characters. `--stable-seconds` defaults to zero and accepts 0–5
+seconds, no longer than the timeout. The same matching window identities,
+titles and PIDs must satisfy the condition across observations for that interval.
+Changes, disappearance or an incomplete inventory restart the interval.
+For `--condition absent`, absence must persist across complete observations.
+Polling samples the desktop; changes between samples can go unobserved.
+
+Window waits hold no control lease and remain available during human pause.
+The options work on shared XRDP and native desktop backends, including existing
+supervisors after updating the client code. They do not establish document
+readiness: inspect the actual document and verify its files before acting.
+A launch can reuse an existing window. Check returned PIDs and
+`existing_window_ids`; do not assume the launch PID owns every matching window.
+Failed launch waits retain the launch token/PID and identify terminating signals
+such as `SIGSEGV (11)`. Inspect launch status before retrying.
+
+For accessible controls:
+
 ```bash
 basaltw desktop wait-element --pid PID --name Save --role button \
   --state enabled --generation GENERATION --timeout 15

@@ -143,11 +143,34 @@ class MusicToolsTests(unittest.TestCase):
                     self.assertEqual(app["launch_argv"], [executable] if native else
                                      ["basaltw", "desktop", "exec", "--", executable])
                     self.assertTrue(any(executable in instruction for instruction in app["instructions"]))
+                    self.assertTrue(any("--no-synthesizer" in instruction for instruction in app["instructions"]))
                     self.assertEqual(result["required_tools"]["musescore"]["status"], "available")
                     self.assertEqual(result["recipes"]["score"]["missing_tools"], [])
                     for tool in ("sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "parecord"):
                         self.assertIn(tool, result["tools"])
+                    for tool in ("pdfinfo", "pdftoppm", "pdftotext"):
+                        self.assertIn(tool, result["tools"])
                     execute.assert_not_called()
+
+    def test_pdf_bundle_deduplicates_and_round_trips_without_selecting_other_media(self):
+        parser = create_setup_argument_parser("test")
+        args = parser.parse_args(["vm.example", "agent", "--apt-install", "poppler-utils", "--pdf-tools", "--pdf-tools"])
+        self.assertEqual(args.apt_packages, ["poppler-utils"])
+        config = SetupConfig.from_args(args, "agent_code_vm")
+        saved = SetupConfig.from_dict(config.host, config.system_type, config.to_dict())
+        remote = create_setup_argument_parser("remote", for_remote=True)
+        self.assertEqual(remote.parse_args(shlex.split(" ".join(saved.to_remote_args()))).apt_packages, ["poppler-utils"])
+        self.assertIn("--apt-install poppler-utils", saved.to_setup_command())
+        self.assertFalse(config.install_av_tools)
+        self.assertFalse(config.install_musescore)
+        baseline = SetupConfig.from_args(parser.parse_args(["vm.example", "agent"]), "agent_code_vm")
+        self.assertEqual(config.include_desktop, baseline.include_desktop)
+        self.assertEqual(remote.parse_args(["--pdf-tools"]).apt_packages, ["poppler-utils"])
+        self.assertIsNone(parser.parse_args(["vm.example", "agent"]).apt_packages)
+        native = argparse.ArgumentParser()
+        add_setup_arguments(native, include_system_type=True)
+        with self.assertRaisesRegex(ValueError, "apt_packages"):
+            cachyos.cachyos_config_from_args(native.parse_args(["agent_cachyos", "localhost", "agent", "--pdf-tools"]))
 
     def test_reconstruction_identifies_installed_debian_musescore_without_launching_qt(self):
         with (
