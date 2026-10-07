@@ -319,8 +319,9 @@ def add_setup_arguments(
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Allow managed inbound services from the target-adjacent private "
-            "IPv4 /24 or IPv6 ULA /64 (an explicit static prefix is honored)"
+            "Allow managed inbound services from the target-adjacent private LAN. "
+            "CachyOS uses the single default-route IPv4 subnet; Debian uses "
+            "IPv4 /24 or IPv6 ULA /64 unless an explicit static prefix is set"
         ),
     )
 

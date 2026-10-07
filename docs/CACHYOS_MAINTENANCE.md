@@ -165,9 +165,10 @@ that every Surface needs a replacement kernel.
 ## Direct T3 access across LAN subnets
 
 `--lan-access` allows the single private default-route LAN, not every private
-address range. On the audited laptop, address `192.168.68.57/22` produced an
-allow for `192.168.68.0/22`. A new T3 connection arriving from `192.168.0.x`
-would therefore hit the covering deny on TCP 3773. The desktop backend was
+address range. Before the cross-subnet refresh, the audited laptop's address
+`192.168.68.57/22` produced an allow for `192.168.68.0/22`. A new T3 connection
+arriving from `192.168.0.x` would therefore hit the covering deny on TCP 3773.
+The desktop backend was
 listening on `0.0.0.0:3773` and responded locally; it was not confined to
 loopback. This is the configured firewall scope, not evidence of a broken T3
 listener.
@@ -656,3 +657,27 @@ channel; an OS or full workstation refresh is unnecessary just to acquire
 these read-only diagnostic improvements. A pinned channel needs its normal
 deliberate channel update. The updated doctor was exercised directly from this
 repository against the live saved selection.
+
+### Verification after the cross-subnet refresh
+
+The owner's refresh completed at 12:35:06 CDT with source commit `26efb17` on
+the `dev` channel. The private saved setup retained both explicit sources,
+`192.168.68.0/22` and `192.168.0.0/24`, and the previous software selection.
+Privileged UFW status and live IPv4 input chains then confirmed T3 TCP 3773 and
+the selected Sunshine ports allowed from both ranges before the deny guards.
+Sunshine administration, T3 UDP, legacy RDP, and managed IPv6 access remained
+guarded. The earlier broad T3 allows remained behind those guards.
+
+The installed doctor returned no failed capabilities, and system/user services
+had zero failed units. Mirror refresh remained successful; Sunshine remained
+active with zero restarts. `pacman -Dk` found no database errors, and `pacman -Qk`
+found no missing files for UFW, mirror refresh, T3 desktop, Sunshine, libinput,
+or the CachyOS kernel. The follow-up kernel journal contained UFW multicast
+block messages but no new Surface controller warning. These checks do not
+establish software update freshness or cross-subnet client reachability. A
+connection from the intended client is still needed to qualify routing,
+pairing, and application behavior.
+
+The shared CLI help previously described `--lan-access` only in terms of
+Debian's inferred `/24` or ULA `/64`. It now distinguishes CachyOS's actual
+default-route IPv4 subnet, including this workstation's `/22`.
