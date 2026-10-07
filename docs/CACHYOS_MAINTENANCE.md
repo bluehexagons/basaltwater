@@ -174,12 +174,15 @@ listener.
 
 For a trusted client on another subnet, confirm its actual source IP/mask and
 the destination used for direct pairing. Explicit `--access-source` values
-can add a private host or subnet to the saved setup selection. For example,
-`--access-source 192.168.0.0/24` would add that network if `/24` is its confirmed
-scope. Preview through `basaltw refresh --dry-run` with the access flag, retain
-the existing selection, and finish active work before applying refresh. Access
-sources apply to all selected managed services, including Sunshine; they are
-not a T3-only allowance.
+override inferred LAN discovery, even when `--lan-access` remains selected.
+To preserve current LAN access and include another network, specify both
+`--access-source 192.168.68.0/22` and the new host/subnet. For example,
+`--access-source 192.168.0.0/24` would cover the other network if `/24` is its
+confirmed scope; a single client IP is narrower. Preview through
+`basaltw refresh --dry-run` with both access flags, retain the existing software
+selection, and finish active work before applying refresh. Access sources apply
+to all selected managed services, including Sunshine; they are not a T3-only
+allowance.
 
 The router must also route the client to the laptop and permit traffic between
 the networks. A firewall allow on the laptop cannot create that route or bypass
