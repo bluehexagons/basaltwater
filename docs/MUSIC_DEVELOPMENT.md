@@ -132,7 +132,15 @@ filename text and Save button. Prefer those references when available and use
 fresh screenshots for the unexposed score controls.
 
 PDF page inspection tools were absent on this VM; `--pdf-tools` now offers them
-as an optional setup selection. A reproducible, test-owned virtual capture route
+as an optional setup selection. After the owner's subsequent setup rerun on
+2026-10-07, Poppler 25.03.0 was discovered through the agent manifest. `pdfinfo`,
+`pdftotext` and bounded `pdftoppm` rendering passed for all 30 LibreTabs review
+PDFs, each with one page. First-page PNGs were 1131×1600 and original PDF/MIDI
+bytes remained unchanged. A malformed PDF with a valid-looking header failed
+parsing, as expected. This qualifies those command workflows on the tested
+Debian VM; executable discovery alone remains insufficient evidence elsewhere.
+
+A reproducible, test-owned virtual capture route
 for native Godot remains a useful follow-up and is not provided by `--audio-tools`.
 MuseScore's own PNG export can provide score images when a PDF rasterizer is
 unavailable. Keep hardware capture, device latency and human listening checks
