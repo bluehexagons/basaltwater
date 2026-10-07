@@ -553,6 +553,10 @@ inventoried, and the doctor does not launch a browser to test it.
 
 The doctor loads the validated saved selection: a missing selected T3 package,
 inactive selected web service, or broken selected CLI is reported as failed.
+Selected media/graphics, desktop, streaming, sysadmin, and publishing commands
+also receive PATH presence checks without launching them. Remmina's selected
+protocol/secret dependencies are checked as packages. Command presence does not
+verify runtime behavior or executable ownership; setup performs its own readiness checks.
 Missing unselected browsers remain informational. It also reports failed units,
 root capacity, booted kernel module presence, firmware/encryption observations,
 non-loopback listeners, and potentially broad saved UFW input rules, including

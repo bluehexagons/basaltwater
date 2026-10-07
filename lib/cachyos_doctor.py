@@ -191,7 +191,8 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         if config is not None:
             from common.cachyos_steps import (
                 CACHYOS_AUTOMATION_PACKAGES, CACHYOS_DESKTOP_PACKAGES,
-                CACHYOS_SYSADMIN_PACKAGES, desktop_automation_requested,
+                CACHYOS_SYSADMIN_PACKAGES, CACHYOS_AV_COMMANDS, CACHYOS_GL_COMMANDS,
+                CACHYOS_REMMINA_PACKAGES, desktop_automation_requested,
             )
             from common.cachyos_software import selected_software
             from common.cachyos_development import (
@@ -201,12 +202,14 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             selected_packages.update({
                 package: desktop_automation_requested(config) for package in CACHYOS_AUTOMATION_PACKAGES
             })
+            observed_commands = set()
             if config.install_game_dev:
                 selected_packages.update({package: True for package in GAME_DEV_PACKAGES})
                 for command in GAME_DEV_COMMANDS:
                     if command == "python" and config.install_python:
                         continue  # The language selection performs its version probe below.
                     available = shutil.which(command) is not None
+                    observed_commands.add(command)
                     record("tool." + command.lower(), "available" if available else "failed",
                            "Selected development command found; project behavior not tested." if available
                            else "Selected development command missing; rerun --game-dev.", selected=True)
@@ -253,6 +256,30 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                     selected_packages[package] = True
             if config.install_sysadmin_tools:
                 selected_packages.update({package: True for _, package in CACHYOS_SYSADMIN_PACKAGES})
+            if config.install_remmina:
+                selected_packages.update({package: True for package in CACHYOS_REMMINA_PACKAGES})
+            native_commands = [command for field, command, _ in CACHYOS_DESKTOP_PACKAGES
+                               if getattr(config, field)]
+            native_commands.extend(command for command, _ in selected_software(config))
+            for enabled, selected_commands in (
+                (config.install_av_tools, CACHYOS_AV_COMMANDS),
+                (config.install_gl_tools, CACHYOS_GL_COMMANDS),
+                (config.install_sysadmin_tools, tuple(command for command, _ in CACHYOS_SYSADMIN_PACKAGES)),
+                (config.install_sunshine, ("sunshine",)),
+                (config.install_moonlight, ("moonlight",)),
+            ):
+                if enabled:
+                    native_commands.extend(selected_commands)
+            # Presence checks never launch GUI apps, capture, scanners, or
+            # SteamCMD (even its version/quit probes can initialize user state).
+            for command in dict.fromkeys(native_commands):
+                if command in observed_commands:
+                    continue
+                available = shutil.which(command) is not None
+                record("tool." + command, "available" if available else "failed",
+                       "Selected native command found; application, media, graphics, and network behavior not tested."
+                       if available else "Selected native command missing; inspect PATH and its original package manager.",
+                       selected=True)
             for enabled, packages in (
                 (config.install_sunshine, ("sunshine", "libva-utils")),
                 (config.install_moonlight, ("moonlight-qt",)),

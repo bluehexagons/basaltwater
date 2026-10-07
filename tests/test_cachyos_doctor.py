@@ -254,6 +254,62 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(nvm["version"], "0.40.6")
                 self.assertNotIn(temporary, json.dumps(report))
 
+    def test_selected_native_commands_are_checked_without_launching_them(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             agent_tools=[], install_av_tools=True, install_gl_tools=True,
+                             install_blender=True, install_sysadmin_tools=True,
+                             install_butler=True, install_steamcmd=True, install_moonlight=True)
+        # Package queries succeed, but missing executables must still fail.
+        missing = {"ffprobe", "apitrace", "blender", "tcpdump", "butler", "moonlight"}
+        with patch.object(doctor.shutil, "which", side_effect=lambda cmd: None if cmd in missing else "/fixture/" + cmd):
+            report = doctor.collect_cachyos_doctor(config=config)
+        records = {item["name"]: item for item in report["capabilities"]}
+        for command in missing:
+            self.assertEqual(records["tool." + command]["state"], "failed")
+            self.assertTrue(records["tool." + command]["selected"])
+        for command in ("ffmpeg", "magick", "exiftool", "glxinfo", "vulkaninfo", "steamcmd", "nmap"):
+            self.assertEqual(records["tool." + command]["state"], "available")
+            self.assertIsNone(records["tool." + command]["version"])
+        self.assertEqual(records["package.blender"]["state"], "available")
+        for call in self.probe.call_args_list:
+            self.assertIn(call.args[0][0], ("/usr/bin/pacman", "/usr/bin/systemctl", "/usr/bin/busctl",
+                                          "/fixture/git", "/fixture/rg"))
+
+    def test_unselected_native_commands_are_not_required_and_overlaps_are_unique(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos")
+        with patch.object(doctor.shutil, "which", return_value=None):
+            records = {item["name"] for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+        for command in ("ffprobe", "apitrace", "blender", "steamcmd", "tcpdump"):
+            self.assertNotIn("tool." + command, records)
+        config.install_game_dev = config.install_gl_tools = True
+        with patch.object(doctor.shutil, "which", return_value=None):
+            report = doctor.collect_cachyos_doctor(config=config)
+        names = [item["name"] for item in report["capabilities"]]
+        self.assertEqual(names.count("tool.glxinfo"), 1)
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_remmina_protocol_dependencies_follow_the_selection(self):
+        from common.cachyos_steps import CACHYOS_REMMINA_PACKAGES
+        from lib.config import SetupConfig
+
+        self.probe.side_effect = lambda command, uid: ("error", "") if (
+            command[-1] in CACHYOS_REMMINA_PACKAGES) else self.healthy_probe(command, uid)
+        for selected in (False, True):
+            config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                                 install_remmina=selected)
+            with patch.object(doctor.shutil, "which", return_value=None):
+                records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+            for package in CACHYOS_REMMINA_PACKAGES:
+                if selected:
+                    self.assertEqual(records["package." + package]["state"], "failed")
+                    self.assertTrue(records["package." + package]["selected"])
+                else:
+                    self.assertNotIn("package." + package, records)
+
     def test_desktop_package_does_not_require_managed_web_service(self):
         def probe(command, uid):
             if command[-1] == "basaltwater-cachyos-t3.service":

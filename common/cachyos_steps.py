@@ -62,6 +62,9 @@ CACHYOS_AUTOMATION_PACKAGES = (
     "python-gobject", "at-spi2-core", "gstreamer", "gst-plugins-base",
     "gst-plugin-pipewire", "gtk3", "libxkbcommon",
 )
+CACHYOS_AV_COMMANDS = ("ffmpeg", "ffprobe", "magick", "exiftool")
+CACHYOS_GL_COMMANDS = ("glxinfo", "vulkaninfo", "apitrace")
+CACHYOS_REMMINA_PACKAGES = ("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret")
 
 
 def desktop_automation_requested(config: SetupConfig) -> bool:
@@ -214,7 +217,7 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
     if desktop_automation_requested(config):
         packages.extend(CACHYOS_AUTOMATION_PACKAGES)
     if config.install_remmina:
-        packages.extend(("freerdp", "libvncserver", "spice-gtk", "gtk-vnc", "libsecret"))
+        packages.extend(CACHYOS_REMMINA_PACKAGES)
     if config.install_blender:
         packages.append("libdecor")  # Native Wayland window decorations.
     if config.install_steamcmd:
@@ -419,8 +422,8 @@ def report_cachyos_readiness(config: SetupConfig) -> None:
                                    "and resolve empty overrides before rerunning --git-lfs")
         print("  Git LFS: filters present; custom filters and remote transfers require a project test")
     for enabled, commands in (
-        (config.install_av_tools, ("ffmpeg", "ffprobe", "magick", "exiftool")),
-        (config.install_gl_tools, ("glxinfo", "vulkaninfo", "apitrace")),
+        (config.install_av_tools, CACHYOS_AV_COMMANDS),
+        (config.install_gl_tools, CACHYOS_GL_COMMANDS),
     ):
         if enabled:
             for command in commands:
