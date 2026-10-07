@@ -183,6 +183,7 @@ class NodeSelection:
     requirement: str
     engines: str | None
     nvm_dir: str
+    runtime_source: str
 
     def environment(self, original: dict[str, str] | None = None) -> dict[str, str]:
         environment = dict(os.environ if original is None else original)
@@ -248,7 +249,8 @@ def select_node(project: str = ".", *, version: str | None = None,
             )
     selected_by = "--version" if version else source or ("package.json engines" if engines else "PATH" if path_default else "NVM default")
     return NodeSelection(executable, ".".join(map(str, actual)), selected_by,
-                         requirement, engines, str(nvm_root))
+                         requirement, engines, str(nvm_root),
+                         "nvm" if Path(executable).is_relative_to(nvm_root / "versions/node") else "path")
 
 
 def inspect_project_node(project: str, *, version: str | None = None) -> dict[str, object]:
@@ -292,7 +294,8 @@ def inspect_project_node(project: str, *, version: str | None = None) -> dict[st
         issues.append("project_npm_engine_mismatch")
     return {
         "healthy": not issues, "selection": asdict(selection), "tools": tools, "issues": issues,
-        "maintenance_owner": runtime_owner(selection.nvm_dir, selection.version),
+        "maintenance_owner": (runtime_owner(selection.nvm_dir, selection.version)
+                              if selection.runtime_source == "nvm" else None),
         "npm_requirement": npm_requirement,
     }
 
@@ -402,7 +405,9 @@ def run_node_command(args: argparse.Namespace) -> int:
         selection = select_node(args.project, version=args.version)
         if args.node_command == "status":
             print(json.dumps(asdict(selection), indent=2) if args.json else
-                  f"Node {selection.version}: {selection.executable}\nSelected by {selection.source} ({selection.requirement})")
+                  f"Node {selection.version}: {selection.executable}\n"
+                  f"Runtime source: {selection.runtime_source.upper()}\n"
+                  f"Selected by {selection.source} ({selection.requirement})")
         elif args.node_command == "env":
             print("export PATH=" + shlex.quote(selection.environment()["PATH"]))
         else:

@@ -104,6 +104,11 @@ package manager, install its reviewed exact version with
 `basaltw node install --project PATH --package-manager npm@VERSION` (or
 `pnpm@VERSION`/`yarn@VERSION`); consult the project's metadata first.
 See [project tooling](PROJECT_TOOLING.md) for runtime selection details.
+Selection prefers a matching installed NVM runtime and falls back to `node`
+on `PATH` when it satisfies both the project pin and Node engines. `node status`
+shows the runtime source (NVM or PATH) separately from the pin or engine that
+selected it; JSON exposes this as `runtime_source`. A PATH runtime is not
+assigned an NVM maintenance owner merely because its version matches one.
 Setup probes language versions outside repositories with Corepack downloads
 and project policy disabled; these host probes do not establish project readiness.
 

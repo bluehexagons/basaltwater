@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import io
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,7 @@ class NodeToolchainTests(unittest.TestCase):
         (self.project / '.nvmrc').write_text('22')
         selection = self.select()
         self.assertEqual(selection.version, '22.23.2')
+        self.assertEqual(selection.runtime_source, 'nvm')
         self.assertTrue(selection.source.endswith('.nvmrc'))
         (self.project / '.node-version').write_text('20.20.2')
         self.assertEqual(self.select().version, '20.20.2')
@@ -76,6 +78,29 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertNotIn(old, environment['PATH'])
         self.assertTrue(environment['PATH'].startswith(str(Path(selected.executable).parent)))
         self.assertEqual(environment['VALUE'], 'kept')
+
+    def test_missing_nvm_pin_reports_compatible_path_origin_and_pin_separately(self):
+        (self.project / '.nvmrc').write_text('27')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=27'}}))
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
+                patch('lib.node_toolchain.subprocess.run',
+                      return_value=subprocess.CompletedProcess([], 0, 'v27.1.0\n')):
+            selection = self.select()
+            self.assertEqual(selection.runtime_source, 'path')
+            self.assertEqual(selection.source, str(self.project / '.nvmrc'))
+            for json_output in (False, True):
+                with self.subTest(json=json_output), patch('sys.stdout', new_callable=io.StringIO) as output:
+                    args = argparse.Namespace(node_command='status', project=str(self.project),
+                                              version=None, json=json_output)
+                    self.assertEqual(run_node_command(args), 0)
+                    if json_output:
+                        report = json.loads(output.getvalue())
+                        self.assertEqual(report['runtime_source'], 'path')
+                        self.assertEqual(report['source'], str(self.project / '.nvmrc'))
+                    else:
+                        self.assertIn('Runtime source: PATH', output.getvalue())
+                        self.assertIn('Selected by ' + str(self.project / '.nvmrc'), output.getvalue())
 
     def test_stable_range_cases(self):
         cases = (
@@ -272,9 +297,13 @@ class NodeToolchainTests(unittest.TestCase):
 
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'NODE_OPTIONS': '--require=project.js', 'LD_PRELOAD': '/private'}), \
                 patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
-                patch('lib.node_toolchain.subprocess.run', side_effect=probe) as run:
+                patch('lib.node_toolchain.subprocess.run', side_effect=probe) as run, \
+                patch('lib.node_toolchain.runtime_owner', return_value='automatic') as owner:
             result = inspect_project_node(str(self.project))
         self.assertTrue(result['healthy'])
+        self.assertEqual(result['selection']['runtime_source'], 'path')
+        self.assertIsNone(result['maintenance_owner'])
+        owner.assert_not_called()
         self.assertEqual(run.call_count, 3)
 
 
