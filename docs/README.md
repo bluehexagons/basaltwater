@@ -33,7 +33,6 @@ overview.
 | Operate a Proxmox host or guest | [Proxmox workflows](PROXMOX.md) | [Machine types](MACHINE_TYPES.md) |
 | Configure alerts, audit visibility, or the panel | [Notifications](NOTIFICATIONS.md) | [Minimal web panel](WEB_PANEL.md), [Authentication hardening](AUTHENTICATION_HARDENING.md) |
 | Configure storage, shares, or backups | [Storage operations](STORAGE_OPERATIONS.md) | [Samba](SAMBA_SHARES.md), [Syncthing](SYNCTHING.md), [Backups](BACKUPS.md) |
-| Research a Debian-based Basaltwater operating environment | [InfraOS concept](INFRAOS.md) | [Machine types](MACHINE_TYPES.md), [Deployment safety](DEPLOYMENT_SAFETY.md) |
 
 ## Core setup and operations
 
@@ -135,10 +134,6 @@ posts/translations, and publication; Steam default release stays manual.
 The [operator guide](GAME_PUBLISHING.md) covers the implemented workflows and
 remaining provider qualification; automated post delivery and richer adapters
 remain planned.
-
-The [InfraOS concept](INFRAOS.md) is an initial product discussion for a
-Debian-based operating environment built around basaltwater. It is not a
-supported operating system or an implementation commitment.
 
 Repository contributors should read the
 [contributor and coding-agent guide](agents/contributing/README.md). It
