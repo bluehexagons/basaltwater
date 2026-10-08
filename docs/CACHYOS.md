@@ -566,13 +566,15 @@ inventoried, and the doctor does not launch a browser to test it.
 The doctor loads the validated saved selection: a missing selected T3 package,
 inactive selected web service, or broken selected CLI is reported as failed.
 Desktop selections also check the native T3 executable and managed login startup;
-an active managed web service in desktop mode is reported as a conflict.
+an active managed web service in desktop mode or active upstream T3 service
+alongside a selected Basaltwater T3 mode is reported as a conflict.
 Selected media/graphics, desktop, streaming, sysadmin, and publishing commands
 also receive PATH presence checks without launching them. Remmina's selected
 protocol/secret dependencies are checked as packages. Command presence does not
 verify runtime behavior or executable ownership; setup performs its own readiness checks.
 Missing unselected browsers remain informational. It also reports failed units,
-root capacity, booted kernel module presence, firmware/encryption observations,
+root and home filesystem capacity, booted kernel module presence,
+firmware/encryption observations,
 non-loopback listeners, and potentially broad saved UFW input rules, including
 port ranges and Sunshine UDP. It distinguishes broad allows preceded by covering
 unconditional denies from uncovered or unparsed rules needing review. It never
@@ -580,6 +582,8 @@ elevates privileges; saved rules do not prove effective packet filtering.
 When Sunshine is selected, it checks the user service and, if `vainfo` is installed,
 VA-API encoding profiles without starting capture. A crashed Sunshine service is
 reported as failed; an inactive service may reflect an intentional quit.
+`startup.sunshine` separately checks persistent login enablement, so an enabled
+service quit for the session is distinguished from disabled or temporary startup.
 `health.mirrors` separately identifies a failed CachyOS mirror refresh service
 and points to its local journal and DNS/connectivity checks. It does not contact
 mirrors, retry the service, or verify mirror freshness. See

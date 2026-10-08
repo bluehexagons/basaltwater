@@ -186,6 +186,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                "Run as the existing desktop user on CachyOS x86_64; no desktop probes ran.")
     else:
         config = config if config is not None else saved_selection()
+        home = Path(pwd.getpwuid(uid).pw_dir)
         selected_packages = {"t3code-bin": config.t3code_desktop} if config is not None else {}
         selected_packages.update({package: False for package in BROWSER_PACKAGES})
         if config is not None:
@@ -377,8 +378,13 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 ], uid)
             active = status == "ok" and output.strip() == "active"
             selected = bool(config.web_interfaces) if config is not None and name == "service.t3code" else None
-            conflict = active and config is not None and config.t3code_desktop and name == "service.t3code"
+            conflict = active and config is not None and (
+                (config.t3code_desktop and name == "service.t3code") or
+                ((config.t3code_desktop or config.web_interfaces) and name == "service.t3code-upstream")
+            )
             record(name, "failed" if conflict else "available" if active else "failed" if selected else "deferred",
+                   "Upstream T3 user service active alongside a Basaltwater T3 selection; manage it with its original installer."
+                   if conflict and name == "service.t3code-upstream" else
                    "Managed web service active while desktop mode is selected; finish active work and rerun --t3code-desktop."
                    if conflict else "User unit active; functional readiness is not verified." if active else
                    ("Selected web service inactive; inspect systemctl --user status basaltwater-cachyos-t3."
@@ -396,7 +402,6 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
         if config is not None and config.t3code_desktop:
             from common.cachyos_t3_desktop import collect_autostart_health
 
-            home = Path(pwd.getpwuid(uid).pw_dir)
             state, reason = collect_autostart_health(home)
             record("startup.t3code-desktop", state, reason, selected=True)
             available = shutil.which("t3code", path="/usr/bin:/bin") is not None
@@ -411,7 +416,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             state, reason = collect_notification_health(config)
             record("notifications.webhook", state, reason, selected=True)
 
-        for name, state, reason in collect_host_health(_probe, uid) + collect_network_health(
+        for name, state, reason in collect_host_health(_probe, uid, home=home) + collect_network_health(
             _probe, uid, config.web_interface_port if config is not None else 3773,
         ):
             record(name, state, reason)

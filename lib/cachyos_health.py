@@ -10,6 +10,8 @@ import shlex
 import shutil
 import stat
 
+from lib.validation import validate_filesystem_path
+
 
 def collect_sunshine_health(probe, uid: int, *, bus_ready: bool) -> list[tuple[str, str, str]]:
     """Observe service state and optional VA-API profiles without starting capture."""
@@ -19,7 +21,7 @@ def collect_sunshine_health(probe, uid: int, *, bus_ready: bool) -> list[tuple[s
         "--property=ActiveState", "--property=Result",
     ], uid) if bus_ready else ("error", "")
     values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    known = status == "ok" and set(values) == {"ActiveState", "Result"}
+    known = status == "ok" and len(output.splitlines()) == 2 and set(values) == {"ActiveState", "Result"}
     failed = known and (values["ActiveState"] == "failed" or values["Result"] in {
         "core-dump", "signal", "exit-code", "timeout", "start-limit-hit", "watchdog", "resources",
     })
@@ -29,6 +31,20 @@ def collect_sunshine_health(probe, uid: int, *, bus_ready: bool) -> list[tuple[s
                 if failed else "Sunshine user service active; capture, input, encoding, and client streaming are not verified."
                 if active else "Sunshine user service inactive or unverified; it may have been quit for this session. "
                 "Setup enables it at KDE login; inspect its service locally if streaming was expected.")]
+    status, output = probe([
+        "/usr/bin/systemctl", "--user", "show", unit, "--property=UnitFileState",
+    ], uid) if bus_ready else ("error", "")
+    match = re.fullmatch(r"UnitFileState=([a-z-]+)\s*", output) if status == "ok" else None
+    enabled = bool(match and match[1] == "enabled")
+    disabled = bool(match and match[1] in {
+        "disabled", "masked", "masked-runtime", "enabled-runtime", "linked", "linked-runtime",
+        "static", "indirect", "generated", "transient",
+    })
+    results.append(("startup.sunshine", "available" if enabled else "failed" if disabled else "deferred",
+                    "Sunshine user service enabled at KDE login; streaming behavior is not verified."
+                    if enabled else "Sunshine login startup disabled, temporary, or overridden; inspect its user unit "
+                    "and rerun setup with --sunshine if login startup is wanted."
+                    if disabled else "Sunshine login startup unverified; inspect its user unit in the KDE session."))
     if not shutil.which("vainfo", path="/usr/bin:/bin"):
         results.append(("graphics.sunshine-vaapi", "deferred",
                         "VA-API profiles unverified; libva-utils supplies vainfo for Intel/AMD diagnostics. "
@@ -78,7 +94,7 @@ def collect_t3_storage_health(home: Path, uid: int) -> list[tuple[str, str, str]
              "Default T3 desktop state directories and any Clerk token file are private; contents were not read.")]
 
 
-def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
+def collect_host_health(probe, uid: int, *, home: Path | None = None) -> list[tuple[str, str, str]]:
     observations = []
 
     def add(name, state, reason):
@@ -114,13 +130,18 @@ def collect_host_health(probe, uid: int) -> list[tuple[str, str, str]]:
         f"{count} repository updates in local sync metadata; use the normal full CachyOS update workflow. "
         "Metadata may be stale; AUR updates are not checked."
         if status == "ok" else "Update freshness unknown; check through the normal CachyOS update workflow.")
-    try:
-        capacity = shutil.disk_usage("/")
-        free = capacity.free // (1024 ** 3)
-        add("health.capacity", "failed" if capacity.free < 5 * 1024 ** 3 else "available",
-            f"Root filesystem has {free} GiB free.")
-    except OSError:
-        add("health.capacity", "deferred", "Root filesystem capacity unavailable.")
+    capacity_paths = [("health.capacity", "/", "Root")]
+    if home is not None:
+        capacity_paths.append(("health.home-capacity", str(home), "Home"))
+    for name, path, label in capacity_paths:
+        try:
+            validate_filesystem_path(path)
+            capacity = shutil.disk_usage(path)
+            free = capacity.free // (1024 ** 3)
+            add(name, "failed" if capacity.free < 5 * 1024 ** 3 else "available",
+                f"{label} filesystem has {free} GiB free.")
+        except (OSError, ValueError):
+            add(name, "deferred", f"{label} filesystem capacity unavailable.")
     add("health.firmware", "available" if Path("/sys/firmware/efi").is_dir() else "deferred",
         "Booted in UEFI mode; Secure Boot state is not verified." if Path("/sys/firmware/efi").is_dir()
         else "Legacy BIOS boot; Secure Boot is unavailable. This is not a boot failure.")

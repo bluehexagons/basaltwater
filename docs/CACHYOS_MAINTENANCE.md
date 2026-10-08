@@ -362,8 +362,12 @@ journalctl --user -u app-dev.lizardbyte.app.Sunshine.service -n 100 --no-pager
 ```
 
 With Sunshine selected in the saved setup, the doctor distinguishes an
-inactive service from failures without restarting it. It also
-checks H.264 High VA-API encoding profiles; older setups may need the diagnostic
+inactive service from failures without restarting it. `startup.sunshine`
+separately checks persistent login enablement; disabled, masked, and runtime-only
+enablement are reported as failures for the saved Sunshine selection. An enabled
+service quit for the session remains advisory. Rerun the saved setup when you
+want login startup restored. It also checks H.264 High VA-API encoding profiles;
+older setups may need the diagnostic
 tool installed with `sudo pacman -S --needed libva-utils`. Select an actual render
 node from `/dev/dri` and inspect it without starting screen capture:
 
@@ -713,3 +717,17 @@ pairing, and application behavior.
 The shared CLI help previously described `--lan-access` only in terms of
 Debian's inferred `/24` or ULA `/64`. It now distinguishes CachyOS's actual
 default-route IPv4 subnet, including this workstation's `/22`.
+
+## Login startup follow-up: 2026-10-08
+
+The saved desktop selection and native `t3code-bin` executable ownership were
+verified before enabling the new managed T3 autostart entry on this workstation.
+The entry passed `desktop-file-validate`. The running app was retained; no full
+setup, refresh, package upgrade, service restart, or logout was performed.
+
+The repository doctor then reported zero failed capabilities. Both
+`startup.t3code-desktop` and `startup.sunshine` were available, and the home
+filesystem had about 390 GiB free. These checks observe startup configuration;
+a subsequent KDE login and T3 provider thread/terminal test are still needed to
+verify launch behavior. The installed launcher acquires the new diagnostic
+checks through its normal Basaltwater upgrade workflow.

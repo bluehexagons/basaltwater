@@ -120,7 +120,10 @@ it does not verify automation or permission. Treat null selection/permission
 fields as unknown and keep live qualification separate from observation time.
 The doctor also checks saved selections, selected CLIs, host health, listeners,
 and saved UFW input rules, accounting for earlier unconditional denies, port
-ranges, and Sunshine UDP. Effective firewall rules require privileged verification;
+ranges, and Sunshine UDP. Host capacity covers both root and home filesystems.
+Sunshine login enablement is checked separately from current service activity,
+so a session quit does not imply disabled login startup.
+Effective firewall rules require privileged verification;
 local update metadata may be stale. Successful setup writes a private diagnostic
 receipt at `~/.local/state/basaltwater/cachyos/last-report.json`.
 Webhook attempts write a separate private `last-notification.json` with delivery

@@ -217,7 +217,7 @@ class SoftwareTests(unittest.TestCase):
             stack.enter_context(patch.object(doctor, "is_cachyos", return_value=True))
             stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
             stack.enter_context(patch.object(doctor.os, "getuid", return_value=1000))
-            stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="human")))
+            stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="human", pw_dir=str(self.home))))
             stack.enter_context(patch.object(doctor, "_owned_socket", return_value=False))
             stack.enter_context(patch.object(doctor.shutil, "which", side_effect=lambda name, **kw: "/usr/bin/" + name))
             probes = stack.enter_context(patch.object(doctor, "_probe", side_effect=probe))

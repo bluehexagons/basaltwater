@@ -234,11 +234,10 @@ def cachyos_packages(config: SetupConfig) -> list[str]:
 
 def report_cachyos_host_health(config: SetupConfig) -> None:
     """Observe host readiness before any package changes; never repair the OS."""
-    del config
     from lib.cachyos_doctor import _probe
     from lib.cachyos_health import collect_host_health
 
-    for name, state, reason in collect_host_health(_probe, os.getuid()):
+    for name, state, reason in collect_host_health(_probe, os.getuid(), home=_home(config)):
         print(f"  {name}: {state} — {reason}")
 
 

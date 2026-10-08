@@ -31,7 +31,7 @@ class HealthTests(unittest.TestCase):
             result = health.collect_sunshine_health(
                 lambda *_: ("ok", "ActiveState=failed\nResult=core-dump\n"), 1000, bus_ready=True)
             self.assertEqual(result[0][1], "failed")
-            self.assertEqual(result[1][1], "deferred")
+            self.assertEqual(result[2][1], "deferred")
         self.assertEqual(calls[0], ["/usr/bin/systemctl", "--user", "show",
                                    "app-dev.lizardbyte.app.Sunshine.service",
                                    "--property=ActiveState", "--property=Result"])
@@ -52,14 +52,17 @@ class HealthTests(unittest.TestCase):
 
         def probe(command, uid):
             calls.append(command)
-            return ("ok", "VAProfileH264High : VAEntrypointEncSliceLP\nprivate driver text\n") if "vainfo" in command[0] else (
-                "ok", "ActiveState=active\nResult=success\n")
+            if "vainfo" in command[0]:
+                return "ok", "VAProfileH264High : VAEntrypointEncSliceLP\nprivate driver text\n"
+            if "--property=UnitFileState" in command:
+                return "ok", "UnitFileState=enabled\n"
+            return "ok", "ActiveState=active\nResult=success\n"
 
         with patch.object(health.shutil, "which", return_value="/usr/bin/vainfo"), \
                 patch.object(Path, "glob", return_value=[node]), \
                 patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=stat.S_IFCHR | 0o660)):
             result = health.collect_sunshine_health(probe, 1000, bus_ready=True)
-        self.assertEqual([state for _, state, _ in result], ["available", "available"])
+        self.assertEqual([state for _, state, _ in result], ["available", "available", "available"])
         self.assertIn(["/usr/bin/vainfo", "--display", "drm", "--device", str(node)], calls)
         self.assertNotIn("private driver", str(result))
         self.assertNotIn(str(node), str(result))
@@ -72,7 +75,27 @@ class HealthTests(unittest.TestCase):
                                  (stat.S_IFLNK, "VAProfileH264High : VAEntrypointEncSlice\n")):
                 with patch.object(Path, "lstat", return_value=SimpleNamespace(st_mode=mode)):
                     result = health.collect_sunshine_health(lambda *_: ("ok", output), 1000, bus_ready=False)
-                    self.assertEqual(result[1][1], "deferred")
+                    self.assertEqual(result[2][1], "deferred")
+
+    def test_sunshine_login_enablement_is_separate_from_session_activity(self):
+        cases = [("enabled", "available"), ("disabled", "failed"), ("masked", "failed"),
+                 ("enabled-runtime", "failed"), ("", "deferred"), ("private-secret", "deferred")]
+        with patch.object(health.shutil, "which", return_value=None):
+            for value, expected in cases:
+                def probe(command, uid):
+                    return ("ok", f"UnitFileState={value}\n") if "--property=UnitFileState" in command else (
+                        "ok", "ActiveState=inactive\nResult=success\n")
+                result = {name: (state, reason) for name, state, reason in
+                          health.collect_sunshine_health(probe, 1000, bus_ready=True)}
+                self.assertEqual(result["service.sunshine"][0], "deferred")
+                self.assertEqual(result["startup.sunshine"][0], expected)
+                self.assertNotIn("private-secret", str(result))
+
+    def test_duplicate_sunshine_properties_cannot_establish_service_health(self):
+        with patch.object(health.shutil, "which", return_value=None):
+            result = health.collect_sunshine_health(lambda *_: (
+                "ok", "ActiveState=failed\nActiveState=active\nResult=success\n"), 1000, bus_ready=True)
+        self.assertEqual(result[0][1], "deferred")
 
     def test_t3_permissions_are_checked_without_reading_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -216,13 +239,31 @@ class HealthTests(unittest.TestCase):
             elif expected == "failed":
                 self.assertIn("DNS/connectivity", result["health.mirrors"][1])
 
+    def test_capacity_checks_home_separately_and_redacts_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            def usage(path):
+                return SimpleNamespace(free=(20 if path == "/" else 1) * 1024 ** 3)
+            with patch.object(health.shutil, "disk_usage", side_effect=usage) as check:
+                result = {name: (state, reason) for name, state, reason in
+                          health.collect_host_health(lambda *_: ("error", ""), 1000, home=home)}
+            self.assertEqual(result["health.capacity"][0], "available")
+            self.assertEqual(result["health.home-capacity"][0], "failed")
+            check.assert_any_call(str(home))
+            self.assertNotIn(temporary, str(result))
+            with patch.object(health.shutil, "disk_usage", side_effect=PermissionError):
+                result = {name: state for name, state, _ in
+                          health.collect_host_health(lambda *_: ("error", ""), 1000, home=home)}
+            self.assertEqual(result["health.home-capacity"], "deferred")
+
     def test_selected_missing_tools_packages_and_service_fail(self):
         config = SetupConfig(system_type="agent_cachyos", host="localhost", username="human",
                              web_interfaces=["t3code"], install_sunshine=True, agent_tools=["codex"])
         with ExitStack() as stack:
+            home = stack.enter_context(tempfile.TemporaryDirectory())
             stack.enter_context(patch.object(doctor.os, "getuid", return_value=1000))
             stack.enter_context(patch.object(doctor.os, "geteuid", return_value=1000))
-            stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="human")))
+            stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="human", pw_dir=home)))
             stack.enter_context(patch.object(doctor, "is_cachyos", return_value=True))
             stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
             stack.enter_context(patch.object(doctor, "_owned_socket", return_value=True))

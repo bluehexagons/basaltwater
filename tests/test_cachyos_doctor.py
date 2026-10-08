@@ -129,7 +129,8 @@ class DoctorTests(unittest.TestCase):
         self.addCleanup(stack.close)
         self.uid = stack.enter_context(patch.object(doctor.os, "getuid", return_value=1000))
         stack.enter_context(patch.object(doctor.os, "geteuid", return_value=1000))
-        stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice")))
+        self.home = stack.enter_context(tempfile.TemporaryDirectory())
+        stack.enter_context(patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=self.home)))
         self.supported = stack.enter_context(patch.object(doctor, "is_cachyos", return_value=True))
         stack.enter_context(patch.object(doctor.platform, "machine", return_value="x86_64"))
         self.socket = stack.enter_context(patch.object(doctor, "_owned_socket", return_value=True))
@@ -357,6 +358,17 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(records["tool.t3code"]["state"], "available")
         self.assertEqual(records["service.t3code"]["state"], "deferred")
         self.assertFalse(any(call.args[0][0] == "/usr/bin/t3code" for call in self.probe.call_args_list))
+
+    def test_active_upstream_t3_service_conflicts_with_selected_desktop_or_web(self):
+        from lib.config import SetupConfig
+
+        with patch.object(doctor.shutil, "which", return_value=None):
+            for mode in ({"t3code_desktop": True}, {"web_interfaces": ["t3code"]}):
+                config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                                     agent_tools=["codex"], **mode)
+                records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+                self.assertEqual(records["service.t3code-upstream"]["state"], "failed")
+                self.assertIn("original installer", records["service.t3code-upstream"]["reason"])
 
     def test_selected_sunshine_includes_service_and_encoding_observations(self):
         from lib.config import SetupConfig
