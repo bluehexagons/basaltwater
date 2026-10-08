@@ -190,7 +190,7 @@ class TestInstallationSnapshot(unittest.TestCase):
             with self.assertRaisesRegex(ChannelError, "neither"):
                 managed_repository_path(script)
 
-    def test_top_level_version_flag_is_stable_and_machine_readable(self) -> None:
+    def test_top_level_version_flag_is_one_machine_readable_line(self) -> None:
         output = io.StringIO()
 
         with redirect_stdout(output), self.assertRaises(SystemExit) as raised:
@@ -198,7 +198,11 @@ class TestInstallationSnapshot(unittest.TestCase):
             parser.parse_args(["--version"])
 
         self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(output.getvalue(), "basaltw 2.0.0\n")
+        project_root = str(Path(basaltwater.__file__).resolve().parent)
+        self.assertEqual(
+            output.getvalue(),
+            f"basaltw {installation_version(project_root)}\n",
+        )
 
 
 if __name__ == "__main__":

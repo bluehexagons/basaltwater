@@ -1,5 +1,9 @@
 # Storage integrity review
 
+Status: core integrity controls and read-only panel snapshots are delivered.
+The follow-up proposals below are not scheduled; priority and ownership are
+tracked in the [planning index](plans/README.md).
+
 The implemented recovery commands are documented in [Scrub recovery](SCRUB_RECOVERY.md).
 This review separates the fixes shipped with them from proposed follow-up work.
 

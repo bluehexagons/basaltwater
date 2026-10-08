@@ -63,6 +63,7 @@ release are separate states, tracked in the [release checklist](../BASALTWATER_R
 | Lightweight service monitoring and application candidates | Monitoring proposed; HomeBox native support delivered; VM qualification open | Unscheduled | HomeBox request [#99](https://github.com/bluehexagons/basaltwater/issues/99) closed 2026-09-13 | [Lightweight service and monitoring candidates](LIGHTWEIGHT_SERVICE_CANDIDATES.md): support Gatus first for service checks, Beszel second for VM telemetry, and consider Memos as the first team application; exclude PHP and gate mandatory PostgreSQL dependencies. [HomeBox support](HOMEBOX_SUPPORT.md) records delivered setup, recovery, recurring updates, and full VM qualification still to run. |
 | Background agent capabilities | Panel Codex prompt tasks and scheduling implemented; fleet operations brief and evidence framework proposed | Unscheduled | [#105](https://github.com/bluehexagons/basaltwater/issues/105) and [#107](https://github.com/bluehexagons/basaltwater/issues/107); scheduling scope relates to [#28](https://github.com/bluehexagons/basaltwater/issues/28) | [Panel prompt tasks](../WEB_PANEL.md#agent-prompt-tasks) run without T3. [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) still proposes durable fleet evidence, fixed daily briefs, model budgets, incident investigation and recovery rehearsals; extend existing scheduling owners for later coordination. |
 | Recovery workflows | Queued behind transaction and deployment state | P2 | Former recovery scope of closed [#97](https://github.com/bluehexagons/basaltwater/issues/97) | [Roadmap](ROADMAP.md), with Proxmox backup and restore details in the [Proxmox audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md). |
+| Storage integrity and recovery | Core integrity controls and panel snapshots delivered; further automation proposals remain unscheduled | P2, after reliability foundations | No dedicated open issue | [Storage integrity review](../STORAGE_REVIEW.md): verify-before-sync snapshots, common mutation locking, interrupted-manifest reconciliation, resumable scans, persistent incident notifications, and reviewed recovery retention. |
 | Safe network apply and rollback | Address handoff delivered; firewall apply remains | P2 | No dedicated open issue | [Roadmap](ROADMAP.md): extend the verified host/guest address handoff model to reviewed Proxmox firewall artifacts with timed rollback and connectivity confirmation. |
 | Extensibility and release quality | Queued | P3 | No dedicated open issue | [Roadmap](ROADMAP.md): plugin isolation, retained packaging smoke tests, lint/type/coverage gates, and a documented provider contract. |
 
@@ -87,15 +88,12 @@ they do not silently compete with P0/P1 work.
 | [#100 — Akaunting support](https://github.com/bluehexagons/basaltwater/issues/100) | Deferred | Use [Coolify evaluation](COOLIFY_INTEGRATION.md) only when a concrete application recipe and recovery need justify it. |
 | [#105 — Agent automation systems](https://github.com/bluehexagons/basaltwater/issues/105) and [#107 — Core system agent](https://github.com/bluehexagons/basaltwater/issues/107) | Partial; broader framework proposed | The panel provides account-level Codex tasks and schedules. [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) still requires fleet evidence, fixed recipes, budgets, and authority contracts. |
 
-Five implemented issues were closed during the 2026-08-24 tracker
-reconciliation; #38, #58, #85, and #97 were subsequently closed, followed by
-HomeBox request #99 on 2026-09-13. The current
-[issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) tracks the 14 issues still
-open as of 2026-10-08. Fixes for #102 and #103 are in `main` and no recurrence
-has been reported, but their issue acceptance still asks for checks on the
-originally affected hosts, so they remain open.
+The [issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) tracks the 14 issues
+still open as of 2026-10-08. Fixes for #102 and #103 are in `main` and no
+recurrence has been reported, but their issue acceptance still asks for checks
+on the originally affected hosts, so they remain open.
 
-## Audit and decision records
+## Audit inputs and retained evidence
 
 | Document | Lifecycle | Use |
 | --- | --- | --- |
@@ -103,11 +101,7 @@ originally affected hosts, so they remain open.
 | [Proxmox setup and maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | Proxmox update, observability, recovery, hardening, and policy slices. |
 | [CLI-only agent host audit](AGENT_CLI_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | Agent update lifecycle, maintenance windows, audit output, and cache/credential lifecycle. |
 | [RDP desktop agent audit](DESKTOP_AGENT_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | XRDP identity, configuration rollback, workload safety, and live smoke coverage. |
-| [Test slop audit](TEST_SLOP_AUDIT_2026-08-09.md) | Complete reference | Records test-retention decisions; it is not active project work. |
 | [Test suite audit and coverage plan](TEST_SUITE_AUDIT_2026-09-02.md) | Finalized implementation plan | Canonical backlog for test coverage, domain grouping, redundancy reduction, and unowned test-surface decisions. |
-| [Test output audit](TEST_OUTPUT_AUDIT_2026-08-24.md) | Complete reference | Records the 2026-08-24 CI-output baseline and changes; its test counts are historical. |
-| [Codebase audit](CODEBASE_AUDIT_2026-09-13.md) | Complete reference | Findings addressed; current operator contracts cover recovery, CI/CD credential isolation, installer policy, and Proxmox maintenance. Live environment qualification remains separate. |
-| [Codebase audit](CODEBASE_AUDIT_2026-08-21.md) | Historical reference; residuals routed | Earlier findings remain useful evidence. Active command/state work is owned by transactional execution; webhook replay and updater trust remain deferred in the roadmap. |
 | [Shared desktop setup audit](DESKTOP_SETUP_AUDIT.md) | Historical diagnostic reference | Captures the unconfirmed XRDP resize/reconnect cause and setup cleanup; live reconnect qualification remains in the single-session desktop plan. |
 
 ## Keeping the portfolio current
@@ -115,6 +109,8 @@ originally affected hosts, so they remain open.
 When work lands, update the detailed owner first, then this index, the roadmap,
 and the issue triage when their status or ordering changes. Do not create a new
 plan for a slice already owned by one of the projects above. Move completed
-audit documents to reference status rather than leaving them in the active
-queue, and record newly deferred work explicitly instead of relying on file
-age or issue inactivity.
+findings into their owning plan or the roadmap. Keep a completed audit only
+while current qualification depends on its evidence; remove snapshots whose
+findings and decisions are already represented by maintained documentation.
+Record newly deferred work explicitly instead of relying on file age or issue
+inactivity.

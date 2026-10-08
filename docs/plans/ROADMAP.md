@@ -30,20 +30,6 @@ records still request checks on their originally affected hosts. The release
 matrix tracks broad candidate checks; those issue-specific acceptance checks
 remain open.
 
-## Basaltwater release checkpoint (2026-09-19)
-
-The rename's core namespace implementation is delivered in
-[PR #101](https://github.com/bluehexagons/basaltwater/pull/101): distribution
-`basaltwater`, entry point `basaltwater.py`, command `basaltw`, renamed runtime
-resources and skills, one-time migration from recent installations, and visual
-assets. New storage uses Basaltwater names while existing disks retain their
-[persistent identities](BASALTWATER_CONTRACTS.md#persistent-storage-identities).
-Successful cutover leaves no old-name runtime aliases. The [rename plan](BASALTWATER_RENAME.md) owns the detailed scope;
-the [release checklist](../BASALTWATER_RELEASE.md) owns disposable-host
-qualification and external publication. Core namespace delivery does not mean
-merged, tagged, published or live-host qualified. These release checks do not
-replace or reorder the reliability work below.
-
 ## Product direction
 
 The project should become a small, dependable infrastructure reconciler for
@@ -66,99 +52,13 @@ operating model. Prefer safeguards that reduce operator effort and make
 failures obvious; defer controls that require recurring manual administration
 until actual usage or incidents justify them.
 
-## Verification snapshot (2026-08-24)
+## Issue and project ownership
 
-The ordering remains justified by the current implementation:
-
-- required command failures now raise from `remote_utils.run(check=True)`;
-  nginx setup, firewall initialization, SSH reload, and CI/CD prerequisite
-  paths propagate required failures with focused coverage. The argv-native
-  command API and high-impact required-caller migrations now cover deployment,
-  storage, app-server, build-server, and CI/CD setup paths; the broader caller
-  classification remains incomplete;
-- full setup no longer tears down all managed services before replacement
-  steps run;
-- manifest deployment builds and validates a sibling release before stopping
-  app-scoped services, restores the prior release and unit files after failed
-  activation, and treats exhausted health checks as deployment failures;
-- manifest builds use application-specific accounts, automatically detect
-  common language runtimes, and retain isolated Node/uv build homes;
-- deployment-owned Nginx files are snapshotted, validated, atomically written,
-  and restored on failure without overwriting unmanaged same-name sites;
-- persistent JSON state/configuration now uses the shared atomic writer, but
-  corrupt-state readers still fall back permissively;
-- shared SSH/SCP/rsync, Proxmox node builders, and CI/CD deployment targets
-  require strict checking against explicitly enrolled workspace host keys;
-- remote setup and manifest activation now use versioned markers that block
-  overlapping work and preserve interruption/recovery context; remembered
-  target state is finalized only after setup succeeds;
-- package metadata now produces a self-contained wheel, local `make check`
-  builds and installs it in an isolated smoke environment, and tagged-release
-  CI installs, smoke-tests, and publishes the artifact;
-- Proxmox read-only status/list/health/top/audit commands share the versioned
-  JSON envelope used by provider-neutral VM commands;
-- signed webhook deliveries have no delivery-ID replay protection; this is
-  intentionally deferred until CI/CD work resumes;
-- command diagnostics redact complete quoted shell values, and the shared
-  command runner now enforces a caller-overridable one-hour bound; and
-- active agent config staging rejects source symlinks, and manifest release
-  activation now fails closed on app-unit stop or verification failures.
-- the old callback-based transaction framework has been removed; sync and scrub
-  now fail explicitly, while durable setup/deployment operation records are
-  landed and retain interruption/recovery context.
-- hosted Proxmox provisioning now accepts fractional memory sizes, reconciles
-  provider-side vCPU drift when requested, and uses the corrected named-disk
-  allocation syntax; these remain covered by focused provider tests.
-
-The manifest environment-key injection finding is resolved. CI now tests
-Python 3.13, the interpreter shipped by Debian Trixie, and `make compile`
-propagates compilation failures.
-Those completed items should remain regression coverage, not active roadmap
-work.
-
-The following work packets are complete as of this snapshot:
-
-- the first high-impact `remote_utils.run()` caller migration, including the
-  argv-native API and focused setup coverage;
-- the local wheel-install smoke test and consistent Proxmox status/`--json`
-  output; and
-- explicit CI/CD deployment-target SSH enrollment with fail-closed setup.
-
-The best next work packets are:
-
-1. Continue the `remote_utils.run()` caller inventory beyond the completed
-   nginx, firewall, SSH reload, and CI/CD prerequisite paths, moving remaining
-   required setup callers toward strict, argv-native execution. Strict,
-   secret-safe, and bounded execution are already landed; intentional probes
-   and cleanup remain best-effort.
-2. Add lightweight, phase-specific recovery inspection and rerun guidance to
-   the landed target-setup and manifest markers; do not build a generalized
-   transaction coordinator.
-3. Replace permissive corrupt-state fallbacks with schema/version checks and
-   actionable remediation.
-4. Add low-administration release and operator improvements around the
-   supported recovery path and command-level diagnostics.
-
-## Planning portfolio and GitHub issue alignment (refreshed 2026-10-08)
-
-The issue tracker was reconciled with implementation and plans on 2026-08-24;
-this portfolio and issue map were refreshed on 2026-10-08. Five completed
-operator-facing requests were closed after their documentation and test
-evidence was checked. #38, #58, #85, and #97 were subsequently closed, followed
-by HomeBox request #99 on 2026-09-13. Partial requests
-remain open with their residual scope recorded. The
-[planning index](README.md) separates active projects, queued dependencies,
-unscheduled issue backlog, and completed reference records. See the complete
-[GitHub issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) for issue-by-issue
-evidence and ownership. The five closure comments on GitHub link the same
-implementation evidence.
-
-The triage confirms that Proxmox VM provisioning, guest lifecycle management,
-local self-setup, Proxmox restart defaults, and Debian kernel-package cleanup
-are delivered. Interactive setup orchestration, generic deployment secrets,
-unified diagnostics, cross-host scheduling, and live XRDP verification remain
-follow-up work. APT caching, desktop widget preferences, and multimedia
-bundles are not current implementation priorities.
+The [planning index](README.md) owns the current portfolio, queued work, and
+unscheduled issue backlog. The
+[GitHub issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) records issue-specific
+implementation evidence and acceptance. Keep historical closure details in
+GitHub and the issue triage instead of duplicating them here.
 
 ## P0: Transactional execution and state
 
@@ -252,6 +152,10 @@ Restore verification should be designed before adding more backup backends.
 The Proxmox discovery, retention, verification-job, and isolated-restore slice
 is scoped in the
 [Proxmox setup and maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md).
+Storage integrity proposals for verify-before-sync snapshots, locking,
+interrupted-manifest reconciliation, resumable scans, incident notifications,
+and recovery retention remain unscheduled; their scope is in the
+[storage integrity review](../STORAGE_REVIEW.md).
 
 ## P2: Safe network apply and rollback
 
@@ -310,13 +214,6 @@ to English only; English/Spanish structural tests cover both translation
 directions, and other validated language tags remain allowed.
 
 ## Small improvements to land continuously
-
-Checkpoint, 2026-10-02: [T3 Code VM improvements](T3_CODE_AGENT_VM_IMPROVEMENTS.md)
-now cover v0.0.45 compatibility, native archive checks, per-thread agent reload,
-bulk provider updates, projectless scratch preservation, native PR links,
-complete managed skill bundles for Codex/OpenCode/Claude, and current preview
-recording delivery. Source, archive, and wheel checks passed; deployed-host and
-connected-client qualification remain explicit follow-up work.
 
 Small, well-contained fixes should not wait for a larger phase. Good follow-ups
 include plugin import fault isolation, extending consistent `--json` support to

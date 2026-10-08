@@ -116,8 +116,8 @@ automation, T3 Code, skills, and hardening.
 
 ## Plans and contributor material
 
-The [`plans/`](plans/) directory contains implementation plans and audit
-records. It is not operator documentation; start with the
+The [`plans/`](plans/) directory contains implementation plans and retained
+audit and decision records. It is not operator documentation; start with the
 [planning index](plans/README.md) only when researching project work.
 The [v2.0 release qualification checklist](BASALTWATER_RELEASE.md) is the
 current maintainer record for preview publication, stable live testing, and
