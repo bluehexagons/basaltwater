@@ -353,6 +353,7 @@ class T3InstallTests(unittest.TestCase):
         path = desktop.autostart_path(self.home)
         path.parent.mkdir(parents=True)
         path.write_text("[Desktop Entry]\nExec=personal-command\n")
+        path.chmod(0o600)  # Exercise unmanaged content independently of the host umask.
         for config in (self.desktop_config(), self.config):
             with self.assertRaisesRegex(ValueError, "unmanaged T3 desktop autostart"):
                 t3.preflight(config)
