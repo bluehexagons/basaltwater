@@ -67,6 +67,7 @@ and save-data conventions before executing project code.
 basaltw agent manifest /absolute/project --json
 basaltw local cachyos-doctor --json
 basaltw desktop --native develop doctor --project /absolute/project --json
+basaltw desktop --native develop import --project /absolute/project --json
 basaltw desktop --native develop editor --project /absolute/project --dry-run
 basaltw desktop --native develop editor --project /absolute/project --json
 basaltw desktop --native develop run --project /absolute/project \
@@ -94,6 +95,28 @@ Use `--engine /absolute/engine` or `--engine EXECUTABLE` for an explicitly chose
 runtime; C# defaults to `godot-mono` and also requires a discoverable `dotnet`
 command. SDK installation and compatibility still need project verification.
 Setup still installs the standard repository Godot package only.
+
+Use `develop import` to prepare the selected project's assets explicitly. It
+runs `--headless --import`, waits for imports, then exits; Godot can execute
+project editor plugins and write its `.godot` cache during this operation.
+Wait for the import task to complete before starting dependent tests. Imports
+are never part of doctor or dry-run and do not establish gameplay correctness.
+
+`editor` and `run` accept `--headless`, `--quit-after 120`, and
+`--rendering-method forward_plus|mobile|gl_compatibility` before the project
+arguments. Headless uses Godot's headless display and dummy audio driver.
+`--quit-after` accepts 1–1000000 engine iterations; it is an iteration bound,
+not a wall-clock timeout or a promise that the project passed assertions.
+A renderer override applies to that launch without changing project settings.
+Check the selected engine's supported options and retain its actual backend
+observations. See the [Godot command-line reference](https://docs.godotengine.org/en/stable/tutorials/editor/command_line_tutorial.html).
+
+```fish
+basaltw desktop --native develop run --project /absolute/project \
+  --headless --quit-after 120 --scene res://tests/smoke.tscn --json
+basaltw desktop --native develop run --project /absolute/project \
+  --rendering-method gl_compatibility --quit-after 120 --json -- --fixture menu
+```
 
 Each explicit launch returns a task ID, unit, private directory/log, and current
 state. A user-systemd service owns the task's process group and follows the
@@ -163,24 +186,87 @@ Prefer project-defined playtest fixtures and input actions. Capture the tested
 revision/worktree, scene, engine, renderer, resolution, seed, logs, and expected
 outcome together. The existing
 [graphics recipe runner](VISUAL_COMPARISONS.md#run-a-project-check) retains
-reviewable evidence. Use headless checks for the assertions they actually
+reviewable evidence. Queue it as a native development task to recover the
+existing KDE environment and retain results after the launch client exits:
+
+```fish
+basaltw desktop --native develop check playtest-smoke --project /absolute/project \
+  --settings /absolute/playtest-settings.json --timeout 120 --dry-run --json
+basaltw desktop --native develop check playtest-smoke --project /absolute/project \
+  --settings /absolute/playtest-settings.json --timeout 120 --json
+basaltw desktop --native develop status TASK_ID --json
+```
+
+`check` uses the existing repository-root `basaltwater-agent.json` recipes.
+Declare a reviewed project harness, for example:
+
+```json
+{
+  "version": 1,
+  "recipes": {
+    "playtest-smoke": {
+      "description": "Import assets, run the fixed menu fixture and assert its observations",
+      "argv": ["python3", "tools/playtest_smoke.py"],
+      "requires": ["python3", "godot"]
+    }
+  }
+}
+```
+
+The project harness owns import ordering, input actions, assertions, expected
+errors, captures and structured runtime observations. Read its settings from
+`BASALTWATER_VISUAL_SETTINGS` and write evidence under
+`BASALTWATER_VISUAL_EVIDENCE`. For Godot, record actual scene/renderer/device,
+dimensions, engine version, seed and observed state, then exit nonzero when an
+assertion fails. For Electron/native clients, use the same recipe interface
+with the project's reviewed test runner. Recipe arguments are literal; shell
+logic belongs in an explicit reviewed script. Basaltwater supplies no generic
+Godot debugger or input-action bridge.
+
+Native `check` validates the recipe, required executable presence, directory,
+settings and 1–3600 second deadline before queueing. Its dry-run omits the
+eventual private `--output` path because no task directory is allocated.
+`status` returns `recipe`, `evidence` and `check_report` paths; the latter points
+to `TASK_DIRECTORY/check/check.json`. Inspect that report and its `check.log`,
+`environment.json`, `settings.json` and project artifacts after completion.
+The report records commit/dirty state at check start; it does not snapshot or
+freeze a checkout being edited concurrently. The recipe inherits the task's
+recovered native environment and active toolchain; select a project runtime
+explicitly inside the harness when necessary.
+
+Use headless checks for the assertions they actually
 exercise; verify rendering, audio, focus, and controller behavior on the real
 desktop/GPU. Separate game frame times from streaming/encoding/client latency.
 
-For Electron, use the project's package scripts and committed Node/package
-manager requirements via `basaltw node exec`; preserve its sandbox policy.
-For example, launch a reviewed project script in the existing desktop:
+For Electron, launch one declared package script using the project's committed
+Node/package-manager requirements and preserve its sandbox policy:
 
 ```fish
-basaltw desktop --native develop exec --project /absolute/electron-project \
-  --json -- basaltw node exec -- npm run dev:electron
+basaltw desktop --native develop node dev:electron --project /absolute/electron-project \
+  --json -- --development
 basaltw desktop --native develop exec --project /absolute/native-project \
   --json -- /absolute/native-project/bin/application --development
 ```
 
-The supervisor preserves the caller's PATH for an explicitly selected project
-runtime; it does not import the caller's provider credentials or bus/display
-overrides into the user manager. Task launches run trusted project code with
+`node SCRIPT` requires a declared `package.json` script. It uses this
+Basaltwater installation's `node exec --project PATH` to select an already
+installed runtime from `.node-version`, `.nvmrc` and `engines.node`. It selects
+npm/pnpm/yarn from `packageManager`, defaulting to npm when undeclared;
+`--manager` overrides the choice. This selects the manager name; verifying its
+exact declared version remains the project's toolchain responsibility.
+Arguments after `--` go to the script using
+the selected manager's argument convention. It does not install a runtime,
+package manager or project dependencies, disable Electron's sandbox, or add a
+shell around the launch; the package manager executes the reviewed script.
+Corepack network downloads are disabled for this task. Missing/incompatible
+runtime or manager errors are retained in its log. `doctor` lists bounded
+package-script names and declared requirements without executing them; it keeps
+Node/runtime readiness unverified. Use `basaltw node doctor --project PATH
+--json` for explicit runtime diagnosis.
+
+The supervisor preserves the caller's PATH and optional validated NVM_DIR for
+an explicitly selected project runtime; it does not import the caller's provider
+credentials or bus/display overrides into the user manager. Task launches run trusted project code with
 the normal account's access; they are not a sandbox.
 
 For native applications, use project-owned run/test commands and check file

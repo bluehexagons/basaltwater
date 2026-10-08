@@ -42,6 +42,7 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.state, self.substate, self.invocation = "active", "running", "a" * 32
         self.transient, self.description = "yes", None
         self.launch_state = "ok"
+        self.enterContext(patch.dict(os.environ, {"NVM_DIR": ""}))
 
     def respond(self, command, uid):
         self.assertEqual(uid, self.uid)
@@ -564,6 +565,9 @@ class TestDevelopmentManifest(unittest.TestCase):
         self.assertEqual(commands["role"], "remote-godot-development")
         self.assertEqual(commands["readiness"], "unverified")
         self.assertEqual(commands["doctor_argv"], ["basaltw", "desktop", "--native", "develop", "doctor", "--project", temporary, "--json"])
+        self.assertEqual(commands["godot_import_argv"][4], "import")
+        self.assertEqual(commands["node_script_prefix_argv"][4], "node")
+        self.assertEqual(commands["recipe_check_prefix_argv"][4], "check")
         self.assertIn("electron", commands["secondary_workflows"])
         execute.assert_not_called()
 

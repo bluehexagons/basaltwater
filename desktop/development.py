@@ -13,6 +13,7 @@ import secrets
 import shlex
 import shutil
 import stat
+import subprocess
 import sys
 
 from lib.atomic_io import read_json_file, write_json_atomic
@@ -25,13 +26,13 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 LOG_LIMIT = 16 * 1024 * 1024
 TASK_ID = re.compile(r"[0-9a-f]{32}")
 UNIT_PREFIX = "basaltwater-development-"
-KINDS = ("editor", "run", "exec")
+KINDS = ("editor", "run", "import", "exec", "node", "check")
 
 
 def add_development_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("develop", help="Check projects and supervise native development tasks without screen control")
     actions = parser.add_subparsers(dest="development_command", required=True)
-    for name in ("doctor", "editor", "run", "exec"):
+    for name in ("doctor", "editor", "run", "import", "exec"):
         action = actions.add_parser(name)
         action.add_argument("--project", required=True, help="Existing project or worktree directory")
         action.add_argument("--json", action="store_true")
@@ -39,14 +40,30 @@ def add_development_parser(commands: argparse._SubParsersAction) -> None:
             action.add_argument("--engine", help="Godot executable name or absolute path; defaults to godot or godot-mono for C#")
         if name != "doctor":
             action.add_argument("--dry-run", action="store_true", help="Validate and show the task without creating state or launching")
+        if name in ("editor", "run"):
+            action.add_argument("--headless", action="store_true", help="Use Godot's headless display/audio; this does not verify GPU or input")
+            action.add_argument("--quit-after", type=int, help="Quit after 1–1000000 engine iterations; this is not a wall-clock deadline")
+            action.add_argument("--rendering-method", choices=("forward_plus", "mobile", "gl_compatibility"), help="Explicit per-launch renderer override")
         if name == "run":
             action.add_argument("--scene", help="Existing .tscn/.scn within the project; accepts res:// paths")
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Project arguments following --")
         elif name == "exec":
             action.add_argument("argv", nargs=argparse.REMAINDER, help="Explicit application/project command following --")
+    for name in ("node", "check"):
+        action = actions.add_parser(name, help="Run a declared package script" if name == "node" else "Run a declared project rendering/test recipe in the native session")
+        action.add_argument("script" if name == "node" else "recipe")
+        action.add_argument("--project", required=True)
+        action.add_argument("--json", action="store_true")
+        action.add_argument("--dry-run", action="store_true")
+        if name == "node":
+            action.add_argument("--manager", choices=("npm", "pnpm", "yarn"), help="Override packageManager; defaults to npm when undeclared")
+            action.add_argument("argv", nargs="*", help="Script arguments following --")
+        else:
+            action.add_argument("--settings", help="Existing non-secret JSON settings to record and pass to the recipe")
+            action.add_argument("--timeout", type=int, default=600, help="Recipe process-group deadline in seconds (1–3600)")
     for name in ("status", "stop"):
         action = actions.add_parser(name)
-        action.add_argument("task", help="Task ID returned by editor, run, or exec")
+        action.add_argument("task", help="Task ID returned by a development launch")
         action.add_argument("--json", action="store_true")
         if name == "stop":
             action.add_argument("--dry-run", action="store_true", help="Validate the task identity without stopping it")
@@ -115,8 +132,10 @@ def project_info(project: Path, engine: str | None = None) -> dict:
     path = project / "project.godot"
     result = {"directory": str(project), "kind": "native", "missing_tools": [], "runtime_readiness": "unverified"}
     if not path.exists() and not path.is_symlink():
-        if (project / "package.json").is_file():
+        if (project / "package.json").exists() or (project / "package.json").is_symlink():
+            from desktop.development_workflows import package_info
             result["kind"] = "node"
+            result["node"] = package_info(project)
         return result
     body = _regular_text(path)
     values = _godot_features(body)
@@ -258,7 +277,7 @@ def _private_json(path: Path) -> dict:
 def load_task(directory: Path) -> dict:
     _private_directory(directory)
     value = _private_json(directory / "task.json")
-    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id"}
+    if (set(value) - {"schema_version", "task", "unit", "kind", "project", "argv", "owner_uid", "created_at", "invocation_id", "recipe"}
             or type(value.get("schema_version")) is not int or value["schema_version"] != 1
             or value.get("task") != directory.name or not TASK_ID.fullmatch(directory.name)
             or value.get("unit") != f"{UNIT_PREFIX}{directory.name}.service"
@@ -270,6 +289,13 @@ def load_task(directory: Path) -> dict:
         raise ValueError("Invalid development task timestamp")
     if "invocation_id" in value and (not isinstance(value["invocation_id"], str) or not TASK_ID.fullmatch(value["invocation_id"])):
         raise ValueError("Invalid development task invocation")
+    if value["kind"] == "check":
+        recipe = value.get("recipe")
+        if not isinstance(recipe, str) or not 1 <= len(recipe) <= 256 or recipe.startswith("-"):
+            raise ValueError("Invalid development recipe identity")
+        validate_no_control_characters(recipe, "Recipe name")
+    elif "recipe" in value:
+        raise ValueError("Recipe metadata belongs only to a check task")
     validate_filesystem_path(value.get("project"))
     if not Path(value["project"]).is_absolute():
         raise ValueError("Task project must be absolute")
@@ -328,6 +354,9 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     result = {"schema_version": 1, "ok": True, "task": task_id, "unit": task["unit"],
               "kind": task["kind"], "project": task["project"], "directory": str(directory),
               "log": str(directory / "output.log"), "state": "unavailable", "returncode": None}
+    if task["kind"] == "check":
+        result.update(recipe=task["recipe"], evidence=str(directory / "check"),
+                      check_report=str(directory / "check" / "check.json"))
     if (directory / "stop-requested.json").exists():
         request = _private_json(directory / "stop-requested.json")
         timestamp = request.get("requested_at")
@@ -401,7 +430,10 @@ def list_tasks(project: str | None = None) -> dict:
 
 
 def launch(project: str, kind: str, *, engine: str | None = None, scene: str | None = None,
-           argv: list[str] | None = None, dry_run: bool = False) -> dict:
+           argv: list[str] | None = None, dry_run: bool = False, headless: bool = False,
+           quit_after: int | None = None, rendering_method: str | None = None,
+           script: str | None = None, manager: str | None = None, recipe: str | None = None,
+           settings: str | None = None, timeout: int = 600) -> dict:
     uid = _guard()
     if kind not in KINDS:
         raise ValueError("Unknown development task kind")
@@ -409,18 +441,40 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     arguments = list(argv or [])
     if arguments[:1] == ["--"]:
         arguments = arguments[1:]
-    if kind == "exec":
+    if kind in ("import", "check") and arguments:
+        raise ValueError("Import and check tasks do not accept extra command arguments")
+    if kind not in ("editor", "run") and (headless or quit_after is not None or rendering_method is not None):
+        raise ValueError("Godot run options require editor or run")
+    if quit_after is not None and (type(quit_after) is not int or not 1 <= quit_after <= 1000000):
+        raise ValueError("Godot quit-after must be from 1 through 1000000 iterations")
+    if rendering_method is not None and rendering_method not in ("forward_plus", "mobile", "gl_compatibility"):
+        raise ValueError("Unknown Godot rendering method")
+    if kind == "node":
+        from desktop.development_workflows import node_command
+        arguments = node_command(path, script, manager, arguments)
+    elif kind == "check":
+        from desktop.development_workflows import check_command
+        arguments = check_command(path, recipe, settings, timeout)
+    elif kind == "exec":
         validate_argv(arguments)
         arguments[0] = _executable(arguments[0])
     else:
         info = project_info(path, engine)
         if info["kind"] != "godot":
-            raise ValueError("Godot editor/run requires project.godot in the chosen project")
+            raise ValueError("Godot editor/run/import requires project.godot in the chosen project")
         if info["missing_tools"]:
             raise ValueError("Missing project tools: " + ", ".join(info["missing_tools"]))
         user_arguments = arguments
         arguments = [info["engine"], "--path", str(path)]
-        if kind == "editor":
+        if headless or kind == "import":
+            arguments.append("--headless")
+        if quit_after is not None:
+            arguments.extend(["--quit-after", str(quit_after)])
+        if rendering_method is not None:
+            arguments.extend(["--rendering-method", rendering_method])
+        if kind == "import":
+            arguments.append("--import")
+        elif kind == "editor":
             arguments.append("--editor")
         elif scene is not None:
             validate_filesystem_path(scene)
@@ -438,6 +492,10 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     # its provider credentials or display/bus overrides into the user manager.
     environment["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")
     validate_no_control_characters(environment["PATH"], "PATH")
+    if os.environ.get("NVM_DIR"):
+        environment["NVM_DIR"] = str(_project(os.environ["NVM_DIR"]))
+    if kind == "node":
+        environment["COREPACK_ENABLE_NETWORK"] = "0"
     if dry_run or is_dry_run():
         return {"schema_version": 1, "ok": True, "dry_run": True, "kind": kind,
                 "project": str(path), "argv": arguments, "session": "existing-kde-wayland"}
@@ -445,9 +503,14 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     directory = _root(create=True) / secrets.token_hex(16)
     directory.mkdir(mode=0o700)  # A collision must never replace an existing task.
     _private_directory(directory)
+    if kind == "check":
+        arguments.extend(["--output", str(directory / "check")])
+        validate_argv(arguments)
     task = {"schema_version": 1, "task": directory.name, "unit": f"{UNIT_PREFIX}{directory.name}.service",
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
+    if kind == "check":
+        task["recipe"] = recipe
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
     unset = ["PYTHONPATH", "PYTHONHOME", "AT_SPI_BUS_ADDRESS"]
     unset.extend(name for name in ("DISPLAY", "XAUTHORITY") if name not in environment)
@@ -492,8 +555,12 @@ def run_development_command(args: argparse.Namespace) -> int:
             result = task_status(args.task, stop=action == "stop", dry_run=getattr(args, "dry_run", False))
         else:
             result = launch(args.project, action, engine=getattr(args, "engine", None),
-                scene=getattr(args, "scene", None), argv=getattr(args, "argv", None), dry_run=args.dry_run)
-    except (OSError, ValueError, RuntimeError) as exc:
+                scene=getattr(args, "scene", None), argv=getattr(args, "argv", None), dry_run=args.dry_run,
+                headless=getattr(args, "headless", False), quit_after=getattr(args, "quit_after", None),
+                rendering_method=getattr(args, "rendering_method", None), script=getattr(args, "script", None),
+                manager=getattr(args, "manager", None), recipe=getattr(args, "recipe", None),
+                settings=getattr(args, "settings", None), timeout=getattr(args, "timeout", 600))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1

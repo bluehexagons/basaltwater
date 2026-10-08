@@ -35,7 +35,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         }
         self.inspect = self.enterContext(patch.object(agent_visual_check, "inspect_environment", return_value=self.manifest))
         self.context = self.enterContext(patch.object(agent_visual_check, "host_context", return_value={"kernel": "test"}))
-        self.execute = self.enterContext(patch.object(agent_visual_check, "run", return_value=subprocess.CompletedProcess([], 0)))
+        self.execute = self.enterContext(patch.object(agent_visual_check, "run_streamed", return_value=0))
         self.enterContext(patch.object(agent_visual_check, "is_dry_run", return_value=False))
         self.parser = argparse.ArgumentParser()
         agent_cli.add_agent_subparser(self.parser.add_subparsers(dest="command"))
@@ -58,7 +58,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(call.args[0], self.manifest["recipes"]["graphics"]["argv"])
         self.assertEqual(call.kwargs["cwd"], str(self.project / "."))
         self.assertEqual(call.kwargs["timeout"], 25)
-        self.assertEqual(call.kwargs["input_data"], "")
+        self.assertNotIn("input_data", call.kwargs)  # stdin is closed, never an inherited terminal.
         self.assertEqual(call.kwargs["env"]["SDL_VIDEODRIVER"], "offscreen")
         self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_EVIDENCE"], str(self.output))
         self.assertEqual(call.kwargs["env"]["BASALTWATER_VISUAL_SETTINGS"], str(self.output / "settings.json"))
@@ -73,8 +73,8 @@ class TestAgentVisualCheck(unittest.TestCase):
 
     def test_failed_recipe_retains_log_returncode_and_report(self) -> None:
         def failure(argv, **kwargs):
-            kwargs["stdout"].write("renderer could not initialize\n")
-            return subprocess.CompletedProcess(argv, 17)
+            kwargs["on_output"]("renderer could not initialize\n")
+            return 17
 
         self.execute.side_effect = failure
         result = agent_visual_check.check_recipe(self.args())
@@ -83,6 +83,21 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("renderer could not initialize", (self.output / "check.log").read_text())
         self.assertTrue((self.output / "environment.json").is_file())
+
+    def test_log_quota_keeps_draining_and_preserves_failure(self) -> None:
+        def flood(argv, **kwargs):
+            for chunk in ("12345", "67890", "still drained"):
+                kwargs["on_output"](chunk)
+            return 7
+
+        self.execute.side_effect = flood
+        with patch.object(agent_visual_check, "LOG_LIMIT", 8):
+            result = agent_visual_check.check_recipe(self.args())
+        self.assertEqual((self.output / "check.log").read_bytes(), b"12345678")
+        self.assertTrue(result["log_truncated"])
+        self.assertEqual(result["log_limit_bytes"], 8)
+        self.assertEqual(result["returncode"], 7)
+        self.assertEqual(result["status"], "failed")
 
     def test_timeout_interruption_and_launch_failure_retain_evidence(self) -> None:
         for exception, status in ((CommandTimeoutError("check", 10), "timed-out"), (KeyboardInterrupt(), "interrupted"), (FileNotFoundError("missing executable"), "failed")):
@@ -134,7 +149,7 @@ class TestAgentVisualCheck(unittest.TestCase):
             path = Path(kwargs["env"]["BASALTWATER_VISUAL_SETTINGS"])
             path.chmod(0o600)
             path.write_text('{"frame":0}')
-            return subprocess.CompletedProcess(argv, 0)
+            return 0
 
         self.execute.side_effect = change_settings
         result = agent_visual_check.check_recipe(self.args())
@@ -162,7 +177,7 @@ class TestAgentVisualCheck(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_cli_dispatch_returns_json_with_failure_status(self) -> None:
-        self.execute.return_value = subprocess.CompletedProcess([], 3)
+        self.execute.return_value = 3
         with redirect_stdout(output := StringIO()):
             self.assertEqual(agent_cli.run_agent_command(self.args("--json")), 1)
         result = json.loads(output.getvalue())

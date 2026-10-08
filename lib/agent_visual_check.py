@@ -15,6 +15,7 @@ from lib.agent_environment import inspect_environment
 from lib.agent_visuals import _directory, _settings
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import is_dry_run, run
+from lib.streamed_process import run_streamed
 from lib.validation import validate_filesystem_path
 
 
@@ -27,6 +28,7 @@ GRAPHICS_PACKAGES = (
     "mesa", "libglvnd", "vulkan-intel", "vulkan-radeon", "nvidia-utils",
     "sdl3", "sdl3_image", "mesa-utils", "xorg-server-xvfb", "xorg-xauth",
 )
+LOG_LIMIT = 16 * 1024 * 1024
 
 
 def host_context(environment: dict[str, str]) -> dict:
@@ -96,6 +98,7 @@ def check_recipe(args: argparse.Namespace) -> dict:
         "started_at": datetime.now(timezone.utc).isoformat(), "timeout": args.timeout,
         "returncode": None, "verification_scope": "project-recipe-exit-status",
         "gpu_readiness": "unverified", "ui_readiness": "unverified",
+        "log_limit_bytes": LOG_LIMIT, "log_truncated": False,
     }
     write_json_atomic(report_path, report)
     started = time.monotonic()
@@ -103,14 +106,25 @@ def check_recipe(args: argparse.Namespace) -> dict:
         snapshot = {"manifest": manifest, "host": host_context(environment)}
         write_json_atomic(environment_path, snapshot)
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as log:
-            completed = run(
+        with os.fdopen(descriptor, "wb", buffering=0) as log:
+            written = 0
+
+            def record_output(chunk: str) -> None:
+                nonlocal written
+                encoded = chunk.encode("utf-8", errors="replace")
+                retained = encoded[:max(0, LOG_LIMIT - written)]
+                log.write(retained)
+                written += len(retained)
+                if len(retained) < len(encoded):
+                    report["log_truncated"] = True
+
+            returncode = run_streamed(
                 recipe["argv"], cwd=cwd, env=environment, timeout=args.timeout,
-                check=False, stdout=log, stderr=subprocess.STDOUT, input_data="",
+                on_output=record_output,
             )
-        report["returncode"] = completed.returncode
-        if completed.returncode != 0:
-            raise RuntimeError(f"Project recipe exited with status {completed.returncode}; inspect {log_path}")
+        report["returncode"] = returncode
+        if returncode != 0:
+            raise RuntimeError(f"Project recipe exited with status {returncode}; inspect {log_path}")
         if read_json_file(settings_path, max_bytes=512 * 1024) != settings:
             raise RuntimeError("Project recipe changed the recorded settings; refusing inconsistent evidence")
         report.update(ok=True, status="passed")

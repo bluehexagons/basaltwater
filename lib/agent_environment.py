@@ -340,8 +340,11 @@ def inspect_environment(repository: str) -> dict[str, object]:
             "doctor_argv": ["basaltw", "desktop", "--native", "develop", "doctor", "--project", root, "--json"],
             "godot_editor_argv": ["basaltw", "desktop", "--native", "develop", "editor", "--project", root, "--json"],
             "godot_run_argv": ["basaltw", "desktop", "--native", "develop", "run", "--project", root, "--json"],
+            "godot_import_argv": ["basaltw", "desktop", "--native", "develop", "import", "--project", root, "--json"],
+            "node_script_prefix_argv": ["basaltw", "desktop", "--native", "develop", "node", "--project", root, "--json"],
+            "recipe_check_prefix_argv": ["basaltw", "desktop", "--native", "develop", "check", "--project", root, "--json"],
             "application_prefix_argv": ["basaltw", "desktop", "--native", "develop", "exec", "--project", root, "--"],
-            "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. Tasks retain private bounded logs and status after client disconnect. Capture/input still require separate approved portal control. Honor human pause; record actual playtest outcomes separately from prerequisites and process exit status.",
+            "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. Import Godot assets before testing; bounded headless runs do not verify GPU/input. Use node for a declared package script with the project's selected installed Node runtime, and check for a declared project recipe with private revision/settings evidence. Tasks retain bounded logs and status after client disconnect. Capture/input still require separate approved portal control. Honor human pause; record actual playtest outcomes separately from prerequisites and process exit status.",
         } if native_desktop else None,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],

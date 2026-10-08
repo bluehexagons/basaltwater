@@ -24,6 +24,9 @@ Then run it deliberately, using the project's selected toolchain:
 ```bash
 basaltw agent visuals check graphics-smoke --repository ~/repos/my-game \
   --settings ~/capture-settings.json --timeout 600 --json
+# Queue in the existing CachyOS KDE session, retaining results after disconnect:
+basaltw desktop --native develop check graphics-smoke --project ~/repos/my-game \
+  --settings ~/capture-settings.json --timeout 600 --json
 ```
 
 The recipe runs in its declared repository-relative directory in the current
@@ -35,13 +38,22 @@ Missing declared requirements and unknown recipes fail before execution.
 
 `check.json` records the recipe, argv, working directory, UTC start/end times,
 duration, timeout, return code and outcome. `check.log` retains combined stdout
-and stderr. `environment.json` retains the read-only environment manifest,
-including executable paths, commit and dirty state; it also records OS/kernel,
+and stderr up to 16 MiB, while continuing to drain excess output. The report's
+`log_limit_bytes` and `log_truncated` record that bound and any truncation;
+the recipe's outcome is retained even when its output exceeds the quota.
+Project-created artifacts have no automatic quota. `environment.json` retains
+the read-only environment manifest, including executable paths, commit and dirty state; it also records OS/kernel,
 architecture and an allowlist of display/SDL/Mesa environment settings. When
 pacman is available, a bounded read-only query records installed Mesa, SDL,
 graphics-driver and Xvfb package versions from a fixed list. Missing optional
 packages or an unavailable package query do not fail the project check.
 No tool-version shims or renderers run as part of this metadata collection.
+
+The native development wrapper returns a task ID and `check_report` path under
+the task's private directory. Use `develop status TASK_ID --json` for lifecycle
+state and inspect the check report for the recipe outcome. See the
+[remote development guide](CACHYOS_DEVELOPMENT.md) for preview, stopping,
+runtime selection and Godot/Electron/native harness conventions.
 
 The child inherits the caller's environment, including `SDL_VIDEODRIVER`.
 `BASALTWATER_VISUAL_EVIDENCE` points to the new evidence directory and

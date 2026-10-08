@@ -34,15 +34,31 @@ Read the reference for the task:
 For remote Godot development, check project prerequisites with
 `basaltw desktop --native develop doctor --project PATH --json`. Use `develop
 editor --project PATH` or `develop run --project PATH --scene res://SCENE` to
-launch explicitly in the owned logged-in KDE session from T3 or SSH. For
-Electron/native commands, use `develop exec --project PATH -- COMMAND`, choosing
-the project's Node/runtime wrapper and preserving its sandbox policy. Use
+launch explicitly in the owned logged-in KDE session from T3 or SSH. Use
+`develop import --project PATH` for explicit headless asset preparation; wait
+for completion before dependent checks. Editor/run accept `--headless`,
+`--quit-after ITERATIONS`, and `--rendering-method METHOD`; iteration bounds
+are not wall-clock deadlines, and headless success does not verify GPU/input.
+For Electron, use `develop node SCRIPT --project PATH -- ARGUMENTS` to execute
+one declared package script with the selected installed project Node runtime
+and npm/pnpm/yarn policy. It installs no dependencies and disables implicit
+Corepack downloads. Preserve the project's sandbox policy. For native commands,
+use `develop exec --project PATH -- COMMAND`. Use
 `--dry-run` to preview. These user-systemd tasks survive client disconnection
 and retain private bounded logs; `develop list`, `develop status TASK_ID`, and
 `develop stop TASK_ID` manage only their records/process group. Save changes
 before stopping an editor. Launches honor saved/live human pause; they do not
 grant capture/input permission. See the
 [remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md).
+
+Queue project-declared Godot/Electron/native checks with `develop check RECIPE
+--project PATH --settings SETTINGS.json --timeout SECONDS`. Use the existing
+`basaltwater-agent.json` recipes; the project harness owns import ordering,
+actions, assertions and actual renderer/runtime observations. It reads
+`BASALTWATER_VISUAL_SETTINGS` and writes `BASALTWATER_VISUAL_EVIDENCE`. Native
+status returns the private `check_report` path with revision/settings/outcome
+evidence and a bounded check log. Record what the harness actually exercised;
+exit status alone does not verify GPU, audio, input or complete UI behavior.
 
 Launch the active executable directly from the invoking graphical session:
 
