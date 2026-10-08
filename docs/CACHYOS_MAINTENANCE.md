@@ -249,6 +249,36 @@ it never opens tokens or databases. A permissive token file inside private paren
 is advisory; exposed directories or unsafe ownership/types are failures.
 Custom T3 state locations require separate inspection.
 
+## T3 desktop login startup
+
+`--t3code-desktop` now enables T3 Code at each KDE login. Existing desktop
+installations acquire this behavior on their next desktop setup or refresh:
+
+```fish
+basaltw refresh --dry-run
+basaltw refresh
+basaltw local cachyos-doctor
+```
+
+The entry is `~/.config/autostart/basaltwater-cachyos-t3.desktop`, or
+`$XDG_CONFIG_HOME/autostart/basaltwater-cachyos-t3.desktop` for an absolute XDG
+override. It uses the package-owned `/usr/bin/t3code` and KDE's normal login
+environment. No user service or restart loop is added for the desktop app;
+quitting it leaves it stopped for that session. Setup retains a running app.
+The entry's `TryExec` prevents login launch attempts after package removal.
+
+Use **System Settings → Autostart** to disable T3 startup. The doctor reports a
+disabled entry as advisory; the next desktop setup or refresh re-enables it.
+Missing or modified entries and a missing native executable are reported as
+failures. Setup refuses symlinks or unmanaged content at the managed filename;
+inspect that file locally before retrying. Other personal startup entries are
+retained. Remove duplicate personal T3 entries in KDE if you previously added one.
+
+Verify startup with a later logout/login when convenient, then test a provider
+thread and terminal in T3. The doctor observes startup configuration without
+launching the app and cannot prove that a login launch succeeded. No automatic
+login or pre-login desktop is configured.
+
 ## AUR download failures
 
 Shelly's generic source-download failure can hide the underlying Git error:
@@ -390,8 +420,10 @@ basaltw setup agent_cachyos localhost --web-interface t3code
 
 Desktop mode disables only the Basaltwater-owned user service and retains its
 unit, runtime, and data. Web mode stages and starts the managed service again;
-the desktop package stays installed. Omitting both flags leaves the current
-mode alone. Setup never kills the desktop app or takes over an upstream service.
+after successful activation it removes the managed desktop autostart entry.
+A failed web activation keeps desktop login startup. The desktop package stays
+installed. Omitting both flags leaves the current mode alone. Setup never kills
+the desktop app or takes over an upstream service.
 
 The web service uses `~/.local/share/basaltwater/cachyos-t3/data` explicitly,
 separate from the desktop's default `~/.t3`. Switching modes does not copy,

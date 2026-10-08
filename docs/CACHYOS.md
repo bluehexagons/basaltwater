@@ -92,7 +92,7 @@ This installs the launcher, Codex, GitHub CLI, T3 desktop, and the selected
 project tools. Omit `--node --python --git-lfs` for just the default coding tools
 and T3 desktop; add `--no-agent-tool gh` to omit GitHub CLI. A missing
 `t3code-bin` is installed using CachyOS's default Shelly CLI and may prompt for
-package review or sudo.
+package review or sudo. T3 Code starts automatically at subsequent KDE logins.
 
 For an installer-wide preview, add `--plan` before `--local-setup` in your
 chosen block. This does not install packages, download the repository, or
@@ -124,7 +124,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Remote desktop or diagnostics | `--remmina`, `--sysadmin-tools` |
 | Materials, removable media, publishing | `--material-maker`, `--etcher`, `--butler`, `--steamcmd` ([packages and post-install checks](CACHYOS_SOFTWARE.md)) |
 | Repository workspace | `--repo HTTPS_URL` (repeatable), `--agent-workspace /absolute/path` (default `~/repos`) |
-| T3 Code desktop | `--t3code-desktop`: install or retain the upstream-listed `t3code-bin` AUR package; mutually exclusive with `--web-interface` |
+| T3 Code desktop | `--t3code-desktop`: install or retain `t3code-bin` and enable KDE login startup; mutually exclusive with `--web-interface` |
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
@@ -298,6 +298,18 @@ Setup prints provider executable paths; if a KDE-launched T3 cannot find a
 provider, use its **Binary path** setting. Verify a thread and terminal in the
 app; a terminal CLI check does not establish GUI provider discovery. Desktop
 mode does not require the separate Node/npm runtime used by the web service.
+
+Desktop setup enables T3 Code at KDE login using a managed
+[freedesktop autostart entry](https://specifications.freedesktop.org/autostart/latest/)
+at `~/.config/autostart/basaltwater-cachyos-t3.desktop` (or under an absolute
+`$XDG_CONFIG_HOME`). It launches the native `/usr/bin/t3code` only after login
+and skips startup if that executable has been uninstalled. Setup itself does
+not launch another app. A normal quit leaves T3 stopped until the next login.
+Manage startup in KDE's **System Settings → Autostart**; a desktop setup or
+refresh re-enables the managed entry. Custom files or symlinks at its destination
+are preserved and reported before package changes. Switching successfully to
+web mode removes this entry; a failed web activation preserves it. See
+[login-startup maintenance](CACHYOS_MAINTENANCE.md#t3-desktop-login-startup).
 
 Use the app's **Settings → Connections** for desktop pairing or T3 Connect,
 when supported by the installed version. The managed web-service commands below
@@ -553,6 +565,8 @@ inventoried, and the doctor does not launch a browser to test it.
 
 The doctor loads the validated saved selection: a missing selected T3 package,
 inactive selected web service, or broken selected CLI is reported as failed.
+Desktop selections also check the native T3 executable and managed login startup;
+an active managed web service in desktop mode is reported as a conflict.
 Selected media/graphics, desktop, streaming, sysadmin, and publishing commands
 also receive PATH presence checks without launching them. Remmina's selected
 protocol/secret dependencies are checked as packages. Command presence does not

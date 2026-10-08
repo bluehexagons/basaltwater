@@ -211,6 +211,9 @@ T3 desktop is another explicit AUR exception: `--t3code-desktop` installs or ret
 absent. Preserve the selected helper's review prompts and source policy.
 It is mutually exclusive with
 `--web-interface t3code`, which selects a separate managed web environment.
+Desktop setup enables T3 at KDE login through a managed autostart entry; normal
+quit leaves it stopped for the session. A successful switch to web mode removes
+that entry. Doctor checks its configuration without launching the app.
 Use `basaltwater-cachyos-t3code` for switching, pairing, and Connect commands.
 Native control is a separate, task-scoped opt-in. Keep its agent, workspace,
 and readiness checks when using the desktop app; verify a real provider thread

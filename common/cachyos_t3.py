@@ -24,7 +24,8 @@ from common.cachyos_steps import (
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from common import cachyos_aur as aur
-from lib.remote_utils import run
+from common import cachyos_t3_desktop as desktop
+from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_filesystem_path
 
 
@@ -77,6 +78,7 @@ def _protect_desktop_data(home: Path) -> None:
 
 
 def _check_managed_paths(home: Path) -> tuple[Path, Path]:
+    desktop.autostart_path(home)
     prefix = home / ".local/share/basaltwater/cachyos-t3"
     unit = home / ".config/systemd/user" / T3_SERVICE
     marker = prefix / "desktop-mode"
@@ -137,6 +139,9 @@ def preflight(config: SetupConfig) -> None:
 
 def install_desktop(config: SetupConfig) -> None:
     """Retain AUR ownership and retire only the Basaltwater web service."""
+    if config.dry_run or is_dry_run():
+        print("  Would install/retain T3 desktop, disable the managed web service, and enable KDE login startup")
+        return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
@@ -170,10 +175,12 @@ def install_desktop(config: SetupConfig) -> None:
             enabled = run(["systemctl", "--user", "is-enabled", T3_SERVICE], capture_output=True, check=False)
             if enabled.returncode != 1 or enabled.stdout.strip() != "disabled":
                 raise RuntimeError("Managed T3 web service remains enabled; inspect user/global systemd enablement")
+        desktop.enable_autostart(home)
         _write_managed(prefix / "desktop-mode", _MARKER + "\n", mode=0o600)
     print(f"  T3 desktop: {DESKTOP_PACKAGE} {version}; updates remain with your AUR helper")
     print("  Managed web service disabled; desktop settings, credentials, and all T3 data retained")
     print("  Default ~/.t3 desktop state is private; existing credential contents retained")
+    print("  T3 Code enabled at KDE login; normal quit stays stopped until the next login")
     print("  Open T3 Code from KDE and verify a provider thread and terminal")
     for tool in config.selected_agent_tools():
         if tool != "gh":
@@ -324,6 +331,9 @@ def _prune_releases(releases: Path, keep: set[Path]) -> None:
 
 
 def install(config: SetupConfig) -> None:
+    if config.dry_run or is_dry_run():
+        print("  Would stage/update the T3 web service and remove managed desktop login startup after activation")
+        return
     home = _home(config)
     prefix, unit = _check_managed_paths(home)
     _check_service_ownership(unit)
@@ -343,6 +353,7 @@ def install(config: SetupConfig) -> None:
         _check_service_ownership(unit)
         _recover_activation(prefix, unit)
         _install_locked(config, home, prefix, unit)
+        desktop.disable_autostart(home)
         (prefix / "desktop-mode").unlink(missing_ok=True)
 
 

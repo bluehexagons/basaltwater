@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from common import cachyos_t3 as t3
 from common import cachyos_aur as aur
+from common import cachyos_t3_desktop as desktop
 from lib.config import SetupConfig
 
 
@@ -22,7 +23,8 @@ class T3InstallTests(unittest.TestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.home = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        stack.enter_context(patch.dict(os.environ, {"XDG_CACHE_HOME": ""}))
+        stack.enter_context(patch.dict(os.environ, {"XDG_CACHE_HOME": "", "XDG_CONFIG_HOME": ""}))
+        stack.enter_context(patch.object(t3, "is_dry_run", return_value=False))
         self.prefix = self.home / ".local/share/basaltwater/cachyos-t3"
         self.binary = self.prefix / "bin/t3"
         self.unit = self.home / ".config/systemd/user" / t3.T3_SERVICE
@@ -332,11 +334,39 @@ class T3InstallTests(unittest.TestCase):
 
     def test_desktop_retains_installed_package_without_launching_or_downloading(self):
         t3.install_desktop(self.desktop_config())
+        self.assertEqual(desktop.autostart_path(self.home).read_text(), desktop.AUTOSTART_ENTRY)
         self.assertTrue((self.prefix / "desktop-mode").is_file())
         self.assertFalse(self.unit.exists())
         self.assertFalse(self.binary.exists())
         self.assertFalse(any(cmd[0] in {"npm", "/usr/bin/shelly", "/usr/bin/paru", "/usr/bin/yay",
                                        "/usr/bin/t3code"} for _, cmd in self.events))
+
+    def test_t3_dry_runs_do_not_probe_install_or_change_files(self):
+        for install, config in ((t3.install, self.config), (t3.install_desktop, self.desktop_config())):
+            config.dry_run = True
+            install(config)
+        self.system_run.assert_not_called()
+        self.user_run.assert_not_called()
+        self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_autostart_conflict_stops_both_modes_before_mutations(self):
+        path = desktop.autostart_path(self.home)
+        path.parent.mkdir(parents=True)
+        path.write_text("[Desktop Entry]\nExec=personal-command\n")
+        for config in (self.desktop_config(), self.config):
+            with self.assertRaisesRegex(ValueError, "unmanaged T3 desktop autostart"):
+                t3.preflight(config)
+        self.system_run.assert_not_called()
+        self.user_run.assert_not_called()
+        self.assertIn("personal-command", path.read_text())
+
+    def test_desktop_rerun_keeps_one_autostart_entry(self):
+        t3.install_desktop(self.desktop_config())
+        path = desktop.autostart_path(self.home)
+        inode = path.stat().st_ino
+        t3.install_desktop(self.desktop_config())
+        self.assertEqual(path.stat().st_ino, inode)
+        self.assertEqual(list(path.parent.iterdir()), [path])
 
     def test_desktop_state_is_private_before_first_launch(self):
         t3.install_desktop(self.desktop_config())
@@ -564,10 +594,12 @@ class T3InstallTests(unittest.TestCase):
         self.assertFalse(self.enabled)
         t3.install_desktop(self.desktop_config())
         self.assertFalse(self.active)
+        self.assertTrue(desktop.autostart_path(self.home).exists())
         t3.install(self.config)
         self.assertTrue(self.active)
         self.assertTrue(self.enabled)
         self.assertFalse((self.prefix / "desktop-mode").exists())
+        self.assertFalse(desktop.autostart_path(self.home).exists())
         self.assertEqual(desktop_data.read_text(), "desktop data")
         self.assertEqual(web_data.read_text(), "web data")
 
@@ -580,6 +612,7 @@ class T3InstallTests(unittest.TestCase):
         self.assertFalse(self.active)
         self.assertFalse(self.enabled)
         self.assertTrue((self.prefix / "desktop-mode").is_file())
+        self.assertEqual(desktop.autostart_path(self.home).read_text(), desktop.AUTOSTART_ENTRY)
 
     def test_desktop_recovers_interrupted_web_activation_without_restarting_it(self):
         target, content = self.legacy()

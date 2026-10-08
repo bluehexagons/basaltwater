@@ -19,6 +19,15 @@ an inactive service is expected in this mode. Setup retains all application data
 The `desktop-mode` marker under `~/.local/share/basaltwater/cachyos-t3` records
 the selection. Do not launch another backend to repair a working desktop.
 
+Desktop setup enables KDE login startup through the managed
+`~/.config/autostart/basaltwater-cachyos-t3.desktop` entry (or absolute
+`$XDG_CONFIG_HOME`). It uses `/usr/bin/t3code`, skips an absent executable, and
+does not launch the app during setup. Normal quit leaves it stopped for this
+session. KDE's Autostart settings can disable it; desktop setup/refresh re-enables
+it. Custom entries and symlinks at the managed destination are refused before
+changes. Doctor checks startup configuration and executable presence without
+launching Electron; verify a later login plus a provider thread and terminal.
+
 Use the app's provider settings, local provider login, and absolute provider
 binary paths if KDE's PATH differs from the shell. Verify a thread and terminal
 in the app. Use desktop Settings → Connections for pairing or T3 Connect when
@@ -27,8 +36,9 @@ environment, not the desktop's default `~/.t3` data.
 
 The desktop flag and `--web-interface t3code` are mutually exclusive. To switch
 to web mode, finish active work, quit the desktop to free its port, and rerun
-setup with the web flag. To switch back, rerun with the desktop flag. Omission
-does not change the selected mode. Never uninstall the desktop package, kill
+setup with the web flag. Successful web activation removes the managed desktop
+autostart entry; failed activation preserves it. To switch back, rerun with the
+desktop flag. Omission does not change the selected mode. Never uninstall the desktop package, kill
 its processes, or delete history as part of switching.
 
 ## Managed web service

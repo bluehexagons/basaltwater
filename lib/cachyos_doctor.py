@@ -377,8 +377,10 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 ], uid)
             active = status == "ok" and output.strip() == "active"
             selected = bool(config.web_interfaces) if config is not None and name == "service.t3code" else None
-            record(name, "available" if active else "failed" if selected else "deferred",
-                   "User unit active; functional readiness is not verified." if active else
+            conflict = active and config is not None and config.t3code_desktop and name == "service.t3code"
+            record(name, "failed" if conflict else "available" if active else "failed" if selected else "deferred",
+                   "Managed web service active while desktop mode is selected; finish active work and rerun --t3code-desktop."
+                   if conflict else "User unit active; functional readiness is not verified." if active else
                    ("Selected web service inactive; inspect systemctl --user status basaltwater-cachyos-t3."
                     if selected else "Managed web service inactive; expected for --t3code-desktop. Desktop health is checked in the app."
                     if config is not None and config.t3code_desktop and name == "service.t3code" else
@@ -392,7 +394,16 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             for name, state, reason in collect_sunshine_health(_probe, uid, bus_ready=bus_ready):
                 record(name, state, reason, selected=True)
         if config is not None and config.t3code_desktop:
-            for name, state, reason in collect_t3_storage_health(Path(pwd.getpwuid(uid).pw_dir), uid):
+            from common.cachyos_t3_desktop import collect_autostart_health
+
+            home = Path(pwd.getpwuid(uid).pw_dir)
+            state, reason = collect_autostart_health(home)
+            record("startup.t3code-desktop", state, reason, selected=True)
+            available = shutil.which("t3code", path="/usr/bin:/bin") is not None
+            record("tool.t3code", "available" if available else "failed",
+                   "Native T3 desktop executable found; application behavior not tested." if available else
+                   "T3 desktop executable missing; repair t3code-bin with its original package manager.", selected=True)
+            for name, state, reason in collect_t3_storage_health(home, uid):
                 record(name, state, reason, selected=True)
         if config is not None and config.notify_specs:
             from lib.cachyos_notification_state import collect_notification_health

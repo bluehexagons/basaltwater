@@ -335,6 +335,28 @@ class DoctorTests(unittest.TestCase):
         storage.assert_called_once_with(Path(home), 1000)
         self.assertEqual(records["security.t3-storage"]["state"], "failed")
         self.assertTrue(records["security.t3-storage"]["selected"])
+        self.assertEqual(records["startup.t3code-desktop"]["state"], "failed")
+        self.assertTrue(records["startup.t3code-desktop"]["selected"])
+        self.assertEqual(records["tool.t3code"]["state"], "failed")
+        self.assertEqual(records["service.t3code"]["state"], "failed")
+        self.assertIn("desktop mode", records["service.t3code"]["reason"])
+
+    def test_desktop_login_startup_observation_does_not_launch_app(self):
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             t3code_desktop=True, agent_tools=["codex"])
+        self.probe.side_effect = lambda cmd, uid: ("error", "") if cmd[-1] == "basaltwater-cachyos-t3.service" else self.healthy_probe(cmd, uid)
+        with tempfile.TemporaryDirectory() as home, \
+                patch.object(doctor.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="alice", pw_dir=home)), \
+                patch.object(doctor.shutil, "which", side_effect=lambda cmd, **kw: "/usr/bin/t3code" if cmd == "t3code" else None), \
+                patch("common.cachyos_t3_desktop.collect_autostart_health", return_value=("available", "Login startup configured.")) as startup:
+            records = {item["name"]: item for item in doctor.collect_cachyos_doctor(config=config)["capabilities"]}
+        startup.assert_called_once_with(Path(home))
+        self.assertEqual(records["startup.t3code-desktop"]["state"], "available")
+        self.assertEqual(records["tool.t3code"]["state"], "available")
+        self.assertEqual(records["service.t3code"]["state"], "deferred")
+        self.assertFalse(any(call.args[0][0] == "/usr/bin/t3code" for call in self.probe.call_args_list))
 
     def test_selected_sunshine_includes_service_and_encoding_observations(self):
         from lib.config import SetupConfig
