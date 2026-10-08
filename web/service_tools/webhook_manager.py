@@ -37,7 +37,7 @@ SECRET_FILE = "/etc/basaltwater/cicd/webhook_secret"
 
 def load_config() -> dict:
     """Load webhook configuration."""
-    if not os.path.exists(CONFIG_FILE):
+    if not os.path.lexists(CONFIG_FILE):
         return {"repositories": []}
     
     return load_config_file(CONFIG_FILE)

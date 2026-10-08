@@ -30,6 +30,13 @@ files receive defaults. Cache inventories stop on invalid records rather than
 silently omitting hosts, and saves refuse to overwrite invalid existing cache
 or machine/setup state.
 
+Proxmox host registries apply the same bounded, regular-file read contract and
+refuse ordinary saves over malformed or incompatible records. Cached facts and
+connection fields retain their declared types. An explicit removal of a named
+incompatible Proxmox record remains available after recovery review. Shared JSON
+readers reject duplicate object keys and nonfinite numbers; writers refuse
+nonfinite values before replacing the existing file.
+
 Recovery errors name the affected path without printing its contents. The file
 stays in place as a guard against accidental fresh setup. Restore a verified
 backup, or explicitly move the file to a private quarantine location after

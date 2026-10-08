@@ -53,7 +53,7 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                 call("ufw delete allow 443/tcp", check=False),
                 call("ufw delete allow 80", check=False),
                 call("ufw delete allow 443", check=False),
-                call("ufw allow 3478/udp comment 'antistatic STUN'", check=False),
+                call("ufw allow 3478/udp comment 'antistatic STUN'"),
                 call("ufw --force enable"),
             ]
         )
@@ -83,8 +83,8 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                 call("ufw delete allow 443/tcp", check=False),
                 call("ufw delete allow 80", check=False),
                 call("ufw delete allow 443", check=False),
-                call("ufw allow 8080/tcp comment 'antistatic direct port'", check=False),
-                call("ufw allow 3478/udp comment 'antistatic STUN'", check=False),
+                call("ufw allow 8080/tcp comment 'antistatic direct port'"),
+                call("ufw allow 3478/udp comment 'antistatic STUN'"),
                 call("ufw --force enable"),
             ]
         )

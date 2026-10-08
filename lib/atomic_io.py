@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat
 import tempfile
 
 from lib.types import JSON
 from lib.validation import validate_filesystem_path
+
+
+def _json_object(pairs: list[tuple[str, JSON]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("JSON contains duplicate object keys")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("JSON contains a non-finite number")
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("JSON contains a non-finite number")
+    return number
 
 
 def read_json_file(path: str, *, max_bytes: int = 1024 * 1024) -> JSON:
@@ -26,7 +47,10 @@ def read_json_file(path: str, *, max_bytes: int = 1024 * 1024) -> JSON:
         if len(content) > max_bytes:
             raise ValueError(f'JSON file exceeds {max_bytes} bytes: {path}')
         try:
-            return json.loads(content.decode('utf-8'))
+            return json.loads(
+                content.decode('utf-8'), object_pairs_hook=_json_object,
+                parse_constant=_reject_json_constant, parse_float=_finite_json_float,
+            )
         except RecursionError as exc:
             raise ValueError(f'JSON nesting is too deep: {path}') from exc
     finally:
@@ -87,7 +111,7 @@ def write_json_atomic(
 ) -> None:
     """Serialize JSON and persist it through :func:`write_text_atomic`."""
 
-    content = json.dumps(value, indent=indent, sort_keys=sort_keys) + "\n"
+    content = json.dumps(value, indent=indent, sort_keys=sort_keys, allow_nan=False) + "\n"
     write_text_atomic(path, content, mode=mode, uid=uid, gid=gid)
 
 

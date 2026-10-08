@@ -59,3 +59,27 @@ second dispatcher.
 | Application deployment | `deploy/` |
 
 For edit workflow and tests, see the [contributor guide](README.md).
+
+## Execution and persistent state
+
+Use the strict default of `lib.remote_utils.run()` for required mutations.
+`check=False` returns a result for probes, optional work or verified installers;
+inspect or verify it before treating the operation as successful. Timeouts raise
+in either mode. Inventory direct calls without running setup code:
+
+```bash
+python3 scripts/audit_command_contracts.py --unchecked
+python3 scripts/audit_command_contracts.py --json
+```
+
+The report describes syntax and result consumption; it does not prove correct
+return-code handling. Review dynamic policies and wrappers separately.
+
+Use `lib.atomic_io` for atomic persistent writes and bounded, regular-file JSON
+reads. Distinguish missing state from corrupt/unsupported state; preserve the
+latter and raise an actionable path-specific error. Use
+`lib.operation_state` at durable operation boundaries and
+`lib.unit_transaction.replace_units()` for managed systemd replacement.
+Snapshots protect files and activation state, not arbitrary application data.
+See the [transaction plan](../../plans/TRANSACTIONAL_EXECUTION.md) and
+[operator recovery guide](../../TRANSACTION_RECOVERY.md).

@@ -157,7 +157,7 @@ class TestRegistryRoundTrip(_WorkspaceFixture):
         with open(path, "w", encoding="utf-8") as destination:
             json.dump([{"name": "old", "address": "10.0.0.1"}], destination)
 
-        with self.assertRaisesRegex(ValueError, "record 0.*proxmox_hosts.json"):
+        with self.assertRaisesRegex(ValueError, "proxmox_hosts.json.*record 0"):
             load_proxmox_hosts(self.workspace)
 
 

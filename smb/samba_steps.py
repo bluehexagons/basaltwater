@@ -11,6 +11,7 @@ from lib.machine_state import can_manage_firewall
 from lib.mount_utils import is_path_under_mnt, get_mount_ancestor
 from lib.remote_utils import run, is_package_installed
 from lib.validation import validate_samba_share_specs
+from lib.validators import validate_username
 
 
 SMB_CONF_PATH = "/etc/samba/smb.conf"
@@ -180,6 +181,8 @@ def validate_samba_share_credentials(config: SetupConfig) -> None:
 
 
 def create_samba_user(username: str, password: str) -> None:
+    if not validate_username(username):
+        raise ValueError("Invalid Samba username")
     safe_username = shlex.quote(username)
     
     result = run(f"id {safe_username}", check=False)
@@ -201,7 +204,7 @@ def create_samba_user(username: str, password: str) -> None:
         )
         print(f"  Updated Samba user password: {username}")
     
-    run(f"smbpasswd -e {safe_username}", check=False)
+    run(f"smbpasswd -e {safe_username}")
 
 
 def _get_veto_dirs_for_share(share_path: str, config: SetupConfig) -> list[str]:
@@ -698,7 +701,7 @@ def configure_samba_fail2ban(config: SetupConfig) -> None:
     with open(jail_path, "w") as f:
         f.write(fail2ban_samba_jail)
 
-    run("systemctl enable fail2ban", check=False)
+    run("systemctl enable fail2ban")
     run("systemctl restart fail2ban")
 
     print("  ✓ fail2ban configured for Samba (5 failed attempts = 1 hour ban)")

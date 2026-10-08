@@ -9,12 +9,12 @@ storage pool, optional friendly description). Records are stored in
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import asdict, dataclass, field
 from typing import Optional, cast
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import read_json_file, write_json_atomic
+from lib.state_read import StateReadError
 from lib.concurrency import resource_lock
 from lib.types import JSONDict, JSONList
 from lib.validation import validate_filesystem_path
@@ -25,6 +25,22 @@ from lib.workspace import ensure_workspace_dir, normalize_workspace_dir
 PROXMOX_HOSTS_FILENAME = "proxmox_hosts.json"
 PROXMOX_HOST_SCHEMA_VERSION = 1
 PROXMOX_PROVIDER = "proxmox"
+
+
+def _optional_string(data: JSONDict, key: str) -> Optional[str]:
+    value = data.get(key)
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"Proxmox field '{key}' must be a string")
+    return value
+
+
+def _string_list(data: JSONDict, key: str) -> list[str]:
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"Proxmox field '{key}' must be a list of strings")
+    return value
 
 
 @dataclass
@@ -41,16 +57,13 @@ class ProxmoxStoragePool:
 
     @classmethod
     def from_dict(cls, data: JSONDict) -> "ProxmoxStoragePool":
-        if "name" not in data:
+        if not isinstance(data.get("name"), str) or not data["name"]:
             raise ValueError("Proxmox storage pool record missing 'name'")
-        content_raw = data.get("content") or []
-        if not isinstance(content_raw, list):
-            raise ValueError("Proxmox storage pool 'content' must be a list")
         return cls(
-            name=str(data["name"]),
-            type=cast(Optional[str], data.get("type")),
-            status=cast(Optional[str], data.get("status")),
-            content=[str(value) for value in content_raw],
+            name=data["name"],
+            type=_optional_string(data, "type"),
+            status=_optional_string(data, "status"),
+            content=_string_list(data, "content"),
         )
 
 
@@ -82,13 +95,9 @@ class ProxmoxHostFacts:
 
     @classmethod
     def from_dict(cls, data: JSONDict) -> "ProxmoxHostFacts":
-        bridges_raw = data.get("bridges") or []
-        if not isinstance(bridges_raw, list):
-            raise ValueError("Proxmox host facts 'bridges' must be a list")
-        nameservers_raw = data.get("nameservers") or []
-        if not isinstance(nameservers_raw, list):
-            raise ValueError("Proxmox host facts 'nameservers' must be a list")
-        storage_raw = data.get("storage_pools") or []
+        storage_raw = data.get("storage_pools")
+        if storage_raw is None:
+            storage_raw = []
         if not isinstance(storage_raw, list):
             raise ValueError("Proxmox host facts 'storage_pools' must be a list")
         storage_pools: list[ProxmoxStoragePool] = []
@@ -97,16 +106,14 @@ class ProxmoxHostFacts:
                 raise ValueError("Proxmox host facts storage pool entries must be objects")
             storage_pools.append(ProxmoxStoragePool.from_dict(cast(JSONDict, entry)))
         return cls(
-            node_name=cast(Optional[str], data.get("node_name")),
-            bridges=[str(value) for value in bridges_raw],
-            gateway=cast(Optional[str], data.get("gateway")),
-            nameservers=[str(value) for value in nameservers_raw],
+            node_name=_optional_string(data, "node_name"),
+            bridges=_string_list(data, "bridges"),
+            gateway=_optional_string(data, "gateway"),
+            nameservers=_string_list(data, "nameservers"),
             storage_pools=storage_pools,
-            default_root_storage=cast(Optional[str], data.get("default_root_storage")),
-            default_template_storage=cast(
-                Optional[str], data.get("default_template_storage")
-            ),
-            default_bridge=cast(Optional[str], data.get("default_bridge")),
+            default_root_storage=_optional_string(data, "default_root_storage"),
+            default_template_storage=_optional_string(data, "default_template_storage"),
+            default_bridge=_optional_string(data, "default_bridge"),
         )
 
 
@@ -132,7 +139,7 @@ class ProxmoxHost:
 
     @classmethod
     def from_dict(cls, data: JSONDict) -> "ProxmoxHost":
-        if data.get("schema_version") != PROXMOX_HOST_SCHEMA_VERSION:
+        if type(data.get("schema_version")) is not int or data.get("schema_version") != PROXMOX_HOST_SCHEMA_VERSION:
             raise ValueError(
                 "Unsupported Proxmox host record schema; remove and re-register "
                 "this development record with 'basaltw proxmox add'"
@@ -144,9 +151,15 @@ class ProxmoxHost:
             )
         if "name" not in data or "address" not in data:
             raise ValueError("Proxmox host record missing 'name' or 'address'")
-        tags_raw = data.get("tags") or []
-        if not isinstance(tags_raw, list):
-            raise ValueError("Proxmox host 'tags' must be a list")
+        for key in ("name", "address", "user"):
+            if key in data and not isinstance(data[key], str):
+                raise ValueError(f"Proxmox host '{key}' must be a string")
+        for key in ("ssh_key", "description", "default_storage", "default_template_storage", "default_bridge"):
+            if data.get(key) is not None and not isinstance(data[key], str):
+                raise ValueError(f"Proxmox host '{key}' must be a string")
+        if data.get("facts") is not None and not isinstance(data["facts"], dict):
+            raise ValueError("Proxmox host 'facts' must be an object")
+        tags = _string_list(data, "tags")
         return cls(
             name=str(data["name"]),
             address=str(data["address"]),
@@ -165,7 +178,7 @@ class ProxmoxHost:
                 if isinstance(data.get("facts"), dict)
                 else None
             ),
-            tags=[str(t) for t in tags_raw],
+            tags=tags,
         )
 
 
@@ -175,17 +188,14 @@ def get_proxmox_hosts_path(workspace: Optional[str] = None) -> str:
 
 
 def _load_raw(path: str) -> JSONList:
-    if not os.path.exists(path):
-        return []
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"Failed to read Proxmox host registry {path}: {exc}")
+        data = read_json_file(path)
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        raise StateReadError(path, "unreadable, unsafe, or malformed Proxmox host registry") from exc
     if not isinstance(data, list):
-        raise ValueError(
-            f"Proxmox host registry {path} must contain a JSON array"
-        )
+        raise StateReadError(path, "Proxmox host registry must contain a JSON array")
     return cast(JSONList, data)
 
 
@@ -197,14 +207,12 @@ def _load_proxmox_hosts_unlocked(
     hosts: list[ProxmoxHost] = []
     for index, entry in enumerate(raw):
         if not isinstance(entry, dict):
-            raise ValueError(f"Invalid entry in {path}: expected object")
+            raise StateReadError(path, "Proxmox host entries must be objects")
         try:
             host = ProxmoxHost.from_dict(cast(JSONDict, entry))
             _validate_host_record(host)
         except ValueError as exc:
-            raise ValueError(
-                f"Invalid Proxmox host record {index} in {path}: {exc}"
-            ) from exc
+            raise StateReadError(path, f"invalid Proxmox host record {index}") from exc
         hosts.append(host)
     return hosts
 
@@ -236,6 +244,7 @@ def save_proxmox_hosts(
     """Persist the registry, returning the file path."""
     path = get_proxmox_hosts_path(workspace)
     with resource_lock("proxmox-hosts", path, wait=True):
+        _load_proxmox_hosts_unlocked(workspace)
         return _save_proxmox_hosts_unlocked(hosts, workspace)
 
 

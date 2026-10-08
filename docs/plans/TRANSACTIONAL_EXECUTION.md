@@ -1,238 +1,193 @@
-# Transactional Execution and Reconciliation
+# Transactional execution and reconciliation
 
-Status: partially implemented. The misleading in-memory transaction framework
-has been retired and durable operation state is landed; required-command
-classification, corrupt-state handling, and lightweight recovery guidance
-remain the active scope.
+Status: the bounded transaction system is implemented. Host qualification stays
+in the [release checklist](../BASALTWATER_RELEASE.md); broader recovery automation
+and database migration rollback are separate follow-on work.
 
-This plan turns setup and deployment from a sequence of mostly independent
-commands into an operation with explicit preparation, activation, verification,
-and recovery phases. It addresses ARCH-01, ARCH-03, ARCH-05, ARCH-06, and
-ARCH-08 from the [architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-07.md).
+This plan addresses ARCH-01, ARCH-03, ARCH-05, ARCH-06 and ARCH-08 from the
+[architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-07.md).
+The implementation checkpoint below is current as of 2026-10-08.
 
-## Goals
+## Contract and boundaries
 
-- Stop immediately when a required command fails.
-- Preserve the last working service or release until replacement activation.
-- Make partial state visible and recoverable after interruption.
-- Use the same validation result for planning and post-apply verification.
-- Keep best-effort maintenance operations possible, but make that choice
-  explicit at each call site.
+A transaction protects a named resource while preparing, activating, verifying
+and recovering its replacement. Required command failures stop dependent work.
+A failed or interrupted recovery preserves evidence and blocks another
+operation at the same boundary.
 
-## Verified implementation baseline (2026-08-19)
+These guarantees apply to managed release trees, generated systemd units and
+operation/state files. A full setup is an ordered, fail-fast reconciliation:
+its marker identifies partial progress, but it cannot reverse package installs,
+user changes, arbitrary scripts or application data writes. Two separately
+atomic state files are not a single filesystem transaction.
 
-- `lib.remote_utils.run(check=True)` now raises `CommandExecutionError` with a
-  bounded stderr diagnostic; callers that intentionally inspect failure use
-  explicit `check=False`. Commands have a one-hour default timeout,
-  caller-specific overrides, typed timeout diagnostics, and shell process-group
-  termination.
-- `remote_setup.py` no longer removes all managed services before setup steps.
-- `DeploymentOrchestrator.deploy_manifest()` builds and validates a sibling
-  release before stopping app-scoped services. Failed activation restores the
-  prior release and generated unit files.
-- Manifest health polling accepts only 2xx responses and rejects an unhealthy
-  release. Stable ports, app-scoped build identities, SQLite pre-deploy backups,
-  and deployment serialization are implemented.
-- Nginx deployment files are snapshotted and restored after failed validation;
-  managed files use atomic replacement and unmanaged same-name sites are not
-  overwritten.
-- A shared `lib.atomic_io.write_json_atomic()` now protects machine/setup state,
-  caches/history, webhook and deploy-target configuration, deployment/release
-  metadata, host/network inventories, Cloudflare state, remote argument files,
-  and Gogs admin credentials. Its tests cover replacement interruption and
-  restrictive permissions.
-- Readers still fall back on corrupt JSON in several paths; schema versions and
-  actionable remediation remain open work.
-- Shared SSH/SCP/rsync and Proxmox node builders use
-  `StrictHostKeyChecking=yes` with the workspace enrollment file. Build-server
-  deployment targets now require explicit enrollment and no longer populate
-  trust from an unauthenticated `ssh-keyscan`.
-- `lib.operation_state` defines a schema-versioned, atomically persisted marker
-  with explicit in-progress and recovery-required states. It rejects corrupt,
-  unsupported, symlinked, and stale-ID updates rather than replacing them.
-  A nonblocking kernel lock protects ownership through completion or store
-  closure; another process cannot transition or remove a live owner's marker.
-  Process exit releases the lock, but recovery must still supply the recorded
-  operation ID. Stable `.lock` files must not be deleted to bypass ownership.
-  Marker reads and writes are capped at 1 MiB; readers require regular files
-  and reject FIFOs without blocking. Invalid field types and encoding produce
-  an operation-state error with the marker path and recovery guidance.
-- Manifest deployment creates that marker before staging, records deterministic
-  staging/backup paths and units before activation, clears it after success or
-  verified rollback, and retains recovery errors when rollback is incomplete.
-- Target setup records its current step before mutation, finalizes remembered
-  machine/setup state only after the full operation succeeds, and retains
-  interrupted or failed state for the next invocation.
-- Nginx setup, firewall initialization, SSH reload, and CI/CD prerequisite
-  setup now propagate required command and verification failures. Probes,
-  stale-rule cleanup, and the container-capability firewall exception remain
-  explicitly best-effort.
+Nginx validates and restores its own managed configuration. It is a separate
+boundary from application activation. Application rollback does not restore
+database writes or migrations; SQLite backups require an explicit operator
+restore decision.
 
-The former `lib/transaction.py` callback framework was removed on 2026-08-21.
-It reran completed steps, could report success after continue-on-error failures,
-required callers to trigger rollback manually, and kept all transaction and
-checkpoint state in memory. Sync and scrub callers now use explicit fail-fast
-control flow and retain `lib/operation_log.py` only for diagnostic events. Their
-initial-operation failures now propagate to setup instead of being logged as
-successful configuration. Durable recovery state is a small, versioned
-operation record rather than a registry of non-serializable callbacks.
+## Implemented execution contracts
 
-## Phase 0: Contract and primitive convergence
+- `lib.remote_utils.run()` raises on nonzero status by default, with typed
+  command errors and redacted, bounded diagnostics. Explicit `check=False`
+  returns a result for probes, verified installers and optional cleanup.
+- Commands have a one-hour default timeout, positive per-call overrides and an
+  explicit `None` opt-out. Timeouts raise even with `check=False`; shell
+  process groups receive TERM/KILL cleanup.
+- Argv-native calls avoid shell parsing where practical. SSH/SCP/rsync and
+  Proxmox builders require approved keys in the workspace enrollment file.
+  Key discovery is not approval; rotation remains an operator action.
+- Required commands propagate failures through deployment, storage, app-server,
+  build-server, CI/CD, firewall, SSH, locale, permissions and supported-host
+  time synchronization. Requested APT/Flatpak installs verify the installed
+  result. Password updates and hardened sudo removal cannot report success
+  without applying or verifying the requested change.
+- Cloudflare direct-access rules, Samba account enablement and fail2ban
+  enablement are required. Gogs rollback propagates activation/restart failure
+  and verifies the restored service is running before announcing restoration.
+- Capability-specific container exceptions, optional diagnostics, stale-rule
+  deletion and verification-based installers retain explicit best-effort
+  handling.
 
-Before changing broad execution behavior:
+The former in-memory callback framework, `lib/transaction.py`, was removed.
+Sync and scrub own explicit fail-fast control flow; `lib/operation_log.py`
+is diagnostic evidence, not a durable rollback engine.
 
-1. Inventory and classify every `remote_utils.run()` caller as required,
-   optional, probe, or cleanup, including its current return-code handling.
-2. **Complete:** retire `lib/transaction.py`, preserve operation logging as
-   diagnostic evidence, and require explicit orchestration code to own apply,
-   verification, and recovery behavior.
-3. **Complete:** define the durable operation-marker schema and crash-safe
-   storage primitive. Integration owns marker location and recovery behavior at
-   each setup or deployment boundary.
-4. Add fault-injection tests at the orchestration boundary, not only unit tests
-   of transaction primitives.
+## Caller inventory and maintenance
 
-## Phase 1: Execution contracts
+Run the source inventory without importing or executing target setup code:
 
-Split the ambiguous `lib.remote_utils.run()` behavior into explicit contracts.
-The preferred shape is a strict default that raises a project-specific command
-error containing the argv, return code, and bounded stderr. Callers that can
-legitimately continue should request a result-returning best-effort mode and
-inspect it.
+```bash
+python3 scripts/audit_command_contracts.py
+python3 scripts/audit_command_contracts.py --unchecked
+python3 scripts/audit_command_contracts.py --json
+```
 
-Migration requirements:
+The 2026-10-08 checkpoint contains 754 direct calls: 393 required, 281
+caller-managed results, 73 discarded best-effort results and 7 delegated
+policies. The inventory covers root modules and owning source packages,
+including imported aliases and calls inside the helper itself.
 
-- inventory every `run()` caller before changing the helper;
-- classify failures as required, optional, probe, or cleanup;
-- keep secrets out of command displays and exception messages;
-- avoid shell execution when an argv form is sufficient; and
-- add regression tests for failure propagation through complete setup steps.
+These are structural classifications, not semantic certification. A consumed
+result still needs review for correct return-code handling; dynamic policies,
+wrappers and shell expressions need manual review. Existing best-effort calls
+include optional desktop installers, idempotent firewall cleanup, probes and
+component-specific cleanup/rollback paths. Do not change all of them to strict
+execution without checking absence/idempotency and recovery behavior.
 
-Do not change the helper and assume all callers want strict behavior. Existing
-verification-based installers and probes intentionally inspect failed results.
+Use this report when changing a component, then add failure-propagation tests
+at its orchestration boundary. New required mutations must use the strict
+default; intentional exceptions must inspect or verify their result, or explain
+why failure is optional. Further component audits are maintenance work, not a
+claim that every package installer provides full rollback.
 
-The first execution-contract slice landed on 2026-08-09: strict failures now
-raise, best-effort failures remain inspectable, and result-inspecting database,
-release-fetch, and host-metric callers explicitly request `check=False`.
-Diagnostic redaction was completed on 2026-08-21 for quoted, escaped,
-delimiter-bearing, and unterminated secret values in command and stderr text.
-Bounded execution was completed the same day: commands default to one hour,
-callers may select a positive override or explicitly opt out with `None`, and
-timeouts always raise `CommandTimeoutError`. Shell commands are isolated in a
-new session so TERM/KILL cleanup covers descendants. The argv-native command
-API landed on 2026-08-24, and required callers in deployment, storage,
-app-server, build-server, and CI/CD setup were migrated; the full caller
-classification remains open.
+## Atomic persistent state
 
-## Phase 2: Atomic persistent state
+`lib.atomic_io` writes same-directory private temporary files, flushes and
+syncs data, atomically replaces the target and syncs its directory. Release
+renames also sync both parent directories. A sync error after a rename may mean
+the rename happened; activation and rollback inspect actual paths accordingly.
 
-The first implementation slice (2026-08-09) created one shared atomic JSON
-writer using a same-directory temporary file, flush and `fsync`, restrictive
-mode, and `os.replace`, then migrated workspace caches, machine/setup state,
-operation history, webhook/deploy configuration, release metadata, host/network
-inventories, Cloudflare state, remote argument files, and Gogs credentials to
-it.
+Bounded readers require regular, non-symlink files and refuse FIFOs without
+blocking. Duplicate object keys, nonfinite JSON constants, invalid shapes,
+unreadable files and unsupported versions fail closed. Only missing state
+receives defaults where the owning schema permits them. Writers refuse
+nonfinite values and preserve the previous file on serialization failure.
 
-Readers should distinguish:
+These primitives protect setup/machine state, caches/history, webhook and
+deployment configuration, release metadata, host/network inventories,
+Cloudflare state, remote arguments and Gogs credentials. Proxmox registry reads
+and ordinary saves now preserve malformed/incompatible records and reject
+coerced field types, including cached facts. Explicit removal of a named
+incompatible Proxmox record remains an operator repair path.
 
-- missing state, where defaults may be valid;
-- invalid or corrupt state, which should name the file and remediation; and
-- unsupported schema versions, which should fail without overwriting data.
+Schemas remain compatible with documented legacy records. Add a new version
+when an incompatible representation is required; a version number alone does
+not make a corrupt-state fallback safe.
 
-State schemas should gain an explicit version when the next incompatible
-change is required. Replace permissive corrupt-state fallbacks with an error
-that names the file and remediation, while retaining defaults only for missing
-state where they are valid.
+## Durable operations and recovery
 
-## Phase 3: Staged service reconciliation
+`lib.operation_state` provides versioned, bounded atomic markers. Nonblocking
+kernel locks protect ownership through completion or store closure. Process
+exit releases the lock, but an unfinished marker still blocks a fresh operation.
+Recovery must use the recorded operation ID; stale IDs, corrupt records,
+unsupported versions and unsafe files are rejected. Never delete stable lock
+files to bypass ownership.
 
-Manifest deployments now record application units, build and validate before
-stopping app-scoped services, require and verify successful stops before the
-release rename, remove obsolete units only after activation, and restore the
-previous release and units on failure. Rollback stop/restart failures are
-reported as incomplete recovery. The remaining work is to apply the broader
-contract to non-manifest setup services and persist interruption/recovery
-markers.
+Markers record context and recent phases. Completion writes a private
+`<marker>.last.json` before removing the marker. It retains the most recent
+256 phase transitions, final context, completion time and the `succeeded`,
+`rolled_back` or `failed` outcome. This is bounded last-result evidence, not
+a permanent audit archive. Persistence/removal failure leaves or restores the
+marker so a new invocation cannot silently pass incomplete finalization.
 
-Replace cleanup-first setup with a staged reconciliation model:
+Use [transaction recovery](../TRANSACTION_RECOVERY.md) for marker locations,
+phase-specific repair, previous port/unit restoration, first-deployment
+recovery and verified marker resolution.
 
-1. Record the currently managed services and configuration artifacts.
-2. Prepare new files and units without removing the active versions.
-3. Validate generated configuration and executable prerequisites.
-4. Stop only the services that must change.
-5. Activate replacements and run health checks.
-6. Remove obsolete managed services only after successful activation.
-7. Restore the recorded state when activation fails.
+## Setup and systemd reconciliation
 
-A failed run should leave an operation marker explaining whether rollback
-succeeded and which manual action remains. A later run must detect and resolve
-that marker instead of silently starting another cleanup.
+Target setup records its current step before mutation and saves remembered
+machine/setup state only after the full operation succeeds. It preserves
+interrupted or failed progress. Handled failures may retry a matching setup
+plan; hard-kill markers require explicit inspection first.
 
-## Phase 4: Release activation and health gates
+`lib.unit_transaction.replace_units()` serializes replacement, snapshots live
+files and activation states, stages candidates privately and validates them
+with `systemd-analyze verify` before replacing anything. Write, reload and
+activation failures restore old files, ownership, modes, enablement and running
+state. Timer/path changes do not restart an unrelated executing oneshot.
+Incomplete rollback retains snapshots and its recovery marker.
 
-The manifest deployment path now stages releases, validates declared outputs,
-gates activation on service startup and health, and restores the prior release
-and unit files on failure. Immutable release history/current symlinks and
-database migration policy remain open.
+Managed application, Antistatic, Gogs, CI/CD, storage operations and maintenance
+units use this boundary. Unit removal propagates stop/disable/reload failures;
+static units without an install section skip disable. This protects unit
+configuration, not data changed by a service startup.
 
-Deploy into immutable release directories and switch a stable `current` link
-only after builds and preflight validation pass. Retain at least the previously
-active release. Health checks must determine deployment success for components
-that declare them.
+## Release activation
 
-Database migrations require a separate policy because switching application
-files cannot always reverse a schema change. Record the migration boundary,
-create and verify backups before migration, and clearly report when application
-rollback also requires database restoration.
+Static and manifest deployment share one app lock and inspect both marker
+types. Switching deployment formats cannot bypass unfinished recovery.
+Preparation rejects unsafe destinations and symlinked shared state.
 
-Manifest activation now leaves a durable, versioned marker when a process or
-machine is interrupted and blocks another deployment until the operator
-reconciles it. Automated recovery from every recorded phase and longer-term
-operation history remain open.
+Both paths stage beside the active release, record deterministic paths before
+activation and retain the previous tree until finalization succeeds. Manifest
+builds and output validation happen while the old services continue running.
+Activation verifies app-scoped stops, switches trees, activates managed units
+and gates success on declared direct-loopback 2xx health checks. A stop timeout
+still attempts to restore previously running services.
 
-## Phase 5: Managed SSH trust
+Handled failures restore the previous tree and unit snapshots. Manifest
+rollback restores the previous port assignments, including removing a newly
+created port file when none existed. Interrupted or incomplete recovery retains
+staging/backup/failed trees and the marker. Successful activation tolerates
+best-effort old-tree/source cleanup failures.
 
-Separate host-key enrollment from privileged operations. Enrollment should
-display fingerprints for operator verification and persist approved keys in the
-workspace. Subsequent setup, deploy, and transfer commands should require an
-existing matching key. Host-key rotation needs an explicit command and audit
-entry.
+Immutable release directories with a stable `current` symlink were an earlier
+proposal, not a requirement for the implemented directory-swap boundary.
+Migrating layouts would add compatibility work without removing the need for
+durable markers, verification and recovery. Longer release retention belongs
+to a separate operator-facing rollback feature.
 
-Interactive convenience commands may offer a clearly labelled trust-on-first-
-use mode, but automated privileged paths should not enable it by default.
+## Validation and remaining qualification
 
-The Proxmox guest helper and CI/CD deploy-target workflow now use the workspace
-enrollment file. A successful `ssh-keyscan` is discovery data, not operator
-approval; deployment must not be enabled until the expected fingerprint is
-explicitly verified. Host-key rotation remains an explicit operator action.
+Mocked system calls and temporary directories cover command failures, marker
+ownership, corrupt/unsafe state, atomic write interruption, post-rename sync
+failure, service-stop timeout, failed activation, port restoration, interruption
+and incomplete rollback. Tests assert retained evidence and refusal to start
+another deployment after incomplete recovery.
 
-## Acceptance criteria
+The repository check also validates syntax, packaging and documentation.
+Hosted VM, unprivileged LXC and direct Debian live qualification remains in the
+release matrix; mocked tests do not establish that those hosts have passed.
 
-- A required command failure produces a non-zero top-level result and stops
-  dependent steps.
-- Injected failures before and after service stop preserve or restore the last
-  healthy service.
-- Interrupted state writes never replace valid JSON with a partial file.
-- A declared health-check failure prevents deployment success.
-- Operation history records apply, verification, rollback, and rollback result.
-- Existing best-effort probes and optional installers retain intentional
-  behavior through explicit APIs and tests.
-- Hosted VM, unprivileged LXC, and direct Debian setup paths have regression
-  coverage for the new phases.
+Follow-on work is deliberately separate:
 
-## Recommended first delivery slice
+- automatic recovery across every recorded phase;
+- multi-release retention and operator-facing rollback commands;
+- database migration and restore policy;
+- a general desired-versus-observed planning layer; and
+- component-specific reconciliation beyond the managed boundaries above.
 
-The atomic persistence, core execution contract, transaction-framework
-retirement, setup/deployment operation markers, and high-impact required-caller
-migrations are complete. The next delivery should continue the
-`remote_utils.run()` caller inventory outside the migrated setup paths, add
-lightweight phase-specific recovery guidance, and tighten corrupt-state
-readers. Broader recovery automation should wait until real operational
-experience identifies a repeated need.
-
-## Non-goals
-
-- Building a general distributed transaction system.
-- Automatically reversing arbitrary repository-authored scripts.
-- Pretending every database migration is reversible.
-- Adding new supported operating systems during this work.
+Do not reintroduce a general callback transaction framework or promise reversal
+of arbitrary scripts and database writes.

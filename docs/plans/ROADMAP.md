@@ -20,10 +20,13 @@ release checklist now defines the preview publication gate, stable live-test
 matrix, evidence format, and final sign-off. The current pass is release
 qualification; it does not include further CachyOS enhancements.
 
-The P0 transactional-execution residuals remain active: finish the required
-command-caller inventory, add phase-specific recovery guidance, and replace
-permissive corrupt-state fallbacks with actionable errors. Security-monitor
-backlog pagination is implemented; issue #108 still needs reliable detection of
+The bounded P0 transaction system is implemented: shared release locks and
+durable markers, rollback evidence and port restoration, strict state readers,
+phase-specific recovery guidance, and a repeatable command-caller inventory.
+Live host qualification remains in the release matrix. The inventory is a
+structural review aid; component-specific command audits remain maintenance
+work. Automatic recovery and database migration rollback are separate follow-ons.
+Security-monitor backlog pagination is implemented; issue #108 still needs reliable detection of
 source-retention gaps and a release disposition. The maintainers report no
 recurrence for #102 and #103 and the code fixes are in `main`, but both issue
 records still request checks on their originally affected hosts. The release
@@ -70,8 +73,9 @@ The detailed implementation plan is in
 Required outcomes:
 
 - command helpers have explicit fail-fast and best-effort contracts;
-- setup stages service changes and does not remove a working service until its
-  replacement is ready;
+- managed unit replacements stage and validate candidates before changing live
+  files; full setup records partial progress without promising reversal of
+  packages, scripts or application data;
 - deployment health checks gate success and restore the previous release when
   activation fails;
 - persistent state is written atomically and corrupt state produces actionable
@@ -80,6 +84,9 @@ Required outcomes:
   trust.
 
 This work is the foundation for every later apply or rollback feature.
+The [implementation plan](TRANSACTIONAL_EXECUTION.md) records the completed
+boundaries, validation and explicit limits. Use
+[transaction recovery](../TRANSACTION_RECOVERY.md) when a marker blocks retry.
 
 ## P1: One manifest-driven deployment platform
 

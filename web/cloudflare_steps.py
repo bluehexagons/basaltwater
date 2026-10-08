@@ -31,7 +31,6 @@ def _allow_antistatic_direct_access_for_cloudflare(config: SetupConfig) -> bool:
     for rule_port, protocol, comment in rules:
         run(
             f"ufw allow {rule_port}/{protocol} comment {shlex.quote(comment)}",
-            check=False,
         )
     print(f"  ✓ Preserved direct antistatic access: {allowed_ports}")
     print(

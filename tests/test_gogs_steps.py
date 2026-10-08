@@ -1054,6 +1054,7 @@ class TestGogsSetupRollback(unittest.TestCase):
             patch("web.gogs_steps.os.path.exists", return_value=True),
             patch("web.gogs_steps.run", return_value=completed) as runner,
             patch("web.gogs_steps.write_gogs_state") as write_state,
+            patch("web.gogs_steps.is_service_active", return_value=True),
         ):
             gogs_steps._rollback_failed_gogs_setup(
                 "v1.2.3",
@@ -1087,7 +1088,41 @@ class TestGogsSetupRollback(unittest.TestCase):
                 "/srv/gogs/custom/conf/app.ini",
             )
 
-        runner.assert_called_once_with("systemctl stop gogs", check=False)
+        runner.assert_called_once_with("systemctl stop gogs")
+
+    def test_rollback_activation_failure_does_not_report_restoration(self):
+        for failed_command in ("ln -sfn", "systemctl restart"):
+            with self.subTest(command=failed_command):
+                def run(command, **kwargs):
+                    if command.startswith(failed_command):
+                        self.assertTrue(kwargs.get("check", True))
+                        raise RuntimeError("rollback command failed")
+                    return SimpleNamespace(returncode=0)
+                with (
+                    patch("web.gogs_steps.os.path.exists", return_value=True),
+                    patch("web.gogs_steps.run", side_effect=run),
+                    patch("web.gogs_steps.write_gogs_state"),
+                    patch("builtins.print") as output,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "rollback command failed"):
+                        gogs_steps._rollback_failed_gogs_setup(
+                            "v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini",
+                        )
+                output.assert_not_called()
+
+    def test_inactive_restored_service_is_an_incomplete_rollback(self):
+        with (
+            patch("web.gogs_steps.os.path.exists", return_value=True),
+            patch("web.gogs_steps.run"),
+            patch("web.gogs_steps.write_gogs_state"),
+            patch("web.gogs_steps.is_service_active", return_value=False),
+            patch("builtins.print") as output,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "rollback did not restore"):
+                gogs_steps._rollback_failed_gogs_setup(
+                    "v1.2.3", "b" * 64, "/srv/gogs", "/srv/gogs/custom/conf/app.ini",
+                )
+        output.assert_not_called()
 
 
 class TestConfigureAutoUpdateGogs(unittest.TestCase):

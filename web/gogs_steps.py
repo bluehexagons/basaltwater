@@ -259,7 +259,7 @@ def install_or_update_gogs_release() -> tuple[str, bool, str]:
         if checksum_result.returncode != 0 or observed_sha256 != expected_sha256:
             raise RuntimeError("Gogs release archive checksum verification failed")
         run(f"mkdir -p {shlex.quote(extract_dir)}")
-        run(f"rm -rf {shlex.quote(release_dir)}", check=False)
+        run(f"rm -rf {shlex.quote(release_dir)}")
         run(
             f"tar -xzf {shlex.quote(archive_path)} -C {shlex.quote(extract_dir)}",
             check=True,
@@ -296,8 +296,8 @@ def _ensure_git_user() -> str:
         )
         print(f"  ✓ Created system user: {GOGS_GIT_USER}")
     else:
-        run(f"usermod -d {shlex.quote(git_home)} {shlex.quote(GOGS_GIT_USER)}", check=False)
-        run(f"usermod -s /usr/bin/git-shell {shlex.quote(GOGS_GIT_USER)}", check=False)
+        run(f"usermod -d {shlex.quote(git_home)} {shlex.quote(GOGS_GIT_USER)}")
+        run(f"usermod -s /usr/bin/git-shell {shlex.quote(GOGS_GIT_USER)}")
         print(f"  ✓ Using existing system user: {GOGS_GIT_USER}")
 
     ssh_dir = f"{git_home}/.ssh"
@@ -306,7 +306,7 @@ def _ensure_git_user() -> str:
     run(f"chmod 700 {shlex.quote(ssh_dir)}")
     run(f"chmod 600 {shlex.quote(ssh_dir)}/authorized_keys")
     run(f"chown -R {shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)} {shlex.quote(git_home)}")
-    run(f"passwd -l {shlex.quote(GOGS_GIT_USER)}", check=False)
+    run(f"passwd -l {shlex.quote(GOGS_GIT_USER)}")
     return git_home
 
 
@@ -1283,7 +1283,6 @@ def _rollback_failed_gogs_setup(
             run(
                 f"ln -sfn {shlex.quote(previous_release)} "
                 f"{shlex.quote(GOGS_CURRENT_DIR)}",
-                check=False,
             )
             write_gogs_state(
                 safe_previous_tag,
@@ -1291,10 +1290,12 @@ def _rollback_failed_gogs_setup(
                 config_path,
                 previous_archive_sha256,
             )
-            run(f"systemctl restart {GOGS_SERVICE}", check=False)
+            run(f"systemctl restart {GOGS_SERVICE}")
+            if not is_service_active(GOGS_SERVICE):
+                raise RuntimeError("Gogs rollback did not restore a running service")
             print(f"  ⚠ Restored Gogs {safe_previous_tag} after setup failure")
             return
-    run(f"systemctl stop {GOGS_SERVICE}", check=False)
+    run(f"systemctl stop {GOGS_SERVICE}")
 
 
 def setup_gogs(config: SetupConfig) -> None:

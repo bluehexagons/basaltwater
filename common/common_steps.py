@@ -28,7 +28,7 @@ from lib.remote_utils import (
     run,
 )
 from lib.update_policy import ECOSYSTEM_AUTO_UPGRADE_ENV, npm_freshness_args
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_package_name
 from lib.validators import validate_username
 from lib.vendor_installer import MAX_INSTALLER_BYTES, installer_command, record_installer
 
@@ -288,8 +288,8 @@ def configure_locale(config: SetupConfig) -> None:
     
     install_package("locales", "locales", f"{_APT_GET} install -y -qq locales")
     run("sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen")
-    locale_gen_result = run("locale-gen", check=False)
-    run("update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8", check=False)
+    run("locale-gen")
+    run("update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8")
     
     os.environ["LANG"] = "en_US.UTF-8"
     os.environ["LC_ALL"] = "en_US.UTF-8"
@@ -300,13 +300,12 @@ def configure_locale(config: SetupConfig) -> None:
         if "LANG=en_US.UTF-8" not in existing:
             f.write('LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8\n')
     
-    if locale_gen_result.returncode == 0:
-        print("  ✓ UTF-8 locale configured (en_US.UTF-8)")
-    else:
-        print("  ⚠ locale-gen failed; locale may not be fully configured")
+    print("  ✓ UTF-8 locale configured (en_US.UTF-8)")
 
 
 def setup_user(config: SetupConfig) -> None:
+    if not validate_username(config.username):
+        raise ValueError("Invalid setup username")
     safe_username = shlex.quote(config.username)
     
     result = run(f"id {safe_username}", check=False)
@@ -316,21 +315,29 @@ def setup_user(config: SetupConfig) -> None:
         run(f"useradd -m -s /bin/bash {safe_username}")
         print(f"  Created new user: {config.username}")
         if config.password:
-            if set_user_password(config.username, config.password):
-                print("  Password set")
+            if not set_user_password(config.username, config.password):
+                raise RuntimeError("Requested user password could not be set")
+            print("  Password set")
         else:
             print("  No password configured; relying on SSH key authentication")
     else:
         print(f"  User already exists: {config.username}")
         if config.password:
-            if set_user_password(config.username, config.password):
-                print("  Password updated")
+            if not set_user_password(config.username, config.password):
+                raise RuntimeError("Requested user password could not be updated")
+            print("  Password updated")
     
     if config.harden_agent or config.privilege_broker_port is not None:
-        run(f"gpasswd -d {safe_username} sudo", check=False)
+        # gpasswd also fails when the user is already absent. Only tolerate a
+        # failure after verifying that the requested restriction holds.
+        removal = run(f"gpasswd -d {safe_username} sudo", check=False)
+        if removal.returncode != 0:
+            groups = run(["id", "-nG", config.username], capture_output=True, check=False, timeout=15)
+            if groups.returncode != 0 or "sudo" in (groups.stdout or "").split():
+                raise RuntimeError("Could not verify removal of user sudo privileges")
         sudo_message = "without sudo privileges"
     else:
-        run(f"usermod -aG sudo {safe_username}", check=False)
+        run(f"usermod -aG sudo {safe_username}")
         sudo_message = (
             "with passwordless sudo privileges"
             if config.nopasswd and config.machine_type == "vm"
@@ -339,7 +346,7 @@ def setup_user(config: SetupConfig) -> None:
     
     result = run("getent group remoteusers", check=False)
     if result.returncode == 0:
-        run(f"usermod -aG remoteusers {safe_username}", check=False)
+        run(f"usermod -aG remoteusers {safe_username}")
         user_groups_message = (
             f"  ✓ User configured {sudo_message} and remoteusers group"
         )
@@ -467,7 +474,7 @@ def generate_ssh_key(config: SetupConfig) -> None:
     
     run(f"chown -R {safe_username}:{safe_username} {shlex.quote(ssh_dir)}")
     run(f"chmod 600 {shlex.quote(private_key)}")
-    run(f"chmod 644 {shlex.quote(public_key)}", check=False)
+    run(f"chmod 644 {shlex.quote(public_key)}")
     
     print(f"  ✓ SSH key generated for {config.username} (~/.ssh/id_ed25519)")
 
@@ -487,8 +494,8 @@ def copy_ssh_keys_to_user(config: SetupConfig) -> None:
         raise RuntimeError("Refusing non-regular root authorized_keys path")
 
     if os.path.abspath(authorized_keys) == "/root/.ssh/authorized_keys":
-        run("chmod 700 /root/.ssh", check=False)
-        run("chmod 600 /root/.ssh/authorized_keys", check=False)
+        run("chmod 700 /root/.ssh")
+        run("chmod 600 /root/.ssh/authorized_keys")
         print("  ✓ Root SSH keys already available")
         return
     
@@ -532,13 +539,20 @@ def configure_time_sync(config: SetupConfig) -> None:
     tz = config.timezone if config.timezone else "UTC"
 
     if not can_manage_time_sync(config.machine_type):
+        # Guest clock management is optional when the host owns the clock.
+        failed = False
         for package, service in (
             ("chrony", "chrony"),
             ("systemd-timesyncd", "systemd-timesyncd"),
         ):
             if is_package_installed(package):
-                run(f"systemctl disable --now {service}", check=False)
-        run(f"timedatectl set-timezone {shlex.quote(tz)}", check=False)
+                result = run(f"systemctl disable --now {service}", check=False)
+                failed = failed or result.returncode != 0
+        result = run(f"timedatectl set-timezone {shlex.quote(tz)}", check=False)
+        failed = failed or result.returncode != 0
+        if failed:
+            print("  ⚠ Guest time settings could not be fully applied; clock remains host-managed")
+            return
         print(
             "  ✓ Time synchronization managed by container host "
             f"(guest daemons disabled, timezone: {tz})"
@@ -549,17 +563,17 @@ def configure_time_sync(config: SetupConfig) -> None:
     
     if is_package_installed("systemd-timesyncd"):
         print("  Migrating from systemd-timesyncd to chrony...")
-        run("systemctl stop systemd-timesyncd", check=False)
-        run("systemctl disable systemd-timesyncd", check=False)
-        run(f"{_APT_GET} remove -y -qq systemd-timesyncd", check=False)
+        run("systemctl stop systemd-timesyncd")
+        run("systemctl disable systemd-timesyncd")
+        run(f"{_APT_GET} remove -y -qq systemd-timesyncd")
         print("  ✓ systemd-timesyncd removed")
     
     install_package("chrony", "chrony", f"{_APT_GET} install -y -qq chrony")
     
-    run("systemctl enable chrony", check=False)
-    run("systemctl start chrony", check=False)
+    run("systemctl enable chrony")
+    run("systemctl start chrony")
     
-    run(f"timedatectl set-timezone {shlex.quote(tz)}", check=False)
+    run(f"timedatectl set-timezone {shlex.quote(tz)}")
     print(f"  ✓ Time synchronization configured (chrony, timezone: {tz})")
 
 
@@ -814,7 +828,7 @@ def _chown_existing_paths(username: str, paths: list[str]) -> None:
     safe_username = shlex.quote(username)
     existing_paths = [path for path in paths if os.path.exists(path)]
     for path in existing_paths:
-        run(f"chown -R {safe_username}:{safe_username} {shlex.quote(path)}", check=False)
+        run(f"chown -R {safe_username}:{safe_username} {shlex.quote(path)}")
 
 
 def _user_tool_paths(user_home: str) -> list[str]:
@@ -1428,16 +1442,17 @@ def install_apt_packages(config: SetupConfig) -> None:
     
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     print("  Installing custom apt packages...")
-    for package in config.apt_packages:
+    packages = [validate_package_name(package) for package in config.apt_packages]
+    for package in packages:
         if is_package_installed(package):
             print(f"  ✓ {package} already installed")
         else:
             print(f"  Installing {package}...")
-            run(f"{_APT_GET} install -y -qq {shlex.quote(package)}", check=False)
+            run(f"{_APT_GET} install -y -qq {shlex.quote(package)}")
             if is_package_installed(package):
                 print(f"  ✓ {package} installed")
             else:
-                print(f"  ⚠ Failed to install {package}")
+                raise RuntimeError(f"Requested package was not installed: {package}")
 
 
 def install_flatpak_packages(config: SetupConfig) -> None:
@@ -1457,8 +1472,7 @@ def install_flatpak_packages(config: SetupConfig) -> None:
     install_flatpak_if_needed()
     
     if not is_flatpak_installed():
-        print("  ⚠ Flatpak not available, skipping flatpak package installation")
-        return
+        raise RuntimeError("Flatpak is unavailable for the requested package installation")
     
     print("  Installing custom flatpak packages...")
     FLATPAK_REMOTE = "flathub"
@@ -1468,9 +1482,9 @@ def install_flatpak_packages(config: SetupConfig) -> None:
             print(f"  ✓ {package} already installed")
         else:
             print(f"  Installing {package}...")
-            run(f"flatpak install -y {FLATPAK_REMOTE} {shlex.quote(package)}", check=False)
+            run(f"flatpak install -y {FLATPAK_REMOTE} {shlex.quote(package)}")
             # Verify installation
             if is_flatpak_app_installed(package):
                 print(f"  ✓ {package} installed")
             else:
-                print(f"  ⚠ Failed to install {package}")
+                raise RuntimeError(f"Requested Flatpak package was not installed: {package}")

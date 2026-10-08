@@ -14,6 +14,27 @@ from lib.atomic_io import read_json_file, remove_file_durable, rename_path_durab
 
 
 class TestAtomicIO(unittest.TestCase):
+    def test_invalid_json_constants_and_duplicate_keys_are_rejected_without_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            for content in ('{"password": "private", "password": "changed"}',
+                            '{"value": NaN}', '{"value": Infinity}', '{"value": 1e10000}'):
+                with self.subTest(content=content):
+                    write_text_atomic(path, content)
+                    with self.assertRaises(ValueError) as caught:
+                        read_json_file(path)
+                    self.assertNotIn("private", str(caught.exception))
+                    with open(path) as stream:
+                        self.assertEqual(stream.read(), content)
+
+    def test_nonfinite_write_preserves_existing_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "state.json")
+            write_json_atomic(path, {"valid": True})
+            with self.assertRaises(ValueError):
+                write_json_atomic(path, {"value": float("nan")})
+            self.assertEqual(read_json_file(path), {"valid": True})
+
     def test_rename_syncs_both_parents_after_move(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "source")
