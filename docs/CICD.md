@@ -37,7 +37,9 @@ logs. A ping event checks connectivity only and does not build a repository.
 
 The receiver stays on localhost behind Nginx. For a Cloudflare Tunnel, configure
 the host with `--cloudflare` and follow the [tunnel guide](CLOUDFLARE.md); the
-webhook hostname must resolve through the tunnel to its Nginx site.
+webhook hostname must resolve through the tunnel to its Nginx site. The
+webhook-specific ingress uses a separate loopback listener; see the
+[webhook tunnel route guide](../web/config/webhook_cloudflare_setup.md).
 
 ## Build and app server topology
 

@@ -70,10 +70,11 @@ steps.
 
 ## Webhooks and direct services
 
-For a CI/CD webhook, add an ingress entry for the webhook hostname that points
-to the local receiver port, then configure the matching GitHub webhook secret.
-The [CI/CD guide](./CICD.md) covers signature validation and the receiver
-service.
+For a CI/CD webhook, use the dedicated
+[webhook tunnel route guide](../web/config/webhook_cloudflare_setup.md). Its
+Nginx listener uses `127.0.0.1:8080`, separate from the generated site origin on
+port 80 and the receiver on port 8765. The [CI/CD guide](./CICD.md) covers GitHub
+configuration, signature validation, and the receiver service.
 
 Cloudflare Tunnel does not proxy UDP. An Antistatic deployment therefore keeps
 its direct UDP 3478 STUN access (and any required direct TCP service port) even
