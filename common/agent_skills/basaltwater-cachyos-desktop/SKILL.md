@@ -1,6 +1,6 @@
 ---
 name: basaltwater-cachyos-desktop
-description: Edit and verify Blender models and vector, raster, audio or video assets with native applications on a CachyOS KDE workstation, using application scripts, exports and user-approved Wayland capture/input. Use for application workflows and native GUI work, not workstation installation or VM XRDP control.
+description: Run and verify Godot, Electron and native development tasks, and edit Blender models and vector, raster, audio or video assets on a CachyOS KDE workstation using application scripts, exports and user-approved Wayland capture/input. Use for native application workflows, not workstation installation or VM XRDP control.
 metadata:
   managed-by: basaltwater
 ---
@@ -30,6 +30,19 @@ Read the reference for the task:
   parallel Xvfb launches, high-resolution content checks and post-refresh evidence.
 
 ## Launch and observe
+
+For remote Godot development, check project prerequisites with
+`basaltw desktop --native develop doctor --project PATH --json`. Use `develop
+editor --project PATH` or `develop run --project PATH --scene res://SCENE` to
+launch explicitly in the owned logged-in KDE session from T3 or SSH. For
+Electron/native commands, use `develop exec --project PATH -- COMMAND`, choosing
+the project's Node/runtime wrapper and preserving its sandbox policy. Use
+`--dry-run` to preview. These user-systemd tasks survive client disconnection
+and retain private bounded logs; `develop list`, `develop status TASK_ID`, and
+`develop stop TASK_ID` manage only their records/process group. Save changes
+before stopping an editor. Launches honor saved/live human pause; they do not
+grant capture/input permission. See the
+[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md).
 
 Launch the active executable directly from the invoking graphical session:
 

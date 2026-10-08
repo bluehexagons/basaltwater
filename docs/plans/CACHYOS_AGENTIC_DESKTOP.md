@@ -418,6 +418,19 @@ desktop-control implementation.
 
 ## Implementation record
 
+- The 2026-10-08 revision makes Godot development/playtesting over T3,
+  Sunshine/Moonlight, and SSH the primary role; Electron/native clients remain
+  secondary, and production builds/isolated environments are outside scope.
+- Added `desktop --native develop doctor/editor/run/exec/list/status/stop`,
+  read-only project/tool prerequisites, owned user-manager session discovery,
+  explicit transient development services, private bounded logs/exit evidence,
+  task/invocation-scoped stopping, and human-pause checks before queueing and
+  child launch. Manifest and managed CachyOS skills discover these commands.
+  Current Intel workstation fixtures exercise GPU launch with caller display
+  variables removed, literal argument/runtime PATH handling, output bounds,
+  client-exit durability, and stopping one task while another survives.
+  Actual remote-client, logout/reboot, editor/dialog, Electron, audio/controller,
+  and broader hardware qualification remain separate.
 - Implemented the versioned capability metadata contract and
   `basaltw local cachyos-doctor [--json]`, with fixed read-only probes,
   bounded streaming, local bus addressing, and no service activation.

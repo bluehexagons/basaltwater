@@ -11,6 +11,10 @@ For Godot games and secondary Electron/native development over T3,
 Sunshine/Moonlight, and SSH, start with the
 [remote development guide](CACHYOS_DEVELOPMENT.md). It covers initial remote
 commissioning, project checks, playtesting, and preserving the logged-in session.
+`basaltw desktop --native develop` checks projects and supervises explicit
+Godot/native/Electron commands from T3 or SSH without requesting capture/input
+access. Its `doctor`, `editor`, `run`, `exec`, `list`, `status`, and `stop`
+commands are separate from the portal lifecycle below.
 
 ## Start a task's portal session
 

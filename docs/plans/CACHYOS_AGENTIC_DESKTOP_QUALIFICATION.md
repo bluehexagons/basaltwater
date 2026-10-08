@@ -251,11 +251,40 @@ production build or container qualification.
 | Case | Required evidence | Result |
 | --- | --- | --- |
 | Remote commissioning | Actual Moonlight video/audio/input and reconnect; T3 thread/PTY; independent same-user SSH connection | Existing daily-use acceptance; full remote commissioning sequence pending |
-| Launch from SSH | Missing caller display variables recovered from the owned user manager; correct KDE session/project; no portal request or new listener | Pending implementation |
-| Godot prerequisites | Bounded project/engine checks; C# requirement explained; no import, plugin execution, application launch, or state write | Pending implementation |
-| Durable development task | Client disconnect preserves the job; logs and exit status retained privately; output bounded | Pending implementation |
-| Scoped stop | Only the recorded user-systemd task is stopped; another editor/game and KDE survive | Pending implementation |
-| Project and argument validation | Scene remains in the chosen project; literal arguments survive spaces, percent signs, and shell metacharacters | Pending implementation |
+| Launch from SSH | Missing caller display variables recovered from the owned user manager; correct KDE session/project; no portal request or new listener | Caller display variables removed in current-workstation fixture; actual SSH client pending |
+| Godot prerequisites | Bounded project/engine checks; C# requirement explained; no import, plugin execution, application launch, or state write | Implemented with mocked read-only/metadata/C# cases; native project doctor passed live |
+| Durable development task | Client disconnect preserves the job; logs and exit status retained privately; output bounded | Client process exited before GPU fixture completion; 16 MiB output limit and exit-code retention passed live |
+| Scoped stop | Only the recorded user-systemd task is stopped; another editor/game and KDE survive | Two disposable tasks: second stayed running after first stopped; foreign/stale identity refusals mocked |
+| Project and argument validation | Scene remains in the chosen project; literal arguments survive spaces, percent signs, and shell metacharacters | Project/scene and size bounds mocked; literal argv, PATH and worker-source path passed live |
 | Remote session lifecycle | Monitor-off, lock/unlock, reconnect, display geometry, and renewed consent have explicit observations | Pending live qualification |
 | Secondary client software | Electron/native launch preserves project runtime and sandbox behavior; dialogs/scaling/input checked | Pending live qualification |
 | Playtest/debugger bridge | Project-declared actions and structured observations; actual GPU evidence separate from headless assertions | Planned |
+
+### Development task evidence — 2026-10-08
+
+Source checks ran on the current CachyOS Intel Arc (MTL) workstation, separately
+from the earlier NVIDIA evidence. Packages were Godot `4.7.2-2.1`, Plasma/KWin
+`6.7.5-3.1`, PipeWire `1:1.6.9-1`, WirePlumber `0.5.18-1.1`, and systemd
+`262-1`. The existing desktop was KDE Wayland; the disposable Godot fixture
+reported X11 (XWayland), Vulkan `1.4.354`, Forward+, and the Intel GPU.
+
+The caller removed display/session-bus/session-type variables and set a
+synthetic SSH marker. Session discovery used the existing user manager; the
+task ran without starting portal control. Its project path contained spaces,
+`%n`, and `$HOME`. Project arguments containing percent syntax, dollar syntax,
+backticks and spaces survived literally; a separate native Python fixture also
+preserved an empty argument and a PATH component containing `%n`. A worker-source
+alias containing percent/dollar syntax passed after correcting double escaping
+of environment values. These fixtures qualify missing-environment handling,
+not actual network SSH/Moonlight connectivity.
+
+The launch client exited before completion; subsequent invocations recovered
+private logs and exit code. A fixture wrote 18 MiB and exited 7: the retained log
+was exactly 16 MiB, `log_truncated` was true, task state was failed, and the
+supervisor retained the project outcome without becoming a failed host service.
+Stopping one of two disposable tasks left the other running. Only fixture
+services were stopped; existing T3, Sunshine, KDE, and personal applications
+were preserved. Evidence stays in the ignored local
+`artifacts/cachyos-remote-development-2026-10-08/` directory and private task state.
+No screen capture, input injection, logout/reboot, package changes, persistent
+service configuration changes, or real project editing was needed for these checks.

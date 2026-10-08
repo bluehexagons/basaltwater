@@ -66,17 +66,79 @@ and save-data conventions before executing project code.
 ```fish
 basaltw agent manifest /absolute/project --json
 basaltw local cachyos-doctor --json
-basaltw desktop --native status
-# With an already approved running portal session:
-basaltw desktop --native exec -- godot --editor --path /absolute/project
+basaltw desktop --native develop doctor --project /absolute/project --json
+basaltw desktop --native develop editor --project /absolute/project --dry-run
+basaltw desktop --native develop editor --project /absolute/project --json
+basaltw desktop --native develop run --project /absolute/project \
+  --scene res://scenes/playtest.tscn --json -- --fixture menu
 ```
 
-The existing portal launch requires running control. It enables task-process
-accessibility without changing KDE preferences. Screen capture and input keep
-their separate consent, generation, geometry, and lease checks; see
-[native desktop control](CACHYOS_DESKTOP.md). Pause agent control before the
-owner playtests through Moonlight, and wait for explicit handback before
-resuming input. A launched game can keep running after the portal helper stops.
+`develop` works from T3 or same-user SSH without a running portal helper. It
+reads the existing user manager's graphical environment and checks canonical,
+owned Wayland/user-bus sockets and the active graphical-session target.
+Unavailable or stale session state stops launch with a reason. It does not
+create a desktop, unlock KDE, request screen access, or change manager settings.
+The application's own display driver remains unchanged; Godot may use XWayland
+inside the KDE Wayland session. Only selected task processes receive the
+accessibility environment.
+
+The project doctor reads bounded regular `project.godot` metadata and discovers
+executables. It reports declared minimum engine requirements and C#/.NET tool
+presence without running an engine, importing assets, executing plugins, or
+writing state. Minimum features are not an exact engine pin. Runtime version,
+imports, native-extension compatibility, GPU, sound, and input stay unverified.
+Use `--engine /absolute/engine` or `--engine EXECUTABLE` for an explicitly chosen
+runtime; C# defaults to `godot-mono` and also requires a discoverable `dotnet`
+command. SDK installation and compatibility still need project verification.
+Setup still installs the standard repository Godot package only.
+
+Each explicit launch returns a task ID, unit, private directory/log, and current
+state. A user-systemd service owns the task's process group and follows the
+graphical-session target. T3/SSH disconnection does not stop it. Logout/reboot
+recovery is not provided. An initial `running` state proves service activity,
+not window readiness or a completed playtest. Applications that forward a
+request to an existing instance are not adopted into the new task. An
+unacknowledged launch or failed state inspection retains the task ID as
+`launch-unverified`; inspect that task before retrying to avoid duplicate work.
+
+```fish
+basaltw desktop --native develop list --project /absolute/project --json
+basaltw desktop --native develop status TASK_ID --json
+# Save task-owned editor changes first:
+basaltw desktop --native develop stop TASK_ID --dry-run --json
+basaltw desktop --native develop stop TASK_ID --json
+```
+
+`list` reads saved records without querying or activating services. It returns
+up to 50 records from at most 500 entries and marks incomplete results with
+`truncated`; use `status` for live service/completion evidence. `launch_pid`,
+when present, is the original command's PID and can be historical; it is not a
+window identity. The stop command checks the recorded transient unit and
+invocation before stopping its process group. A slow/unacknowledged stop needs
+a fresh status check. Stop previews validate identity without changing the
+task. It never restarts KDE, Sunshine, T3, or other tasks.
+
+Records live under `~/.local/state/basaltwater/development/TASK_ID` with directory
+mode 0700 and files 0600. Combined stdout/stderr is capped at 16 MiB; further
+output is drained and completion reports `log_truncated`. This bound covers the
+supervisor's log, not files the project itself creates. Project exit failures
+remain task failures without marking the supervisor service failed when it
+successfully retained evidence. Logs/records are retained after stop; review
+them privately and remove only an exact finished task directory when no longer
+needed. There is no cleanup timer.
+
+Arguments after `run ... --` are project arguments. A selected scene must be an
+existing `.tscn`/`.scn` within the project, including after symlink resolution.
+Generic `exec` commands run an explicit executable and argument vector, without
+an implicit shell. Arguments are limited to 100 entries, 4096 characters each,
+and 48 KiB serialized in total. `--dry-run` validates prerequisites/arguments
+without creating task records or services.
+
+Screen capture and input retain their separate consent, generation, geometry,
+and lease checks; see [native desktop control](CACHYOS_DESKTOP.md). Launches
+honor a saved or active human pause. Pause agent control before the owner
+playtests through Moonlight, and wait for explicit handback before resuming
+input. A launched game can keep running after the portal helper stops.
 
 Prefer project-defined playtest fixtures and input actions. Capture the tested
 revision/worktree, scene, engine, renderer, resolution, seed, logs, and expected
@@ -88,6 +150,20 @@ desktop/GPU. Separate game frame times from streaming/encoding/client latency.
 
 For Electron, use the project's package scripts and committed Node/package
 manager requirements via `basaltw node exec`; preserve its sandbox policy.
+For example, launch a reviewed project script in the existing desktop:
+
+```fish
+basaltw desktop --native develop exec --project /absolute/electron-project \
+  --json -- basaltw node exec -- npm run dev:electron
+basaltw desktop --native develop exec --project /absolute/native-project \
+  --json -- /absolute/native-project/bin/application --development
+```
+
+The supervisor preserves the caller's PATH for an explicitly selected project
+runtime; it does not import the caller's provider credentials or bus/display
+overrides into the user manager. Task launches run trusted project code with
+the normal account's access; they are not a sandbox.
+
 For native applications, use project-owned run/test commands and check file
 dialogs, keyboard navigation, scaling, fonts, and fullscreen behavior as needed.
 Asset workflows should retain editable sources and verify exported assets in

@@ -119,7 +119,7 @@ DESKTOP_APPLICATIONS = {
 TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
-    "cmake", "godot", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
+    "cmake", "godot", "godot-mono", "dotnet", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
     "magick", "convert", "identify", "exiftool",
     "pdfinfo", "pdftoppm", "pdftotext",
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
@@ -332,6 +332,17 @@ def inspect_environment(repository: str) -> dict[str, object]:
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
+        "development": {
+            "role": "remote-godot-development",
+            "secondary_workflows": ["electron", "native-applications", "native-games"],
+            "readiness": "unverified",
+            "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md",
+            "doctor_argv": ["basaltw", "desktop", "--native", "develop", "doctor", "--project", root, "--json"],
+            "godot_editor_argv": ["basaltw", "desktop", "--native", "develop", "editor", "--project", root, "--json"],
+            "godot_run_argv": ["basaltw", "desktop", "--native", "develop", "run", "--project", root, "--json"],
+            "application_prefix_argv": ["basaltw", "desktop", "--native", "develop", "exec", "--project", root, "--"],
+            "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. Tasks retain private bounded logs and status after client disconnect. Capture/input still require separate approved portal control. Honor human pause; record actual playtest outcomes separately from prerequisites and process exit status.",
+        } if native_desktop else None,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
@@ -380,6 +391,10 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print(f"Desktop guide: {DESKTOP_GUIDE}")
         for path in result["desktop_skills"]:
             print(f"Desktop skill: {path}")
+    if development := result.get("development"):
+        print(f"Development: {development['role']} (readiness unverified)")
+        print(f"  Project check: {shlex.join(development['doctor_argv'])}")
+        print(f"  {development['instructions']}")
     publishing = result["publishing"]
     installed = [name for name, path in publishing["tools"].items() if path]
     print("Publishing tools: " + (", ".join(installed) if installed else "none on PATH") + " (readiness and authentication unverified)")

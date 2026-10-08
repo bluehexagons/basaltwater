@@ -17,6 +17,14 @@ Manager, and Shelly are the current KDE baseline. Do not assume SDDM, X11,
 Octopi, or a preinstalled paru from older CachyOS images. Optional helper
 fallbacks do not extend support to outdated systems.
 
+The primary role is remote Godot application/game development and playtesting
+through T3 Code, Sunshine/Moonlight, and same-user SSH after initial KDE login.
+Electron and native client software are secondary. Use the
+[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md)
+for commissioning and project/task commands. Production builds and publishing
+use separate systems; containers and isolated project environments are outside
+this workstation role. Preserve the logged-in desktop and remote access paths.
+
 To add supported tools, rerun `basaltw setup agent_cachyos localhost` as the
 desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`,
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
@@ -70,11 +78,23 @@ not prepare NVM on CachyOS. Custom NVM installations keep their own manager.
 Add `--blender --git-lfs` for source assets. Game development also selects KDE
 automation prerequisites for native Animator work, but starts no input/capture.
 Use the [game development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_GAME_DEVELOPMENT.md)
-for package scope and sibling workflows. Both OS profiles support game
-development; Debian also covers validation, builds, publishing, and services.
-This desktop bundle does not reproduce Debian compiler/formatter pins or
-prepare a release SDK. Use the project's separately prepared SDK and ABI gates
-for release packages on either host; record where each validation check ran.
+for package scope and sibling workflows. This desktop bundle does not reproduce
+release compiler/formatter pins or prepare a release SDK. Run project checks
+and record their actual workstation/runtime/backend; leave production builds
+and publishing to the separate build systems.
+
+Use `basaltw desktop --native develop doctor --project PATH --json` for read-only
+Godot/project prerequisites. It discovers engine/.NET executables without
+running an engine, importing resources, or claiming version/GPU/input readiness.
+From T3 or SSH, explicit `develop editor`, `develop run --scene res://SCENE`, and
+`develop exec -- COMMAND` attach to the owned user manager's existing KDE session.
+Pass the chosen `--project PATH`; use `--dry-run` to preview launches. Tasks
+retain bounded private logs and exit evidence across client disconnects.
+Use `develop list`, `develop status TASK_ID`, and `develop stop TASK_ID`; save
+edits first, and stop only the task that belongs to the current work. Initial
+running state and historical launch PID do not establish window identity.
+Launches honor human pause, and capture/input still need separate portal consent.
+Do not restart KDE, T3, Sunshine, or another editor to recover a project task.
 
 For a recognized standalone Codex installation, preview with
 `basaltw agent update --tool codex --dry-run`, then update with

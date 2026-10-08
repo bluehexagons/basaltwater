@@ -16,6 +16,8 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("desktop", help="Use the shared Debian desktop or opt in to native CachyOS automation")
     parser.add_argument("--native", action="store_true", help="Use KDE Wayland portal automation on CachyOS; start requests user consent")
     commands = parser.add_subparsers(dest="desktop_command", required=True)
+    from desktop.development import add_development_parser
+    add_development_parser(commands)
     for name in ("status", "stop", "logout", "windows", "doctor", "handoff", "revoke"):
         commands.add_parser(name).add_argument("--json", action="store_true")
     starting = commands.add_parser("start")
@@ -104,6 +106,9 @@ def add_desktop_subparser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run_desktop_command(args: argparse.Namespace) -> int:
+    if args.desktop_command == "develop":
+        from desktop.development import run_development_command
+        return run_development_command(args)
     backend = runtime
     if getattr(args, "native", False):
         from desktop import native_session
