@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.atomic_io import read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 
 
 class TestAtomicIO(unittest.TestCase):
@@ -52,6 +52,44 @@ class TestAtomicIO(unittest.TestCase):
             with patch("lib.atomic_io._fsync_directory", side_effect=sync):
                 rename_path_durable(source, target)
             self.assertEqual(parents, [directory, target_parent])
+
+    def test_release_flushes_files_before_directories_without_following_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.join(directory, "release")
+            child = os.path.join(root, "nested")
+            os.makedirs(child)
+            paths = [root, child, os.path.join(root, "file"), os.path.join(child, "file"),
+                     os.path.join(directory, "outside")]
+            for path in paths[2:]:
+                with open(path, "w") as stream:
+                    stream.write("contents")
+            os.symlink(paths[-1], os.path.join(root, "external-file"))
+            os.symlink(directory, os.path.join(child, "external-directory"))
+            names = {os.stat(path).st_ino: path for path in paths}
+            flushed = []
+            with patch("lib.atomic_io.os.fsync", side_effect=lambda fd: flushed.append(names[os.fstat(fd).st_ino])):
+                fsync_tree(root)
+            self.assertEqual(set(flushed), set(paths[:-1]))
+            self.assertLess(flushed.index(paths[3]), flushed.index(child))
+            self.assertLess(flushed.index(child), flushed.index(root))
+            self.assertLess(flushed.index(paths[2]), flushed.index(root))
+
+    def test_release_flush_rejects_symlink_root_and_special_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = os.path.join(directory, "release")
+            os.mkdir(root)
+            link = os.path.join(directory, "link")
+            os.symlink(root, link)
+            with self.assertRaisesRegex(ValueError, "not a link"):
+                fsync_tree(link)
+            os.mkfifo(os.path.join(root, "pipe"))
+            script = (
+                'from lib.atomic_io import fsync_tree\nimport sys\n'
+                'try:\n    fsync_tree(sys.argv[1])\n'
+                'except ValueError:\n    sys.exit(7)\n'
+            )
+            result = subprocess.run([sys.executable, '-c', script, root], capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 7, result.stderr)
 
     def test_json_reader_rejects_unsafe_paths_and_bounds_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

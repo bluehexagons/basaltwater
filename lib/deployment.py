@@ -19,9 +19,9 @@ from typing import Any, IO, Iterable, Optional
 from lib.remote_utils import run
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateError, OperationStateStore
-from lib.atomic_io import remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import fsync_tree, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 from lib.state_read import StateReadError, read_state_object
-from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
+from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, snapshot_unit_file
 from lib.deploy_utils import (
     create_safe_directory_name,
     detect_project_type,
@@ -55,7 +55,18 @@ class DeploymentOrchestrator:
         """Copy repository files without following links out of the source tree."""
         if os.path.islink(source_path):
             raise ValueError(f"Deployment source is a symlink: {source_path}")
-        shutil.copytree(source_path, staging_path, dirs_exist_ok=True, symlinks=True)
+
+        def copy_regular(source, destination):
+            descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as original:
+                if not stat.S_ISREG(os.fstat(original.fileno()).st_mode):
+                    raise ValueError(f"Deployment source file must be regular: {source}")
+                with open(destination, "wb") as copied:
+                    shutil.copyfileobj(original, copied)
+            shutil.copystat(source, destination, follow_symlinks=False)
+            return destination
+
+        shutil.copytree(source_path, staging_path, dirs_exist_ok=True, symlinks=True, copy_function=copy_regular)
         for current, directories, files in os.walk(staging_path, followlinks=False):
             for name in (*directories, *files):
                 candidate = os.path.join(current, name)
@@ -184,10 +195,25 @@ class DeploymentOrchestrator:
         """Deploy a ready-to-serve non-manifest tree through an atomic release swap."""
         del keep_source
         dest_path = self.get_deployment_path(domain, path, git_url)
+        self._validate_release_source(source_path, dest_path)
         with self._open_deployment_lock(dest_path):
             return self._deploy_static_release(
                 source_path, dest_path, domain, path, git_url, commit_hash, full_deploy,
             )
+
+    @staticmethod
+    def _validate_release_source(source_path: str, dest_path: str) -> None:
+        """Keep source copying and cleanup outside the active release tree."""
+        validate_filesystem_path(source_path, must_exist=True)
+        validate_filesystem_path(dest_path, must_exist=False)
+        if os.path.islink(dest_path):
+            raise ValueError(f"Release path must be a directory, not a link: {dest_path}")
+        if os.path.islink(source_path) or not os.path.isdir(source_path):
+            raise ValueError(f"Deployment source must be a directory, not a link: {source_path}")
+        source = os.path.realpath(source_path)
+        destination = os.path.realpath(dest_path)
+        if os.path.commonpath((source, destination)) in {source, destination}:
+            raise ValueError("Deployment source and release paths must not overlap")
 
     def _deploy_static_release(
         self, source_path: str, dest_path: str, domain: Optional[str], path: str,
@@ -280,6 +306,7 @@ class DeploymentOrchestrator:
             activated = True
 
             operation = store.transition(operation.operation_id, "finalizing")
+            fsync_tree(dest_path)
             save_deployment_metadata(dest_path, git_url, commit_hash)
             store.complete(operation.operation_id)
             operation = None
@@ -300,6 +327,10 @@ class DeploymentOrchestrator:
                 'backend_port': None,
             }
         except Exception as error:
+            if operation is None:
+                # Completion is the commit boundary. Output or cleanup errors
+                # afterwards must not attempt to undo an already committed tree.
+                raise
             # A directory sync can fail after a rename already took effect.
             if backup_path and os.path.exists(backup_path):
                 release_displaced = True
@@ -528,26 +559,49 @@ class DeploymentOrchestrator:
 
     def _restore_app_units(self, dest_path: str, snapshots: dict[str, dict[str, Any]]) -> None:
         """Restore unit files, permissions, enablement and prior running state."""
-        current = self._app_unit_names(dest_path)
-        for service_name in set(current) - set(snapshots):
-            cleanup_service(service_name)
-        for service_name, previous in snapshots.items():
-            write_text_atomic(os.path.join(SYSTEMD_UNIT_DIR, f"{service_name}.service"), **previous["file"])
-        run("systemctl daemon-reload")
-        for service_name, previous in snapshots.items():
-            state = previous["state"]
-            run(self._unit_command(service_name, "disable"))
-            if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
-                action = "enable --runtime" if state["UnitFileState"] == "enabled-runtime" else "enable"
-                run(self._unit_command(service_name, action))
-            if state["ActiveState"] == "active":
-                self._restart_app_units([service_name])
-            else:
-                run(self._unit_command(service_name, "stop"))
-            actual = inspect_unit_state(f"{service_name}.service")
-            if ((actual["ActiveState"] == "active") != (state["ActiveState"] == "active")
-                    or actual["UnitFileState"] != state["UnitFileState"]):
-                raise RuntimeError(f"Restored unit state did not match: {service_name}.service")
+        errors: list[str] = []
+
+        def attempt(label, action):
+            try:
+                action()
+                return True
+            except Exception as exc:
+                errors.append(f"{label}: {exc}")
+                return False
+
+        current: set[str] = set()
+        try:
+            current = self._app_unit_names(dest_path)
+        except Exception as exc:
+            errors.append(f"Unit inventory: {exc}")
+        for service_name in sorted(current - set(snapshots)):
+            attempt(service_name, lambda name=service_name: cleanup_service(name))
+        restored = []
+        for service_name, previous in sorted(snapshots.items()):
+            if attempt(service_name, lambda name=service_name, previous=previous: write_text_atomic(
+                os.path.join(SYSTEMD_UNIT_DIR, f"{name}.service"), **previous["file"],
+            )):
+                restored.append(service_name)
+        if attempt("Reload restored units", lambda: run("systemctl daemon-reload")):
+            for service_name in restored:
+                state = snapshots[service_name]["state"]
+                attempt(service_name, lambda name=service_name: run(self._unit_command(name, "disable")))
+                if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+                    action = "enable --runtime" if state["UnitFileState"] == "enabled-runtime" else "enable"
+                    attempt(service_name, lambda name=service_name, action=action: run(self._unit_command(name, action)))
+                if state["ActiveState"] == "active":
+                    attempt(service_name, lambda name=service_name: self._restart_app_units([name]))
+                else:
+                    attempt(service_name, lambda name=service_name: run(self._unit_command(name, "stop")))
+
+                def verify(name=service_name, state=state):
+                    actual = inspect_unit_state(f"{name}.service")
+                    if ((actual["ActiveState"] == "active") != (state["ActiveState"] == "active")
+                            or actual["UnitFileState"] != state["UnitFileState"]):
+                        raise RuntimeError("Restored unit state did not match")
+                attempt(service_name, verify)
+        if errors:
+            raise RuntimeError("Service unit recovery was incomplete: " + "; ".join(errors))
 
     @staticmethod
     def _unit_command(unit_name: str, action: str) -> str:
@@ -590,22 +644,25 @@ class DeploymentOrchestrator:
 
         errors: list[str] = []
         for unit_name in sorted(unit_names):
-            result = run(
-                self._unit_command(unit_name, "restart"),
-                check=False,
-                capture_output=True,
-            )
-            if result.returncode != 0:
-                error = self._get_command_error(result, "systemctl restart failed")
-                errors.append(f"{unit_name}.service restart failed: {error}")
-                continue
-            status = run(
-                self._unit_command(unit_name, "is-active --quiet"),
-                check=False,
-                capture_output=True,
-            )
-            if status.returncode != 0:
-                errors.append(f"{unit_name}.service is not active after restart")
+            try:
+                result = run(
+                    self._unit_command(unit_name, "restart"),
+                    check=False,
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    error = self._get_command_error(result, "systemctl restart failed")
+                    errors.append(f"{unit_name}.service restart failed: {error}")
+                    continue
+                status = run(
+                    self._unit_command(unit_name, "is-active --quiet"),
+                    check=False,
+                    capture_output=True,
+                )
+                if status.returncode != 0:
+                    errors.append(f"{unit_name}.service is not active after restart")
+            except Exception as exc:
+                errors.append(f"{unit_name}.service recovery failed: {exc}")
         if errors:
             raise RuntimeError("; ".join(errors))
 
@@ -733,6 +790,7 @@ class DeploymentOrchestrator:
                 raise ValueError('This manifest contains CI workflows only; there are no deployment components')
             raise ValueError('This metadata-only manifest has no deployment components')
         dest_path = self.get_deployment_path(domain, path, git_url)
+        self._validate_release_source(source_path, dest_path)
         parent_dir = os.path.dirname(dest_path)
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
@@ -904,6 +962,7 @@ class DeploymentOrchestrator:
             for stale_unit in sorted(set(unit_snapshots) - desired_units):
                 cleanup_service(stale_unit)
 
+            fsync_tree(dest_path)
             ports_modified = True
             self._save_manifest_ports(dest_path, manifest)
             save_deployment_metadata(dest_path, git_url, commit_hash)
@@ -923,11 +982,15 @@ class DeploymentOrchestrator:
             print(f"  ✓ Manifest deployed to {dest_path}")
             return deps
         except Exception as deployment_error:
+            if operation is None:
+                raise
             if backup_path and os.path.exists(backup_path):
                 release_displaced = True
             if staging_path and not os.path.exists(staging_path) and os.path.exists(dest_path):
                 activated = True
             rollback_errors: list[str] = []
+            if isinstance(deployment_error, UnitRecoveryError):
+                rollback_errors.append(str(deployment_error))
             failed_path = ""
             if operation is not None:
                 try:
@@ -961,13 +1024,18 @@ class DeploymentOrchestrator:
                     if backup_path and os.path.exists(backup_path):
                         rename_path_durable(backup_path, dest_path)
                         backup_path = None
-                    self._restore_app_units(dest_path, unit_snapshots)
                 except Exception as exc:
                     rollback_errors.append(str(exc))
-                if not rollback_errors:
-                    if failed_path:
-                        shutil.rmtree(failed_path, ignore_errors=True)
-                    print("  ✓ Restored previous release after failed activation")
+                # A sync failure can follow a successful tree restoration.
+                # Recover services against that tree even if its sync failed,
+                # but never restart old units against an unrestored new tree.
+                if not backup_path or not os.path.exists(backup_path):
+                    try:
+                        if unit_snapshots and not os.path.isdir(dest_path):
+                            raise RuntimeError("Previous release is missing; cannot restore services")
+                        self._restore_app_units(dest_path, unit_snapshots)
+                    except Exception as exc:
+                        rollback_errors.append(str(exc))
             elif stopped_units:
                 for unit_name in stopped_units:
                     try:
@@ -1009,6 +1077,10 @@ class DeploymentOrchestrator:
             if operation is not None:
                 operation_store.complete(operation.operation_id, outcome="rolled_back" if activated or release_displaced or stopped_units else "failed")
                 operation = None
+            if failed_path:
+                shutil.rmtree(failed_path, ignore_errors=True)
+            if activated or release_displaced:
+                print("  ✓ Restored previous release after failed activation")
             raise
         finally:
             try:

@@ -13,6 +13,15 @@ from lib.remote_utils import is_dry_run, run
 from lib.validation import validate_filesystem_path, validate_service_name_uniqueness
 
 
+class UnitRecoveryError(RuntimeError):
+    """A unit replacement still owns recovery evidence after failure."""
+
+    def __init__(self, marker_path: str, backup_dir: str):
+        self.marker_path = marker_path
+        self.backup_dir = backup_dir
+        super().__init__(f"Systemd rollback needs recovery; inspect {marker_path} and {backup_dir}")
+
+
 def _command(*args: str) -> str:
     result = run(list(args), capture_output=True, timeout=120)
     return result.stdout or ""
@@ -66,7 +75,8 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
 
     store = OperationStateStore(os.path.join(unit_dir, ".basaltwater-unit-operation.json"))
     backup_dir = ""
-    retain = False
+    resolved = False
+    record = None
     try:
         record = store.begin("unit-replacement", unit_dir, "staging", context={"units": list(units)})
         modified = False
@@ -96,6 +106,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                 if state["ActiveState"] != "active" or state["UnitFileState"] != "enabled":
                     raise RuntimeError(f"Unit activation failed verification: {name}")
             store.complete(record.operation_id)
+            resolved = True
         except BaseException:
             errors = []
             try:
@@ -106,27 +117,34 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
             def attempt(action):
                 try:
                     action()
+                    return True
                 except BaseException as exc:
                     errors.append(type(exc).__name__)
+                    return False
 
             if modified:
                 for name in touched:
                     attempt(lambda name=name: _command("systemctl", "stop", name))
                     attempt(lambda name=name: _command("systemctl", "disable", name))
+                restored = set()
                 for name, previous in snapshots.items():
                     path = os.path.join(unit_dir, name)
                     if previous is None:
-                        attempt(lambda path=path: remove_file_durable(path))
+                        safe = attempt(lambda path=path: remove_file_durable(path))
                     else:
-                        attempt(lambda path=path, previous=previous: write_text_atomic(path, **previous))
-                attempt(lambda: _command("systemctl", "daemon-reload"))
-                for name in touched:
-                    state = states[name]
-                    if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
-                        flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
-                        attempt(lambda name=name, flags=flags: _command("systemctl", "enable", *flags, name))
-                    if state["ActiveState"] == "active":
-                        attempt(lambda name=name: _command("systemctl", "restart", name))
+                        safe = attempt(lambda path=path, previous=previous: write_text_atomic(path, **previous))
+                    if safe:
+                        restored.add(name)
+                if attempt(lambda: _command("systemctl", "daemon-reload")):
+                    for name in touched:
+                        if name not in restored:
+                            continue
+                        state = states[name]
+                        if state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+                            flags = ["--runtime"] if state["UnitFileState"] == "enabled-runtime" else []
+                            attempt(lambda name=name, flags=flags: _command("systemctl", "enable", *flags, name))
+                        if state["ActiveState"] == "active":
+                            attempt(lambda name=name: _command("systemctl", "restart", name))
                 for name in touched:
                     def verify(name=name):
                         actual = inspect_unit_state(name)
@@ -135,14 +153,18 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                             raise RuntimeError("Restored unit state did not match")
                     attempt(verify)
             if errors:
-                retain = True
                 store.transition(record.operation_id, "rollback-failed", status="recovery_required", context={"backup_dir": backup_dir, "errors": errors})
-                raise RuntimeError(f"Systemd rollback needs recovery; inspect {store.path} and {backup_dir}")
+                raise UnitRecoveryError(store.path, backup_dir)
             store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
+            resolved = True
             raise
+    except Exception as error:
+        if record is not None and not resolved and not isinstance(error, UnitRecoveryError):
+            raise UnitRecoveryError(store.path, backup_dir) from error
+        raise
     finally:
         store.close()
-        if backup_dir and not retain:
+        if backup_dir and resolved:
             try:
                 shutil.rmtree(backup_dir)
             except OSError as exc:

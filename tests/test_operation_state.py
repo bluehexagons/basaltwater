@@ -135,7 +135,7 @@ class TestOperationStateStore(unittest.TestCase):
             with open(path, "w", encoding="utf-8") as file_obj:
                 json.dump({"schema_version": 99}, file_obj)
 
-            with self.assertRaisesRegex(OperationStateError, "move the marker aside"):
+            with self.assertRaisesRegex(OperationStateError, "verified recovery"):
                 OperationStateStore(path).load()
 
     def test_symlink_marker_is_rejected(self) -> None:
@@ -170,6 +170,28 @@ class TestOperationStateStore(unittest.TestCase):
             started = store.begin("setup", "host", "applying")
             with self.assertRaisesRegex(ValueError, "Unsupported operation status"):
                 store.transition(started.operation_id, "failed", status="failed")
+
+    def test_invalid_marker_fields_preserve_evidence_and_do_not_echo_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            store = OperationStateStore(path)
+            record = store.begin("setup", "host", "applying").to_dict()
+            store.close()
+            for key, value in (
+                ("schema_version", "private-data"), ("status", {"secret": "private-data"}),
+                ("phase", "applying\nprivate-data"), ("operation_type", "\x1bprivate-data"),
+                ("phases", ["\nprivate-data"]), ("phases", ["applying"] * 257),
+            ):
+                with self.subTest(key=key, value=value):
+                    original = json.dumps({**record, key: value})
+                    with open(path, "w", encoding="utf-8") as stream:
+                        stream.write(original)
+                    with self.assertRaises(OperationStateError) as error:
+                        store.load()
+                    self.assertNotIn("private-data", str(error.exception))
+                    self.assertIn("verified recovery", str(error.exception))
+                    with open(path, encoding="utf-8") as stream:
+                        self.assertEqual(stream.read(), original)
 
 
 if __name__ == "__main__":

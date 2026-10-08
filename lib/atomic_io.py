@@ -143,6 +143,39 @@ def rename_path_durable(source: str, destination: str) -> None:
         _fsync_directory(parent)
 
 
+def fsync_tree(path: str) -> None:
+    """Flush release contents and directories before discarding its backup.
+
+    Links created by build tooling are flushed with their parent directory;
+    their targets are never followed. Special files are refused without waiting
+    on a FIFO. The caller owns the tree and must have finished writing it.
+    """
+    validate_filesystem_path(path, must_exist=True)
+    if os.path.islink(path) or not os.path.isdir(path):
+        raise ValueError(f"Release tree must be a directory, not a link: {path}")
+
+    def walk_error(error):
+        raise error
+
+    for current, _directories, files in os.walk(path, topdown=False, followlinks=False, onerror=walk_error):
+        for name in files:
+            candidate = os.path.join(current, name)
+            if stat.S_ISLNK(os.lstat(candidate).st_mode):
+                continue
+            descriptor = os.open(candidate, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError(f"Release file must be regular: {candidate}")
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        descriptor = os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def _fsync_directory(path: str) -> None:
     """Flush directory metadata after an atomic replacement."""
 

@@ -29,6 +29,11 @@ completion time, final context and `succeeded`, `rolled_back`, or `failed`
 outcome. This is bounded last-result evidence, not a permanent audit archive.
 An existing result file does not block a new operation.
 
+A retained marker takes precedence over last-result evidence. The result is
+written before marker removal, so interrupted or failed finalization can leave
+a `succeeded` result beside an unresolved marker. Inspect and reconcile the
+marker before retrying, even when the last result appears successful.
+
 Stop concurrent deployment jobs and establish that the original process has
 exited before repairing state. Privately preserve the marker, its backups, the
 last result and relevant logs. Inspect a marker locally, for example:
@@ -50,13 +55,29 @@ Do not publish private snapshots or raw error contexts in support reports.
 | Manifest `verifying`; static `finalizing` | New release is active; startup and final persistence may be incomplete | Choose between verifying the new release and restoring the old one. For manifest rollback, stop new units, restore the previous tree and unit snapshot, reload systemd, then restore recorded enablement and running state. Restore `previous_ports` too. |
 | Release `rolling-back` or `recovery` | Restoration itself may be interrupted | Inspect destination, backup and failed paths before moving anything. A backup may already be consumed by restoration. Check every recorded unit and port assignment; retain the rejected tree until recovery is verified. |
 | Units `staging` or `validating` | Private candidates and snapshots | Live files have not been replaced. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
-| Units `replacing` or `rollback-failed` | Some files and activated units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Do not restart unrelated executing oneshots. |
+| Units `replacing`, `rolling-back` or `rollback-failed` | Some files and activated units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Do not restart unrelated executing oneshots. |
 
 For a first deployment with no previous release, recovery removes the rejected
 new release and new units. For manifest recovery, `previous_ports: null` means
 the port file was absent; remove the new file rather than retaining assignments
 from a rejected release. Legacy markers may omit newer context fields: use
 retained snapshots and actual service configuration instead of guessing.
+
+Rollback attempts independent service restorations even after another unit
+fails. It does not restart a unit whose old file could not be restored; failed
+`daemon-reload` also prevents restarting against cached replacement definitions.
+A rename sync error can occur after the old release was restored: inspect the
+actual paths and service states rather than treating the error as proof that
+the old tree is still at its backup path. Port or marker-completion failures
+retain the rejected release and private unit snapshots for further recovery.
+
+A manifest can also leave a systemd replacement marker. Reconcile both layers
+before resolving either marker. The inner unit snapshot records the state at
+that individual replacement, after manifest activation may have stopped the old
+service; the manifest snapshot records its state before deployment. Use the
+chosen release and the manifest snapshot to determine the final running state,
+then verify every unit and resolve both recorded operation IDs. A restored
+release tree alone does not complete an unresolved inner unit transaction.
 
 ## Verify before resolving the marker
 

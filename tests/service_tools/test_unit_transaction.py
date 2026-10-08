@@ -159,3 +159,57 @@ class TestUnitTransaction(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.replace()
         self.assertEqual(self.path.read_text(), "old unit")
+
+    def test_failed_marker_completion_retains_recovery_snapshot(self):
+        for validation_failure in (False, True):
+            with self.subTest(validation_failure=validation_failure):
+                if validation_failure:
+                    self.failure = ["systemd-analyze", "verify"]
+                with patch.object(units.OperationStateStore, "complete", side_effect=OSError("result storage failed")):
+                    with self.assertRaises(units.UnitRecoveryError) as error:
+                        self.replace()
+                self.assertIsInstance(error.exception.__cause__, OSError)
+                self.assertEqual(str(error.exception.__cause__), "result storage failed")
+                store = units.OperationStateStore(str(self.root / ".basaltwater-unit-operation.json"))
+                record = store.load()
+                snapshot = Path(record.context["backup_dir"]) / "previous.json"
+                self.assertTrue(snapshot.is_file())
+                self.assertEqual(json.loads(snapshot.read_text())["units"]["demo.timer"]["content"], "old unit")
+                with self.assertRaisesRegex(ValueError, "Unfinished"):
+                    self.replace()
+                store.complete(record.operation_id, outcome="rolled_back")
+
+    def test_failed_rollback_reload_cannot_restart_cached_new_unit(self):
+        self.failure = ["systemctl", "restart"]
+        reloads = 0
+
+        def command(*args):
+            nonlocal reloads
+            if args == ("systemctl", "daemon-reload"):
+                reloads += 1
+                if reloads == 2:
+                    raise OSError("restore reload failed")
+            return self.run_command(list(args)).stdout
+
+        with patch.object(units, "_command", side_effect=command):
+            with self.assertRaisesRegex(RuntimeError, "needs recovery"):
+                self.replace()
+        self.assertEqual(self.path.read_text(), "old unit")
+        self.assertEqual(self.commands.count(["systemctl", "restart", "demo.timer"]), 1)
+        self.assertEqual(self.active, "inactive")
+
+    def test_failed_file_restoration_cannot_restart_unrestored_unit(self):
+        self.failure = ["systemctl", "restart"]
+        original = units.write_text_atomic
+
+        def write(path, content, **kwargs):
+            if path == str(self.path) and content == "old unit":
+                raise OSError("restore write failed")
+            original(path, content, **kwargs)
+
+        with patch.object(units, "write_text_atomic", side_effect=write):
+            with self.assertRaisesRegex(RuntimeError, "needs recovery"):
+                self.replace()
+        self.assertEqual(self.path.read_text(), "new unit")
+        self.assertEqual(self.commands.count(["systemctl", "restart", "demo.timer"]), 1)
+        self.assertEqual(self.active, "inactive")

@@ -19,10 +19,18 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 
 OPERATION_SCHEMA_VERSION = 1
 OperationStatus = Literal["in_progress", "recovery_required"]
+RECOVERY_GUIDANCE = (
+    "preserve the marker and reconcile actual state using docs/TRANSACTION_RECOVERY.md; "
+    "resolve it only after verified recovery before retrying"
+)
 
 
 class OperationStateError(ValueError):
     """Raised when durable operation state is invalid or unsafe to replace."""
+
+
+def _invalid_marker(path: str, reason: str) -> OperationStateError:
+    return OperationStateError(f"Invalid operation marker {path}: {reason}; {RECOVERY_GUIDANCE}")
 
 
 def _timestamp() -> str:
@@ -67,29 +75,32 @@ class OperationRecord:
 
 def _required_string(payload: JSONDict, key: str, path: str) -> str:
     value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise OperationStateError(f"Invalid operation marker {path}: {key} must be a string")
+    try:
+        _validate_label(value, key)
+    except ValueError:
+        raise _invalid_marker(path, f"{key} must be a non-empty string without control characters") from None
     return value
 
 
 def _record_from_dict(payload: object, path: str) -> OperationRecord:
     if not isinstance(payload, dict):
-        raise OperationStateError(f"Invalid operation marker {path}: expected a JSON object")
+        raise _invalid_marker(path, "expected a JSON object")
     version = payload.get("schema_version")
     if type(version) is not int or version != OPERATION_SCHEMA_VERSION:
         raise OperationStateError(
-            f"Unsupported operation marker schema in {path}: {version!r}; "
-            "move the marker aside for inspection before retrying"
+            f"Unsupported operation marker schema in {path}; {RECOVERY_GUIDANCE}"
         )
     status = payload.get("status")
     if not isinstance(status, str) or status not in {"in_progress", "recovery_required"}:
-        raise OperationStateError(f"Invalid operation marker {path}: unknown status {status!r}")
+        raise _invalid_marker(path, "unknown status")
     context = payload.get("context")
     if not isinstance(context, dict):
-        raise OperationStateError(f"Invalid operation marker {path}: context must be an object")
+        raise _invalid_marker(path, "context must be an object")
     phases = payload.get("phases", [])
-    if not isinstance(phases, list) or any(not isinstance(phase, str) or not phase for phase in phases):
-        raise OperationStateError(f"Invalid operation marker {path}: phases must be strings")
+    if not isinstance(phases, list) or len(phases) > 256:
+        raise _invalid_marker(path, "phases must be a list of at most 256 strings")
+    for phase in phases:
+        _required_string({"phase": phase}, "phase", path)
     return OperationRecord(
         schema_version=OPERATION_SCHEMA_VERSION,
         operation_id=_required_string(payload, "operation_id", path),
@@ -144,16 +155,11 @@ class OperationStateStore:
         if not os.path.lexists(self.path):
             return None
         if os.path.islink(self.path):
-            raise OperationStateError(
-                f"Unsafe operation marker {self.path}: marker must not be a symlink"
-            )
+            raise _invalid_marker(self.path, "marker must not be a symlink")
         try:
             payload = read_json_file(self.path)
         except (OSError, ValueError) as exc:
-            raise OperationStateError(
-                f"Invalid operation marker {self.path}: {exc}; "
-                "move the marker aside for inspection before retrying"
-            ) from exc
+            raise _invalid_marker(self.path, "unreadable, unsafe, or malformed JSON") from exc
         return _record_from_dict(payload, self.path)
 
     def begin(
@@ -172,8 +178,7 @@ class OperationStateStore:
         if existing is not None:
             raise OperationStateError(
                 f"Unfinished {existing.operation_type} operation {existing.operation_id} "
-                f"is recorded in {self.path} at phase {existing.phase}; recover or "
-                "move the marker aside before retrying"
+                f"is recorded in {self.path} at phase {existing.phase}; {RECOVERY_GUIDANCE}"
             )
         timestamp = _timestamp()
         record = OperationRecord(

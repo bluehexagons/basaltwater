@@ -87,6 +87,9 @@ claim that every package installer provides full rollback.
 syncs data, atomically replaces the target and syncs its directory. Release
 renames also sync both parent directories. A sync error after a rename may mean
 the rename happened; activation and rollback inspect actual paths accordingly.
+Release files and directories are flushed before completion and old-backup
+cleanup; rename durability alone does not flush copied or built file contents.
+The flush does not follow build-created symlinks or open special files as data.
 
 Bounded readers require regular, non-symlink files and refuse FIFOs without
 blocking. Duplicate object keys, nonfinite JSON constants, invalid shapes,
@@ -120,6 +123,9 @@ Markers record context and recent phases. Completion writes a private
 `rolled_back` or `failed` outcome. This is bounded last-result evidence, not
 a permanent audit archive. Persistence/removal failure leaves or restores the
 marker so a new invocation cannot silently pass incomplete finalization.
+A retained marker takes precedence over a last-result file written before
+marker removal. Marker errors require verified recovery and preserve private
+field contents instead of suggesting an immediate bypass.
 
 Use [transaction recovery](../TRANSACTION_RECOVERY.md) for marker locations,
 phase-specific repair, previous port/unit restoration, first-deployment
@@ -138,6 +144,9 @@ with `systemd-analyze verify` before replacing anything. Write, reload and
 activation failures restore old files, ownership, modes, enablement and running
 state. Timer/path changes do not restart an unrelated executing oneshot.
 Incomplete rollback retains snapshots and its recovery marker.
+Snapshots also survive failed marker completion. Restoration gates restarts
+on successful file restoration and daemon reload so cached new definitions
+cannot be restarted as if they were the old configuration.
 
 Managed application, Antistatic, Gogs, CI/CD, storage operations and maintenance
 units use this boundary. Unit removal propagates stop/disable/reload failures;
@@ -146,9 +155,12 @@ configuration, not data changed by a service startup.
 
 ## Release activation
 
-Static and manifest deployment share one app lock and inspect both marker
-types. Switching deployment formats cannot bypass unfinished recovery.
+Static and manifest deployment share one lock for the deployment base and
+inspect both marker types for the requested application. Switching deployment
+formats cannot bypass unfinished recovery.
 Preparation rejects unsafe destinations and symlinked shared state.
+Source and release paths must not overlap; source copying refuses special
+files without consuming their contents.
 
 Both paths stage beside the active release, record deterministic paths before
 activation and retain the previous tree until finalization succeeds. Manifest
@@ -162,6 +174,12 @@ rollback restores the previous port assignments, including removing a newly
 created port file when none existed. Interrupted or incomplete recovery retains
 staging/backup/failed trees and the marker. Successful activation tolerates
 best-effort old-tree/source cleanup failures.
+Rollback attempts each independent unit restoration, including after a rename
+takes effect but its sync fails. Rejected trees remain until port restoration
+and marker completion succeed. Reporting failures after the commit boundary
+cannot trigger rollback of a completed activation.
+An inner `UnitRecoveryError` keeps the manifest recovery marker even if its
+release tree was restored; both transaction layers require reconciliation.
 
 Immutable release directories with a stable `current` symlink were an earlier
 proposal, not a requirement for the implemented directory-swap boundary.
