@@ -284,14 +284,21 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         return {"schema_version": 1, "ok": True, "dry_run": True, "operation": "stop",
                 "task": task_id, "unit": task["unit"]}
     if stop and unit.get("LoadState") != "not-found":
-        state, _ = _probe(["/usr/bin/systemctl", "--user", "stop", task["unit"]], uid)
+        state, _ = _probe(["/usr/bin/systemctl", "--user", "stop", "--no-block", task["unit"]], uid)
         if state != "ok":
             raise RuntimeError("Task stop was not acknowledged; inspect its status before retrying")
-        write_json_atomic(str(directory / "stopped.json"), {"stopped_at": datetime.now(timezone.utc).isoformat()}, mode=0o600)
+        write_json_atomic(str(directory / "stop-requested.json"), {"requested_at": datetime.now(timezone.utc).isoformat()}, mode=0o600)
         unit = _unit(task, uid)
     result = {"schema_version": 1, "ok": True, "task": task_id, "unit": task["unit"],
               "kind": task["kind"], "project": task["project"], "directory": str(directory),
               "log": str(directory / "output.log"), "state": "unavailable", "returncode": None}
+    if (directory / "stop-requested.json").exists():
+        request = _private_json(directory / "stop-requested.json")
+        timestamp = request.get("requested_at")
+        if (set(request) != {"requested_at"} or not isinstance(timestamp, str) or len(timestamp) > 40
+                or datetime.fromisoformat(timestamp).tzinfo is None):
+            raise ValueError("Invalid development stop request")
+        result["stop_requested_at"] = timestamp
     if (directory / "started.json").exists():
         started = _private_json(directory / "started.json")
         if type(started.get("launch_pid")) is not int or started["launch_pid"] <= 0:
@@ -307,9 +314,10 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         result["state"] = "completed" if successful else "failed"
         result["ok"] = successful
     if unit.get("ActiveState") in ("active", "activating", "deactivating") and unit.get("SubState") != "exited":
-        result.update(state="stopping" if unit["ActiveState"] == "deactivating" else "running", ok=True)
-    elif (directory / "stopped.json").exists():
-        _private_json(directory / "stopped.json")
+        result.update(state="stopping" if "stop_requested_at" in result or unit["ActiveState"] == "deactivating" else "running", ok=True)
+    elif "stop_requested_at" in result or (directory / "stopped.json").exists():
+        if (directory / "stopped.json").exists():
+            _private_json(directory / "stopped.json")
         result.update(state="stopped", ok=True)
     elif unit.get("ActiveState") == "failed":
         result.update(state="failed", ok=False)
@@ -404,7 +412,7 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
     command = ["/usr/bin/systemd-run", "--user", "--quiet", f"--unit={task['unit']}",
         f"--description=Basaltwater development task {directory.name}", "--service-type=exec",
-        "--remain-after-exit", "--expand-environment=no", "--property=ExitType=cgroup",
+        "--expand-environment=no", "--property=ExitType=cgroup",
         "--property=KillMode=control-group", "--property=TimeoutStopSec=10s",
         "--property=PartOf=graphical-session.target", "--property=After=graphical-session.target",
         "--property=StandardOutput=null", "--property=StandardError=null",

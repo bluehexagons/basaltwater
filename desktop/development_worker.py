@@ -23,6 +23,8 @@ def run_task(directory: Path) -> int:
     result = {"returncode": 1, "log_truncated": False}
     process = None
     stop_at = None
+    terminate_sent = False
+    kill_sent = False
 
     def stopping(*_):
         nonlocal stop_at
@@ -41,13 +43,15 @@ def run_task(directory: Path) -> int:
             remaining = LOG_LIMIT
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
-                while selector.get_map():
+                while selector.get_map() or process.poll() is None:
                     if stop_at is not None:
                         if process.poll() is None:
-                            if time.monotonic() - stop_at > 5:
+                            if time.monotonic() - stop_at > 5 and not kill_sent:
                                 process.kill()
-                            else:
+                                kill_sent = True
+                            elif not terminate_sent and not kill_sent:
                                 process.terminate()
+                                terminate_sent = True
                         if time.monotonic() - stop_at > 6:
                             break  # systemd stops any remaining task descendants.
                     for key, _ in selector.select(timeout=.1):

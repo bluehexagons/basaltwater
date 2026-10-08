@@ -163,6 +163,7 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.assertIn("--expand-environment=no", command)
         self.assertIn("--property=KillMode=control-group", command)
         self.assertIn("--property=ExitType=cgroup", command)
+        self.assertNotIn("--remain-after-exit", command)
         self.assertNotIn(str(scene), command)  # Project argv is passed through JSON, not systemd expansion.
         self.assertEqual(result["state"], "running")
 
@@ -177,8 +178,28 @@ class TestDevelopmentTasks(unittest.TestCase):
         result = development.task_status(launched["task"], stop=True)
         self.assertEqual(result["state"], "stopped")
         stop_calls = [call.args[0] for call in self.probe.call_args_list if call.args[0][2] == "stop"]
-        self.assertEqual(stop_calls, [["/usr/bin/systemctl", "--user", "stop", launched["unit"]]])
+        self.assertEqual(stop_calls, [["/usr/bin/systemctl", "--user", "stop", "--no-block", launched["unit"]]])
         self.assertEqual(development.task_status(launched["task"])["state"], "stopped")
+
+    def test_stop_acknowledges_queueing_without_claiming_a_running_task_has_stopped(self):
+        launched = self.launch()
+        active = {"LoadState": "loaded", "ActiveState": "active", "SubState": "running"}
+        with patch.object(development, "_unit", return_value=active):
+            result = development.task_status(launched["task"], stop=True)
+        self.assertEqual(result["state"], "stopping")
+        self.assertIn("stop_requested_at", result)
+        self.assertTrue((Path(result["directory"]) / "stop-requested.json").exists())
+        self.assertEqual(development.task_status(launched["task"])["state"], "stopped")
+        self.probe.side_effect = None
+        self.probe.return_value = "ok", "LoadState=not-found"
+        self.assertEqual(development.task_status(launched["task"])["state"], "stopped")
+
+    def test_unacknowledged_stop_does_not_record_a_successful_request(self):
+        launched = self.launch()
+        with patch.object(development, "_unit", return_value={"LoadState": "loaded"}), patch.object(development, "_probe", return_value=("error", "")):
+            with self.assertRaisesRegex(RuntimeError, "not acknowledged"):
+                development.task_status(launched["task"], stop=True)
+        self.assertFalse((Path(launched["directory"]) / "stop-requested.json").exists())
 
     def test_changed_or_unmanaged_unit_is_never_stopped(self):
         launched = self.launch()
@@ -201,6 +222,7 @@ class TestDevelopmentTasks(unittest.TestCase):
                 self.assertTrue(result["dry_run"])
                 self.assertFalse(any(call.args[0][2] == "stop" for call in self.probe.call_args_list))
                 self.assertFalse((Path(launched["directory"]) / "stopped.json").exists())
+                self.assertFalse((Path(launched["directory"]) / "stop-requested.json").exists())
 
     def test_completion_survives_disappearance_of_service_and_project(self):
         launched = self.launch()
@@ -360,8 +382,54 @@ class TestDevelopmentWorker(unittest.TestCase):
                     self.assertEqual(log.read_bytes(), b"small log")
                 finally:
                     os.close(write_fd)
+                    process.poll.return_value = 0
                     worker.join(2)
                 self.assertFalse(worker.is_alive())
+
+    def test_shutdown_remains_responsive_after_application_closes_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            read_fd, write_fd = os.pipe()
+            os.close(write_fd)
+            finished, eof, terminated = threading.Event(), threading.Event(), threading.Event()
+            handlers = {}
+            process = Mock(stdout=os.fdopen(read_fd, "rb"), pid=123)
+            process.poll.side_effect = lambda: -15 if finished.is_set() else None
+
+            def wait(timeout=None):
+                if not finished.wait(2 if timeout is None else timeout):
+                    raise subprocess.TimeoutExpired("fixture", timeout)
+                return -15
+
+            def terminate():
+                terminated.set()
+                finished.set()
+
+            read = os.read
+
+            def read_output(descriptor, count):
+                body = read(descriptor, count)
+                if not body:
+                    eof.set()
+                return body
+
+            process.wait.side_effect = wait
+            process.terminate.side_effect = terminate
+            process.kill.side_effect = finished.set
+            with patch.object(development_worker, "load_task", return_value={"argv": ["fixture"], "project": temporary}), patch.object(development_worker.subprocess, "Popen", return_value=process), patch.object(development_worker.signal, "signal", side_effect=lambda number, handler: handlers.update({number: handler})), patch.object(development_worker.os, "read", side_effect=read_output), patch.object(development_worker, "_honor_human_pause"):
+                worker = threading.Thread(target=development_worker.run_task, args=(directory,))
+                worker.start()
+                try:
+                    self.assertTrue(eof.wait(2))
+                    handlers[development_worker.signal.SIGTERM]()
+                    self.assertTrue(terminated.wait(1), "Supervisor ignored shutdown after stdout closed")
+                finally:
+                    finished.set()
+                    worker.join(2)
+                self.assertFalse(worker.is_alive())
+            process.terminate.assert_called_once()
+            process.kill.assert_not_called()
+            self.assertEqual(json.loads((directory / "result.json").read_text())["returncode"], -15)
 
     def test_log_quota_drains_output_and_preserves_child_exit_status(self):
         with tempfile.TemporaryDirectory() as temporary:

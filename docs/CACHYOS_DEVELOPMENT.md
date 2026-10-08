@@ -115,8 +115,12 @@ up to 50 records from at most 500 entries and marks incomplete results with
 when present, is the original command's PID and can be historical; it is not a
 window identity. The stop command checks the recorded transient unit and
 invocation before stopping its process group. A slow/unacknowledged stop needs
-a fresh status check. Stop previews validate identity without changing the
-task. It never restarts KDE, Sunshine, T3, or other tasks.
+a fresh status check. An acknowledged stop queues shutdown without waiting for
+the full grace period; `stopping` and `stop_requested_at` describe that request.
+Check `status` again for `stopped`. Task descendants have a ten-second service
+stop bound; the supervisor remains responsive even if an app closes its output.
+Stop previews validate identity without changing the task. It never restarts
+KDE, Sunshine, T3, or other tasks.
 
 Records live under `~/.local/state/basaltwater/development/TASK_ID` with directory
 mode 0700 and files 0600. Combined stdout/stderr is capped at 16 MiB; further
@@ -125,7 +129,9 @@ supervisor's log, not files the project itself creates. Project exit failures
 remain task failures without marking the supervisor service failed when it
 successfully retained evidence. Logs/records are retained after stop; review
 them privately and remove only an exact finished task directory when no longer
-needed. There is no cleanup timer.
+needed. Finished successful supervisor units are unloaded automatically after
+their process group exits; saved records still provide status and exit evidence.
+There is no log/record cleanup timer.
 
 Arguments after `run ... --` are project arguments. A selected scene must be an
 existing `.tscn`/`.scn` within the project, including after symlink resolution.

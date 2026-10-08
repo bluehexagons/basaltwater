@@ -221,7 +221,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | --- | --- | --- |
 | Setup | Fresh/rerun/interrupted setup, existing workspace and credentials preserved, recovery after failure | Not run |
 | Refresh | Successful selection saved privately; source upgraded before a fresh CLI replays the same flags; missing state and source failure stop before setup; failed/preview runs retain prior selection | Not run |
-| Selection persistence | Private validated selection records, omitted options stop future management without deleting data | Not implemented |
+| Selection persistence | Private validated selection records, omitted options stop future management without deleting data | Implemented; fresh/rerun/interruption qualification pending |
 | T3 desktop | Retain an installed t3code-bin, install when absent through default Shelly with review prompts, check optional paru/yay fallbacks only when Shelly is absent, preserve web service on cancellation/failure, discover Codex from KDE, complete a thread and terminal command | Not run |
 | T3 mode switching | Web → desktop disables only the owned service; desktop → web activates isolated data; preserve both environments and desktop package | Not run |
 | Codex lifecycle | Fresh standalone install, managed update and rollback, external-manager preservation, existing configuration and credentials retained | Not run |
@@ -235,7 +235,7 @@ marking a package query successful or by using unrestricted desktop tools.
 | Portal grant restoration | Initial owner approval, repeated restoration, pause preservation, bounded renewal and owner revocation | Repeated T3 restoration, pause preservation and renewal passed; revocation mocked; logout/reboot and other application identities pending |
 | Clipboard | Separate opt-in and bounds; protected content excluded | Not implemented |
 | Applications | Creative/admin/gaming package and GPU/audio readiness matrix | Blender/Inkscape, GIMP batch and Fast21 held-input gameplay paths above passed; remaining matrix pending |
-| Recovery | Safe reruns, exact managed cleanup, concurrent human application use | Not implemented |
+| Recovery | Safe reruns, exact managed cleanup, concurrent human application use | Scoped development-task stop passed; full setup/rerun recovery pending |
 | Collaboration | Schema-aware unavailable/deferred/pending UI, private artifact access, no additional control channel | Not implemented |
 
 Release only the capability and hardware/session combinations whose acceptance
@@ -288,3 +288,21 @@ were preserved. Evidence stays in the ignored local
 `artifacts/cachyos-remote-development-2026-10-08/` directory and private task state.
 No screen capture, input injection, logout/reboot, package changes, persistent
 service configuration changes, or real project editing was needed for these checks.
+
+### Task shutdown follow-up — 2026-10-08
+
+The review after `41e2107` adds asynchronous, identity-checked stop requests and
+keeps the supervisor checking shutdown after an application closes stdout.
+Successful finished transient units now unload without deleting their records.
+Mocked regressions reproduced the earlier failures before the fixes; 38 focused
+development tests passed afterward.
+
+On the same Intel/KDE workstation, a disposable Python fixture closed stdout
+and stderr and ignored SIGTERM. Stop acknowledged the queued request in about
+19 ms and reported `stopping`; the supervisor killed the child after its grace
+period and retained exit code -9. Later status reported `stopped`. Another task
+remained running until its own cleanup. A short successful task's unit became
+`not-found` while its private record still reported `completed` and exit code 0.
+Evidence is under the private ignored development artifact directory's
+`lifecycle-review/` subdirectory. Only disposable task processes were stopped;
+no portal control, network listener, package change, logout, or reboot was used.
