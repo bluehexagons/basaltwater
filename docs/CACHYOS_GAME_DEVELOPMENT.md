@@ -1,11 +1,12 @@
 # Antistatic development on CachyOS
 
 Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation.
-This setup supports editing and running the core game, its direct TypeScript
-dependencies, Blender source assets, and Antistatic Animator. Both CachyOS and
-Debian support game development; Debian also covers validation, builds,
-publishing, and servers. Release packages use the game's pinned SDK and ABI
-gates on either OS. Rolling desktop tools need not reproduce Debian's reviewed
+The primary workstation role is remote Godot development and playtesting; see
+the [remote development guide](CACHYOS_DEVELOPMENT.md). This guide covers the
+secondary Antistatic/native/Electron workflow: editing and running the core
+game, its direct TypeScript dependencies, Blender source assets, and Antistatic
+Animator. Production builds, publishing, and servers use separate systems.
+Rolling desktop tools need not reproduce a release SDK or Debian's reviewed
 compiler, formatter, graphics, or packaged-runtime baseline.
 
 For a first installation, use the [fish installer](CACHYOS.md#quick-start)

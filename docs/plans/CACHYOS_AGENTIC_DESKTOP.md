@@ -12,15 +12,19 @@ Reusable portal grants, bounded renewal, and interruptible held input were
 implemented and live-tested on 2026-10-05, including actual Fast21 gameplay.
 Grant cleanup recovery and physical-key troubleshooting have documented
 follow-ups; live revocation and logout/reboot qualification remain open.
+The 2026-10-08 role revision below prioritizes remote Godot development;
+Electron and other native client applications remain secondary use cases.
 
 ## Objective
 
-Expand the existing `agent_cachyos` profile into a useful agentic workstation
-for modern bare-metal CachyOS installations while preserving the user's KDE
-desktop and account ownership. The profile should make selected tools easy to
-install, update, observe, and recover, and should give an agent bounded access
-to browser and desktop workflows when the user explicitly enables those
-capabilities.
+Expand the existing `agent_cachyos` profile into a remotely operated Godot
+development workstation for modern bare-metal CachyOS installations while
+preserving the user's KDE desktop and account ownership. Electron and native
+application/game development are secondary workflows. Optimize the loop from
+T3 editing to native execution, Moonlight playtesting, evidence collection,
+debugging, and human handoff. The owner normally has no physical access after
+initial login; diagnostics and recovery must work through the remaining remote
+access paths.
 
 The current profile covers native package installation for the coding, creative,
 media, gaming, remote desktop, and sysadmin bundles, user-managed Codex/OpenCode
@@ -39,6 +43,10 @@ authority for CachyOS desktop qualification and feature delivery.
 
 ## Boundaries and non-goals
 
+- Production builds, release SDKs, publishing pipelines, containers, and isolated
+  project environments are outside this workstation role. Keep managed Git
+  worktrees for concurrent source editing. Do not add automatic login, desktop
+  unlock, or pre-login graphical access as a recovery shortcut.
 - Keep the existing human user, KDE Plasma session, GPU/driver setup, network
   addressing, login manager, and OS update policy under user control. Explicit
   access flags opt into the bounded desktop UFW policy in the operator guide.
@@ -65,6 +73,31 @@ authority for CachyOS desktop qualification and feature delivery.
 - The existing `basaltw desktop` command remains the XRDP/X11 workflow;
   `basaltw desktop --native` explicitly selects Wayland. Do not silently route
   CachyOS sessions through X11-only tools such as `xdotool`.
+
+## Remote development priorities — 2026-10-08
+
+Use [remote development](../CACHYOS_DEVELOPMENT.md) as the operator entry point.
+The order below supersedes the older browser-first delivery sequence. Existing
+portal consent, pause, and lease boundaries continue to govern capture/input;
+an explicit application launch need not acquire capture or input permission.
+
+| Priority | Slice | Acceptance |
+| --- | --- | --- |
+| P1 | Project-aware launches and durable task records | From T3 or SSH, discover the owned logged-in KDE session; launch the correct worktree/scene or explicit native/Electron command; retain bounded private logs/status after client disconnect; stop only the recorded task |
+| P1 | Remote readiness and recovery | Distinguish user bus, graphical session, T3, Sunshine, and SSH access; explain pending approval; diagnose the affected component without restarting KDE or unrelated applications |
+| P2 | Godot agent/debugger bridge | Optional project-owned integration exposes structured scene/runtime observations and explicitly declared playtest actions through local interfaces |
+| P2 | Repeatable playtests and evidence | Project fixtures define input, scene/seed/settings, logs, screenshots/clips, and assertions; actual GPU/desktop checks stay distinct from headless assertions |
+| P2 | Display, input, and handoff qualification | Moonlight reconnect, monitor-off, lock/unlock, scaling/fullscreen, mouse capture, held keys, controllers, and human pause/handback have recorded results |
+| P3 | Multiplayer and performance workflows | Task-owned multi-instance roles/ports/logs; distinguish engine CPU/GPU frame times from encoding/network/client latency |
+| P3 | Secondary client and asset workflows | Electron/native launches, browser previews, dialogs/fonts/scaling, and asset reopen/consumer checks use the same project/task conventions |
+
+Start with read-only project prerequisites and explicit user-systemd development
+tasks. Do not implicitly execute project code during setup, refresh, discovery,
+or doctor. Godot engine features indicate minimum requirements rather than an
+exact runtime pin; project declarations own stricter compatibility requirements.
+Headless checks must not claim GPU, sound, or input readiness. Long-running
+development tasks may survive T3/SSH disconnects, but do not promise recovery
+across logout, reboot, or an application crash without a project checkpoint.
 
 ## Capability decisions to make first
 
@@ -127,7 +160,7 @@ names, or personal mount paths in the default support record.
 desktop, start a remote listener, or capture data. Unsupported capabilities
 must produce an actionable result rather than a generic setup failure.
 
-### P1 — browser automation as the first machine-use feature
+### P3 — optional browser automation for client software
 
 Add an opt-in CachyOS flag such as `--browser-automation playwright`. Keep the
 runtime and browser under a managed, user-owned path with provenance and an
@@ -424,7 +457,8 @@ desktop-control implementation.
 
 ## Open decisions and issue slices
 
-Resolve these in order and record the result in the relevant issue or plan:
+Resolve the remote development slices above first, then record decisions for
+these remaining optional integrations in the relevant issue or plan:
 
 1. Use pinned Playwright-managed Chromium as the explicit user-runtime
    exception above; qualify CachyOS dependencies before enabling setup.

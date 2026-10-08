@@ -240,3 +240,22 @@ marking a package query successful or by using unrestricted desktop tools.
 
 Release only the capability and hardware/session combinations whose acceptance
 cases pass. Record unsupported applications and backend versions explicitly.
+
+## Remote development gates — 2026-10-08 role revision
+
+The workstation primarily develops and playtests Godot games through T3,
+Sunshine/Moonlight, and SSH after initial KDE login. Electron/native applications
+are secondary. These cases supplement existing evidence; they do not require
+production build or container qualification.
+
+| Case | Required evidence | Result |
+| --- | --- | --- |
+| Remote commissioning | Actual Moonlight video/audio/input and reconnect; T3 thread/PTY; independent same-user SSH connection | Existing daily-use acceptance; full remote commissioning sequence pending |
+| Launch from SSH | Missing caller display variables recovered from the owned user manager; correct KDE session/project; no portal request or new listener | Pending implementation |
+| Godot prerequisites | Bounded project/engine checks; C# requirement explained; no import, plugin execution, application launch, or state write | Pending implementation |
+| Durable development task | Client disconnect preserves the job; logs and exit status retained privately; output bounded | Pending implementation |
+| Scoped stop | Only the recorded user-systemd task is stopped; another editor/game and KDE survive | Pending implementation |
+| Project and argument validation | Scene remains in the chosen project; literal arguments survive spaces, percent signs, and shell metacharacters | Pending implementation |
+| Remote session lifecycle | Monitor-off, lock/unlock, reconnect, display geometry, and renewed consent have explicit observations | Pending live qualification |
+| Secondary client software | Electron/native launch preserves project runtime and sandbox behavior; dialogs/scaling/input checked | Pending live qualification |
+| Playtest/debugger bridge | Project-declared actions and structured observations; actual GPU evidence separate from headless assertions | Planned |

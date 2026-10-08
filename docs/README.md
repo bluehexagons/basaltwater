@@ -25,6 +25,7 @@ overview.
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
 | Upload game builds and review release writing | [VM game publishing](GAME_PUBLISHING.md) | [Web panel](WEB_PANEL.md), [Project manifests](PROJECT_TOOLING.md) |
 | Set up coding tools on a CachyOS KDE workstation | [First setup in fish](CACHYOS.md) | [Managed skills](AGENT_SKILLS.md), [Later maintenance](CACHYOS_MAINTENANCE.md) |
+| Develop and playtest Godot games remotely on CachyOS | [Remote development](CACHYOS_DEVELOPMENT.md) | [KDE Wayland control](CACHYOS_DESKTOP.md), [Native/Electron tooling](CACHYOS_GAME_DEVELOPMENT.md) |
 | Edit native applications in the existing CachyOS desktop | [KDE Wayland control](CACHYOS_DESKTOP.md) | [Desktop development workflows](DESKTOP_DEVELOPMENT.md), [Managed skills](AGENT_SKILLS.md) |
 | Prepare a Windows 11 Ubuntu WSL build machine | [Ubuntu WSL](WINDOWS_WSL.md) | [Machine types](MACHINE_TYPES.md) |
 | Deploy an application or publish an internal site | [Deployments](DEPLOYMENTS.md) | [Internal web](INTERNAL_WEB.md), [CI/CD](CICD.md) |
@@ -77,6 +78,7 @@ automation, T3 Code, skills, and hardening.
 | [Workstations and desktop applications](WORKSTATIONS.md) | Desktop profiles, Debian/CachyOS software support and flags, Blender, browsers, Flatpak, office tools, and verification |
 | [Shared desktop automation](DESKTOP_AUTOMATION.md) | Native application launch, accessibility and pixel input, screenshots, and human handoff |
 | [CachyOS native desktop](CACHYOS_DESKTOP.md) | KDE portal consent, capture/input, AT-SPI, reusable grants, pause/revocation and native application qualification |
+| [Remote CachyOS development](CACHYOS_DEVELOPMENT.md) | Godot-first workstation role, T3/Moonlight/SSH commissioning, playtesting, handoff, and secondary Electron/native workflows |
 | [Agentic coding security](AGENT_SECURITY.md) | Sudo, Codex approval/sandbox policy, hardened modes, and supply-chain boundaries |
 | [Agentic VMs](AGENTIC_VMS.md) | Headless, full-capability, approval-panel, unrestricted, and hardened VM configurations |
 | [Agent environment manifest](AGENT_ENVIRONMENT.md) | Available tools, workspace conventions, and explicit branch-to-deployment mappings |

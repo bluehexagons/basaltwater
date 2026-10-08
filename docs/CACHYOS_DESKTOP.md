@@ -7,6 +7,11 @@ supported applications. `basaltw agent manifest --json` discovers installed
 executables with native launch arguments and workflow guidance. Discovery
 keeps readiness unverified; it does not launch applications or request access.
 
+For Godot games and secondary Electron/native development over T3,
+Sunshine/Moonlight, and SSH, start with the
+[remote development guide](CACHYOS_DEVELOPMENT.md). It covers initial remote
+commissioning, project checks, playtesting, and preserving the logged-in session.
+
 ## Start a task's portal session
 
 Run locally as the graphical desktop user:
