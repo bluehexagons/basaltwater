@@ -241,6 +241,11 @@ users while the main `/var/lib/basaltwater` runtime state remains private to
 root. Rerun saved setup with `sudo basaltw refresh` to reconcile installations
 that previously stored this flag inside the private runtime directory.
 
+`basaltw agent support-bundle` retains the same native readiness issues,
+selection, command-presence flags, module versions, and project-bootstrap list
+as the saved readiness report. Unknown fields, executable paths and unrecognized
+module values are omitted from this shareable diagnostic evidence.
+
 ## Build for an older release baseline
 
 A newer VM's libc and native libraries can exceed a project's supported

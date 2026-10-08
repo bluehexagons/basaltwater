@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.agent_readiness import sanitize_development_readiness
 from lib.installation_info import build_setup_snapshot_metadata
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
@@ -53,22 +54,6 @@ _BROWSER_REMEDIATIONS = frozenset(
         "restart_agent_sessions",
     )
 )
-_DEVELOPMENT_ISSUES = frozenset(
-    (
-        "godot_unusable",
-        "go_unusable",
-        "gofmt_missing",
-        "go_c_compiler_missing",
-        "node_default_missing",
-        "node_npm_missing",
-        "node_pnpm_missing",
-    )
-)
-_DEVELOPMENT_TOOLCHAIN_FIELDS = {
-    "godot": ("installed", "healthy", "version", "export_templates", "web_templates"),
-    "go": ("installed", "healthy", "version", "gofmt", "cgo_enabled", "c_compiler"),
-    "node": ("installed", "healthy", "version", "npm", "pnpm", "corepack"),
-}
 
 
 def _effective_home() -> str:
@@ -187,22 +172,6 @@ def build_agent_support_bundle(
         if isinstance(raw_browser_workflow_skills, list)
         else []
     )
-    raw_development_toolchains = development.get("toolchains")
-    development_toolchains = (
-        raw_development_toolchains
-        if isinstance(raw_development_toolchains, dict)
-        else {}
-    )
-    raw_development_issues = development.get("issues")
-    development_issues = (
-        [
-            issue
-            for issue in raw_development_issues
-            if isinstance(issue, str) and issue in _DEVELOPMENT_ISSUES
-        ]
-        if isinstance(raw_development_issues, list)
-        else []
-    )
     return {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -282,23 +251,7 @@ def build_agent_support_bundle(
                 else None
             ),
         },
-        "development": {
-            "installed": development.get("installed") is True,
-            "healthy": development.get("healthy") is True,
-            "issues": development_issues,
-            "toolchains": {
-                name: {
-                    field: toolchain.get(field)
-                    for field in fields
-                    if field in toolchain
-                }
-                for name, fields in _DEVELOPMENT_TOOLCHAIN_FIELDS.items()
-                if isinstance(
-                    toolchain := development_toolchains.get(name),
-                    dict,
-                )
-            },
-        },
+        "development": sanitize_development_readiness(development),
         "t3_logs": _t3_log_summary(user_home),
         "privacy": {
             "log_contents_included": False,

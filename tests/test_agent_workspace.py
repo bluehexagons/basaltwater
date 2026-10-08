@@ -230,7 +230,7 @@ class AgentSupportTests(unittest.TestCase):
                     return_value={
                         "installed": True,
                         "healthy": False,
-                        "issues": ["node_pnpm_missing", "/secret/toolchain"],
+                        "issues": ["node_pnpm_missing", "native_command_missing", "native_module_missing", "native_selection_unsafe", "/secret/toolchain"],
                         "toolchains": {
                             "node": {
                                 "installed": True,
@@ -239,7 +239,16 @@ class AgentSupportTests(unittest.TestCase):
                                 "npm": "11.19.0",
                                 "pnpm": None,
                                 "path": "/secret/node",
-                            }
+                            },
+                            "native": {
+                                "installed": True,
+                                "selected": None,
+                                "healthy": False,
+                                "commands": {"cmake": False, "cc": True, "gdb": "/secret/gdb", "/secret/compiler": False},
+                                "modules": {"glew": None, "openal": "1.24.2", "sdl3": "/secret/sdl", "/secret/library": None},
+                                "project_bootstrap_required": ["sdl3", "sdl3-image", "/secret/bootstrap"],
+                                "path": "/secret/native",
+                            },
                         },
                     },
                 ),
@@ -296,8 +305,16 @@ class AgentSupportTests(unittest.TestCase):
                 bundle["browser"]["remediation"],
                 "rerun_setup_with_browser_automation",
             )
-            self.assertEqual(bundle["development"]["issues"], ["node_pnpm_missing"])
+            self.assertEqual(bundle["development"]["issues"], [
+                "node_pnpm_missing", "native_command_missing", "native_module_missing", "native_selection_unsafe",
+            ])
             self.assertNotIn("path", bundle["development"]["toolchains"]["node"])
+            self.assertEqual(bundle["development"]["toolchains"]["native"], {
+                "installed": True, "selected": None, "healthy": False,
+                "commands": {"cmake": False, "cc": True},
+                "modules": {"glew": None, "openal": "1.24.2"},
+                "project_bootstrap_required": ["sdl3", "sdl3-image"],
+            })
 
     def test_support_bundle_writes_new_private_file_below_home(self) -> None:
         with tempfile.TemporaryDirectory() as home:
