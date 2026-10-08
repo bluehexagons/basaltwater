@@ -48,6 +48,7 @@ class OperationRecord:
     started_at: str
     updated_at: str
     context: JSONDict
+    phases: tuple[str, ...] = ()
 
     def to_dict(self) -> JSONDict:
         return {
@@ -60,6 +61,7 @@ class OperationRecord:
             "started_at": self.started_at,
             "updated_at": self.updated_at,
             "context": self.context,
+            "phases": list(self.phases),
         }
 
 
@@ -85,6 +87,9 @@ def _record_from_dict(payload: object, path: str) -> OperationRecord:
     context = payload.get("context")
     if not isinstance(context, dict):
         raise OperationStateError(f"Invalid operation marker {path}: context must be an object")
+    phases = payload.get("phases", [])
+    if not isinstance(phases, list) or any(not isinstance(phase, str) or not phase for phase in phases):
+        raise OperationStateError(f"Invalid operation marker {path}: phases must be strings")
     return OperationRecord(
         schema_version=OPERATION_SCHEMA_VERSION,
         operation_id=_required_string(payload, "operation_id", path),
@@ -95,6 +100,7 @@ def _record_from_dict(payload: object, path: str) -> OperationRecord:
         started_at=_required_string(payload, "started_at", path),
         updated_at=_required_string(payload, "updated_at", path),
         context=context,
+        phases=tuple(phases),
     )
 
 
@@ -180,6 +186,7 @@ class OperationStateStore:
             started_at=timestamp,
             updated_at=timestamp,
             context=dict(context or {}),
+            phases=(phase,),
         )
         self._write(record)
         return record
@@ -207,14 +214,33 @@ class OperationStateStore:
             started_at=current.started_at,
             updated_at=_timestamp(),
             context=dict(context if context is not None else current.context),
+            phases=(*current.phases[-255:], phase),
         )
         self._write(record)
         return record
 
-    def complete(self, operation_id: str) -> None:
+    def complete(self, operation_id: str, *, outcome: str = "succeeded") -> None:
+        """Retain the last result privately, then durably clear the guard.
+
+        Phase history is bounded to 256 transitions. The result is evidence,
+        not a recovery marker; it does not block the next operation.
+        """
+        if outcome not in {"succeeded", "rolled_back", "failed"}:
+            raise ValueError(f"Unsupported operation outcome: {outcome}")
         self._acquire()
-        self._require_current(operation_id)
-        remove_file_durable(self.path)
+        current = self._require_current(operation_id)
+        write_json_atomic(self.path + ".last.json", {
+            "version": 1, "outcome": outcome, "completed_at": _timestamp(),
+            "operation": current.to_dict(),
+        }, mode=0o600, sort_keys=True)
+        try:
+            remove_file_durable(self.path)
+        except OSError:
+            # unlink can succeed before the directory fsync fails. Keep the
+            # recovery guard and ownership so callers can safely roll back.
+            if not os.path.lexists(self.path):
+                self._write(current)
+            raise
         self.close()
 
     def _require_current(self, operation_id: str) -> OperationRecord:

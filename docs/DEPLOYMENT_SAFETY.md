@@ -16,6 +16,8 @@ know.
   Ready-to-serve static deployments stage beside the active release and switch
   directories atomically. A staging failure leaves the previous release active.
   Old-release cleanup failures retain the backup without rejecting activation.
+  Static releases also record interruption state and restore the old tree when
+  activation or metadata persistence fails.
 - Repository symlinks and special files are rejected on the controller before
   manifest inspection or upload. Target-side source copying also refuses links.
 - Artifact uploads validate and normalize local source paths and separate rsync
@@ -37,6 +39,8 @@ know.
 - Manifest activation writes a versioned operation marker before staging or
   service interruption. A clean deployment or verified rollback removes it;
   interrupted and incomplete-recovery markers block another deployment.
+  Static and manifest deployments share the lock and check each other's markers.
+  Rollback restores previous manifest port assignments along with release files.
 - Deployment-owned Nginx files are snapshotted and restored when `nginx -t`
   rejects a generated configuration.
 - Services that declare `sqlite_backup` receive a consistent SQLite API backup
@@ -81,6 +85,9 @@ contents, permissions, ownership, and service state before activation. Filesyste
 or service restoration failures retain the recovery marker and failed release
 for inspection. A later deployment replaces this snapshot under the application
 lock.
+
+Use [transaction recovery](TRANSACTION_RECOVERY.md) for phase-specific guidance.
+Completed operations retain a private last-result record beside the marker.
 
 Restore a manifest component's latest SQLite backup by resolving its generated
 service identity, stopping it, removing stale journal files, installing the

@@ -104,6 +104,10 @@ as null), reload systemd, and restore the recorded enabled/active states. Verify
 the services before archiving the marker and backup privately; keep the stable
 `.lock` file in place. Do not clear the marker merely to force a retry.
 
+Use [transaction recovery](TRANSACTION_RECOVERY.md) for phase-specific setup,
+release and unit recovery. Completed operations retain a private last-result
+record beside the marker, including phase history and the rollback outcome.
+
 Package, service, and user probes have a 15-second deadline. A timeout or
 unavailable probe raises an explicit unknown-state error and stops dependent
 setup instead of treating the package, service, or user as absent. Repair the

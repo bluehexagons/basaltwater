@@ -7,12 +7,14 @@ import shlex
 from typing import Optional
 
 from lib.unit_transaction import replace_units
+from lib.atomic_io import remove_file_durable
 from lib.remote_utils import run
 from lib.validation import (
     validate_environment_variable_name,
     validate_filesystem_path,
     validate_no_control_characters,
     validate_systemd_exec_command,
+    validate_service_name_uniqueness,
 )
 
 
@@ -39,14 +41,18 @@ def cleanup_systemd_unit(unit_name: str, unit_type: str = "service") -> None:
         unit_name: Base name of the unit (without extension)
         unit_type: Type of unit - "service", "timer", or "mount"
     """
+    validate_service_name_uniqueness(unit_name, [])
+    if unit_type not in {"service", "timer", "path", "mount"}:
+        raise ValueError(f"Unsupported systemd unit type: {unit_type}")
     unit_file = os.path.join(SYSTEMD_DIR, f"{unit_name}.{unit_type}")
     
     # Stop and disable the unit
     if os.path.exists(unit_file):
-        run(f"systemctl stop {shlex.quote(unit_name)}.{unit_type}", check=False)
-        run(f"systemctl disable {shlex.quote(unit_name)}.{unit_type}", check=False)
-        os.remove(unit_file)
-        run("systemctl daemon-reload", check=False)
+        run(f"systemctl stop {shlex.quote(unit_name)}.{unit_type}")
+        if _unit_has_install_section(unit_file):
+            run(f"systemctl disable {shlex.quote(unit_name)}.{unit_type}")
+        remove_file_durable(unit_file)
+        run("systemctl daemon-reload")
 
 
 def cleanup_service(service_name: str) -> None:
@@ -69,6 +75,7 @@ def cleanup_service(service_name: str) -> None:
         # Cleans up just the timer
         cleanup_service("myapp-update")
     """
+    validate_service_name_uniqueness(service_name, [])
     service_file = os.path.join(SYSTEMD_DIR, f"{service_name}.service")
     timer_file = os.path.join(SYSTEMD_DIR, f"{service_name}.timer")
     path_file = os.path.join(SYSTEMD_DIR, f"{service_name}.path")
@@ -81,22 +88,22 @@ def cleanup_service(service_name: str) -> None:
         (path_file, "path"),
     ):
         if os.path.exists(activator_file):
-            run(f"systemctl stop {shlex.quote(service_name)}.{activator_kind}", check=False)
-            run(f"systemctl disable {shlex.quote(service_name)}.{activator_kind}", check=False)
-            os.remove(activator_file)
+            run(f"systemctl stop {shlex.quote(service_name)}.{activator_kind}")
+            run(f"systemctl disable {shlex.quote(service_name)}.{activator_kind}")
+            remove_file_durable(activator_file)
             needs_reload = True
     
     # Stop service; disable only when it declares an [Install] section
     if os.path.exists(service_file):
-        run(f"systemctl stop {shlex.quote(service_name)}.service", check=False)
+        run(f"systemctl stop {shlex.quote(service_name)}.service")
         if _unit_has_install_section(service_file):
-            run(f"systemctl disable {shlex.quote(service_name)}.service", check=False)
-        os.remove(service_file)
+            run(f"systemctl disable {shlex.quote(service_name)}.service")
+        remove_file_durable(service_file)
         needs_reload = True
     
     # Reload systemd to reflect changes
     if needs_reload:
-        run("systemctl daemon-reload", check=False)
+        run("systemctl daemon-reload")
 
 
 def _systemd_environment_line(key: str, value: str) -> str:

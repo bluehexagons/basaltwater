@@ -8,11 +8,32 @@ import tempfile
 import unittest
 import subprocess
 import sys
+from unittest.mock import patch
 
 from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_failed_completion_fsync_restores_marker_and_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            store = OperationStateStore(path)
+            self.addCleanup(store.close)
+            record = store.begin("setup", "host", "finalizing")
+
+            def remove(target):
+                os.unlink(target)
+                raise OSError("directory fsync failed")
+
+            with patch("lib.operation_state.remove_file_durable", side_effect=remove):
+                with self.assertRaisesRegex(OSError, "fsync failed"):
+                    store.complete(record.operation_id)
+            self.assertEqual(store.load(), record)
+            other = OperationStateStore(path)
+            with self.assertRaisesRegex(OperationStateError, "another process"):
+                other.complete(record.operation_id)
+            store.complete(record.operation_id)
+
     def test_invalid_marker_types_and_encoding_raise_domain_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'operation.json')
@@ -65,6 +86,12 @@ class TestOperationStateStore(unittest.TestCase):
 
             store.complete(started.operation_id)
             self.assertIsNone(store.load())
+            with open(path + ".last.json") as stream:
+                result = json.load(stream)
+            self.assertEqual(result["outcome"], "succeeded")
+            self.assertEqual(result["operation"]["operation_id"], started.operation_id)
+            self.assertEqual(result["operation"]["phases"], ["preparing", "activating"])
+            self.assertEqual(os.stat(path + ".last.json").st_mode & 0o777, 0o600)
 
     def test_existing_marker_blocks_new_operation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

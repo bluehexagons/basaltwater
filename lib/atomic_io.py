@@ -103,6 +103,22 @@ def remove_file_durable(path: str) -> bool:
     return True
 
 
+def rename_path_durable(source: str, destination: str) -> None:
+    """Rename an artifact and sync both parent directories before proceeding.
+
+    A sync failure can occur after the rename has taken effect. Operation owners
+    must reconcile the recorded paths before attempting recovery.
+    """
+    validate_filesystem_path(source)
+    validate_filesystem_path(destination)
+    os.rename(source, destination)
+    for parent in dict.fromkeys((
+        os.path.dirname(os.path.abspath(source)),
+        os.path.dirname(os.path.abspath(destination)),
+    )):
+        _fsync_directory(parent)
+
+
 def _fsync_directory(path: str) -> None:
     """Flush directory metadata after an atomic replacement."""
 

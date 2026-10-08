@@ -9,16 +9,17 @@ import shutil
 import re
 import socket
 import sqlite3
+import stat
 import sys
 import tempfile
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Iterable, Optional
+from typing import Any, IO, Iterable, Optional
 
 from lib.remote_utils import run
 from lib.local_http import open_loopback
-from lib.operation_state import OperationRecord, OperationStateStore
-from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.operation_state import OperationRecord, OperationStateError, OperationStateStore
+from lib.atomic_io import remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 from lib.state_read import StateReadError, read_state_object
 from lib.unit_transaction import inspect_unit_state, snapshot_unit_file
 from lib.deploy_utils import (
@@ -138,15 +139,63 @@ class DeploymentOrchestrator:
             return os.path.join(self.base_dir, dir_name)
         else:
             return os.path.join(self.base_dir, repo_name)
+
+    def _open_deployment_lock(self, dest_path: str) -> IO[str]:
+        """Serialize both release paths and reject unresolved prior operations."""
+        validate_filesystem_path(dest_path, must_exist=False)
+        if os.path.islink(dest_path) or (os.path.lexists(dest_path) and not os.path.isdir(dest_path)):
+            raise ValueError(f"Release path must be a directory, not a link: {dest_path}")
+        base = os.path.realpath(self.base_dir)
+        destination = os.path.realpath(dest_path)
+        if os.path.commonpath((base, destination)) != base or destination == base:
+            raise ValueError(f"Release path must be inside the deployment base: {dest_path}")
+        shared_root = os.path.join(self.base_dir, ".basaltwater_shared")
+        app_root = self._get_persistent_root(os.path.basename(dest_path))
+        for directory in (shared_root, app_root):
+            if os.path.islink(directory):
+                raise ValueError(f"Deployment state directory must not be a link: {directory}")
+            self._ensure_dir(directory)
+        descriptor = os.open(
+            os.path.join(shared_root, ".manifest-deploy.lock"),
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600,
+        )
+        handle = os.fdopen(descriptor, "a+", encoding="utf-8")
+        try:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise ValueError("Deployment lock must be a regular file")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            for filename in ("manifest-operation.json", "static-operation.json"):
+                marker = os.path.join(app_root, filename)
+                record = OperationStateStore(marker).load()
+                if record is not None:
+                    raise OperationStateError(
+                        f"Unfinished {record.operation_type} operation {record.operation_id} "
+                        f"is recorded in {marker} at phase {record.phase}; "
+                        "reconcile the release and services using docs/TRANSACTION_RECOVERY.md before retrying"
+                    )
+            return handle
+        except BaseException:
+            handle.close()
+            raise
     
     def deploy_from_archive(self, source_path: str, domain: Optional[str], path: str,
                            git_url: str, commit_hash: Optional[str],
                            full_deploy: bool = True, keep_source: bool = False) -> dict[str, Any]:
         """Deploy a ready-to-serve non-manifest tree through an atomic release swap."""
         del keep_source
+        dest_path = self.get_deployment_path(domain, path, git_url)
+        with self._open_deployment_lock(dest_path):
+            return self._deploy_static_release(
+                source_path, dest_path, domain, path, git_url, commit_hash, full_deploy,
+            )
+
+    def _deploy_static_release(
+        self, source_path: str, dest_path: str, domain: Optional[str], path: str,
+        git_url: str, commit_hash: Optional[str], full_deploy: bool,
+    ) -> dict[str, Any]:
+        """Stage, activate and recover a static release under the deployment lock."""
         from lib.deploy_utils import is_ruby_project
 
-        dest_path = self.get_deployment_path(domain, path, git_url)
         if is_ruby_project(source_path) or (
             os.path.isdir(dest_path) and is_ruby_project(dest_path)
         ):
@@ -177,12 +226,23 @@ class DeploymentOrchestrator:
 
         parent_dir = os.path.dirname(dest_path)
         os.makedirs(parent_dir, exist_ok=True)
-        staging_path = tempfile.mkdtemp(
-            prefix=f".{os.path.basename(dest_path)}.build-",
-            dir=parent_dir,
-        )
+        staging_path = ""
         backup_path: Optional[str] = None
+        activated = False
+        release_displaced = False
+        store = OperationStateStore(os.path.join(
+            self._get_persistent_root(os.path.basename(dest_path)), "static-operation.json",
+        ))
+        operation: Optional[OperationRecord] = None
+        retain = False
         try:
+            operation = store.begin("static_deploy", dest_path, "preparing")
+            staging_path = tempfile.mkdtemp(
+                prefix=f".{os.path.basename(dest_path)}.build-", dir=parent_dir,
+            )
+            operation = store.transition(operation.operation_id, "staging", context={
+                "staging_path": staging_path, "commit": commit_hash or "unknown",
+            })
             self._copy_deployment_source(source_path, staging_path)
             project_type = detect_project_type(staging_path)
             print(f"Deploying {project_type} project to {dest_path}...")
@@ -209,16 +269,20 @@ class DeploymentOrchestrator:
                     dir=parent_dir,
                 )
                 os.rmdir(backup_path)
-                os.rename(dest_path, backup_path)
-            try:
-                os.rename(staging_path, dest_path)
-            except Exception:
-                if backup_path and os.path.exists(backup_path) and not os.path.exists(dest_path):
-                    os.rename(backup_path, dest_path)
-                raise
+            operation = store.transition(operation.operation_id, "activating", context={
+                **operation.context, "backup_path": backup_path or "",
+            })
+            if backup_path:
+                rename_path_durable(dest_path, backup_path)
+                release_displaced = True
+            rename_path_durable(staging_path, dest_path)
             staging_path = ""
+            activated = True
 
+            operation = store.transition(operation.operation_id, "finalizing")
             save_deployment_metadata(dest_path, git_url, commit_hash)
+            store.complete(operation.operation_id)
+            operation = None
             if backup_path:
                 try:
                     shutil.rmtree(backup_path)
@@ -235,9 +299,62 @@ class DeploymentOrchestrator:
                 'needs_proxy': False,
                 'backend_port': None,
             }
+        except Exception as error:
+            # A directory sync can fail after a rename already took effect.
+            if backup_path and os.path.exists(backup_path):
+                release_displaced = True
+            if staging_path and not os.path.exists(staging_path) and os.path.exists(dest_path):
+                activated = True
+            recovery_errors: list[str] = []
+            try:
+                if activated:
+                    # Retain the rejected tree at a known recovery path until
+                    # the old release has been restored successfully.
+                    staging_path = tempfile.mkdtemp(
+                        prefix=f".{os.path.basename(dest_path)}.failed-", dir=parent_dir,
+                    )
+                    os.rmdir(staging_path)
+                    assert operation is not None
+                    try:
+                        operation = store.transition(operation.operation_id, "rolling-back", context={
+                            **operation.context, "failed_path": staging_path,
+                        })
+                    except Exception as exc:
+                        recovery_errors.append(type(exc).__name__)
+                    rename_path_durable(dest_path, staging_path)
+            except Exception as exc:
+                recovery_errors.append(type(exc).__name__)
+            try:
+                if backup_path and os.path.exists(backup_path):
+                    rename_path_durable(backup_path, dest_path)
+                    backup_path = None
+            except Exception as exc:
+                recovery_errors.append(type(exc).__name__)
+            if recovery_errors:
+                retain = True
+                if operation is not None:
+                    try:
+                        store.transition(operation.operation_id, "recovery", status="recovery_required", context={
+                            **operation.context, "error_type": type(error).__name__,
+                            "errors": recovery_errors, "failed_path": staging_path,
+                        })
+                    except Exception:
+                        # The original marker still guards this operation even
+                        # when storage cannot record a more detailed result.
+                        pass
+                raise RuntimeError(f"Static release recovery was incomplete; inspect {store.path}") from error
+            if operation is not None:
+                store.complete(operation.operation_id, outcome="rolled_back" if activated or release_displaced else "failed")
+                operation = None
+            raise
         finally:
-            if staging_path and os.path.exists(staging_path):
-                shutil.rmtree(staging_path)
+            store.close()
+            # An interruption retains staging and the marker for inspection.
+            if not retain and operation is None and staging_path and os.path.exists(staging_path):
+                try:
+                    shutil.rmtree(staging_path)
+                except OSError as exc:
+                    print(f"  ⚠ Staging cleanup failed at {staging_path}: {exc}")
     
     # ------------------------------------------------------------------
     # basaltwater.json manifest deploys
@@ -620,14 +737,7 @@ class DeploymentOrchestrator:
         if parent_dir and not os.path.exists(parent_dir):
             os.makedirs(parent_dir, exist_ok=True)
 
-        shared_root = os.path.join(self.base_dir, ".basaltwater_shared")
-        self._ensure_dir(shared_root)
-        lock_handle = open(
-            os.path.join(shared_root, ".manifest-deploy.lock"),
-            "a+",
-            encoding="utf-8",
-        )
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        lock_handle = self._open_deployment_lock(dest_path)
         staging_path = ""
         backup_path: Optional[str] = None
         activated = False
@@ -635,6 +745,8 @@ class DeploymentOrchestrator:
         stopped_units: list[str] = []
         unit_snapshots: dict[str, dict[str, Any]] = {}
         desired_units: set[str] = set()
+        previous_ports: Optional[dict[str, int]] = None
+        ports_modified = False
         operation_store = OperationStateStore(
             os.path.join(
                 self._get_persistent_root(os.path.basename(dest_path)),
@@ -650,6 +762,7 @@ class DeploymentOrchestrator:
                 context={"commit": commit_hash or "unknown"},
             )
             manifest = self._resolve_manifest_ports(manifest, dest_path)
+            previous_ports = read_state_object(self._port_state_path(dest_path), versioned=False)
             self._validate_manifest_routes(manifest, domain)
             print(f"Deploying manifest ({len(manifest.components)} component(s)) to {dest_path}...")
             build_user = self._build_identity(dest_path)
@@ -675,8 +788,11 @@ class DeploymentOrchestrator:
                 operation.operation_id,
                 "building",
                 context={
+                    **operation.context,
                     "commit": commit_hash or "unknown",
                     "staging_path": staging_path,
+                    "unit_snapshot_path": os.path.join(os.path.dirname(operation_store.path), "manifest-units.previous.json"),
+                    "previous_ports": previous_ports,
                 },
             )
             self._copy_deployment_source(source_path, staging_path)
@@ -710,10 +826,12 @@ class DeploymentOrchestrator:
                 operation.operation_id,
                 "activating",
                 context={
+                    **operation.context,
                     "commit": commit_hash or "unknown",
                     "staging_path": staging_path,
                     "backup_path": backup_path or "",
                     "units": sorted(unit_snapshots),
+                    "desired_units": sorted(desired_units),
                 },
             )
 
@@ -723,7 +841,7 @@ class DeploymentOrchestrator:
                 try:
                     if self._stop_app_unit(unit_name):
                         stopped_units.append(unit_name)
-                except RuntimeError:
+                except Exception:
                     # A failed stop or status check can leave the unit's state
                     # uncertain. Reconcile it against the unchanged release.
                     stopped_units.append(unit_name)
@@ -735,15 +853,16 @@ class DeploymentOrchestrator:
 
             if os.path.exists(dest_path):
                 assert backup_path is not None
-                os.rename(dest_path, backup_path)
+                rename_path_durable(dest_path, backup_path)
                 release_displaced = True
-            os.rename(staging_path, dest_path)
+            rename_path_durable(staging_path, dest_path)
             staging_path = ""
             activated = True
             operation = operation_store.transition(
                 operation.operation_id,
                 "verifying",
                 context={
+                    **operation.context,
                     "commit": commit_hash or "unknown",
                     "backup_path": backup_path or "",
                     "units": sorted(desired_units),
@@ -785,12 +904,16 @@ class DeploymentOrchestrator:
             for stale_unit in sorted(set(unit_snapshots) - desired_units):
                 cleanup_service(stale_unit)
 
+            ports_modified = True
             self._save_manifest_ports(dest_path, manifest)
             save_deployment_metadata(dest_path, git_url, commit_hash)
-            if not keep_source and os.path.exists(source_path):
-                shutil.rmtree(source_path)
             operation_store.complete(operation.operation_id)
             operation = None
+            if not keep_source and os.path.exists(source_path):
+                try:
+                    shutil.rmtree(source_path)
+                except OSError as exc:
+                    print(f"  ⚠ Source cleanup failed at {source_path}: {exc}")
             if backup_path:
                 try:
                     shutil.rmtree(backup_path)
@@ -800,8 +923,17 @@ class DeploymentOrchestrator:
             print(f"  ✓ Manifest deployed to {dest_path}")
             return deps
         except Exception as deployment_error:
+            if backup_path and os.path.exists(backup_path):
+                release_displaced = True
+            if staging_path and not os.path.exists(staging_path) and os.path.exists(dest_path):
+                activated = True
             rollback_errors: list[str] = []
             failed_path = ""
+            if operation is not None:
+                try:
+                    operation = operation_store.transition(operation.operation_id, "rolling-back")
+                except Exception as exc:
+                    rollback_errors.append(str(exc))
             if activated or release_displaced:
                 for unit_name in sorted(desired_units if activated else set()):
                     try:
@@ -814,10 +946,20 @@ class DeploymentOrchestrator:
                         dir=parent_dir or None,
                     )
                     os.rmdir(failed_path)
+                    if operation is not None:
+                        try:
+                            operation = operation_store.transition(operation.operation_id, "rolling-back", context={
+                                **operation.context, "failed_path": failed_path,
+                            })
+                        except Exception as exc:
+                            rollback_errors.append(str(exc))
                     if os.path.exists(dest_path):
-                        os.rename(dest_path, failed_path)
+                        rename_path_durable(dest_path, failed_path)
+                except Exception as exc:
+                    rollback_errors.append(str(exc))
+                try:
                     if backup_path and os.path.exists(backup_path):
-                        os.rename(backup_path, dest_path)
+                        rename_path_durable(backup_path, dest_path)
                         backup_path = None
                     self._restore_app_units(dest_path, unit_snapshots)
                 except Exception as exc:
@@ -835,30 +977,42 @@ class DeploymentOrchestrator:
                             self._stop_app_unit(unit_name)
                     except Exception as exc:
                         rollback_errors.append(str(exc))
+            if ports_modified:
+                try:
+                    if previous_ports is None:
+                        remove_file_durable(self._port_state_path(dest_path))
+                    else:
+                        write_json_atomic(self._port_state_path(dest_path), previous_ports, mode=0o600, sort_keys=True)
+                except Exception as exc:
+                    rollback_errors.append(str(exc))
             if rollback_errors:
                 if operation is not None:
-                    operation_store.transition(
-                        operation.operation_id,
-                        "recovery",
-                        status="recovery_required",
-                        context={
-                            "backup_path": backup_path or "",
-                            "failed_path": failed_path,
-                            "errors": rollback_errors,
-                            "units": sorted(set(unit_snapshots) | desired_units),
-                        },
-                    )
+                    try:
+                        operation_store.transition(
+                            operation.operation_id,
+                            "recovery",
+                            status="recovery_required",
+                            context={
+                                **operation.context,
+                                "backup_path": backup_path or "",
+                                "failed_path": failed_path,
+                                "errors": rollback_errors,
+                                "units": sorted(set(unit_snapshots) | desired_units),
+                            },
+                        )
+                    except Exception:
+                        pass  # Retain the original guard if persistence is unavailable.
                 raise RuntimeError(
                     "Deployment failed and service recovery was incomplete: "
                     + "; ".join(rollback_errors)
                 ) from deployment_error
             if operation is not None:
-                operation_store.complete(operation.operation_id)
+                operation_store.complete(operation.operation_id, outcome="rolled_back" if activated or release_displaced or stopped_units else "failed")
                 operation = None
             raise
         finally:
             try:
-                if staging_path and os.path.exists(staging_path):
+                if operation is None and staging_path and os.path.exists(staging_path):
                     try:
                         shutil.rmtree(staging_path)
                     except OSError as exc:

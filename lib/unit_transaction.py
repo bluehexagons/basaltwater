@@ -98,6 +98,10 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
             store.complete(record.operation_id)
         except BaseException:
             errors = []
+            try:
+                store.transition(record.operation_id, "rolling-back")
+            except Exception as exc:
+                errors.append(type(exc).__name__)
 
             def attempt(action):
                 try:
@@ -134,7 +138,7 @@ def replace_units(units: dict[str, str], *, activate: tuple[str, ...], unit_dir:
                 retain = True
                 store.transition(record.operation_id, "rollback-failed", status="recovery_required", context={"backup_dir": backup_dir, "errors": errors})
                 raise RuntimeError(f"Systemd rollback needs recovery; inspect {store.path} and {backup_dir}")
-            store.complete(record.operation_id)
+            store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
             raise
     finally:
         store.close()

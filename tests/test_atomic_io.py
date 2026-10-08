@@ -10,10 +10,28 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 
 
 class TestAtomicIO(unittest.TestCase):
+    def test_rename_syncs_both_parents_after_move(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "source")
+            target_parent = os.path.join(directory, "nested")
+            os.mkdir(source)
+            os.mkdir(target_parent)
+            target = os.path.join(target_parent, "destination")
+            parents = []
+
+            def sync(parent):
+                self.assertFalse(os.path.exists(source))
+                self.assertTrue(os.path.isdir(target))
+                parents.append(parent)
+
+            with patch("lib.atomic_io._fsync_directory", side_effect=sync):
+                rename_path_durable(source, target)
+            self.assertEqual(parents, [directory, target_parent])
+
     def test_json_reader_rejects_unsafe_paths_and_bounds_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'data.json')
