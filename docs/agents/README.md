@@ -51,6 +51,12 @@ basaltw agent maintenance status HOST USER
 tools without failing for intentionally absent clients. Narrow the check with
 `--capability host` or require a specific client with `--tool codex`.
 
+The host check observes both the coding account's home filesystem and `/`.
+A separate home mount with ample space does not hide root pressure that can
+block package updates or managed runtimes. JSON keeps the home observation in
+`disk` and the root observation in `disk.root_filesystem`; readiness records and
+support bundles retain both capacity observations without the account's home path.
+
 For a deliberate terminal-agent upgrade, preview the selected tool first:
 
 ```bash

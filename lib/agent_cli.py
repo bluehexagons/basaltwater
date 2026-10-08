@@ -1557,29 +1557,33 @@ def inspect_host_readiness(
     elif swap_activity["status"] == "unknown" and swap_used:
         warnings.append("swap is in use but current swap activity could not be inspected")
 
-    try:
-        disk = shutil.disk_usage(user_home)
-        disk_usage_percent = int((disk.used * 100) / disk.total) if disk.total else 0
-        disk_details: JSONDict = {
-            "path": user_home,
-            "total_bytes": disk.total,
-            "used_bytes": disk.used,
-            "free_bytes": disk.free,
-            "usage_percent": disk_usage_percent,
-        }
+    def filesystem_capacity(path: str, label: str) -> JSONDict:
+        validate_filesystem_path(path)
+        try:
+            disk = shutil.disk_usage(path)
+        except OSError:
+            warnings.append(f"{label} filesystem usage could not be inspected")
+            return {"available": False}
+        usage_percent = disk.used * 100 // disk.total if disk.total else 0
         if (
-            disk_usage_percent >= _AGENT_HOST_DISK_CRITICAL_PERCENT
+            usage_percent >= _AGENT_HOST_DISK_CRITICAL_PERCENT
             or disk.free < _AGENT_HOST_DISK_CRITICAL_FREE
         ):
-            errors.append("agent filesystem has critical free-space pressure")
+            errors.append(f"{label} filesystem has critical free-space pressure")
         elif (
-            disk_usage_percent >= _AGENT_HOST_DISK_WARNING_PERCENT
+            usage_percent >= _AGENT_HOST_DISK_WARNING_PERCENT
             or disk.free < _AGENT_HOST_DISK_WARNING_FREE
         ):
-            warnings.append("agent filesystem has low free-space headroom")
-    except OSError:
-        disk_details = {"path": user_home, "available": False}
-        warnings.append("agent filesystem usage could not be inspected")
+            warnings.append(f"{label} filesystem has low free-space headroom")
+        return {
+            "total_bytes": disk.total, "used_bytes": disk.used,
+            "free_bytes": disk.free, "usage_percent": usage_percent,
+        }
+
+    disk_details = {"path": user_home, **filesystem_capacity(user_home, "agent")}
+    # /home can be a separate mount. Root pressure still blocks managed
+    # runtimes, package updates and system services even with ample home space.
+    disk_details["root_filesystem"] = filesystem_capacity("/", "root")
 
     storage = _agent_storage_inventory(user_home)
     for name, threshold in _AGENT_STORAGE_WARNING_BYTES.items():

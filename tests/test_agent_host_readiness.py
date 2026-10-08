@@ -17,6 +17,7 @@ from lib.agent_cli import (
 )
 from lib.types import BYTES_PER_GB, BYTES_PER_MB
 from lib.agent_storage import CodexCleanupResult
+from lib.agent_readiness import build_agent_readiness_record
 
 
 class _DiskUsage:
@@ -110,6 +111,40 @@ class TestAgentHostReadiness(unittest.TestCase):
                 self.assertEqual(result['warnings'], expected)
                 self.assertTrue(result['healthy'])
                 inspect.assert_called_once_with(home, os.stat(home).st_uid, dry_run=True)
+
+    def test_separate_root_capacity_is_checked_and_retained_without_home_paths(self) -> None:
+        healthy = _DiskUsage(32 * BYTES_PER_GB, 8 * BYTES_PER_GB, 24 * BYTES_PER_GB)
+        for root_disk, status, message in (
+            (_DiskUsage(32 * BYTES_PER_GB, 31 * BYTES_PER_GB, BYTES_PER_GB), "error", "root filesystem has critical free-space pressure"),
+            (_DiskUsage(32 * BYTES_PER_GB, 20 * BYTES_PER_GB, 2 * BYTES_PER_GB), "warning", "root filesystem has low free-space headroom"),
+            (OSError("unavailable"), "warning", "root filesystem usage could not be inspected"),
+        ):
+            with (
+                self.subTest(status=status, message=message),
+                tempfile.TemporaryDirectory() as home,
+                patch("lib.agent_cli._read_meminfo", return_value={"MemTotal": 4 * BYTES_PER_GB}),
+                patch("lib.agent_cli._read_memory_capacity_bytes", return_value=0),
+                patch("lib.agent_cli._agent_storage_inventory", return_value={"paths": {}, "size_bytes": {}, "codex_release_count": 0}),
+                patch("lib.agent_cli._systemd_properties", return_value={}),
+                patch("lib.agent_cli._maintenance_status", return_value={"units": {}, "warnings": [], "errors": []}),
+                patch("lib.agent_cli.inspect_agent_maintenance", return_value={"status": "inactive"}),
+                patch("lib.agent_cli.shutil.disk_usage", side_effect=[healthy, root_disk]) as usage,
+                patch("lib.agent_cli.os.path.exists", return_value=False),
+            ):
+                result = inspect_host_readiness(home)
+                record = build_agent_readiness_record([], [result], trigger="manual", boot_id_path=os.path.join(home, "missing-boot"))
+            self.assertEqual([call.args[0] for call in usage.call_args_list], [home, "/"])
+            self.assertEqual(result["disk"]["free_bytes"], 24 * BYTES_PER_GB)
+            self.assertEqual(result["status"], status)
+            self.assertEqual(result["healthy"], status != "error")
+            self.assertIn(message, result["errors"] if status == "error" else result["warnings"])
+            saved_disk = record["capabilities"][0]["disk"]
+            self.assertNotIn("path", saved_disk)
+            self.assertEqual(saved_disk["root_filesystem"], result["disk"]["root_filesystem"])
+            if isinstance(root_disk, OSError):
+                self.assertEqual(saved_disk["root_filesystem"], {"available": False})
+            else:
+                self.assertEqual(saved_disk["root_filesystem"]["free_bytes"], root_disk.free)
 
     def test_maintenance_includes_installed_development_timers_only(self) -> None:
         def properties(

@@ -124,7 +124,8 @@ class AgentSupportTests(unittest.TestCase):
             "healthy": True,
             "status": "warning",
             "memory": {"total_bytes": 1},
-            "disk": {"path": "/secret/home", "free_bytes": 2},
+            "disk": {"path": "/secret/home", "free_bytes": 2,
+                     "root_filesystem": {"free_bytes": 1, "usage_percent": 95}},
             "agent_storage": {
                 "paths": {"npm_cache": "/secret/home/.npm"},
                 "size_bytes": {"npm_cache": 3},
@@ -263,6 +264,7 @@ class AgentSupportTests(unittest.TestCase):
             self.assertFalse(bundle["privacy"]["log_contents_included"])
             self.assertFalse(bundle["privacy"]["installation_branch_included"])
             self.assertEqual(bundle["host"]["maintenance_hold"]["status"], "active")
+            self.assertEqual(bundle["host"]["disk"]["root_filesystem"], {"free_bytes": 1, "usage_percent": 95})
             self.assertEqual(
                 bundle["basaltwater"],
                 {
