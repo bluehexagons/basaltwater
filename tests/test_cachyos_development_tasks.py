@@ -78,6 +78,45 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.assertEqual(result["project"]["missing_tools"], ["Godot .NET engine", ".NET SDK"])
         self.probe.assert_not_called()
 
+    def test_features_come_only_from_the_application_section(self):
+        (self.project / "project.godot").write_text(
+            '[rendering]\nconfig/features=PackedStringArray("3.0", "C#")\n'
+            '[application]\nconfig/features=PackedStringArray("4.7", "Forward Plus")\n'
+        )
+        result = development.doctor(str(self.project))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["project"]["minimum_engine_version"], "4.7")
+        self.assertFalse(result["project"]["requires_dotnet"])
+
+    def test_multiline_csharp_features_and_escaped_strings_are_read_without_execution(self):
+        (self.project / "project.godot").write_text(
+            '[application] ; application metadata\nconfig/features=PackedStringArray(\n'
+            '  "4.7", "C\\u0023", "custom ) feature",\n) ; declaration\n'
+        )
+        result = development.doctor(str(self.project))
+        self.assertEqual(result["project"]["minimum_engine_version"], "4.7")
+        self.assertTrue(result["project"]["requires_dotnet"])
+        self.assertIn("Godot .NET engine", result["project"]["missing_tools"])
+        self.probe.assert_not_called()
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_ambiguous_or_malformed_features_do_not_silently_choose_an_engine(self):
+        bodies = (
+            '[application]\nconfig/features=PackedStringArray("C#")\nconfig/features=PackedStringArray("4.7")',
+            '[application]\nconfig/features=PackedStringArray("C#")\n[application]\n',
+            '[application]\nconfig/features=["C#"]',
+            '[application]\nconfig/features=PackedStringArray("C#", 7)',
+            '[application]\nconfig/features=PackedStringArray("C#"',
+            '[application]\nconfig/features=PackedStringArray(' + '[' * 2000 + ']' * 2000 + ')',
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                (self.project / "project.godot").write_text(body)
+                with self.assertRaisesRegex(ValueError, "features|application"):
+                    self.launch()
+        self.probe.assert_not_called()
+        self.assertFalse((self.home / ".local").exists())
+
     def test_native_and_node_projects_remain_usable_without_godot(self):
         (self.project / "project.godot").unlink()
         self.assertEqual(development.doctor(str(self.project))["project"]["kind"], "native")
@@ -122,6 +161,14 @@ class TestDevelopmentTasks(unittest.TestCase):
         command = self.probe.call_args_list[0].args[0]
         self.assertIn("--setenv=PATH=/usr/bin:/tmp/literal%npath", command)
         self.assertFalse(any("PROVIDER_TOKEN" in argument for argument in command))
+
+    def test_unvalidated_display_authority_is_removed_from_task_environment(self):
+        self.launch()
+        command = self.probe.call_args_list[0].args[0]
+        unset = next(value.removeprefix("--property=UnsetEnvironment=").split() for value in command if value.startswith("--property=UnsetEnvironment="))
+        self.assertIn("DISPLAY", unset)
+        self.assertIn("XAUTHORITY", unset)
+        self.assertNotIn("WAYLAND_DISPLAY", unset)
 
     def test_argument_count_controls_and_serialized_size_are_bounded(self):
         for argv in ([], ["arg"] * 101, ["arg", "bad\nvalue"], ["arg", "x" * 4097], ["x" * 4096] * 20):
@@ -261,6 +308,23 @@ class TestDevelopmentTasks(unittest.TestCase):
         self.probe.return_value = "ok", "LoadState=not-found"
         self.assertEqual(development.task_status(launched["task"])["state"], "unavailable")
 
+    def test_unavailable_service_keeps_recorded_evidence_without_claiming_live_completion(self):
+        launched = self.launch()
+        directory = Path(launched["directory"])
+        write_json_atomic(str(directory / "result.json"), {"returncode": 0, "log_truncated": False})
+        self.probe.side_effect = None
+        self.probe.return_value = "error", ""
+        result = development.task_status(launched["task"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["state"], "unverified")
+        self.assertEqual(result["recorded_state"], "completed")
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["log"], str(directory / "output.log"))
+        with self.assertRaises(RuntimeError):
+            development.task_status(launched["task"], stop=True)
+        self.assertFalse((directory / "stop-requested.json").exists())
+        self.assertTrue(all(call.args[0][2] != "stop" for call in self.probe.call_args_list))
+
     def test_unacknowledged_launch_retains_identifier_for_recovery(self):
         self.launch_state = "error"
         result = self.launch()
@@ -276,8 +340,8 @@ class TestDevelopmentTasks(unittest.TestCase):
                 self.probe.reset_mock()
                 result = self.launch()
             self.assertFalse(result["ok"])
-            self.assertEqual(result["state"], "launch-unverified")
-            self.assertIn("Inspection unavailable", result["error"])
+            self.assertEqual(result["state"], "unverified" if inspections else "launch-unverified")
+            self.assertIn("Inspection unavailable", result["service_error"] if inspections else result["error"])
             self.assertEqual(sum(call.args[0][0] == "/usr/bin/systemd-run" for call in self.probe.call_args_list), 1)
             self.assertEqual(development.task_status(result["task"])["state"], "running")
 
@@ -333,6 +397,29 @@ class TestDevelopmentSession(unittest.TestCase):
         self.assertNotIn("TOKEN", environment)
         self.assertEqual(environment["DISPLAY"], ":1")
         self.assertTrue(all(call.args[1] == 1234 for call in probe.call_args_list))
+
+    def test_stale_or_unsafe_xauthority_does_not_break_an_owned_wayland_session(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            authority = root / "authority"
+            authority.write_text("synthetic authority")
+            authority.chmod(0o600)
+            linked = root / "linked"
+            linked.symlink_to(authority)
+            public = root / "public"
+            public.write_text("synthetic authority")
+            public.chmod(0o666)
+            for selected in (authority, linked, public, root / "missing"):
+                with self.subTest(selected=selected), patch.object(development, "_owned_socket", return_value=True), patch.object(development, "_probe", side_effect=[
+                    ("ok", "ActiveState=active"), ("ok", f"WAYLAND_DISPLAY=wayland-0\nDISPLAY=:1\nXAUTHORITY={selected}\n"),
+                ]):
+                    environment, _ = development.session_environment(os.getuid())
+                self.assertEqual(environment["WAYLAND_DISPLAY"], "wayland-0")
+                self.assertEqual(environment["DISPLAY"], ":1")
+                if selected == authority:
+                    self.assertEqual(environment["XAUTHORITY"], str(authority))
+                else:
+                    self.assertNotIn("XAUTHORITY", environment)
 
     def test_missing_bus_or_graphical_session_never_starts_services(self):
         with patch.object(development, "_owned_socket", return_value=False), patch.object(development, "_probe") as probe:

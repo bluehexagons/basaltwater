@@ -82,6 +82,34 @@ def _regular_text(path: Path, *, limit: int = 1024 * 1024) -> str:
     return body.decode("utf-8")
 
 
+def _godot_features(body: str) -> list[str]:
+    sections = re.split(r"(?m)^[ \t]*\[([^\]\r\n]+)\][ \t]*(?:;[^\n]*)?\r?$", body)
+    applications = [sections[index + 1] for index in range(1, len(sections), 2)
+                    if sections[index] == "application"]
+    if len(applications) > 1:
+        raise ValueError("Ambiguous Godot application sections")
+    if not applications:
+        return []
+    declarations = list(re.finditer(r"(?m)^[ \t]*config/features[ \t]*=", applications[0]))
+    if not declarations:
+        return []
+    if len(declarations) != 1:
+        raise ValueError("Ambiguous Godot application config/features")
+    # Keep quoted parentheses/escapes intact without evaluating Godot variants.
+    declaration = re.match(
+        r'\s*PackedStringArray\(((?:[ \t\r\n,]|"(?:\\.|[^"\\])*")*)\)[ \t]*(?:;[^\n]*)?(?=\r?\n|\Z)',
+        applications[0][declarations[0].end():], re.DOTALL)
+    if declaration is None:
+        raise ValueError("Godot application config/features requires PackedStringArray of strings")
+    try:
+        values = json.loads("[" + declaration[1].rstrip().removesuffix(",") + "]")
+    except ValueError as exc:
+        raise ValueError("Invalid Godot application config/features strings") from exc
+    if any(not isinstance(value, str) for value in values):
+        raise ValueError("Godot application config/features requires strings")
+    return values
+
+
 def project_info(project: Path, engine: str | None = None) -> dict:
     """Read declarations and discover executables; never import or run project code."""
     path = project / "project.godot"
@@ -91,8 +119,7 @@ def project_info(project: Path, engine: str | None = None) -> dict:
             result["kind"] = "node"
         return result
     body = _regular_text(path)
-    features = re.search(r'^config/features\s*=\s*PackedStringArray\(([^\n]*)\)\s*$', body, re.MULTILINE)
-    values = re.findall(r'"([^"\\]*)"', features[1]) if features else []
+    values = _godot_features(body)
     minimum = next((value for value in values if re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", value)), None)
     uses_dotnet = "C#" in values
     executable = _executable(engine or ("godot-mono" if uses_dotnet else "godot"), required=False)
@@ -169,8 +196,11 @@ def session_environment(uid: int) -> tuple[dict[str, str], str]:
         validate_filesystem_path(authority)
         path = Path(authority)
         if path.is_absolute():
-            info = path.lstat()
-            if stat.S_ISREG(info.st_mode) and info.st_uid == uid and not info.st_mode & 0o022:
+            try:
+                info = path.lstat()
+            except OSError:
+                info = None
+            if info is not None and stat.S_ISREG(info.st_mode) and info.st_uid == uid and not info.st_mode & 0o022:
                 environment["XAUTHORITY"] = authority
     return environment, "Owned graphical-session target and Wayland/user-bus sockets are available; live UI readiness is unverified"
 
@@ -279,7 +309,13 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
     uid = _guard()
     directory = _task(task_id)
     task = load_task(directory)
-    unit = _unit(task, uid)
+    service_error = None
+    try:
+        unit = _unit(task, uid)
+    except (OSError, ValueError, RuntimeError) as exc:
+        if stop:
+            raise  # Stopping still requires verified live unit identity.
+        unit, service_error = {}, str(exc)
     if stop and (dry_run or is_dry_run()):
         return {"schema_version": 1, "ok": True, "dry_run": True, "operation": "stop",
                 "task": task_id, "unit": task["unit"]}
@@ -313,6 +349,9 @@ def task_status(task_id: str, *, stop: bool = False, dry_run: bool = False) -> d
         successful = completion["returncode"] == 0 and not completion.get("error")
         result["state"] = "completed" if successful else "failed"
         result["ok"] = successful
+    if service_error is not None:
+        result.update(recorded_state=result["state"], state="unverified", ok=False, service_error=service_error)
+        return result
     if unit.get("ActiveState") in ("active", "activating", "deactivating") and unit.get("SubState") != "exited":
         result.update(state="stopping" if "stop_requested_at" in result or unit["ActiveState"] == "deactivating" else "running", ok=True)
     elif "stop_requested_at" in result or (directory / "stopped.json").exists():
@@ -410,13 +449,15 @@ def launch(project: str, kind: str, *, engine: str | None = None, scene: str | N
             "kind": kind, "project": str(path), "argv": arguments, "owner_uid": uid,
             "created_at": datetime.now(timezone.utc).isoformat()}
     write_json_atomic(str(directory / "task.json"), task, mode=0o600)
+    unset = ["PYTHONPATH", "PYTHONHOME", "AT_SPI_BUS_ADDRESS"]
+    unset.extend(name for name in ("DISPLAY", "XAUTHORITY") if name not in environment)
     command = ["/usr/bin/systemd-run", "--user", "--quiet", f"--unit={task['unit']}",
         f"--description=Basaltwater development task {directory.name}", "--service-type=exec",
         "--expand-environment=no", "--property=ExitType=cgroup",
         "--property=KillMode=control-group", "--property=TimeoutStopSec=10s",
         "--property=PartOf=graphical-session.target", "--property=After=graphical-session.target",
         "--property=StandardOutput=null", "--property=StandardError=null",
-        "--property=UnsetEnvironment=PYTHONPATH PYTHONHOME AT_SPI_BUS_ADDRESS"]
+        "--property=UnsetEnvironment=" + " ".join(unset)]
     # systemd-run already escapes percent specifiers in environment and argv.
     command.extend(f"--setenv={name}={value}" for name, value in environment.items())
     command.extend(["--", sys.executable,

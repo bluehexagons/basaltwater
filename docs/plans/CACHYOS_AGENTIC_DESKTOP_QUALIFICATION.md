@@ -306,3 +306,21 @@ remained running until its own cleanup. A short successful task's unit became
 Evidence is under the private ignored development artifact directory's
 `lifecycle-review/` subdirectory. Only disposable task processes were stopped;
 no portal control, network listener, package change, logout, or reboot was used.
+
+### Project metadata and recovery follow-up — 2026-10-08
+
+The review after `64072b6` scopes Godot features to the application section,
+supports multiline/escaped string arrays, and rejects ambiguous or malformed
+declarations. Read-only status preserves saved completion evidence when live
+service inspection fails, reporting `unverified` instead of losing the task's
+log path or claiming completion. Launches omit stale/unsafe Xauthority files and
+remove unvalidated display/authority values from the task environment.
+
+Forty-four focused development tests and the full check passed: 5157 tests,
+two skipped, with compilation, documentation, and installed-wheel checks. The
+same disposable Godot GPU fixture passed again with caller display variables
+removed, retained literal project arguments, and reported completion after its
+unit unloaded. Evidence is in `lifecycle-review/godot-followup.json` and the
+private task log. Unavailable-manager and malformed/C# metadata cases use mocked
+calls and temporary files; no manager shutdown, logout/reboot, actual .NET
+runtime, or broader Electron qualification is implied.

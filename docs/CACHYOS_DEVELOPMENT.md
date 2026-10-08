@@ -85,7 +85,10 @@ accessibility environment.
 The project doctor reads bounded regular `project.godot` metadata and discovers
 executables. It reports declared minimum engine requirements and C#/.NET tool
 presence without running an engine, importing assets, executing plugins, or
-writing state. Minimum features are not an exact engine pin. Runtime version,
+writing state. Features come from the application's `config/features` string
+array; multiline declarations are supported, while ambiguous or malformed
+declarations stop diagnosis/launch instead of silently selecting the wrong engine.
+Minimum features are not an exact engine pin. Runtime version,
 imports, native-extension compatibility, GPU, sound, and input stay unverified.
 Use `--engine /absolute/engine` or `--engine EXECUTABLE` for an explicitly chosen
 runtime; C# defaults to `godot-mono` and also requires a discoverable `dotnet`
@@ -98,7 +101,7 @@ graphical-session target. T3/SSH disconnection does not stop it. Logout/reboot
 recovery is not provided. An initial `running` state proves service activity,
 not window readiness or a completed playtest. Applications that forward a
 request to an existing instance are not adopted into the new task. An
-unacknowledged launch or failed state inspection retains the task ID as
+unacknowledged launch or failed initial unit inspection retains the task ID as
 `launch-unverified`; inspect that task before retrying to avoid duplicate work.
 
 ```fish
@@ -121,6 +124,16 @@ Check `status` again for `stopped`. Task descendants have a ten-second service
 stop bound; the supervisor remains responsive even if an app closes its output.
 Stop previews validate identity without changing the task. It never restarts
 KDE, Sunshine, T3, or other tasks.
+
+If the user manager is unavailable or unit identity cannot be verified, read-only
+status still returns private log paths and saved exit evidence. `state` is
+`unverified`, `recorded_state` describes saved completion evidence, and
+`service_error` explains the failed live check. It does not claim that the process
+group has ended. Stop and stop previews require a verified unit response.
+Missing or unsafe Xauthority files are omitted from the task environment;
+unvalidated DISPLAY/XAUTHORITY values from the manager are explicitly removed.
+An owned Wayland session remains usable, while XWayland readiness still needs
+application verification.
 
 Records live under `~/.local/state/basaltwater/development/TASK_ID` with directory
 mode 0700 and files 0600. Combined stdout/stderr is capped at 16 MiB; further
