@@ -1,5 +1,10 @@
 # Shared desktop setup audit — 2026-09-12
 
+Status: historical diagnostic record. The resize/reconnect symptom remains a
+live qualification item in the [single-session desktop plan](SINGLE_SESSION_DESKTOP.md);
+the server-side cursor-cache explanation below is still a hypothesis, not a
+confirmed root cause.
+
 After another setup run, the operator confirmed that the first resize after
 connection still causes reconnection. The apparent earlier improvement was
 not a complete fix. The current VM has the updated configuration and a new

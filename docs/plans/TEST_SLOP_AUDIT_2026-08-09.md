@@ -1,9 +1,10 @@
 # Test Slop Audit (2026-08-09)
 
-Status: complete for this review slice. The repository currently has 102 test modules and about
-1,900 test methods. This audit removes tests that add no distinct behavioral
-evidence, while retaining boundary, failure, security, and integration
-coverage.
+Status: complete for this review slice. At the 2026-08-09 audit baseline the
+repository had 102 test modules and about 1,900 test methods; these are
+historical counts, not current suite totals. This audit removes tests that add
+no distinct behavioral evidence, while retaining boundary, failure, security,
+and integration coverage.
 
 ## Review criteria
 

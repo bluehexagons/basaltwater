@@ -69,6 +69,7 @@ jobs:
         with:
           generate_release_notes: true
           draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
           files: dist/*.whl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

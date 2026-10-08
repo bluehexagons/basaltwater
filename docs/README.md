@@ -20,6 +20,7 @@ overview.
 | I need to… | Start here | Then use |
 | --- | --- | --- |
 | Try Basaltwater for the first time | [Beginner walkthrough](GETTING_STARTED.md) | [Installation](INSTALLATION.md), [Quick reference](QUICK_REFERENCE.md) |
+| Qualify the v2.0 preview or prepare a stable release | [Release qualification checklist](BASALTWATER_RELEASE.md) | [Planning index](plans/README.md), [issue triage](plans/GITHUB_ISSUE_TRIAGE_2026-08-17.md) |
 | Install Basaltwater or configure a first host | [Installation](INSTALLATION.md) | [Quick reference](QUICK_REFERENCE.md), [CLI reference](COMMAND_LINE.md) |
 | Change or inspect an existing host | [Saved configuration operations](OPERATIONS.md) | [Sysadmin shortcuts](SYSADMIN.md), [Maintenance](MAINTENANCE.md) |
 | Provision or maintain a coding VM | [Agentic VMs](AGENTIC_VMS.md) | [Agent systems](agents/README.md), [Credentials](CREDENTIALS.md) |
@@ -118,6 +119,9 @@ automation, T3 Code, skills, and hardening.
 The [`plans/`](plans/) directory contains implementation plans and audit
 records. It is not operator documentation; start with the
 [planning index](plans/README.md) only when researching project work.
+The [v2.0 release qualification checklist](BASALTWATER_RELEASE.md) is the
+current maintainer record for preview publication, stable live testing, and
+release sign-off.
 
 Potential Android emulator and SSH-hosted iOS simulator workflows are scoped
 in the deferred [mobile agent support plan](plans/MOBILE_AGENT_SUPPORT.md).

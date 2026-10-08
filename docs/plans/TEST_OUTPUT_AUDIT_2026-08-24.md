@@ -1,13 +1,14 @@
 # Test output and task logging audit (2026-08-24)
 
-Status: complete for the current CI-output slice.
+Status: complete for the CI-output slice reviewed on 2026-08-24.
 
 ## Baseline
 
-The repository currently contains 137 discovered test modules and 2,631 test
-method definitions. The default runner executed 2,621 tests with one skip. A
-local `make check` passed but produced about 100 lines (11 KiB) of service log
-output after the test summary.
+The 2026-08-24 audit baseline contained 137 discovered test modules and 2,631
+test method definitions. The default runner executed 2,621 tests with one
+skip. A local `make check` passed but produced about 100 lines (11 KiB) of
+service log output after the test summary. These are historical audit counts,
+not current suite totals.
 
 The primary leak was in `lib/logging_utils.py`: non-root processes cannot write
 `/var/log/infra_tools`, so their fallback `stderr` handlers remained active

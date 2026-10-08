@@ -1,10 +1,10 @@
 # Codebase Audit and Maintenance Review (2026-08-21)
 
-Status: active roadmap input. This review records verified maintenance and
-operational gaps found across the repository; implementation sequencing remains
-owned by [the project roadmap](ROADMAP.md). The scope is intentionally
-proportional to a small-business tool: reliability and clear failure reporting
-come before controls that add recurring operator administration.
+Status: historical audit and reference. Resolved findings remain useful
+evidence; active command/state residuals are owned by
+[transactional execution](TRANSACTIONAL_EXECUTION.md), while deferred webhook
+replay and updater-trust decisions remain in the
+[roadmap](ROADMAP.md). Do not treat this audit as a separate work queue.
 
 ## Scope and verification
 
@@ -166,9 +166,10 @@ this is not part of the current reliability slice.
 remote deletion, but exposes only `--dry-run`; unlike guest destruction and
 orphan-volume deletion it has no `--yes` switch or interactive confirmation.
 
-**Follow-up:** apply one documented confirmation contract to irreversible
-Proxmox commands and test both interactive refusal and explicit non-interactive
-approval.
+**Resolution (2026-09-13):** the Proxmox `delsnapshot` CLI and interactive
+shell now require an exact interactive `yes` unless `--yes`/`-y` is supplied;
+dry runs remain non-mutating. Focused tests cover refusal, approval, dry run,
+and the shell confirmation path.
 
 ### AUD-09: Agent update trust is recorded, not verified
 
@@ -278,7 +279,10 @@ rollback stop failure, and inactive/active verification failures.
   retains incomplete rollback state; target setup records failed steps and
   supports guarded, same-identity recovery reruns under AUD-04.
 
-## Current recommended order
+## Recommended order at the time of this audit
+
+Current ownership and sequencing live in the
+[roadmap](ROADMAP.md) and [transactional-execution plan](TRANSACTIONAL_EXECUTION.md).
 
 1. Continue required-command caller classification beyond the completed nginx,
    firewall, and CI/CD prerequisite paths.
@@ -292,7 +296,9 @@ rollback stop failure, and inactive/active verification failures.
 5. ~~Complete explicit SSH enrollment for CI/CD targets when that deployment
    path is next maintained.~~ CI/CD target enrollment is now explicit and
    setup fails closed when a target key is missing.
-6. Standardize destructive CLI confirmation where a command still lacks it.
+6. ~~Standardize destructive CLI confirmation for snapshot deletion.~~ The
+   CLI and interactive shell now share the explicit confirmation boundary;
+   re-audit new destructive commands when that surface changes.
 
 Webhook replay protection and a stronger updater trust policy remain valid
 follow-ups, but are deferred until their respective workflows justify the

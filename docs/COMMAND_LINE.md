@@ -1,8 +1,9 @@
 # Command-Line Reference
 
-Reference for the upcoming stable `v2.0.0` `basaltw` CLI. The code help,
-`basaltwater.py`, and `lib/arg_parser.py` are the source of truth; this page
-summarizes the command surface and behaviors that are easy to miss.
+Reference for the `v2.0.0` preview series and eventual stable `basaltw` CLI.
+The code help, `basaltwater.py`, and `lib/arg_parser.py` are the source of
+truth; this page summarizes the command surface and behaviors that are easy to
+miss.
 
 Related pages:
 
@@ -1719,7 +1720,7 @@ basaltw proxmox backup <host> <vmid> [--storage POOL] [--mode MODE] [--compress 
 basaltw proxmox snapshots <host> <vmid>
 basaltw proxmox snapshot <host> <vmid> <name> [--description TEXT] [--dry-run]
 basaltw proxmox rollback <host> <vmid> <name> [--dry-run]
-basaltw proxmox delsnapshot <host> <vmid> <name> [--dry-run]
+basaltw proxmox delsnapshot <host> <vmid> <name> [-y] [--dry-run]
 basaltw proxmox migrate <host> <vmid> <target> [--online] [--with-local-disks]
 basaltw proxmox clean-disks <host> [--delete] [--yes] [--dry-run]
 basaltw proxmox unlock <host> <vmid> [--dry-run]
@@ -1810,6 +1811,11 @@ declaration; remove it separately with `basaltw rm NAME` when it is no
 longer wanted. Other Proxmox-specific guest mutations and host-administration
 operations remain under `basaltw proxmox ...` until their command paths
 are migrated.
+
+`proxmox delsnapshot` also asks for the exact response `yes` before deleting a
+snapshot; `-y`/`--yes` skips that prompt for automation. Its `--dry-run` option
+prints the command without prompting or deleting. The interactive Proxmox
+shell applies the same confirmation rule.
 
 `rolling-update` uses saved setup commands and workspace credentials. It audits
 all targets before making changes, audits each node again after its update and

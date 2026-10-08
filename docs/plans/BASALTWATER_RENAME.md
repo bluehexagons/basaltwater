@@ -1,9 +1,10 @@
 # Basaltwater identity and project rename
 
-Status: v2.0.0 core namespace delivered, including the package/CLI,
-active guides, bundled skills and [visual identity](../BRANDING.md).
-New storage uses Basaltwater identities; existing disk serials and LVM names
-are intentionally retained. Public release operations and live VM qualification remain. See
+Status: v2.0.0 core namespace delivered and preview metadata configured as
+`2.0.0rc1`. Candidate publication and stable live qualification remain open.
+The package/CLI, active guides, bundled skills and [visual identity](../BRANDING.md)
+are delivered. New storage uses Basaltwater identities; existing disk serials
+and LVM names are intentionally retained. See
 [cutover contracts](BASALTWATER_CONTRACTS.md) and
 the [operator migration guide](../BASALTWATER_MIGRATION.md).
 This document records the branding discussion and the full project scope.

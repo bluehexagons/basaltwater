@@ -1,10 +1,11 @@
 # Test suite audit and coverage plan (2026-09-02)
 
 Status: audit complete and improvement plan finalized; the first two
-implementation slices are implemented and verified. The suite now has 176
-tracked test modules, 3,294 class-based test methods, and 3,283 tests in the
-default runner. One live Proxmox test is intentionally skipped unless
-explicitly enabled.
+implementation slices were implemented and verified. At the 2026-09-02 audit
+baseline the suite had 176 tracked test modules, 3,294 class-based test
+methods, and 3,283 tests in the default runner. These counts are historical,
+not current suite totals. One live Proxmox test was intentionally skipped
+unless explicitly enabled.
 
 ## Review method
 

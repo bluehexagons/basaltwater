@@ -1,5 +1,10 @@
 # Managed target-user rename
 
+Status: controller and target implementation, operator documentation, and
+mocked lifecycle coverage are delivered. Disposable Debian/systemd SSH
+handoff and recovery qualification remains open; see the
+[v2.0 release checklist](../BASALTWATER_RELEASE.md#stable-qualification-matrix).
+
 This plan defines the `basaltw user rename` operation for changing the
 login name of the account stored as a target's setup username. The public
 operation runs from the controller. It does not add a separate administrator

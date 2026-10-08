@@ -44,10 +44,10 @@ Popularity figures below are approximate GitHub star counts observed on
 - Evaluate ntfy, SFTPGo, and a tightly bounded SQLite Vikunja deployment only
   after the monitoring slices. They have plausible value but are not part of
   the initial project.
-- Track inventory management requested in issue #99 through the
-  [HomeBox implementation record](HOMEBOX_SUPPORT.md). Its native setup,
-  recovery, and recurring-update slices were separately authorized and
-  delivered; the remaining monitoring sequence is unchanged.
+- HomeBox support requested in issue #99 was implemented and the issue was
+  closed on 2026-09-13. Its full disposable-VM qualification remains in the
+  [HomeBox implementation record](HOMEBOX_SUPPORT.md); the monitoring
+  sequence is unchanged.
 - Defer listmonk because PostgreSQL is mandatory. Defer Pocket ID and
   Vaultwarden because identity and password storage require a stronger
   recovery and urgent-update contract than this project's first slices.
@@ -118,7 +118,7 @@ first-class support:
 | [Gatus](https://github.com/TwiN/gatus) (~11.1k) | Synthetic monitoring and status pages | Go binary; memory, SQLite, or PostgreSQL storage; YAML configuration | **Recommend: phase 1** | Best match for existing service health endpoints and declarative setup; no fleet enrollment dependency |
 | [Beszel](https://github.com/henrygd/beszel) (~24.5k) | VM resource monitoring and alerts | Go hub and agent binaries; embedded hub state | **Recommend: phase 2** | Complements Gatus with resource history; native agent and outbound connection fit managed VMs |
 | [Memos](https://github.com/usememos/memos) (~60.2k) | Team notes and lightweight knowledge capture | Single Go binary; SQLite by default; attachments in local state | **Recommend: phase 3 candidate** | Strong adoption, small runtime shape, and useful to small teams; proves the reusable app lifecycle beyond monitoring |
-| [HomeBox](https://github.com/sysadminsmedia/homebox) | Inventory, item photos, and document tracking | Native Go binary; SQLite and local attachments | Native support delivered; [#99](https://github.com/bluehexagons/basaltwater/issues/99) | [Implementation record](HOMEBOX_SUPPORT.md) covers setup, recovery, recurring updates, and outstanding VM qualification |
+| [HomeBox](https://github.com/sysadminsmedia/homebox) | Inventory, item photos, and document tracking | Native Go binary; SQLite and local attachments | Native support delivered; request [#99](https://github.com/bluehexagons/basaltwater/issues/99) closed | [Implementation record](HOMEBOX_SUPPORT.md) covers setup, recovery, recurring updates, and outstanding VM qualification |
 | [ntfy](https://github.com/binwiederhier/ntfy) (~32.7k) | Mobile and desktop push notifications | Statically linked binary or Debian package; SQLite cache/state | Evaluate later | Natural destination for `--notify`, but public topic authorization and client delivery semantics need a dedicated design |
 | [SFTPGo](https://github.com/drakkan/sftpgo) (~12.4k) | Business-partner file exchange over SFTP, WebDAV, and HTTPS | Go binary; SQLite by default; local or object storage | Evaluate later | Useful complement to Samba/Syncthing, but adds protocol, account, storage, quota, and firewall complexity; review AGPL/UI terms |
 | [Vikunja](https://github.com/go-vikunja/vikunja) (~4.4k) | Task and project management | Bundled Go service and frontend; SQLite, MySQL, or PostgreSQL | Conditional/deferred | SQLite is suitable only for personal use or a handful of users according to upstream guidance; do not market that baseline for a growing team |

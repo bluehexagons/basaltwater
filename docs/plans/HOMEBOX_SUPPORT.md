@@ -1,9 +1,11 @@
 # HomeBox service support
 
 Status: native setup, recovery, recurring updates, and operator documentation
-implemented on 2026-09-07. Full disposable Debian VM qualification remains a
-release validation task. This record tracks [issue #99](https://github.com/bluehexagons/basaltwater/issues/99)
-under the [lightweight service project](LIGHTWEIGHT_SERVICE_CANDIDATES.md).
+implemented on 2026-09-07. The request in [issue #99](https://github.com/bluehexagons/basaltwater/issues/99)
+was closed on 2026-09-13 after implementation. Full disposable Debian VM
+qualification remains a release validation task under the
+[lightweight service project](LIGHTWEIGHT_SERVICE_CANDIDATES.md) and the
+[v2.0 release checklist](../BASALTWATER_RELEASE.md#stable-qualification-matrix).
 
 The live operator contract is [HomeBox inventory](../HOMEBOX.md). This plan
 records the delivered boundary, validation evidence, and the work still needed

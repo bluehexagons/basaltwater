@@ -1,6 +1,7 @@
 # Project Roadmap
 
-Status: active planning guidance for the upcoming `v2.0.0` stable release.
+Status: active planning guidance for the `v2.0.0` release-candidate preview
+series and its eventual stable release.
 
 This roadmap is intentionally opinionated. Basaltwater already supports a
 wide range of setup and operations tasks; the next releases should complete
@@ -10,6 +11,24 @@ systems, desktop applications, or service-specific installers.
 See the [planning and issue index](README.md) for the portfolio view and the
 [GitHub issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) for current
 issue-to-implementation evidence.
+
+## Current pass checkpoint (2026-10-08)
+
+The source package version is `2.0.0rc1`, corresponding to the opt-in preview
+tag `v2.0.0-rc.1`. No preview tag or public release has been created. The
+release checklist now defines the preview publication gate, stable live-test
+matrix, evidence format, and final sign-off. The current pass is release
+qualification; it does not include further CachyOS enhancements.
+
+The P0 transactional-execution residuals remain active: finish the required
+command-caller inventory, add phase-specific recovery guidance, and replace
+permissive corrupt-state fallbacks with actionable errors. Security-monitor
+backlog pagination is implemented; issue #108 still needs reliable detection of
+source-retention gaps and a release disposition. The maintainers report no
+recurrence for #102 and #103 and the code fixes are in `main`, but both issue
+records still request checks on their originally affected hosts. The release
+matrix tracks broad candidate checks; those issue-specific acceptance checks
+remain open.
 
 ## Basaltwater release checkpoint (2026-09-19)
 
@@ -120,11 +139,13 @@ The best next work packets are:
 4. Add low-administration release and operator improvements around the
    supported recovery path and command-level diagnostics.
 
-## Planning portfolio and GitHub issue alignment (2026-08-24)
+## Planning portfolio and GitHub issue alignment (refreshed 2026-10-08)
 
-The issue tracker was reconciled with the implementation and the plans in this
-document on 2026-08-24. Five completed operator-facing requests were closed
-after their documentation and test evidence was checked. Partial requests
+The issue tracker was reconciled with implementation and plans on 2026-08-24;
+this portfolio and issue map were refreshed on 2026-10-08. Five completed
+operator-facing requests were closed after their documentation and test
+evidence was checked. #38, #58, #85, and #97 were subsequently closed, followed
+by HomeBox request #99 on 2026-09-13. Partial requests
 remain open with their residual scope recorded. The
 [planning index](README.md) separates active projects, queued dependencies,
 unscheduled issue backlog, and completed reference records. See the complete

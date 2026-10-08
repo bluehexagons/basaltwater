@@ -1,24 +1,33 @@
-# GitHub issue triage (reverified 2026-10-05)
+# GitHub issue triage (reverified 2026-10-08)
 
-Status: current map of the 14 open issues against `main` on 2026-10-05.
+Status: current map of the 14 open issues against `main` on 2026-10-08.
 Repository implementation, unit tests, and live-host qualification are separate
 states. The [planning index](README.md) and [roadmap](ROADMAP.md) own priority;
 this page records issue scope and evidence.
 
-## Immediate defects
+## Fixes in main; affected-host verification pending
 
-| Issue | Current evidence | Next check |
+| Issue | Current evidence | Remaining acceptance |
 | --- | --- | --- |
-| [#103 — Incorrect certificate message](https://github.com/bluehexagons/basaltwater/issues/103) | The CA command previously treated a missing configured CA file as proof of public trust. The implementation now verifies the live endpoint with the configured CA or public trust store and reports unknown trust when the CA is missing, TLS fails, or a purported public endpoint still chains to the VM-local CA. | Run on the affected self-signed host after deployment; confirm the panel shows accurate CA instructions or an explicit unverified state. |
-| [#102 — “ausearch is unavailable”](https://github.com/bluehexagons/basaltwater/issues/102) | The reported host should have audit coverage. A restricted PATH can hide packaged `/usr/sbin/ausearch`; the exporter and security monitor now use system audit paths. VM/hardware setup now fails if auditd cannot start or load rules, and the required-profile monitor checks daemon and rule health before reporting a clean scan. The current agent VM has active auditd and a healthy snapshot. | Deploy to the affected host and verify `auditctl -s`, loaded managed rules, a fresh healthy panel snapshot, and security-monitor collection. |
-| [#108 — Oversized security event backlogs](https://github.com/bluehexagons/basaltwater/issues/108) | Audit and SSH collection cap command output at 2 MiB and retain the cursor on failure. An oversized interval can therefore fail repeatedly without progress; this is separate from #102's tool discovery and audit coverage. | Add complete bounded pagination or interval splitting, advance only through fully parsed intervals, deduplicate boundaries, and expose irrecoverable gaps. Qualify high-volume, restart, timeout and repeated-failure behavior with mocked commands. |
+| [#102 — “ausearch is unavailable”](https://github.com/bluehexagons/basaltwater/issues/102) | PATH/tool-resolution and required-audit-coverage fixes are in `main`; the current agent VM had active auditd and a healthy snapshot. The maintainer reports no recurrence. | The issue requests verification on the originally affected host: `/usr/sbin/auditctl -s`, managed rules from `/usr/sbin/auditctl -l`, a fresh healthy panel snapshot, and a security-monitor run. Keep open until that evidence is recorded. Release coverage is tracked as `SEC-01`. |
+| [#103 — Incorrect certificate message](https://github.com/bluehexagons/basaltwater/issues/103) | The CA command now verifies the live endpoint against the configured CA or public trust store and reports unknown trust when verification cannot be established. The maintainer reports no recurrence. | The issue requests a check on the originally affected self-signed host using `basaltwater-web ca --json` and the panel text. Keep open until that evidence is recorded. Release coverage is tracked as `TLS-01`. |
+
+No recurrence is a positive maintainer signal, but it does not establish the
+state of either originally affected host. The release-matrix checks qualify
+the candidate broadly and do not replace the issue-specific acceptance above.
+
+## Active monitoring defect
+
+| Issue | Current evidence | Remaining work |
+| --- | --- | --- |
+| [#108 — Oversized security event backlogs](https://github.com/bluehexagons/basaltwater/issues/108) | The monitor now streams audit and SSH output, bounds per-record and summary memory, and scans a complete 15-minute interval per invocation. Its shared cursor advances only after all sources succeed; failures discard partial results and retry the same interval. | Detect when audit or journal logs have rotated past an old cursor and report the missing interval before advancing. Qualify catch-up against real retained logs; preserve the existing high-volume, timeout, restart, and repeated-failure coverage. |
 
 ## Release and live qualification
 
 | Issue | Current evidence | Remaining work |
 | --- | --- | --- |
-| [#104 — New stable release](https://github.com/bluehexagons/basaltwater/issues/104) | `v0.2.0` is the latest published GitHub release. The Basaltwater v2 namespace and migration are in `main`, with mocked tests and one post-setup Debian agent VM audit. | Complete the disposable-host, migration/recovery, storage, Proxmox, and CI/CD qualification in [release checklist](../BASALTWATER_RELEASE.md), then tag and publish `v2.0.0`. |
-| [#106 — CachyOS Software](https://github.com/bluehexagons/basaltwater/issues/106) | All twelve requested application selections are implemented with saved refresh selection, doctor checks, documentation, and mocked tests. See [software matrix](../CACHYOS_SOFTWARE.md). | Run the documented live AUR, GUI/GPU, streaming, flashing, and authenticated publishing checks on an appropriate CachyOS machine; package presence is not workflow qualification. |
+| [#104 — New stable release](https://github.com/bluehexagons/basaltwater/issues/104) | `v0.2.0` remains the latest final release. The source package now identifies the `v2.0.0-rc.N` preview series; the current candidate is `2.0.0rc1`, and no preview tag has been published. | Use the formal [release qualification checklist](../BASALTWATER_RELEASE.md). Publish an opt-in prerelease candidate after its publication gate, then complete the install, upgrade/recovery, target-user rename, security/TLS, HomeBox, storage, Proxmox, and CI/CD matrix before stable `v2.0.0`. |
+| [#106 — CachyOS Software](https://github.com/bluehexagons/basaltwater/issues/106) | All twelve requested application selections are implemented with saved refresh selection, doctor checks, documentation, and mocked tests. See [software matrix](../CACHYOS_SOFTWARE.md). | No further CachyOS enhancements are in the current release pass. Existing experimental software qualification remains separate and is not a Debian stable-release gate. |
 
 ## Partial implementation
 
@@ -48,6 +57,7 @@ this page records issue scope and evidence.
   working live workflow.
 - The 2026-08-24 reconciliation closed #79, #81, #90, #92, and #93 with
   implementation evidence. #38, #58, #85, and #97 were subsequently closed;
-  their broader residual themes remain in the roadmap, not in this open count.
+  HomeBox request #99 closed on 2026-09-13. Their broader residual themes
+  remain in the roadmap, not in this open count.
 - When implementation changes, update the owning plan and operator docs, then
   refresh this map and the corresponding GitHub issue.
