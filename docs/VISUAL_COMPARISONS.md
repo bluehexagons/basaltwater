@@ -1,4 +1,77 @@
-# Compare captures and Git revisions
+# Check rendering and compare captures
+
+## Run a project check
+
+After a workstation refresh or graphics/toolchain change, use an explicit
+project-owned check rather than treating installed packages as proof of rendering.
+Declare a reviewed recipe in the project's `basaltwater-agent.json`:
+
+```json
+{
+  "version": 1,
+  "recipes": {
+    "graphics-smoke": {
+      "description": "Check fixed-frame captures and complete 1440p/4K image content",
+      "argv": ["./scripts/check-graphics.sh"],
+      "requires": ["python3"]
+    }
+  }
+}
+```
+
+Then run it deliberately, using the project's selected toolchain:
+
+```bash
+basaltw agent visuals check graphics-smoke --repository ~/repos/my-game \
+  --settings ~/capture-settings.json --timeout 600 --json
+```
+
+The recipe runs in its declared repository-relative directory in the current
+checkout. Basaltwater does not switch branches, install dependencies, select a
+Node runtime, or interpret shell operators/placeholders in its argv. Use a
+reviewed script for shell logic and the project's normal runtime selection.
+See [environment declarations](AGENT_ENVIRONMENT.md) for recipe validation.
+Missing declared requirements and unknown recipes fail before execution.
+
+`check.json` records the recipe, argv, working directory, UTC start/end times,
+duration, timeout, return code and outcome. `check.log` retains combined stdout
+and stderr. `environment.json` retains the read-only environment manifest,
+including executable paths, commit and dirty state; it also records OS/kernel,
+architecture and an allowlist of display/SDL/Mesa environment settings. When
+pacman is available, a bounded read-only query records installed Mesa, SDL,
+graphics-driver and Xvfb package versions from a fixed list. Missing optional
+packages or an unavailable package query do not fail the project check.
+No tool-version shims or renderers run as part of this metadata collection.
+
+The child inherits the caller's environment, including `SDL_VIDEODRIVER`.
+`BASALTWATER_VISUAL_EVIDENCE` points to the new evidence directory and
+`BASALTWATER_VISUAL_SETTINGS` points to its private, read-only settings copy
+(an empty JSON object when `--settings` is omitted). Project scripts can use
+these paths for PNGs, observed settings and renderer logs. Changing the settings
+copy fails the check. Requested settings and inherited environment are context;
+the project must record the actual backend, GPU/software renderer, runtime,
+dimensions and settings used by its rendering process, including child workers.
+
+Success means that the declared recipe exited zero with its recorded settings
+intact. The project owns image decoding, complete-content checks, renderer
+assertions and performance thresholds. Generic GPU and UI readiness remain
+unverified; a prerequisite check, PNG header or exit code alone cannot verify
+them. Use 1440p/4K fixtures with known content near every edge to detect clipped
+or black regions, and retain the actual rendering observations with the captures.
+
+Checks have a 1–3600 second process-group deadline (default 600), disconnect stdin,
+return nonzero on failure, and retain evidence on failure, timeout or interruption.
+They run as the invoking account and execute trusted project code, without a
+sandbox or automatic desktop-portal access. Review logs/settings before sharing;
+only allowlisted environment values are recorded, but project logs can contain
+anything the project prints. No evidence is published automatically.
+
+Output uses the same private storage and new-directory policy as comparisons
+below. Use `--output` for the active ignored project artifact directory. Neither
+setup, refresh, doctor nor manifest automatically runs these checks. For native
+capture backend selection, see [CachyOS game development](CACHYOS_GAME_DEVELOPMENT.md#capture-backends-and-post-refresh-checks).
+
+## Compare existing captures
 
 `basaltw agent visuals compare` turns two PNG captures into a standalone HTML
 viewer with synchronized scrolling and zoom, an adjustable overlay, amplified

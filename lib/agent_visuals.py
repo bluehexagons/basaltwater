@@ -25,7 +25,7 @@ MAX_IMAGE_PIXELS = 16 * 1024 * 1024
 
 
 def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
-    parser = commands.add_parser("visuals", help="Compare PNGs or capture two Git revisions")
+    parser = commands.add_parser("visuals", help="Check project rendering, compare PNGs or capture Git revisions")
     actions = parser.add_subparsers(dest="visuals_command", required=True)
     compare = actions.add_parser("compare", help="Build a self-contained before/after viewer")
     compare.add_argument("before")
@@ -39,7 +39,12 @@ def add_visuals_parser(commands: argparse._SubParsersAction) -> None:
     capture.add_argument("--settings", required=True, metavar="JSON")
     capture.add_argument("--timeout", type=validate_positive_integer, default=600)
     capture.add_argument("capture_command", nargs=argparse.REMAINDER, metavar="COMMAND")
-    for action in (compare, capture):
+    check = actions.add_parser("check", help="Run a declared project recipe and retain environment evidence")
+    check.add_argument("recipe", help="Recipe name in basaltwater-agent.json")
+    check.add_argument("--repository", default=".")
+    check.add_argument("--settings", help="Non-secret JSON capture settings to retain with the check")
+    check.add_argument("--timeout", type=validate_positive_integer, default=600)
+    for action in (compare, capture, check):
         action.add_argument("--output", help="New artifact directory; default: private managed state")
         action.add_argument("--json", action="store_true")
 
@@ -188,13 +193,22 @@ def capture_revisions(args: argparse.Namespace) -> dict:
 
 def run_visuals_command(args: argparse.Namespace) -> int:
     try:
-        result = capture_revisions(args) if args.visuals_command == "capture" else compare_captures(args)
+        if args.visuals_command == "check":
+            from lib.agent_visual_check import check_recipe
+
+            result = check_recipe(args)
+        else:
+            result = capture_revisions(args) if args.visuals_command == "capture" else compare_captures(args)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "error": str(exc)}
     if args.json:
         print(json.dumps(result, indent=2))
     elif result.get("viewer"):
         print(result["viewer"])
+    elif result.get("ok"):
+        print(f"Project recipe passed: {result['recipe']} ({result['elapsed_seconds']}s)")
+        print(f"Evidence: {result['directory']}")
+        print("Review project observations for renderer, GPU and image-content verification")
     else:
         print(f"Error: {result['error']}")
         if result.get("directory"):

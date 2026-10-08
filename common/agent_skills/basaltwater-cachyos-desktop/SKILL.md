@@ -26,6 +26,8 @@ Read the reference for the task:
 - [Media](references/media.md): Inkscape object actions and SVG/PNG exports,
   GIMP/Krita editable sources, Audacity/Shotcut audio/video verification,
   and the other supported creative and engineering applications.
+- [Rendering evidence](references/rendering.md): capture backend selection,
+  parallel Xvfb launches, high-resolution content checks and post-refresh evidence.
 
 ## Launch and observe
 
@@ -48,7 +50,7 @@ settings and unrelated running applications.
 Use `basaltw desktop --native` explicitly for KDE Wayland. The ordinary
 `basaltw desktop` backend remains Debian XRDP/Xorg. Start locally from the
 graphical session; background scripts/exports can work without it. Do not
-create XRDP, guess another session's bus/display, force X11 or install global
+create XRDP, guess another session's bus/display, change KDE to X11 or install global
 input daemons. See the [native control reference](references/native-control.md).
 
 ```fish

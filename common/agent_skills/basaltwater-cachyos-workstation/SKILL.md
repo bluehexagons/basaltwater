@@ -154,6 +154,14 @@ inbound ports. Inspect the documented limitations and effective rules in the
 Additional read-only diagnostics include `command -v`, tool version checks,
 `pacman -Q`, and user service logs. Graphics diagnostics may use `vulkaninfo`
 or `glxinfo` when installed; a successful CLI check does not prove GPU rendering.
+After a refresh, run a reviewed project graphics recipe explicitly with
+`basaltw agent visuals check RECIPE --repository PATH --json` to retain logs,
+settings, executable/commit context and selected graphics-package versions.
+The project owns assertions about the actual renderer and complete image content;
+the generic check only establishes its recipe's outcome. Use the
+[capture backend guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_GAME_DEVELOPMENT.md#capture-backends-and-post-refresh-checks)
+for Wayland, isolated Xvfb and supported offscreen captures. Setup, refresh and
+doctor do not run project code or qualify GPU/desktop behavior automatically.
 An agent running as this account has the account's access to personal files.
 Keep work inside the requested project and preserve existing application settings.
 

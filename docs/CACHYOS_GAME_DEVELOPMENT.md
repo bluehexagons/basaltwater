@@ -149,3 +149,67 @@ record the host on which a check actually ran.
 Use the game's [environment guide](https://github.com/bluehexagons/antistatic/blob/main/docs/development-environments.md)
 for capture display isolation and fresh-checkout lobby test preparation. These
 checks belong to the game and work independently of Basaltwater.
+
+## Capture backends and post-refresh checks
+
+Choose the backend for the evidence needed, and verify the actual SDL driver
+and GL renderer in the application's logs:
+
+| Backend | Useful checks | Limits |
+| --- | --- | --- |
+| Native KDE Wayland | Interactive rendering, monitor scale and desktop behavior | Requested window/capture sizes can exceed the compositor's backing surface; inspect full image content |
+| Isolated Xvfb/X11 with Mesa llvmpipe | Repeatable project screenshots and software reference comparisons | Does not qualify the hardware GPU, native Wayland or monitor behavior |
+| SDL offscreen, when the application supports GL with that driver | Hardware captures independent of desktop window size | Driver support and GPU/software selection must be verified by the project; does not qualify desktop interaction |
+
+For an isolated Xvfb capture, explicitly select `SDL_VIDEODRIVER=x11` and remove
+`WAYLAND_DISPLAY` from the child environment so SDL does not prefer the personal
+Wayland session. Preserve the selected graphics-capable driver in render-worker
+forks; `dummy` is for non-rendering tests. Use private application data and let
+the project harness own its virtual display and Xauthority. These choices apply
+to a capture process, not to KDE's login/session configuration.
+
+Check `xvfb-run --help` for `--auto-display`. When advertised, use `xvfb-run -d`:
+the X server allocates the display number atomically, avoiding simultaneous
+`-a` startup races. Older wrappers can use `-a`; serialize launches if their
+allocation races. Query capabilities once per harness invocation rather than
+starting a throwaway `xvfb-run ... true` availability probe before every capture.
+Keep the actual capture server startup and diagnostics separate from that query.
+
+Antistatic's screenshot scripts own this selection. For a hardware capture
+larger than the desktop, its Linux renderer supports:
+
+```fish
+cd "$HOME/repos/antistatic"
+env SDL_VIDEODRIVER=offscreen basaltw node exec -- npm run screenshot:stage -- \
+  --stage 'Visual Test' --cpus 0 --frame 180 --resolution 3840x2160 \
+  --no-xvfb --verbose --out /absolute/new-artifact/visual-test-4k.png
+```
+
+Inspect the reported GL renderer and complete scene content, including corners
+and UI where requested. In the observed Antistatic SDR path, oversized native
+Wayland PNGs could have the requested dimensions while containing clipped/black
+regions; offscreen captures produced complete 4K content on Intel Mesa. Keep the
+workaround until that project uses an independent SDR presentation/capture
+framebuffer. See the game's
+[headless capture guide](https://github.com/bluehexagons/antistatic/blob/main/docs/headless-mode.md)
+for current limitations and fixture settings. A working offscreen capture does
+not establish native desktop, HDR, monitor-scaling or end-to-end FPS behavior.
+
+After refresh, run `basaltw local cachyos-doctor --json` for prerequisites, then
+the project's build and declared graphics-check recipe. The optional
+[visual check command](VISUAL_COMPARISONS.md#run-a-project-check) retains the
+manifest, host/package context, capture settings, logs and timings together:
+
+```fish
+basaltw agent manifest /absolute/project --json
+basaltw agent visuals check graphics-smoke --repository /absolute/project \
+  --settings /absolute/capture-settings.json --json
+```
+
+The project must declare and implement that recipe first. Keep paired captures
+at the same frame, camera, resolution, renderer, locale, graphics settings and
+clean data state. Fix fixture palettes/seed and allow time-based UI transitions
+to settle. Record observed runtime/GPU/backend in project outputs, distinguish
+capture startup and CPU preparation timings from frame-rate measurements, and
+put shared evidence in the project's active ignored artifact directory. Compare
+like backends; software references and native GPU captures serve different checks.

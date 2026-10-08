@@ -110,6 +110,13 @@ never executed by the manifest. Arguments do not expand environment variables,
 substitutions, or globs. Choose whether to run a recipe according to the user's
 task and review project commands before execution.
 
+`basaltw agent visuals check RECIPE --repository PATH --json` explicitly runs
+one declared recipe and retains its output, settings and environment evidence.
+This separate command is useful for post-refresh rendering checks; manifest and
+doctor remain prerequisite/discovery observations. See
+[project visual checks](VISUAL_COMPARISONS.md#run-a-project-check) for execution
+scope, private artifacts and project-owned verification.
+
 For a Blender project, declare `blender` and a recipe such as
 `["blender", "--background", "scenes/validation.blend", "--render-output",
 ".artifacts/render-", "--render-format", "PNG", "--render-frame", "1"]`.
