@@ -26,6 +26,19 @@ environment from the canonical secret on every run. Empty, multiline, oversized,
 or unsafe secret values fail before service replacement. Secrets must use
 letters, digits, or `._~+/=-`; setup does not rotate an existing valid secret.
 
+## Configure a GitHub webhook
+
+In the repository's **Settings → Webhooks**, add the host configured above with
+`/webhook` as its path. Select `application/json`, enter the contents of
+`/etc/basaltwater/cicd/webhook_secret` as the webhook secret, enable SSL
+verification, and subscribe to push events. Keep the secret in the protected
+file and GitHub's secret field; do not put it in repository configuration or
+logs. A ping event checks connectivity only and does not build a repository.
+
+The receiver stays on localhost behind Nginx. For a Cloudflare Tunnel, configure
+the host with `--cloudflare` and follow the [tunnel guide](CLOUDFLARE.md); the
+webhook hostname must resolve through the tunnel to its Nginx site.
+
 ## Build and app server topology
 
 The build server runs the webhook receiver as `webhook` and repository code
