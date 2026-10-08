@@ -24,9 +24,15 @@ GRAPHICS_ENVIRONMENT = (
     "SDL_RENDER_DRIVER", "LIBGL_ALWAYS_SOFTWARE", "GALLIUM_DRIVER",
     "MESA_LOADER_DRIVER_OVERRIDE", "DRI_PRIME", "QT_QPA_PLATFORM",
 )
-GRAPHICS_PACKAGES = (
+ARCH_GRAPHICS_PACKAGES = (
     "mesa", "libglvnd", "vulkan-intel", "vulkan-radeon", "nvidia-utils",
     "sdl3", "sdl3_image", "mesa-utils", "xorg-server-xvfb", "xorg-xauth",
+)
+DEBIAN_GRAPHICS_PACKAGES = (
+    "libgl1-mesa-dri", "libegl-mesa0", "libglx-mesa0", "libglvnd0",
+    "libgl1", "libegl1", "mesa-vulkan-drivers", "libvulkan1",
+    "nvidia-driver", "libnvidia-glcore", "libsdl2-2.0-0", "libsdl2-image-2.0-0",
+    "libsdl3-0", "libsdl3-image0", "mesa-utils", "xvfb", "xauth",
 )
 LOG_LIMIT = 16 * 1024 * 1024
 
@@ -43,19 +49,43 @@ def host_context(environment: dict[str, str]) -> dict:
         release = platform.freedesktop_os_release()
         context["distribution"] = {key: release[key] for key in ("ID", "VERSION_ID") if key in release}
     except OSError:
+        release = {}
         context["distribution"] = {}
-    pacman = shutil.which("pacman")
-    if pacman:
+    families = {release.get("ID", ""), *release.get("ID_LIKE", "").split()}
+    command = None
+    if families & {"debian", "ubuntu"}:
+        manager = shutil.which("dpkg-query")
+        packages = DEBIAN_GRAPHICS_PACKAGES
+        if manager:
+            command = [manager, "--show", "--showformat=${binary:Package}\t${Version}\t${db:Status-Status}\n", *packages]
+    elif families & {"arch", "cachyos"}:
+        manager = shutil.which("pacman")
+        packages = ARCH_GRAPHICS_PACKAGES
+        if manager:
+            command = [manager, "-Q", *packages]
+    if command:
         try:
             result = run(
-                [pacman, "-Q", *GRAPHICS_PACKAGES], check=False, capture_output=True,
+                command, check=False, capture_output=True,
                 timeout=10, input_data="",
+                env={**os.environ, "LC_ALL": "C"},
             )
-            # Missing optional packages make pacman return nonzero. Retain only
-            # installed packages from this fixed allowlist, never a full inventory.
+            if result.returncode not in (0, 1):
+                return context
+            # Missing optional packages return 1. Dpkg also knows removed or
+            # unpacked packages, so require installed status. Preserve multiarch
+            # qualifiers so two installed architectures do not overwrite evidence.
             for line in (result.stdout or "").splitlines():
-                name, separator, version = line.partition(" ")
-                if name in GRAPHICS_PACKAGES and separator and 0 < len(version) <= 256:
+                if families & {"debian", "ubuntu"}:
+                    fields = line.split("\t")
+                    if len(fields) != 3 or fields[2] != "installed":
+                        continue
+                    name, version = fields[:2]
+                else:
+                    name, separator, version = line.partition(" ")
+                    if not separator:
+                        continue
+                if name.partition(":")[0] in packages and 0 < len(version) <= 256:
                     context["graphics_packages"][name] = version
             context["package_observation"] = "observed" if result.returncode == 0 else "partial"
         except (OSError, RuntimeError, subprocess.SubprocessError):

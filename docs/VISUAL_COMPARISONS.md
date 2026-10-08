@@ -44,8 +44,11 @@ the recipe's outcome is retained even when its output exceeds the quota.
 Project-created artifacts have no automatic quota. `environment.json` retains
 the read-only environment manifest, including executable paths, commit and dirty state; it also records OS/kernel,
 architecture and an allowlist of display/SDL/Mesa environment settings. When
-pacman is available, a bounded read-only query records installed Mesa, SDL,
-graphics-driver and Xvfb package versions from a fixed list. Missing optional
+the host's package manager is available, a bounded read-only query records
+installed Mesa, SDL, graphics-driver and Xvfb package versions from a fixed list:
+Pacman on Arch/CachyOS, or `dpkg-query` on Debian and its derivatives. Debian
+records retain architecture qualifiers and exclude removed or unpacked packages.
+Source-built project libraries are outside this package inventory. Missing optional
 packages or an unavailable package query do not fail the project check.
 No tool-version shims or renderers run as part of this metadata collection.
 

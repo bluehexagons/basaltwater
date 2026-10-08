@@ -201,8 +201,49 @@ class TestVisualHostContext(unittest.TestCase):
         self.assertEqual(context["package_observation"], "partial")
         self.assertEqual(context["distribution"], {"ID": "cachyos"})
         self.assertNotIn("private", json.dumps(context))
-        self.assertEqual(execute.call_args.args[0], ["/usr/bin/pacman", "-Q", *agent_visual_check.GRAPHICS_PACKAGES])
+        self.assertEqual(execute.call_args.args[0], ["/usr/bin/pacman", "-Q", *agent_visual_check.ARCH_GRAPHICS_PACKAGES])
         self.assertEqual(execute.call_args.kwargs["timeout"], 10)
+
+    def test_debian_query_retains_only_installed_packages_and_multiarch_versions(self) -> None:
+        output = (
+            "libgl1-mesa-dri:amd64\t25.0.7-2\tinstalled\n"
+            "libgl1-mesa-dri:i386\t25.0.7-1\tinstalled\n"
+            "xvfb\t2:21.1.16-1\tinstalled\n"
+            "libsdl3-0:amd64\t3.2.10+ds-1\tunpacked\n"
+            "nvidia-driver\t550.1\tconfig-files\n"
+            "unrelated\t1.0\tinstalled\n"
+            "xauth\t\tinstalled\n"
+            "malformed\n"
+        )
+        for release in ({"ID": "debian", "VERSION_ID": "13"}, {"ID": "derivative", "ID_LIKE": "ubuntu debian"}):
+            with (
+                self.subTest(release=release),
+                patch.object(agent_visual_check.platform, "freedesktop_os_release", return_value=release),
+                patch.object(agent_visual_check.shutil, "which", return_value="/usr/bin/dpkg-query") as discover,
+                patch.object(agent_visual_check, "run", return_value=subprocess.CompletedProcess([], 1, output, "missing optional packages")) as execute,
+            ):
+                context = agent_visual_check.host_context({})
+            self.assertEqual(context["graphics_packages"], {
+                "libgl1-mesa-dri:amd64": "25.0.7-2", "libgl1-mesa-dri:i386": "25.0.7-1", "xvfb": "2:21.1.16-1",
+            })
+            self.assertEqual(context["package_observation"], "partial")
+            discover.assert_called_once_with("dpkg-query")
+            self.assertEqual(execute.call_args.args[0], [
+                "/usr/bin/dpkg-query", "--show", "--showformat=${binary:Package}\t${Version}\t${db:Status-Status}\n",
+                *agent_visual_check.DEBIAN_GRAPHICS_PACKAGES,
+            ])
+            self.assertEqual(execute.call_args.kwargs["env"]["LC_ALL"], "C")
+
+    def test_unknown_distribution_does_not_query_an_unrelated_package_manager(self) -> None:
+        with (
+            patch.object(agent_visual_check.platform, "freedesktop_os_release", return_value={"ID": "fedora"}),
+            patch.object(agent_visual_check.shutil, "which") as discover,
+            patch.object(agent_visual_check, "run") as execute,
+        ):
+            context = agent_visual_check.host_context({})
+        self.assertEqual(context["package_observation"], "unavailable")
+        discover.assert_not_called()
+        execute.assert_not_called()
 
     def test_missing_package_manager_and_metadata_are_optional(self) -> None:
         with (
@@ -217,11 +258,21 @@ class TestVisualHostContext(unittest.TestCase):
 
     def test_package_probe_failure_does_not_fail_project_check(self) -> None:
         with (
-            patch.object(agent_visual_check.platform, "freedesktop_os_release", return_value={}),
+            patch.object(agent_visual_check.platform, "freedesktop_os_release", return_value={"ID": "cachyos"}),
             patch.object(agent_visual_check.shutil, "which", return_value="/usr/bin/pacman"),
             patch.object(agent_visual_check, "run", side_effect=CommandTimeoutError("pacman", 10)),
         ):
             self.assertEqual(agent_visual_check.host_context({})["package_observation"], "unavailable")
+
+    def test_failed_debian_query_is_unavailable_without_retaining_output(self) -> None:
+        with (
+            patch.object(agent_visual_check.platform, "freedesktop_os_release", return_value={"ID": "debian"}),
+            patch.object(agent_visual_check.shutil, "which", return_value="/usr/bin/dpkg-query"),
+            patch.object(agent_visual_check, "run", return_value=subprocess.CompletedProcess([], 2, "xvfb\t1.0\tinstalled\n", "database error")),
+        ):
+            context = agent_visual_check.host_context({})
+        self.assertEqual(context["package_observation"], "unavailable")
+        self.assertEqual(context["graphics_packages"], {})
 
 
 if __name__ == "__main__":
