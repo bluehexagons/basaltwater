@@ -431,6 +431,14 @@ desktop-control implementation.
   client-exit durability, and stopping one task while another survives.
   Actual remote-client, logout/reboot, editor/dialog, Electron, audio/controller,
   and broader hardware qualification remain separate.
+- Added explicit Godot asset import, headless/iteration-bounded editor and game
+  runs, per-launch rendering methods, declared Node package scripts using the
+  installed project runtime, and native queued project checks using existing
+  recipes. Check evidence retains revision/settings/outcome and bounded logs.
+  Intel/KDE fixtures passed import, headless/GPU runs, Node argv/runtime
+  selection, native SDL launch, project assertions, timeout, and log truncation.
+  Project-owned harnesses supply structured observations/assertions; a generic
+  Godot debugger/action bridge and broader Electron UI coverage remain open.
 - Implemented the versioned capability metadata contract and
   `basaltw local cachyos-doctor [--json]`, with fixed read-only probes,
   bounded streaming, local bus addressing, and no service activation.

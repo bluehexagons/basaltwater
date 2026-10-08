@@ -253,12 +253,14 @@ production build or container qualification.
 | Remote commissioning | Actual Moonlight video/audio/input and reconnect; T3 thread/PTY; independent same-user SSH connection | Existing daily-use acceptance; full remote commissioning sequence pending |
 | Launch from SSH | Missing caller display variables recovered from the owned user manager; correct KDE session/project; no portal request or new listener | Caller display variables removed in current-workstation fixture; actual SSH client pending |
 | Godot prerequisites | Bounded project/engine checks; C# requirement explained; no import, plugin execution, application launch, or state write | Implemented with mocked read-only/metadata/C# cases; native project doctor passed live |
+| Godot import and bounded runs | Explicit asset preparation, headless versus GPU observations, per-launch renderer options, literal game arguments | SVG import, headless run and iteration-bounded Intel GPU fixture passed live |
 | Durable development task | Client disconnect preserves the job; logs and exit status retained privately; output bounded | Client process exited before GPU fixture completion; 16 MiB output limit and exit-code retention passed live |
 | Scoped stop | Only the recorded user-systemd task is stopped; another editor/game and KDE survive | Two disposable tasks: second stayed running after first stopped; foreign/stale identity refusals mocked |
 | Project and argument validation | Scene remains in the chosen project; literal arguments survive spaces, percent signs, and shell metacharacters | Project/scene and size bounds mocked; literal argv, PATH and worker-source path passed live |
 | Remote session lifecycle | Monitor-off, lock/unlock, reconnect, display geometry, and renewed consent have explicit observations | Pending live qualification |
-| Secondary client software | Electron/native launch preserves project runtime and sandbox behavior; dialogs/scaling/input checked | Pending live qualification |
-| Playtest/debugger bridge | Project-declared actions and structured observations; actual GPU evidence separate from headless assertions | Planned |
+| Secondary client software | Electron/native launch preserves project runtime and sandbox behavior; dialogs/scaling/input checked | Pinned Node/package-script argv and native SDL Wayland launch passed; Electron UI/dialog/scaling/input pending |
+| Project recipe evidence | Native environment, private revision/settings/observations, assertions, deadline and bounded logs | GPU recipe with five assertions, timeout, and 16 MiB log quota passed live |
+| Playtest/debugger bridge | Project-declared actions and structured observations; actual GPU evidence separate from headless assertions | Project-recipe observations/assertions available; generic Godot debugger/action bridge planned |
 
 ### Development task evidence — 2026-10-08
 
@@ -324,3 +326,34 @@ unit unloaded. Evidence is in `lifecycle-review/godot-followup.json` and the
 private task log. Unavailable-manager and malformed/C# metadata cases use mocked
 calls and temporary files; no manager shutdown, logout/reboot, actual .NET
 runtime, or broader Electron qualification is implied.
+
+### Godot and secondary workflow tooling — 2026-10-08
+
+Implementation `b04c217` adds explicit native Godot import and run options,
+declared Node package scripts, and queued project checks. Source checks passed
+73 focused tests and the full repository check: 5173 tests, two skipped,
+including compilation, documentation, packaging and installed-wheel checks.
+
+Disposable project checks used the same Intel Arc/KDE stack as above, with
+Node `26.10.0-3`, npm `12.2.0-1`, GCC `16.2.1+r23+gd564253eb6c8-1` and SDL3
+`3.4.18-1.1`. Caller display/bus variables were removed; no portal was started.
+
+| Check | Observed result |
+| --- | --- |
+| Asset import | Explicit headless import created the SVG asset cache and completed with exit 0. |
+| Bounded Godot runs | Headless and Forward+ GPU launches completed with exit 0; the GPU fixture reported Godot 4.7.2, X11/XWayland and Intel Arc at 320×200. |
+| Declared Node script | `.node-version` selected Node 26.10.0. npm script arguments preserved flags, dollar/percent syntax, spaces and an empty argument. A project-local `basaltwater.py` trap was never executed. This verifies runtime selection and manager choice, not exact package-manager version enforcement or Electron UI. |
+| Native application | Disposable SDL3 C window launched through `develop exec`, reported the Wayland video driver and exited normally. |
+| GPU project recipe | Harness imported assets, launched Godot and passed five assertions covering native display, Intel device, imported asset, viewport size and literal arguments. Private evidence retained its commit/dirty context, settings and JSON runtime observations. |
+| Recipe timeout | One-second deadline produced a retained `timed-out` check report and failed task status. |
+| Recipe output bound | An 18 MiB stream was drained, with exactly 16 MiB retained and `log_truncated` true; the report preserved project exit code 7. Evidence files had mode 0600. |
+| Completion | All eight fixture units unloaded; subsequent status retained their terminal outcomes. No failed user units were observed. |
+
+Fixture sources and reports remain under the ignored private
+`artifacts/cachyos-remote-development-2026-10-08/tooling-review/` directory and
+normal private development-task state. Existing KDE, T3, Sunshine and personal
+applications were preserved. These checks do not qualify network SSH/Moonlight,
+pixel content, audio/controllers, Electron GUI/sandbox behavior, C#/.NET,
+logout/reboot, or another GPU. No dependencies, persistent services or project
+environments were installed; the native compilation was a disposable development
+fixture, not a production build.
