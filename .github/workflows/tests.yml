@@ -14,7 +14,8 @@ jobs:
   test:
     name: Python ${{ matrix.python-version }} (Debian Trixie)
     runs-on: ubuntu-latest
-    container: debian:trixie
+    # Docker's official ECR publication avoids Docker Hub's anonymous pull limit.
+    container: public.ecr.aws/docker/library/debian:trixie
     strategy:
       fail-fast: false
       matrix:

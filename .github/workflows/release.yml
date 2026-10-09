@@ -12,7 +12,8 @@ jobs:
   test:
     name: Python ${{ matrix.python-version }} (Debian Trixie)
     runs-on: ubuntu-latest
-    container: debian:trixie
+    # Keep release qualification on the same registry as branch CI.
+    container: public.ecr.aws/docker/library/debian:trixie
     strategy:
       fail-fast: false
       matrix:

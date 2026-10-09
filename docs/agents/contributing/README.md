@@ -60,6 +60,14 @@ make check
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
 
+Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows pull
+Docker's official Debian image from its
+[public ECR repository](https://gallery.ecr.aws/docker/library/debian) to avoid
+Docker Hub's anonymous pull limit. Container initialization failures happen
+before checkout or tests; inspect the failing workflow step before changing code.
+For changes exercised by CI, also run `make coverage` after `make check`; the
+branch workflow runs both, and coverage executes the suite with instrumentation.
+
 ```bash
 python3 -m py_compile file.py
 basaltw setup server_web test.com --dry-run
