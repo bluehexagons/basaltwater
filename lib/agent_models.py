@@ -34,7 +34,11 @@ def _name(value: object, label: str) -> str:
 
 
 def _number(value: object, label: str, *, minimum: float = 0) -> float:
-    if type(value) not in (int, float) or not math.isfinite(value) or value < minimum:
+    try:
+        valid = type(value) in (int, float) and math.isfinite(value) and value >= minimum
+    except OverflowError:
+        valid = False
+    if not valid:
         raise ValueError(f"Invalid {label}: expected a finite number >= {minimum}")
     return float(value)
 
@@ -136,7 +140,8 @@ def _policy_and_runs(repository: str) -> tuple[JSONDict, list[JSONDict]]:
         results = read_json_file(str(results_path), max_bytes=_MAX_BYTES)
     except FileNotFoundError:
         return policy, []
-    if not isinstance(results, dict) or results.get("schema_version") != 1 or not isinstance(results.get("runs"), list):
+    if (not isinstance(results, dict) or type(results.get("schema_version")) is not int
+            or results["schema_version"] != 1 or not isinstance(results.get("runs"), list)):
         raise ValueError("Unsupported project model results schema")
     for run in results["runs"]:
         _validate_run(run)
@@ -190,21 +195,23 @@ def record_model_outcome(repository: str, values: JSONDict) -> JSONDict:
 
 def _summary(runs: list[JSONDict]) -> JSONDict:
     accepted = sum(run["outcome"] == "accepted" for run in runs)
-    known_costs = [run["cost_usd"] for run in runs if run["cost_usd"] is not None]
-    known_rework = [run["rework_minutes"] for run in runs if run["rework_minutes"] is not None]
+    known_costs = [run["cost_usd"] for run in runs if run.get("cost_usd") is not None]
+    known_rework = [run["rework_minutes"] for run in runs if run.get("rework_minutes") is not None]
+    total_cost = _number(sum(known_costs), "total recorded cost")
+    total_rework = _number(sum(known_rework), "total recorded rework")
     return {
         "samples": len(runs), "accepted": accepted,
         "acceptance_rate": accepted / len(runs) if runs else None,
         "reworked": sum(run["outcome"] == "reworked" for run in runs),
         "failed": sum(run["outcome"] == "failed" for run in runs),
         "attempts": sum(run["attempts"] for run in runs),
-        "cost_samples": len(known_costs), "known_cost_usd": sum(known_costs),
-        "cost_per_accepted_usd": sum(known_costs) / accepted
+        "cost_samples": len(known_costs), "known_cost_usd": total_cost,
+        "cost_per_accepted_usd": total_cost / accepted
         if accepted and len(known_costs) == len(runs) else None,
-        "rework_samples": len(known_rework), "known_rework_minutes": sum(known_rework),
-        "rework_minutes": sum(known_rework) if runs and len(known_rework) == len(runs) else None,
-        "mean_seconds": sum(run["seconds"] for run in runs) / len(runs)
-        if runs and all(run["seconds"] is not None for run in runs) else None,
+        "rework_samples": len(known_rework), "known_rework_minutes": total_rework,
+        "rework_minutes": total_rework if runs and len(known_rework) == len(runs) else None,
+        "mean_seconds": _number(sum(run["seconds"] for run in runs) / len(runs), "mean runtime")
+        if runs and all(run.get("seconds") is not None for run in runs) else None,
     }
 
 
@@ -277,8 +284,11 @@ def recommend_agent_model(
             continue
         recent = [run for run in runs if run["task"] == task and run["evaluation"] == rule["evaluation"]
                   and run["model"] == identifier and cutoff <= _date(run["date"]) <= now]
-        estimate = (rule["expected_input_tokens"] * model["input_usd_per_million"]
-                    + rule["expected_output_tokens"] * model["output_usd_per_million"]) / 1_000_000
+        estimate = _number(
+            rule["expected_input_tokens"] / 1_000_000 * model["input_usd_per_million"]
+            + rule["expected_output_tokens"] / 1_000_000 * model["output_usd_per_million"],
+            "estimated token cost",
+        )
         for effort in efforts:
             evidence = [run for run in recent if run["effort"] == effort]
             if effort != efforts[0] and not evidence:
@@ -342,7 +352,7 @@ def run_models_command(args: argparse.Namespace) -> int:
             result = record_model_outcome(args.repository, vars(args))
         else:
             result = report_model_outcomes(args.repository)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, allow_nan=False))
         return 1 if args.agent_models_command == "recommend" and result["selection"] is None else 0
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"Error: {exc}")

@@ -177,6 +177,67 @@ class AgentModelsTests(unittest.TestCase):
         self.assertEqual(row["known_rework_minutes"], 0)
         self.assertIsNone(row["rework_minutes"])
 
+    def test_omitted_optional_telemetry_is_unknown_and_history_can_be_extended(self) -> None:
+        for _ in range(3):
+            self._record()
+        history = json.loads(self.results_path.read_text(encoding="utf-8"))
+        for run in history["runs"]:
+            for field in ("cost_usd", "seconds", "rework_minutes"):
+                del run[field]
+        self._write(self.results_path, history)
+        row = report_model_outcomes(str(self.repository))[0]
+        self.assertEqual(row["accepted"], 3)
+        self.assertEqual(row["cost_samples"], 0)
+        self.assertEqual(row["rework_samples"], 0)
+        self.assertIsNone(row["cost_per_accepted_usd"])
+        self.assertIsNone(row["rework_minutes"])
+        self.assertIsNone(row["mean_seconds"])
+        self.assertFalse(self._recommend()["provisional"])
+        self._record()
+        saved = json.loads(self.results_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["runs"][:3], history["runs"])
+        self.assertEqual(report_model_outcomes(str(self.repository))[0]["samples"], 4)
+
+    def test_oversized_numeric_values_are_validation_errors_and_preserve_history(self) -> None:
+        self._record()
+        before = self.results_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "finite number"):
+            self._record(cost=10 ** 400)
+        self.assertEqual(self.results_path.read_bytes(), before)
+        policy = self._policy()
+        policy["models"][0]["input_usd_per_million"] = 10 ** 400
+        self._write(self.policy_path, policy)
+        parser = argparse.ArgumentParser()
+        add_agent_subparser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["agent", "models", "report", str(self.repository), "--json"])
+        with patch("builtins.print") as output:
+            self.assertEqual(run_agent_command(args), 1)
+        self.assertIn("finite number", output.call_args.args[0])
+
+    def test_overflowing_statistics_and_estimates_fail_without_invalid_json(self) -> None:
+        for _ in range(2):
+            self._record(cost=1e308)
+        before = self.results_path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "total recorded cost"):
+            report_model_outcomes(str(self.repository))
+        self.assertEqual(self.results_path.read_bytes(), before)
+        policy = self._policy()
+        policy["tasks"]["classification"]["expected_input_tokens"] = 1e308
+        policy["models"][0]["input_usd_per_million"] = 1e308
+        self._write(self.policy_path, policy)
+        with self.assertRaisesRegex(ValueError, "estimated token cost"):
+            self._recommend()
+
+    def test_results_schema_version_requires_an_integer(self) -> None:
+        self._record()
+        history = json.loads(self.results_path.read_text(encoding="utf-8"))
+        for version in (True, 1.0):
+            with self.subTest(version=version):
+                history["schema_version"] = version
+                self._write(self.results_path, history)
+                with self.assertRaisesRegex(ValueError, "results schema"):
+                    report_model_outcomes(str(self.repository))
+
     def test_old_evidence_and_stale_catalog_need_fresh_evaluation(self) -> None:
         for _ in range(3):
             self._record("gpt-6.1-sol", cost=0.2)

@@ -100,6 +100,9 @@ billing unknown, including subscription sessions without dollar telemetry. Also
 leave unobserved runtime and parent rework unknown; explicitly record zero when
 you checked and found no rework. Reports expose the known rework subtotal and
 sample count, and return a null total when observations are incomplete.
+Optional telemetry omitted from saved outcomes is also unknown. Invalid or
+overflowing numeric values produce a validation error; inspect the project data
+and correct it without replacing history or inventing measurements.
 Never invent a cost or treat missing cost as zero. Each cost should cover all
 attempts represented by that outcome; record another model's escalation as
 another outcome. Validation should describe acceptance evidence without prompts,
