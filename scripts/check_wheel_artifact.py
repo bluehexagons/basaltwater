@@ -20,6 +20,7 @@ REQUIRED_WHEEL_PATHS = (
     "remote_setup.py",
     "lib/config.py",
     "lib/agent_skill_bundles.py",
+    "lib/agent_models.py",
     "lib/t3code_native_probe.cjs",
     "plugins/common.py",
     "common/agent_steps.py",
@@ -28,6 +29,9 @@ REQUIRED_WHEEL_PATHS = (
     "common/service_tools/web_panel_admin.py",
     "common/service_tools/web_panel_agent_tools.py",
     "common/agent_skills/basaltwater-agent-operations/references/unattended-tasks.md",
+    "common/agent_skills/basaltwater-agent-workspace/references/lifecycle.md",
+    "common/agent_skills/basaltwater-agent-workspace/references/model-selection.md",
+    "common/agent_skills/basaltwater-agent-workspace/assets/agent-models.json",
     "common/agent_skills/basaltwater-t3code/references/updates.md",
     "common/agent_skills/basaltwater-t3code/references/thread-migration.md",
     "common/cachyos_steps.py",
@@ -146,6 +150,9 @@ def _smoke_installed_wheel(
                 "; import common.service_tools.admin_job"
                 "; import common.service_tools.web_panel_admin"
                 "; import common.service_tools.web_panel_agent_tools"
+                "; from lib.agent_models import _TEMPLATE, validate_model_policy"
+                "; from lib.atomic_io import read_json_file"
+                "; validate_model_policy(read_json_file(str(_TEMPLATE)))"
             ),
         ],
         check=True,

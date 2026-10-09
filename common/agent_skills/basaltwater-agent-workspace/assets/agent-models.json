@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "catalog_max_age_days": 30,
+  "evidence_max_age_days": 90,
+  "minimum_samples": 3,
+  "minimum_acceptance": 0.8,
+  "models": [
+    {
+      "id": "gpt-6-luna",
+      "provider": "openai",
+      "family": "luna",
+      "efforts": ["none", "low", "medium", "high", "xhigh"],
+      "input_usd_per_million": 0.1,
+      "output_usd_per_million": 0.5,
+      "verified_on": "2026-10-09",
+      "source": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "provider": "openai",
+      "family": "sol",
+      "efforts": ["low", "medium", "high", "xhigh"],
+      "input_usd_per_million": 2,
+      "output_usd_per_million": 10,
+      "verified_on": "2026-10-09",
+      "source": "https://developers.openai.com/api/docs/models"
+    },
+    {
+      "id": "gpt-6-astra",
+      "provider": "openai",
+      "family": "astra",
+      "efforts": ["low", "medium", "high", "xhigh"],
+      "input_usd_per_million": 10,
+      "output_usd_per_million": 50,
+      "verified_on": "2026-10-09",
+      "source": "https://developers.openai.com/api/docs/models"
+    }
+  ],
+  "tasks": {
+    "classification": {"family": "luna", "effort": "none", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "documentation": {"family": "luna", "effort": "low", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "coding": {"family": "sol", "effort": "medium", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "review": {"family": "sol", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000},
+    "specialist": {"family": "astra", "effort": "high", "evaluation": "v1", "expected_input_tokens": 4000, "expected_output_tokens": 1000}
+  }
+}

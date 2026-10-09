@@ -15,12 +15,42 @@ from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.agent_support import build_agent_support_bundle, write_agent_support_bundle
 from lib.agent_workspace import (
     create_agent_worktree,
+    inspect_agent_worktree,
     list_agent_worktrees,
     remove_agent_worktree,
 )
 
 
 class AgentWorkspaceTests(unittest.TestCase):
+    def test_status_reports_ancestry_and_fails_on_git_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            primary = os.path.join(directory, "primary")
+            worktree = os.path.join(directory, "worker")
+            task = {"path": worktree, "branch": "agent/worker", "head": "a" * 40,
+                    "dirty": False, "main": False}
+            destination = {"path": primary, "branch": "main", "head": "b" * 40,
+                           "dirty": False, "main": True}
+            for code in (0, 1, 128):
+                with self.subTest(code=code), patch(
+                    "lib.agent_workspace.primary_agent_repository", return_value=primary,
+                ), patch(
+                    "lib.agent_workspace._worktree_record", side_effect=[task.copy(), destination],
+                ), patch(
+                    "lib.agent_workspace._git",
+                    return_value=subprocess.CompletedProcess([], code, "", ""),
+                ) as git:
+                    if code == 128:
+                        with self.assertRaisesRegex(RuntimeError, "ancestry"):
+                            inspect_agent_worktree(worktree)
+                    else:
+                        record = inspect_agent_worktree(worktree)
+                        self.assertEqual(record["merged_into_primary"], code == 0)
+                        self.assertEqual(record["primary_branch"], "main")
+                        self.assertEqual(record["repository"], primary)
+                    git.assert_called_once_with(
+                        primary, ["merge-base", "--is-ancestor", "a" * 40, "b" * 40], check=False,
+                    )
+
     def _git(self, repository: str, *arguments: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["git", "-C", repository, *arguments],

@@ -19,6 +19,7 @@ managed machine.
 | --- | --- | --- |
 | Discover development/testing tools and deployment mappings | [Environment manifest](../AGENT_ENVIRONMENT.md) | [Desktop development workflows](../DESKTOP_DEVELOPMENT.md) |
 | Compare images or capture two Git revisions | [Visual comparisons](../VISUAL_COMPARISONS.md) | [Managed workspace skills](../AGENT_SKILLS.md) |
+| Delegate isolated work and learn economical model choices | [Subagent workflows](../AGENT_SUBAGENTS.md) | [Managed workflow skills](../AGENT_SKILLS.md) |
 | Choose a headless or graphical coding profile | [Workstations](../WORKSTATIONS.md) | [Command-line agent flags](../COMMAND_LINE.md#agent-host-flags) |
 | Configure a coding VM from an example | [Agentic VMs](../AGENTIC_VMS.md) | [Privilege approvals](../PRIVILEGE_APPROVALS.md) |
 | Set up agent tools on a CachyOS KDE desktop | [First setup in fish](../CACHYOS.md) | [CachyOS skill selection](../CACHYOS.md#skills-diagnostics-and-boundaries) |

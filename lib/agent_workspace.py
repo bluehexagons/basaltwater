@@ -83,6 +83,37 @@ def _within(path: str, parent: str) -> bool:
         return False
 
 
+def primary_agent_repository(path: str) -> str:
+    """Resolve the primary checkout even when called from a linked worktree."""
+    worktree = _repository_root(path)
+    value = _git(worktree, ["rev-parse", "--git-common-dir"]).stdout.strip()
+    common_dir = os.path.realpath(
+        value if os.path.isabs(value) else os.path.join(worktree, value)
+    )
+    return _repository_root(os.path.dirname(common_dir))
+
+
+def inspect_agent_worktree(path: str) -> JSONDict:
+    """Report branch ancestry against the primary checkout's current commit."""
+    primary = primary_agent_repository(path)
+    record = _worktree_record(path, main_path=primary)
+    destination = _worktree_record(primary, main_path=primary)
+    ancestry = _git(
+        primary,
+        ["merge-base", "--is-ancestor", str(record["head"]), str(destination["head"])],
+        check=False,
+    )
+    if ancestry.returncode not in (0, 1):
+        raise RuntimeError("Could not determine task ancestry against the primary checkout")
+    record.update({
+        "repository": primary,
+        "primary_branch": destination["branch"],
+        "primary_head": destination["head"],
+        "merged_into_primary": ancestry.returncode == 0,
+    })
+    return record
+
+
 def _managed_root(home: str, override: Optional[str], *, create: bool) -> str:
     resolved_home = os.path.realpath(os.path.abspath(home))
     candidate = os.path.abspath(
@@ -241,13 +272,7 @@ def remove_agent_worktree(
     if worktree == managed_root or not _within(worktree, managed_root):
         raise ValueError("Only worktrees below the managed agent root can be removed")
 
-    common_dir_value = _git(worktree, ["rev-parse", "--git-common-dir"]).stdout.strip()
-    common_dir = os.path.realpath(
-        common_dir_value
-        if os.path.isabs(common_dir_value)
-        else os.path.join(worktree, common_dir_value)
-    )
-    primary = _repository_root(os.path.dirname(common_dir))
+    primary = primary_agent_repository(worktree)
     worktrees = list_agent_worktrees(primary)
     if not any(os.path.samefile(worktree, str(item["path"])) for item in worktrees):
         raise ValueError(f"Path is not a registered Git worktree: {worktree}")
@@ -261,13 +286,19 @@ def remove_agent_worktree(
     if record["dirty"]:
         raise ValueError("Agent worktree has uncommitted or untracked changes")
     target = _git(primary, ["rev-parse", "HEAD"]).stdout.strip()
-    merged = _git(
+    ancestry = _git(
         primary,
         ["merge-base", "--is-ancestor", str(record["head"]), target],
         check=False,
-    ).returncode == 0
-    if not merged:
-        raise ValueError("Agent task branch is not merged into the primary checkout")
+    )
+    if ancestry.returncode not in (0, 1):
+        raise RuntimeError("Could not determine task ancestry against the primary checkout")
+    if ancestry.returncode == 1:
+        raise ValueError(
+            "Agent task branch is not merged into the primary checkout's current HEAD; "
+            "cherry-pick and squash do not preserve task ancestry. Review and merge the "
+            "task branch before cleanup, or retain it for later integration."
+        )
 
     result: JSONDict = {
         "path": worktree,
@@ -292,6 +323,9 @@ def _print_result(value: JSONDict | list[JSONDict], *, as_json: bool) -> None:
         marker = "main" if record.get("main") else str(record.get("status") or "worktree")
         dirty = " dirty" if record.get("dirty") else ""
         print(f"{record['path']}: {record.get('branch') or 'detached'} ({marker}{dirty})")
+        if "merged_into_primary" in record:
+            state = "merged" if record["merged_into_primary"] else "not merged"
+            print(f"  {state} into {record.get('primary_branch') or 'detached primary HEAD'}")
 
 
 def run_agent_workspace_command(args: argparse.Namespace) -> int:
@@ -307,7 +341,7 @@ def run_agent_workspace_command(args: argparse.Namespace) -> int:
         elif args.agent_workspace_command == "list":
             value = list_agent_worktrees(args.repository)
         elif args.agent_workspace_command == "status":
-            value = _worktree_record(args.path)
+            value = inspect_agent_worktree(args.path)
         elif args.agent_workspace_command == "remove":
             value = remove_agent_worktree(
                 args.path,

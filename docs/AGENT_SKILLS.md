@@ -34,10 +34,18 @@ receives these base skills:
 | Skill | Use it for |
 | --- | --- |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
-| `basaltwater-agent-workspace` | Isolated branches and worktrees for concurrent tasks |
+| `basaltwater-agent-workspace` | Bounded delegation, isolated editors, merge-based integration, and project model learning |
 | `basaltwater-deploy-smoke` | Preflight and layered smoke checks for test deployments |
 | `basaltwater-shared-assets` | SMB/SSHFS asset boundaries and Git LFS workflows |
 | `basaltwater-vm-triage` | Redacted host diagnostics and support snapshots |
+
+The workspace skill ships a complete worktree lifecycle and cost-aware OpenAI
+model guidance. The parent owns file assignments, standard worker handoffs,
+integration, validation, outcome recording, and cleanup. Read-only reviewers
+can inspect the primary checkout; editors need isolation. Project policies and
+reviewed results support new model IDs without a Basaltwater upgrade. See
+[Subagent workflows and model choices](AGENT_SUBAGENTS.md) for commands,
+adaptation, and the standard-service/no-max defaults.
 
 Browser guidance is selected from the resolved setup instead of being included
 in the base catalog:

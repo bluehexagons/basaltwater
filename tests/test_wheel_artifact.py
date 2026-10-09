@@ -32,10 +32,14 @@ class WheelArtifactTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "generated Python artifacts"):
                 check_wheel_artifact._check_wheel_contents(wheel)
 
-    def test_rejects_missing_native_desktop_guidance(self) -> None:
+    def test_rejects_missing_workflow_resources(self) -> None:
         resources = (
             "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
+            "lib/agent_models.py",
+            "common/agent_skills/basaltwater-agent-workspace/references/lifecycle.md",
+            "common/agent_skills/basaltwater-agent-workspace/references/model-selection.md",
+            "common/agent_skills/basaltwater-agent-workspace/assets/agent-models.json",
         )
         for missing in resources:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:

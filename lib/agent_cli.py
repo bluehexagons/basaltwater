@@ -161,6 +161,9 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_blender import add_blender_parser
 
     add_blender_parser(commands)
+    from lib.agent_models import add_models_parser
+
+    add_models_parser(commands)
     doctor = commands.add_parser(
         "doctor",
         help="Check installed agent tools and local credential files",
@@ -377,7 +380,7 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     workspace_list.add_argument("--json", action="store_true")
     workspace_status = workspace_commands.add_parser(
         "status",
-        help="Show branch and dirty state for one worktree",
+        help="Show branch, dirty state, and ancestry against the primary checkout",
     )
     workspace_status.add_argument("path", metavar="WORKTREE")
     workspace_status.add_argument("--json", action="store_true")
@@ -2585,6 +2588,11 @@ def run_agent_command(args: argparse.Namespace) -> int:
 
         return run_agent_workspace_command(args)
 
+    if args.agent_command == "models":
+        from lib.agent_models import run_models_command
+
+        return run_models_command(args)
+
     if args.agent_command == "support-bundle":
         from lib.agent_support import run_agent_support_command
 
@@ -2767,7 +2775,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, visuals, blender, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

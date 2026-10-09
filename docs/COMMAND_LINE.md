@@ -23,6 +23,7 @@ Related pages:
 - [`GIT_ACCESS.md`](./GIT_ACCESS.md) for Git policy and HTTPS authentication
 - [`AGENT_SKILLS.md`](./AGENT_SKILLS.md) for managed Codex/OpenCode/Claude workflow
   skills and capability routing
+- [`AGENT_SUBAGENTS.md`](./AGENT_SUBAGENTS.md) for subagent integration and project model learning
 - [`AGENT_SECURITY.md`](./AGENT_SECURITY.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
 - [`AGENTIC_VMS.md`](./AGENTIC_VMS.md) for headless, full-capability,
@@ -85,6 +86,7 @@ basaltw agent auth login HOST USER [--open-browser] [--method subscription|api-k
 basaltw agent privilege <request|status|wait|password-hash> ...
 basaltw agent web pair HOST USER [-k PATH]
 basaltw agent workspace <create|list|status|remove> ...
+basaltw agent models <init|recommend|record|report> ...
 basaltw agent maintenance <hold|status|release> [HOST USER] [options]
 basaltw agent support-bundle [--output PATH] [--browser-smoke]
 basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
@@ -951,7 +953,11 @@ basaltw agent update --json
 basaltw agent update 10.0.0.10 agent --tool codex --dry-run
 basaltw agent workspace create ~/repos/project api-check --base HEAD --json
 basaltw agent workspace list ~/repos/project --json
+basaltw agent workspace status WORKTREE --json
 basaltw agent workspace remove WORKTREE --dry-run --json
+basaltw agent models init ~/repos/project --json
+basaltw agent models recommend ~/repos/project coding --available SESSION_MODELS.json --json
+basaltw agent models report ~/repos/project --json
 basaltw agent maintenance hold --hours 8
 basaltw agent maintenance status --json
 basaltw agent maintenance release 10.0.0.10 agent
@@ -1063,6 +1069,28 @@ accepts only a registered worktree below that managed root, refuses dirty or
 untracked work, requires an `agent/*`
 branch merged into the primary checkout's current `HEAD`, and never has a
 force mode. Use its `--dry-run` before cleanup.
+
+`status` also reports the primary repository, its current branch and commit,
+and `merged_into_primary`. Normal merges preserve the ancestry required by
+cleanup; cherry-pick and squash require later source-branch integration or
+retaining the worktree. The parent owns integration and removal. See the
+[complete workflow](AGENT_SUBAGENTS.md).
+
+`agent models init REPOSITORY` creates `.basaltwater/agent-models.json` in the
+primary checkout and refuses to overwrite existing policies. `recommend
+REPOSITORY TASK_CLASS --available JSON_FILE` intersects current session
+capabilities with fresh verified catalog metadata and reviewed project results;
+it never invokes a model or changes session settings. Astra requires
+`--astra-reason JUSTIFICATION`. Recommendations exclude fast service, `max`,
+and `ultra`, and return nonzero with a null selection when none is eligible.
+`record REPOSITORY --task CLASS --model ID --effort EFFORT --outcome
+accepted|reworked|failed --validation TEXT` stores the parent's outcome in
+`.basaltwater/agent-model-results.json`. Optional `--cost-usd`, `--seconds`,
+`--rework-minutes`, and `--attempts` retain observed cost, latency, rework, and
+retry evidence; unavailable billing stays unknown. `report REPOSITORY` groups
+history by task, evaluation version, exact model, and effort. All four commands
+emit JSON and accept `--json`. New model IDs need project catalog edits, not
+code changes. See [model choices and adaptation](AGENT_SUBAGENTS.md).
 
 `agent maintenance hold` creates or renews a private automatic-restart hold
 for 8 hours by default. `--hours N` accepts 1–72 hours, `status` reports the
