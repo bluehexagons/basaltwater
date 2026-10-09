@@ -14,6 +14,21 @@ from lib.operation_state import OperationStateError, OperationStateStore
 
 
 class TestOperationStateStore(unittest.TestCase):
+    def test_recovery_transition_rejects_a_changed_record_with_the_same_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "operation.json")
+            store = OperationStateStore(path)
+            self.addCleanup(store.close)
+            started = store.begin("setup", "host", "applying")
+            eligible = store.transition(started.operation_id, "recovery", status="recovery_required")
+            store.close()
+            other = OperationStateStore(path)
+            updated = other.transition(started.operation_id, "applying")
+            other.close()
+            with self.assertRaisesRegex(OperationStateError, "changed before recovery"):
+                store.transition(started.operation_id, "applying", expected_record=eligible)
+            self.assertEqual(store.load(), updated)
+
     def test_failed_completion_fsync_restores_marker_and_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "operation.json")

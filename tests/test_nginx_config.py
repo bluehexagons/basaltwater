@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +27,9 @@ from lib.nginx_config import (
     generate_merged_nginx_config,
     SSL_PROTOCOLS,
 )
+from lib import nginx_config as nginx
+from lib.operation_state import OperationStateError, OperationStateStore
+from lib.remote_utils import CommandTimeoutError
 
 
 class TestGetSslCertPath(unittest.TestCase):
@@ -291,6 +298,12 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
 
 
 class TestReconcileDeploymentSites(unittest.TestCase):
+    def setUp(self):
+        for target, value in (("is_dry_run", False), ("_is_legacy_rails_site", False)):
+            mocked = patch.object(nginx, target, return_value=value)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
     def test_preserves_legacy_rails_site_owned_by_existing_unit(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             available = os.path.join(temp_dir, 'sites-available')
@@ -416,7 +429,9 @@ server {
             }]
 
             with patch('lib.nginx_config.NGINX_SITES_AVAILABLE_DIR', available), \
-                 patch('lib.nginx_config.NGINX_SITES_ENABLED_DIR', enabled):
+                 patch('lib.nginx_config.NGINX_SITES_ENABLED_DIR', enabled), \
+                 patch('lib.nginx_config._self_signed_cert_path', side_effect=lambda name:
+                       (os.path.join(temp_dir, name + '.crt'), os.path.join(temp_dir, name + '.key'))):
                 with self.assertRaisesRegex(RuntimeError, 'configuration test'):
                     create_nginx_sites_for_groups(
                         {'example.com': deployments},
@@ -426,6 +441,219 @@ server {
             with open(config_path, 'r', encoding='utf-8') as handle:
                 self.assertEqual(handle.read(), previous)
             self.assertTrue(os.path.islink(os.path.join(enabled, 'example_com')))
+
+
+class TestNginxTransaction(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.available = self.root / "sites-available"
+        self.enabled = self.root / "sites-enabled"
+        self.ssl = self.root / "ssl"
+        for directory in (self.available, self.enabled, self.ssl):
+            directory.mkdir()
+        self.config = self.available / "example_com"
+        self.old = (GENERATED_CONFIG_MARKER + "\n# previous\n").encode()
+        self.config.write_bytes(self.old)
+        self.config.chmod(0o640)
+        self.link = self.enabled / "example_com"
+        self.link.symlink_to(self.config)
+        self.stale = self.available / "stale_com"
+        self.stale.write_bytes(self.old)
+        (self.enabled / "stale_com").symlink_to(self.stale)
+        (self.available / "manual").write_text("unmanaged")
+        self.cert = self.ssl / "example.com.crt"
+        self.key = self.ssl / "example.com.key"
+        self.cert.write_bytes(b"previous certificate")
+        self.key.write_bytes(b"private previous key")
+        self.key.chmod(0o600)
+        self.marker = self.root / ".basaltwater-nginx-operation.json"
+        self.groups = {"example.com": [{"path": "/", "needs_proxy": False, "serve_path": "/srv/new"}]}
+        self.loaded = self.old
+        self.commands = []
+        self.reloads = 0
+        self.fail_reload = set()
+        self.fail_validation = False
+        for target, kwargs in (
+            ("NGINX_SITES_AVAILABLE_DIR", {"new": str(self.available)}),
+            ("NGINX_SITES_ENABLED_DIR", {"new": str(self.enabled)}),
+            ("is_dry_run", {"return_value": False}),
+            ("_is_legacy_rails_site", {"return_value": False}),
+            ("_self_signed_cert_path", {"side_effect": self.cert_paths}),
+            ("get_ssl_cert_path", {"side_effect": lambda domain: self.cert_paths(domain or "default")}),
+            ("generate_self_signed_cert", {"side_effect": self.generate_cert}),
+            ("run", {"side_effect": self.run_command}),
+        ):
+            mocked = patch.object(nginx, target, **kwargs)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
+    def cert_paths(self, name):
+        return str(self.ssl / (name + ".crt")), str(self.ssl / (name + ".key"))
+
+    def generate_cert(self, name):
+        cert, key = self.cert_paths(name)
+        Path(cert).write_bytes(b"new certificate")
+        Path(key).write_bytes(b"new key")
+
+    def run_command(self, command, **kwargs):
+        self.commands.append(command)
+        if command == "nginx -t" and self.fail_validation:
+            self.fail_validation = False
+            return subprocess.CompletedProcess(command, 1, "", "")
+        if command == "systemctl reload nginx":
+            self.reloads += 1
+            self.loaded = self.config.read_bytes() if self.config.exists() else b"new site"
+            if self.reloads in self.fail_reload:
+                raise CommandTimeoutError(command, 1)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def apply(self):
+        create_nginx_sites_for_groups(self.groups)
+
+    def assert_restored(self):
+        self.assertEqual(self.config.read_bytes(), self.old)
+        self.assertEqual(self.config.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.loaded, self.old)
+        self.assertEqual(self.stale.read_bytes(), self.old)
+        self.assertEqual(os.readlink(self.link), str(self.config))
+        self.assertEqual(self.cert.read_bytes(), b"previous certificate")
+        self.assertEqual(self.key.read_bytes(), b"private previous key")
+        self.assertEqual(self.key.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.available / "manual").read_text(), "unmanaged")
+
+    def test_success_keeps_new_files_and_result_after_durable_completion(self):
+        self.apply()
+        self.assertIn(b"/srv/new", self.config.read_bytes())
+        self.assertEqual(self.loaded, self.config.read_bytes())
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(self.stale.exists())
+        self.assertFalse(list(self.root.glob(".basaltwater-nginx-*/")))
+        result = json.loads(Path(str(self.marker) + ".last.json").read_text())
+        self.assertEqual(result["outcome"], "succeeded")
+
+    def test_validation_failure_restores_sites_tls_and_reloads_previous_config(self):
+        self.fail_validation = True
+        with self.assertRaisesRegex(RuntimeError, "configuration test failed"):
+            self.apply()
+        self.assert_restored()
+        self.assertEqual(self.reloads, 1)
+        self.assertFalse(self.marker.exists())
+
+    def test_reload_timeout_after_effect_restores_loaded_previous_config(self):
+        self.fail_reload = {1}
+        with self.assertRaises(CommandTimeoutError):
+            self.apply()
+        self.assert_restored()
+        self.assertEqual(self.reloads, 2)
+        self.assertFalse(self.marker.exists())
+
+    def test_failed_restore_reload_retains_private_snapshot_and_blocks_retry(self):
+        self.fail_reload = {1, 2}
+        with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
+            self.apply()
+        record = OperationStateStore(str(self.marker)).load()
+        self.assertEqual(record.status, "recovery_required")
+        snapshot = Path(record.context["backup_dir"]) / "previous.json"
+        previous = json.loads(snapshot.read_text())
+        self.assertEqual(base64.b64decode(previous[str(self.key)]["content_base64"]), b"private previous key")
+        self.assertEqual(snapshot.stat().st_mode & 0o777, 0o600)
+        calls = len(self.commands)
+        with self.assertRaisesRegex(OperationStateError, "Unfinished"):
+            self.apply()
+        self.assertEqual(len(self.commands), calls)
+
+    def test_failed_file_restore_does_not_reload_partial_configuration(self):
+        self.fail_reload = {1}
+        original = nginx.write_bytes_atomic
+
+        def write(path, content, **kwargs):
+            if path == str(self.config) and content == self.old:
+                raise OSError("restore failed")
+            original(path, content, **kwargs)
+
+        with patch.object(nginx, "write_bytes_atomic", side_effect=write):
+            with self.assertRaisesRegex(RuntimeError, "recovery was incomplete"):
+                self.apply()
+        self.assertEqual(self.reloads, 1)
+        self.assertEqual(self.key.read_bytes(), b"private previous key")
+        self.assertTrue(self.marker.exists())
+
+    def test_failed_finalization_preserves_snapshot_after_rollback(self):
+        with patch.object(OperationStateStore, "complete", side_effect=OSError("result storage failed")):
+            with self.assertRaisesRegex(OSError, "result storage failed"):
+                self.apply()
+        self.assert_restored()
+        record = OperationStateStore(str(self.marker)).load()
+        self.assertTrue((Path(record.context["backup_dir"]) / "previous.json").exists())
+
+    def test_new_sites_and_tls_files_are_removed_on_rollback(self):
+        self.groups = {"new.example.com": self.groups["example.com"]}
+        self.fail_validation = True
+        with self.assertRaises(RuntimeError):
+            self.apply()
+        self.assert_restored()
+        for path in (self.available / "new_example_com", self.enabled / "new_example_com",
+                     self.ssl / "new.example.com.crt", self.ssl / "new.example.com.key"):
+            self.assertFalse(path.exists())
+
+    def test_process_death_leaves_durable_snapshot_and_guard(self):
+        script = '''
+import os, sys
+from pathlib import Path
+from subprocess import CompletedProcess
+from unittest.mock import patch
+from lib import nginx_config as n
+root = Path(sys.argv[1])
+n.NGINX_SITES_AVAILABLE_DIR = str(root / "sites-available")
+n.NGINX_SITES_ENABLED_DIR = str(root / "sites-enabled")
+def crash(*args, **kwargs):
+    (root / "sites-available" / "example_com").write_bytes(b"interrupted replacement")
+    os._exit(9)
+with patch.object(n, "run", side_effect=lambda command, **kwargs: CompletedProcess(command, 0)), \\
+     patch.object(n, "_self_signed_cert_path", side_effect=lambda name: (str(root / "ssl" / (name + ".crt")), str(root / "ssl" / (name + ".key")))), \\
+     patch.object(n, "_write_nginx_sites_for_groups", side_effect=crash):
+    n.create_nginx_sites_for_groups({"example.com": []})
+'''
+        result = subprocess.run([sys.executable, "-c", script, str(self.root)], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 9, result.stderr)
+        record = OperationStateStore(str(self.marker)).load()
+        self.assertEqual(record.phase, "applying")
+        previous = json.loads((Path(record.context["backup_dir"]) / "previous.json").read_text())
+        self.assertEqual(base64.b64decode(previous[str(self.config)]["content_base64"]), self.old)
+        with self.assertRaises(OperationStateError):
+            self.apply()
+
+    def test_invalid_domains_special_files_and_tls_links_fail_before_mutation(self):
+        for domain in ("../escape", "example.com\nother"):
+            with self.subTest(domain=domain), self.assertRaises(ValueError):
+                create_nginx_sites_for_groups({domain: []})
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            create_nginx_sites_for_groups({None: [], "default": []})
+        invalid_path = self.available / "invalid\nname"
+        invalid_path.write_bytes(self.old)
+        with self.assertRaisesRegex(ValueError, "control"):
+            self.apply()
+        invalid_path.unlink()
+        fifo = self.available / "pipe"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(ValueError, "Unsafe"):
+            self.apply()
+        fifo.unlink()
+        self.key.unlink()
+        self.key.symlink_to(self.cert)
+        with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+            self.apply()
+        self.assertEqual(self.config.read_bytes(), self.old)
+        self.assertEqual(self.reloads, 0)
+
+    def test_dry_run_creates_no_recovery_artifacts(self):
+        with patch.object(nginx, "is_dry_run", return_value=True):
+            self.apply()
+        self.assert_restored()
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.commands, [])
 
 
 if __name__ == '__main__':

@@ -18,6 +18,8 @@ know.
   Old-release cleanup failures retain the backup without rejecting activation.
   Static releases also record interruption state and restore the old tree when
   activation or metadata persistence fails.
+  A plain static deployment refuses to overwrite a release with managed
+  services; first deploy an all-static manifest to retire those units safely.
 - Repository symlinks and special files are rejected on the controller before
   manifest inspection or upload. Target-side source copying also refuses links.
 - Artifact uploads validate and normalize local source paths and separate rsync
@@ -41,13 +43,18 @@ know.
   interrupted and incomplete-recovery markers block another deployment.
   Static and manifest deployments share the lock and check each other's markers.
   Rollback restores previous manifest port assignments along with release files.
-- Deployment-owned Nginx files are snapshotted and restored when `nginx -t`
-  rejects a generated configuration.
+- Deployment-owned Nginx sites, enabled links and selected generated TLS files
+  have private durable snapshots and an operation lock/marker. Failed validation,
+  reload or finalization restores, validates and reloads the previous
+  configuration. Incomplete recovery blocks retry and preserves the snapshot.
+  Nginx must already be active; this path does not start an inactive daemon.
 - Services that declare `sqlite_backup` receive a consistent SQLite API backup
   while the old unit is verified inactive and before replacement, with
   an integrity check and manifest-controlled retention. Symlinked backup
   directories and pre-existing temporary backup paths are rejected before a
   privileged backup is written.
+  Backup contents and publication are synced before pruning older archives;
+  retention preserves the new recovery point even if the clock moved backwards.
 - Installs a weekly cleanup timer and caps journal growth on server-style
   setups.
 - Uses conservative package-update policy for Node and uv by default.

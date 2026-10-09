@@ -29,7 +29,101 @@ def setUpModule():
 
 class TestRemoteSetupArgsFile(unittest.TestCase):
     def tearDown(self):
+        if remote_setup._active_setup_operation is not None:
+            remote_setup._active_setup_operation[0].close()
         remote_setup._active_setup_operation = None
+
+    def test_failed_main_releases_ownership_and_allows_matching_retry_in_process(self):
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            remote_setup, "SETUP_OPERATION_FILE", os.path.join(directory, "operation.json"),
+        ), patch.object(remote_setup, "record_setup_activity"), patch.object(
+            remote_setup, "_remove_secret_payloads",
+        ):
+            def failure():
+                remote_setup._begin_setup_operation(config)
+                raise RuntimeError("original step failure")
+
+            with patch.object(remote_setup, "_run_main", side_effect=failure):
+                with self.assertRaisesRegex(RuntimeError, "original step failure"):
+                    remote_setup.main()
+            self.assertIsNone(remote_setup._active_setup_operation)
+
+            def recovery():
+                remote_setup._begin_setup_operation(config)
+                remote_setup._complete_setup_operation()
+                return 0
+
+            with patch.object(remote_setup, "_run_main", side_effect=recovery):
+                self.assertEqual(remote_setup.main(), 0)
+
+    def test_failure_annotation_error_preserves_original_exception_and_marker(self):
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        original = OperationStateStore.transition
+
+        def transition(store, operation_id, phase, **kwargs):
+            if phase == "recovery":
+                raise OSError("marker storage failed")
+            return original(store, operation_id, phase, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            marker = os.path.join(directory, "operation.json")
+
+            def failure():
+                remote_setup._begin_setup_operation(config)
+                raise RuntimeError("original step failure")
+
+            with patch.object(remote_setup, "SETUP_OPERATION_FILE", marker), patch.object(
+                remote_setup, "record_setup_activity",
+            ), patch.object(remote_setup, "_remove_secret_payloads"), patch.object(
+                remote_setup, "_run_main", side_effect=failure,
+            ), patch.object(OperationStateStore, "transition", transition):
+                with self.assertRaisesRegex(RuntimeError, "original step failure"):
+                    remote_setup.main()
+            self.assertIsNone(remote_setup._active_setup_operation)
+            store = OperationStateStore(marker)
+            record = store.load()
+            self.assertEqual(record.status, "in_progress")
+            store.transition(record.operation_id, "recovery", status="recovery_required")
+            store.close()
+
+    def test_failed_completion_cannot_record_successful_security_activity(self):
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            remote_setup, "SETUP_OPERATION_FILE", os.path.join(directory, "operation.json"),
+        ), patch.object(remote_setup, "record_setup_activity") as audit:
+            remote_setup._begin_setup_operation(config)
+            with patch.object(OperationStateStore, "complete", side_effect=OSError("completion failed")):
+                with self.assertRaises(OSError):
+                    remote_setup._complete_setup_operation()
+            self.assertEqual([call.args[1] for call in audit.call_args_list], ["in_progress"])
+
+    def test_changed_recovery_marker_is_rejected_and_failed_begin_releases_lock(self):
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            remote_setup, "SETUP_OPERATION_FILE", os.path.join(directory, "operation.json"),
+        ), patch.object(remote_setup, "record_setup_activity"):
+            store = OperationStateStore(remote_setup.SETUP_OPERATION_FILE)
+            started = store.begin("target_setup", config.system_type, "applying", context={
+                "system_type": config.system_type, "username": config.username, "machine_type": config.machine_type,
+            })
+            store.transition(started.operation_id, "recovery", status="recovery_required")
+            store.close()
+            original = OperationStateStore.transition
+
+            def raced_transition(owner, operation_id, phase, **kwargs):
+                competing = OperationStateStore(owner.path)
+                original(competing, operation_id, "applying")
+                competing.close()  # Simulate a competing recovery that died.
+                return original(owner, operation_id, phase, **kwargs)
+
+            with patch.object(OperationStateStore, "transition", raced_transition):
+                with self.assertRaisesRegex(OperationStateError, "changed before recovery"):
+                    remote_setup._begin_setup_operation(config)
+            self.assertIsNone(remote_setup._active_setup_operation)
+            # The rejected begin must not hold ownership via its traceback.
+            store.transition(started.operation_id, "recovery", status="recovery_required")
+            store.close()
 
     def test_main_prints_run_notes_after_success(self):
         def fake_run() -> int:

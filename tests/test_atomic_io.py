@@ -10,10 +10,33 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.atomic_io import fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_bytes_atomic, write_json_atomic, write_text_atomic
 
 
 class TestAtomicIO(unittest.TestCase):
+    def test_new_parent_entries_are_synced_before_publishing_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = os.path.join(directory, "state", "app")
+            target = os.path.join(parent, "operation.json")
+            synced = []
+
+            def sync(path):
+                if path != parent:
+                    self.assertFalse(os.path.exists(target))
+                synced.append(path)
+
+            with patch("lib.atomic_io._fsync_directory", side_effect=sync):
+                write_json_atomic(target, {"phase": "applying"})
+            self.assertEqual(synced, [directory, os.path.dirname(parent), parent])
+
+    def test_binary_snapshot_contents_and_permissions_are_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "snapshot")
+            write_bytes_atomic(path, b"\xff\x00private", mode=0o640, uid=os.getuid(), gid=os.getgid())
+            with open(path, "rb") as stream:
+                self.assertEqual(stream.read(), b"\xff\x00private")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o640)
+
     def test_invalid_json_constants_and_duplicate_keys_are_rejected_without_values(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "state.json")

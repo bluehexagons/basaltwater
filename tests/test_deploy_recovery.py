@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -41,6 +42,9 @@ class TestReleaseRecovery(unittest.TestCase):
         self.units = patch.object(self.orchestrator, "_app_unit_snapshots", return_value={})
         self.units.start()
         self.addCleanup(self.units.stop)
+        inventory = patch.object(self.orchestrator, "_app_unit_names", return_value=set())
+        inventory.start()
+        self.addCleanup(inventory.stop)
 
     def deploy(self, *, manifest=False, keep_source=True):
         args = (str(self.source), "example.com", "/", "https://example.test/site.git", "new")
@@ -55,6 +59,16 @@ class TestReleaseRecovery(unittest.TestCase):
         self.assertEqual((self.dest / "index.html").read_text(), "old")
         self.assertFalse((self.state / "static-operation.json").exists())
         self.assertEqual(list(self.base.glob("*.failed-*")), [])
+
+    def test_static_deploy_refuses_to_overwrite_a_managed_service_release(self):
+        with patch.object(self.orchestrator, "_app_unit_names", return_value={"app-example_com-api"}), patch(
+            "lib.deployment.run",
+        ) as command:
+            with self.assertRaisesRegex(RuntimeError, "retire those services"):
+                self.deploy()
+        self.assertEqual((self.dest / "index.html").read_text(), "old")
+        command.assert_not_called()
+        self.assertFalse((self.state / "static-operation.json").exists())
 
     def test_static_first_release_metadata_failure_removes_failed_activation(self):
         (self.dest / "index.html").unlink()
@@ -406,3 +420,81 @@ class TestReleaseRecovery(unittest.TestCase):
                 self.deploy(manifest=True)
         restore.assert_not_called()
         self.assertEqual((self.dest / "index.html").read_text(), "new")
+
+
+class TestSQLiteBackupDurability(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.orchestrator = DeploymentOrchestrator(base_dir=str(self.root))
+        self.component = parse_manifest({"version": 1, "components": [{
+            "name": "api", "type": "service", "domain": "example.com",
+            "exec": "/bin/true", "port": 8123,
+            "sqlite_backup": "{{data_dir}}/app.sqlite3", "backup_retention": 1,
+        }]}).components[0]
+        self.dest = str(self.root / "app")
+        data = Path(self.orchestrator._component_data_dir(self.dest, self.component))
+        data.mkdir(parents=True)
+        with sqlite3.connect(data / "app.sqlite3") as database:
+            database.execute("CREATE TABLE demo (value INTEGER)")
+            database.execute("INSERT INTO demo VALUES (7)")
+        self.backups = Path(self.orchestrator._component_shared_dir(self.dest, self.component)) / "backups"
+        self.backups.mkdir()
+        self.old = self.backups / "api_old.sqlite3"
+        self.old.write_bytes(b"previous archive")
+        os.utime(self.old, (4102444800, 4102444800))
+        runner = patch("lib.deployment.run", side_effect=lambda command, **kwargs: CompletedProcess(command, 0, "", ""))
+        runner.start()
+        self.addCleanup(runner.stop)
+
+    def backup(self):
+        self.orchestrator._backup_component_sqlite(self.component, self.dest, None)
+
+    def test_flush_and_durable_publish_precede_pruning_and_keep_newest_data(self):
+        from lib.atomic_io import remove_file_durable, rename_path_durable
+        sync = os.fsync
+        events = []
+
+        def flush(descriptor):
+            events.append("flush")
+            sync(descriptor)
+
+        def publish(source, destination):
+            self.assertIn("flush", events)
+            rename_path_durable(source, destination)
+            events.append("publish")
+
+        def prune(path):
+            self.assertIn("publish", events)
+            remove_file_durable(path)
+
+        with patch("lib.deployment.os.fsync", side_effect=flush), patch(
+            "lib.deployment.rename_path_durable", side_effect=publish,
+        ), patch("lib.deployment.remove_file_durable", side_effect=prune):
+            self.backup()
+        remaining = list(self.backups.glob("*.sqlite3"))
+        self.assertEqual(len(remaining), 1)
+        self.assertNotEqual(remaining[0], self.old)
+        with sqlite3.connect(remaining[0]) as database:
+            self.assertEqual(database.execute("SELECT value FROM demo").fetchone(), (7,))
+
+    def test_file_sync_failure_preserves_older_archives(self):
+        with patch("lib.deployment.os.fsync", side_effect=OSError("file sync failed")):
+            with self.assertRaisesRegex(OSError, "file sync failed"):
+                self.backup()
+        self.assertEqual(self.old.read_bytes(), b"previous archive")
+        self.assertEqual(list(self.backups.glob("*.sqlite3")), [self.old])
+
+    def test_directory_sync_failure_after_publish_preserves_older_archives(self):
+        from lib.atomic_io import rename_path_durable
+
+        def publish(source, destination):
+            rename_path_durable(source, destination)
+            raise OSError("directory sync failed after rename")
+
+        with patch("lib.deployment.rename_path_durable", side_effect=publish):
+            with self.assertRaisesRegex(OSError, "directory sync failed"):
+                self.backup()
+        self.assertEqual(self.old.read_bytes(), b"previous archive")
+        self.assertEqual(len(list(self.backups.glob("*.sqlite3"))), 2)

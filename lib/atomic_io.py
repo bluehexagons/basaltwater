@@ -1,4 +1,4 @@
-"""Crash-safe helpers for small persistent text and JSON files."""
+"""Crash-safe helpers for persistent files and release trees."""
 
 from __future__ import annotations
 
@@ -62,25 +62,35 @@ def write_text_atomic(
     path: str, content: str, *, mode: int = 0o600,
     uid: int = -1, gid: int = -1,
 ) -> None:
-    """Write text using a same-directory temporary file and atomic replace.
+    """Encode text and persist it through :func:`write_bytes_atomic`."""
+    write_bytes_atomic(path, content.encode("utf-8"), mode=mode, uid=uid, gid=gid)
+
+
+def write_bytes_atomic(
+    path: str, content: bytes, *, mode: int = 0o600,
+    uid: int = -1, gid: int = -1,
+) -> None:
+    """Write bytes using a same-directory temporary file and atomic replace.
 
     The temporary file is flushed and fsynced before replacement, and the
     containing directory is synced after replacement so an interrupted write
     cannot leave a partial target file behind.
     """
 
+    if not isinstance(content, bytes):
+        raise TypeError("Atomic file content must be bytes")
     target_path = os.path.abspath(path)
+    validate_filesystem_path(target_path)
     parent_dir = os.path.dirname(target_path)
-    os.makedirs(parent_dir, exist_ok=True)
+    ensure_directory_durable(parent_dir)
 
     file_descriptor, temporary_path = tempfile.mkstemp(
         dir=parent_dir,
         prefix=f".{os.path.basename(target_path)}-",
-        text=True,
     )
     descriptor_open = True
     try:
-        with os.fdopen(file_descriptor, "w", encoding="utf-8") as file_obj:
+        with os.fdopen(file_descriptor, "wb") as file_obj:
             descriptor_open = False
             file_obj.write(content)
             file_obj.flush()
@@ -113,6 +123,24 @@ def write_json_atomic(
 
     content = json.dumps(value, indent=indent, sort_keys=sort_keys, allow_nan=False) + "\n"
     write_text_atomic(path, content, mode=mode, uid=uid, gid=gid)
+
+
+def ensure_directory_durable(path: str) -> None:
+    """Create directories and sync each new entry in its containing directory.
+
+    Syncing a newly written file's immediate parent alone does not persist that
+    parent's own entry when the directory hierarchy was also just created.
+    """
+    directory = os.path.abspath(path)
+    validate_filesystem_path(directory)
+    missing = []
+    current = directory
+    while not os.path.lexists(current):
+        missing.append(current)
+        current = os.path.dirname(current)
+    os.makedirs(directory, exist_ok=True)
+    for created in reversed(missing):
+        _fsync_directory(os.path.dirname(created))
 
 
 def remove_file_durable(path: str) -> bool:

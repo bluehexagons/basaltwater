@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import os
 import shlex
 import shutil
+import stat
 import tempfile
 from typing import Optional, Sequence
 
 from lib.types import Deployments, StrList, PathPair
-from lib.remote_utils import run
+from lib.atomic_io import fsync_tree, remove_file_durable, write_bytes_atomic, write_json_atomic
+from lib.operation_state import OperationStateStore
+from lib.remote_utils import is_dry_run, run
+from lib.validation import validate_filesystem_path
+from lib.validators import validate_host
 
 
 SSL_PROTOCOLS = "TLSv1.2 TLSv1.3"
@@ -26,20 +32,29 @@ def _config_name_for_domain(domain: Optional[str]) -> str:
 
 
 def _remove_path(path: str) -> None:
-    if not os.path.lexists(path):
-        return
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path)
-    else:
-        os.remove(path)
+    remove_file_durable(path)
+
+
+def _read_config_file(path: str) -> tuple[bytes, int, int, int]:
+    validate_filesystem_path(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ValueError(f"Unsafe Nginx configuration file: {path}")
+        content = handle.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise ValueError(f"Nginx configuration file exceeds 1 MiB: {path}")
+    return content, stat.S_IMODE(info.st_mode), info.st_uid, info.st_gid
 
 
 def _is_basaltwater_deployment_site(path: str) -> bool:
     read_path = os.path.realpath(path) if os.path.islink(path) else path
+    if os.path.isdir(read_path):
+        return False
     try:
-        with open(read_path, 'r', encoding='utf-8') as handle:
-            content = handle.read()
-    except OSError:
+        content = _read_config_file(read_path)[0].decode("utf-8")
+    except (OSError, UnicodeError):
         return False
 
     if GENERATED_CONFIG_MARKER in content:
@@ -68,24 +83,6 @@ def _is_legacy_rails_site(config_name: str) -> bool:
         )
     except OSError:
         return False
-
-
-def _write_config_atomic(path: str, content: bytes, mode: int = 0o644) -> None:
-    """Replace a config file without exposing a partial write."""
-    fd, temporary_path = tempfile.mkstemp(
-        prefix=f".{os.path.basename(path)}.",
-        dir=os.path.dirname(path),
-    )
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary_path, mode)
-        os.replace(temporary_path, path)
-    finally:
-        if os.path.exists(temporary_path):
-            os.unlink(temporary_path)
 
 
 def _assert_managed_config_names(current_config_names: set[str]) -> None:
@@ -130,7 +127,7 @@ def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
                 print(f"  ✓ Removed stale nginx config: {path}")
 
 
-def _snapshot_deployment_sites(current_config_names: set[str]) -> dict[str, tuple[str, object]]:
+def _snapshot_deployment_sites(current_config_names: set[str], extra_paths: tuple[str, ...]) -> dict[str, tuple[str, object]]:
     snapshot: dict[str, tuple[str, object]] = {}
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
         if not os.path.isdir(directory):
@@ -140,31 +137,59 @@ def _snapshot_deployment_sites(current_config_names: set[str]) -> dict[str, tupl
             if name not in current_config_names and not _is_basaltwater_deployment_site(path):
                 continue
             if os.path.islink(path):
-                snapshot[path] = ("symlink", os.readlink(path))
+                info = os.lstat(path)
+                snapshot[path] = ("symlink", (os.readlink(path), info.st_uid, info.st_gid))
             elif os.path.isfile(path):
-                with open(path, "rb") as handle:
-                    snapshot[path] = ("file", (handle.read(), os.stat(path).st_mode & 0o777))
+                snapshot[path] = ("file", _read_config_file(path))
+    for path in extra_paths:
+        if os.path.islink(path):
+            raise ValueError(f"Managed TLS file must not be a symlink: {path}")
+        if os.path.lexists(path):
+            snapshot[path] = ("file", _read_config_file(path))
     return snapshot
 
 
 def _restore_deployment_sites(
     snapshot: dict[str, tuple[str, object]],
     current_config_names: set[str],
+    extra_paths: tuple[str, ...],
 ) -> None:
-    for directory in (NGINX_SITES_ENABLED_DIR, NGINX_SITES_AVAILABLE_DIR):
-        if not os.path.isdir(directory):
-            continue
-        for name in os.listdir(directory):
-            path = os.path.join(directory, name)
-            if name in current_config_names or _is_basaltwater_deployment_site(path):
-                _remove_path(path)
-    for path, (kind, value) in snapshot.items():
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+    errors = []
+
+    def attempt(path, action):
+        try:
+            action()
+        except Exception as exc:
+            errors.append(f"{path}: {type(exc).__name__}")
+
+    desired_paths = {
+        os.path.join(directory, name)
+        for directory in (NGINX_SITES_ENABLED_DIR, NGINX_SITES_AVAILABLE_DIR)
+        for name in current_config_names
+    } | set(extra_paths)
+    for path in sorted(desired_paths - snapshot.keys()):
+        attempt(path, lambda path=path: _remove_path(path))
+    # Restore regular files before enabling links; each file replacement is
+    # durable and does not first delete its current contents.
+    for path, (kind, value) in sorted(snapshot.items()):
+        if kind == "file":
+            content, mode, uid, gid = value
+            attempt(path, lambda path=path, content=content, mode=mode, uid=uid, gid=gid:
+                    write_bytes_atomic(path, content, mode=mode, uid=uid, gid=gid))
+    for path, (kind, value) in sorted(snapshot.items()):
         if kind == "symlink":
-            os.symlink(str(value), path)
-        else:
-            content, mode = value
-            _write_config_atomic(path, content, mode)
+            def restore_link(path=path, value=value):
+                target, uid, gid = value
+                _remove_path(path)
+                os.symlink(target, path)
+                os.lchown(path, uid, gid)
+            attempt(path, restore_link)
+    for directory in dict.fromkeys((NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR,
+                                    *(os.path.dirname(path) for path in extra_paths))):
+        if os.path.isdir(directory):
+            attempt(directory, lambda directory=directory: fsync_tree(directory))
+    if errors:
+        raise RuntimeError("Nginx file restoration failed: " + "; ".join(errors))
 
 
 def _self_signed_cert_path(name: str) -> PathPair:
@@ -553,13 +578,15 @@ server {{
     return "\n".join([GENERATED_CONFIG_MARKER, cache_maps, main_config])
 
 
-def _create_nginx_sites_for_groups(
+def _write_nginx_sites_for_groups(
     grouped_deployments: dict[Optional[str], Deployments],
     enable_https_redirect: bool = True,
 ) -> None:
     """Create nginx site configurations for grouped deployments."""
     
     run("mkdir -p /var/www/letsencrypt/.well-known/acme-challenge")
+    for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
+        os.makedirs(directory, exist_ok=True)
     current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
     _reconcile_deployment_sites(current_config_names)
     
@@ -567,10 +594,7 @@ def _create_nginx_sites_for_groups(
         cert_domain = domain or 'default'
         generate_self_signed_cert(cert_domain)
         
-        if domain:
-            config_name = _config_name_for_domain(domain)
-        else:
-            config_name = _config_name_for_domain(domain)
+        config_name = _config_name_for_domain(domain)
 
         config_file = os.path.join(NGINX_SITES_AVAILABLE_DIR, config_name)
         
@@ -581,7 +605,7 @@ def _create_nginx_sites_for_groups(
         )
         
         try:
-            _write_config_atomic(config_file, config_content.encode("utf-8"))
+            write_bytes_atomic(config_file, config_content.encode("utf-8"), mode=0o644)
         except PermissionError as e:
             raise PermissionError(f"Failed to write nginx config to {config_file}: {e}") from e
         
@@ -594,34 +618,116 @@ def _create_nginx_sites_for_groups(
             _remove_path(enabled_link)
 
         if not os.path.lexists(enabled_link):
-            run(f"ln -s {shlex.quote(config_file)} {shlex.quote(enabled_link)}")
+            os.symlink(config_file, enabled_link)
             print(f"  ✓ Enabled nginx site: {config_name}")
-            
-    result = run("nginx -t", check=False)
-    if result.returncode != 0:
-        raise RuntimeError("nginx configuration test failed")
-    run("systemctl reload nginx")
-    print(f"  ✓ nginx reloaded")
 
 
 def create_nginx_sites_for_groups(
     grouped_deployments: dict[Optional[str], Deployments],
     enable_https_redirect: bool = True,
 ) -> None:
-    """Atomically replace deployment-owned Nginx sites after validation."""
+    """Recoverably reconcile deployment sites and their generated TLS files."""
+    for domain in grouped_deployments:
+        if domain is not None and (not isinstance(domain, str) or not validate_host(domain)):
+            raise ValueError("Nginx deployment domain must be a valid host")
+    for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
+        validate_filesystem_path(directory)
+        if os.path.islink(directory):
+            raise ValueError(f"Nginx site directory must not be a symlink: {directory}")
     current_config_names = {_config_name_for_domain(domain) for domain in grouped_deployments}
-    _assert_managed_config_names(current_config_names)
-    snapshot = _snapshot_deployment_sites(current_config_names)
+    if len(current_config_names) != len(grouped_deployments):
+        raise ValueError("Nginx deployment domains produce duplicate configuration names")
+    extra_paths = tuple(path for domain in grouped_deployments for path in _self_signed_cert_path(domain or "default"))
+    for path in extra_paths:
+        validate_filesystem_path(path)
+        if os.path.islink(os.path.dirname(path)):
+            raise ValueError(f"Managed TLS directory must not be a symlink: {os.path.dirname(path)}")
+    if is_dry_run():
+        print("  [DRY-RUN] Would reconcile and reload deployment Nginx sites")
+        return
+    store = OperationStateStore(os.path.join(
+        os.path.dirname(NGINX_SITES_AVAILABLE_DIR), ".basaltwater-nginx-operation.json",
+    ))
+    record = None
+    backup_dir = ""
+    resolved = False
+    modified = False
     try:
-        _create_nginx_sites_for_groups(
-            grouped_deployments,
-            enable_https_redirect=enable_https_redirect,
-        )
-    except Exception:
-        _restore_deployment_sites(snapshot, current_config_names)
-        validation = run("nginx -t", check=False)
-        if validation.returncode != 0:
-            print("  ⚠ Restored previous Nginx files, but their validation also failed")
-        else:
-            print("  ✓ Restored previous Nginx configuration")
-        raise
+        record = store.begin("nginx-reconciliation", NGINX_SITES_AVAILABLE_DIR, "staging")
+        try:
+            _assert_managed_config_names(current_config_names)
+            # The apply path requires reload, so refuse an inactive/uninspectable
+            # daemon before changing files rather than trying to start it.
+            if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
+                raise RuntimeError("Nginx must be active before reconciling deployment sites")
+            snapshot = _snapshot_deployment_sites(current_config_names, extra_paths)
+            backup_dir = tempfile.mkdtemp(prefix=".basaltwater-nginx-", dir=os.path.dirname(store.path))
+            paths = set(snapshot) | set(extra_paths) | {
+                os.path.join(directory, name)
+                for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR)
+                for name in current_config_names
+            }
+            previous = {}
+            for path in sorted(paths):
+                if path not in snapshot:
+                    previous[path] = None
+                    continue
+                kind, value = snapshot[path]
+                if kind == "symlink":
+                    target, uid, gid = value
+                    previous[path] = dict(kind=kind, target=target, uid=uid, gid=gid)
+                else:
+                    content, mode, uid, gid = value
+                    previous[path] = dict(kind=kind, content_base64=base64.b64encode(content).decode("ascii"),
+                                          mode=mode, uid=uid, gid=gid)
+            write_json_atomic(os.path.join(backup_dir, "previous.json"), previous, mode=0o600)
+            context = {"backup_dir": backup_dir, "config_names": sorted(current_config_names)}
+            store.transition(record.operation_id, "applying", context=context)
+            modified = True
+            _write_nginx_sites_for_groups(grouped_deployments, enable_https_redirect=enable_https_redirect)
+            for directory in dict.fromkeys((NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR,
+                                            *(os.path.dirname(path) for path in extra_paths))):
+                if os.path.isdir(directory):
+                    fsync_tree(directory)
+            store.transition(record.operation_id, "verifying")
+            if run("nginx -t", check=False).returncode != 0:
+                raise RuntimeError("nginx configuration test failed")
+            run("systemctl reload nginx")
+            if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
+                raise RuntimeError("Nginx is not active after reload")
+            store.complete(record.operation_id)
+            resolved = True
+        except BaseException as error:
+            errors = []
+            try:
+                store.transition(record.operation_id, "rolling-back")
+            except Exception as exc:
+                errors.append(type(exc).__name__)
+            if modified:
+                try:
+                    _restore_deployment_sites(snapshot, current_config_names, extra_paths)
+                    if run("nginx -t", check=False).returncode != 0:
+                        raise RuntimeError("Restored Nginx configuration test failed")
+                    run("systemctl reload nginx")
+                    if run("systemctl is-active --quiet nginx", check=False, capture_output=True).returncode != 0:
+                        raise RuntimeError("Nginx is not active after restoration")
+                except BaseException as exc:
+                    errors.append(type(exc).__name__)
+            if errors:
+                try:
+                    store.transition(record.operation_id, "recovery", status="recovery_required",
+                                     context={"backup_dir": backup_dir, "errors": errors})
+                except Exception:
+                    pass
+                raise RuntimeError(f"Nginx recovery was incomplete; inspect {store.path} and {backup_dir}") from error
+            store.complete(record.operation_id, outcome="rolled_back" if modified else "failed")
+            resolved = True
+            raise
+    finally:
+        store.close()
+        if backup_dir and resolved:
+            try:
+                shutil.rmtree(backup_dir)
+            except OSError as exc:
+                print(f"  ⚠ Nginx snapshot cleanup failed at {backup_dir}: {exc}")
+    print("  ✓ nginx reloaded")

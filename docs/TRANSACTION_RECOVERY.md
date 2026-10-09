@@ -18,6 +18,7 @@ is a separate operator decision that can discard newer writes.
 | Manifest release | `/var/www/.basaltwater_shared/<app>/manifest-operation.json` | Staging/previous/failed paths, previous ports, desired units, adjacent `manifest-units.previous.json` |
 | Static release | `/var/www/.basaltwater_shared/<app>/static-operation.json` | Staging/previous/failed paths |
 | Systemd replacement or removal | `/etc/systemd/system/.basaltwater-unit-operation.json` | `backup_dir/previous.json` with old files, modes, ownership, and activation states |
+| Deployment Nginx reconciliation | `/etc/nginx/.basaltwater-nginx-operation.json` | `backup_dir/previous.json` with previous site files, links and selected generated certificate/key files |
 
 Release paths follow the configured deployment base. Static and manifest entry
 points share a deployment lock and check both markers, so switching deployment
@@ -43,6 +44,8 @@ sudo python3 -m json.tool /var/lib/basaltwater/setup-operation.json
 ```
 
 Do not publish private snapshots or raw error contexts in support reports.
+Nginx snapshots contain private TLS keys encoded as base64; encoding does not
+make them safe to share.
 
 ## Recover by phase
 
@@ -56,6 +59,8 @@ Do not publish private snapshots or raw error contexts in support reports.
 | Release `rolling-back` or `recovery` | Restoration itself may be interrupted | Inspect destination, backup and failed paths before moving anything. A backup may already be consumed by restoration. Check every recorded unit and port assignment; retain the rejected tree until recovery is verified. |
 | Units `staging` or `validating` | Private candidates and snapshots | Live files and running states have not changed. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
 | Units `replacing`, `removing`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Restore the service before rearming its timer/path. Do not restart unrelated executing oneshots. |
+| Nginx `staging` | Snapshot preparation | Deployment sites and TLS files have not changed. Inspect any recorded snapshot before resolving the marker. |
+| Nginx `applying`, `verifying`, `rolling-back` or `recovery` | Sites, enabled links, TLS files and loaded workers may differ | Restore each absolute path in `previous.json`: null means previously absent; regular-file contents are base64 with mode/uid/gid; links record target/uid/gid. Restore all files and links before validation. Run `nginx -t`, reload Nginx and verify activity and routing before resolving the marker. |
 
 For a first deployment with no previous release, recovery removes the rejected
 new release and new units. For manifest recovery, `previous_ports: null` means
@@ -80,9 +85,22 @@ A manifest can also leave a systemd replacement or removal marker. Reconcile
 both layers before resolving either marker. The inner unit snapshot records
 the state at that individual unit operation, after manifest activation may
 have stopped the old service; the manifest snapshot records its state before
-deployment. Use the chosen release and the manifest snapshot to determine the final running state,
-then verify every unit and resolve both recorded operation IDs. A restored
-release tree alone does not complete an unresolved inner unit transaction.
+deployment. Use the chosen release and the manifest snapshot to determine the
+final running state, then verify every unit and resolve both recorded operation
+IDs. A restored release tree alone does not complete an unresolved inner unit
+transaction.
+
+Nginx has its own recovery boundary. A release may have committed before Nginx
+reconciliation failed; repairing Nginx does not restore that release or its
+database. A reload timeout can occur after workers accepted the new
+configuration, so restored files alone are insufficient: validate and reload
+the chosen configuration, then verify requests. Failed file restoration blocks
+automatic reload, and incomplete recovery retains the private snapshot.
+
+If setup cannot persist its failure details, the original error is still
+reported and the marker may remain `in_progress`. Inspect it explicitly before
+retrying. A matching automatic retry also refuses a marker that changed after
+it was inspected, even when its operation ID is unchanged.
 
 ## Verify before resolving the marker
 

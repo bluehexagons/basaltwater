@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
+from lib.atomic_io import ensure_directory_durable, read_json_file, remove_file_durable, write_json_atomic
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
@@ -126,7 +126,7 @@ class OperationStateStore:
     def _acquire(self) -> None:
         if self._lock_finalizer is not None and self._lock_finalizer.alive:
             return
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        ensure_directory_durable(os.path.dirname(self.path))
         lock_path = self.path + '.lock'
         descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
@@ -203,12 +203,20 @@ class OperationStateStore:
         *,
         status: OperationStatus = "in_progress",
         context: Optional[JSONDict] = None,
+        expected_record: Optional[OperationRecord] = None,
     ) -> OperationRecord:
+        """Change phase, optionally requiring the exact record inspected earlier.
+
+        Recovery eligibility decisions must be rechecked under ownership, since
+        another invocation can change the same operation before lock acquisition.
+        """
         _validate_label(phase, "Operation phase")
         if status not in {"in_progress", "recovery_required"}:
             raise ValueError(f"Unsupported operation status: {status}")
         self._acquire()
         current = self._require_current(operation_id)
+        if expected_record is not None and current != expected_record:
+            raise OperationStateError(f"Operation marker changed before recovery: {self.path}; {RECOVERY_GUIDANCE}")
         record = OperationRecord(
             schema_version=current.schema_version,
             operation_id=current.operation_id,

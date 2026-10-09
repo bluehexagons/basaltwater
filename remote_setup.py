@@ -79,51 +79,56 @@ def _begin_setup_operation(config: SetupConfig) -> None:
         "system_type": config.system_type,
         "username": config.username,
     }
-    existing = store.load()
-    matching_recovery = bool(
-        existing is not None
-        and existing.operation_type == "target_setup"
-        and existing.resource == config.system_type
-        and existing.status == "recovery_required"
-        and existing.context.get("machine_type") == config.machine_type
-        and existing.context.get("system_type") == config.system_type
-        and existing.context.get("username") == config.username
-    )
-    if matching_recovery and existing is not None:
-        prior_attempts = existing.context.get("recovery_attempt", 0)
-        recovery_attempt = (
-            prior_attempts + 1
-            if isinstance(prior_attempts, int) and not isinstance(prior_attempts, bool)
-            else 1
+    try:
+        existing = store.load()
+        matching_recovery = bool(
+            existing is not None
+            and existing.operation_type == "target_setup"
+            and existing.resource == config.system_type
+            and existing.status == "recovery_required"
+            and existing.context.get("machine_type") == config.machine_type
+            and existing.context.get("system_type") == config.system_type
+            and existing.context.get("username") == config.username
         )
-        prior_step = existing.context.get("step")
-        print(
-            f"  ⚠ Resuming interrupted setup operation {existing.operation_id}"
-            + (f" after incomplete step {prior_step!r}" if isinstance(prior_step, str) else "")
-            + "; rerunning the idempotent setup plan"
-        )
-        record = store.transition(
-            existing.operation_id,
-            "applying",
-            context={
-                **context,
-                "recovery_attempt": recovery_attempt,
-                "recovered_from": {
-                    "error_type": existing.context.get("error_type"),
-                    "phase": existing.phase,
-                    "step": prior_step,
+        if matching_recovery and existing is not None:
+            prior_attempts = existing.context.get("recovery_attempt", 0)
+            recovery_attempt = (
+                prior_attempts + 1
+                if isinstance(prior_attempts, int) and not isinstance(prior_attempts, bool)
+                else 1
+            )
+            prior_step = existing.context.get("step")
+            print(
+                f"  ⚠ Resuming interrupted setup operation {existing.operation_id}"
+                + (f" after incomplete step {prior_step!r}" if isinstance(prior_step, str) else "")
+                + "; rerunning the idempotent setup plan"
+            )
+            record = store.transition(
+                existing.operation_id,
+                "applying",
+                expected_record=existing,
+                context={
+                    **context,
+                    "recovery_attempt": recovery_attempt,
+                    "recovered_from": {
+                        "error_type": existing.context.get("error_type"),
+                        "phase": existing.phase,
+                        "step": prior_step,
+                    },
                 },
-            },
-        )
-    else:
-        record = store.begin(
-            "target_setup",
-            config.system_type,
-            "applying",
-            context=context,
-        )
-    _active_setup_operation = (store, record)
-    _record_security_setup_activity(record, "in_progress")
+            )
+        else:
+            record = store.begin(
+                "target_setup",
+                config.system_type,
+                "applying",
+                context=context,
+            )
+        _active_setup_operation = (store, record)
+        _record_security_setup_activity(record, "in_progress")
+    except BaseException:
+        store.close()
+        raise
 
 
 def _transition_setup_operation(phase: str, context: dict[str, object]) -> None:
@@ -140,9 +145,9 @@ def _complete_setup_operation() -> None:
     if _active_setup_operation is None:
         return
     store, record = _active_setup_operation
-    _record_security_setup_activity(record, "succeeded")
     store.complete(record.operation_id)
     _active_setup_operation = None
+    _record_security_setup_activity(record, "succeeded")
 
 
 def _record_setup_failure(error: Exception) -> None:
@@ -651,17 +656,30 @@ def run_cachyos_setup(config: SetupConfig) -> int:
 
 
 def main() -> int:
+    global _active_setup_operation
     report = SetupReport()
     try:
         with report.activate(), report.capture():
             try:
                 result = _run_main()
             except Exception as exc:
-                _record_setup_failure(exc)
+                try:
+                    _record_setup_failure(exc)
+                except Exception:
+                    # The original marker still guards the partial setup. A
+                    # storage failure while annotating it must not hide the
+                    # exception that interrupted the actual operation.
+                    print(
+                        "Warning: Could not record setup failure details; preserve "
+                        "the setup marker and inspect the original error.", file=sys.stderr,
+                    )
                 raise
             finally:
                 _remove_secret_payloads()
     finally:
+        if _active_setup_operation is not None:
+            _active_setup_operation[0].close()
+            _active_setup_operation = None
         report.render()
     return result
 

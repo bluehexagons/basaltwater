@@ -19,7 +19,7 @@ from typing import Any, IO, Iterable, Optional
 from lib.remote_utils import run
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateError, OperationStateStore
-from lib.atomic_io import fsync_tree, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import ensure_directory_durable, fsync_tree, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 from lib.state_read import StateReadError, read_state_object
 from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, snapshot_unit_file
 from lib.deploy_utils import (
@@ -48,7 +48,7 @@ class DeploymentOrchestrator:
         return os.path.join(self.base_dir, ".basaltwater_shared", app_name)
     
     def _ensure_dir(self, path: str) -> None:
-        os.makedirs(path, exist_ok=True)
+        ensure_directory_durable(path)
 
     @staticmethod
     def _copy_deployment_source(source_path: str, staging_path: str) -> None:
@@ -234,6 +234,12 @@ class DeploymentOrchestrator:
             raise RuntimeError(
                 "Automatic Node deployments are no longer supported; declare "
                 "build commands and output in basaltwater.json"
+            )
+
+        if self._app_unit_names(dest_path):
+            raise RuntimeError(
+                "Static deployment cannot replace a release with managed services; "
+                "deploy an all-static basaltwater.json manifest first to retire those services"
             )
 
         if not should_redeploy(dest_path, git_url, commit_hash, full_deploy):
@@ -760,18 +766,28 @@ class DeploymentOrchestrator:
                     pass
             raise
         os.chmod(temporary_path, 0o600)
-        os.replace(temporary_path, backup_path)
+        descriptor = os.open(temporary_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise ValueError(f"SQLite backup must be a regular file: {temporary_path}")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        rename_path_durable(temporary_path, backup_path)
         backups = sorted(
             (
                 os.path.join(backup_dir, name)
                 for name in os.listdir(backup_dir)
                 if name.startswith(f"{component.name}_") and name.endswith(".sqlite3")
+                and os.path.join(backup_dir, name) != backup_path
             ),
             key=os.path.getmtime,
             reverse=True,
         )
-        for old_backup in backups[component.backup_retention:]:
-            os.remove(old_backup)
+        # Retain the new recovery point even if the clock moved backwards or
+        # older archives have future mtimes.
+        for old_backup in backups[component.backup_retention - 1:]:
+            remove_file_durable(old_backup)
         print(f"  ✓ Backed up SQLite database to {backup_path}")
 
     def deploy_manifest(self, manifest: Manifest, source_path: str, domain: Optional[str],

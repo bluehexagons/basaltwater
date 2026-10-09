@@ -6,7 +6,7 @@ and database migration rollback are separate follow-on work.
 
 This plan addresses ARCH-01, ARCH-03, ARCH-05, ARCH-06 and ARCH-08 from the
 [architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-07.md).
-The implementation checkpoint below is current as of 2026-10-08.
+The implementation checkpoint below is current as of 2026-10-09.
 
 ## Contract and boundaries
 
@@ -21,9 +21,10 @@ its marker identifies partial progress, but it cannot reverse package installs,
 user changes, arbitrary scripts or application data writes. Two separately
 atomic state files are not a single filesystem transaction.
 
-Nginx validates and restores its own managed configuration. It is a separate
-boundary from application activation. Application rollback does not restore
-database writes or migrations; SQLite backups require an explicit operator
+Nginx owns durable snapshots and verified recovery of its managed configuration
+and generated TLS files. It is a separate boundary from application activation.
+Application rollback does not restore database writes or migrations; SQLite
+backups require an explicit operator
 restore decision.
 
 ## Implemented execution contracts
@@ -63,7 +64,7 @@ python3 scripts/audit_command_contracts.py --unchecked
 python3 scripts/audit_command_contracts.py --json
 ```
 
-The 2026-10-08 checkpoint contains 746 direct calls: 385 required, 281
+The 2026-10-09 checkpoint contains 749 direct calls: 385 required, 284
 caller-managed results, 73 discarded best-effort results and 7 delegated
 policies. The inventory covers root modules and owning source packages,
 including imported aliases and calls inside the helper itself.
@@ -84,8 +85,12 @@ claim that every package installer provides full rollback.
 ## Atomic persistent state
 
 `lib.atomic_io` writes same-directory private temporary files, flushes and
-syncs data, atomically replaces the target and syncs its directory. Release
-renames also sync both parent directories. A sync error after a rename may mean
+syncs data, atomically replaces the target and syncs its directory. Newly created
+parent directories are persisted in their containing directories before state
+publication; operation and shared-release directory creation uses the same
+`ensure_directory_durable()` helper. Text and binary writes share the same
+ownership, permission and sync behavior. Release renames also sync both parent
+directories. A sync error after a rename may mean
 the rename happened; activation and rollback inspect actual paths accordingly.
 Release files and directories are flushed before completion and old-backup
 cleanup; rename durability alone does not flush copied or built file contents.
@@ -116,6 +121,9 @@ exit releases the lock, but an unfinished marker still blocks a fresh operation.
 Recovery must use the recorded operation ID; stale IDs, corrupt records,
 unsupported versions and unsafe files are rejected. Never delete stable lock
 files to bypass ownership.
+Conditional recovery transitions compare the exact previously inspected record
+under the acquired lock. A changed marker with the same operation ID cannot
+bypass the original eligibility decision.
 
 Markers record context and recent phases. Completion writes a private
 `<marker>.last.json` before removing the marker. It retains the most recent
@@ -137,6 +145,10 @@ Target setup records its current step before mutation and saves remembered
 machine/setup state only after the full operation succeeds. It preserves
 interrupted or failed progress. Handled failures may retry a matching setup
 plan; hard-kill markers require explicit inspection first.
+Failure-detail persistence cannot replace the original setup exception. Failed
+invocations release ownership while retaining their marker, including when
+called repeatedly in one process. Security activity records success only after
+marker completion succeeds.
 
 `lib.unit_transaction.replace_units()` serializes replacement, snapshots live
 files and activation states, stages candidates privately and validates them
@@ -158,11 +170,30 @@ disable/enable. Stop timeouts, unlink sync errors, reload failures and incomplet
 rollback retain the same evidence as replacement. This protects unit
 configuration, not data changed by a service startup.
 
+## Nginx reconciliation
+
+Deployment Nginx reconciliation uses a shared operation lock and private,
+durable snapshots of previous site files, link targets, ownership, permissions
+and selected self-signed certificate/key files. Missing planned paths are
+recorded as null. Configuration reads reject special files without blocking
+and bound regular-file snapshots to 1 MiB per file.
+
+The daemon must already be active. Apply persists files and links, requires
+`nginx -t`, reloads and verifies activity before completion. A validation error,
+reload timeout or finalization failure restores the snapshot, validates it,
+reloads the previous configuration and verifies activity. Failed file restoration
+prevents reloading a partial configuration. Incomplete recovery or process
+death retains the snapshot and a blocking marker. Output after completion does
+not trigger rollback. This boundary remains separate from release activation.
+
 ## Release activation
 
 Static and manifest deployment share one lock for the deployment base and
 inspect both marker types for the requested application. Switching deployment
 formats cannot bypass unfinished recovery.
+Plain static deployment refuses a release with managed service units. Retire
+those services by deploying an all-static manifest before switching to the
+plain static path, so a directory swap cannot strand running old services.
 Preparation rejects unsafe destinations and symlinked shared state.
 Source and release paths must not overlap; source copying refuses special
 files without consuming their contents.
@@ -173,6 +204,9 @@ builds and output validation happen while the old services continue running.
 Activation verifies app-scoped stops, switches trees, activates managed units
 and gates success on declared direct-loopback 2xx health checks. A stop timeout
 still attempts to restore previously running services.
+SQLite backups are integrity-checked, flushed and durably published before
+older archives are pruned. Retention always keeps the newly created recovery
+point even if older files have future modification times.
 
 Handled failures restore the previous tree and unit snapshots. Manifest
 rollback restores the previous port assignments, including removing a newly
