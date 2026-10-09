@@ -74,8 +74,9 @@ Required outcomes:
 
 - command helpers have explicit fail-fast and best-effort contracts;
 - managed unit replacements stage and validate candidates before changing live
-  files; full setup records partial progress without promising reversal of
-  packages, scripts or application data;
+  files; grouped removals snapshot files/states and restore them on failure;
+  full setup records partial progress without promising reversal of packages,
+  scripts or application data;
 - deployment health checks gate success and restore the previous release when
   activation fails;
 - persistent state is written atomically and corrupt state produces actionable

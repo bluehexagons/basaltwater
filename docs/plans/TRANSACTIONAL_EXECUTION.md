@@ -10,10 +10,10 @@ The implementation checkpoint below is current as of 2026-10-08.
 
 ## Contract and boundaries
 
-A transaction protects a named resource while preparing, activating, verifying
-and recovering its replacement. Required command failures stop dependent work.
-A failed or interrupted recovery preserves evidence and blocks another
-operation at the same boundary.
+A transaction protects a named resource while preparing, applying, verifying
+and recovering its replacement or removal. Required command failures stop
+dependent work. A failed or interrupted recovery preserves evidence and blocks
+another operation at the same boundary.
 
 These guarantees apply to managed release trees, generated systemd units and
 operation/state files. A full setup is an ordered, fail-fast reconciliation:
@@ -63,7 +63,7 @@ python3 scripts/audit_command_contracts.py --unchecked
 python3 scripts/audit_command_contracts.py --json
 ```
 
-The 2026-10-08 checkpoint contains 754 direct calls: 393 required, 281
+The 2026-10-08 checkpoint contains 746 direct calls: 385 required, 281
 caller-managed results, 73 discarded best-effort results and 7 delegated
 policies. The inventory covers root modules and owning source packages,
 including imported aliases and calls inside the helper itself.
@@ -144,13 +144,18 @@ with `systemd-analyze verify` before replacing anything. Write, reload and
 activation failures restore old files, ownership, modes, enablement and running
 state. Timer/path changes do not restart an unrelated executing oneshot.
 Incomplete rollback retains snapshots and its recovery marker.
-Snapshots also survive failed marker completion. Restoration gates restarts
-on successful file restoration and daemon reload so cached new definitions
-cannot be restarted as if they were the old configuration.
+Snapshots also survive failed marker completion. Restoration gates group
+restarts on successful restoration of every file and daemon reload, so a
+restored timer/path cannot activate an unrestored service and cached new
+definitions cannot be restarted as if they were the old configuration.
 
 Managed application, Antistatic, Gogs, CI/CD, storage operations and maintenance
-units use this boundary. Unit removal propagates stop/disable/reload failures;
-static units without an install section skip disable. This protects unit
+units use this boundary. `remove_units()` shares its lock and marker, snapshots
+files and states, stops the whole group before deletion, and restores the
+service before rearming its timer/path on failure. Removal skips absent managed
+files and preserves static units' enablement; runtime-enabled units use runtime
+disable/enable. Stop timeouts, unlink sync errors, reload failures and incomplete
+rollback retain the same evidence as replacement. This protects unit
 configuration, not data changed by a service startup.
 
 ## Release activation

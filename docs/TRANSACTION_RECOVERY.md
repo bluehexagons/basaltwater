@@ -17,7 +17,7 @@ is a separate operator decision that can discard newer writes.
 | Target setup | `/var/lib/basaltwater/setup-operation.json` | Current step, profile, username and error type |
 | Manifest release | `/var/www/.basaltwater_shared/<app>/manifest-operation.json` | Staging/previous/failed paths, previous ports, desired units, adjacent `manifest-units.previous.json` |
 | Static release | `/var/www/.basaltwater_shared/<app>/static-operation.json` | Staging/previous/failed paths |
-| Systemd replacement | `/etc/systemd/system/.basaltwater-unit-operation.json` | `backup_dir/previous.json` with old files, modes, ownership, and activation states |
+| Systemd replacement or removal | `/etc/systemd/system/.basaltwater-unit-operation.json` | `backup_dir/previous.json` with old files, modes, ownership, and activation states |
 
 Release paths follow the configured deployment base. Static and manifest entry
 points share a deployment lock and check both markers, so switching deployment
@@ -54,8 +54,8 @@ Do not publish private snapshots or raw error contexts in support reports.
 | Release `activating` | Old services may be stopped; the old tree may be at `backup_path`; destination may be absent or new | Inspect all paths. Restore the previous tree if displaced, then restore saved units and active states. Never assume a rename happened solely because its phase was recorded. |
 | Manifest `verifying`; static `finalizing` | New release is active; startup and final persistence may be incomplete | Choose between verifying the new release and restoring the old one. For manifest rollback, stop new units, restore the previous tree and unit snapshot, reload systemd, then restore recorded enablement and running state. Restore `previous_ports` too. |
 | Release `rolling-back` or `recovery` | Restoration itself may be interrupted | Inspect destination, backup and failed paths before moving anything. A backup may already be consumed by restoration. Check every recorded unit and port assignment; retain the rejected tree until recovery is verified. |
-| Units `staging` or `validating` | Private candidates and snapshots | Live files have not been replaced. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
-| Units `replacing`, `rolling-back` or `rollback-failed` | Some files and activated units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Do not restart unrelated executing oneshots. |
+| Units `staging` or `validating` | Private candidates and snapshots | Live files and running states have not changed. Verify existing units, preserve or remove unused staging artifacts, then resolve the marker. |
+| Units `replacing`, `removing`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Restore the service before rearming its timer/path. Do not restart unrelated executing oneshots. |
 
 For a first deployment with no previous release, recovery removes the rejected
 new release and new units. For manifest recovery, `previous_ports: null` means
@@ -66,16 +66,21 @@ retained snapshots and actual service configuration instead of guessing.
 Rollback attempts independent service restorations even after another unit
 fails. It does not restart a unit whose old file could not be restored; failed
 `daemon-reload` also prevents restarting against cached replacement definitions.
+Within a grouped unit transaction, any failed file restoration prevents
+restarting the group so a restored timer/path cannot activate an unrestored
+service. Removal uses the same lock and snapshot boundary as replacement,
+skips absent managed files, and stops all present units before deleting any
+of their files.
 A rename sync error can occur after the old release was restored: inspect the
 actual paths and service states rather than treating the error as proof that
 the old tree is still at its backup path. Port or marker-completion failures
 retain the rejected release and private unit snapshots for further recovery.
 
-A manifest can also leave a systemd replacement marker. Reconcile both layers
-before resolving either marker. The inner unit snapshot records the state at
-that individual replacement, after manifest activation may have stopped the old
-service; the manifest snapshot records its state before deployment. Use the
-chosen release and the manifest snapshot to determine the final running state,
+A manifest can also leave a systemd replacement or removal marker. Reconcile
+both layers before resolving either marker. The inner unit snapshot records
+the state at that individual unit operation, after manifest activation may
+have stopped the old service; the manifest snapshot records its state before
+deployment. Use the chosen release and the manifest snapshot to determine the final running state,
 then verify every unit and resolve both recorded operation IDs. A restored
 release tree alone does not complete an unresolved inner unit transaction.
 

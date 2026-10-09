@@ -1,14 +1,9 @@
 """Systemd service creation for deployed applications."""
 
 from __future__ import annotations
-import os
-import shlex
-
 from typing import Optional
 
-from lib.unit_transaction import replace_units
-from lib.atomic_io import remove_file_durable
-from lib.remote_utils import run
+from lib.unit_transaction import remove_units, replace_units
 from lib.validation import (
     validate_environment_variable_name,
     validate_filesystem_path,
@@ -21,17 +16,8 @@ from lib.validation import (
 SYSTEMD_DIR = "/etc/systemd/system"
 
 
-def _unit_has_install_section(unit_file: str) -> bool:
-    """Return True when a unit file contains an [Install] section."""
-    try:
-        with open(unit_file, "r", encoding="utf-8") as f:
-            return "[Install]" in f.read()
-    except OSError:
-        return False
-
-
 def cleanup_systemd_unit(unit_name: str, unit_type: str = "service") -> None:
-    """Stop, disable, and remove a single systemd unit file if it exists.
+    """Recoverably stop, disable, and remove a managed systemd unit.
     
     This is a low-level helper for cleaning up individual unit files.
     For most use cases, use cleanup_service() instead which automatically
@@ -39,24 +25,16 @@ def cleanup_systemd_unit(unit_name: str, unit_type: str = "service") -> None:
     
     Args:
         unit_name: Base name of the unit (without extension)
-        unit_type: Type of unit - "service", "timer", or "mount"
+        unit_type: Type of unit - "service", "timer", "path", or "mount"
     """
     validate_service_name_uniqueness(unit_name, [])
     if unit_type not in {"service", "timer", "path", "mount"}:
         raise ValueError(f"Unsupported systemd unit type: {unit_type}")
-    unit_file = os.path.join(SYSTEMD_DIR, f"{unit_name}.{unit_type}")
-    
-    # Stop and disable the unit
-    if os.path.exists(unit_file):
-        run(f"systemctl stop {shlex.quote(unit_name)}.{unit_type}")
-        if _unit_has_install_section(unit_file):
-            run(f"systemctl disable {shlex.quote(unit_name)}.{unit_type}")
-        remove_file_durable(unit_file)
-        run("systemctl daemon-reload")
+    remove_units((f"{unit_name}.{unit_type}",), unit_dir=SYSTEMD_DIR)
 
 
 def cleanup_service(service_name: str) -> None:
-    """Stop, disable, and remove a service plus any associated timer or path unit.
+    """Remove a service and its timer/path as one recoverable unit operation.
     
     This is the primary cleanup function for systemd services. It automatically
     checks for and cleans up any associated timer or path unit before cleaning
@@ -76,34 +54,10 @@ def cleanup_service(service_name: str) -> None:
         cleanup_service("myapp-update")
     """
     validate_service_name_uniqueness(service_name, [])
-    service_file = os.path.join(SYSTEMD_DIR, f"{service_name}.service")
-    timer_file = os.path.join(SYSTEMD_DIR, f"{service_name}.timer")
-    path_file = os.path.join(SYSTEMD_DIR, f"{service_name}.path")
-    
-    needs_reload = False
-    
-    # Stop and disable timers/paths first (they activate the service)
-    for activator_file, activator_kind in (
-        (timer_file, "timer"),
-        (path_file, "path"),
-    ):
-        if os.path.exists(activator_file):
-            run(f"systemctl stop {shlex.quote(service_name)}.{activator_kind}")
-            run(f"systemctl disable {shlex.quote(service_name)}.{activator_kind}")
-            remove_file_durable(activator_file)
-            needs_reload = True
-    
-    # Stop service; disable only when it declares an [Install] section
-    if os.path.exists(service_file):
-        run(f"systemctl stop {shlex.quote(service_name)}.service")
-        if _unit_has_install_section(service_file):
-            run(f"systemctl disable {shlex.quote(service_name)}.service")
-        remove_file_durable(service_file)
-        needs_reload = True
-    
-    # Reload systemd to reflect changes
-    if needs_reload:
-        run("systemctl daemon-reload")
+    remove_units(
+        (f"{service_name}.timer", f"{service_name}.path", f"{service_name}.service"),
+        unit_dir=SYSTEMD_DIR,
+    )
 
 
 def _systemd_environment_line(key: str, value: str) -> str:

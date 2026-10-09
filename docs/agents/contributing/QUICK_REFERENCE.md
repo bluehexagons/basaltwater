@@ -79,7 +79,9 @@ Use `lib.atomic_io` for atomic persistent writes and bounded, regular-file JSON
 reads. Distinguish missing state from corrupt/unsupported state; preserve the
 latter and raise an actionable path-specific error. Use
 `lib.operation_state` at durable operation boundaries and
-`lib.unit_transaction.replace_units()` for managed systemd replacement.
+`lib.unit_transaction.replace_units()` / `remove_units()` for managed systemd
+replacement and grouped removal. Pass timers/paths before their service when
+removing a group; both operations share a lock and recovery marker.
 Snapshots protect files and activation state, not arbitrary application data.
 See the [transaction plan](../../plans/TRANSACTIONAL_EXECUTION.md) and
 [operator recovery guide](../../TRANSACTION_RECOVERY.md).
