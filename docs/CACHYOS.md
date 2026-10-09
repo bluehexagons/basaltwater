@@ -526,12 +526,21 @@ place. Deferred cleanup can run on a later setup invocation.
 
 ## Skills, diagnostics, and boundaries
 
-Codex and OpenCode receive the CachyOS workstation, workspace, desktop, and (when T3 is
-selected) T3 skills under `~/.agents/skills`. Standard VM, XRDP, gateway,
+Codex and OpenCode receive the CachyOS workstation, workspace, desktop, shared
+subagent, and (when T3 is selected) T3 skills under `~/.agents/skills`. Claude
+receives the selected catalog under `~/.claude/skills`. Standard VM, XRDP, gateway,
 browser-automation, and Godot-web skills are not installed. Personal skills are
 preserved. The desktop skill covers autonomous Blender/Inkscape and other
 application edits, scripting, editable sources and verified exports. The manifest
 uses direct native launch commands instead of Debian XRDP commands.
+
+The shared `basaltwater-subagents` skill provides the same local worktree
+lifecycle, worker handoffs, and cost-aware OpenAI model guidance as Debian.
+`basaltw agent workspace` and `basaltw agent models` run locally as the desktop
+user, without SSH or provisioning. Project policy and reviewed outcomes let
+agents evaluate new model IDs without upgrading Basaltwater. Use standard
+service and supported safe efforts; fast service, `max`, and `ultra` require an
+explicit user selection. See [subagent workflows and model choices](AGENT_SUBAGENTS.md).
 
 Selecting a supported desktop application installs Python GObject, AT-SPI,
 GStreamer, its base/PipeWire plugins and GTK3 prerequisites. Setup starts no

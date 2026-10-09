@@ -27,10 +27,8 @@ results, and unresolved concerns. They do not merge, push, or remove worktrees
 unless the parent assigns that responsibility within the user's authorization.
 
 Choose branch merges upfront: they preserve the ancestry required by managed
-cleanup. Read [the complete lifecycle](references/lifecycle.md) for assignments,
-handoffs, review, integration, and the implications of cherry-picking or squash.
-For cost-aware model choice and project learning, read
-[model selection](references/model-selection.md) when selecting subagents.
+cleanup. Use the installed `basaltwater-subagents` skill for the complete local
+lifecycle, handoffs, and cost-aware model selection with project learning.
 
 ## Create and inspect
 

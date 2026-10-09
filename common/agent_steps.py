@@ -47,6 +47,7 @@ AGENT_SKILLS_ROOT = os.path.join(os.path.dirname(__file__), "agent_skills")
 BASE_AGENT_SKILL_NAMES = (
     "basaltwater-agent-operations",
     "basaltwater-agent-workspace",
+    "basaltwater-subagents",
     "basaltwater-deploy-smoke",
     "basaltwater-shared-assets",
     "basaltwater-vm-triage",

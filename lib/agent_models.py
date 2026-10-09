@@ -23,7 +23,7 @@ SAFE_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
 _FAMILIES = ("luna", "sol", "astra")
 _OUTCOMES = ("accepted", "reworked", "failed")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}\Z")
-_TEMPLATE = Path(__file__).resolve().parents[1] / "common/agent_skills/basaltwater-agent-workspace/assets/agent-models.json"
+_TEMPLATE = Path(__file__).resolve().parents[1] / "common/agent_skills/basaltwater-subagents/assets/agent-models.json"
 _MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -191,6 +191,7 @@ def record_model_outcome(repository: str, values: JSONDict) -> JSONDict:
 def _summary(runs: list[JSONDict]) -> JSONDict:
     accepted = sum(run["outcome"] == "accepted" for run in runs)
     known_costs = [run["cost_usd"] for run in runs if run["cost_usd"] is not None]
+    known_rework = [run["rework_minutes"] for run in runs if run["rework_minutes"] is not None]
     return {
         "samples": len(runs), "accepted": accepted,
         "acceptance_rate": accepted / len(runs) if runs else None,
@@ -200,7 +201,8 @@ def _summary(runs: list[JSONDict]) -> JSONDict:
         "cost_samples": len(known_costs), "known_cost_usd": sum(known_costs),
         "cost_per_accepted_usd": sum(known_costs) / accepted
         if accepted and len(known_costs) == len(runs) else None,
-        "rework_minutes": sum(run["rework_minutes"] or 0 for run in runs),
+        "rework_samples": len(known_rework), "known_rework_minutes": sum(known_rework),
+        "rework_minutes": sum(known_rework) if runs and len(known_rework) == len(runs) else None,
         "mean_seconds": sum(run["seconds"] for run in runs) / len(runs)
         if runs and all(run["seconds"] is not None for run in runs) else None,
     }
@@ -260,6 +262,7 @@ def recommend_agent_model(
     unknown = sorted(set(available) - catalog_ids)
     stale: list[str] = []
     candidates: list[JSONDict] = []
+    fallback: list[JSONDict] = []
     for model in policy["models"]:
         identifier = model["id"]
         if identifier not in available or model["family"] == "astra" and not astra_reason.strip():
@@ -272,25 +275,30 @@ def recommend_agent_model(
                    and SAFE_EFFORTS.index(effort) >= SAFE_EFFORTS.index(rule["effort"])]
         if not efforts:
             continue
-        effort = efforts[0]
-        evidence = [run for run in runs if run["task"] == task and run["evaluation"] == rule["evaluation"]
-                    and run["model"] == identifier and run["effort"] == effort
-                    and cutoff <= _date(run["date"]) <= now]
-        summary = _summary(evidence)
+        recent = [run for run in runs if run["task"] == task and run["evaluation"] == rule["evaluation"]
+                  and run["model"] == identifier and cutoff <= _date(run["date"]) <= now]
         estimate = (rule["expected_input_tokens"] * model["input_usd_per_million"]
                     + rule["expected_output_tokens"] * model["output_usd_per_million"]) / 1_000_000
-        candidates.append({"model": identifier, "family": model["family"], "effort": effort,
-                           "estimated_token_cost_usd": estimate, **summary})
+        for effort in efforts:
+            evidence = [run for run in recent if run["effort"] == effort]
+            if effort != efforts[0] and not evidence:
+                continue
+            candidate = {"model": identifier, "family": model["family"], "effort": effort,
+                         "estimated_token_cost_usd": estimate, **_summary(evidence)}
+            candidates.append(candidate)
+            # Only the lowest supported effort is an automatic provisional choice.
+            if (effort == efforts[0] and candidate["samples"] < policy["minimum_samples"]
+                    and _FAMILIES.index(model["family"]) >= _FAMILIES.index(rule["family"])):
+                fallback.append(candidate)
     proven = [candidate for candidate in candidates if candidate["samples"] >= policy["minimum_samples"]
               and candidate["acceptance_rate"] >= policy["minimum_acceptance"]]
     # Unproven alternatives are trials, not automatic replacements for a proven setting.
-    fallback = [candidate for candidate in candidates
-                if _FAMILIES.index(candidate["family"]) >= _FAMILIES.index(rule["family"])
-                and candidate["samples"] < policy["minimum_samples"]]
     pool = proven or fallback
     empirical = bool(proven) and all(candidate["cost_per_accepted_usd"] is not None for candidate in pool)
     cost_field = "cost_per_accepted_usd" if empirical else "estimated_token_cost_usd"
-    selected = min(pool, key=lambda item: (item[cost_field], item["model"])) if pool else None
+    selected = min(pool, key=lambda item: (
+        item[cost_field], SAFE_EFFORTS.index(item["effort"]), item["model"],
+    )) if pool else None
     return {
         "task": task, "evaluation": rule["evaluation"], "selection": selected,
         "service": "standard", "astra_reason": astra_reason.strip() or None,

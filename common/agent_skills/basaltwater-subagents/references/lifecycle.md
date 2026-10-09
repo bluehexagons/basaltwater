@@ -4,6 +4,8 @@ Choose the integration branch and use normal branch merges before assigning
 editing work. The parent stays in the primary checkout and owns integration and
 cleanup. This example splits a website task into user guides and historical
 records; a read-only reviewer can inspect the primary checkout after merging.
+These commands work in both bash on Debian and fish on CachyOS. Supply the
+actual repository path when the workspace differs from `~/repos`.
 
 ## Prepare and assign
 
@@ -22,10 +24,19 @@ agent only `docs/guides/`, and the second only `docs/history/`. Specify the desi
 result and validation. Reserve navigation, shared configuration, package
 manifests, generated output, and lockfiles for the parent unless explicitly
 assigned. Give workers their worktree as the working directory. A tool that
-cannot set a working directory must receive explicit absolute paths.
+cannot set a working directory must receive explicit absolute paths for edits,
+`git -C /absolute/returned/path` for Git operations, and an explicit working
+directory for builds and tests. Absolute edit paths alone do not isolate Git,
+package-manager, or build commands. If the tool cannot direct those commands to
+the assigned checkout, keep the task read-only or use another supported tool.
+
+Worktrees isolate repository files. Git configuration and hooks, tool settings,
+caches, desktop sessions, and listening ports can remain shared. Assign distinct
+ports and output paths for concurrent previews, and coordinate commands that
+change shared state.
 
 Keep task prompts bounded. Workers should report a needed change outside their
-scope rather than edit another worker's files. Limit concurrency to the VM's
+scope rather than edit another worker's files. Limit concurrency to the host's
 available headroom; the successful light website task is not evidence that heavy
 builds or many concurrent Electron jobs will fit.
 
@@ -56,10 +67,11 @@ The parent checks the returned worktree state, changed paths, and each commit:
 basaltw agent workspace status GUIDE_WORKTREE --json
 basaltw agent workspace status HISTORY_WORKTREE --json
 git -C ~/repos/PROJECT log HEAD..agent/user-guides --oneline
+git -C ~/repos/PROJECT log HEAD..agent/historical-records --oneline
 git -C ~/repos/PROJECT diff HEAD...agent/user-guides
 git -C ~/repos/PROJECT diff HEAD...agent/historical-records
-git -C ~/repos/PROJECT merge --no-ff agent/user-guides
-git -C ~/repos/PROJECT merge --no-ff agent/historical-records
+git -C ~/repos/PROJECT merge --no-ff --no-edit agent/user-guides
+git -C ~/repos/PROJECT merge --no-ff --no-edit agent/historical-records
 ```
 
 The explicit merge preserves task ancestry after another branch is integrated.
@@ -68,7 +80,9 @@ integration checkout and inspect their effect on both tasks. Then run the
 project's combined checks/build, request a read-only review if useful, and
 record each model outcome only after assessing the result. A reviewer must not
 run a formatter, install, build, or test that writes to the shared checkout.
-Use an isolated worktree when its review needs those operations.
+Use an isolated worktree when its review needs those operations. Keep the
+reviewer's branch unchanged if it only runs checks; a writing review is an
+editing task and needs the same handoff and integration as other editors.
 
 Push only when authorized, to the explicit destination, and verify the remote
 commit. If the remote advanced, integrate and validate it before retrying.
@@ -88,6 +102,10 @@ basaltw agent workspace list ~/repos/PROJECT --json
 Use the actual returned paths in place of the uppercase placeholders. Removal
 checks ancestry against the primary checkout's current `HEAD`, so keeping the
 integration commit only on another branch or the remote is insufficient.
+End worker sessions and stop task-owned previews or builds before removal; a
+clean Git status does not show processes still using the directory. Untracked
+output blocks removal; ignored output does not. Copy any deliverables that must
+survive before removing the worktree.
 
 ## If cherry-pick or squash was chosen
 

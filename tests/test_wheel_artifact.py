@@ -37,9 +37,10 @@ class WheelArtifactTest(unittest.TestCase):
             "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
             "lib/agent_models.py",
-            "common/agent_skills/basaltwater-agent-workspace/references/lifecycle.md",
-            "common/agent_skills/basaltwater-agent-workspace/references/model-selection.md",
-            "common/agent_skills/basaltwater-agent-workspace/assets/agent-models.json",
+            "common/agent_skills/basaltwater-subagents/SKILL.md",
+            "common/agent_skills/basaltwater-subagents/references/lifecycle.md",
+            "common/agent_skills/basaltwater-subagents/references/model-selection.md",
+            "common/agent_skills/basaltwater-subagents/assets/agent-models.json",
         )
         for missing in resources:
             with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:

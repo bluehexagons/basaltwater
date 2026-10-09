@@ -20,10 +20,10 @@ and unresolved concerns.
 
 Choose branch merges before delegating; cherry-pick and squash leave the source
 commits outside the ancestry required by cleanup. Small, tightly coupled tasks
-often cost more to delegate than they save. See the
-[subagent workflow guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_SUBAGENTS.md)
-for the complete lifecycle and project model-selection commands. Use OpenAI
-Luna for simple classification, Sol for coding, and Astra only with a concrete
+often cost more to delegate than they save. Use the installed
+`basaltwater-subagents` skill for the complete local lifecycle and project
+model-selection commands. Use OpenAI Luna for simple classification, Sol for
+coding, and Astra only with a concrete
 cost justification. Use actual session capabilities and reviewed project
 outcomes to adapt to new model releases. Do not autonomously choose fast mode,
 `max`, or `ultra`; explicit user selections govern exceptions.
@@ -39,6 +39,8 @@ basaltw agent workspace status WORKTREE --json
 Work in the returned directory. `HEAD` uses the local checkout's commit; fetch
 and use `--base origin/main` when the task needs current remote main. Preserve
 unrelated work, and integrate or push only within the user's requested scope.
+Worktrees do not isolate ports, caches, or the human user's desktop session;
+coordinate shared-state changes and give concurrent previews distinct ports.
 
 Inspect status before cleanup, then preview removal:
 
@@ -48,5 +50,8 @@ basaltw agent workspace remove WORKTREE --json
 ```
 
 Removal refuses dirty, unmerged, or unmanaged worktrees. Resolve the reported
-condition without discarding user work. This workflow needs no SSH host, VM
-provisioning, or saved server setup.
+condition without discarding user work. `status --json` reports `repository`,
+`primary_branch`, `primary_head`, and `merged_into_primary`; `remove --dry-run`
+also checks registration, managed paths, branches, and dirty state. Stop worker
+processes and preserve needed ignored output before removal.
+This workflow needs no SSH host, VM provisioning, or saved server setup.

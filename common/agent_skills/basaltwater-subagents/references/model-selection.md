@@ -1,5 +1,8 @@
 # Cost-aware subagents and project learning
 
+This workflow applies to Debian agent VMs and CachyOS workstations. The commands
+below work in bash and fish; use the actual project path on either platform.
+
 Use OpenAI models currently exposed by the session. Start with Luna for file
 classification, extraction, and bounded documentation edits; use Sol for coding,
 integration reasoning, and substantive reviews. Reserve Astra for a specialized
@@ -41,6 +44,21 @@ resolve linked worktrees to that same checkout. Review and commit these non-secr
 project files within the user's authorized scope; workers report observations
 to the parent rather than concurrently edit them.
 
+If the project ignores `.basaltwater/`, inspect its ignore rules before staging.
+When evidence should travel with the repository, allow only these two files;
+installation-channel state and unrelated local data must stay ignored. For
+example, put these rules after an existing directory exclusion in the project's
+`.gitignore`, within the authorized scope:
+
+```gitignore
+!/.basaltwater/
+/.basaltwater/*
+!/.basaltwater/agent-models.json
+!/.basaltwater/agent-model-results.json
+```
+
+Stage the two reviewed files explicitly. Do not force-add the whole directory.
+
 ```bash
 basaltw agent models init ~/repos/PROJECT --json
 basaltw agent models recommend ~/repos/PROJECT classification --available SESSION_MODELS.json --json
@@ -65,16 +83,23 @@ Codex selection; use it only when it represents the task's actual interface.
 Do not substitute a broad API model list for a subagent tool's availability.
 
 Only models with fresh verified metadata and a supported safe effort are
-eligible. The selector starts at the task's requested effort and uses the next
-available higher safe effort if needed; classification `none` therefore falls
-back to `low` when the tool cannot disable thinking. Inspect the returned effort
-and cost before launch. No eligible choice returns nonzero and `selection: null`.
+eligible. The task's requested effort is a minimum. A provisional setting uses
+the lowest supported safe effort at or above it; classification `none` therefore
+falls back to `low` when the tool cannot disable thinking. Proven settings at
+higher supported efforts also compete using their own evidence and costs, so
+successful `high` results are not hidden by an unsuccessful `medium` default.
+Untested higher efforts are not automatic retries. Change the task minimum only
+after reviewing its needs. Inspect the returned effort and cost before launch.
+No eligible choice returns nonzero and `selection: null`.
 
 `accepted` means the parent accepted the initial result after validation;
 `reworked` means correction was needed; `failed` includes unusable results and
 escalations. Record failures as well as successes. Use `--attempts`, `--seconds`,
 and `--rework-minutes` when observed. `--cost-usd` is optional: leave unavailable
-billing unknown, including subscription sessions without dollar telemetry.
+billing unknown, including subscription sessions without dollar telemetry. Also
+leave unobserved runtime and parent rework unknown; explicitly record zero when
+you checked and found no rework. Reports expose the known rework subtotal and
+sample count, and return a null total when observations are incomplete.
 Never invent a cost or treat missing cost as zero. Each cost should cover all
 attempts represented by that outcome; record another model's escalation as
 another outcome. Validation should describe acceptance evidence without prompts,
@@ -82,8 +107,10 @@ credentials, or confidential source excerpts.
 
 Results remain separate by task class, evaluation version, exact model ID, and
 effort. Set task-specific acceptance criteria and update its `evaluation` value
-when those criteria, prompts, harness behavior, or the workload materially
-change. Old versions remain visible in `report` but do not drive current choices.
+when those criteria, prompts, harness behavior, platform-dependent checks, or the
+workload materially change. Separate Debian-specific and CachyOS-specific task
+classes when their acceptance requirements differ. Old versions remain visible
+in `report` but do not drive current choices.
 Split easy file classification from ambiguous classification rather than average
 them into a misleading score.
 

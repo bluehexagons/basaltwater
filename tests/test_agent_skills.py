@@ -18,7 +18,7 @@ from common.agent_steps import (
     install_managed_agent_skills,
 )
 from common.godot_web_steps import GODOT_AGENT_SKILLS
-from common.cachyos_steps import CACHYOS_SKILLS, CACHYOS_T3_SKILL
+from common.cachyos_steps import CACHYOS_SKILLS, CACHYOS_T3_SKILL, install_cachyos_skills
 from common.t3code_steps import T3_AGENT_SKILL_NAMES
 from lib.config import SetupConfig
 from lib.types import StepFunc
@@ -37,6 +37,7 @@ class ManagedAgentSkillTests(unittest.TestCase):
         expected = {
             "basaltwater-agent-operations",
             "basaltwater-agent-workspace",
+            "basaltwater-subagents",
             "basaltwater-deploy-smoke",
             "basaltwater-shared-assets",
             "basaltwater-vm-triage",
@@ -83,6 +84,38 @@ class ManagedAgentSkillTests(unittest.TestCase):
                     installed = Path(path).parent / relative
                     self.assertEqual(installed.read_bytes(), source.read_bytes())
                     self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
+
+    def test_shared_subagent_bundle_survives_cachyos_catalog_reconciliation(self) -> None:
+        shared = "basaltwater-subagents"
+        source = Path(AGENT_SKILLS_ROOT) / shared
+        for tools in (["codex"], ["opencode"], ["claude"], ["codex", "claude"]):
+            with self.subTest(tools=tools), tempfile.TemporaryDirectory() as home:
+                config = SetupConfig(host="localhost", username="agent",
+                                     system_type="agent_cachyos", agent_tools=tools)
+                with (
+                    patch("common.agent_steps.pwd.getpwnam", return_value=self._account(home)),
+                    patch("common.agent_steps.os.chown"),
+                    patch("subprocess.run", side_effect=AssertionError("Skill delivery must be local")),
+                ):
+                    install_managed_agent_skills("agent", tools)
+                    install_cachyos_skills(config)
+                    install_cachyos_skills(config)
+                catalogs = (".agents", ".claude") if len(tools) == 2 else (
+                    ".claude" if tools == ["claude"] else ".agents",
+                )
+                for catalog in catalogs:
+                    root = Path(home) / catalog / "skills"
+                    self.assertTrue((root / "basaltwater-cachyos-workspace/SKILL.md").is_file())
+                    self.assertFalse((root / "basaltwater-agent-workspace/SKILL.md").exists())
+                    for resource in source.rglob("*"):
+                        if resource.is_file():
+                            installed = root / shared / resource.relative_to(source)
+                            self.assertEqual(installed.read_bytes(), resource.read_bytes())
+                            self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
+                    inventory = root / shared / ".basaltwater-files.json"
+                    self.assertTrue(inventory.is_file())
+                if tools == ["claude"]:
+                    self.assertFalse((Path(home) / ".agents").exists())
 
     def test_every_managed_skill_belongs_to_an_installer_catalog(self) -> None:
         source_names = {

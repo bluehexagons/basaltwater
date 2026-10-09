@@ -28,6 +28,7 @@ from lib.vendor_installer import install as install_vendor_tool
 CACHYOS_SKILLS = (
     "basaltwater-cachyos-workstation", "basaltwater-cachyos-workspace",
     "basaltwater-cachyos-desktop",
+    "basaltwater-subagents",
 )
 CACHYOS_T3_SKILL = "basaltwater-cachyos-t3code"
 T3_SERVICE = "basaltwater-cachyos-t3.service"

@@ -1,5 +1,10 @@
 # Subagent workflows and model choices
 
+Debian agent-enabled setups and CachyOS workstations both install the shared
+`basaltwater-subagents` skill with local lifecycle and model-selection references.
+Their workspace skills retain each platform's account and setup boundaries.
+Detailed guidance needs neither a Basaltwater checkout nor a GitHub connection.
+
 Use delegation for independent tasks with clear acceptance checks. User guides,
 historical records, and an independent review can split well; small changes
 touching the same configuration usually benefit from one owner. Account for
@@ -16,12 +21,12 @@ Choose normal branch merges before starting. Managed cleanup requires task
 commits to be ancestors of the primary checkout's current `HEAD`; cherry-pick
 and squash do not satisfy that condition. `workspace status --json` exposes
 ancestry, while `remove --dry-run` checks all cleanup conditions. The shipped
-[complete lifecycle](../common/agent_skills/basaltwater-agent-workspace/references/lifecycle.md)
+[complete lifecycle](../common/agent_skills/basaltwater-subagents/references/lifecycle.md)
 connects worktree creation, bounded assignments, standard handoffs, commit review,
 merge, validation, and removal in one example.
 
-The workspace skill also ships
-[model selection and learning](../common/agent_skills/basaltwater-agent-workspace/references/model-selection.md).
+The shared subagent skill also ships
+[model selection and learning](../common/agent_skills/basaltwater-subagents/references/model-selection.md).
 Start with Luna for simple categorization or extraction, Sol for coding and
 reviews, and rarely Astra for a justified specialized task. Verify the exact
 model and effort supported by the current session. Use standard service and
@@ -46,6 +51,8 @@ Initialization preserves existing policies. Recording requires a validation
 result; observed costs, runtime, retry counts, and parent rework are optional.
 Unknown billing remains unknown, including subscription sessions. Neither
 command launches agents or calls a model API.
+Unobserved parent rework also remains unknown; reports expose a known subtotal
+and observation count rather than present missing observations as no rework.
 
 Recommendations intersect verified project metadata with current runtime
 availability and safe efforts. New IDs can be added without upgrading
@@ -54,6 +61,9 @@ uncatalogued or stale models so the agent can verify official metadata, update
 the project policy, and evaluate candidates. Proven choices use recent outcomes
 for the same task, evaluation version, model ID, and effort. Untested candidates
 are exposed for trials; they do not displace a proven choice automatically.
+Proven higher efforts remain eligible even when a lower supported default has
+failed. Provisional choices use the lowest supported effort meeting the task's
+minimum, and do not automatically retry with untested higher effort.
 An empty eligible set returns nonzero and a null selection.
 
 The starter catalog is dated **2026-10-09**, with standard API token rates and

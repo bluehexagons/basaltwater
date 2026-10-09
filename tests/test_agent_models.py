@@ -126,6 +126,57 @@ class AgentModelsTests(unittest.TestCase):
         rows = report_model_outcomes(str(self.repository))
         self.assertEqual({row["evaluation"] for row in rows}, {"v1", "v2"})
 
+    def test_proven_higher_effort_remains_eligible_after_default_fails(self) -> None:
+        for _ in range(3):
+            self._record("gpt-6.1-sol", task="coding", effort="medium", outcome="failed", cost=0.1)
+            self._record("gpt-6.1-sol", task="coding", effort="high", cost=0.5)
+        result = self._recommend("coding")
+        self.assertEqual(result["selection"]["model"], "gpt-6.1-sol")
+        self.assertEqual(result["selection"]["effort"], "high")
+        self.assertFalse(result["provisional"])
+        self.assertEqual(result["basis"], "reviewed_cost_per_accepted")
+        # Losing a supported setting must also remove its otherwise proven evidence.
+        self._write(self.available_path, [{"id": "gpt-6.1-sol", "efforts": ["medium"]}])
+        self.assertIsNone(self._recommend("coding")["selection"])
+
+    def test_efforts_compete_by_cost_and_sparse_higher_effort_needs_a_trial(self) -> None:
+        for _ in range(3):
+            self._record("gpt-6.1-sol", task="coding", effort="medium", cost=0.5)
+            self._record("gpt-6.1-sol", task="coding", effort="high", cost=0.1)
+        self.assertEqual(self._recommend("coding")["selection"]["effort"], "high")
+        self._record("gpt-6.1-sol", task="coding", effort="medium")
+        result = self._recommend("coding")
+        self.assertEqual(result["basis"], "token_cost_estimate")
+        self.assertEqual(result["selection"]["effort"], "medium")
+        policy = self._policy()
+        policy["tasks"]["coding"]["evaluation"] = "v2"
+        self._write(self.policy_path, policy)
+        self._record("gpt-6.1-sol", task="coding", effort="high", cost=0.1)
+        result = self._recommend("coding")
+        self.assertEqual(result["selection"]["effort"], "medium")
+        self.assertIn("high", [item["effort"] for item in result["trial_candidates"]])
+
+    def test_new_lower_effort_does_not_displace_proven_setting(self) -> None:
+        for _ in range(3):
+            self._record()
+        self.available[0]["efforts"].insert(0, "none")
+        self._write(self.available_path, self.available)
+        result = self._recommend()
+        self.assertEqual(result["selection"]["effort"], "low")
+        self.assertFalse(result["provisional"])
+        self.assertIn("none", [item["effort"] for item in result["trial_candidates"]])
+
+    def test_unobserved_rework_stays_unknown_with_known_subtotal(self) -> None:
+        self._record()
+        record_model_outcome(str(self.repository), {
+            "task": "classification", "model": "gpt-6-luna", "effort": "low",
+            "outcome": "reworked", "attempts": 1, "validation": "Parent corrected an ambiguous category",
+        })
+        row = report_model_outcomes(str(self.repository))[0]
+        self.assertEqual(row["rework_samples"], 1)
+        self.assertEqual(row["known_rework_minutes"], 0)
+        self.assertIsNone(row["rework_minutes"])
+
     def test_old_evidence_and_stale_catalog_need_fresh_evaluation(self) -> None:
         for _ in range(3):
             self._record("gpt-6.1-sol", cost=0.2)
