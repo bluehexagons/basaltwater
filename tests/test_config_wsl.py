@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from common import wsl_steps
+from lib.config import SetupConfig
+from plugins.wsl import build_wsl_steps
 from windows import wsl_prepare
 
 
@@ -51,6 +53,25 @@ class WslStepTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[0].args[0][:2], ["apt-get", "update"])
         self.assertEqual(run.call_args_list[1].args[0][:2], ["apt-get", "upgrade"])
         self.assertIn("sudo", run.call_args_list[2].args[0])
+
+    def test_agents_receive_helpers_after_tools_and_before_readiness(self):
+        for tools in (["codex"], ["claude"], ["opencode"], ["codex", "claude"], ["gh"], []):
+            with self.subTest(tools=tools):
+                config = SetupConfig(host="localhost", username="agent", system_type="server_wsl",
+                                     machine_type="wsl", agent_tools=tools)
+                functions = [function.__name__ for _title, function in build_wsl_steps(config)]
+                if set(tools).intersection({"codex", "claude", "opencode"}):
+                    self.assertEqual(functions[-3:], ["install_agent_cli_launcher", "install_wsl_agent_skills",
+                                                     "report_wsl_readiness"])
+                else:
+                    self.assertNotIn("install_agent_cli_launcher", functions)
+                    self.assertNotIn("install_wsl_agent_skills", functions)
+
+    def test_skill_dry_run_never_writes_catalogs(self):
+        with patch.object(wsl_steps, "is_dry_run", return_value=True), \
+             patch("common.agent_steps.install_managed_agent_skills") as install:
+            wsl_steps.install_wsl_agent_skills(self._config())
+        install.assert_not_called()
 
 
 class WslPrepareTests(unittest.TestCase):

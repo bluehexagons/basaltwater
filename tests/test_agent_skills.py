@@ -20,6 +20,7 @@ from common.agent_steps import (
 from common.godot_web_steps import GODOT_AGENT_SKILLS
 from common.cachyos_steps import CACHYOS_SKILLS, CACHYOS_T3_SKILL, install_cachyos_skills
 from common.t3code_steps import T3_AGENT_SKILL_NAMES
+from common.wsl_steps import WSL_SKILL_NAMES, install_wsl_agent_skills
 from lib.config import SetupConfig
 from lib.types import StepFunc
 from plugins.common import extend_agent_steps
@@ -130,10 +131,36 @@ class ManagedAgentSkillTests(unittest.TestCase):
             *BROWSER_AGENT_SKILL_NAMES,
             *T3_AGENT_SKILL_NAMES,
             *GODOT_AGENT_SKILLS,
+            *WSL_SKILL_NAMES,
             "basaltwater-desktop",
         }
 
         self.assertEqual(source_names, installed_names)
+
+    def test_wsl_delivers_complete_bundles_to_each_selected_linux_user_catalog(self) -> None:
+        for tools, catalogs in ((["codex"], (".agents",)), (["opencode"], (".agents",)),
+                                (["claude"], (".claude",)), (["codex", "claude"], (".agents", ".claude"))):
+            with self.subTest(tools=tools), tempfile.TemporaryDirectory() as home:
+                config = SetupConfig(host="localhost", username="agent", system_type="server_wsl",
+                                     machine_type="wsl", agent_tools=tools)
+                with (
+                    patch("common.wsl_steps.is_dry_run", return_value=False),
+                    patch("common.agent_steps.pwd.getpwnam", return_value=self._account(home)),
+                    patch("common.agent_steps.os.chown"),
+                    patch("subprocess.run", side_effect=AssertionError("Skill installation must not launch tools")),
+                ):
+                    install_wsl_agent_skills(config)
+                    install_wsl_agent_skills(config)
+                for catalog in catalogs:
+                    root = Path(home) / catalog / "skills"
+                    self.assertEqual({entry.name for entry in root.iterdir()}, set(WSL_SKILL_NAMES))
+                    for name in WSL_SKILL_NAMES:
+                        source = Path(AGENT_SKILLS_ROOT) / name
+                        for resource in source.rglob("*"):
+                            if resource.is_file():
+                                self.assertEqual((root / name / resource.relative_to(source)).read_bytes(), resource.read_bytes())
+                if tools == ["claude"]:
+                    self.assertFalse((Path(home) / ".agents").exists())
 
     def test_selects_browser_skill_for_the_provisioned_capabilities(self) -> None:
         cases = (

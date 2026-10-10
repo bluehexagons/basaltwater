@@ -15,6 +15,10 @@ from lib.validation import validate_filesystem_path
 
 
 SKILL_AGENT_TOOLS = frozenset({"codex", "opencode", "claude"})
+SKILL_CATALOG_PROVIDERS = (
+    (".agents", ("codex", "opencode")),
+    (".claude", ("claude",)),
+)
 _MARKER = b"managed-by: basaltwater"
 _INVENTORY = ".basaltwater-files.json"
 _RESOURCE_DIRS = {"references", "scripts", "assets", "agents"}
@@ -26,10 +30,7 @@ def skill_catalogs(agent_tools: Iterable[str]) -> tuple[str, ...]:
     tools = set(agent_tools)
     return tuple(
         directory
-        for directory, providers in (
-            (".agents", {"codex", "opencode"}),
-            (".claude", {"claude"}),
-        )
+        for directory, providers in SKILL_CATALOG_PROVIDERS
         if tools.intersection(providers)
     )
 

@@ -6,6 +6,50 @@ the shared `~/.agents/skills` directory and for Claude Code under its personal
 commands and boundaries that a general coding agent cannot infer reliably from
 the project alone.
 
+## Access from different sessions
+
+| Launch context | Catalog used |
+| --- | --- |
+| Codex CLI, including `codex exec` | The provider account's `~/.agents/skills`, plus repository and other Codex-supported scopes |
+| T3 Code on Debian or CachyOS | The account running the provider on the selected connection, using the same provider catalog as terminal sessions |
+| Basaltwater panel prompt task | The panel account's `~/.agents/skills`; the runner fixes `HOME` and `CODEX_HOME` and starts a new terminal process |
+| T3 Code on Windows connected to Ubuntu WSL | The selected distribution's Linux account/catalog |
+| Subagent | Its actual account, working directory, and provider configuration; pass relevant skill paths when assigning a fresh worker |
+
+Skill access has three separate checks: the files exist and are readable, the
+provider advertises/enables the skill, and the agent reads it for this task.
+Basaltwater handles installation. It does not replace the provider's discovery
+or guarantee that every skill is loaded on every turn. Codex custom agents
+inherit `skills.config` and MCP settings unless overridden; fresh conversation
+context and thread-scoped tools are separate. See the
+[official OpenAI documentation](https://learn.chatgpt.com/docs/build-skills) and
+[subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents).
+
+Run `basaltw agent manifest /absolute/project --json` as the provider account to
+list known Basaltwater entrypoints in both user catalogs. `skills` reports
+`current`, `different`, `incomplete`, `unsafe`, or `personal` against the running
+Basaltwater installation's source. `different` can mean an older bundle or local
+edits; setup preserves edited supporting resources rather than overwriting them.
+This is an inventory of known Basaltwater names, not personal, plugin, repository,
+or system skills. `session_access` stays `unverified`; it does not read provider
+configuration or credentials. Use the active skill list (`/skills` in interactive
+Codex) to verify discovery, and respect disabled skills. Large Codex catalogs
+can omit metadata from initial context; pass the relevant skill name and path.
+
+Choose platform guidance first, then session-specific references. Keep a single
+capability-selected catalog per account rather than replacing it whenever an
+agent launches. T3 preview, native desktop grants, and unattended permissions
+depend on the active session. The shared subagent skill ships
+[`references/session-context.md`](../common/agent_skills/basaltwater-subagents/references/session-context.md)
+with a worker assignment example and guidance for each context.
+
+Windows `server_wsl` now installs `basaltw`, `basaltwater-wsl-workspace`, and
+`basaltwater-subagents` when a supported coding agent is selected. These are
+Linux-user skills; native Windows providers have separate homes and are not
+provisioned by this profile. Native PowerShell artifact jobs execute committed
+scripts rather than Codex prompts. WSL does not receive VM maintenance, panel,
+XRDP, or managed browser skills. See [Windows/WSL](WINDOWS_WSL.md).
+
 ## Installed skills
 
 The limited [`agent_cachyos` profile](CACHYOS.md) has a separate catalog:
@@ -175,7 +219,8 @@ behavior. Add a base skill to `BASE_AGENT_SKILL_NAMES` in
 tuples should extend the base constant so standalone capability setup remains
 complete. Platform-neutral skills such as `basaltwater-subagents` also belong
 to `CACHYOS_SKILLS` in `common/cachyos_steps.py`; keep platform-specific skills
-in their own catalog.
+in their own catalog. Ubuntu WSL skills belong to `WSL_SKILL_NAMES` in
+`common/wsl_steps.py` and are wired by `plugins/wsl.py`.
 
 Keep essential discovery and operational boundaries in the entrypoint and link
 detailed procedures to shipped relative references. For example,

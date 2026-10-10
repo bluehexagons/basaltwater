@@ -9,6 +9,19 @@ It performs no installation, cloud
 request, deployment, or authentication-file inspection. Tool availability does
 not establish health; use the reported doctor command for that separate check.
 
+`skills` inventories known Basaltwater entrypoints in both `~/.agents/skills`
+(Codex/OpenCode) and `~/.claude/skills` (Claude Code). It compares entrypoints and
+supporting files with the running CLI's source, reporting `current`, `different`,
+`incomplete`, `unsafe`, or `personal`. A differing bundle may be older or edited;
+refresh it through the platform's setup, preserving personal changes. Missing
+optional skills are not health failures. The inventory does not include arbitrary
+personal, repository, plugin, or system skills and does not inspect provider
+configuration or credentials. `session_access` remains `unverified`: check the
+active agent's skill list and enabled settings separately. See
+[skill access by launch context](AGENT_SKILLS.md#access-from-different-sessions).
+Desktop guidance now includes relevant local entrypoints from either provider
+catalog, including Claude-only installations.
+
 Installed desktop applications appear with supported workflows and a link to
 the [desktop development guide](DESKTOP_DEVELOPMENT.md). Blender also includes
 a background-render recipe and guidance on argument order and capture settings.

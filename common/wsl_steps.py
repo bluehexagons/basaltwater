@@ -14,6 +14,19 @@ from lib.remote_utils import is_dry_run, run
 from lib.validators import validate_username
 
 
+WSL_SKILL_NAMES = ("basaltwater-wsl-workspace", "basaltwater-subagents")
+
+
+def install_wsl_agent_skills(config: SetupConfig) -> None:
+    """Install Linux-user guidance without claiming Debian VM capabilities."""
+    if is_dry_run():
+        print("  [DRY-RUN] Would install managed WSL agent skills")
+        return
+    from common.agent_steps import install_managed_agent_skills
+
+    install_managed_agent_skills(config.username, config.selected_agent_tools(), WSL_SKILL_NAMES)
+
+
 def preflight_wsl(config: SetupConfig) -> None:
     if config.system_type != "server_wsl" or config.machine_type != "wsl":
         raise ValueError("server_wsl requires the wsl machine type")

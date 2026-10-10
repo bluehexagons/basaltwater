@@ -12,6 +12,7 @@ import subprocess
 import urllib.parse
 
 from lib import agent_workspace
+from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
 from lib.validation import validate_filesystem_path, validate_no_control_characters
@@ -305,10 +306,13 @@ def inspect_environment(repository: str) -> dict[str, object]:
                "executable": tools[name], "readiness": "unverified", "guide": DESKTOP_GUIDE}
         for name, guidance in DESKTOP_APPLICATIONS.items() if tools[name]
     }
+    skills = inspect_skill_catalogs(home)
+    desktop_names = (("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
+                     if native_desktop else ("basaltwater-desktop",))
     desktop_skills = [
-        path for name in (("basaltwater-cachyos-desktop", "basaltwater-cachyos-workstation")
-                         if native_desktop else ("basaltwater-desktop",))
-        if os.path.isfile(path := os.path.join(home, ".agents", "skills", name, "SKILL.md"))
+        entry["path"] for catalog in skills["catalogs"] for name in desktop_names
+        for entry in catalog["skills"]
+        if entry["name"] == name and entry["status"] not in {"unsafe", "incomplete"}
     ]
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
@@ -316,6 +320,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
         "schema_version": 1,
         "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
+        "skills": skills,
         "browser": {
             "preferred_provider": "active-session",
             "readiness": "session-dependent",
@@ -379,6 +384,10 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     workspace = result["workspace"]
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
+    for catalog in result["skills"]["catalogs"]:
+        print(f"Skill catalog: {catalog['path']} ({', '.join(catalog['providers'])}; session access unverified)")
+        for entry in catalog["skills"]:
+            print(f"  {entry['name']}: {entry['status']} — {entry['path']}")
     for name, requirement in result["required_tools"].items():
         print(f"Required tool: {name} ({requirement['status']})")
     for name, recipe in result["recipes"].items():

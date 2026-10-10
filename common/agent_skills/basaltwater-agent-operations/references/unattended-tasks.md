@@ -5,6 +5,22 @@ launched by its scheduler. The runner uses the panel account's Codex CLI,
 credentials, configuration, and installed skills. T3 Code is optional; Claude
 Code and OpenCode are diagnostic inventory entries, not task executors.
 
+Each run fixes `HOME` and `CODEX_HOME` to the panel account, so credentials,
+configuration, and the `~/.agents/skills` catalog belong to that account rather
+than a caller's custom home. Check the active session's skill list; filesystem
+presence does not establish that a skill is enabled or loaded. Use
+`basaltw agent manifest /absolute/project --json` to find local entrypoints and
+incomplete or differing bundles. Honor disabled skill settings. T3 preview and
+other thread-scoped tools are not inherited by this terminal process.
+
+If the prompt authorizes delegation and its tools support it, use the installed
+`basaltwater-subagents` session-context reference. Pass worker-specific skill
+paths, permissions, unattended status, and the remaining runtime. Join workers
+before completing the run; use one agent when worker limits cannot be enforced.
+The prompt's model selector accepts supported `none` effort from Codex's cache;
+disabled thinking is model-dependent. User-selected settings do not authorize
+workers to inherit fast service, `max`, or `ultra` without explicit scope.
+
 ## Scope and permissions
 
 Review the prompt and execution settings before saving. A template supplies

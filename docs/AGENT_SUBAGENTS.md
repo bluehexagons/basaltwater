@@ -1,9 +1,19 @@
 # Subagent workflows and model choices
 
-Debian agent-enabled setups and CachyOS workstations both install the shared
-`basaltwater-subagents` skill with local lifecycle and model-selection references.
+Debian agent-enabled setups, CachyOS workstations, and Ubuntu WSL coding profiles
+install the shared `basaltwater-subagents` skill with local lifecycle,
+model-selection, and session-context references.
 Their workspace skills retain each platform's account and setup boundaries.
 Detailed guidance needs neither a Basaltwater checkout nor a GitHub connection.
+
+Fresh workers need the relevant project instructions and absolute skill paths
+in their assignment. Their enabled skills and tools depend on the provider,
+account, and working directory; they may not inherit the parent's loaded skill
+bodies or T3 browser attachment. The shipped
+[session-context guide](../common/agent_skills/basaltwater-subagents/references/session-context.md)
+explains terminal, T3, WSL, and unattended task boundaries and includes a bounded
+worker assignment. Use `basaltw agent manifest /absolute/project --json` for
+local catalog inventory, then check discovery in the active agent session.
 
 Use delegation for independent tasks with clear acceptance checks. User guides,
 historical records, and an independent review can split well; small changes

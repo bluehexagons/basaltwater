@@ -1,17 +1,21 @@
 ---
 name: basaltwater-subagents
-description: Plan bounded subagent tasks, choose cost-aware OpenAI models, and review and integrate work on Debian agent VMs or CachyOS workstations.
+description: Plan bounded subagent tasks, choose cost-aware OpenAI models, and integrate work on Debian, CachyOS, or Ubuntu WSL.
 metadata:
   managed-by: basaltwater
 ---
 
 # Subagent workflows
 
-Use this workflow with the platform's workspace skill. It is installed on both
-Debian agent VMs and CachyOS workstations; its references are available locally.
+Use this workflow with the platform's workspace skill. It is installed on
+Debian agent VMs, CachyOS workstations, and Ubuntu WSL; its references are local.
 Delegate independent tasks when context transfer, review, integration, retries,
 and model cost leave a useful saving. Keep small, tightly coupled changes with
 one owner. Delegation remains subject to the session's authorization and tools.
+
+Read [session context and skill access](references/session-context.md) when
+launching fresh workers, changing accounts or providers, or delegating from an
+unattended task. Skill files, selected guidance, and tools have separate scopes.
 
 Agents share the filesystem. Read-only reviewers may inspect the primary
 checkout; editors and checks that write files need separate managed worktrees.

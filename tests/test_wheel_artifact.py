@@ -37,9 +37,12 @@ class WheelArtifactTest(unittest.TestCase):
             "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
             "lib/agent_models.py",
+            "lib/agent_skill_catalog.py",
             "common/agent_skills/basaltwater-subagents/SKILL.md",
             "common/agent_skills/basaltwater-subagents/references/lifecycle.md",
             "common/agent_skills/basaltwater-subagents/references/model-selection.md",
+            "common/agent_skills/basaltwater-subagents/references/session-context.md",
+            "common/agent_skills/basaltwater-wsl-workspace/SKILL.md",
             "common/agent_skills/basaltwater-subagents/assets/agent-models.json",
         )
         for missing in resources:

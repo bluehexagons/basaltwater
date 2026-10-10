@@ -74,6 +74,7 @@ class TestAgentEnvironment(unittest.TestCase):
             skill = Path(self.directory, ".agents/skills", name, "SKILL.md")
             skill.parent.mkdir(parents=True)
             skill.write_text("Local guidance")
+            skill.chmod(0o644)
         with (
             patch.object(agent_workspace, "_repository_root", return_value=self.directory),
             patch.object(agent_workspace, "_effective_home", return_value=self.directory),
@@ -121,6 +122,7 @@ class TestAgentEnvironment(unittest.TestCase):
         skill = Path(self.directory, ".agents/skills/basaltwater-desktop/SKILL.md")
         skill.parent.mkdir(parents=True)
         skill.write_text("Desktop guidance")
+        skill.chmod(0o644)
         with (
             patch.object(agent_workspace, "_repository_root", return_value=self.directory),
             patch.object(agent_workspace, "_effective_home", return_value=self.directory),
@@ -152,12 +154,33 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertEqual(result["desktop_skills"], [str(skill)])
         execute.assert_not_called()
 
+    def test_claude_only_desktop_guidance_is_discoverable_on_both_platforms(self) -> None:
+        for native, name in ((False, "basaltwater-desktop"), (True, "basaltwater-cachyos-desktop")):
+            with self.subTest(native=native):
+                self.cachyos.return_value = native
+                skill = Path(self.directory, ".claude/skills", name, "SKILL.md")
+                skill.parent.mkdir(parents=True)
+                skill.write_text("Personal guidance")
+                skill.chmod(0o644)
+                with (
+                    patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+                    patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+                    patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}),
+                    patch.object(agent_environment.shutil, "which", return_value="/bin/tool"),
+                    patch.object(agent_environment.subprocess, "run") as execute,
+                ):
+                    result = agent_environment.inspect_environment(self.directory)
+                self.assertEqual(result["desktop_skills"], [str(skill)])
+                self.assertEqual(result["skills"]["session_access"], "unverified")
+                execute.assert_not_called()
+
     def test_summary_includes_application_specific_instructions(self) -> None:
         result = {
             "tools": {"blender": "/bin/blender"},
             "publishing": {"tools": {"butler": None, "steamcmd": None}, "readiness": "unverified"},
             "desktop_applications": {"blender": {**agent_environment.DESKTOP_APPLICATIONS["blender"], "readiness": "unverified"}},
             "desktop_skills": [],
+            "skills": {"catalogs": []},
             "workspace": {"repository": self.directory, "branch": "main", "commit": "a" * 40, "worktree_root": self.directory, "legacy_browser_artifacts": self.directory, "artifact_directories": []},
             "browser": {"instructions": "Use session browser", "managed_playwright": {"readiness": "not-on-path"}},
             "deployments": {}, "undeclared_branches": ["dev", "staging"],

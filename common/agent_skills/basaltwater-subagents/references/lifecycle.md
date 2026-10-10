@@ -4,7 +4,7 @@ Choose the integration branch and use normal branch merges before assigning
 editing work. The parent stays in the primary checkout and owns integration and
 cleanup. This example splits a website task into user guides and historical
 records; a read-only reviewer can inspect the primary checkout after merging.
-These commands work in both bash on Debian and fish on CachyOS. Supply the
+These commands work in bash on Debian/Ubuntu WSL and fish on CachyOS. Supply the
 actual repository path when the workspace differs from `~/repos`.
 
 ## Prepare and assign
