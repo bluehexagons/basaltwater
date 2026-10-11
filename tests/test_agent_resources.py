@@ -64,6 +64,51 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(result["memory_max"]["value"], 2048)
         self.assertFalse(result["memory_high"]["available"])
 
+    def test_hybrid_hosts_select_cpu_and_memory_controllers_independently(self):
+        for controllers in ("cpu", "memory", "cpu,memory"):
+            with self.subTest(controllers=controllers):
+                self.hierarchy()
+                self.write(self.leaf, **{"cpu.max": "200000 100000", "memory.max": "4096", "memory.high": "3072"})
+                for filename in ("cpu.max", "memory.max", "memory.high"):
+                    if filename.split(".", 1)[0] in controllers.split(","):
+                        (self.leaf / filename).unlink()
+                legacy = self.root / ("legacy-" + controllers)
+                worker = legacy / "parent/worker"
+                worker.mkdir(parents=True)
+                self.write(worker, **{"cpu.cfs_quota_us": "100000", "cpu.cfs_period_us": "100000",
+                                      "memory.limit_in_bytes": "2048", "memory.soft_limit_in_bytes": "100"})
+                self.write(worker.parent, **{"cpu.cfs_quota_us": "50000", "cpu.cfs_period_us": "100000",
+                                             "memory.limit_in_bytes": "1024"})
+                with (self.proc / "self/cgroup").open("a") as stream:
+                    stream.write(f"\n2:{controllers}:/parent/worker\n")
+                with (self.proc / "self/mountinfo").open("a") as stream:
+                    stream.write(f"2 0 0:2 / {legacy} rw - cgroup cgroup rw,{controllers}\n")
+                result = self.inspect()
+                self.assertEqual(result["cgroup_version"], "hybrid")
+                self.assertEqual(result["cpu_quota"]["value"], 0.5 if "cpu" in controllers else 2)
+                self.assertEqual(result["cpu_budget_upper_bound"], 0.5 if "cpu" in controllers else 2)
+                self.assertEqual(result["memory_max"]["value"], 1024 if "memory" in controllers else 4096)
+                self.assertEqual(result["memory_high"]["available"], "memory" not in controllers)
+                sanitized = resources.sanitize_workload_limits(result)
+                record = build_agent_readiness_record([], [{"capability": "host", "healthy": True,
+                                                           "workload_limits": result}], trigger="manual")
+                self.assertEqual(sanitized["cgroup_version"], "hybrid")
+                self.assertEqual(sanitized["cpu_quota"]["value"], result["cpu_quota"]["value"])
+                self.assertIn('"cgroup_version": "hybrid"', json.dumps(record))
+                self.assertNotIn(str(self.root), json.dumps(record))
+
+    def test_known_cpu_quota_remains_an_upper_bound_when_affinity_is_unavailable(self):
+        self.hierarchy()
+        self.write(self.leaf, **{"cpu.max": "75000 100000"})
+        with patch.object(resources.os, "sched_getaffinity", side_effect=OSError):
+            result = self.inspect()
+            self.assertFalse(result["affinity_available"])
+            self.assertIsNone(result["affinity_cpu_count"])
+            self.assertEqual(result["cpu_budget_upper_bound"], 0.75)
+            self.assertFalse(result["cpu_budget_is_concurrency_recommendation"])
+            self.write(self.leaf, **{"cpu.max": "max 100000"})
+            self.assertIsNone(self.inspect()["cpu_budget_upper_bound"])
+
     def test_missing_malformed_and_hidden_ancestry_are_unknown(self):
         result = self.inspect()
         self.assertEqual(result["cgroup_version"], "unavailable")

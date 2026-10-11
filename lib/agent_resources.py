@@ -170,14 +170,22 @@ def inspect_workload_limits(*, proc_root: str = "/proc") -> dict:
         affinity = None
     hierarchies = _hierarchies(proc)
     v2 = hierarchies.get("v2")
-    cpu = _limit(v2 or hierarchies.get("cpu"), "cpu.max" if v2 else "cpu.cfs_quota_us", cpu=True, v1=not v2)
-    memory = _limit(v2 or hierarchies.get("memory"), "memory.max" if v2 else "memory.limit_in_bytes", v1=not v2)
-    high = _limit(v2, "memory.high")  # v1 soft_limit is not v2 memory.high.
-    budget = min(affinity, cpu["value"]) if affinity is not None and cpu["value"] is not None else affinity
+    # Controllers bound to v1 cannot also belong to v2. A hybrid host may
+    # expose a unified mount while its CPU or memory controller remains in v1.
+    legacy_cpu = hierarchies.get("cpu")
+    legacy_memory = hierarchies.get("memory")
+    cpu = _limit(legacy_cpu or v2, "cpu.cfs_quota_us" if legacy_cpu else "cpu.max",
+                 cpu=True, v1=legacy_cpu is not None)
+    memory = _limit(legacy_memory or v2, "memory.limit_in_bytes" if legacy_memory else "memory.max",
+                    v1=legacy_memory is not None)
+    high = _limit(None if legacy_memory else v2, "memory.high")  # v1 soft_limit is not v2 memory.high.
+    bounds = [value for value in (affinity, cpu["value"]) if value is not None]
+    budget = min(bounds) if bounds else None
+    version = "hybrid" if v2 and len(hierarchies) > 1 else "v2" if v2 else "v1" if hierarchies else "unavailable"
     return {"sampled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "scope": "current-process", "ancestry_scope": "visible-cgroup-mount",
             "affinity_available": affinity is not None,
-            "affinity_cpu_count": affinity, "cgroup_version": "v2" if v2 else "v1" if hierarchies else "unavailable",
+            "affinity_cpu_count": affinity, "cgroup_version": version,
             "cpu_quota": cpu, "memory_max": memory, "memory_high": high,
             "cpu_budget_upper_bound": budget, "cpu_budget_is_concurrency_recommendation": False,
             "pressure": {"guest": {name: _pressure(proc / "pressure" / name) for name in ("cpu", "memory", "io")},
@@ -214,6 +222,6 @@ def sanitize_workload_limits(value: object) -> dict:
             "scope": "current-process", "ancestry_scope": "visible-cgroup-mount",
             "affinity_available": record.get("affinity_available") is True,
             "affinity_cpu_count": number(record.get("affinity_cpu_count")),
-            "cgroup_version": record.get("cgroup_version") if record.get("cgroup_version") in ("v1", "v2") else "unavailable",
+            "cgroup_version": record.get("cgroup_version") if record.get("cgroup_version") in ("v1", "v2", "hybrid") else "unavailable",
             **limits, "cpu_budget_upper_bound": number(record.get("cpu_budget_upper_bound")),
             "cpu_budget_is_concurrency_recommendation": False, "pressure": pressure}

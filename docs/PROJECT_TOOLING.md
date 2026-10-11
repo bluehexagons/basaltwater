@@ -315,6 +315,11 @@ tightest visible ancestor CPU quota in CPU equivalents, memory max/high in
 bytes, and timestamped guest/workload pressure averages and cumulative stall
 microseconds. A quota can be smaller than affinity. Missing or malformed
 interfaces remain unavailable, with `null` values rather than zero resources.
+`cgroup_version` distinguishes `v1`, `v2`, and `hybrid` mounts. On a hybrid
+host, CPU and memory limits follow each controller's own hierarchy; a v2 mount
+does not replace limits imposed through v1. A known quota remains a CPU-budget
+upper bound even when affinity is unavailable; that missing measurement stays
+explicitly unknown.
 `ancestry_complete` refers to the visible cgroup mount; namespaces or restricted
 mounts can hide tighter host ancestors. The CPU budget is an upper bound, not a
 build-concurrency recommendation. v1 memory soft limits are not reported as
