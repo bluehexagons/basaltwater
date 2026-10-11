@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 import io
 import json
 import os
+import sqlite3
 import struct
 import tempfile
 import threading
@@ -16,7 +17,11 @@ from unittest.mock import Mock, patch
 
 from common.service_tools.privilege_broker import Broker, Handler, execute
 from lib.privilege_client import add_privilege_parser, run_privilege_command
-from lib.privilege_policy import MAX_MESSAGE, canonical, operation_plan, validate_policy
+from lib.privilege_execution import ExecutionResult
+from lib.privilege_policy import (
+    DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS,
+    canonical, operation_plan, validate_policy,
+)
 
 
 def policy() -> dict:
@@ -31,7 +36,7 @@ class BrokerTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = os.path.join(self.directory.name, "state.db")
         self.policy = policy()
-        self.runner = Mock(return_value="succeeded")
+        self.runner = Mock(return_value=ExecutionResult("succeeded", exit_code=0))
         self.broker = Broker(self.path, lambda: copy.deepcopy(self.policy), self.runner)
         self.addCleanup(lambda: self.broker.db.close())
 
@@ -96,7 +101,7 @@ class BrokerTests(unittest.TestCase):
         def run(plan):
             started.set()
             release.wait(5)
-            return "succeeded"
+            return ExecutionResult("succeeded", exit_code=0)
         self.broker.runner = run
         worker = threading.Thread(target=self.broker.execute_next)
         worker.start()
@@ -146,6 +151,14 @@ class BrokerTests(unittest.TestCase):
             self.broker.decide(request["id"], "0" * 64, True, "operator")
         self.assertFalse(self.broker.execute_next())
 
+    def test_unreviewable_oversize_response_never_creates_a_request(self):
+        argv = ["true", *(["x" * 512] * 20)]
+        message = {"action": "request", "operation": "command.run", "parameters": {"argv": argv}, "reason": "test"}
+        self.assertLess(len(canonical(message).encode()), MAX_MESSAGE)
+        with self.assertRaisesRegex(ValueError, "response size"):
+            self.broker.request(1000, "command.run", {"argv": argv}, "test")
+        self.assertEqual(self.broker.db.execute("SELECT count(*) FROM requests").fetchone()[0], 0)
+
     def test_changed_policy_invalidates_approval_and_execution(self):
         for before_approval in (True, False):
             request = self.request()
@@ -193,7 +206,7 @@ class BrokerTests(unittest.TestCase):
             from contextlib import closing
             with closing(sqlite3.connect(self.path)) as db:
                 self.assertEqual(db.execute("SELECT state FROM requests").fetchone()[0], "executing")
-            return "succeeded"
+            return ExecutionResult("succeeded", exit_code=0)
         self.broker.runner = inspect
         self.broker.execute_next()
 
@@ -233,22 +246,62 @@ class BrokerTests(unittest.TestCase):
     def test_runner_uses_fixed_argv_and_no_caller_environment(self, run):
         run.return_value.returncode = 0
         plan = operation_plan(self.policy, 1000, "service.restart", {"unit": "demo.service"})
-        self.assertEqual(execute(plan), "succeeded")
+        self.assertEqual(execute(plan), ExecutionResult("succeeded", exit_code=0))
         self.assertEqual(run.call_args.args[0], ["/usr/bin/systemctl", "--no-ask-password", "restart", "--", "demo.service"])
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertEqual(run.call_args.kwargs["cwd"], "/")
+
+    def test_execution_failure_metadata_survives_reopening_without_output(self):
+        request = self.request()
+        self.runner.return_value = ExecutionResult("failed", exit_code=7, failure="nonzero_exit")
+        self.broker.decide(request["id"], request["digest"], True, "operator")
+        self.broker.execute_next()
+        self.broker.db.close()
+        self.broker = Broker(self.path, lambda: self.policy, self.runner)
+        result = self.broker.status(request["id"])
+        self.assertEqual(result["execution"], {"state": "failed", "exit_code": 7, "failure": "nonzero_exit"})
+        self.assertFalse(self.broker.execute_next())
+        self.runner.assert_called_once()
+
+    def test_old_database_migration_preserves_requests_and_audit(self):
+        request = self.request()
+        self.broker.decide(request["id"], request["digest"], False, "operator")
+        self.broker.db.close()
+        with sqlite3.connect(self.path) as db:
+            db.execute("ALTER TABLE requests DROP COLUMN execution")
+        self.broker = Broker(self.path, lambda: self.policy, self.runner)
+        self.assertEqual(self.broker.status(request["id"])["state"], "denied")
+        self.assertIsNone(self.broker.status(request["id"])["execution"])
+        self.assertEqual(self.broker.db.execute("SELECT count(*) FROM events").fetchone()[0], 2)
+
+    def test_hour_review_window_accepts_a_delayed_human_decision(self):
+        self.policy["ttl_seconds"] = DEFAULT_REQUEST_TTL_SECONDS
+        with patch("common.service_tools.privilege_broker.time.time", return_value=10000):
+            request = self.request()
+        self.assertEqual(request["expires"] - request["created"], 3600)
+        with patch("common.service_tools.privilege_broker.time.time", return_value=11800):
+            self.broker.decide(request["id"], request["digest"], True, "operator")
+            self.broker.execute_next()
+        self.runner.assert_called_once()
 
 
 class PolicyTests(unittest.TestCase):
     def test_strict_policy(self):
         self.assertEqual(validate_policy(policy()), policy())
-        for key, value in (("version", True), ("requester_uid", 0), ("ttl_seconds", 9999),
+        for key, value in (("version", True), ("requester_uid", 0), ("ttl_seconds", MAX_REQUEST_TTL_SECONDS + 1),
+                           ("ttl_seconds", True), ("ttl_seconds", 29),
                            ("origin", "http://vm.example:9444"), ("origin", "https://vm.example:9444/path"),
                            ("services", {"*.service": "allow"}), ("reboot", "allow")):
             candidate = policy()
             candidate[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 validate_policy(candidate)
+
+    def test_administrator_can_select_the_full_supported_review_window(self):
+        for ttl in (30, 300, 3600, MAX_REQUEST_TTL_SECONDS):
+            candidate = policy()
+            candidate["ttl_seconds"] = ttl
+            self.assertEqual(validate_policy(candidate)["ttl_seconds"], ttl)
 
 
 class ClientTests(unittest.TestCase):
@@ -274,6 +327,15 @@ class ClientTests(unittest.TestCase):
             self.assertEqual(run_privilege_command(self.arguments("wait")), 1)
         sleep.assert_not_called()
         exchange.assert_called_once_with({"action": "status", "id": "a" * 32})
+
+    @patch("lib.privilege_client.exchange")
+    def test_wait_supports_hour_default_and_longer_administrator_windows(self, exchange):
+        args = self.arguments("wait")
+        self.assertEqual(args.timeout, 3600)
+        args.timeout = MAX_REQUEST_TTL_SECONDS
+        exchange.return_value = {"id": "a" * 32, "state": "succeeded"}
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(run_privilege_command(args), 0)
 
 
 class TransportTests(unittest.TestCase):

@@ -8,7 +8,7 @@ import socket
 import sys
 import time
 
-from lib.privilege_policy import MAX_MESSAGE, REQUEST_SOCKET, canonical
+from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS, REQUEST_SOCKET, canonical
 
 
 def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
@@ -44,7 +44,7 @@ def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
         sub.add_argument("request_id")
         sub.add_argument("--json", action="store_true")
         if name == "wait":
-            sub.add_argument("--timeout", type=int, default=300)
+            sub.add_argument("--timeout", type=int, default=DEFAULT_REQUEST_TTL_SECONDS)
     password = actions.add_parser("password-hash", help="Create an approval password hash on the administrator's device")
     password.add_argument("--username", required=True)
 
@@ -73,8 +73,8 @@ def run_privilege_command(args: argparse.Namespace) -> int:
             result = exchange({"action": "cancel", "id": args.request_id})
         else:
             timeout = getattr(args, "timeout", 0)
-            if not 0 <= timeout <= 900:
-                raise ValueError("Timeout must be between 0 and 900 seconds")
+            if not 0 <= timeout <= MAX_REQUEST_TTL_SECONDS:
+                raise ValueError(f"Timeout must be between 0 and {MAX_REQUEST_TTL_SECONDS} seconds")
             deadline = time.monotonic() + timeout
             while True:
                 result = exchange({"action": "status", "id": args.request_id})

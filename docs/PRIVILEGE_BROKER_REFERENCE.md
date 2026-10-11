@@ -16,7 +16,9 @@ rules:
     "example.service": "approve",
     "reviewed-worker.service": "allow"
   },
-  "reboot": "approve"
+  "reboot": "approve",
+  "commands": "approve",
+  "ttl_seconds": 3600
 }
 ```
 
@@ -24,8 +26,10 @@ This fragment describes the mutable values; retain the installation's existing
 machine identity and requester UID. `approve` needs a browser decision for
 every request. `allow` executes automatically but is still audited.
 Unregistered services are denied. Reboot accepts only `approve` or `deny`.
-The schema permits at most 32 exact `.service` names and an expiry of 30–900
-seconds. The broker reads policy for every request and before execution, so a
+The schema permits at most 32 exact `.service` names and an expiry of 30–86,400
+seconds. New installations default to 3,600 seconds; setup reruns preserve the
+administrator's existing value. Commands always require individual approval.
+The broker reads policy for every request and before execution, so a
 change invalidates an outstanding request.
 
 Registering a service grants every effect of restarting it. Audit its unit,
@@ -49,6 +53,24 @@ the reviewed exact argv (fixed `systemctl` argv for structured service/reboot
 actions), a clean environment, no shell, and no privileged output
 returned to the agent. Policy, code, credentials, and their ancestor paths must
 be root-owned, non-symlinked, and not group/world writable.
+
+The broker and HTTPS service retain their filesystem/device/home sandboxes.
+An approved `command.run` dispatches a unique transient root unit through the
+system manager and waits for it to stop. Its fixed, root-owned
+`common/service_tools/privilege_command.py` helper receives only the reviewed
+argv as bounded JSON on a private stdin pipe. User arguments never enter
+systemd's command-line/environment substitution. The helper revalidates argv
+and executes it with a clean environment and closed interactive stdin.
+
+The transient unit deliberately has host filesystem, device and network access;
+that authority is described in the reviewed effects. It has no restart, a
+60-second command timeout, a 65-second unit runtime cap, a five-second stop
+deadline and control-group termination. The broker waits up to 80 seconds;
+the unit is limited to 1 GiB of memory and 128 tasks. A signalled systemd client or
+a lost wait response stays uncertain and is never replayed. Child output is
+discarded. `execution` metadata records only state, exit code and a fixed failure
+category, including on the review page. Existing audit databases gain a nullable
+execution column without losing requests or events.
 
 The approval page checks the configured Host and Origin, uses per-request CSRF
 tokens, escapes agent-supplied text, disables caching and framing, and has no

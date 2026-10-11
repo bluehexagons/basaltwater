@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 from common.service_tools import admin_job, privilege_broker
 from lib.admin_actions import ADMIN_ACTIONS, ADMIN_HELPER, ADMIN_TIMEOUT, ADMIN_UNIT, dispatch_argv
 from lib.privilege_policy import operation_plan
+from lib.privilege_execution import ExecutionResult
 from tests.test_agent_privilege_broker import policy
 
 
@@ -49,18 +50,18 @@ class AdminPolicyTests(unittest.TestCase):
     def test_detached_dispatch_does_not_report_job_completion(self):
         plan = operation_plan(policy(), 1000, "admin.run", {"action": "refresh"})
         with patch.object(privilege_broker, "protected_path"), patch.object(privilege_broker, "admin_availability", return_value={}), patch.object(privilege_broker.subprocess, "run", return_value=Mock(returncode=0)) as run:
-            self.assertEqual(privilege_broker.execute(plan), "dispatched")
+            self.assertEqual(privilege_broker.execute(plan).state, "dispatched")
             self.assertEqual(run.call_args.args[0], plan["argv"])
             run.side_effect = subprocess.TimeoutExpired(plan["argv"], 60)
-            self.assertEqual(privilege_broker.execute(plan), "uncertain")
+            self.assertEqual(privilege_broker.execute(plan).state, "uncertain")
         with patch.object(privilege_broker, "protected_path", side_effect=ValueError("Unsafe source")), patch.object(privilege_broker.subprocess, "run") as run:
-            self.assertEqual(privilege_broker.execute(plan), "failed")
+            self.assertEqual(privilege_broker.execute(plan).state, "failed")
             run.assert_not_called()
 
     def test_recent_admin_requests_are_owned_and_survive_reopening(self):
         with tempfile.TemporaryDirectory() as directory:
             path = directory + "/requests.db"
-            broker = privilege_broker.Broker(path, lambda: copy.deepcopy(policy()), Mock(return_value="dispatched"))
+            broker = privilege_broker.Broker(path, lambda: copy.deepcopy(policy()), Mock(return_value=ExecutionResult("dispatched", exit_code=0)))
             try:
                 request = broker.request(1000, "admin.run", {"action": "refresh"}, "Requested by administrator")
                 with self.assertRaisesRegex(ValueError, "outstanding"):

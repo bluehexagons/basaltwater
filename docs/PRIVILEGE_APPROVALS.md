@@ -46,7 +46,7 @@ basaltw agent privilege request system.reboot \
 basaltw agent privilege request service.restart --unit example.service \
   --reason "Restart the reviewed service" --json
 
-basaltw agent privilege wait REQUEST_ID --timeout 300 --json
+basaltw agent privilege wait REQUEST_ID --timeout 3600 --json
 
 # Request an exact command, without a shell or a leading sudo.
 basaltw agent privilege request command.run \
@@ -59,10 +59,24 @@ parameters, effects, and expiry, then choose **Approve once** or **Deny**.
 Treat the agent's explanation as untrusted. The root broker performs one
 approved attempt automatically.
 
-Requests expire after five minutes by default. A changed policy invalidates a
-request; an interrupted execution is marked uncertain and is never retried.
+New installations use a one-hour review window. Administrators can select
+30 seconds to 24 hours through `ttl_seconds` in the root-owned policy. Setup
+reruns preserve an existing window, including an older five-minute value; change
+that policy explicitly to extend an existing installation. The CLI's wait
+timeout only controls observation and does not extend the review deadline.
+A changed policy invalidates a request; an interrupted execution is marked
+uncertain and is never retried.
 Check status before submitting a replacement request. A reboot reported as
 `dispatched` is not proof that the VM returned.
+
+Approved commands run in a separate supervised root service with host
+filesystem, device and network access. The broker's own filesystem sandbox
+remains enabled. Review every argument and any referenced executable/configuration
+before approval. Each command has a 60-second runtime limit and its process
+group is stopped when the unit finishes. Status and the review page expose
+safe exit/failure metadata; privileged stdout and stderr remain discarded.
+The command unit has a 1 GiB memory limit and a 128-task limit; use the fixed
+administration workflow for long maintenance jobs.
 
 When an action is no longer needed, withdraw your own request without an
 operator approval:

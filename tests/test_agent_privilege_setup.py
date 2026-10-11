@@ -20,6 +20,7 @@ from lib.arg_parser import add_setup_arguments
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
 from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT, privilege_broker_origin
+from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS
 from plugins.common import extend_web_panel_steps
 
 
@@ -112,6 +113,8 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("SupplementaryGroups", web)
         self.assertIn("python3 -I /opt/basaltwater/", broker)
         self.assertIn("StateDirectoryMode=0700", broker)
+        self.assertIn("ProtectSystem=strict", broker)
+        self.assertNotIn("ReadWritePaths=/", broker)
         self.assertIn("ProtectSystem=strict", web)
 
     @patch("common.privilege_broker_steps.run")
@@ -194,6 +197,8 @@ class LifecycleTests(unittest.TestCase):
     def test_install_preserve_policy_and_rotate_password(self):
         self.steps.configure_privilege_broker(self.config)
         original = json.loads(self.policy_path.read_text())
+        self.assertEqual(original["ttl_seconds"], DEFAULT_REQUEST_TTL_SECONDS)
+        original["ttl_seconds"] = 300  # Preserve an existing administrator choice.
         original["services"] = {"reviewed.service": "allow"}
         self.policy_path.write_text(json.dumps(original))
         self.config.privilege_broker_auth = None

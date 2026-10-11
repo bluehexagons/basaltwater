@@ -16,7 +16,9 @@ from urllib.parse import urlsplit
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.machine_state import can_manage_system_services, is_vm
 from lib.privilege_auth import validate_auth
-from lib.privilege_policy import CONFIG_DIR, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy
+from lib.privilege_policy import (
+    CONFIG_DIR, DEFAULT_REQUEST_TTL_SECONDS, POLICY_PATH, WEB_USER, load_policy, protected_path, validate_policy,
+)
 from lib.privilege_setup import privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
 from lib.validators import validate_username
@@ -219,7 +221,8 @@ def configure_privilege_broker(config) -> None:
         policy["origin"] = privilege_broker_origin(config)
     else:
         policy = {"version": 1, "machine": secrets.token_hex(16), "origin": privilege_broker_origin(config),
-                  "requester_uid": account.pw_uid, "ttl_seconds": 300, "services": {}, "reboot": "approve", "commands": "approve"}
+                  "requester_uid": account.pw_uid, "ttl_seconds": DEFAULT_REQUEST_TTL_SECONDS,
+                  "services": {}, "reboot": "approve", "commands": "approve"}
     validate_policy(policy)
     # Every installed Python dependency is part of the privileged boundary.
     for directory in ("/opt/basaltwater/lib", "/opt/basaltwater/common", "/opt/basaltwater/plugins"):

@@ -54,8 +54,13 @@ def render_request(request: dict, token: str) -> str:
     expires = datetime.fromtimestamp(request["expires"], timezone.utc).isoformat()
     fields = [("Machine identity", plan["machine"]), ("Requesting account UID", plan["uid"]),
               ("Operation", plan["operation"]), ("Command", canonical(plan["argv"])), ("Parameters", canonical(plan["parameters"])),
-              ("Expected effects", plan["effect"]), ("Expires (UTC)", expires),
+              ("Expected effects", plan["effect"]),
+              ("Review window", f'{round(request["expires"] - request["created"])} seconds'),
+              ("Expires (UTC)", expires),
               ("Status", request["state"])]
+    if request.get("execution"):
+        execution = request["execution"]
+        fields.extend([("Exit code", execution["exit_code"]), ("Execution detail", execution["failure"] or "Completed")])
     content = '<p><a href="/">All requests</a></p><dl>'
     content += ''.join(f'<dt>{escape(label)}</dt><dd>{escape(value)}</dd>' for label, value in fields)
     content += '</dl><p class="notice">Agent-provided explanation (untrusted): ' + escape(request["reason"]) + '</p>'

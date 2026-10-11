@@ -21,6 +21,8 @@ APPROVAL_SOCKET = "/run/basaltwater-privilege-broker/approval.sock"
 DATABASE_PATH = "/var/lib/basaltwater-privilege-broker/requests.sqlite3"
 WEB_USER = "basaltwater-approval"
 MAX_MESSAGE = 16384
+DEFAULT_REQUEST_TTL_SECONDS = 3600
+MAX_REQUEST_TTL_SECONDS = 24 * 60 * 60
 UNIT_PATTERN = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,180}\.service\Z")
 COMMAND_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}\Z")
 ID_PATTERN = re.compile(r"[a-f0-9]{32}\Z")
@@ -61,8 +63,8 @@ def validate_policy(value: object) -> dict:
         raise ValueError("machine must be a unique 32-character hexadecimal installation ID")
     if type(value["requester_uid"]) is not int or value["requester_uid"] < 1000:
         raise ValueError("requester_uid must identify a non-system account")
-    if type(value["ttl_seconds"]) is not int or not 30 <= value["ttl_seconds"] <= 900:
-        raise ValueError("ttl_seconds must be between 30 and 900")
+    if type(value["ttl_seconds"]) is not int or not 30 <= value["ttl_seconds"] <= MAX_REQUEST_TTL_SECONDS:
+        raise ValueError(f"ttl_seconds must be between 30 and {MAX_REQUEST_TTL_SECONDS}")
     origin = value["origin"]
     if not isinstance(origin, str):
         raise ValueError("origin must be HTTPS")
@@ -102,6 +104,20 @@ def load_policy(path: str = POLICY_PATH) -> dict:
     return validate_policy(json.loads(data))
 
 
+def validate_command_argv(argv: object) -> list[str]:
+    """Validate the same exact argument vector at review and execution boundaries."""
+    if (not isinstance(argv, list) or not 1 <= len(argv) <= 64
+        or any(not isinstance(argument, str) or not argument or len(argument) > 512
+               or any(ord(character) < 32 or ord(character) == 127 for character in argument)
+               for argument in argv)):
+        raise ValueError("Command must be a bounded argument vector without control characters")
+    executable = argv[0]
+    if (executable == "sudo" or (not executable.startswith("/")
+        and not COMMAND_NAME_PATTERN.fullmatch(executable))):
+        raise ValueError("Command executable must be a path or simple program name, without sudo")
+    return argv
+
+
 def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -> dict:
     if uid != policy["requester_uid"]:
         raise PermissionError("Account is not authorized to request privileges")
@@ -127,18 +143,9 @@ def operation_plan(policy: dict, uid: int, operation: str, parameters: object) -
         if action != "cancel-shutdown":
             effect += " Run independently of the panel with a six-hour limit; dispatch does not prove completion."
     elif operation == "command.run" and set(parameters) == {"argv"}:
-        argv = parameters["argv"]
-        if (not isinstance(argv, list) or not 1 <= len(argv) <= 64
-            or any(not isinstance(argument, str) or not argument or len(argument) > 512
-                   or any(ord(character) < 32 or ord(character) == 127 for character in argument)
-                   for argument in argv)):
-            raise ValueError("Command must be a bounded argument vector without control characters")
-        executable = argv[0]
-        if (executable == "sudo" or (not executable.startswith("/")
-            and not COMMAND_NAME_PATTERN.fullmatch(executable))):
-            raise ValueError("Command executable must be a path or simple program name, without sudo")
+        argv = validate_command_argv(parameters["argv"])
         mode = policy.get("commands", "approve")
-        effect = "Run this exact command once as root; review every argument before approving."
+        effect = "Run this exact command once as root with host filesystem, device and network access, limited to 60 seconds; review every argument before approving."
     else:
         raise ValueError("Unknown operation or parameters")
     if mode == "deny":

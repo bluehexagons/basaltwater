@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from common.service_tools.privilege_approval import ApprovalServer
 from common.service_tools.privilege_broker import Broker
 from lib.privilege_auth import authenticate, password_record
+from lib.privilege_execution import ExecutionResult
 from tests.test_agent_privilege_broker import policy
 
 
@@ -28,7 +29,7 @@ class ApprovalTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.runner = Mock(return_value="succeeded")
+        self.runner = Mock(return_value=ExecutionResult("succeeded", exit_code=0))
         self.broker = Broker(self.directory.name + "/state.db", lambda: policy(), self.runner)
         self.addCleanup(self.broker.db.close)
         self.request = self.broker.request(1000, "service.restart", {"unit": "demo.service"}, '<script>alert("x")</script>')
@@ -84,6 +85,16 @@ class ApprovalTests(unittest.TestCase):
         self.broker.execute_next()
         self.runner.assert_called_once()
         self.assertIn("succeeded", self.call()[2])
+
+    def test_failed_execution_shows_safe_exit_metadata(self):
+        self.runner.return_value = ExecutionResult("failed", exit_code=7, failure="nonzero_exit")
+        self.assertEqual(self.post(self.form())[0], 303)
+        self.broker.execute_next()
+        content = self.call()[2]
+        self.assertIn("Review window", content)
+        self.assertIn("Exit code", content)
+        self.assertIn("nonzero_exit", content)
+        self.assertNotIn("Approve once", content)
 
     def test_cross_origin_and_forged_csrf_rejected(self):
         form = self.form()

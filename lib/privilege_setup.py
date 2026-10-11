@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from lib.privilege_auth import validate_auth
-from lib.privilege_policy import validate_policy
+from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, validate_policy
 
 DEFAULT_PRIVILEGE_BROKER_PORT = 9444
 
@@ -38,7 +38,8 @@ def validate_broker_settings(config) -> None:
     if type(config.privilege_broker_port) is not int or not 1024 <= config.privilege_broker_port <= 65535:
         raise ValueError("--privilege-broker port must be between 1024 and 65535")
     validate_policy({"version": 1, "machine": "0" * 32, "origin": privilege_broker_origin(config),
-                     "requester_uid": 1000, "ttl_seconds": 300, "services": {}, "reboot": "approve"})
+                     "requester_uid": 1000, "ttl_seconds": DEFAULT_REQUEST_TTL_SECONDS,
+                     "services": {}, "reboot": "approve"})
     # The shared gateway reserves 8443 plus its automatic forward range.
     reserved = set(range(8443, 9000)) | {config.web_panel_port}
     if config.web_interfaces:

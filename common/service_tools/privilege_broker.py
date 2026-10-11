@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import fcntl
 import json
 import os
@@ -28,33 +29,41 @@ from lib.privilege_policy import (
 )
 from common.service_tools.admin_job import availability as admin_availability, job_status
 from lib.admin_actions import ADMIN_HELPER
+from lib.privilege_execution import (
+    COMMAND_HELPER, ENVIRONMENT, EXECUTOR_WAIT_SECONDS, ExecutionResult, command_executor_argv,
+)
 
-ENVIRONMENT = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "HOME": "/"}
 
-
-def execute(plan: dict) -> str:
-    """No arbitrary argv, environment, stdin, output, or cwd crosses this boundary."""
+def execute(plan: dict) -> ExecutionResult:
+    """Execute claimed actions; only approved command argv crosses the helper boundary."""
     try:
         if plan["operation"] == "admin.run":
             protected_path(ADMIN_HELPER)
             if plan["parameters"]["action"] in admin_availability():
-                return "failed"
+                return ExecutionResult("failed", failure="action_unavailable")
+        command = plan["operation"] == "command.run"
+        if command:
+            protected_path(COMMAND_HELPER)
         result = subprocess.run(
-            plan["argv"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            command_executor_argv() if command else plan["argv"],
+            **({"input": canonical(plan["argv"]).encode()} if command else {"stdin": subprocess.DEVNULL}),
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, cwd="/", env=ENVIRONMENT, close_fds=True,
-            timeout=60, check=False,
+            timeout=EXECUTOR_WAIT_SECONDS if command else 60, check=False,
         )
     except subprocess.TimeoutExpired:
         # systemd may still have a job after its client is killed.
-        return "uncertain"
+        return ExecutionResult("uncertain", failure="wait_timeout")
     except (OSError, ValueError, RuntimeError):
-        return "failed"
+        return ExecutionResult("failed", failure="executor_unavailable")
+    if result.returncode < 0:
+        return ExecutionResult("uncertain", exit_code=result.returncode, failure="executor_signal")
     if result.returncode:
-        return "failed"
+        return ExecutionResult("failed", exit_code=result.returncode, failure="nonzero_exit")
     dispatched = plan["operation"] == "system.reboot" or (
         plan["operation"] == "admin.run" and plan["parameters"]["action"] != "cancel-shutdown"
     )
-    return "dispatched" if dispatched else "succeeded"
+    return ExecutionResult("dispatched" if dispatched else "succeeded", exit_code=0)
 
 
 class Broker:
@@ -80,6 +89,8 @@ class Broker:
                 request_id TEXT NOT NULL, state TEXT NOT NULL, actor TEXT
             );
         """)
+        if "execution" not in {row["name"] for row in self.db.execute("PRAGMA table_info(requests)")}:
+            self.db.execute("ALTER TABLE requests ADD COLUMN execution TEXT")
         with self.db:
             for row in self.db.execute(
                 "SELECT id,state FROM requests WHERE state IN ('pending','approved','executing')"
@@ -105,6 +116,7 @@ class Broker:
             raise ValueError("Request unavailable")
         result = dict(row)
         result["plan"] = json.loads(result["plan"])
+        result["execution"] = json.loads(result["execution"]) if result["execution"] else None
         return result
 
     def request(self, uid: int, operation: str, parameters: dict, reason: str) -> dict:
@@ -127,7 +139,15 @@ class Broker:
             request_id = secrets.token_hex(16)
             now = time.time()
             fingerprint = digest({"id": request_id, "created": now, "expires": now + policy["ttl_seconds"], "plan": plan})
-            self.db.execute("INSERT INTO requests VALUES(?,?,?,?,?,?,?,?,?)",
+            preview = {"id": request_id, "uid": uid, "created": now, "expires": now + policy["ttl_seconds"],
+                       "plan": plan, "digest": fingerprint, "reason": reason, "state": "pending",
+                       "actor": f"uid:{uid}", "execution": None,
+                       "review_url": policy["origin"] + "/requests/" + request_id}
+            # A valid input can double in size because the review contains both
+            # parameters and executable argv. Reserve space for outcome metadata.
+            if len(canonical({"ok": True, "result": preview}).encode()) > MAX_MESSAGE - 512:
+                raise ValueError("Reviewed request exceeds the response size limit")
+            self.db.execute("INSERT INTO requests(id,uid,created,expires,plan,digest,reason,state,actor) VALUES(?,?,?,?,?,?,?,?,?)",
                             (request_id, uid, now, now + policy["ttl_seconds"], canonical(plan), fingerprint, reason, "pending", "requester"))
             self._transition(request_id, "pending", f"uid:{uid}")
             if plan["mode"] == "allow":
@@ -194,12 +214,13 @@ class Broker:
         # The execution claim must be durably committed BEFORE any side effect.
         try:
             result = self.runner(request["plan"])
-            if result not in {"succeeded", "failed", "uncertain", "dispatched"}:
-                result = "uncertain"
+            if not isinstance(result, ExecutionResult) or result.state not in {"succeeded", "failed", "uncertain", "dispatched"}:
+                result = ExecutionResult("uncertain", failure="invalid_executor_result")
         except Exception:
-            result = "uncertain"
+            result = ExecutionResult("uncertain", failure="executor_exception")
         with self.lock, self.db:
-            self._transition(request["id"], result, request["actor"])
+            self.db.execute("UPDATE requests SET execution=? WHERE id=?", (canonical(asdict(result)), request["id"]))
+            self._transition(request["id"], result.state, request["actor"])
         return True
 
     def dispatch(self, message: object, uid: int, *, approval: bool = False) -> dict:
