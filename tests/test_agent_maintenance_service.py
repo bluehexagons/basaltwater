@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,6 +26,27 @@ ISSUE = {"key": "service:x", "message": "A configured service failed", "severity
 
 
 class MaintenancePolicyTest(unittest.TestCase):
+    def test_boolean_flags_preserve_omission_and_polarity_without_deprecations(self) -> None:
+        # Deprecated constructor options are rejected by Python 3.14.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            parser, _, _ = basaltwater.create_basaltwater_parser()
+        options = {
+            "maintenance_agent": "maintenance-agent",
+            "maintenance_agent_routines": "maintenance-agent-routines",
+            "maintenance_agent_security": "maintenance-agent-security",
+        }
+        for command in (["setup", "server_proxmox", "pve.example", "root"],
+                        ["patch", "pve.example", "root"],
+                        ["agent", "maintenance-agent", "configure"]):
+            with self.subTest(command=command):
+                omitted = parser.parse_args(command)
+                self.assertTrue(all(not hasattr(omitted, name) for name in options))
+                for enabled in (True, False):
+                    flags = ["--" + ("" if enabled else "no-") + flag for flag in options.values()]
+                    selected = parser.parse_args(command + flags)
+                    self.assertTrue(all(getattr(selected, name) is enabled for name in options))
+
     def test_flags_round_trip_setup_remote_and_saved_state(self) -> None:
         parser, _, _ = basaltwater.create_basaltwater_parser()
         args = parser.parse_args(["setup", "server_web", "test.example", "agent", "--maintenance-agent",
@@ -284,16 +306,29 @@ class MaintenanceExecutionTest(unittest.TestCase):
             config_file = Path(home) / "config/baseline.json"
             # The target account stays non-root even when CI itself runs as root.
             account = SimpleNamespace(pw_name="agent", pw_uid=1000, pw_gid=1000, pw_dir=home)
-            real_stat = os.stat
-            def account_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
-                metadata = real_stat(path, *args, **kwargs)
-                if path == home:
+            real_stat, real_lstat = os.stat, os.lstat
+            directory_owners = {home: account.pw_uid, str(root): 0,
+                                str(control): account.pw_uid, str(config_file.parent): 0}
+            def target_metadata(path: str | Path, metadata: os.stat_result) -> os.stat_result:
+                uid = directory_owners.get(os.fspath(path))
+                if uid is not None:
                     fields = list(metadata)
-                    fields[4] = account.pw_uid
+                    fields[4] = uid
                     return os.stat_result(fields)
                 return metadata
             config = SetupConfig("example.test", "agent", "server_web", machine_type="vm", web_panel_port=8445)
-            with patch.multiple(steps, CONFIG_FILE=str(config_file), DATA_DIR=str(root), CONTROL_DIR=str(control)), patch.object(steps, "is_dry_run", return_value=False), patch.object(steps, "_identity", return_value=account), patch.object(steps.pwd, "getpwnam", return_value=account) as controller, patch.object(steps.os, "stat", side_effect=account_stat), patch.object(steps.os, "chown"), patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))) as write, patch.object(steps, "replace_units") as replace, patch("common.agent_steps.install_codex") as install:
+            with (
+                patch.multiple(steps, CONFIG_FILE=str(config_file), DATA_DIR=str(root), CONTROL_DIR=str(control)),
+                patch.object(steps, "is_dry_run", return_value=False),
+                patch.object(steps, "_identity", return_value=account),
+                patch.object(steps.pwd, "getpwnam", return_value=account) as controller,
+                patch.object(steps.os, "stat", side_effect=lambda path, *args, **kwargs: target_metadata(path, real_stat(path, *args, **kwargs))),
+                patch.object(steps.os, "lstat", side_effect=lambda path, *args, **kwargs: target_metadata(path, real_lstat(path, *args, **kwargs))),
+                patch.object(steps.os, "chown"),
+                patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))) as write,
+                patch.object(steps, "replace_units") as replace,
+                patch("common.agent_steps.install_codex") as install,
+            ):
                 steps.configure_maintenance_agent(config)
                 self.assertFalse(agent.load_policy(str(control / "settings.json"))["enabled"])
                 install.assert_not_called()
@@ -305,7 +340,7 @@ class MaintenanceExecutionTest(unittest.TestCase):
                 retained = {"checked_at": "earlier", "issues": [], "routines": [], "review": {"status": "skipped"}}
                 write_json_atomic(str(root / "reports.json"), {"version": 1, "context": {}, "reports": [retained]})
                 controller.return_value = SimpleNamespace(pw_name="panel", pw_uid=account.pw_uid, pw_gid=account.pw_gid + 1)
-                with patch.object(steps, "_load_baseline", return_value=({}, account)), patch.object(steps.Path, "stat", return_value=SimpleNamespace(st_uid=0, st_mode=0o40755)):
+                with patch.object(steps, "_load_baseline", return_value=({}, account)):
                     steps.configure_maintenance_agent(config)
                 self.assertEqual(agent.load_policy(str(control / "settings.json"))["interval"], 120)
                 self.assertEqual(agent.load_policy(str(control / "settings.json"))["daily_calls"], 0)
@@ -314,7 +349,7 @@ class MaintenanceExecutionTest(unittest.TestCase):
                 self.assertEqual(agent.load_reports(str(root / "reports.json"))["reports"], [retained])
                 large_record = {**retained, "review": {"status": "completed", "output": "a" * 600}}
                 write_json_atomic(str(root / "reports.json"), {"version": 1, "context": {}, "reports": [large_record] * 5})
-                with patch.object(steps, "_load_baseline", return_value=({}, account)), patch.object(steps.Path, "stat", return_value=SimpleNamespace(st_uid=0, st_mode=0o40755)), patch.object(steps, "maintenance_context", return_value={"units": [], "description": "a" * 2400}), patch.object(agent, "MAX_STATE_BYTES", 5000):
+                with patch.object(steps, "_load_baseline", return_value=({}, account)), patch.object(steps, "maintenance_context", return_value={"units": [], "description": "a" * 2400}), patch.object(agent, "MAX_STATE_BYTES", 5000):
                     steps.configure_maintenance_agent(config)
                 self.assertLessEqual((root / "reports.json").stat().st_size, 5000)
                 self.assertEqual(agent.load_reports(str(root / "reports.json"))["reports"][-1], large_record)

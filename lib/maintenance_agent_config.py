@@ -67,11 +67,14 @@ def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "audit_days": "Days between security audits (1–30; default 7)",
             "timeout": "Maximum minutes per AI review (1–60; default 10)",
         }.get(key, "Reasoning effort for " + key.replace("_", " "))
-        parser.add_argument("--" + flag, dest=dest, default=argparse.SUPPRESS,
-                            action=argparse.BooleanOptionalAction if type(default) is bool else "store",
-                            type=int if key in LIMITS else None,
-                            choices=EFFORTS if key.endswith("effort") else None,
-                            help=help_text)
+        if type(default) is bool:
+            parser.add_argument("--" + flag, dest=dest, default=argparse.SUPPRESS,
+                                action=argparse.BooleanOptionalAction, help=help_text)
+        else:
+            parser.add_argument("--" + flag, dest=dest, default=argparse.SUPPRESS,
+                                type=int if key in LIMITS else str,
+                                choices=EFFORTS if key.endswith("effort") else None,
+                                help=help_text)
 
 
 def setup_policy(config: object) -> dict[str, Any]:

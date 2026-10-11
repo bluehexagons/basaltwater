@@ -30,6 +30,15 @@ that represents the action being changed. For invalid input, inspect
 For architecture and test expectations, see the
 [contributor guide](README.md).
 
+## Boolean CLI options on newer Python versions
+
+Pass `type` and `choices` only to argument actions that consume a value.
+`argparse.BooleanOptionalAction` does not consume one: those keywords were
+deprecated in Python 3.12 and removed in 3.14, even when passed as `None`.
+For helpers that build both switches and value options, use separate argument
+branches. Parser regression tests can treat `DeprecationWarning` as an error
+to catch this incompatibility on Python 3.13 as well.
+
 ## Filesystem mocks on newer Python versions
 
 Do not call `Path.is_file()` from a mocked `os.path.isfile()` callback, or
@@ -38,3 +47,7 @@ these pathlib checks to the corresponding `os.path` functions, causing recursive
 mock calls. Evaluate a temporary fixture's state before entering the patch when
 the test needs a fixed result; for changing state, capture the original function
 before patching and call it only on temporary fixture paths.
+
+For ownership fixtures, mock `os.stat()` and `os.lstat()` on the specific
+temporary paths. Do not assume mocking `Path.stat()` also controls
+`Path.lstat()`: Python 3.14 calls `os.lstat()` directly.
