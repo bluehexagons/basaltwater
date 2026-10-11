@@ -17,6 +17,9 @@ If the prompt authorizes delegation and its tools support it, use the installed
 `basaltwater-subagents` session-context reference. Pass worker-specific skill
 paths, permissions, unattended status, and the remaining runtime. Join workers
 before completing the run; use one agent when worker limits cannot be enforced.
+Internal parent/worker messaging is part of authorized delegation when native
+tools expose it. The panel has no inbox for injecting follow-up replies into an
+active run.
 The prompt's model selector accepts supported `none` effort from Codex's cache;
 disabled thinking is model-dependent. User-selected settings do not authorize
 workers to inherit fast service, `max`, or `ultra` without explicit scope.

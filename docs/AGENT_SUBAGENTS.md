@@ -15,6 +15,12 @@ explains terminal, T3, WSL, and unattended task boundaries and includes a bounde
 worker assignment. Use `basaltw agent manifest /absolute/project --json` for
 local catalog inventory, then check discovery in the active agent session.
 
+Use the active harness's messaging tools for authorized parent/worker
+coordination. Check whether a message wakes an idle worker or needs a separate
+follow-up task. Independent terminal processes and T3 threads do not share a
+Basaltwater inbox; panel tasks cannot receive follow-up input during a run.
+The session-context guide explains these boundaries for all three platforms.
+
 Use delegation for independent tasks with clear acceptance checks. User guides,
 historical records, and an independent review can split well; small changes
 touching the same configuration usually benefit from one owner. Account for

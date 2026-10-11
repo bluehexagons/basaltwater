@@ -43,6 +43,27 @@ task and session permissions. When a worker lacks a required tool, have it retur
 the blocked check and evidence so the parent can complete that part with its own
 authorized capabilities.
 
+## Coordinate through the active harness
+
+When delegation is authorized, use the exposed parent/worker messaging tools for
+progress, blockers, questions, and scoped corrections. Include the parent's
+identity in a fresh worker's assignment when the harness does not supply it.
+Messages do not expand task scope or permissions. Internal task coordination
+does not authorize sending email, chat messages, or other external communications.
+
+Tool names and delivery behavior depend on the harness. Where `send_message`
+and `followup_task` are exposed, `send_message` queues a message without starting
+a turn; use `followup_task` to resume an idle child with more work. Workers can
+message the parent before their final handoff. Check the active tool definitions
+rather than assume every Codex CLI or T3 session exposes these same operations.
+Keep waits within the task's remaining runtime.
+
+Basaltwater does not provide a cross-session agent inbox. The panel runner sends
+one prompt to a fresh `codex exec` process and closes its input; it cannot inject
+a reply while that run is active. An unattended run may still coordinate with
+its own workers through native tools when available. Sharing a VM, worktree, or
+skill catalog does not connect independent CLI processes or T3 threads.
+
 ## Pass the needed context explicitly
 
 Codex custom agents inherit `skills.config` and MCP settings when their custom
@@ -77,5 +98,6 @@ with one agent when its limits cannot be enforced across workers.
 
 The [official OpenAI documentation](https://learn.chatgpt.com/docs/build-skills)
 describes local discovery; [custom subagent settings](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-describe inherited configuration. Check current provider behavior when upgrading;
-Basaltwater does not supply a separate subagent harness.
+describe inherited configuration, and [hosted collaboration actions](https://developers.openai.com/api/docs/guides/responses-multi-agent)
+describe the messaging tools above. Check current provider behavior when
+upgrading; Basaltwater does not supply a separate subagent harness.
