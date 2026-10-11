@@ -270,10 +270,11 @@ class TestStaticWebPublish(unittest.TestCase):
             static_publication.write_receipt(str(publication), directory, output="dist", published_at="now", built=True)
             result = static_publication.verify_receipt(str(publication), url=None, local_output=str(local))
             self.assertEqual(result["issues"][0]["component"], "local_build")
-            with patch.object(static_publication, "_served_hash", side_effect=TimeoutError("timed out")):
-                result = static_publication.verify_receipt(str(publication), url="https://vm.test/site/")
-            self.assertEqual(result["issue"], "served_artifact_unavailable")
-            self.assertFalse(result["ok"])
+            for error in (TimeoutError("timed out"), static_publication.http.client.IncompleteRead(b"partial")):
+                with self.subTest(error=type(error).__name__), patch.object(static_publication, "_served_hash", side_effect=error):
+                    result = static_publication.verify_receipt(str(publication), url="https://vm.test/site/")
+                self.assertEqual(result["issue"], "served_artifact_unavailable")
+                self.assertFalse(result["ok"])
 
     def test_served_hash_reads_bounded_bytes_with_tls_and_identity_encoding(self) -> None:
         response = io.BytesIO(b"site")
@@ -310,6 +311,29 @@ class TestStaticWebPublish(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, "receipt failed"):
                     static_web_publish.publish(_args(str(output.parent)))
             self.assertEqual((old / "index.html").read_text(), "old")
+
+    def test_oversized_receipt_preserves_the_previous_site(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "project" / "dist"
+            output.mkdir(parents=True)
+            (output / "index.html").write_text("new", encoding="utf-8")
+            sites = Path(directory) / "sites"
+            old = sites / "agent" / "demo"
+            old.mkdir(parents=True)
+            (old / "index.html").write_text("old", encoding="utf-8")
+            static_publication.write_receipt(str(old), directory, output="dist", published_at="before", built=False)
+            previous = (old / static_publication.RECEIPT_FILE).read_bytes()
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                patch.object(static_web_publish, "_base_url", return_value=None),
+                patch.object(static_publication, "MAX_RECEIPT_BYTES", 100),
+            ):
+                with self.assertRaisesRegex(ValueError, "receipt exceeds"):
+                    static_web_publish.publish(_args(str(output.parent)))
+            self.assertEqual((old / "index.html").read_text(), "old")
+            self.assertEqual((old / static_publication.RECEIPT_FILE).read_bytes(), previous)
+            self.assertTrue(static_publication.verify_receipt(str(old), url=None)["ok"])
 
     def test_verification_distinguishes_source_changes_and_unknown_dirty_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
+import json
 import os
 import re
 import ssl
@@ -21,6 +23,7 @@ from lib.validators import validate_host
 RECEIPT_FILE = ".basaltwater-receipt.json"
 RESERVED_FILES = {RECEIPT_FILE, ".basaltwater.json"}
 MAX_ARTIFACTS = 10000
+MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 
 
 def source_state(project: str) -> dict[str, object]:
@@ -79,11 +82,14 @@ def artifact_hashes(root: str) -> dict[str, object]:
 
 def write_receipt(root: str, project: str, *, output: str, published_at: str, built: bool) -> None:
     """Stage the receipt with its snapshot so both activate or roll back together."""
-    write_json_atomic(os.path.join(root, RECEIPT_FILE), {
+    receipt = {
         "version": 1, "source": source_state(project), "output": output,
         "published_at": published_at, "build_performed": built,
         "artifacts": artifact_hashes(root),
-    }, mode=0o600, sort_keys=True)
+    }
+    if len((json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n").encode("utf-8")) > MAX_RECEIPT_BYTES:
+        raise ValueError("Publication receipt exceeds its size limit")
+    write_json_atomic(os.path.join(root, RECEIPT_FILE), receipt, mode=0o600, sort_keys=True)
 
 
 def read_receipt(root: str) -> dict[str, object]:
@@ -91,7 +97,7 @@ def read_receipt(root: str) -> dict[str, object]:
     info = os.lstat(path)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
         raise ValueError("Publication receipt must be a private owner-held regular file")
-    value = read_json_file(path, max_bytes=4 * 1024 * 1024)
+    value = read_json_file(path, max_bytes=MAX_RECEIPT_BYTES)
     if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("Unsupported publication receipt")
     artifacts, source = value.get("artifacts"), value.get("source")
@@ -181,7 +187,7 @@ def verify_receipt(root: str, *, url: str | None, local_output: str | None = Non
                     issues.append({"issue": "artifact_mismatch", "component": "served", "path": path,
                                    "remediation": "Check the route and publish the intended snapshot again."})
                 served += 1
-            except (OSError, ValueError, urllib.error.URLError) as exc:
+            except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
                 issues.append({"issue": "served_artifact_unavailable", "component": "served", "path": path,
                                "error": str(exc), "remediation": "Check HTTPS, routing and VM CA trust; preserve TLS verification."})
                 break

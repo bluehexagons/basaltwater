@@ -145,7 +145,8 @@ The mode-`0600` `.basaltwater-receipt.json` records the observed source commit,
 dirty state, output directory, publication time, build mode, and SHA-256/size
 inventory of at most 10,000 artifacts. It is excluded from public metadata and
 Nginx denies dotfile requests. Failed activation retains the previous receipt
-with its snapshot. Older publications return `receipt_missing`; publish again
+with its snapshot. Receipts are limited to 4 MiB; exceeding the size or artifact
+limit fails before activation. Older publications return `receipt_missing`; publish again
 within an authorized hosting task to generate their receipt.
 
 Dirty or unavailable Git metadata leaves `source_matches` unverified (`null`)
