@@ -1762,6 +1762,7 @@ basaltw proxmox hosts
 basaltw proxmox remove <name-or-address>
 basaltw proxmox probe <host>
 basaltw proxmox probe-cluster <address> [--user USER] [--key PATH] [--tag TAG]
+basaltw proxmox join-cluster <host> --via <member> [--link INDEX=IP]... [--join-address HOST] [--timeout SECONDS] [--dry-run] [--yes]
 basaltw proxmox audit <host> [<host> ...] [--json]
 basaltw proxmox rolling-update <target> [<target> ...] [--dry-run] [--reboot-timeout SECONDS]
 basaltw proxmox top <host> [<host> ...]
@@ -1821,6 +1822,19 @@ read-only and checks core Proxmox services, cluster quorum, active tasks,
 configured storage, root free space, guest locks, running guests, and the reboot
 marker. It exits nonzero when the host is not healthy and supports stable JSON
 output for automation.
+
+`join-cluster` joins an empty registered Proxmox VE 9.x node through a registered,
+quorate cluster member with root SSH access. It obtains a temporary root API
+ticket over trusted SSH and pins the member's API certificate, so existing 2FA
+policy can remain enabled. The ticket is passed through stdin and is never
+stored or printed. `--dry-run` performs read-only inspections without issuing
+credentials or joining. Normal execution confirms replacement of `/etc/pve`;
+`--yes` skips only confirmation. Specify every Corosync link with `--link INDEX=IP`
+for clusters with multiple networks. Success verifies both nodes and fresh SSH
+access before updating the new host's registered SSH identity to the member's
+identity. Interrupted joins require task and membership inspection before retry.
+See [joining clusters with 2FA](PROXMOX.md#joining-a-cluster-with-two-factor-authentication)
+for prerequisites, limits, and recovery behavior.
 
 Registered host records contain `schema_version: 1` and `provider: proxmox`.
 `v2.0.0` rejects incompatible development records rather than

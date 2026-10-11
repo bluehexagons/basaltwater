@@ -13,6 +13,7 @@ from dataclasses import replace
 from typing import Optional
 
 from lib.cluster_update import run_cluster_update
+from lib.proxmox_cluster_join import ProxmoxClusterJoinError, run_cluster_join
 from lib.proxmox_backup import BackupInfo, ProxmoxBackupError, create_backup, list_backups
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
 from lib.proxmox_migrate import ProxmoxMigrateError, migrate_guest
@@ -146,6 +147,16 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         help="Tag to apply to newly discovered nodes; repeatable",
     )
     probe_cluster.set_defaults(_handler=_cmd_probe_cluster)
+
+    join_cluster = sub.add_parser("join-cluster", help="Join an empty node through an enrolled cluster member, including with 2FA")
+    join_cluster.add_argument("host", help="Registered empty Proxmox node to join")
+    join_cluster.add_argument("--via", required=True, help="Registered member of the existing cluster")
+    join_cluster.add_argument("--link", action="append", default=[], metavar="INDEX=IP", help="Joining node's Corosync link IP; repeat for each cluster link")
+    join_cluster.add_argument("--join-address", help="Cluster member address reachable from the joining node; defaults to its registered address")
+    join_cluster.add_argument("--timeout", type=int, default=900, help="Native join SSH timeout in seconds (default: 900)")
+    join_cluster.add_argument("--dry-run", action="store_true", help="Inspect both nodes and print the plan without issuing a ticket or joining")
+    join_cluster.add_argument("-y", "--yes", action="store_true", help="Confirm replacement of the joining node's /etc/pve configuration")
+    join_cluster.set_defaults(_handler=_cmd_join_cluster)
 
     rolling_update = sub.add_parser(
         "rolling-update",
@@ -676,6 +687,7 @@ def run_proxmox_command(args: argparse.Namespace) -> int:
         return handler(args, workspace)
     except (
         ProxmoxBackupError,
+        ProxmoxClusterJoinError,
         ProxmoxManageError,
         ProxmoxMigrateError,
         ProxmoxStorageError,
@@ -832,6 +844,14 @@ def _cmd_rolling_update(args: argparse.Namespace, workspace: Optional[str]) -> i
         dry_run=args.dry_run,
         reboot_timeout=args.reboot_timeout,
         resume=args.resume,
+    )
+
+
+def _cmd_join_cluster(args: argparse.Namespace, workspace: Optional[str]) -> int:
+    return run_cluster_join(
+        _resolve_host(args.host, workspace), _resolve_host(args.via, workspace),
+        workspace=workspace, links=args.link, join_address=args.join_address,
+        timeout=args.timeout, dry_run=args.dry_run, yes=args.yes,
     )
 
 

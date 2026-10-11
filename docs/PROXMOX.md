@@ -96,6 +96,81 @@ recover from a legitimate host-key change before either Basaltwater or plain
 metadata are not trusted automatically; verify them independently and use
 `basaltw ssh-key enroll HOST` when workspace enrollment is required.
 
+## Joining a cluster with two-factor authentication
+
+Use an enrolled cluster member's root SSH access to join an empty registered
+node, including when `root@pam` and other users have 2FA enabled:
+
+```bash
+basaltw proxmox join-cluster pve-new --via pve1 --dry-run
+basaltw proxmox join-cluster pve-new --via pve1
+```
+
+Both names refer to registered hosts in the selected workspace. Run the normal
+`server_proxmox` setup first, or use `proxmox add` and explicitly enroll each
+host's SSH key. Both nodes must run supported Proxmox VE 9.x, accept root SSH,
+and use distinct Proxmox node names and addresses. The existing cluster must
+have quorum. The joining node must contain no VMs or containers and must not
+already have cluster configuration. The controller needs SSH connectivity to
+both nodes; the joining node also needs API connectivity to the selected member
+on port 8006 and connectivity on the cluster's Corosync networks.
+
+The dry run connects to both nodes for read-only inspections and prints the
+native join command. It does not issue a ticket, join, or write the registry.
+The normal command asks for `yes` after showing that joining replaces the
+standalone node's `/etc/pve` data and inherits the cluster's storage configuration.
+`--yes` supplies that confirmation for unattended use and retains all checks.
+
+Basaltwater obtains a signed `root@pam` API ticket through the enrolled member's
+already authenticated root SSH connection. Proxmox accepts a valid ticket as
+an authentication credential, allowing its normal `pvecm add` API join to run
+without collecting a password or 2FA response. The API certificate fingerprint
+comes from that same trusted node and is pinned for the join. The ticket stays
+in memory and travels through SSH stdin; it is not placed in command arguments,
+environment variables, files, saved configuration, or output. This creates no
+permanent API token or 2FA-exempt account and does not change login policy.
+It relies on the root privileges already granted to the controller. Tickets
+retain Proxmox's normal two-hour lifetime; they are not single-use credentials.
+See [Proxmox's ticket authentication implementation](https://github.com/proxmox/pve-access-control/blob/master/src/PVE/API2/AccessControl.pm)
+and [native cluster join](https://github.com/proxmox/pve-docs/blob/master/pvecm.adoc).
+
+For a single-link cluster, the default link 0 address is the joining node's
+reported management IP. Specify a separate Corosync address, or every link
+in a cluster with multiple networks, explicitly:
+
+```bash
+basaltw proxmox join-cluster pve-new --via pve1 \
+  --link 0=10.10.0.24 --link 1=10.20.0.24
+```
+
+Link indices are 0–7 and addresses must be literal IPv4 or IPv6 addresses.
+`--join-address HOST` overrides the member address used by the joining node;
+it must still reach that member's pinned API certificate. Network configuration
+and firewall policy are not changed by this command.
+
+The join holds the new node's Basaltwater setup/maintenance lock and repeats
+the empty-node check immediately before calling Proxmox. It uses no force flag.
+Afterward it verifies cluster CA identity, quorum, and reciprocal online node
+membership. Joining replaces standalone SSH authorization with the cluster's
+shared database, so Basaltwater verifies a fresh connection using the enrolled
+member's SSH identity before updating the new host's registry entry to that
+identity and invalidating cached facts. Descriptions, tags, and explicit defaults
+are retained. A matching saved `server_proxmox` setup also receives the verified
+SSH identity so future patches and rolling updates can reconnect; its other
+arguments, run metadata, and history remain unchanged. Concurrent connection
+edits are preserved and reported for review. Run `basaltw proxmox probe pve-new`
+to refresh discovery.
+
+The native join SSH timeout defaults to 900 seconds; `--timeout SECONDS` accepts
+1–7200. A failed or interrupted join can have changed cluster membership and
+must be inspected in Proxmox's task log and on both nodes before retrying. The
+command never automatically replays a join or deletes cluster configuration.
+An active native join or an existing member with the same name/address blocks
+a new join. A node already verified in the intended cluster is checked and
+registered without running `pvecm add` again, even when it now has guests.
+Automated coverage uses mocked Proxmox APIs and commands; a real-cluster join
+remains an operator smoke test.
+
 ## Concurrent setup and provisioning
 
 Independent setup processes on one controller may target different servers at

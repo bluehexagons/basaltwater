@@ -10,7 +10,7 @@ storage pool, optional friendly description). Records are stored in
 from __future__ import annotations
 
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Optional, cast
 
 from lib.atomic_io import read_json_file, write_json_atomic
@@ -385,6 +385,29 @@ def sync_proxmox_host(
         hosts.append(host)
         _save_proxmox_hosts_unlocked(hosts, workspace)
         return host
+
+
+def update_proxmox_host_ssh_identity(
+    expected: ProxmoxHost,
+    ssh_key: str | None,
+    workspace: str | None = None,
+) -> ProxmoxHost:
+    """Save verified cluster SSH access without discarding concurrent registry edits."""
+    path = get_proxmox_hosts_path(workspace)
+    with resource_lock("proxmox-hosts", path, wait=True):
+        hosts = _load_proxmox_hosts_unlocked(workspace)
+        for index, current in enumerate(hosts):
+            if (current.name.lower() != expected.name.lower()
+                    or current.address.lower().rstrip(".") != expected.address.lower().rstrip(".")):
+                continue
+            if current.user != expected.user or current.ssh_key not in (expected.ssh_key, ssh_key):
+                raise ValueError("Proxmox SSH registration changed during cluster join; inspect the saved connection")
+            updated = replace(current, ssh_key=ssh_key, facts=None)
+            _validate_host_record(updated)
+            hosts[index] = updated
+            _save_proxmox_hosts_unlocked(hosts, workspace)
+            return updated
+        raise ValueError("Proxmox registration was removed or renamed during cluster join; register the verified node again")
 
 
 def remove_proxmox_host(

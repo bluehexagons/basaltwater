@@ -14,7 +14,8 @@ from lib.state_read import StateReadError, read_state_object
 from lib.config import RetiredSetupConfigError, SetupConfig
 from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
-from lib.validators import validate_username
+from lib.validators import validate_host, validate_username
+from lib.validation import validate_filesystem_path
 from lib.workspace import get_history_dir, get_setup_cache_dir
 
 
@@ -27,13 +28,56 @@ def _get_entrypoint_metadata(operation: str) -> dict[str, str]:
     }
 
 
-def get_cache_path_for_host(host: str) -> str:
-    cache_dir = get_setup_cache_dir()
-    os.makedirs(cache_dir, exist_ok=True)
+def _cache_path_for_host(host: str, workspace: str | None = None) -> str:
+    cache_dir = get_setup_cache_dir(workspace) if workspace is not None else get_setup_cache_dir()
     normalized_host = host.lower().rstrip('.')
     safe_host = re.sub(r'[^a-zA-Z0-9._-]', '_', normalized_host)
     host_hash = hashlib.sha256(normalized_host.encode()).hexdigest()[:8]
     return os.path.join(cache_dir, f"{safe_host}_{host_hash}.json")
+
+
+def get_cache_path_for_host(host: str) -> str:
+    cache_path = _cache_path_for_host(host)
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    return cache_path
+
+
+def get_proxmox_setup_ssh_identity(
+    host: str, workspace: str | None = None,
+) -> tuple[str, str | None] | None:
+    """Read a current Proxmox setup's transport identity without creating a cache."""
+    if not validate_host(host):
+        raise ValueError("Invalid Proxmox setup host")
+    cache_path = _cache_path_for_host(host, workspace)
+    data = _cache_record(cache_path)
+    if data is None or data["system_type"] != "server_proxmox":
+        return None
+    if data["host"].lower().rstrip(".") != host.lower().rstrip("."):
+        raise ValueError("Proxmox setup cache host mismatch")
+    key = data["args"].get("ssh_key")
+    if key is not None:
+        if not isinstance(key, str):
+            raise ValueError("Invalid cached Proxmox SSH identity")
+        validate_filesystem_path(key)
+    return cache_path, key
+
+
+def update_proxmox_setup_ssh_identity(
+    host: str, expected_key: str | None, ssh_key: str | None, workspace: str | None = None,
+) -> None:
+    """Update only SSH access after a join, preserving setup and history metadata."""
+    if ssh_key is not None:
+        validate_filesystem_path(ssh_key)
+    cache_path = _cache_path_for_host(host, workspace)
+    with resource_lock("setup-cache", cache_path, wait=True):
+        identity = get_proxmox_setup_ssh_identity(host, workspace)
+        if identity is None or identity[1] not in (expected_key, ssh_key):
+            raise ValueError("Proxmox setup SSH identity changed during cluster join; inspect the saved setup")
+        data = _cache_record(cache_path)
+        if data is None:
+            raise ValueError("Proxmox setup cache disappeared during cluster join")
+        data["args"]["ssh_key"] = ssh_key
+        write_json_atomic(cache_path, data, mode=0o600)
 
 
 def _get_history_path_for_run(host: str, operation: str, end_time: float) -> str:

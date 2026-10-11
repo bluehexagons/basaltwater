@@ -67,6 +67,8 @@ def get_ssh_control_path(
     host: str,
     username: str,
     ssh_key: str | None = None,
+    *,
+    known_hosts_path: str | None = None,
 ) -> str:
     """Return a private, reusable OpenSSH multiplexing socket path.
 
@@ -77,7 +79,11 @@ def get_ssh_control_path(
     stable across adjacent CLI invocations so ``probe`` followed by ``audit``
     can reuse it while OpenSSH's ``ControlPersist`` window is active.
     """
-    identity = "\0".join((host, username, ssh_key or "", get_known_hosts_path()))
+    trust_path = (
+        os.path.abspath(os.path.expanduser(known_hosts_path))
+        if known_hosts_path is not None else get_known_hosts_path()
+    )
+    identity = "\0".join((host, username, ssh_key or "", trust_path))
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     control_dir = os.path.join(
         tempfile.gettempdir(), f"basaltwater-ssh-{os.getuid()}"
