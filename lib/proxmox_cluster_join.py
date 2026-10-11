@@ -115,6 +115,9 @@ def _execute(host: ProxmoxHost, command: list[str], *, input_data: str | None = 
         control_path="none" if fresh else get_ssh_control_path(
             host.address, host.user, host.ssh_key, known_hosts_path=known_hosts),
     )
+    # A forced PTY can echo stdin or keep JSON input waiting for terminal EOF.
+    # The join needs neither the controller's forwarded agent nor port forwards.
+    ssh[1:1] = ["-T", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"]
     try:
         result = run(ssh, check=False, capture_output=True, input_data=input_data,
                      timeout=timeout if input_data is not None else ssh_process_timeout(timeout),

@@ -330,6 +330,9 @@ class TestClusterJoinTransport(unittest.TestCase):
             self.assertNotIn(TICKET, str(call.args))
             self.assertIn(TICKET, call.kwargs["input_data"])
             self.assertIn("StrictHostKeyChecking=yes", call.args[0])
+            self.assertIn("-T", call.args[0])
+            self.assertIn("ForwardAgent=no", call.args[0])
+            self.assertIn("ClearAllForwardings=yes", call.args[0])
             self.assertEqual(call.kwargs["timeout"], 900)
         self.assertNotEqual([item for item in first.args[0] if item.startswith("ControlPath=")],
                             [item for item in second.args[0] if item.startswith("ControlPath=")])
