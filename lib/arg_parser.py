@@ -1030,6 +1030,9 @@ def add_setup_arguments(
             ),
         )
     web_panel_group = parser.add_mutually_exclusive_group()
+    from lib.maintenance_agent_config import add_policy_arguments
+
+    add_policy_arguments(parser)
     broker_group = parser.add_mutually_exclusive_group()
     from lib.privilege_setup import DEFAULT_PRIVILEGE_BROKER_PORT
     broker_group.add_argument("--privilege-broker", nargs="?", const=DEFAULT_PRIVILEGE_BROKER_PORT,

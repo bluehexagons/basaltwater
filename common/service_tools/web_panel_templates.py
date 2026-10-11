@@ -70,6 +70,7 @@ NAVIGATION_ICONS = {
     "Notifications": "notifications", "Access": "access", "Admin controls": "admin",
     "Git & credentials": "access",
     "Publishing": "export",
+    "Maintenance agent": "maintenance", "Agent inbox": "notifications",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics",
@@ -85,6 +86,7 @@ PAGE_ICONS = {
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
     "credentials": "access",
     "publishing": "export",
+    "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
 
 # Small repeating tiles; no raster, external resource, filter or embedded data.
@@ -250,6 +252,8 @@ def panel_navigation(
     items: list[NavigationItem] = [
         ("/", "Dashboard", "dashboard"),
         ("/agents", "Agents", "agents"),
+        ("/maintenance-agent", "Maintenance agent", "maintenance-agent"),
+        ("/agent-inbox", "Agent inbox", "agent-inbox"),
         ("/agent-tools", "Agent tools", "agent-tools"),
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),

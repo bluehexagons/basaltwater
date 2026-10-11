@@ -51,6 +51,10 @@ from common.service_tools.web_panel_credentials import parse_credentials_query, 
 from common.service_tools.web_panel_publishing import FIELDS as PUBLISHING_FIELDS, publishing_action, render_publishing
 from lib.publishing import Publishing
 from lib.publishing_auth import PublishingAuth
+from common.service_tools.web_panel_maintenance import (
+    inbox_action, maintenance_action, render_inbox, render_maintenance,
+)
+from lib.agent_inbox import mailbox_name
 from common.web_panel_events import (
     WEB_PANEL_AUDIT_SNAPSHOT,
     WEB_PANEL_INGEST_TOKEN,
@@ -2144,6 +2148,23 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._send(HTTPStatus.OK, "ok\n", "text/plain")
             return
+        if path == "/maintenance-agent":
+            if parsed.query:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid maintenance query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_maintenance(self.state, _PAGE_STYLE), "text/html")
+            return
+        if path == "/agent-inbox":
+            try:
+                query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True, max_num_fields=1)
+                if set(query) - {"mailbox"} or len(parsed.query) > 256:
+                    raise ValueError("Invalid mailbox query")
+                recipient = mailbox_name(query.get("mailbox", ["operator"])[0])
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid mailbox query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_inbox(self.state, _PAGE_STYLE, recipient), "text/html")
+            return
         if path == "/agents":
             try:
                 query = parse_agent_query(parsed.query)
@@ -2237,7 +2258,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         admin_paths = {"/actions/admin", "/actions/admin/cancel"}
         credential_paths = {"/actions/credentials/identity", "/actions/credentials/github", "/actions/credentials/github-remove"}
         publishing_paths = {"/actions/publishing/" + action for action in PUBLISHING_FIELDS}
-        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths | publishing_paths:
+        maintenance_paths = {"/actions/maintenance-agent", "/actions/agent-inbox"}
+        if path != "/actions/t3-update" and path not in agent_paths | admin_paths | credential_paths | publishing_paths | maintenance_paths:
             self._send(HTTPStatus.NOT_FOUND, "Not found\n", "text/plain")
             return
         if parsed.query:
@@ -2269,6 +2291,25 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if path in agent_paths:
             self._handle_agent_action(path, values)
+            return
+        if path in maintenance_paths:
+            if any(len(entries) != 1 for entries in values.values()):
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid agent settings request\n", "text/plain")
+                return
+            submitted = {key: entries[0] for key, entries in values.items() if key != "csrf"}
+            try:
+                if path.endswith("maintenance-agent"):
+                    maintenance_action(submitted)
+                else:
+                    inbox_action(self.state, submitted)
+            except (OSError, RuntimeError, ValueError) as exc:
+                body = render_maintenance(self.state, _PAGE_STYLE, error=str(exc)) if path.endswith("maintenance-agent") else render_inbox(self.state, _PAGE_STYLE, error=str(exc))
+                self._send(HTTPStatus.UNPROCESSABLE_ENTITY, body, "text/html")
+                return
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/maintenance-agent" if path.endswith("maintenance-agent") else "/agent-inbox?mailbox=" + urllib.parse.quote(submitted.get("recipient", "operator"), safe=""))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
             return
         if path in admin_paths:
             self._handle_admin_action(path, values)

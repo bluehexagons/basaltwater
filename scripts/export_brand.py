@@ -26,6 +26,8 @@ from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_storage as storage
 from common.service_tools import web_panel_host as host
+from common.service_tools import web_panel_maintenance as maintenance
+from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -120,7 +122,8 @@ def export_assets(assets: Path) -> None:
                   ("credentials.html", "Git & credentials specimen", None),
                   ("services.html", "Service artwork specimen", None), ("admin.html", "Administration specimen", None),
                   ("jobs.html", "Scheduled jobs specimen", None), ("logs.html", "Diagnostics specimen", None),
-                  ("agents.html", "Agents specimen", None))
+                  ("agents.html", "Agents specimen", None), ("maintenance-agent.html", "Maintenance agent specimen", None),
+                  ("agent-inbox.html", "Agent inbox specimen", None))
     icon_labels = {name: label for label, name in NAVIGATION_ICONS.items()}
     icon_gallery = "".join(
         f'<a class="icon-swatch tone-{ICON_TONES.get(name, "water")}" href="icon-{name}.svg">{render_icon(name)}'
@@ -281,6 +284,20 @@ def export_assets(assets: Path) -> None:
         patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows, [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
+        patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": True}),
+        patch.object(maintenance, "load_reports", return_value={
+            "version": 1, "username": "operator", "context": {"system_type": "server_dev"}, "reports": [{
+                "checked_at": "2026-01-01T09:00:00+00:00", "check_status": "completed", "security_audit": True,
+                "issues": [{"key": "root-disk", "severity": "warning", "message": "Root filesystem is 88% used"}],
+                "routines": [{"unit": "cleanup-maintenance", "status": "requested"}], "notification": "processed by host notification policy",
+                "review": {"status": "completed", "model": "example-mini", "effort": "low", "reason": "Changed findings",
+                           "output": "Review retention settings and identify the growing directory before removing files."},
+            }],
+        }),
+        patch.object(maintenance.AgentInbox, "list", return_value=[{
+            "id": "a" * 32, "sender": "worker-build", "recipient": "operator", "created_at": 1767258000,
+            "acknowledged": False, "message": "Task build-42 completed. Review the artifact before publishing.",
+        }]),
         patch.object(diagnostics, "collect_diagnostics", return_value={
             "issues": [], "properties": {"LoadState": "loaded", "ActiveState": "active",
                 "SubState": "running", "MemoryCurrent": "41943040", "NRestarts": "0", "Result": "success"},
@@ -297,6 +314,8 @@ def export_assets(assets: Path) -> None:
             "services.html": panel.render_service_status(state, False),
             "admin.html": panel.render_admin(state, panel._PAGE_STYLE, {}),
             "agents.html": agents.render_agents(state, panel._PAGE_STYLE, {}),
+            "maintenance-agent.html": maintenance.render_maintenance(state, panel._PAGE_STYLE),
+            "agent-inbox.html": maintenance.render_inbox(state, panel._PAGE_STYLE),
             "credentials.html": panel.render_credentials(state, panel._PAGE_STYLE, {}),
             "jobs.html": jobs.render_jobs(True, panel._PAGE_STYLE, state.manifest["host"]),
             "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"]),
@@ -304,6 +323,7 @@ def export_assets(assets: Path) -> None:
         for name, document in pages.items():
             document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')
             for route, filename in (("/", "panel.html"), ("/agents", "agents.html"),
+                                    ("/maintenance-agent", "maintenance-agent.html"), ("/agent-inbox", "agent-inbox.html"),
                                     ("/agent-tools", "tools.html"), ("/admin", "admin.html"),
                                     ("/credentials", "credentials.html"),
                                     ("/services", "services.html"), ("/jobs", "jobs.html"), ("/logs", "logs.html")):

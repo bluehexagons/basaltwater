@@ -170,6 +170,11 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_models import add_models_parser
 
     add_models_parser(commands)
+    from lib.agent_inbox import add_inbox_parser
+    from lib.maintenance_agent import add_maintenance_agent_parser
+
+    add_inbox_parser(commands)
+    add_maintenance_agent_parser(commands)
     from lib.agent_containers import add_containers_parser
     from lib.agent_graphics import add_graphics_parser
 
@@ -2585,6 +2590,14 @@ def _selected_tools_readiness_healthy(
 
 def run_agent_command(args: argparse.Namespace) -> int:
     """Run a local or remote agent-tool command."""
+    if args.agent_command == "inbox":
+        from lib.agent_inbox import run_inbox_command
+
+        return run_inbox_command(args)
+    if args.agent_command == "maintenance-agent":
+        from lib.maintenance_agent import run_maintenance_agent_command
+
+        return run_maintenance_agent_command(args)
     if args.agent_command == "manifest":
         from lib.agent_environment import run_manifest_command
 
@@ -2835,7 +2848,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, browser, containers, graphics, resources, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, containers, graphics, resources, visuals, blender, models, inbox, maintenance-agent, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

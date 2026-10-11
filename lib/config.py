@@ -470,6 +470,18 @@ class SetupConfig:
     web_panel_payload: bool = False
     web_panel_notification_ingest: Optional[bool] = None
     disable_web_panel: bool = False
+    maintenance_agent: Optional[bool] = None
+    maintenance_agent_interval: Optional[int] = None
+    maintenance_agent_routines: Optional[bool] = None
+    maintenance_agent_security: Optional[bool] = None
+    maintenance_agent_audit_days: Optional[int] = None
+    maintenance_agent_model: MaybeStr = None
+    maintenance_agent_effort: MaybeStr = None
+    maintenance_agent_escalation_model: MaybeStr = None
+    maintenance_agent_escalation_effort: MaybeStr = None
+    maintenance_agent_daily_calls: Optional[int] = None
+    maintenance_agent_daily_escalations: Optional[int] = None
+    maintenance_agent_timeout: Optional[int] = None
     privilege_broker_port: Optional[int] = None
     privilege_broker_host: MaybeStr = None
     privilege_broker_auth: MaybeStr = None
@@ -848,6 +860,9 @@ class SetupConfig:
 
         validate_web_port_settings(self)
         validate_web_panel_settings(self)
+        from lib.maintenance_agent_config import setup_policy
+
+        setup_policy(self)
         from lib.privilege_setup import validate_broker_settings
 
         validate_broker_settings(self)
@@ -1004,6 +1019,9 @@ class SetupConfig:
         """Generate command line arguments for remote execution."""
         args: StrList = []
         args.extend(self._homebox_args())
+        from lib.maintenance_agent_config import setup_policy_args
+
+        args.extend(setup_policy_args(self))
         if self.disable_privilege_broker:
             args.append("--no-privilege-broker")
         elif self.privilege_broker_port is not None:
@@ -1471,6 +1489,9 @@ class SetupConfig:
         if include_username:
             cmd_parts.append(self.username)
         cmd_parts.extend(self._homebox_args())
+        from lib.maintenance_agent_config import setup_policy_args
+
+        cmd_parts.extend(setup_policy_args(self))
         if self.disable_privilege_broker:
             cmd_parts.append("--no-privilege-broker")
         elif self.privilege_broker_port is not None:
@@ -2702,6 +2723,18 @@ class SetupConfig:
                 args, 'web_panel_notification_ingest'
             ),
             disable_web_panel=disable_web_panel,
+            maintenance_agent=_optional_bool_arg(args, 'maintenance_agent'),
+            maintenance_agent_interval=_optional_int_arg(args, 'maintenance_agent_interval'),
+            maintenance_agent_routines=_optional_bool_arg(args, 'maintenance_agent_routines'),
+            maintenance_agent_security=_optional_bool_arg(args, 'maintenance_agent_security'),
+            maintenance_agent_audit_days=_optional_int_arg(args, 'maintenance_agent_audit_days'),
+            maintenance_agent_model=_optional_str_arg(args, 'maintenance_agent_model'),
+            maintenance_agent_effort=_optional_str_arg(args, 'maintenance_agent_effort'),
+            maintenance_agent_escalation_model=_optional_str_arg(args, 'maintenance_agent_escalation_model'),
+            maintenance_agent_escalation_effort=_optional_str_arg(args, 'maintenance_agent_escalation_effort'),
+            maintenance_agent_daily_calls=_optional_int_arg(args, 'maintenance_agent_daily_calls'),
+            maintenance_agent_daily_escalations=_optional_int_arg(args, 'maintenance_agent_daily_escalations'),
+            maintenance_agent_timeout=_optional_int_arg(args, 'maintenance_agent_timeout'),
             privilege_broker_port=_optional_int_arg(args, 'privilege_broker'),
             privilege_broker_host=_optional_str_arg(args, 'privilege_broker_host'),
             privilege_broker_auth=auth_from_args(args, username),

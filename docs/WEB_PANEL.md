@@ -12,6 +12,8 @@ under the panel account; no T3 Code installation is required.
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
+| Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
+| Exchange messages across sessions | Agent inbox | Account-local mailboxes with durable unread messages and explicit acknowledgement |
 | Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
@@ -281,6 +283,25 @@ workbench is not a deterministic migration or cleanup engine. Review the
 manifest and results, and retain an independent backup for valuable data.
 Editing a prepared prompt changes its instructions; saved tasks retain that
 exact text for later runs.
+
+## Maintenance agents and inbox
+
+Open **Maintenance agent** to enable the installed supervisor, set its check
+interval, model choices, reasoning effort and daily attempt limits, or request
+a check. Panel setup prepares disabled supervision; `--maintenance-agent`
+enables it during setup. Checks continue independently of the panel and T3 Code.
+Healthy checks make no AI calls. Opt-in housekeeping requests fixed existing
+cleanup jobs; AI reviews provide recommendations.
+
+Open **Agent inbox** to read a mailbox, send a message, or acknowledge one after
+handling it. Terminal workers can use `basaltw agent inbox wait` between tasks
+for cooperative wake. Messages survive restarts and reading never acknowledges
+them. Mailboxes share the panel account's trust boundary; root-profile panels
+cannot expose another account's inbox.
+
+See [Maintenance agents and cross-session mail](MAINTENANCE_AGENTS.md) for
+installation and sign-in, flags, escalation rules, storage limits, recovery,
+and the terminal-worker protocol.
 
 ## Agent prompt tasks
 

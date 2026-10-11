@@ -47,6 +47,7 @@ overview.
 | [Ubuntu WSL](WINDOWS_WSL.md) | Windows bootstrap, Ubuntu tools, native jobs, and management |
 | [Local system maintenance](LOCAL_MAINTENANCE.md) | Focused package, desktop, browser, hostname, IP, and DNS changes |
 | [Recurring maintenance](MAINTENANCE.md) | Timers, update policy, cleanup, and troubleshooting |
+| [Maintenance agents and inbox](MAINTENANCE_AGENTS.md) | Tailored host checks, bounded AI reviews, panel controls, durable messages and terminal-worker wake |
 | [Firmware auditing and updates](FIRMWARE.md) | Local fwupd inventory, dependency installation, and guarded updates |
 | [Sysadmin shortcuts](SYSADMIN.md) | SSH, transfers, health, services, logs, upgrades, and reachability |
 | [Shell completion](SHELL_COMPLETION.md) | Bash, Zsh, Fish, and system-wide completion |

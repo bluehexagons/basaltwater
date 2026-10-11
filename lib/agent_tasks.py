@@ -203,7 +203,7 @@ def _kill_group(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
-def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event) -> dict[str, Any]:
+def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, isolated: bool = False) -> dict[str, Any]:
     """Execute one bounded prompt without a shell, root, or approval bypass."""
 
     if os.geteuid() == 0:
@@ -256,8 +256,13 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event) -> 
     status = "completed"
     reason = ""
     started = time.monotonic()
+    command = codex_command(task, executable)
+    if isolated:
+        # Maintenance reviews do not inherit user MCP servers, hooks, provider
+        # overrides or paid service tiers. Authentication remains account-local.
+        command[-1:-1] = ["--ignore-user-config"]
     with subprocess.Popen(
-        codex_command(task, executable), cwd=task["directory"], env=environment,
+        command, cwd=task["directory"], env=environment,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         start_new_session=True,
     ) as process:

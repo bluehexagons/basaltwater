@@ -162,4 +162,11 @@ def build_post_setup_steps(
 
         steps.append(("Configuring storage operations service", configure_storage_operations))
 
+    if config.maintenance_agent is not None or config.web_panel_port is not None or any(
+        getattr(config, name) is not None for name in config.__dataclass_fields__ if name.startswith("maintenance_agent_")
+    ):
+        from common.maintenance_agent_steps import configure_maintenance_agent
+
+        steps.append(("Configuring tailored maintenance agent", configure_maintenance_agent))
+
     return steps
