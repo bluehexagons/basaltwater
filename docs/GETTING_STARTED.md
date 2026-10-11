@@ -172,7 +172,8 @@ a flag on a later command is not a general uninstall mechanism.
 
 To manage a separate Debian host, install the launcher on your controller and
 follow [remote setup](INSTALLATION.md#install-and-configure-a-remote-host).
-That path requires SSH key access for root and verified host-key enrollment.
+That path requires SSH key access for root. Interactive setup asks you to
+confirm a new host's fingerprint and enrolls it as part of the same command.
 The positional username names the target account to configure. Run remote
 commands from your regular controller account; they use that account's saved
 workspace and do not need local `sudo`.

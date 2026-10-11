@@ -100,7 +100,30 @@ class TestSysadminCliDispatch(SysadminCliTestCase):
         enroll_args = self._parse("ssh-key", "enroll", "server", "--yes")
         with patch("lib.ssh_enrollment.enroll_host_key", return_value=9) as enroll:
             self.assertEqual(run_sysadmin_command(enroll_args), 9)
-        enroll.assert_called_once_with("server", port=22, assume_yes=True)
+        enroll.assert_called_once_with(
+            "server", port=22, assume_yes=True, expected_fingerprint=None,
+        )
+
+    def test_pinned_host_key_dispatch_does_not_assume_trust(self) -> None:
+        fingerprint = "SHA256:" + "a" * 43
+        args = self._parse("ssh-key", "enroll", "server", "--fingerprint", fingerprint)
+        with patch("lib.ssh_enrollment.enroll_host_key", return_value=0) as enroll:
+            self.assertEqual(run_sysadmin_command(args), 0)
+        enroll.assert_called_once_with(
+            "server", port=22, assume_yes=False, expected_fingerprint=fingerprint,
+        )
+
+    def test_invalid_fingerprint_fails_before_network_access(self) -> None:
+        args = self._parse("ssh-key", "enroll", "server", "--fingerprint", "SHA256:short")
+        with (
+            patch("lib.ssh_enrollment.subprocess.run") as run,
+            patch("builtins.print") as output,
+        ):
+            self.assertEqual(run_sysadmin_command(args), 1)
+        run.assert_not_called()
+        output.assert_called_once_with(
+            "Error: Expected fingerprint must use the OpenSSH SHA256:... format",
+        )
 
     def test_fan_and_df_dispatch(self) -> None:
         fan_args = argparse.Namespace(

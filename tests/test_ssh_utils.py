@@ -168,6 +168,34 @@ class TestSshUtils(unittest.TestCase):
             command,
         )
 
+    def test_only_interactive_setup_can_confirm_a_new_host_key(self):
+        for setup in (False, True):
+            for batch_mode in (False, True):
+                with self.subTest(setup=setup, batch_mode=batch_mode):
+                    command = build_ssh_command(
+                        "192.0.2.24",
+                        "root",
+                        known_hosts_path="/workspace/known_hosts",
+                        batch_mode=batch_mode,
+                        allow_host_key_prompt=setup,
+                    )
+                    checking = "ask" if setup and not batch_mode else "yes"
+                    self.assertIn(f"StrictHostKeyChecking={checking}", command)
+                    self.assertIn("UserKnownHostsFile=/workspace/known_hosts", command)
+                    self.assertEqual(
+                        sum(option.startswith("StrictHostKeyChecking=") for option in command),
+                        1,
+                    )
+
+    @patch("lib.ssh_utils.sys.stdin.isatty", return_value=True)
+    def test_setup_resolves_terminal_policy_before_host_key_confirmation(self, _isatty):
+        command = build_ssh_command(
+            "192.0.2.24", "root", allow_host_key_prompt=True,
+            known_hosts_path="/workspace/known_hosts",
+        )
+        self.assertIn("StrictHostKeyChecking=ask", command)
+        self.assertIn("BatchMode=no", command)
+
     @patch("lib.ssh_utils.ssh_batch_mode", return_value=True)
     @patch("lib.ssh_utils.subprocess.run")
     def test_remote_sudo_succeeds_without_prompt_when_nopasswd_is_available(

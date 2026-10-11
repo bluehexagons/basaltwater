@@ -202,6 +202,11 @@ def _add_ssh_key_parser(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Trust the displayed fingerprint without prompting",
     )
+    enroll.add_argument(
+        "--fingerprint",
+        metavar="SHA256:FINGERPRINT",
+        help="Enroll without prompting only when this verified fingerprint matches",
+    )
     enroll.set_defaults(_sysadmin_cmd="ssh_key_enroll")
     p.set_defaults(_sysadmin_cmd="ssh_key")
 
@@ -509,7 +514,14 @@ def run_sysadmin_command(args: argparse.Namespace) -> int:
 
     if cmd == "ssh_key_enroll":
         from lib.ssh_enrollment import enroll_host_key
-        return enroll_host_key(args.host, port=args.port, assume_yes=args.yes)
+        try:
+            return enroll_host_key(
+                args.host, port=args.port, assume_yes=args.yes,
+                expected_fingerprint=args.fingerprint,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 1
 
     if cmd == "key":
         import sys

@@ -1503,6 +1503,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 connect_timeout=30,
                 server_alive_interval=30,
                 control_path=control_path,
+                allow_host_key_prompt=True,
             )
             
             ssh_env = os.environ.copy()

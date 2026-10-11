@@ -105,7 +105,7 @@ basaltw maintenance github [--root PATH] <audit|prune> [options]
 basaltw shell
 basaltw network ...
 basaltw proxmox ...
-basaltw ssh-key enroll <host> [--port PORT] [--yes]
+basaltw ssh-key enroll <host> [--port PORT] [--fingerprint SHA256:FINGERPRINT | --yes]
 ```
 
 `basaltw --version` prints one stable line containing the installed project
@@ -1906,15 +1906,22 @@ See [`SYSADMIN.md`](./SYSADMIN.md) for the host shortcut commands (`mount`,
 `health`, `ssh`, `push`, `pull`, `df`, `fan`, `svc`, `logs`, `upgrade`,
 `reachable`, `key`).
 
-Before using SSH setup, deployment, or administration commands for a new host,
-enroll its host key and verify the displayed fingerprint independently:
+Interactive remote setup confirms a new host key through OpenSSH's normal
+fingerprint prompt, saves it in the workspace, and continues without a separate
+enrollment command. Changed keys remain rejected. Dry runs do not connect or
+save trust. See [first connection during setup](SSH.md#first-connection-during-setup).
+
+For unattended setup or administration commands before the first setup,
+enroll the key and verify the displayed fingerprint independently:
 
 ```bash
 basaltw ssh-key enroll example.com
 ```
 
-SSH commands use strict checking against the workspace `known_hosts` file and
-will refuse a host that has not been explicitly enrolled.
+For automation, pass `--fingerprint SHA256:YOUR_VERIFIED_FINGERPRINT` to enroll
+without a prompt. Use the same `--workspace` as the subsequent commands.
+Other SSH commands use strict checking against the workspace `known_hosts`
+file and refuse hosts that have not been enrolled by setup or explicitly.
 
 ## Testing and bootstrap
 

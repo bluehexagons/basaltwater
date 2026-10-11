@@ -250,7 +250,7 @@ Run these commands on the controller. Replace `server.example` with the
 target's hostname or IP and `admin` with the target account to configure.
 Setup connects as root to perform system changes; the positional username does
 not select the SSH transport account. First arrange key-based root SSH access
-on the Debian target, then verify its host key. See [SSH authentication](SSH.md)
+on the Debian target. See [SSH authentication](SSH.md)
 for authentication requirements and passphrase handling.
 
 From the target's VM console or another trusted session, obtain its fingerprint:
@@ -259,15 +259,19 @@ From the target's VM console or another trusted session, obtain its fingerprint:
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Back on the controller, enroll the host and compare the displayed fingerprint
-with that trusted value. Preview the setup before applying it:
+Back on the controller, preview the setup before applying it:
 
 ```bash
-basaltw ssh-key enroll server.example
 basaltw setup server_dev server.example admin --node --dry-run
 ```
 
-After a successful preview, repeat the setup command without `--dry-run`.
+After a successful preview, repeat the setup command without `--dry-run` from
+a terminal. On the first connection, OpenSSH asks you to confirm the target's
+fingerprint; compare it with the trusted value above. Accepting it saves the
+key in the workspace and continues setup without a separate enrollment
+command. An already enrolled host connects directly; a changed key is rejected.
+For unattended setup, first use `basaltw ssh-key enroll server.example
+--fingerprint SHA256:YOUR_VERIFIED_FINGERPRINT` in the same workspace.
 Add `--key ~/.ssh/YOUR_KEY` if your root login uses a non-default private key.
 A normal sudo password on the target is not a substitute for root SSH access;
 Basaltwater does not collect or forward sudo passwords.

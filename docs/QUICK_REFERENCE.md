@@ -21,7 +21,9 @@ For a first experiment without a domain or SSH setup, follow the
 
 `server.example` is a placeholder: replace it with your Debian target's IP
 address or hostname, and replace `admin` with the account to configure there.
-Remote setup requires root SSH key access and [host-key enrollment](SSH.md).
+Remote setup requires root SSH key access. Interactive setup handles
+[first-use host-key confirmation](SSH.md#first-connection-during-setup) inline;
+unattended runs require an enrolled key.
 The saved-host rows require a successful initial setup in the same workspace.
 Remove `--dry-run` from the patch example to apply it.
 

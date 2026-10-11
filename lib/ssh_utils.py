@@ -111,8 +111,9 @@ def build_ssh_command(
     server_alive_interval: int | None = 30,
     control_path: str | None = None,
     known_hosts_path: str | None = None,
+    allow_host_key_prompt: bool = False,
 ) -> list[str]:
-    """Build an SSH command with consistent options."""
+    """Build SSH options, allowing first-use confirmation only for live setup."""
 
     command = ["ssh"]
     if ssh_key:
@@ -126,9 +127,12 @@ def build_ssh_command(
         else get_workspace_known_hosts_path()
     )
     command.extend(["-o", f"UserKnownHostsFile={resolved_known_hosts}"])
-    command.extend(["-o", "StrictHostKeyChecking=yes"])
     if batch_mode is None:
         batch_mode = ssh_batch_mode()
+    # OpenSSH uses /dev/tty for confirmation even when stdin carries an upload.
+    # `ask` still refuses changed keys; automation must use enrolled trust.
+    host_key_checking = "ask" if allow_host_key_prompt and not batch_mode else "yes"
+    command.extend(["-o", f"StrictHostKeyChecking={host_key_checking}"])
     if batch_mode is True:
         command.extend(["-o", "BatchMode=yes"])
     elif batch_mode is False:

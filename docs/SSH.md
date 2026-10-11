@@ -5,6 +5,38 @@ Proxmox operations, rsync transfers, and sshfs mounts. A configured `--key`
 is passed to OpenSSH as an identity file; Basaltwater never needs to store or
 receive the key's passphrase.
 
+## First connection during setup
+
+With working root SSH access, run the normal setup command from a terminal:
+
+```bash
+basaltw setup server_proxmox 192.168.0.24 root
+```
+
+When the target is new to the active workspace, OpenSSH displays its host-key
+fingerprint and asks for confirmation during the setup connection. Compare
+the fingerprint with the target's console or another trusted source, then
+accept it. Setup saves the key in the workspace `known_hosts` file and
+continues in the same command. A separate enrollment command is not required.
+The prompt uses the controlling terminal, so it cannot consume the setup
+archive being uploaded on stdin. Previously enrolled hosts connect without
+another host-key prompt; changed keys still stop the connection.
+
+Dry runs do not connect or enroll keys. Piped and unattended setup retains
+strict checking; pre-enroll an independently verified fingerprint in the same
+workspace before starting automation:
+
+```bash
+basaltw ssh-key enroll 192.168.0.24 --fingerprint SHA256:YOUR_VERIFIED_FINGERPRINT
+```
+
+Transfers, administration commands, and provider-node operations also retain
+strict checking. They use the key saved by setup, or one explicitly enrolled
+with `basaltw ssh-key enroll`. The workspace store is separate from ordinary
+`~/.ssh/known_hosts`, so a first setup can prompt even when plain SSH already
+trusts that address. Use the same `--workspace` for enrollment and setup when
+selecting a custom workspace.
+
 ## Password-protected private keys
 
 When a command is started from a terminal, SSH is allowed to ask for the

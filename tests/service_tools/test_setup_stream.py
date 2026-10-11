@@ -132,6 +132,11 @@ class TestSetupSSHStreaming(unittest.TestCase):
                 command = stream.call_args.args[0]
                 options = stream.call_args.kwargs
                 self.assertIn("BatchMode=no" if interactive else "BatchMode=yes", command)
+                self.assertIn(
+                    "StrictHostKeyChecking=ask" if interactive else "StrictHostKeyChecking=yes",
+                    command,
+                )
+                self.assertIn(f"UserKnownHostsFile={root}/known_hosts", command)
                 self.assertEqual(options["interactive"], interactive)
                 self.assertEqual(options["timeout"], None if interactive else 120)
                 self.assertEqual(options["input_data"], b"runtimepayload")
@@ -139,3 +144,32 @@ class TestSetupSSHStreaming(unittest.TestCase):
                 self.assertIn("/keys/protected_key", command)
                 # Remote execution remains bounded even when the local prompt isn't.
                 self.assertIn("timeout --signal=TERM --kill-after=10s 120", command[-1])
+
+    def test_rejected_host_key_stops_setup_without_replacing_trust(self):
+        from lib import setup_common
+        from lib.config import SetupConfig
+
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch.object(setup_common, "resource_lock"),
+            patch.object(setup_common, "get_ssh_control_path", return_value=os.path.join(root, "control")),
+            patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value=os.path.join(root, "known_hosts")),
+            patch.object(setup_common, "ensure_remote_sudo", return_value=True),
+            patch.object(setup_common, "copy_project_files"),
+            patch.object(setup_common, "create_tar_from_dir", return_value=b"runtime"),
+            patch.object(setup_common, "_create_payload_archive", return_value=b"payload"),
+            patch.object(setup_common, "run_streamed", return_value=255) as stream,
+            patch("lib.ssh_utils.sys.stdin.isatty", return_value=True),
+        ):
+            known_hosts = os.path.join(root, "known_hosts")
+            trusted_key = "192.0.2.24 ssh-ed25519 EXISTING\n"
+            with open(known_hosts, "w", encoding="utf-8") as file_obj:
+                file_obj.write(trusted_key)
+            config = SetupConfig(
+                host="192.0.2.24", username="root", system_type="server_proxmox",
+            )
+            self.assertEqual(setup_common.run_remote_setup(config), 255)
+            stream.assert_called_once()
+            self.assertIn("StrictHostKeyChecking=ask", stream.call_args.args[0])
+            with open(known_hosts, encoding="utf-8") as file_obj:
+                self.assertEqual(file_obj.read(), trusted_key)
