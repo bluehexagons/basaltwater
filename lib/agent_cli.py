@@ -156,6 +156,9 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_environment import add_manifest_parser
 
     add_manifest_parser(commands)
+    from lib.agent_browser import add_browser_parser
+
+    add_browser_parser(commands)
     from lib.agent_visuals import add_visuals_parser
 
     add_visuals_parser(commands)
@@ -1305,6 +1308,9 @@ def inspect_browser_automation(
         remediation = "inspect_browser_runtime"
     return {
         "capability": "browser",
+        "engine": "chromium",
+        "context": "managed",
+        "network_origin": "host",
         "installed": launchers_installed,
         "path": _BROWSER_MCP_WRAPPER if launchers_installed else None,
         "launchers_secure": launchers_secure,
@@ -2558,6 +2564,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.agent_environment import run_manifest_command
 
         return run_manifest_command(args)
+    if args.agent_command == "browser":
+        from lib.agent_browser import run_browser_command
+
+        return run_browser_command(args)
     if args.agent_command == "visuals":
         from lib.agent_visuals import run_visuals_command
 
@@ -2789,7 +2799,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

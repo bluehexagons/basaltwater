@@ -12,9 +12,11 @@ import subprocess
 import urllib.parse
 
 from lib import agent_workspace
+from lib.agent_browser import browser_context_inventory
 from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
+from lib.installation_info import installation_version, read_installation_metadata
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -125,7 +127,7 @@ TOOLS = (
     "pdfinfo", "pdftoppm", "pdftotext",
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
     *MUSESCORE_EXECUTABLES,
-    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
+    "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "firefox", "firefox-esr", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
 DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md"
 PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/GAME_PUBLISHING.md"
@@ -159,6 +161,8 @@ def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("manifest", help="Show tools, workspace conventions and declared deployment mappings")
     parser.add_argument("repository", nargs="?", default=".")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "development", "publishing", "web"),
+                        help="Return only relevant discovery fields; repeat as needed")
 
 
 def _text(value: object, label: str) -> str:
@@ -316,8 +320,14 @@ def inspect_environment(repository: str) -> dict[str, object]:
     ]
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    installation = read_installation_metadata(source_root)
     return {
         "schema_version": 1,
+        "basaltwater": {"version": installation_version(source_root),
+                        "commit": installation.get("commit") if installation else None,
+                        "dirty": installation.get("dirty") if installation else None,
+                        "installation_type": "setup-snapshot" if installation else "unrecorded"},
         "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
         "skills": skills,
@@ -327,8 +337,10 @@ def inspect_environment(repository: str) -> dict[str, object]:
             "instructions": "Prefer browser tools exposed by the active agent session; in T3 Code use preview_status and preview_open before concluding the browser is unavailable.",
             "managed_playwright": {
                 "executable": tools["basaltwater-playwright-mcp"],
+                "engine": "chromium", "context": "managed", "network_origin": "host",
                 "readiness": "unverified" if tools["basaltwater-playwright-mcp"] else "not-on-path",
             },
+            "contexts": browser_context_inventory(root),
         },
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
@@ -356,6 +368,8 @@ def inspect_environment(repository: str) -> dict[str, object]:
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
             "worktree_root": os.path.join(home, agent_workspace._DEFAULT_WORKTREE_RELATIVE),
             "task_branch_pattern": "agent/TASK",
+            "feature_branch_option": "--branch feature/NAME",
+            "ownership": "explicit-private-record; adopt existing worktrees before cleanup",
             "legacy_browser_artifacts": os.path.join(home, ".local/state/basaltwater/playwright-mcp"),
             "artifact_directories": artifacts,
         },
@@ -369,6 +383,37 @@ def inspect_environment(repository: str) -> dict[str, object]:
     }
 
 
+def scoped_environment(result: dict[str, object], capabilities: list[str]) -> dict[str, object]:
+    """Keep runtime provenance in every scope and omit unrelated workflow prose."""
+    scopes = set(capabilities)
+    if "web" in scopes:
+        scopes.update(("workspace", "browser", "development"))
+    fields = {"schema_version", "host_profile", "basaltwater", "health_command"}
+    tools = set()
+    if "workspace" in scopes:
+        fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
+        tools.update(("git", "gh"))
+    if "skills" in scopes:
+        fields.add("skills")
+    if "browser" in scopes:
+        fields.add("browser")
+        tools.update(("basaltwater-playwright-mcp", "firefox", "firefox-esr", "node"))
+    if "development" in scopes:
+        fields.update(("development", "required_tools", "recipes", "project_source"))
+        tools.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make", "cmake", "godot", "godot-mono", "dotnet"))
+        tools.update(result["required_tools"])
+        tools.update(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
+    if "publishing" in scopes:
+        fields.add("publishing")
+        tools.update(("butler", "steamcmd", "basaltwater-web"))
+    if "web" in scopes:
+        tools.add("basaltwater-web")
+    selected = {key: value for key, value in result.items() if key in fields}
+    if tools:
+        selected["tools"] = {name: path for name, path in result["tools"].items() if name in tools}
+    return selected
+
+
 def run_manifest_command(args: argparse.Namespace) -> int:
     try:
         result = inspect_environment(args.repository)
@@ -378,10 +423,17 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         else:
             print(f"Error: {exc}")
         return 1
+    capabilities = getattr(args, "capability", None)
+    if capabilities:
+        result = scoped_environment(result, capabilities)
+        print(json.dumps(result, indent=2) if args.json else "\n".join(f"{key}: {json.dumps(value)}" for key, value in result.items()))
+        return 0
     if args.json:
         print(json.dumps(result, indent=2))
         return 0
     workspace = result["workspace"]
+    if installation := result.get("basaltwater"):
+        print(f"Basaltwater: {installation['version']} ({installation['commit'] or 'revision unrecorded'})")
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
     for catalog in result["skills"]["catalogs"]:

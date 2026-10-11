@@ -9,6 +9,16 @@ It performs no installation, cloud
 request, deployment, or authentication-file inspection. Tool availability does
 not establish health; use the reported doctor command for that separate check.
 
+Use repeatable `--capability` filters for smaller responses, for example
+`basaltw agent manifest . --capability web --json` for Node/web work or
+`--capability browser --capability skills` for browser guidance. Scopes include
+`installation`, `workspace`, `skills`, `browser`, `development`, `publishing`,
+and the `web` combination. Unrelated application and publishing prose is omitted.
+Every scope retains `basaltwater`, with the running CLI snapshot's version,
+installation commit, dirty state, and installation type. These fields describe
+the saved setup source, separately from `workspace.commit`. A checkout or wheel
+without a setup receipt reports an unrecorded revision rather than guessing.
+
 `skills` inventories known Basaltwater entrypoints in both `~/.agents/skills`
 (Codex/OpenCode) and `~/.claude/skills` (Claude Code). It compares entrypoints and
 supporting files with the running CLI's source, reporting `current`, `different`,
@@ -48,6 +58,11 @@ Storefront uploads and VM HTTPS game previews are separate workflows.
 agents should check `preview_status`, then `preview_open` when needed. The
 manifest cannot verify session tools from a standalone CLI. Its managed
 Playwright entry reports only wrapper presence on PATH, without launching it.
+`browser.contexts` separates managed Chromium/optional Firefox, project-pinned
+Playwright engines, interactive Firefox/Firefox ESR, and collaborative preview.
+It records existing runtime versions and leaves startup/rendering unverified;
+use the returned engine-specific doctor command when that coverage is requested.
+See [engine and context checks](BROWSER_AUTOMATION.md#engine-and-context-coverage).
 `workspace.legacy_browser_artifacts` identifies the older artifact directory
 convention; even an existing directory does not establish a browser capability.
 The reported health command uses the workstation doctor on CachyOS.

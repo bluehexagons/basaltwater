@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from lib.atomic_io import write_json_atomic
-from lib.agent_readiness import sanitize_development_readiness
+from lib.agent_readiness import sanitize_browser_context, sanitize_development_readiness
 from lib.installation_info import build_setup_snapshot_metadata
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
@@ -226,6 +226,7 @@ def build_agent_support_bundle(
             "version": t3code["version"],
         },
         "browser": {
+            **sanitize_browser_context(browser),
             "installed": browser["installed"],
             "launchers_secure": browser.get("launchers_secure") is True,
             "launcher_features": {

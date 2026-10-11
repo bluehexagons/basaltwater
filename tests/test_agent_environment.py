@@ -324,6 +324,69 @@ class TestAgentEnvironment(unittest.TestCase):
             self.assertEqual(agent_cli.run_agent_command(args), 1)
         self.assertEqual(json.loads(output.getvalue()), {"ok": False, "error": "invalid declaration"})
 
+    def test_scoped_web_summary_omits_desktop_and_storefront_workflows(self) -> None:
+        self.declaration(required_tools=["project-tool"], recipes={"test": {
+            "description": "Run project checks", "argv": ["recipe-tool"], "requires": ["recipe-tool"],
+        }})
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", side_effect=lambda name: "/bin/" + name),
+            patch.object(agent_environment.subprocess, "run") as execute,
+        ):
+            full = agent_environment.inspect_environment(self.directory)
+            scoped = agent_environment.scoped_environment(full, ["web"])
+        self.assertIn("browser", scoped)
+        self.assertIn("workspace", scoped)
+        self.assertIn("project-tool", scoped["tools"])
+        self.assertIn("recipe-tool", scoped["tools"])
+        self.assertNotIn("blender", scoped["tools"])
+        self.assertNotIn("publishing", scoped)
+        self.assertNotIn("desktop_applications", scoped)
+        self.assertNotIn("skills", scoped)
+        self.assertLess(len(json.dumps(scoped)), len(json.dumps(full)) / 2)
+        self.assertIn("skills", agent_environment.scoped_environment(full, ["web", "skills"]))
+        execute.assert_not_called()
+
+    def test_installation_only_summary_returns_recorded_basaltwater_revision(self) -> None:
+        metadata = Path(self.directory, ".basaltwater-installation.json")
+        metadata.write_text(json.dumps({"schema_version": 1, "installation_type": "setup-snapshot",
+                                        "version": "2.0.0rc1", "commit": "a" * 40, "branch": "main", "dirty": True}))
+        parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["agent", "manifest", self.directory, "--capability", "installation", "--json"])
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
+            patch.object(agent_environment, "__file__", str(Path(self.directory, "lib/agent_environment.py"))),
+            patch.object(agent_environment.shutil, "which", return_value=None),
+            patch.object(agent_environment.subprocess, "run") as execute,
+            redirect_stdout(output := StringIO()),
+        ):
+            self.assertEqual(agent_cli.run_agent_command(args), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["basaltwater"], {"version": "2.0.0rc1", "commit": "a" * 40, "dirty": True,
+                                               "installation_type": "setup-snapshot"})
+        self.assertNotIn("workspace", result)
+        self.assertNotIn("tools", result)
+        execute.assert_not_called()
+
+    def test_unrecorded_source_does_not_confuse_project_commit_with_installation(self) -> None:
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
+            patch.object(agent_environment, "read_installation_metadata", return_value=None),
+            patch.object(agent_environment, "installation_version", return_value="2.0.0rc1"),
+            patch.object(agent_environment.shutil, "which", return_value=None),
+        ):
+            result = agent_environment.inspect_environment(self.directory)
+        self.assertIsNone(result["basaltwater"]["commit"])
+        self.assertIsNone(result["basaltwater"]["dirty"])
+        self.assertEqual(result["workspace"]["commit"], "b" * 40)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -230,6 +230,12 @@ def sanitize_development_readiness(record: JSONDict) -> JSONDict:
     }
 
 
+def sanitize_browser_context(record: JSONDict) -> JSONDict:
+    """Retain only the known managed-Chromium integration doctor's context."""
+    return {field: expected if record.get(field) == expected else None
+            for field, expected in (("engine", "chromium"), ("context", "managed"), ("network_origin", "host"))}
+
+
 def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
     capability = record.get("capability")
     if capability == "host":
@@ -280,6 +286,7 @@ def _sanitize_capability(record: JSONDict) -> Optional[JSONDict]:
         )
         return {
             "capability": "browser",
+            **sanitize_browser_context(record),
             "healthy": record.get("healthy") is True,
             "installed": record.get("installed") is True,
             "launchers_secure": record.get("launchers_secure") is True,

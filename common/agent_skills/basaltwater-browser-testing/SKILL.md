@@ -44,6 +44,19 @@ surface and network origin produced the result when that distinction matters.
 
 ## Use managed Playwright
 
+For a small engine/context inventory, use `basaltw agent manifest REPOSITORY
+--capability browser --json`. The managed capability doctor below qualifies
+Chromium and its MCP integration. Project Playwright Firefox and interactive
+desktop Firefox have separate readiness; discovery leaves rendering unverified.
+When the task explicitly needs Firefox, use `basaltw agent browser doctor
+--engine firefox --context project --project REPOSITORY --json` with the project's
+existing dependencies. An authorized `browser install` with the same arguments
+downloads only the matching engine, preserving packages and lockfiles.
+Use `--context managed` without `--project` for the managed pinned package.
+Neither command changes MCP's Chromium selection or the session browser policy.
+See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#engine-and-context-coverage)
+for dependency and coverage limits.
+
 Before the first VM-local browser action, run:
 
 ```bash

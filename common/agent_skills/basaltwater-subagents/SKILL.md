@@ -13,6 +13,11 @@ Delegate independent tasks when context transfer, review, integration, retries,
 and model cost leave a useful saving. Keep small, tightly coupled changes with
 one owner. Delegation remains subject to the session's authorization and tools.
 
+Start discovery with `basaltw agent manifest . --capability workspace
+--capability skills --json`; add the relevant capability when needed, or use
+`--capability web` for Node/web work. Each scope includes the recorded Basaltwater
+installation revision. Skill discovery still leaves session access unverified.
+
 Read [session context and skill access](references/session-context.md) when
 launching fresh workers, changing accounts or providers, or delegating from an
 unattended task. Skill files, selected guidance, and tools have separate scopes.

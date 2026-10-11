@@ -13,6 +13,17 @@ a collaborative preview.
 
 ## Readiness and origin
 
+Use `basaltw agent manifest REPOSITORY --capability browser --json` for concise
+engine/context discovery. The managed capability doctor qualifies Chromium
+and MCP; it does not verify project Playwright Firefox or desktop Firefox.
+For explicitly requested Firefox coverage, run `basaltw agent browser doctor
+--engine firefox --context project --project REPOSITORY --json`. An authorized
+`browser install` with the same arguments downloads the engine for the existing
+project package without changing package versions or lockfiles. Managed context
+uses `--context managed` without `--project` and leaves MCP on Chromium.
+These diagnostics do not expose browser tools to a session or replace its
+browser policy. See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#engine-and-context-coverage).
+
 Prefer managed Playwright over an installed shared desktop for almost all browser
 testing, including canvas/WebGL. Desktop input is reserved for desktop-specific
 integration or a justified fallback when Playwright cannot cover the task.

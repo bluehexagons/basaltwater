@@ -486,6 +486,68 @@ update or unresolved freshness check instead of treating it as a failed build.
 
 ## Verification
 
+### Engine and context coverage
+
+Use small, read-only discovery before selecting engine coverage:
+
+```bash
+basaltw agent manifest /home/agent/repos/example --capability browser --json
+```
+
+The `browser.contexts` entries distinguish managed headless Chromium and
+optional Firefox, project-installed Playwright Firefox, interactive desktop
+Firefox/Firefox ESR, and the connected client's collaborative preview.
+Discovery reports runtime presence and leaves launch/rendering readiness
+unverified; browser-cache directories do not prove that an engine works.
+The ordinary browser capability doctor below qualifies managed Chromium and
+its MCP integration only. Its result now includes the engine, context, and
+network origin explicitly, also retained in redacted readiness and support
+records. Older records without those fields leave the context unknown.
+
+When Firefox coverage is requested, check the selected existing runtime:
+
+```bash
+basaltw agent browser doctor --engine firefox --context project \
+  --project /home/agent/repos/example --json
+```
+
+If that runtime reports `browser_payload_missing`, explicitly install its
+matching Firefox payload and repeat the check:
+
+```bash
+basaltw agent browser install --engine firefox --context project \
+  --project /home/agent/repos/example --json
+```
+
+These commands use the existing package under that directory's `node_modules`
+(`playwright`, `@playwright/test`, or `playwright-core`), including pnpm package
+links, and the selected Node executable on PATH. Use the owning package directory
+for a monorepo. They do not run npm/npx, add packages, change a lockfile, upgrade
+Playwright, or install OS dependencies. Project `PLAYWRIGHT_BROWSERS_PATH` and
+custom CA settings are retained; Node preload/module overrides are omitted.
+Optional downloads disable browser garbage collection so other projects'
+payloads remain available. Missing project dependencies require the project's
+normal lockfile installation first.
+
+On a Debian VM with managed Playwright, `--context managed` uses the pinned
+managed package and its fixed user cache instead. Optional Firefox provisioning
+does not change the Chromium MCP launcher. Project context also works on
+CachyOS and Ubuntu WSL without assuming a Debian managed browser stack.
+The platform must already provide the selected engine's OS dependencies;
+a failed download or smoke test returns a nonzero status with `issue` and
+`remediation`. Use the host's authorized dependency setup when needed.
+System Firefox is a separate desktop context: [Playwright uses patched Firefox](https://playwright.dev/docs/browsers#firefox),
+so an installed desktop browser does not satisfy its payload requirements.
+
+Each explicit engine doctor launches an isolated, in-memory page, checks a
+button interaction and screenshot, and closes the browser. Successful results
+record Playwright and browser versions and verify local rendering; application
+behavior, desktop integration, and connected-client coverage still need their
+own tests. Session browser policy continues to govern application automation;
+these commands do not expose additional browser tools to an agent session.
+
+### Managed Chromium integration
+
 Run the browser check on the configured VM as the setup user:
 
 ```bash
