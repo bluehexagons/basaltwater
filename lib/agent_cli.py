@@ -40,6 +40,7 @@ from lib.agent_credentials import (
     inspect_codex_auth_file,
 )
 from lib.ssh_utils import build_ssh_command, shell_join, ssh_batch_mode
+from lib.systemd_timers import format_timer_next_trigger
 from lib.types import BYTES_PER_GB, BYTES_PER_MB, JSONDict, StrList
 from lib.t3code_runtime import (
     has_t3_active_runtime_contract,
@@ -1426,7 +1427,10 @@ def _maintenance_status() -> JSONDict:
         timer_name = f"{service_name}.timer"
         timer = _systemd_properties(
             timer_name,
-            ("LoadState", "ActiveState", "UnitFileState", "NextElapseUSecRealtime"),
+            (
+                "LoadState", "ActiveState", "UnitFileState",
+                "NextElapseUSecRealtime", "NextElapseUSecMonotonic",
+            ),
         )
         service = _systemd_properties(
             f"{service_name}.service",
@@ -1450,7 +1454,7 @@ def _maintenance_status() -> JSONDict:
             "last_exit_status": _optional_systemd_integer(
                 service.get("ExecMainStatus")
             ),
-            "next_run": timer.get("NextElapseUSecRealtime") or None,
+            "next_run": format_timer_next_trigger(timer) if loaded else None,
         }
         if result == "failed" or service.get("ActiveState") == "failed":
             errors.append(f"{service_name} maintenance last failed")

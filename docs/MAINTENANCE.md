@@ -48,6 +48,10 @@ Debian's existing APT timers remain enabled.
 `basaltw agent doctor --capability host` also reports installed Node,
 Godot, and Codex authentication timers, while omitting those optional jobs on
 VMs where their tools were not selected.
+The doctor and the web panel's scheduled-jobs view report both calendar and
+boot or interval deadlines when a timer has both. The earlier deadline triggers
+the job; interval estimates include systemd's reported randomized delay. Use
+`systemctl list-timers --all` for the exact next-run timestamp.
 
 ## Update Policy
 

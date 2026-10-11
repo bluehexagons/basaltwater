@@ -189,6 +189,44 @@ class TestAgentHostReadiness(unittest.TestCase):
         self.assertNotIn("auto-update-godot", result["units"])
         self.assertIn("auto-update-node maintenance last failed", result["errors"])
 
+    def test_maintenance_reports_boot_deadline_alongside_calendar_run(self) -> None:
+        def properties(
+            unit: str,
+            requested: tuple[str, ...],
+            *,
+            user: bool = False,
+        ) -> dict[str, str]:
+            self.assertFalse(user)
+            if unit.endswith(".timer"):
+                available = {
+                    "LoadState": "loaded",
+                    "ActiveState": "active",
+                    "UnitFileState": "enabled",
+                    "NextElapseUSecRealtime": "Mon 2026-10-12 00:24:18 CDT",
+                    "NextElapseUSecMonotonic": "27min 40.664323s",
+                }
+            else:
+                available = {
+                    "LoadState": "loaded",
+                    "ActiveState": "inactive",
+                    "Result": "success",
+                    "ExecMainStatus": "0",
+                }
+            return {name: available[name] for name in requested if name in available}
+
+        with (
+            patch("lib.agent_cli._systemd_properties", side_effect=properties),
+            patch("lib.systemd_timers.time.monotonic", return_value=1600),
+        ):
+            result = _maintenance_status()
+
+        self.assertEqual(
+            result["units"]["codex-auth-maintenance"]["next_run"],
+            "Mon 2026-10-12 00:24:18 CDT or in about 1 minute, whichever is earlier",
+        )
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["warnings"], [])
+
     def test_read_meminfo_converts_kibibytes_to_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = os.path.join(temp_dir, "meminfo")

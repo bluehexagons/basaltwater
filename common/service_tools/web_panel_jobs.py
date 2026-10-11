@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import html
-import math
-import re
 import threading
-import time
 import urllib.parse
 from dataclasses import dataclass
+
+from lib.systemd_timers import format_timer_next_trigger
 
 from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
@@ -42,33 +41,6 @@ def parse_job_query(raw: str) -> bool:
 
 def _reported(value: str | None) -> bool:
     return bool(value and value not in {"n/a", "0", "infinity", "[not set]"})
-
-
-def _next_trigger(timer: dict[str, str]) -> str:
-    if timer.get("ActiveState") != "active":
-        return "Timer is not active"
-    realtime = timer.get("NextElapseUSecRealtime")
-    fallback = str(realtime) if _reported(realtime) else "Next trigger not reported"
-    # systemctl formats monotonic deadlines as boot-relative time spans.
-    raw = timer.get("NextElapseUSecMonotonic", "")
-    factors = {"w": 604800, "d": 86400, "h": 3600, "min": 60, "s": 1, "ms": .001, "us": .000001}
-    parts = raw.split()
-    seconds = 0.0
-    for part in parts:
-        match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(min|ms|us|w|d|h|s)", part)
-        if not match:
-            return fallback
-        seconds += float(match[1]) * factors[match[2]]
-    if not parts or seconds <= 0 or not math.isfinite(seconds):
-        return fallback
-    remaining = seconds - time.monotonic()
-    if remaining <= 0:
-        return "Due; waiting for timer dispatch"
-    minutes = max(1, round(remaining / 60))
-    interval = f"In about {minutes} minute{'s' if minutes != 1 else ''}"
-    if _reported(realtime):
-        return f"{realtime} or {interval.lower()}, whichever is earlier"
-    return interval
 
 
 def collect_jobs() -> JobSnapshot:
@@ -120,7 +92,7 @@ def collect_jobs() -> JobSnapshot:
             jobs.append({
                 "label": label, "service": service, "status": status, "tone": tone,
                 "timer": timer_state, "enabled": timer.get("UnitFileState") or "Not reported",
-                "next": _next_trigger(timer),
+                "next": format_timer_next_trigger(timer),
                 "triggered": timer.get("LastTriggerUSec") if _reported(timer.get("LastTriggerUSec")) else "No trigger recorded",
                 "started": str(started) if _reported(started) else "No start recorded",
                 "finished": runtime.get("ExecMainExitTimestamp") if _reported(runtime.get("ExecMainExitTimestamp")) else "No finish recorded",

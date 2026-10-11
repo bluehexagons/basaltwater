@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
+from lib.systemd_timers import format_timer_next_trigger
 
 
 def _pair(name: str = "auto-update-apt", *, timer: str = "active", started: str = "", result: str = "success", active: str = "inactive") -> str:
@@ -78,12 +79,34 @@ class JobTest(unittest.TestCase):
 
     def test_interval_and_calendar_deadlines(self) -> None:
         timer = {"ActiveState": "active", "NextElapseUSecMonotonic": "1h 2min 500ms"}
-        with patch.object(jobs.time, "monotonic", return_value=3600):
-            self.assertEqual(jobs._next_trigger(timer), "In about 2 minutes")
+        with patch("lib.systemd_timers.time.monotonic", return_value=3600):
+            self.assertEqual(format_timer_next_trigger(timer), "In about 2 minutes")
             timer["NextElapseUSecRealtime"] = "tomorrow"
-            self.assertIn("whichever is earlier", jobs._next_trigger(timer))
+            self.assertIn("whichever is earlier", format_timer_next_trigger(timer))
             timer["NextElapseUSecMonotonic"] = "infinity"
-            self.assertEqual(jobs._next_trigger(timer), "tomorrow")
+            self.assertEqual(format_timer_next_trigger(timer), "tomorrow")
+
+    def test_unavailable_inactive_and_due_deadlines(self) -> None:
+        for deadline in ("", "n/a", "infinity", "0", "0s", "bad", "9" * 400 + "s"):
+            with self.subTest(deadline=deadline):
+                timer = {"ActiveState": "active", "NextElapseUSecMonotonic": deadline}
+                self.assertEqual(format_timer_next_trigger(timer), "Next trigger not reported")
+                timer["NextElapseUSecRealtime"] = "tomorrow"
+                self.assertEqual(format_timer_next_trigger(timer), "tomorrow")
+        with patch("lib.systemd_timers.time.monotonic", return_value=3600):
+            timer = {"ActiveState": "active", "NextElapseUSecMonotonic": "1h"}
+            self.assertEqual(format_timer_next_trigger(timer), "Due; waiting for timer dispatch")
+            timer["ActiveState"] = "inactive"
+            self.assertEqual(format_timer_next_trigger(timer), "Timer is not active")
+
+    def test_collected_mixed_deadlines_include_boot_trigger(self) -> None:
+        output = _pair().replace("Persistent=yes", "Persistent=yes\nNextElapseUSecMonotonic=15min")
+        with patch("lib.systemd_timers.time.monotonic", return_value=600):
+            row = self.collect(output).jobs[0]
+        self.assertEqual(
+            row["next"],
+            "Tue 2026-09-08 06:00:00 CDT or in about 5 minutes, whichever is earlier",
+        )
 
     def test_opening_page_does_not_collect_and_bad_queries_are_rejected(self) -> None:
         with patch.object(jobs, "collect_jobs") as collect:
