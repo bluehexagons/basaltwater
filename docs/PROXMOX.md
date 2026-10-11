@@ -512,10 +512,12 @@ the existing volume reference, size, serial, and unowned options. Before
 changing memory, setup repeats the host
 capacity check while replacing the existing VM's allocation rather than
 counting it twice. An unsafe balloon floor remains blocked unless
-`--allow-memory-overcommit` is explicit. A running VM may need to be restarted
-before the guest observes a vCPU, memory-maximum, CPU-model, or disk-hardware
-change; setup reports that requirement without interrupting the guest
-automatically.
+`--allow-memory-overcommit` is explicit. The check uses current running guest
+configurations and retains the larger current or proposed allocation for the
+VM being changed, so a pending decrease does not count as freed memory.
+A running VM may need to be restarted before the guest observes a vCPU,
+memory-maximum, CPU-model, or disk-hardware change; setup reports that
+requirement without interrupting the guest automatically.
 
 If a managed VM disk was moved to another pool or resized outside Basaltwater,
 update its `--storage` declaration and rerun setup. As long as the declaration
@@ -536,8 +538,9 @@ or live capacities changed, repeat `--storage` with the new values and
 unchanged logical names. Every rebind verifies the destination bridge, pool,
 and minimum size of each declared disk. A missing destination is rejected
 instead of creating a new VM; a matching stopped destination is started only
-after those checks and allowed time for SSH to return. The saved provider
-binding changes only after remote setup succeeds. A replacement clone can
+after those checks and a fresh memory-capacity check, even when its memory
+declaration is unchanged, and is allowed time for SSH to return. The saved
+provider binding changes only after remote setup succeeds. A replacement clone can
 follow this path while the original remains stopped; a coexisting clone needs
 a unique address, hostname, and saved setup identity.
 
@@ -617,6 +620,14 @@ and the corresponding totals after the proposed VM. A floor-over-target or
 burst-over-target report includes the GiB excess and percentage of target.
 Burst-only overcommit remains advisory. An unreclaimable floor over the target
 stops provisioning unless `--allow-memory-overcommit` explicitly accepts it.
+Failed or incomplete capacity inspection stops VM creation, memory changes,
+and startup during a provider rebind. The overcommit flag accepts a measured
+floor excess, not an unknown budget.
+The parser accepts Proxmox's plain integer and QEMU `current=MiB` memory formats
+and the documented 512 MiB default when the property is omitted. These formats
+and current-versus-pending reads follow the
+[QEMU configuration schema](https://pve.proxmox.com/pve-docs/qm.conf.5.html) and
+[`qm config` reference](https://pve.proxmox.com/pve-docs/qm.1.html).
 Imported images retain the native format selected by the destination storage
 backend,
 and provisioning rejects a requested disk smaller than the source image. The
@@ -1005,7 +1016,7 @@ basaltw proxmox probe pve1
 
 basaltw setup workstation_dev 10.0.0.50 devuser \
   --provision-on pve1 --memory 8G --storage root 40G --cores 4 \
-  --name dev-01-vm --rdp
+  --name dev-01-vm --rdp --password "$RDP_PASSWORD"
 
 basaltw proxmox ls pve1
 VMID=100  # replace with the VMID returned by `basaltw proxmox ls`

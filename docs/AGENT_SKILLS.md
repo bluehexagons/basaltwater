@@ -177,7 +177,10 @@ and unrelated personal files remain. Retirement removes the managed entrypoint,
 unchanged tracked resources, and empty directories only. Symlinked source or
 destination entries, special files, and unsafe inventory paths are rejected.
 Each file replacement is atomic; the entire catalog is not a single transaction,
-so rerun setup after correcting a reported collision.
+so rerun setup after correcting a reported collision. New resource ownership is
+recorded before writing files, and previous digests remain until refresh finishes.
+An interrupted installation can therefore be retried without treating its new
+resources as personal files; missing recorded resources fail readiness checks.
 Readiness verifies recorded resources are present, unchanged, user-owned, and
 not writable by other users; older entrypoint-only installations remain readable.
 

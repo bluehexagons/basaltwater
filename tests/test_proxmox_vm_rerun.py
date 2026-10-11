@@ -218,6 +218,34 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             any(call.args[3].startswith("qm set") for call in mock_run.call_args_list)
         )
 
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_failed_capacity_probe_blocks_rerun_before_any_provider_mutation(
+        self, command,
+    ) -> None:
+        command.side_effect = [
+            MagicMock(returncode=0, stdout="VMID NAME STATUS\n112 agent-2 running\n"),
+            MagicMock(
+                returncode=0,
+                stdout=(
+                    "name: agent-2\nmemory: 2048\nballoon: 1024\n"
+                    "ipconfig0: ip=10.0.0.50/24,gw=10.0.0.1\n"
+                ),
+            ),
+            MagicMock(returncode=0, stdout="status: running\n"),
+            MagicMock(returncode=0, stdout="READY\n"),
+            MagicMock(returncode=1, stdout="", stderr="Node inspection unavailable"),
+        ]
+        with self.assertRaisesRegex(ProvisionError, "memory capacity"):
+            _reconcile_existing_vm(
+                "10.0.0.1", "10.0.0.50", "renamed-agent", "root", [],
+                desired_cores=4, desired_memory_mib=8192,
+                desired_balloon_min_mib=4096, allow_memory_overcommit=True,
+            )
+        self.assertEqual(command.call_count, 5)
+        self.assertFalse(
+            any(call.args[3].startswith("qm set") for call in command.call_args_list)
+        )
+
     def test_resolved_storage_pools_replace_auto_declarations(self) -> None:
         self.assertEqual(
             _storage_specs_with_resolved_pools(
@@ -680,12 +708,14 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
 
         self.assertEqual(len(mock_run.call_args_list), 2)
 
+    @patch("lib.proxmox_vm._report_memory_capacity", return_value=True)
     @patch("lib.proxmox_vm._wait_for_guest_ssh")
     @patch("lib.proxmox_vm._ssh_run")
     def test_provider_rebind_starts_verified_stopped_destination(
         self,
         mock_run,
         mock_wait,
+        mock_capacity,
     ) -> None:
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="VMID NAME STATUS\n112 agent-2 stopped\n"),
@@ -697,6 +727,7 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
                 ),
             ),
             MagicMock(returncode=0, stdout="status: stopped\n"),
+            MagicMock(returncode=0, stdout="memory: current=8192\nballoon: 2048\n"),
             MagicMock(returncode=0, stdout="", stderr=""),
         ]
 
@@ -713,7 +744,11 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             )
         )
 
-        self.assertEqual(mock_run.call_args_list[3].args[3], "qm start 112")
+        mock_capacity.assert_called_once_with(
+            node_ip="10.0.0.11", user="root", ssh_opts=[],
+            proposed_minimum_mib=2048, proposed_maximum_mib=8192, replacing_vmid=112,
+        )
+        self.assertEqual(mock_run.call_args_list[4].args[3], "qm start 112")
         mock_wait.assert_called_once_with(
             "10.0.0.50",
             "10.0.0.11",
@@ -722,6 +757,32 @@ class TestExistingVMMemoryReconciliation(unittest.TestCase):
             timeout=300,
             dry_run=False,
             label="Migrated VM",
+        )
+
+    @patch("lib.proxmox_vm._report_memory_capacity", return_value=False)
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_provider_rebind_checks_capacity_before_starting_unchanged_vm(
+        self, command, capacity,
+    ) -> None:
+        config = (
+            "name: agent-2\nmemory: 8192\nballoon: 2048\n"
+            "ipconfig0: ip=10.0.0.50/24,gw=10.0.0.1\n"
+        )
+        command.side_effect = [
+            MagicMock(returncode=0, stdout="VMID NAME STATUS\n112 agent-2 stopped\n"),
+            MagicMock(returncode=0, stdout=config),
+            MagicMock(returncode=0, stdout="status: stopped\n"),
+            MagicMock(returncode=0, stdout=config),
+        ]
+        with self.assertRaisesRegex(ProvisionError, "allow-memory-overcommit"):
+            _reconcile_existing_vm(
+                "10.0.0.11", "10.0.0.50", "agent-2", "root", [],
+                desired_memory_mib=8192, desired_balloon_min_mib=2048,
+                require_existing=True, require_existing_name=True, start_existing=True,
+            )
+        capacity.assert_called_once()
+        self.assertFalse(
+            any(call.args[3].startswith("qm start") for call in command.call_args_list)
         )
 
     @patch("lib.proxmox_vm._ssh_run")

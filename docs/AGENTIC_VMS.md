@@ -68,11 +68,14 @@ RDP, protected T3 pairing, read-write Git, active GitHub auth, target-owned Code
 the GitHub CLI and Codex defaults. Add OpenCode and Playwright when the project
 needs those tools. This example provides the web panel as a convenient launch
 point for the separate approval page.
+Set `RDP_PASSWORD` through your secure secret source for the desktop account;
+it is separate from the panel and approval passwords.
 
 ```bash
 basaltw setup agent_code_vm 192.168.1.60 agent \
   --provision-on pve1 --name full-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
+  --password "$RDP_PASSWORD" \
   --agent-tool opencode \
   --browser-automation playwright \
   --lan-access \
@@ -111,6 +114,7 @@ running as the agent account can use root through sudo.
 basaltw setup agent_code_vm 192.168.1.70 maintainer \
   --provision-on pve1 --name maintenance-agent-1 \
   --memory 8G --cores 4 --storage root local-lvm 64G \
+  --password "$RDP_PASSWORD" \
   --agent-tool opencode \
   --browser-automation playwright \
   --lan-access \

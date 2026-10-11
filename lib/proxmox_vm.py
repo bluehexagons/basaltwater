@@ -65,6 +65,7 @@ from lib.proxmox_memory import (
     GuestMemoryAllocation,
     format_gib,
     parse_guest_memory_config,
+    parse_guest_memory_mib,
 )
 from lib.types import NestedStrList, StrList
 from lib.validation import parse_memory_mib
@@ -399,6 +400,15 @@ def _json_command(
         raise ProvisionError(f"{command} returned invalid JSON") from exc
 
 
+def _capacity_integer(value: object, label: str) -> int:
+    """Validate integer API fields without truncating floats or accepting booleans."""
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ProvisionError(f"Proxmox returned an invalid {label}")
+    return value
+
+
 def _running_guest_memory(
     node_ip: str,
     user: str,
@@ -416,26 +426,32 @@ def _running_guest_memory(
         raise ProvisionError("Proxmox cluster resources response was not a list")
 
     allocations: list[GuestMemoryAllocation] = []
+    seen_vmids: set[int] = set()
     for raw_resource in resources:
         if not isinstance(raw_resource, dict):
+            raise ProvisionError("Proxmox returned an invalid guest inventory entry")
+        resource_node = raw_resource.get("node")
+        if not isinstance(resource_node, str) or not resource_node:
+            raise ProvisionError("Proxmox guest inventory entry did not identify its node")
+        if resource_node != node_name:
             continue
-        if raw_resource.get("node") != node_name:
+        if raw_resource.get("status") == "stopped":
             continue
         if raw_resource.get("status") != "running":
-            continue
-        guest_type = str(raw_resource.get("type", ""))
-        if guest_type not in {"qemu", "lxc"}:
-            continue
-        try:
-            vmid = int(raw_resource["vmid"])
-        except (KeyError, TypeError, ValueError):
-            continue
+            raise ProvisionError("Proxmox returned an unknown local guest status")
+        guest_type = raw_resource.get("type")
+        if not isinstance(guest_type, str) or guest_type not in {"qemu", "lxc"}:
+            raise ProvisionError("Proxmox returned an unknown local guest type")
+        vmid = _capacity_integer(raw_resource.get("vmid"), "guest VMID")
+        if not 100 <= vmid <= 999999999 or vmid in seen_vmids:
+            raise ProvisionError("Proxmox returned an invalid or duplicate guest VMID")
+        seen_vmids.add(vmid)
         command = "qm" if guest_type == "qemu" else "pct"
         result = _ssh_run(
             node_ip,
             user,
             ssh_opts,
-            f"{command} config {vmid}",
+            f"{command} config {vmid} --current 1",
             dry_run=False,
         )
         if result.returncode != 0:
@@ -444,13 +460,17 @@ def _running_guest_memory(
                 f"Could not inspect memory for running {guest_type} guest "
                 f"{vmid}: {detail}"
             )
-        allocation = parse_guest_memory_config(
-            result.stdout or "",
-            guest_type=guest_type,
-            vmid=vmid,
-        )
-        if allocation:
-            allocations.append(allocation)
+        try:
+            allocation = parse_guest_memory_config(
+                result.stdout or "",
+                guest_type=guest_type,
+                vmid=vmid,
+            )
+        except ValueError as exc:
+            raise ProvisionError(
+                f"Could not inspect memory for running {guest_type} guest {vmid}: {exc}"
+            ) from exc
+        allocations.append(allocation)
     return allocations
 
 
@@ -463,7 +483,8 @@ def _report_memory_capacity(
     proposed_maximum_mib: int,
     replacing_vmid: Optional[int] = None,
 ) -> bool:
-    """Print advisory host-capacity comparisons for a VM allocation."""
+    """Report a fully inspected memory budget and whether its floors fit."""
+    retaining_running_allocation = False
     try:
         hostname = _ssh_run(
             node_ip,
@@ -492,16 +513,23 @@ def _report_memory_capacity(
         memory = status.get("memory")
         if not isinstance(memory, dict):
             raise ProvisionError("Proxmox node status did not include memory values")
-        total_mib = int(memory.get("total", 0)) // (1024 * 1024)
-        used_mib = int(memory.get("used", 0)) // (1024 * 1024)
+        total_bytes = _capacity_integer(memory.get("total"), "total host memory")
+        used_bytes = _capacity_integer(memory.get("used"), "used host memory")
+        total_mib = total_bytes // (1024 * 1024)
+        used_mib = used_bytes // (1024 * 1024)
         if total_mib <= 0:
             raise ProvisionError("Proxmox reported zero total host memory")
-        target_percent = int(
+        if used_bytes > total_bytes:
+            raise ProvisionError("Proxmox reported host memory use above its total")
+        target_percent = _capacity_integer(
             node_config.get(
                 "ballooning-target",
                 DEFAULT_BALLOON_TARGET_PERCENT,
-            )
+            ),
+            "node balloon target",
         )
+        if target_percent > 100:
+            raise ProvisionError("Proxmox node balloon target is outside 0–100")
         allocations = _running_guest_memory(
             node_ip,
             user,
@@ -509,14 +537,29 @@ def _report_memory_capacity(
             node_name,
         )
         if replacing_vmid is not None:
+            for allocation in allocations:
+                if allocation.vmid == replacing_vmid:
+                    # A pending decrease cannot free the running allocation.
+                    retaining_running_allocation = (
+                        allocation.minimum_mib > proposed_minimum_mib
+                        or allocation.maximum_mib > proposed_maximum_mib
+                    )
+                    proposed_minimum_mib = max(
+                        proposed_minimum_mib, allocation.minimum_mib,
+                    )
+                    proposed_maximum_mib = max(
+                        proposed_maximum_mib, allocation.maximum_mib,
+                    )
             allocations = [
                 allocation
                 for allocation in allocations
                 if allocation.vmid != replacing_vmid
             ]
     except (ProvisionError, TypeError, ValueError) as exc:
-        print(f"  ⚠ Could not calculate Proxmox memory capacity: {exc}")
-        return True
+        raise ProvisionError(
+            f"Could not calculate Proxmox memory capacity: {exc}; "
+            "repair the inspection and retry before creating, starting, or changing VM memory"
+        ) from exc
 
     target_mib = (total_mib * target_percent) // 100
     current_minimum_mib = sum(item.minimum_mib for item in allocations)
@@ -542,6 +585,11 @@ def _report_memory_capacity(
         if replacing_vmid is not None
         else "proposed VM"
     )
+    if retaining_running_allocation:
+        print(
+            f"    VM {replacing_vmid}: retaining current allocation in the budget "
+            "until its memory decrease takes effect"
+        )
     print(
         f"    After {proposed_label}: "
         f"floors {format_gib(after_minimum_mib)} "
@@ -682,14 +730,18 @@ def _parse_existing_vm(vmid: int, config_text: str) -> _ExistingVM:
                 continue
             cores = parsed_cores if parsed_cores > 0 else None
             continue
-        if normalized_key in {"memory", "balloon", "shares"}:
+        if normalized_key == "memory":
+            try:
+                memory_mib = parse_guest_memory_mib(value.strip(), guest_type="qemu")
+            except ValueError:
+                continue
+            continue
+        if normalized_key in {"balloon", "shares"}:
             try:
                 parsed_value = int(value.strip())
             except ValueError:
                 continue
-            if normalized_key == "memory" and parsed_value > 0:
-                memory_mib = parsed_value
-            elif normalized_key == "balloon" and parsed_value >= 0:
+            if normalized_key == "balloon" and parsed_value >= 0:
                 balloon_min_mib = parsed_value
             elif normalized_key == "shares" and parsed_value > 0:
                 balloon_shares = parsed_value
@@ -954,15 +1006,47 @@ def _reconcile_existing_vm(
             or matched.balloon_min_mib != desired_balloon_min_mib
         )
     )
-    if memory_changed:
-        assert desired_memory_mib is not None
-        assert desired_balloon_min_mib is not None
+    if memory_changed or start_after_reconcile:
+        if start_after_reconcile:
+            # A stopped destination is absent from the running-guest budget,
+            # even when its saved hardware declaration has not changed.
+            inspected = _ssh_run(
+                node_ip, user, ssh_opts, f"qm config {matched.vmid}", dry_run=False,
+            )
+            if inspected.returncode != 0:
+                detail = (inspected.stderr or inspected.stdout or "").strip() or "unknown error"
+                raise ProvisionError(
+                    f"Could not inspect memory before starting VM {matched.vmid}: {detail}"
+                )
+            try:
+                allocation = parse_guest_memory_config(
+                    inspected.stdout or "", guest_type="qemu", vmid=matched.vmid,
+                )
+            except ValueError as exc:
+                raise ProvisionError(
+                    f"Could not inspect memory before starting VM {matched.vmid}: {exc}"
+                ) from exc
+            maximum_mib = (
+                desired_memory_mib
+                if desired_memory_mib is not None
+                else allocation.maximum_mib
+            )
+            minimum_mib = (
+                desired_balloon_min_mib
+                if desired_balloon_min_mib is not None
+                else allocation.minimum_mib
+            )
+        else:
+            assert desired_memory_mib is not None
+            assert desired_balloon_min_mib is not None
+            maximum_mib = desired_memory_mib
+            minimum_mib = desired_balloon_min_mib
         memory_floor_safe = _report_memory_capacity(
             node_ip=node_ip,
             user=user,
             ssh_opts=ssh_opts,
-            proposed_minimum_mib=desired_balloon_min_mib,
-            proposed_maximum_mib=desired_memory_mib,
+            proposed_minimum_mib=minimum_mib,
+            proposed_maximum_mib=maximum_mib,
             replacing_vmid=matched.vmid,
         )
         _enforce_memory_floor(memory_floor_safe, allow_memory_overcommit)

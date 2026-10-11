@@ -26,7 +26,9 @@ from lib.proxmox_vm import (
     ProvisionError,
     _create_vm,
     _enforce_memory_floor,
+    _parse_existing_vm,
     _report_memory_capacity,
+    _running_guest_memory,
 )
 from lib.validation import validate_hosted_flags
 
@@ -327,6 +329,121 @@ class TestHostMemorySafety(unittest.TestCase):
 
 
 class TestGuestMemoryCapacity(unittest.TestCase):
+    def test_qemu_current_memory_property_is_counted_and_reconciled(self):
+        config = "name: agent\nmemory: current=8192\nballoon: 2048\n"
+        allocation = parse_guest_memory_config(config, guest_type="qemu", vmid=101)
+
+        self.assertEqual(allocation.minimum_mib, 2048)
+        self.assertEqual(allocation.maximum_mib, 8192)
+        self.assertEqual(_parse_existing_vm(101, config).memory_mib, 8192)
+
+    def test_omitted_memory_uses_proxmox_default(self):
+        for guest_type, floor in (("qemu", 512), ("lxc", 0)):
+            with self.subTest(guest_type=guest_type):
+                allocation = parse_guest_memory_config(
+                    "name: guest\n", guest_type=guest_type, vmid=101,
+                )
+                self.assertEqual(allocation.minimum_mib, floor)
+                self.assertEqual(allocation.maximum_mib, 512)
+
+    def test_invalid_guest_config_cannot_disappear_from_capacity_totals(self):
+        for config in ("", "not a configuration", "memory: invalid", "memory: 0",
+                       "memory: -1", "memory: 8G", "memory: 8192\nballoon: bad"):
+            with self.subTest(config=config):
+                with self.assertRaises(ValueError):
+                    parse_guest_memory_config(config, guest_type="qemu", vmid=101)
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_capacity_inspection_reads_current_not_pending_guest_values(self, command):
+        resources = [
+            {"node": "pve1", "status": "running", "type": guest_type, "vmid": vmid}
+            for guest_type, vmid in (("qemu", 100), ("lxc", 101))
+        ]
+
+        def response(_node, _user, _opts, cmd, **_kwargs):
+            if cmd.startswith("pvesh"):
+                output = json.dumps(resources)
+            elif cmd.endswith("--current 1"):
+                output = "memory: 8192\nballoon: 4096\n"
+            else:
+                output = "memory: 1024\nballoon: 512\n"
+            return MagicMock(returncode=0, stdout=output, stderr="")
+
+        command.side_effect = response
+        allocations = _running_guest_memory("192.0.2.10", "root", [], "pve1")
+        self.assertEqual([item.maximum_mib for item in allocations], [8192, 8192])
+        self.assertEqual([item.minimum_mib for item in allocations], [4096, 0])
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_incomplete_guest_inventory_blocks_capacity_check(self, command):
+        base = {"node": "pve1", "status": "running", "type": "qemu", "vmid": 101}
+        invalid = [None, {}, {**base, "node": None}, {**base, "status": "unknown"},
+                   {**base, "type": "unknown"}, {**base, "type": []}, {**base, "vmid": True},
+                   {**base, "vmid": 101.5}, {**base, "vmid": 0}]
+        for resource in invalid:
+            with self.subTest(resource=resource):
+                command.reset_mock()
+                command.return_value = MagicMock(
+                    returncode=0, stdout=json.dumps([resource]), stderr="",
+                )
+                with self.assertRaises(ProvisionError):
+                    _running_guest_memory("192.0.2.10", "root", [], "pve1")
+                command.assert_called_once()
+
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_failed_capacity_inspection_does_not_authorize_memory_changes(self, command):
+        command.return_value = MagicMock(returncode=1, stdout="", stderr="SSH unavailable")
+        with self.assertRaisesRegex(ProvisionError, "memory capacity"):
+            safe = _report_memory_capacity(
+                node_ip="192.0.2.10", user="root", ssh_opts=[],
+                proposed_minimum_mib=2048, proposed_maximum_mib=8192,
+            )
+            _enforce_memory_floor(safe, True)
+
+    @patch("lib.proxmox_vm._running_guest_memory", return_value=[])
+    @patch("lib.proxmox_vm._json_command")
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_invalid_node_memory_or_target_blocks_admission(self, command, probe, guests):
+        command.return_value = MagicMock(returncode=0, stdout="pve1\n")
+        memory = {"total": 8589934592, "used": 4294967296}
+        for invalid in (None, True, 80.5, -1, 101, "80%", "80.0", " 80"):
+            with self.subTest(target=invalid):
+                probe.side_effect = [{"memory": memory}, {"ballooning-target": invalid}]
+                with self.assertRaisesRegex(ProvisionError, "memory capacity"):
+                    _report_memory_capacity(
+                        node_ip="192.0.2.10", user="root", ssh_opts=[],
+                        proposed_minimum_mib=2048, proposed_maximum_mib=8192,
+                    )
+        for invalid in ({"total": True, "used": 0}, {"total": 0, "used": 0},
+                        {"total": 8589934592}, {**memory, "used": -1},
+                        {**memory, "used": 8589934593}, {**memory, "used": 1.5}):
+            with self.subTest(memory=invalid):
+                probe.side_effect = [{"memory": invalid}, {}]
+                with self.assertRaisesRegex(ProvisionError, "memory capacity"):
+                    _report_memory_capacity(
+                        node_ip="192.0.2.10", user="root", ssh_opts=[],
+                        proposed_minimum_mib=2048, proposed_maximum_mib=8192,
+                    )
+        guests.assert_not_called()
+
+    @patch("builtins.print")
+    @patch("lib.proxmox_vm._ssh_run")
+    def test_pending_memory_decrease_does_not_free_running_vm_memory(self, command, printed):
+        command.side_effect = [
+            MagicMock(returncode=0, stdout="pve1\n", stderr=""),
+            MagicMock(returncode=0, stdout='{"memory": {"total": 8589934592, "used": 4294967296}}', stderr=""),
+            MagicMock(returncode=0, stdout='{"ballooning-target": "75"}', stderr=""),
+            MagicMock(returncode=0, stdout='[{"node": "pve1", "status": "running", "type": "qemu", "vmid": 100}]', stderr=""),
+            MagicMock(returncode=0, stdout="memory: 8192\nballoon: 8192\n", stderr=""),
+        ]
+        safe = _report_memory_capacity(
+            node_ip="192.0.2.10", user="root", ssh_opts=[],
+            proposed_minimum_mib=2048, proposed_maximum_mib=4096, replacing_vmid=100,
+        )
+        self.assertFalse(safe)
+        self.assertTrue(any("until its memory decrease takes effect" in str(item)
+                            for item in printed.call_args_list))
+
     def test_qemu_balloon_minimum_is_the_floor(self):
         allocation = parse_guest_memory_config(
             "memory: 8192\nballoon: 2048\n",
@@ -334,8 +451,6 @@ class TestGuestMemoryCapacity(unittest.TestCase):
             vmid=101,
         )
 
-        self.assertIsNotNone(allocation)
-        assert allocation is not None
         self.assertEqual(allocation.minimum_mib, 2048)
         self.assertEqual(allocation.maximum_mib, 8192)
 
@@ -346,8 +461,6 @@ class TestGuestMemoryCapacity(unittest.TestCase):
             vmid=102,
         )
 
-        self.assertIsNotNone(allocation)
-        assert allocation is not None
         self.assertEqual(allocation.minimum_mib, 4096)
         self.assertEqual(allocation.maximum_mib, 4096)
 
@@ -358,8 +471,6 @@ class TestGuestMemoryCapacity(unittest.TestCase):
             vmid=103,
         )
 
-        self.assertIsNotNone(allocation)
-        assert allocation is not None
         self.assertEqual(allocation.minimum_mib, 0)
         self.assertEqual(allocation.maximum_mib, 2048)
 

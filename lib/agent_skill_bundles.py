@@ -218,6 +218,18 @@ def install_skill_bundle(source: Path, directory: Path, uid: int, gid: int) -> b
     for name in stale:
         _read(directory / name, uid)
     changed = ensure_skill_directory(directory, uid, gid)
+    # Claim only preflighted new resources before writing them. Keep existing
+    # digests until the refresh completes so an interrupted run can recognize
+    # both old contents and files already updated to the current source.
+    claimed = {
+        **recorded,
+        **{name: _digest(content) for name, (content, _mode) in files.items()
+           if name != "SKILL.md" and name not in recorded},
+    }
+    if claimed != recorded:
+        write_json_atomic(str(directory / _INVENTORY), {"version": 1, "files": claimed}, uid=uid, gid=gid)
+        recorded = claimed
+        changed = True
     for name, (content, mode) in files.items():
         path = directory / name
         for parent in reversed(path.parents):

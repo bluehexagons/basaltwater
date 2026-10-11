@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from common.agent_steps import install_managed_agent_skills
 from common.t3code_steps import _ensure_t3_agent_skill
+from lib import agent_skill_bundles as bundles
 from lib.agent_cli import _t3_agent_skills_ready
 from lib.agent_skill_bundles import install_skill_bundle, remove_skill_bundle
 from lib.config import SetupConfig
@@ -65,6 +66,53 @@ class AgentSkillBundleTests(unittest.TestCase):
         reference.write_bytes(b"v2")
         self.assertTrue(self.install())
         self.assertEqual((self.destination / "references/update.md").read_bytes(), b"v2")
+        self.assertFalse(self.install())
+
+    def test_interrupted_new_bundle_can_be_retried_without_adopting_personal_files(self) -> None:
+        self.resource("references/first.md", b"first")
+        self.resource("references/second.md", b"second")
+        write = bundles._write
+
+        def interrupt(path, *args):
+            if path.name == "second.md":
+                raise OSError("Interrupted skill installation")
+            return write(path, *args)
+
+        with patch.object(bundles, "_write", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted"):
+                self.install()
+        self.assertEqual((self.destination / "references/first.md").read_bytes(), b"first")
+        self.assertFalse(bundles.skill_resources_ready(self.destination, self.uid))
+        personal = self.destination / "references/personal.md"
+        personal.write_bytes(b"personal")
+        self.assertTrue(self.install())
+        self.assertEqual((self.destination / "references/second.md").read_bytes(), b"second")
+        self.assertEqual(personal.read_bytes(), b"personal")
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
+        self.assertFalse(self.install())
+
+    def test_interrupted_upgrade_retains_old_digests_and_claims_new_resources(self) -> None:
+        old = self.resource("references/old.md", b"old version")
+        self.install()
+        old.write_bytes(b"new version")
+        self.resource("references/added.md", b"new reference")
+        self.resource("references/last.md", b"last reference")
+        write = bundles._write
+
+        def interrupt(path, *args):
+            if path.name == "last.md":
+                raise OSError("Interrupted skill upgrade")
+            return write(path, *args)
+
+        with patch.object(bundles, "_write", side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, "Interrupted"):
+                self.install()
+        self.assertEqual((self.destination / "references/old.md").read_bytes(), b"old version")
+        self.assertEqual((self.destination / "references/added.md").read_bytes(), b"new reference")
+        self.assertTrue(self.install())
+        self.assertEqual((self.destination / "references/old.md").read_bytes(), b"new version")
+        self.assertEqual((self.destination / "references/last.md").read_bytes(), b"last reference")
+        self.assertTrue(bundles.skill_resources_ready(self.destination, self.uid))
         self.assertFalse(self.install())
 
     def test_collision_preflight_preserves_old_entrypoint(self) -> None:

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+
+from lib.validation import validate_positive_integer
 
 
 DEFAULT_BALLOON_TARGET_PERCENT = 80
 MAX_AUTOMATIC_BALLOON_TARGET_PERCENT = 80
 MIN_AUTOMATIC_BALLOON_TARGET_PERCENT = 50
 MIN_HOST_RESERVE_MIB = 2048
+DEFAULT_GUEST_MEMORY_MIB = 512
 SWAPON_STATUS_COMMAND = (
     "swapon --show=NAME,TYPE,SIZE,USED --bytes --noheadings --raw"
 )
@@ -84,12 +86,15 @@ def calculate_balloon_target(
     )
 
 
-def memory_value_mib(value: Any) -> int:
-    """Convert an integer Proxmox memory value, expressed in MiB, safely."""
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
+def parse_guest_memory_mib(value: str, *, guest_type: str) -> int:
+    """Read Proxmox's integer or QEMU ``current=`` memory property in MiB."""
+    if guest_type not in {"qemu", "lxc"}:
+        raise ValueError(f"Unknown Proxmox guest type: {guest_type}")
+    if guest_type == "qemu":
+        value = value.removeprefix("current=")
+    if not value.isascii() or not value.isdecimal():
+        raise ValueError(f"Invalid {guest_type} memory value: {value!r}")
+    return validate_positive_integer(value, f"{guest_type} memory")
 
 
 def parse_swapon_output(output: str) -> list[HostSwapDevice]:
@@ -120,7 +125,7 @@ def parse_guest_memory_config(
     *,
     guest_type: str,
     vmid: int,
-) -> GuestMemoryAllocation | None:
+) -> GuestMemoryAllocation:
     """Parse a running QEMU or LXC configuration into floor/ceiling values."""
     values: dict[str, str] = {}
     for raw_line in config_text.splitlines():
@@ -128,12 +133,18 @@ def parse_guest_memory_config(
         if separator:
             values[key.strip()] = value.strip()
 
-    maximum_mib = memory_value_mib(values.get("memory"))
-    if maximum_mib <= 0:
-        return None
+    if not values:
+        raise ValueError("Proxmox returned an empty or invalid guest configuration")
+    maximum_mib = parse_guest_memory_mib(
+        values.get("memory", str(DEFAULT_GUEST_MEMORY_MIB)),
+        guest_type=guest_type,
+    )
 
     if guest_type == "qemu":
-        balloon_mib = memory_value_mib(values.get("balloon"))
+        balloon = values.get("balloon", "0")
+        if not balloon.isascii() or not balloon.isdecimal():
+            raise ValueError(f"Invalid QEMU balloon value: {balloon!r}")
+        balloon_mib = int(balloon)
         minimum_mib = (
             balloon_mib
             if 0 < balloon_mib < maximum_mib
