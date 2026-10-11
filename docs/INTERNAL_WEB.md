@@ -126,6 +126,7 @@ Inspect and remove publications as the owning user:
 basaltwater-web site list
 basaltwater-web site url docs
 basaltwater-web site doctor docs
+basaltwater-web site verify docs --project ~/repos/product --output dist --json
 basaltwater-web site remove docs --yes
 ```
 
@@ -133,11 +134,27 @@ Publishing and removal of the same site share a lock, so removal waits for an
 active publication before checking and deleting the result. Lock files must be
 regular files with no symbolic or additional hard links.
 
-`site doctor` verifies the managed site directory and the HTTPS status of its
-root URL. It does not compare the served tree with the current build, follow a
-client-side route, or execute JavaScript. After publishing a change, compare a
-representative non-sensitive served file with its build artifact when content
-freshness matters:
+`site doctor` verifies directory and root HTTP readiness. `site verify` checks
+all artifact hashes against a private receipt activated with the snapshot,
+then checks served HTTPS bytes. Optional `--project PATH` and `--output DIR`
+also compare the local build inventory and observed Git revision. Use
+`--local-only` to omit HTTP coverage, or `--timeout SECONDS` (1–300, default 60)
+to bound the HTTPS phase. Verification never builds or republishes.
+
+The mode-`0600` `.basaltwater-receipt.json` records the observed source commit,
+dirty state, output directory, publication time, build mode, and SHA-256/size
+inventory of at most 10,000 artifacts. It is excluded from public metadata and
+Nginx denies dotfile requests. Failed activation retains the previous receipt
+with its snapshot. Older publications return `receipt_missing`; publish again
+within an authorized hosting task to generate their receipt.
+
+Dirty or unavailable Git metadata leaves `source_matches` unverified (`null`)
+with a warning. A different source commit or artifact inventory returns a
+nonzero exit code and structured issue/remediation. `--no-build` records existing
+output without proving it came from the observed source. Matching served bytes
+do not prove JavaScript rendering, client-side routing, or browser cache freshness.
+For older installations without the verification command, compare a public
+artifact manually:
 
 ```bash
 set -o pipefail

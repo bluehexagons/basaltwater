@@ -20,6 +20,14 @@ basaltw agent workspace status WORKTREE_PATH --json
 basaltw agent manifest ~/repos/PROJECT --json
 ```
 
+Use `workspace create REPOSITORY TASK --branch feature/NAME` for feature branches.
+Existing secondary worktrees below the managed root need explicit `workspace
+adopt WORKTREE --task TASK`; include `--root PATH` for a custom root. This also
+registers older managed worktrees, without moving or cleaning files. Cleanup
+requires matching ownership, a clean worktree, and ancestry in the primary
+checkout. `workspace group TASK REPOSITORY RELATED_REPOSITORY --json` locates
+matching owned worktrees. JSON failures include stable `issue` and `remediation`.
+
 For authorized delegation, use the installed `basaltwater-subagents` skill and
 its local lifecycle and session-context references. Give editors their returned
 worktree paths; the parent owns integration and cleanup. Read-only reviewers can

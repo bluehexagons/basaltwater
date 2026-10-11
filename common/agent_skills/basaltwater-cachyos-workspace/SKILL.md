@@ -42,6 +42,13 @@ unrelated work, and integrate or push only within the user's requested scope.
 Worktrees do not isolate ports, caches, or the human user's desktop session;
 coordinate shared-state changes and give concurrent previews distinct ports.
 
+Use `create REPOSITORY TASK --branch feature/NAME` for a new feature branch.
+Inspect and explicitly `workspace adopt WORKTREE --task TASK --json` existing
+secondary worktrees below the managed root; use `--root PATH` for a custom root.
+Adoption preserves dirty files and records ownership, and is needed for older
+worktrees created before ownership records. `workspace group TASK REPOSITORY
+RELATED_REPOSITORY --json` finds matching owned branches and paths across projects.
+
 Inspect status before cleanup, then preview removal:
 
 ```fish
@@ -52,6 +59,9 @@ basaltw agent workspace remove WORKTREE --json
 Removal refuses dirty, unmerged, or unmanaged worktrees. Resolve the reported
 condition without discarding user work. `status --json` reports `repository`,
 `primary_branch`, `primary_head`, and `merged_into_primary`; `remove --dry-run`
-also checks registration, managed paths, branches, and dirty state. Stop worker
+also checks registration, managed paths, ownership, branches, and dirty state.
+Feature branches retain the clean-tree and merge checks; renamed branches need
+explicit adoption after inspection. JSON failures include `ok: false`, `issue`,
+and `remediation` with a nonzero exit status. Stop worker
 processes and preserve needed ignored output before removal.
 This workflow needs no SSH host, VM provisioning, or saved server setup.

@@ -371,6 +371,7 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     workspace_create.add_argument("repository", metavar="REPOSITORY")
     workspace_create.add_argument("task", metavar="TASK")
     workspace_create.add_argument("--base", default="HEAD", metavar="REVISION")
+    workspace_create.add_argument("--branch", metavar="BRANCH", help="New branch name (default: agent/TASK)")
     workspace_create.add_argument("--root", dest="workspace_root", metavar="PATH")
     workspace_create.add_argument("--json", action="store_true")
     workspace_list = workspace_commands.add_parser(
@@ -385,6 +386,15 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     )
     workspace_status.add_argument("path", metavar="WORKTREE")
     workspace_status.add_argument("--json", action="store_true")
+    workspace_adopt = workspace_commands.add_parser("adopt", help="Register an existing owned feature/task worktree")
+    workspace_adopt.add_argument("path", metavar="WORKTREE")
+    workspace_adopt.add_argument("--task", metavar="TASK")
+    workspace_adopt.add_argument("--root", dest="workspace_root", metavar="PATH")
+    workspace_adopt.add_argument("--json", action="store_true")
+    workspace_group = workspace_commands.add_parser("group", help="Find owned task worktrees across related repositories")
+    workspace_group.add_argument("task", metavar="TASK")
+    workspace_group.add_argument("repositories", nargs="+", metavar="REPOSITORY")
+    workspace_group.add_argument("--json", action="store_true")
     workspace_remove = workspace_commands.add_parser(
         "remove",
         help="Remove a clean task worktree after its branch is merged",

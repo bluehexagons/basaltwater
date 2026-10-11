@@ -20,6 +20,7 @@ import time
 import webbrowser
 
 from lib.remote_utils import CommandTimeoutError, run
+from lib.static_publication import RECEIPT_FILE, RESERVED_FILES, verify_receipt, write_receipt
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
@@ -214,7 +215,8 @@ def _make_tree_readable(root: str) -> None:
         for name in directory_names:
             os.chmod(os.path.join(current_dir, name), 0o755)
         for name in file_names:
-            os.chmod(os.path.join(current_dir, name), 0o644)
+            mode = 0o600 if current_dir == root and name == RECEIPT_FILE else 0o644
+            os.chmod(os.path.join(current_dir, name), mode)
 
 
 def _replace_site(staging_dir: str, destination_dir: str) -> None:
@@ -384,6 +386,8 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
             )
         output_dir = _resolve_output(project_dir, args.output)
         _validate_output_tree(output_dir)
+        if any(os.path.lexists(os.path.join(output_dir, name)) for name in RESERVED_FILES):
+            raise ValueError("Static output contains reserved Basaltwater publication metadata")
         staging_dir = tempfile.mkdtemp(prefix=f".{site}-", dir=user_root)
         try:
             shutil.copytree(output_dir, staging_dir, dirs_exist_ok=True, symlinks=True)
@@ -398,6 +402,10 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
                 "url": url,
             }
             _write_metadata(os.path.join(staging_dir, METADATA_FILE), metadata)
+            write_receipt(
+                staging_dir, project_dir, output=str(metadata["output"]),
+                published_at=published_at, built=not args.no_build,
+            )
             _make_tree_readable(staging_dir)
             destination_dir = os.path.join(user_root, site)
             _replace_site(staging_dir, destination_dir)
@@ -410,6 +418,33 @@ def publish(args: argparse.Namespace) -> dict[str, object]:
         "site": site,
         "url": url or destination_dir,
     }
+
+
+def verify_site(args: argparse.Namespace) -> dict[str, object]:
+    """Verify an owned publication without changing source or gateway state."""
+    if not _SITE_NAME_PATTERN.fullmatch(args.name):
+        raise ValueError("Invalid site name")
+    account = _current_account()
+    user_root = os.path.join(SITES_ROOT, account.pw_name)
+    site = os.path.join(user_root, args.name)
+    for path in (user_root, site):
+        if os.path.islink(path) or not os.path.isdir(path) or os.stat(path).st_uid != account.pw_uid:
+            raise ValueError("Publication directory must be real and owned by the current account")
+    project = os.path.realpath(os.path.abspath(os.path.expanduser(args.project))) if args.project else None
+    if args.output and project is None:
+        raise ValueError("--output requires --project")
+    output = _resolve_output(project, args.output) if project else None
+    url = None if args.local_only else published_url(account.pw_name, args.name)
+    if not args.local_only and not url:
+        raise RuntimeError("Internal-web base URL is unavailable")
+    with _site_lock(user_root, args.name):
+        try:
+            result = verify_receipt(site, url=url, local_output=output, project=project, timeout=args.timeout)
+        except FileNotFoundError:
+            if os.path.lexists(os.path.join(site, RECEIPT_FILE)):
+                raise
+            return {"ok": False, "issue": "receipt_missing", "remediation": "Publish this site again to create a private verification receipt."}
+    return {**result, "site": args.name, "url": url}
 
 
 def list_sites(account: pwd.struct_passwd) -> list[dict[str, object]]:

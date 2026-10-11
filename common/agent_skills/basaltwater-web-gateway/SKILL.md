@@ -47,6 +47,7 @@ From a Vite or similar project with a build script:
 ```bash
 basaltwater-web publish site
 basaltwater-web site doctor NAME
+basaltwater-web site verify NAME --project . --json
 basaltwater-web site url NAME
 ```
 
@@ -62,10 +63,21 @@ build. An npm project without a lockfile uses `npm install`, which can create a
 silently commit or discard that file. Use `--no-install` only when dependencies
 are already usable.
 
-`site doctor` proves that the managed directory exists and its root HTTPS URL
-responds successfully. It does not compare the publication with the checkout,
-inspect client-side routes, or prove that JavaScript rendered. After updating a
-hosted site, verify at least one changed public artifact against the build:
+`site doctor` checks directory and root HTTP readiness. For freshness, use
+`site verify NAME --project PATH --output dist --json`: it compares the private
+receipt with the publication, local build inventory, and served HTTPS bytes.
+Publication stages the receipt with the snapshot, recording the observed source
+commit, dirty state, build mode, and artifact hashes. The mode-`0600` receipt is
+not public site metadata. `--local-only` omits HTTPS coverage.
+
+Verification changes no source, build, or publication. A missing legacy receipt
+requires an authorized publication to create one; do not republish automatically
+for a read-only check. Dirty or unavailable Git state leaves source provenance
+unverified even when artifact bytes match. `--no-build` does not establish that
+the output was built from the recorded source. Verification does not execute
+JavaScript, follow client-side routes, or inspect service-worker caches.
+
+For an older gateway without the verifier, compare a changed public artifact:
 
 ```bash
 set -o pipefail

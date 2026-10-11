@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -15,9 +17,12 @@ from lib.agent_cli import add_agent_subparser, run_agent_command
 from lib.agent_support import build_agent_support_bundle, write_agent_support_bundle
 from lib.agent_workspace import (
     create_agent_worktree,
+    adopt_agent_worktree,
+    inspect_workspace_group,
     inspect_agent_worktree,
     list_agent_worktrees,
     remove_agent_worktree,
+    run_agent_workspace_command,
 )
 
 
@@ -146,6 +151,92 @@ class AgentWorkspaceTests(unittest.TestCase):
             return_value=[],
         ):
             self.assertEqual(run_agent_command(args), 0)
+
+    def test_owned_feature_branch_keeps_dirty_and_merge_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            repository = self._repository(home)
+            record = create_agent_worktree(repository, "typescript", branch="feature/typescript-migration", home=home)
+            worktree = record["path"]
+            self.assertTrue(record["managed"])
+            self.assertEqual(record["branch"], "feature/typescript-migration")
+            self.assertEqual(inspect_agent_worktree(worktree)["task"], "typescript")
+            Path(worktree, "feature.txt").write_text("feature", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "uncommitted"):
+                remove_agent_worktree(worktree, home=home, dry_run=True)
+            self._git(worktree, "add", "feature.txt")
+            self._git(worktree, "commit", "-m", "feature")
+            with self.assertRaisesRegex(ValueError, "not merged"):
+                remove_agent_worktree(worktree, home=home, dry_run=True)
+            self._git(repository, "merge", "--ff-only", record["branch"])
+            self.assertEqual(remove_agent_worktree(worktree, home=home, dry_run=True)["status"], "planned")
+            remove_agent_worktree(worktree, home=home)
+            self.assertFalse(os.path.exists(worktree))
+
+    def test_adoption_requires_explicit_ownership_and_preserves_dirty_files(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            repository = self._repository(home)
+            root = Path(home) / "managed"
+            root.mkdir(mode=0o700)
+            worktree = root / "feature"
+            self._git(repository, "worktree", "add", "-b", "feature/existing", str(worktree))
+            with self.assertRaisesRegex(ValueError, "ownership record"):
+                remove_agent_worktree(str(worktree), root=str(root), home=home, dry_run=True)
+            Path(worktree, "keep.txt").write_text("uncommitted work", encoding="utf-8")
+            record = adopt_agent_worktree(str(worktree), task="related", root=str(root), home=home)
+            self.assertTrue(record["dirty"])
+            self.assertEqual(Path(worktree, "keep.txt").read_text(), "uncommitted work")
+            with self.assertRaisesRegex(ValueError, "uncommitted"):
+                remove_agent_worktree(str(worktree), root=str(root), home=home, dry_run=True)
+            self._git(str(worktree), "branch", "-m", "feature/renamed")
+            with self.assertRaisesRegex(ValueError, "ownership record"):
+                remove_agent_worktree(str(worktree), root=str(root), home=home, dry_run=True)
+
+    def test_group_reports_owned_task_paths_across_related_repositories(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            repository = self._repository(home)
+            related_home = Path(home) / "related"
+            related_home.mkdir()
+            related = self._repository(str(related_home))
+            first = create_agent_worktree(repository, "migration", branch="feature/migration", home=home)
+            second = create_agent_worktree(related, "migration", branch="feature/migration", home=home)
+            result = inspect_workspace_group("migration", [repository, related, repository])
+            self.assertEqual({item["path"] for item in result["workspaces"]}, {first["path"], second["path"]})
+            self.assertEqual(result["missing_repositories"], [])
+            self.assertEqual({item["branch"] for item in result["workspaces"]}, {"feature/migration"})
+
+    def test_public_or_corrupt_ownership_never_allows_cleanup(self) -> None:
+        from lib.agent_workspace import _ownership_path
+        with tempfile.TemporaryDirectory() as home:
+            repository = self._repository(home)
+            record = create_agent_worktree(repository, "private", home=home)
+            ownership = Path(_ownership_path(record["path"]))
+            ownership.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "Unsafe workspace ownership"):
+                remove_agent_worktree(record["path"], home=home)
+            self.assertTrue(Path(record["path"]).is_dir())
+            ownership.chmod(0o600)
+            ownership.write_text("{malformed", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                remove_agent_worktree(record["path"], home=home)
+            self.assertTrue(Path(record["path"]).is_dir())
+
+    def test_json_failures_have_stable_issue_and_remediation(self) -> None:
+        args = argparse.Namespace(agent_workspace_command="remove", path="/missing", workspace_root=None, dry_run=True, json=True)
+        stdout = io.StringIO()
+        from lib.agent_workspace import WorkspaceIssue
+        with (
+            patch("lib.agent_workspace.remove_agent_worktree", side_effect=WorkspaceIssue("workspace_unmerged", "not merged", "Merge the reviewed branch before cleanup.")),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(run_agent_workspace_command(args), 1)
+        result = json.loads(stdout.getvalue())
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["issue"], "workspace_unmerged")
+        self.assertIn("Merge", result["remediation"])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(run_agent_workspace_command(argparse.Namespace(agent_workspace_command=None)), 1)
+        self.assertIn("Error:", stdout.getvalue())
 
 
 class AgentSupportTests(unittest.TestCase):

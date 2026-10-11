@@ -8,7 +8,7 @@ metadata:
 # Managed agent workspaces
 
 Use the managed workspace command before concurrent tasks could edit the same
-checkout. It creates a dedicated `agent/TASK` branch below the user's private
+checkout. It creates a dedicated branch (default `agent/TASK`) below the user's private
 Basaltwater worktree root and never modifies the primary checkout's files.
 
 ## Delegation and ownership
@@ -39,6 +39,18 @@ basaltw agent workspace create ~/repos/PROJECT TASK --base HEAD --json
 basaltw agent workspace list ~/repos/PROJECT --json
 basaltw agent workspace status WORKTREE --json
 ```
+
+Use `create REPOSITORY TASK --branch feature/NAME` for a new ordinary feature
+branch. To bring an existing secondary worktree inside the managed root into
+the lifecycle, inspect it and run `workspace adopt WORKTREE --task TASK --json`.
+Supply `--root PATH` for a custom managed root. Adoption records ownership and
+does not move, reset, commit, or clean the worktree. Older worktrees created
+before ownership records were introduced need this explicit adoption too.
+
+For a task spanning related repositories, use the same task label in each and
+run `workspace group TASK REPOSITORY RELATED_REPOSITORY --json`. The read-only
+result reports matching owned branches and paths, plus repositories without a
+match; it performs no cross-repository integration.
 
 Use the returned absolute worktree path as the task's working directory. Use a
 different task name for every concurrent task. Do not create ad hoc sibling
@@ -77,7 +89,7 @@ basaltw agent workspace remove WORKTREE --json
 ```
 
 Removal is intentionally narrow. It refuses the primary checkout, paths
-outside the managed workspace root, non-`agent/*` branches, dirty or untracked
+outside the managed workspace root, missing or mismatched ownership, dirty or untracked
 files, and branches that are not merged into the primary checkout's current
 `HEAD`. Resolve those conditions explicitly; never bypass them with `git
 worktree remove --force` or `git branch -D` unless the user separately asks to
@@ -86,3 +98,6 @@ discard work.
 `status --json` reports `repository`, `primary_branch`, `primary_head`, and
 `merged_into_primary`. This is an ancestry observation; `remove --dry-run` also
 checks the managed path, branch, registration, and dirty state.
+Feature branches use the same checks. Renaming a branch requires inspection
+and explicit adoption to update ownership. JSON failures return a nonzero exit
+code with `ok: false`, stable `issue`, and actionable `remediation`.

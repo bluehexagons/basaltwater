@@ -5,15 +5,18 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import hashlib
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from common.service_tools import static_web_publish
+from common.service_tools import basaltwater_web
+from lib import static_publication
 
 
 def _args(project: str, **overrides: object) -> argparse.Namespace:
@@ -33,6 +36,11 @@ def _args(project: str, **overrides: object) -> argparse.Namespace:
 
 
 class TestStaticWebPublish(unittest.TestCase):
+    def setUp(self) -> None:
+        source = patch("lib.static_publication.source_state", return_value={"commit": "a" * 40, "dirty": False})
+        source.start()
+        self.addCleanup(source.stop)
+
     def test_publishes_existing_output_atomically_and_updates_catalog(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             project = os.path.join(temporary_dir, "project")
@@ -66,6 +74,13 @@ class TestStaticWebPublish(unittest.TestCase):
             with open(os.path.join(old_site, "index.html"), encoding="utf-8") as file_obj:
                 self.assertEqual(file_obj.read(), "new site")
             self.assertTrue(os.path.isfile(os.path.join(old_site, ".basaltwater.json")))
+            receipt_path = Path(old_site) / static_publication.RECEIPT_FILE
+            self.assertEqual(receipt_path.stat().st_mode & 0o777, 0o600)
+            receipt = static_publication.read_receipt(old_site)
+            self.assertEqual(receipt["source"], {"commit": "a" * 40, "dirty": False})
+            self.assertFalse(receipt["build_performed"])
+            self.assertEqual(set(receipt["artifacts"]), {"index.html"})
+            self.assertNotIn("source", result["metadata"])
             with open(os.path.join(user_root, "index.html"), encoding="utf-8") as file_obj:
                 self.assertIn("demo-site", file_obj.read())
 
@@ -219,6 +234,128 @@ class TestStaticWebPublish(unittest.TestCase):
                 lock.assert_called_once()
                 catalog.assert_called_once_with(str(root), "agent")
             self.assertFalse(site.exists())
+
+    def test_verification_detects_stale_local_and_served_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "dist"
+            output.mkdir()
+            (output / "index.html").write_text("published", encoding="utf-8")
+            static_publication.write_receipt(str(output), directory, output="dist", published_at="now", built=True)
+            record = static_publication.read_receipt(str(output))["artifacts"]["index.html"]
+            with patch.object(static_publication, "_served_hash", return_value=record) as fetch:
+                result = static_publication.verify_receipt(str(output), url="https://vm.test/sites/agent/demo/", project=directory)
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["source_matches"])
+            self.assertFalse(result["rendering_verified"])
+            self.assertEqual(result["served_artifacts_checked"], 1)
+            self.assertEqual(fetch.call_args.args[0], "https://vm.test/sites/agent/demo/index.html")
+            with patch.object(static_publication, "_served_hash", return_value={"size": 1, "sha256": "b" * 64}):
+                result = static_publication.verify_receipt(str(output), url="https://vm.test/sites/agent/demo/")
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["issues"][0]["component"], "served")
+            (output / "index.html").write_text("changed locally", encoding="utf-8")
+            result = static_publication.verify_receipt(str(output), url=None)
+            self.assertEqual(result["issue"], "artifact_mismatch")
+            self.assertEqual(result["issues"][0]["component"], "publication")
+
+    def test_local_build_inventory_and_https_failure_are_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            publication = Path(directory) / "published"
+            local = Path(directory) / "local"
+            publication.mkdir()
+            local.mkdir()
+            (publication / "index.html").write_text("published", encoding="utf-8")
+            (local / "index.html").write_text("new build", encoding="utf-8")
+            static_publication.write_receipt(str(publication), directory, output="dist", published_at="now", built=True)
+            result = static_publication.verify_receipt(str(publication), url=None, local_output=str(local))
+            self.assertEqual(result["issues"][0]["component"], "local_build")
+            with patch.object(static_publication, "_served_hash", side_effect=TimeoutError("timed out")):
+                result = static_publication.verify_receipt(str(publication), url="https://vm.test/site/")
+            self.assertEqual(result["issue"], "served_artifact_unavailable")
+            self.assertFalse(result["ok"])
+
+    def test_served_hash_reads_bounded_bytes_with_tls_and_identity_encoding(self) -> None:
+        response = io.BytesIO(b"site")
+        response.status = 200
+        response.headers = {}
+        opener = Mock()
+        opener.open.return_value = response
+        with (
+            patch.object(static_publication.urllib.request, "build_opener", return_value=opener),
+            patch.object(static_publication.ssl, "create_default_context") as tls,
+            patch.object(static_publication.time, "monotonic", return_value=10),
+        ):
+            record = static_publication._served_hash("https://vm.test/index.html", 4, 20)
+        self.assertEqual(record, {"size": 4, "sha256": hashlib.sha256(b"site").hexdigest()})
+        self.assertEqual(opener.open.call_args.args[0].get_header("Accept-encoding"), "identity")
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 10)
+        tls.assert_called_once_with()
+
+    def test_receipt_failure_does_not_activate_an_unverified_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "project" / "dist"
+            output.mkdir(parents=True)
+            (output / "index.html").write_text("new", encoding="utf-8")
+            sites = Path(directory) / "sites"
+            old = sites / "agent" / "demo"
+            old.mkdir(parents=True)
+            (old / "index.html").write_text("old", encoding="utf-8")
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", str(sites)),
+                patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                patch.object(static_web_publish, "write_receipt", side_effect=OSError("receipt failed")),
+                patch.object(static_web_publish, "_base_url", return_value=None),
+            ):
+                with self.assertRaisesRegex(OSError, "receipt failed"):
+                    static_web_publish.publish(_args(str(output.parent)))
+            self.assertEqual((old / "index.html").read_text(), "old")
+
+    def test_verification_distinguishes_source_changes_and_unknown_dirty_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "index.html").write_text("site", encoding="utf-8")
+            static_publication.write_receipt(directory, directory, output="dist", published_at="now", built=False)
+            for source, ok, matches, warnings in (
+                ({"commit": "b" * 40, "dirty": False}, False, False, []),
+                ({"commit": "a" * 40, "dirty": True}, True, None, ["dirty_source_provenance_unverified"]),
+                ({"commit": None, "dirty": None}, True, None, ["source_revision_unavailable"]),
+            ):
+                with self.subTest(source=source), patch.object(static_publication, "source_state", return_value=source):
+                    result = static_publication.verify_receipt(directory, url=None, project=directory)
+                self.assertEqual((result["ok"], result["source_matches"], result["warnings"]), (ok, matches, warnings))
+
+    def test_verification_refuses_unsafe_receipt_paths_and_public_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "index.html").write_text("site", encoding="utf-8")
+            static_publication.write_receipt(directory, directory, output="dist", published_at="now", built=False)
+            path = Path(directory) / static_publication.RECEIPT_FILE
+            receipt = json.loads(path.read_text())
+            for unsafe in ("..", "../secret", "/secret", "assets/../secret"):
+                modified = {**receipt, "artifacts": {**receipt["artifacts"], unsafe: receipt["artifacts"]["index.html"]}}
+                path.write_text(json.dumps(modified), encoding="utf-8")
+                with self.subTest(unsafe=unsafe), self.assertRaises(ValueError):
+                    static_publication.read_receipt(directory)
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+            path.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "private"):
+                static_publication.read_receipt(directory)
+
+    def test_verify_command_missing_receipt_is_json_and_never_publishes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sites = Path(directory) / "agent" / "legacy"
+            sites.mkdir(parents=True)
+            (sites / "index.html").write_text("legacy site", encoding="utf-8")
+            stdout = io.StringIO()
+            with (
+                patch.object(static_web_publish, "SITES_ROOT", directory),
+                patch.object(static_web_publish, "_current_account", return_value=SimpleNamespace(pw_name="agent", pw_uid=os.getuid())),
+                patch.object(static_web_publish, "publish") as publish,
+                contextlib.redirect_stdout(stdout),
+            ):
+                code = basaltwater_web.main(["site", "verify", "legacy", "--local-only", "--json"])
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(stdout.getvalue())["issue"], "receipt_missing")
+            publish.assert_not_called()
 
     def test_site_lock_rejects_links_and_special_files_without_chmod(self) -> None:
         for kind in ("symlink", "hardlink", "fifo"):

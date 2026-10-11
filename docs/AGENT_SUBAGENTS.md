@@ -33,6 +33,20 @@ other checks that write files need isolation. Assign file boundaries explicitly,
 including a single owner for shared configuration and lockfiles. The parent owns
 integration, combined validation, project model records, and cleanup.
 
+Managed creation records private ownership and defaults to `agent/TASK`;
+`workspace create REPOSITORY TASK --branch feature/NAME` selects a new feature
+branch instead. Existing secondary worktrees below the managed root, including
+older `agent/*` worktrees, need explicit `workspace adopt WORKTREE --task TASK`.
+Adoption changes ownership metadata only and preserves dirty files. Supply
+`--root PATH` for custom roots. Cleanup requires matching ownership, clean
+files, and merge ancestry for both task and feature branches. JSON refusals
+include `ok: false`, a stable `issue`, and `remediation`.
+
+`workspace group TASK REPOSITORY RELATED_REPOSITORY --json` provides a read-only
+view of matching owned branches and paths across related projects, plus missing
+repositories. Use the same task label when creating or adopting each worktree;
+integration remains explicit in each repository.
+
 Choose normal branch merges before starting. Managed cleanup requires task
 commits to be ancestors of the primary checkout's current `HEAD`; cherry-pick
 and squash do not satisfy that condition. `workspace status --json` exposes

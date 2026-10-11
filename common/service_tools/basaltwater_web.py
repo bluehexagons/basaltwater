@@ -153,6 +153,13 @@ def _parser() -> argparse.ArgumentParser:
     site_doctor = site_commands.add_parser("doctor", help="Verify a published site")
     site_doctor.add_argument("name")
     site_doctor.add_argument("--json", action="store_true")
+    site_verify = site_commands.add_parser("verify", help="Verify publication hashes and optional local source/build")
+    site_verify.add_argument("name")
+    site_verify.add_argument("--project")
+    site_verify.add_argument("--output")
+    site_verify.add_argument("--local-only", action="store_true", help="Skip served HTTPS bytes")
+    site_verify.add_argument("--timeout", type=validate_positive_integer, default=60)
+    site_verify.add_argument("--json", action="store_true")
     site_remove = site_commands.add_parser("remove", help="Remove a published site")
     site_remove.add_argument("name")
     site_remove.add_argument("--yes", action="store_true")
@@ -2246,6 +2253,15 @@ def main(argv: list[str] | None = None) -> int:
                 return _print_site_url(args.name)
             if args.site_command == "doctor":
                 return _site_doctor(args.name, args.json)
+            if args.site_command == "verify":
+                result = static_web_publish.verify_site(args)
+                if args.json:
+                    print(json.dumps(result, sort_keys=True))
+                else:
+                    print(f"{args.name}: {'verified' if result['ok'] else result['issue']}")
+                    if result.get("remediation"):
+                        print(result["remediation"])
+                return 0 if result["ok"] else 1
             if args.site_command == "remove":
                 return _remove_site(args.name, args.yes, args.json)
         if args.command in ("list", "ls"):
