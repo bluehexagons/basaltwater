@@ -282,9 +282,18 @@ class MaintenanceExecutionTest(unittest.TestCase):
             root = Path(home) / "maintenance"
             control = root / "control"
             config_file = Path(home) / "config/baseline.json"
-            account = SimpleNamespace(pw_name="agent", pw_uid=os.geteuid(), pw_gid=os.getegid(), pw_dir=home)
+            # The target account stays non-root even when CI itself runs as root.
+            account = SimpleNamespace(pw_name="agent", pw_uid=1000, pw_gid=1000, pw_dir=home)
+            real_stat = os.stat
+            def account_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+                metadata = real_stat(path, *args, **kwargs)
+                if path == home:
+                    fields = list(metadata)
+                    fields[4] = account.pw_uid
+                    return os.stat_result(fields)
+                return metadata
             config = SetupConfig("example.test", "agent", "server_web", machine_type="vm", web_panel_port=8445)
-            with patch.multiple(steps, CONFIG_FILE=str(config_file), DATA_DIR=str(root), CONTROL_DIR=str(control)), patch.object(steps, "is_dry_run", return_value=False), patch.object(steps, "_identity", return_value=account), patch.object(steps.pwd, "getpwnam", return_value=account) as controller, patch.object(steps.os, "chown"), patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))) as write, patch.object(steps, "replace_units") as replace, patch("common.agent_steps.install_codex") as install:
+            with patch.multiple(steps, CONFIG_FILE=str(config_file), DATA_DIR=str(root), CONTROL_DIR=str(control)), patch.object(steps, "is_dry_run", return_value=False), patch.object(steps, "_identity", return_value=account), patch.object(steps.pwd, "getpwnam", return_value=account) as controller, patch.object(steps.os, "stat", side_effect=account_stat), patch.object(steps.os, "chown"), patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))) as write, patch.object(steps, "replace_units") as replace, patch("common.agent_steps.install_codex") as install:
                 steps.configure_maintenance_agent(config)
                 self.assertFalse(agent.load_policy(str(control / "settings.json"))["enabled"])
                 install.assert_not_called()
