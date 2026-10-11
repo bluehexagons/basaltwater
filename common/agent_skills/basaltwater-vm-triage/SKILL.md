@@ -22,6 +22,24 @@ cover memory, swap, disk headroom, bounded agent storage, maintenance timers,
 and pending reboots. Only critical disk pressure or failed maintenance makes
 the host capability unhealthy.
 
+For build/render capacity, inspect `workload_limits` or run
+`basaltw agent resources --json`: affinity and inherited visible cgroup quotas
+can be tighter than guest capacity. Missing counters are unknown. T3 memory
+includes descendant agents/builds; a different service lifetime is not a leak
+or improvement measurement. Choose concurrency from workload measurements,
+memory and storage demand, rather than host CPU count alone.
+
+When SDK/container copies fail for space, opt into
+`basaltw agent doctor --capability host --container-storage --json` or
+`basaltw agent containers inspect --engine podman --json`. Check graph-root
+free space, including a separate home mount. Reclaimable estimates can overstate
+shared-layer savings. Use `agent containers preflight --engine podman
+--image-bytes N --json` with an estimated uncompressed image size and explicit
+copy/reserve assumptions; it is not a guarantee. Diagnose without pruning.
+Cleanup requires task ownership and separate authorization; preserve SDK caches
+and all referenced workloads. Larger storage or migration is a separate action.
+See [container headroom](https://github.com/bluehexagons/basaltwater/blob/main/docs/PROJECT_TOOLING.md#container-storage-and-sdk-headroom).
+
 If the T3 service is unhealthy, inspect its user unit and bounded recent output:
 
 ```bash
@@ -38,6 +56,12 @@ For unattended inspection, omit `--fix` and `--record` and print the support
 snapshot instead of requesting an output file. If the sandbox blocks a service
 socket, log, or diagnostic probe, report that evidence as unavailable; do not
 escalate, restart a service, or use another tool to evade the restriction.
+
+Native graphics startup can be checked explicitly with
+`basaltw agent graphics doctor --context xvfb --json`. A healthy software GLX
+context supports later correctness captures; it does not validate a rendered
+frame, desktop, GPU timing, HDR or latency. Use the project's own capture checks
+for rendering. Ordinary discovery/support never launches this probe.
 
 ## Support snapshot
 
@@ -56,6 +80,9 @@ basaltw agent support-bundle --output ~/agent-support.json
 The snapshot inventories optional browser configuration without launching a
 browser. Add `--browser-smoke` only when Playwright was explicitly installed
 and reproducing browser startup is relevant.
+Add `--container-storage` when container capacity is relevant; only aggregate
+storage enters the bundle. Manifest/support provenance separates a recorded
+setup snapshot from the observed running checkout; neither invents a receipt.
 
 The snapshot contains tool versions, Boolean credential health, stable doctor
 results, service resource counters, maintenance state, and aggregate T3 log

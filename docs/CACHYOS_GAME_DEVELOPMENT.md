@@ -153,6 +153,18 @@ checks belong to the game and work independently of Basaltwater.
 
 ## Capture backends and post-refresh checks
 
+`basaltw agent graphics doctor --context xvfb --json` explicitly probes an
+isolated GLX context; `--context display` uses the invoking session's existing
+display (GLX/Xwayland), leaving native Wayland unqualified. It reports process
+and context outcomes, renderer/version and software/accelerated status without
+claiming frame rendering, GPU timing, physical HDR or latency. Ordinary discovery
+does not launch this probe. Use `basaltw agent resources --json` for the current
+process's affinity, visible inherited cgroup limits and timestamped pressure.
+See [native context checks and compiler caching](PROJECT_TOOLING.md#opt-in-native-graphics-context-check)
+for shared Debian/CachyOS recipes. Existing container engines can use the
+[storage/preflight commands](PROJECT_TOOLING.md#container-storage-and-sdk-headroom)
+without adding container provisioning to this workstation profile.
+
 Choose the backend for the evidence needed, and verify the actual SDL driver
 and GL renderer in the application's logs:
 

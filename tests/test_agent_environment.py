@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from lib import agent_cli, agent_environment, agent_workspace
+from lib.installation_info import inspect_installation_provenance
 
 
 class TestAgentEnvironment(unittest.TestCase):
@@ -24,6 +25,8 @@ class TestAgentEnvironment(unittest.TestCase):
             agent_workspace, "_git", return_value=subprocess.CompletedProcess([], 0, "", ""),
         ))
         self.cachyos = self.enterContext(patch.object(agent_environment, "is_cachyos", return_value=False))
+        self.provenance = self.enterContext(patch.object(agent_environment, "inspect_installation_provenance",
+                                                        return_value=inspect_installation_provenance(self.directory)))
 
     def declaration(self, **fields) -> None:
         self.file.write_text(json.dumps({"version": 1, **fields}), encoding="utf-8")
@@ -357,6 +360,7 @@ class TestAgentEnvironment(unittest.TestCase):
         agent_cli.add_agent_subparser(parser.add_subparsers(dest="command"))
         args = parser.parse_args(["agent", "manifest", self.directory, "--capability", "installation", "--json"])
         with (
+            patch.object(agent_environment, "inspect_installation_provenance", wraps=inspect_installation_provenance),
             patch.object(agent_workspace, "_repository_root", return_value=self.directory),
             patch.object(agent_workspace, "_effective_home", return_value=self.directory),
             patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
@@ -367,8 +371,8 @@ class TestAgentEnvironment(unittest.TestCase):
         ):
             self.assertEqual(agent_cli.run_agent_command(args), 0)
         result = json.loads(output.getvalue())
-        self.assertEqual(result["basaltwater"], {"version": "2.0.0rc1", "commit": "a" * 40, "dirty": True,
-                                               "installation_type": "setup-snapshot"})
+        self.assertEqual(result["basaltwater"], inspect_installation_provenance(self.directory))
+        self.assertEqual(result["basaltwater"]["evidence_source"], "setup-receipt")
         self.assertNotIn("workspace", result)
         self.assertNotIn("tools", result)
         execute.assert_not_called()
@@ -378,8 +382,6 @@ class TestAgentEnvironment(unittest.TestCase):
             patch.object(agent_workspace, "_repository_root", return_value=self.directory),
             patch.object(agent_workspace, "_effective_home", return_value=self.directory),
             patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
-            patch.object(agent_environment, "read_installation_metadata", return_value=None),
-            patch.object(agent_environment, "installation_version", return_value="2.0.0rc1"),
             patch.object(agent_environment.shutil, "which", return_value=None),
         ):
             result = agent_environment.inspect_environment(self.directory)

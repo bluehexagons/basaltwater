@@ -79,16 +79,20 @@ basaltw agent blender smoke [--output NEW_DIRECTORY] [--timeout SECONDS] [--json
 basaltw agent visuals compare BEFORE.png AFTER.png [options]
 basaltw agent visuals capture --before REV --after REV --settings JSON [options] -- COMMAND...
 basaltw agent doctor [HOST USER] [options]
+basaltw agent resources [--json]
+basaltw agent containers inspect [--engine podman|docker]... [--json]
+basaltw agent containers preflight --engine podman|docker --image-bytes N [options]
+basaltw agent graphics doctor --context xvfb|display [--json]
 basaltw agent update [HOST USER] [options]
 basaltw agent auth set HOST USER --tool TOOL --file PATH
 basaltw agent auth status HOST USER [--tool TOOL]
 basaltw agent auth login HOST USER [--open-browser] [--method subscription|api-key]
 basaltw agent privilege <request|status|wait|password-hash> ...
 basaltw agent web pair HOST USER [-k PATH]
-basaltw agent workspace <create|list|status|remove> ...
+basaltw agent workspace <create|adopt|group|list|status|remove> ...
 basaltw agent models <init|recommend|record|report> ...
 basaltw agent maintenance <hold|status|release> [HOST USER] [options]
-basaltw agent support-bundle [--output PATH] [--browser-smoke]
+basaltw agent support-bundle [--output PATH] [--browser-smoke] [--container-storage]
 basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
 basaltw gogs repo-configure [REPOSITORY] --github-url URL --gogs-url URL [options]
 basaltw homebox health HOST [--json]
@@ -940,6 +944,9 @@ basaltw agent doctor
 basaltw agent doctor --tool codex --tool claude --json
 basaltw agent doctor --all-capabilities --json
 basaltw agent doctor --capability development --json
+basaltw agent resources --json
+basaltw agent containers inspect --engine podman --json
+basaltw agent graphics doctor --context xvfb --json
 basaltw agent doctor --tool codex --tool opencode --capability browser
 basaltw agent doctor --capability browser
 basaltw agent doctor --capability t3code --capability host
@@ -1022,11 +1029,31 @@ managed agent skill. Its `--fix` mode can rebuild blocked native dependencies,
 configure the GitHub HTTPS helper after a successful login, enable the service
 at boot, and restart it when inactive.
 `--capability host` reports memory and swap headroom, filesystem and bounded
-agent-storage use, T3 service cgroup pressure, recurring maintenance timer
+agent-storage use, T3 service cgroup counters, recurring maintenance timer
 state (including installed Node and Godot update jobs), the agent maintenance
 hold, and pending reboots. Advisory pressure appears as warnings; critical
 filesystem pressure or a recorded maintenance
 failure makes the capability unhealthy.
+It also reports the current process's affinity, inherited visible cgroup CPU
+quota and memory high/max, and timestamped pressure in `workload_limits`.
+T3 counters include descendants. `agent resources --json` returns these resource
+observations independently on Debian or CachyOS. Missing interfaces stay
+unavailable; CPU budget is an upper bound rather than a concurrency setting.
+Add `--container-storage` to opt into bounded aggregate Podman/Docker probes;
+the flag also includes host checks and supports the remote `HOST USER` form.
+Ordinary host checks and support collection do not invoke container engines.
+
+`agent containers inspect` observes local storage; repeat `--engine` to narrow
+the inventory. `preflight` compares graph-root space with an explicit estimated
+uncompressed image size, `--additional-copies` (default 1, range 0–8), and
+`--reserve-bytes` (default 1 GiB). It returns nonzero for unknown/insufficient
+space; an adequate estimate is never a guarantee. Reclaimable bytes are estimates
+and are not free space. No cleanup command is provided. `agent graphics doctor`
+requires an explicit Xvfb or existing-display context and reports GLX context
+creation/acceleration separately from project rendering, hardware timing,
+physical display, HDR and latency. See [project tooling](PROJECT_TOOLING.md)
+for platform-specific use, cleanup proposals, storage migration and cache recipes.
+
 When `--capability` is supplied without `--tool`, doctor checks only the
 requested capability instead of requiring the default set of terminal agents.
 `--all-capabilities` checks browser, development toolchains, host, and T3 Code
@@ -1066,9 +1093,13 @@ printing changed file names. The default base is the primary checkout's `HEAD`;
 creation does not fetch remote refs or copy uncommitted changes. To start from
 current remote main, fetch it first and pass `--base origin/main`. `remove`
 accepts only a registered worktree below that managed root, refuses dirty or
-untracked work, requires an `agent/*`
-branch merged into the primary checkout's current `HEAD`, and never has a
+untracked work, requires an explicit ownership record and a branch merged
+into the primary checkout's current `HEAD`, and never has a
 force mode. Use its `--dry-run` before cleanup.
+`create --branch feature/NAME` supports named feature branches; `adopt` explicitly
+registers an existing worktree. `group TASK --repository PATH` reports owned
+matching worktrees across repeatable repository selections. Branch naming alone
+does not authorize removal, including for legacy `agent/*` worktrees.
 
 `status` also reports the primary repository, its current branch and commit,
 and `merged_into_primary`. Normal merges preserve the ancestry required by
@@ -1113,6 +1144,11 @@ JSON; an output path must be a new file below the current user's home and is
 written with mode `0600`. Browser configuration is inventoried without starting
 Chromium; add `--browser-smoke` when it is relevant to exercise an explicitly
 installed Playwright fallback for the report.
+Manifest and support share the [installation provenance contract](AGENT_ENVIRONMENT.md):
+recorded `setup_snapshot` and observed `running_source` remain separate. A
+checkout commit does not create a setup receipt. Add `--container-storage` for
+aggregate engine/storage data; graph-root paths, image names, labels, registry
+URLs and cgroup paths remain excluded. Graphics probes are always separate.
 
 `agent update` deliberately updates installed user-managed terminal agents; it
 is never run by an automatic host timer. With no `--tool` selection, it skips

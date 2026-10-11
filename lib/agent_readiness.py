@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.agent_containers import sanitize_container_storage
+from lib.agent_resources import sanitize_workload_limits
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -180,6 +182,8 @@ def _sanitize_host(record: JSONDict) -> JSONDict:
             "size_bytes": _safe_mapping(storage.get("size_bytes")),
             "codex_release_count": storage.get("codex_release_count"),
         },
+        "container_storage": sanitize_container_storage(record.get("container_storage")),
+        "workload_limits": sanitize_workload_limits(record.get("workload_limits")),
         "t3_service": _safe_mapping(record.get("t3_service")),
         "maintenance": _safe_mapping(record.get("maintenance")),
         "maintenance_hold": _safe_mapping(record.get("maintenance_hold")),
@@ -222,6 +226,8 @@ def sanitize_development_readiness(record: JSONDict) -> JSONDict:
                                            if isinstance(name, str) and name in SOURCE_MODULES]
             if isinstance(native.get("project_bootstrap_required"), list) else [],
         })
+        if native.get("module_probe_source") == "host-pkg-config":
+            toolchains["native"]["module_probe_source"] = "host-pkg-config"
     return {
         "installed": record.get("installed") is True,
         "healthy": record.get("healthy") is True,

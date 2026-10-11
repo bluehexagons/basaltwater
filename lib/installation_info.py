@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
 from importlib import metadata as importlib_metadata
 from typing import Any
 
-from lib.atomic_io import write_json_atomic
+from lib.atomic_io import read_json_file, write_json_atomic
+from lib.agent_probe import run_probe
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -131,13 +131,12 @@ def read_installation_metadata(installation_root: str) -> JSONDict | None:
     if os.path.islink(path) or not os.path.isfile(path):
         return None
     try:
-        with open(path, encoding="utf-8") as file_obj:
-            value: Any = json.load(file_obj)
-    except (OSError, json.JSONDecodeError):
+        value: Any = read_json_file(path, max_bytes=16384)
+    except (OSError, ValueError, UnicodeError):
         return None
     if not isinstance(value, dict):
         return None
-    if value.get("schema_version") != INSTALLATION_METADATA_SCHEMA:
+    if type(value.get("schema_version")) is not int or value["schema_version"] != INSTALLATION_METADATA_SCHEMA:
         return None
     if value.get("installation_type") != SETUP_SNAPSHOT_TYPE:
         return None
@@ -164,3 +163,40 @@ def installation_version(installation_root: str) -> str:
     if metadata is not None:
         return str(metadata["version"])
     return _project_version(os.path.abspath(installation_root))
+
+
+def inspect_installation_provenance(installation_root: str) -> JSONDict:
+    """Separate a recorded setup receipt from the source actually running now.
+
+    Only inspect a Git root, never the enclosing project's repository. Neither
+    branches, status filenames nor installation paths are returned.
+    """
+    root = os.path.abspath(installation_root)
+    validate_filesystem_path(root, must_exist=True)
+    receipt = read_installation_metadata(root)
+    snapshot = ({key: receipt.get(key) for key in ("version", "commit", "dirty")}
+                if receipt else None)
+    source = None
+    if os.path.exists(os.path.join(root, ".git")):
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        environment.update({"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"})
+        def git(arguments: list[str]) -> str | None:
+            result = run_probe(["git", "-c", "core.fsmonitor=false", "-C", root, *arguments], timeout=5, env=environment)
+            return result.output.strip() if result.issue is None else None
+        git_root = git(["rev-parse", "--show-toplevel"])
+        if git_root and os.path.realpath(git_root) == os.path.realpath(root):
+            commit = git(["rev-parse", "--verify", "HEAD"])
+            if commit and _COMMIT_RE.fullmatch(commit):
+                status = git(["status", "--porcelain", "--untracked-files=normal"])
+                source = {"version": _project_version(root), "commit": commit,
+                          "dirty": bool(status) if status is not None else None}
+    evidence = source or snapshot
+    return {
+        "version": evidence["version"] if evidence else _project_version(root),
+        "commit": evidence["commit"] if evidence else None,
+        "dirty": evidence["dirty"] if evidence else None,
+        "installation_type": "source-checkout" if source else "setup-snapshot" if snapshot else "unrecorded",
+        "evidence_source": "running-git" if source else "setup-receipt" if snapshot else "unrecorded",
+        "setup_snapshot": snapshot,
+        "running_source": source,
+    }

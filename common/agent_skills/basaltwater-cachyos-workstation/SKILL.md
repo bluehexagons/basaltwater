@@ -177,6 +177,22 @@ inbound ports. Inspect the documented limitations and effective rules in the
 Additional read-only diagnostics include `command -v`, tool version checks,
 `pacman -Q`, and user service logs. Graphics diagnostics may use `vulkaninfo`
 or `glxinfo` when installed; a successful CLI check does not prove GPU rendering.
+Use `basaltw agent resources --json` for affinity, visible inherited cgroup
+limits and timestamped pressure without Debian maintenance checks. Installed
+ccache is not proof of a configured compiler launcher; the project owns its
+build configuration and repeat-build measurements. If a container engine is
+already used, `basaltw agent containers inspect --engine podman --json` reports
+its storage without pruning or enabling a service. Capacity preflight is an
+estimate on the graph-root filesystem, independent of root free space.
+See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/PROJECT_TOOLING.md).
+
+`basaltw agent graphics doctor --context xvfb --json` explicitly starts an
+isolated GLX context probe. `--context display` uses the invoking graphical
+session's existing DISPLAY and only checks GLX/Xwayland. Neither qualifies
+native Wayland, project frames, hardware timing, physical HDR or input latency;
+software contexts can still be healthy for subsequent correctness captures.
+Ordinary manifest/support and workstation prerequisite diagnosis stay non-launching.
+
 After a refresh, run a reviewed project graphics recipe explicitly with
 `basaltw agent visuals check RECIPE --repository PATH --json` to retain logs,
 settings, executable/commit context and selected graphics-package versions.

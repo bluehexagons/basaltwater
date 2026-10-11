@@ -253,6 +253,16 @@ class AgentSupportTests(unittest.TestCase):
                 "codex_release_count": 2,
             },
             "t3_service": {"memory_current_bytes": 4},
+            "container_storage": {"requested": True, "engines": [{
+                "engine": "podman", "available": True, "rootless": True,
+                "graph_root": "/secret/home/containers", "image_count": 10,
+                "registry": "https://private-registry", "images": ["private-image"],
+                "labels": {"owner": "Private Name"},
+                "filesystem": {"available": True, "free_bytes": 6, "mountpoint": "/secret/home"},
+            }]},
+            "workload_limits": {"scope": "current-process", "affinity_available": True,
+                                "affinity_cpu_count": 6, "cgroup_path": "/secret/workload",
+                                "cpu_quota": {"available": True, "value": 1.5, "path": "/secret/quota"}},
             "maintenance": {},
             "maintenance_hold": {
                 "status": "active",
@@ -270,7 +280,7 @@ class AgentSupportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             with (
                 patch(
-                    "lib.agent_support.build_setup_snapshot_metadata",
+                    "lib.agent_support.inspect_installation_provenance",
                     return_value={
                         "version": "2.0.0",
                         "commit": "a" * 40,
@@ -382,8 +392,12 @@ class AgentSupportTests(unittest.TestCase):
             self.assertNotIn("Private Name", rendered)
             self.assertNotIn("private@example.test", rendered)
             self.assertNotIn("private-feature-name", rendered)
+            self.assertNotIn("private-registry", rendered)
+            self.assertNotIn("private-image", rendered)
             self.assertFalse(bundle["privacy"]["log_contents_included"])
             self.assertFalse(bundle["privacy"]["installation_branch_included"])
+            self.assertEqual(bundle["host"]["container_storage"]["engines"][0]["image_count"], 10)
+            self.assertEqual(bundle["host"]["workload_limits"]["cpu_quota"]["value"], 1.5)
             self.assertEqual(bundle["host"]["maintenance_hold"]["status"], "active")
             self.assertEqual(bundle["host"]["disk"]["root_filesystem"], {"free_bytes": 1, "usage_percent": 95})
             self.assertEqual(
@@ -392,6 +406,10 @@ class AgentSupportTests(unittest.TestCase):
                     "version": "2.0.0",
                     "commit": "a" * 40,
                     "dirty": False,
+                    "installation_type": None,
+                    "evidence_source": None,
+                    "setup_snapshot": None,
+                    "running_source": None,
                 },
             )
             self.assertEqual(

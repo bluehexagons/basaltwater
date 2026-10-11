@@ -29,6 +29,7 @@ class _DiskUsage:
 
 class TestAgentHostReadiness(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch("lib.agent_cli.inspect_workload_limits", return_value={}))
         sampler = patch("lib.agent_cli._sample_swap_activity", return_value={"status": "idle"})
         self.swap_sample = sampler.start()
         self.addCleanup(sampler.stop)

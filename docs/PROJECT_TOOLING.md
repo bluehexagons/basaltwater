@@ -241,10 +241,91 @@ users while the main `/var/lib/basaltwater` runtime state remains private to
 root. Rerun saved setup with `sudo basaltw refresh` to reconcile installations
 that previously stored this flag inside the private runtime directory.
 
+Bundle `selected` records the explicit setup choice; `installed` indicates that
+managed bundle selection, while `commands` records individual tool presence.
+None establishes project readiness. An unselected bundle with tools already
+present is valid. Enable it deliberately for regular native work through the
+saved setup; a diagnostic does not change that selection.
+`module_probe_source: host-pkg-config` identifies the sanitized host search
+environment used by Basaltwater. It does not describe SDL chosen by an existing
+project CMake cache. When versions differ, inspect the project's `CMakeCache.txt`
+and its own `pkg-config --modversion sdl3` / `pkg-config --variable=prefix sdl3`
+under the intended project environment. Preserve project-built prefixes and SDK
+pins rather than replacing system SDL to match a previous build.
+
 `basaltw agent support-bundle` retains the same native readiness issues,
 selection, command-presence flags, module versions, and project-bootstrap list
 as the saved readiness report. Unknown fields, executable paths and unrecognized
 module values are omitted from this shareable diagnostic evidence.
+
+### Opt-in native graphics context check
+
+On Debian or CachyOS, explicitly select the context to probe:
+
+```bash
+basaltw agent graphics doctor --context xvfb --json
+# From the intended logged-in graphical session (GLX/Xwayland):
+basaltw agent graphics doctor --context display --json
+```
+
+The first command starts an isolated Xvfb server with private Xauthority;
+the second uses the caller's existing `DISPLAY`. For Debian XRDP, launch the
+display check through `basaltw desktop exec -- basaltw agent graphics doctor
+--context display --json`. On CachyOS, run it in the intended KDE session;
+this GLX check does not qualify native Wayland. No setup, manifest, ordinary
+development doctor or support collection starts this probe.
+
+The bounded [glxinfo](https://dri.freedesktop.org/wiki/glxinfo/) probe reports
+process outcome, context creation, renderer/OpenGL version, and acceleration.
+Missing tools/display, a failed process, and exit success without a recognized
+context are separate outcomes. Software Mesa can pass context readiness for
+subsequent correctness captures; unknown acceleration remains `null`.
+`rendering_verified` stays false until a project renders and checks a frame.
+GPU timing, physical display, HDR and input/display latency remain unqualified
+even after an accelerated context succeeds. Xvfb results describe that virtual
+context, never the user's desktop. Software renderer VRAM counters are omitted.
+
+### Project-owned compiler caching
+
+Installed ccache does not mean a CMake project uses it. If project policy allows
+caching, use a fresh build directory and retain the project's toolchain, SDL
+prefix, and other required configure arguments:
+
+```bash
+cmake -S . -B build-cache -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+ccache --show-stats
+cmake --build build-cache --target PROJECT_TARGET
+```
+
+CMake's [compiler launcher variables](https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_COMPILER_LAUNCHER.html)
+initialize the launcher for supported generators. Verify the resulting cache
+and verbose compile commands. Compare ccache statistics and elapsed time before
+and after repeating the same target with unchanged sources and equivalent
+compile work; a no-op incremental build is not a cache benchmark. Builds that
+require a clean rebuild should use the project's reviewed clean-build procedure.
+Basaltwater does not set compiler launchers or reset global cache statistics.
+
+### Effective workload limits
+
+`basaltw agent resources --json` works on Debian and CachyOS without invoking
+VM maintenance checks. Host/support diagnostics include the same
+`workload_limits` record. It describes the calling process's CPU affinity,
+tightest visible ancestor CPU quota in CPU equivalents, memory max/high in
+bytes, and timestamped guest/workload pressure averages and cumulative stall
+microseconds. A quota can be smaller than affinity. Missing or malformed
+interfaces remain unavailable, with `null` values rather than zero resources.
+`ancestry_complete` refers to the visible cgroup mount; namespaces or restricted
+mounts can hide tighter host ancestors. The CPU budget is an upper bound, not a
+build-concurrency recommendation. v1 memory soft limits are not reported as
+v2 `memory.high`. See the kernel's [cgroup](https://docs.kernel.org/admin-guide/cgroup-v2.html)
+and [pressure](https://docs.kernel.org/accounting/psi.html) contracts.
+
+Guest RAM capacity, this workload's inherited limits, and T3's
+`service-with-descendants` memory counters answer different questions. Builds,
+renders and agents can share a service budget. Choose concurrency using those
+limits, memory and storage demand, concurrent work, and measurements of the
+project's actual workload; raw guest CPU count alone is insufficient.
 
 ## Build for an older release baseline
 
@@ -262,6 +343,79 @@ subordinate UID/GID mappings and run `podman info`
 as the login user. Rootless Podman does not require a Docker daemon or adding
 the coding account to a privileged Docker group. The images and build cache
 consume several GB; include their storage in VM capacity planning.
+
+### Container storage and SDK headroom
+
+Read-only container diagnostics are opt-in and work with existing tools on
+Debian and CachyOS; they do not install or restart an engine:
+
+```bash
+basaltw agent containers inspect --engine podman --json
+basaltw agent doctor --capability host --container-storage --json
+basaltw agent support-bundle --container-storage
+# Example estimate: 4 GiB uncompressed image, one additional layer copy,
+# plus the default 1 GiB reserve. Substitute the workload's measured size.
+basaltw agent containers preflight --engine podman --image-bytes 4294967296 \
+  --additional-copies 1 --json
+```
+
+Use the VM host doctor on Debian; on CachyOS use its local doctor plus
+`agent containers inspect` and `agent resources`. Each engine probe has a
+10-second deadline and 256 KiB output cap. Results distinguish missing,
+failed, timed-out and partial observations. Podman uses the local account's
+store; Docker uses an existing local rootless socket when present, otherwise
+`/var/run/docker.sock`, without saved contexts or credential helpers. Remote
+endpoint/context selections are refused. No sudo, registry login, container
+start or deletion is performed. Engine-owned local bookkeeping may occur.
+
+The local result includes the graph-root path, its filesystem's available
+space and whether it shares the root/home filesystem, aggregate image and
+container counts, running containers, size totals, and an engine-reported
+reclaimable estimate. Separate build-cache totals remain `null` when the engine
+does not expose them. Shareable support/readiness records omit graph-root and
+mount paths, registry URLs, image/container names, labels, and repository paths.
+Detailed engine output and errors are discarded.
+
+Preflight requires an explicit estimated **uncompressed** new image size.
+Required space is `image_bytes * (1 + additional_copies) + reserve_bytes`.
+Adjust `--additional-copies` (0–8) and `--reserve-bytes` for the SDK's observed
+behavior. `sufficient_estimate` is not a guarantee: rootless ID-mapped copies,
+temporary build products, compression, shared layers and concurrent work can
+change demand. Missing graph-root capacity returns `unknown`; insufficient or
+unknown preflight exits nonzero. Free root space cannot supply a graph root on
+a separate home mount. Reclaimable estimates are never counted as free space;
+[Podman documents](https://docs.podman.io/en/latest/markdown/podman-system-df.1.html)
+that shared layers can overstate recoverable space.
+
+For cleanup, first prepare a local owner-scoped proposal: inspect
+`podman system df -v`, `podman ps --all`, and the exact images produced by the
+completed task. Record IDs, ownership, all container/child-image references,
+and estimated space; preserve SDK caches needed by projects, running and
+stopped workloads, and other owners' artifacts. These listings contain private
+names and stay local. Podman image removal has no dry-run: the read-only
+inventory and proposed exact-ID command are the dry-run evidence. After
+cleanup is explicitly authorized, `podman image rm --no-prune EXACT_TASK_IMAGE_ID`
+preserves dangling parents and refuses referenced images without `--force`.
+See [Podman's removal contract](https://docs.podman.io/en/latest/markdown/podman-rmi.1.html).
+Never replace this review with automatic system/image/volume pruning.
+
+For repeated SDK work, provision a larger home or dedicated local data disk
+before adding CPUs to address a space failure. A new VM can declare
+`--storage home-data POOL SIZE --storage-mount home-data /home ext4 empty`.
+An existing managed VM can add a blank named disk at a new empty mount using
+the [named-disk workflow](COMMAND_LINE.md#proxmox-provisioning-flags), subject
+to its existing storage checks. Mounting new storage does not migrate containers.
+
+For a deliberately configured rootless store, review the existing
+`~/.config/containers/storage.conf` and select an absolute `graphroot` on the
+larger local filesystem, preserving its storage driver/options, ownership,
+UID mappings, and any SELinux labels. An administrator can instead set
+`rootless_storage_path` for new stores; see the
+[storage configuration](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md).
+An existing store migration requires a separate stopped-workload, backup,
+copy/restore and verification plan; setup reruns never relocate it. Account
+for separately configured image stores and copy-temporary directories too.
+The generic preflight covers graph-root space only, not every build mount.
 
 `--debug-tools` similarly adds GDB, strace, Valgrind, ccache, and Ninja for
 native diagnosis and builds. These opt-in Debian bundles are saved and sent to

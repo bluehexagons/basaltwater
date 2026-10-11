@@ -88,5 +88,6 @@ def inspect_native_development(*, selected: bool | None = None) -> dict[str, obj
     return {
         "installed": selection is True, "selected": selection, "healthy": not issues,
         "commands": commands, "modules": modules, "issues": issues,
+        "module_probe_source": "host-pkg-config",
         "project_bootstrap_required": [name for name in NATIVE_MODULES if name in SOURCE_MODULES and modules[name] is None],
     }

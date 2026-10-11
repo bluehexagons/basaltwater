@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.agent_containers import inspect_container_storage
+from lib.agent_resources import inspect_workload_limits
 from lib.local_http import open_loopback
 from lib.vendor_installer import POLICIES, download_installer
 from lib.agent_maintenance import (
@@ -168,6 +170,13 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_models import add_models_parser
 
     add_models_parser(commands)
+    from lib.agent_containers import add_containers_parser
+    from lib.agent_graphics import add_graphics_parser
+
+    add_containers_parser(commands)
+    add_graphics_parser(commands)
+    resources = commands.add_parser("resources", help="Read-only affinity, cgroup limits and pressure on Linux")
+    resources.add_argument("--json", action="store_true")
     doctor = commands.add_parser(
         "doctor",
         help="Check installed agent tools and local credential files",
@@ -229,6 +238,8 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         help="Show the last recorded readiness result without running checks",
     )
     doctor.add_argument("-k", "--key", dest="ssh_key", help="SSH private key path")
+    doctor.add_argument("--container-storage", action="store_true",
+                        help="Opt in to bounded local Podman/Docker storage probes; includes host checks")
     update = commands.add_parser(
         "update",
         help="Deliberately update user-installed terminal agents",
@@ -467,6 +478,8 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Also launch the optional Playwright browser smoke test",
     )
+    support.add_argument("--container-storage", action="store_true",
+                         help="Include aggregate local Podman/Docker storage; no cleanup")
 
 
 def _tool_path(tool: str, home: str) -> Optional[str]:
@@ -1545,6 +1558,7 @@ def inspect_host_readiness(
     *,
     meminfo_path: str = "/proc/meminfo",
     memory_sysfs_path: str = "/sys/devices/system/memory",
+    container_storage: bool = False,
 ) -> JSONDict:
     """Report resource headroom and recurring-maintenance health for an agent VM."""
     user_home = os.path.abspath(home or os.path.expanduser("~"))
@@ -1609,6 +1623,14 @@ def inspect_host_readiness(
     disk_details["root_filesystem"] = filesystem_capacity("/", "root")
 
     storage = _agent_storage_inventory(user_home)
+    containers = inspect_container_storage(home=user_home) if container_storage else {"requested": False, "engines": []}
+    for engine in containers["engines"]:
+        filesystem = engine["filesystem"]
+        if filesystem.get("available") and (filesystem.get("usage_percent", 0) >= _AGENT_HOST_DISK_WARNING_PERCENT
+                                             or filesystem["free_bytes"] < _AGENT_HOST_DISK_WARNING_FREE):
+            warnings.append(f"{engine['engine']} container storage has low free-space headroom")
+        if engine["issues"] and "engine_missing" not in engine["issues"]:
+            warnings.append(f"{engine['engine']} container storage could not be fully inspected")
     for name, threshold in _AGENT_STORAGE_WARNING_BYTES.items():
         size = int(storage["size_bytes"].get(name, 0))
         if size > threshold:
@@ -1634,6 +1656,7 @@ def inspect_host_readiness(
         user=True,
     )
     t3_resources = {
+        "scope": "service-with-descendants",
         "memory_current_bytes": _optional_systemd_integer(
             t3_properties.get("MemoryCurrent")
         ),
@@ -1685,6 +1708,8 @@ def inspect_host_readiness(
         },
         "disk": disk_details,
         "agent_storage": storage,
+        "container_storage": containers,
+        "workload_limits": inspect_workload_limits(),
         "t3_service": t3_resources,
         "maintenance": maintenance["units"],
         "maintenance_hold": maintenance_hold,
@@ -2568,6 +2593,17 @@ def run_agent_command(args: argparse.Namespace) -> int:
         from lib.agent_browser import run_browser_command
 
         return run_browser_command(args)
+    if args.agent_command == "containers":
+        from lib.agent_containers import run_containers_command
+
+        return run_containers_command(args)
+    if args.agent_command == "graphics":
+        from lib.agent_graphics import run_graphics_command
+
+        return run_graphics_command(args)
+    if args.agent_command == "resources":
+        print(json.dumps(inspect_workload_limits(), indent=2))
+        return 0
     if args.agent_command == "visuals":
         from lib.agent_visuals import run_visuals_command
 
@@ -2799,7 +2835,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, browser, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, containers, graphics, resources, visuals, blender, models, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 
@@ -2835,6 +2871,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
                 remote_arguments.extend(("--capability", capability))
         if getattr(args, "fix", False):
             remote_arguments.append("--fix")
+        if getattr(args, "container_storage", False):
+            remote_arguments.append("--container-storage")
         if record_requested:
             remote_arguments.append("--record")
         if last_record_requested:
@@ -2845,10 +2883,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
             target,
             "doctor",
             remote_arguments,
-            timeout=_REMOTE_DOCTOR_TIMEOUT_SECONDS,
+            timeout=_REMOTE_DOCTOR_TIMEOUT_SECONDS + (40 if getattr(args, "container_storage", False) else 0),
         )
     if last_record_requested:
-        if requested_tools or requested_capabilities or getattr(args, "fix", False):
+        if requested_tools or requested_capabilities or getattr(args, "fix", False) or getattr(args, "container_storage", False):
             print("Error: --last-record cannot be combined with checks or --fix")
             return 1
         from lib.agent_readiness import (
@@ -2874,6 +2912,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
         requested_capabilities.append("host")
         if _t3_readiness_expected(os.path.abspath(os.path.expanduser("~"))):
             requested_capabilities.append("t3code")
+    if getattr(args, "container_storage", False) and "host" not in requested_capabilities:
+        requested_capabilities.append("host")
     if requested_tools:
         selected = list(requested_tools)
     elif capabilities_explicit and not all_capabilities_requested:
@@ -2892,7 +2932,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
         elif capability == "development":
             capability_results.append(inspect_development_readiness())
         elif capability == "host":
-            capability_results.append(inspect_host_readiness())
+            capability_results.append(inspect_host_readiness(container_storage=True)
+                                      if getattr(args, "container_storage", False) else inspect_host_readiness())
         elif capability == "t3code":
             capability_results.append(
                 inspect_t3code(fix=getattr(args, "fix", False))

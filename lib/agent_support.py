@@ -13,7 +13,9 @@ from typing import Optional
 
 from lib.atomic_io import write_json_atomic
 from lib.agent_readiness import sanitize_browser_context, sanitize_development_readiness
-from lib.installation_info import build_setup_snapshot_metadata
+from lib.agent_containers import sanitize_container_storage
+from lib.agent_resources import sanitize_workload_limits
+from lib.installation_info import inspect_installation_provenance
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -128,6 +130,7 @@ def build_agent_support_bundle(
     home: Optional[str] = None,
     *,
     browser_smoke: bool = False,
+    container_storage: bool = False,
 ) -> JSONDict:
     """Compose diagnostic results while omitting paths, identities, and log text."""
     from lib.agent_cli import (
@@ -140,9 +143,9 @@ def build_agent_support_bundle(
     )
 
     user_home = os.path.abspath(home or _effective_home())
-    installation = build_setup_snapshot_metadata(_INSTALLATION_ROOT)
+    installation = inspect_installation_provenance(_INSTALLATION_ROOT)
     tools = inspect_agent_tools(list(DEFAULT_DOCTOR_TOOLS), home=user_home)
-    host = inspect_host_readiness(user_home)
+    host = inspect_host_readiness(user_home, container_storage=True) if container_storage else inspect_host_readiness(user_home)
     t3code = inspect_t3code(user_home)
     browser = inspect_browser_automation(user_home, run_smoke=browser_smoke)
     development = inspect_development_readiness(user_home)
@@ -175,11 +178,10 @@ def build_agent_support_bundle(
     return {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "basaltwater": {
-            "version": installation["version"],
-            "commit": installation.get("commit"),
-            "dirty": installation.get("dirty"),
-        },
+        "basaltwater": {key: installation.get(key) for key in (
+            "version", "commit", "dirty", "installation_type", "evidence_source",
+            "setup_snapshot", "running_source",
+        )},
         "system": {
             "platform": platform.system(),
             "release": platform.release(),
@@ -213,6 +215,8 @@ def build_agent_support_bundle(
                 "size_bytes": host["agent_storage"]["size_bytes"],
                 "codex_release_count": host["agent_storage"]["codex_release_count"],
             },
+            "container_storage": sanitize_container_storage(host.get("container_storage")),
+            "workload_limits": sanitize_workload_limits(host.get("workload_limits")),
             "t3_service": host["t3_service"],
             "maintenance": host["maintenance"],
             "maintenance_hold": host["maintenance_hold"],
@@ -260,6 +264,8 @@ def build_agent_support_bundle(
             "installation_branch_included": False,
             "credential_contents_included": False,
             "user_identity_included": False,
+            "container_identifiers_included": False,
+            "cgroup_paths_included": False,
         },
     }
 
@@ -296,6 +302,7 @@ def run_agent_support_command(args: argparse.Namespace) -> int:
         bundle = build_agent_support_bundle(
             home,
             browser_smoke=args.browser_smoke,
+            container_storage=getattr(args, "container_storage", False),
         )
         if args.output:
             path = write_agent_support_bundle(bundle, args.output, home)

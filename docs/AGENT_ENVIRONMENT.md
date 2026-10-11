@@ -14,10 +14,16 @@ Use repeatable `--capability` filters for smaller responses, for example
 `--capability browser --capability skills` for browser guidance. Scopes include
 `installation`, `workspace`, `skills`, `browser`, `development`, `publishing`,
 and the `web` combination. Unrelated application and publishing prose is omitted.
-Every scope retains `basaltwater`, with the running CLI snapshot's version,
-installation commit, dirty state, and installation type. These fields describe
-the saved setup source, separately from `workspace.commit`. A checkout or wheel
-without a setup receipt reports an unrecorded revision rather than guessing.
+Every scope retains `basaltwater`, using the same provenance contract as the
+support bundle. `setup_snapshot` describes a recorded setup receipt, while
+`running_source` describes an observed Git root executing the CLI. Each is
+`null` when unavailable. The top-level version/commit/dirty fields prefer the
+running source; `evidence_source` states `running-git`, `setup-receipt`, or
+`unrecorded`. `installation_type` is respectively `source-checkout`,
+`setup-snapshot`, or `unrecorded`. A checkout revision does not assert that
+setup ran. Wheels and non-Git trees without a receipt remain unrecorded, and
+`workspace.commit` still describes the separately selected project. No branch,
+changed filename or installation path appears in this provenance object.
 
 `skills` inventories known Basaltwater entrypoints in both `~/.agents/skills`
 (Codex/OpenCode) and `~/.claude/skills` (Claude Code). It compares entrypoints and

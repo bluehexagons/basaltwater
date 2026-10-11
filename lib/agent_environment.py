@@ -16,7 +16,7 @@ from lib.agent_browser import browser_context_inventory
 from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
-from lib.installation_info import installation_version, read_installation_metadata
+from lib.installation_info import inspect_installation_provenance
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -321,13 +321,10 @@ def inspect_environment(repository: str) -> dict[str, object]:
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    installation = read_installation_metadata(source_root)
+    installation = inspect_installation_provenance(source_root)
     return {
         "schema_version": 1,
-        "basaltwater": {"version": installation_version(source_root),
-                        "commit": installation.get("commit") if installation else None,
-                        "dirty": installation.get("dirty") if installation else None,
-                        "installation_type": "setup-snapshot" if installation else "unrecorded"},
+        "basaltwater": installation,
         "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
         "skills": skills,
