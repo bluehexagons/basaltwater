@@ -29,6 +29,7 @@ from lib.proxmox_preflight import (
     check_proxmox_update_safety,
     check_proxmox_upgrade_candidate,
 )
+from lib.proxmox_repositories import configure_unsubscribed_proxmox_repositories
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -56,11 +57,14 @@ def preflight_proxmox(config: SetupConfig) -> None:
     if is_dry_run():
         print(
             f"  Would verify Proxmox VE {SUPPORTED_PVE_MAJOR}.x, Debian trixie, "
-            "stable APT repositories, and package state"
+            "stable APT repositories, and package state; select matching "
+            "no-subscription repositories if no subscription key is installed"
         )
         return
     check_proxmox_installation()
     check_proxmox_package_state()
+    if configure_unsubscribed_proxmox_repositories():
+        check_proxmox_installation()
     refreshed = run(
         shlex.join(["apt-get", "update"] + APT_LOCK_OPTIONS + APT_UPDATE_OPTIONS),
         check=False, capture_output=True,

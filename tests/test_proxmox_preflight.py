@@ -208,6 +208,8 @@ class TestSetupPreflight(unittest.TestCase):
     def setUp(self) -> None:
         self.packages = self.enterContext(patch("common.proxmox_steps.check_proxmox_package_state"))
         self.candidate = self.enterContext(patch("common.proxmox_steps.check_proxmox_upgrade_candidate"))
+        self.repositories = self.enterContext(patch(
+            "common.proxmox_steps.configure_unsubscribed_proxmox_repositories", return_value=False))
 
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
@@ -231,6 +233,7 @@ class TestSetupPreflight(unittest.TestCase):
         installation.assert_called_once()
         command.assert_not_called()
         self.candidate.assert_not_called()
+        self.repositories.assert_not_called()
 
     @patch("common.proxmox_steps.run")
     @patch("common.proxmox_steps.is_dry_run", return_value=False)
@@ -254,12 +257,38 @@ class TestSetupPreflight(unittest.TestCase):
         self.packages.assert_not_called()
         self.candidate.assert_not_called()
         command.assert_not_called()
+        self.repositories.assert_not_called()
+
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.check_proxmox_installation")
+    def test_repository_selection_precedes_refresh_and_is_revalidated(self, installation, _dry_run, command) -> None:
+        events = []
+        installation.side_effect = lambda: events.append("validate")
+        self.packages.side_effect = lambda: events.append("packages")
+        self.repositories.side_effect = lambda: events.append("select") or True
+        command.side_effect = lambda *args, **kwargs: (
+            events.append("refresh") or subprocess.CompletedProcess([], 0, "", ""))
+        self.candidate.side_effect = lambda: events.append("candidate")
+        preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+        self.assertEqual(events, ["validate", "packages", "select", "validate", "refresh", "candidate"])
+
+    @patch("common.proxmox_steps.run")
+    @patch("common.proxmox_steps.is_dry_run", return_value=False)
+    @patch("common.proxmox_steps.check_proxmox_installation")
+    def test_repository_selection_failure_stops_before_refresh(self, installation, _dry_run, command) -> None:
+        self.repositories.side_effect = RuntimeError("repository selection failed")
+        with self.assertRaisesRegex(RuntimeError, "repository selection failed"):
+            preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox"))
+        command.assert_not_called()
+        self.candidate.assert_not_called()
 
     @patch("common.proxmox_steps.run")
     def test_root_forwarding_restrictions_rejected_before_commands(self, command) -> None:
         with self.assertRaisesRegex(ValueError, "--harden-user"):
             preflight_proxmox(SetupConfig(host="pve", username="root", system_type="server_proxmox", harden_user=True))
         command.assert_not_called()
+        self.repositories.assert_not_called()
 
 
 class TestSetupUpgrade(unittest.TestCase):

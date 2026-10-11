@@ -143,8 +143,18 @@ also rejects incomplete package transactions and held core Proxmox
 packages, and checks that the refreshed `pve-manager` candidate stays within
 9.x before proceeding. Stable point releases are accepted so a change in the
 minor version does not block kernel and other package updates.
-Repository selection stays operator-owned; setup does not switch a host to
-no-subscription or perform a major release upgrade. `--harden-user` is rejected for
+When Proxmox explicitly reports that no subscription key is installed, setup
+enables the matching no-subscription repositories and disables the standard
+enterprise entries before refreshing APT. This handles fresh installer defaults
+for both PVE and Ceph, including `.list` and `.sources` files. Proxmox's native
+repository API preserves unrelated sources, keeps the configured Ceph release,
+and checks for concurrent edits. An existing no-subscription entry is reused.
+Installed keys, including expired or invalid subscriptions, retain their
+repository selections; authentication failures still stop setup. Custom or mixed
+enterprise entries require manual channel selection. Package signatures remain
+required, and setup does not perform a major release upgrade. See the
+[Proxmox repository reference](https://github.com/proxmox/pve-docs/blob/master/pve-package-repos.adoc)
+for subscription requirements and channel differences. `--harden-user` is rejected for
 this profile because its forwarding restrictions would interfere with root's cluster SSH.
 
 Every host setup, including a rerun, then performs a noninteractive
