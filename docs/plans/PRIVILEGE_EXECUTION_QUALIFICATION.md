@@ -77,6 +77,15 @@ qualify the complete setup replay with the repaired public origin and permission
 Keep the non-secret policy readable by the approval identity when changing its
 window; the administrator reference documents the required mode and recovery.
 
+The subsequent approved full refresh activated `39aa8cf` but again finished
+with exit code 1. Dispatch succeeded; setup did not. The running broker's older
+status response omits stage/index/failure fields, so this replay's failing stage
+is not yet established. The approval HTTPS challenge and Xvfb OpenGL 4.5 context
+remain available, and home has about 39 GiB free. Diagnose this failure before
+replaying; retain the recovery snapshot and qualify the lifecycle on a disposable
+Debian/systemd target. The broader handoff is recorded in
+[Antistatic workload feedback](ANTISTATIC_WORKLOAD_FEEDBACK.md).
+
 The limited live diagnostic confirms protected official source with one dirty
 entry, and a setup recovery marker from before the first step. The directory-only
 `state/` ignore misses the installed `state` symlink; a real-Git activation case
@@ -88,7 +97,11 @@ helper permission failure; the complete setup replay remains to be qualified.
 ## Next scoped improvements
 
 After refresh recovery is qualified, prioritize these observations from the
-Antistatic workload rather than duplicating newer container/resource tooling:
+Antistatic workload rather than duplicating newer container/resource tooling.
+
+The [workload feedback](ANTISTATIC_WORKLOAD_FEEDBACK.md) expands their acceptance
+criteria and maps storage, resource interpretation, cleanup and maintenance
+qualification to the existing project owners.
 
 - **Artifact storage:** add an explicit private artifact-root setup option with
   ownership/path/mount validation and bounded doctor capacity reporting. Keep
