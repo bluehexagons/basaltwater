@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from lib.agent_probe import ProbeResult
-from lib.installation_info import inspect_installation_provenance
+from lib.installation_info import inspect_installation_provenance, read_refresh_source_metadata, write_refresh_source_metadata
 from lib import agent_environment, agent_support
 
 
@@ -77,6 +77,58 @@ class ProvenanceTests(unittest.TestCase):
         for contents in (" " * 16385, '{"schema_version":true}', '{"schema_version":1,"schema_version":1}'):
             receipt.write_text(contents)
             self.assertEqual(inspect_installation_provenance(str(self.root))["installation_type"], "unrecorded")
+
+    def test_refresh_receipt_survives_unavailable_private_git_without_claiming_observation(self) -> None:
+        (self.root / ".git").mkdir()
+        self.receipt()
+        with patch("lib.installation_info.run_probe", side_effect=[
+            ProbeResult(str(self.root)), ProbeResult("b" * 40), ProbeResult(""),
+        ]):
+            path = write_refresh_source_metadata(str(self.root))
+        self.assertEqual(Path(path).stat().st_mode & 0o777, 0o644)
+        with patch("lib.installation_info.run_probe", return_value=ProbeResult(issue="probe_unavailable")):
+            result = inspect_installation_provenance(str(self.root))
+        self.assertEqual(result["commit"], "b" * 40)
+        self.assertEqual(result["evidence_source"], "refresh-receipt")
+        self.assertEqual(result["installation_type"], "managed-checkout")
+        self.assertIsNone(result["running_source"])
+        self.assertEqual(result["setup_snapshot"]["commit"], "a" * 40)
+        self.assertEqual(result["refresh_receipt"]["commit"], "b" * 40)
+
+    def test_observed_git_prefers_current_revision_over_old_refresh_receipt(self) -> None:
+        (self.root / ".git").mkdir()
+        with patch("lib.installation_info.run_probe", side_effect=[
+            ProbeResult(str(self.root)), ProbeResult("b" * 40), ProbeResult(""),
+        ]):
+            write_refresh_source_metadata(str(self.root))
+        with patch("lib.installation_info.run_probe", side_effect=[
+            ProbeResult(str(self.root)), ProbeResult("c" * 40), ProbeResult(" M private-name"),
+        ]):
+            result = inspect_installation_provenance(str(self.root))
+        self.assertEqual(result["commit"], "c" * 40)
+        self.assertEqual(result["refresh_receipt"]["commit"], "b" * 40)
+        self.assertTrue(result["dirty"])
+        self.assertNotIn("private-name", json.dumps(result))
+
+    def test_refresh_receipt_cannot_be_created_without_observed_git(self) -> None:
+        with patch("lib.installation_info.run_probe") as probe, self.assertRaises(ValueError):
+            write_refresh_source_metadata(str(self.root))
+        probe.assert_not_called()
+        self.assertFalse((self.root / ".basaltwater-refresh.json").exists())
+
+    def test_unsafe_or_invalid_refresh_receipts_are_rejected(self) -> None:
+        path = self.root / ".basaltwater-refresh.json"
+        valid = {"schema_version": 1, "source": {"version": "2.0.0", "commit": "b" * 40, "dirty": False}}
+        invalid = [" " * 16385, "{", json.dumps({**valid, "schema_version": True}),
+                   json.dumps({**valid, "source": {**valid["source"], "dirty": 1}}),
+                   json.dumps({**valid, "source": {**valid["source"], "commit": None}}),
+                   json.dumps({**valid, "source": {**valid["source"], "credential": "must-not-leak"}})]
+        for contents in invalid:
+            path.write_text(contents)
+            self.assertIsNone(read_refresh_source_metadata(str(self.root)))
+        path.unlink()
+        path.symlink_to(self.root / "pyproject.toml")
+        self.assertIsNone(read_refresh_source_metadata(str(self.root)))
 
     def test_manifest_and_support_agree_for_running_checkout(self) -> None:
         (self.root / ".git").mkdir()

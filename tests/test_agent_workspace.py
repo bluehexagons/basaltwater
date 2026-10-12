@@ -409,6 +409,7 @@ class AgentSupportTests(unittest.TestCase):
                     "installation_type": None,
                     "evidence_source": None,
                     "setup_snapshot": None,
+                    "refresh_receipt": None,
                     "running_source": None,
                 },
             )

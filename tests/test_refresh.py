@@ -43,6 +43,7 @@ class DebianRefreshTests(unittest.TestCase):
             "commit": "abcdef0123456789", "channel": "dev", "updated": True,
         }))
         self.run = stack.enter_context(patch.object(refresh, "run", return_value=subprocess.CompletedProcess([], 0)))
+        self.receipt = stack.enter_context(patch.object(refresh, "write_refresh_source_metadata"))
 
     def invoke(self, *, dry_run=False):
         return refresh.run_refresh_command(argparse.Namespace(dry_run=dry_run))
@@ -52,6 +53,7 @@ class DebianRefreshTests(unittest.TestCase):
         self.upgrade.side_effect = lambda repo: events.append("upgrade") or {
             "commit": "abcdef", "channel": "dev", "updated": False,
         }
+        self.receipt.side_effect = lambda repo: events.append("receipt")
         temporary_paths = []
         def execute(command, **kwargs):
             events.append("setup")
@@ -68,7 +70,7 @@ class DebianRefreshTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 19)
         self.run.side_effect = execute
         self.assertEqual(self.invoke(), 19)
-        self.assertEqual(events, ["upgrade", "setup"])
+        self.assertEqual(events, ["upgrade", "receipt", "setup"])
         self.assertFalse(temporary_paths[0].exists())
 
     def test_source_failure_never_runs_setup(self):
@@ -101,6 +103,7 @@ class DebianRefreshTests(unittest.TestCase):
         self.assertIn("stable", output.getvalue())
         self.upgrade.assert_not_called()
         self.run.assert_not_called()
+        self.receipt.assert_not_called()
 
     def test_standard_debian_profiles_replay_through_target_parser(self):
         for profile in ("control_plane", "workstation_dev", "agent_vm", "agent_workstation",

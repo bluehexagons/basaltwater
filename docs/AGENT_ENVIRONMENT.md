@@ -20,10 +20,30 @@ support bundle. `setup_snapshot` describes a recorded setup receipt, while
 `null` when unavailable. The top-level version/commit/dirty fields prefer the
 running source; `evidence_source` states `running-git`, `setup-receipt`, or
 `unrecorded`. `installation_type` is respectively `source-checkout`,
-`setup-snapshot`, or `unrecorded`. A checkout revision does not assert that
+`setup-snapshot`, or `unrecorded`. Refresh additionally records observed source
+activation in the readable `.basaltwater-refresh.json`. `refresh_receipt` is
+separate from `setup_snapshot`; it is written before setup replay and does not
+assert that setup completed. If Git metadata is inaccessible, diagnostics use
+that receipt with `evidence_source: refresh-receipt` and
+`installation_type: managed-checkout`, leaving `running_source` null. Observed
+Git remains preferred when available. A checkout revision does not assert that
 setup ran. Wheels and non-Git trees without a receipt remain unrecorded, and
 `workspace.commit` still describes the separately selected project. No branch,
 changed filename or installation path appears in this provenance object.
+
+An existing developer launcher can intentionally invoke a checkout rather than
+the managed VM source. Inspect that invocation, then compare the installed
+runtime explicitly when diagnosing missing commands or stale guidance:
+
+```bash
+basaltw agent manifest . --capability installation --json
+/usr/bin/python3 /opt/basaltwater/basaltwater.py agent manifest . --capability installation --json
+```
+
+Compare their reported revisions and evidence sources. Setup preserves unmanaged
+launchers; keep a development override explicit instead of assuming it follows
+managed VM updates. Neither report proves that a long-running service reloaded
+its Python modules; verify its service lifetime separately after a source update.
 
 `skills` inventories known Basaltwater entrypoints in both `~/.agents/skills`
 (Codex/OpenCode) and `~/.claude/skills` (Claude Code). It compares entrypoints and

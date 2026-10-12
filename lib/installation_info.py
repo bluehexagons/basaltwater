@@ -15,6 +15,7 @@ from lib.validation import validate_filesystem_path
 
 
 INSTALLATION_METADATA_FILENAME = ".basaltwater-installation.json"
+REFRESH_METADATA_FILENAME = ".basaltwater-refresh.json"
 INSTALLATION_METADATA_SCHEMA = 1
 SETUP_SNAPSHOT_TYPE = "setup-snapshot"
 _COMMIT_RE = re.compile(r"[0-9a-f]{40,64}")
@@ -165,6 +166,39 @@ def installation_version(installation_root: str) -> str:
     return _project_version(os.path.abspath(installation_root))
 
 
+def read_refresh_source_metadata(installation_root: str) -> JSONDict | None:
+    """Read a source-activation receipt; it never attests to successful setup."""
+    root = os.path.abspath(installation_root)
+    validate_filesystem_path(root, must_exist=True)
+    path = os.path.join(root, REFRESH_METADATA_FILENAME)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    try:
+        value = read_json_file(path, max_bytes=16384)
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if (not isinstance(value, dict) or set(value) != {"schema_version", "source"}
+            or type(value["schema_version"]) is not int or value["schema_version"] != 1):
+        return None
+    source = value["source"]
+    if (not isinstance(source, dict) or set(source) != {"version", "commit", "dirty"}
+            or not isinstance(source["version"], str) or not _VERSION_RE.fullmatch(source["version"])
+            or not isinstance(source["commit"], str) or not _COMMIT_RE.fullmatch(source["commit"])
+            or (source["dirty"] is not None and type(source["dirty"]) is not bool)):
+        return None
+    return dict(source)
+
+
+def write_refresh_source_metadata(installation_root: str) -> str:
+    """Record observed Git source after activation, before saved setup replay."""
+    source = inspect_installation_provenance(installation_root)["running_source"]
+    if source is None:
+        raise ValueError("Cannot record refresh source without an observed Git revision")
+    path = os.path.join(os.path.abspath(installation_root), REFRESH_METADATA_FILENAME)
+    write_json_atomic(path, {"schema_version": 1, "source": source}, mode=0o644, sort_keys=True)
+    return path
+
+
 def inspect_installation_provenance(installation_root: str) -> JSONDict:
     """Separate a recorded setup receipt from the source actually running now.
 
@@ -176,6 +210,7 @@ def inspect_installation_provenance(installation_root: str) -> JSONDict:
     receipt = read_installation_metadata(root)
     snapshot = ({key: receipt.get(key) for key in ("version", "commit", "dirty")}
                 if receipt else None)
+    refresh = read_refresh_source_metadata(root)
     source = None
     if os.path.exists(os.path.join(root, ".git")):
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -190,13 +225,14 @@ def inspect_installation_provenance(installation_root: str) -> JSONDict:
                 status = git(["status", "--porcelain", "--untracked-files=normal"])
                 source = {"version": _project_version(root), "commit": commit,
                           "dirty": bool(status) if status is not None else None}
-    evidence = source or snapshot
+    evidence = source or refresh or snapshot
     return {
         "version": evidence["version"] if evidence else _project_version(root),
         "commit": evidence["commit"] if evidence else None,
         "dirty": evidence["dirty"] if evidence else None,
-        "installation_type": "source-checkout" if source else "setup-snapshot" if snapshot else "unrecorded",
-        "evidence_source": "running-git" if source else "setup-receipt" if snapshot else "unrecorded",
+        "installation_type": "source-checkout" if source else "managed-checkout" if refresh else "setup-snapshot" if snapshot else "unrecorded",
+        "evidence_source": "running-git" if source else "refresh-receipt" if refresh else "setup-receipt" if snapshot else "unrecorded",
         "setup_snapshot": snapshot,
+        "refresh_receipt": refresh,
         "running_source": source,
     }

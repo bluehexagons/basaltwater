@@ -180,7 +180,7 @@ def build_agent_support_bundle(
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "basaltwater": {key: installation.get(key) for key in (
             "version", "commit", "dirty", "installation_type", "evidence_source",
-            "setup_snapshot", "running_source",
+            "setup_snapshot", "refresh_receipt", "running_source",
         )},
         "system": {
             "platform": platform.system(),

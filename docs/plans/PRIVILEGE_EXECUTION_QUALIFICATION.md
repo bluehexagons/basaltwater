@@ -3,14 +3,14 @@
 ## Status: implementation delivered; refresh recovery qualification active
 
 Repair approved command execution on broker-managed Debian VMs and give human
-review a practical expiry window. The observed VM has a 64 GiB home disk with
-a 32 GiB ext4 partition; expanding that partition/filesystem is a separate,
-explicitly approved live operation after the executor is qualified.
+review a practical expiry window. The observed VM initially had a 64 GiB home
+disk with a 32 GiB ext4 partition; its separately approved online expansion is
+now qualified below.
 
-The current broker executes arbitrary approved argv inside its own
+The original broker executed arbitrary approved argv inside its own
 `ProtectSystem=strict` / `PrivateDevices` / `ProtectHome` sandbox. Approval of
-`install -d /srv/...` therefore succeeds while execution fails. The existing
-five-minute default expiry also regularly expires before an operator can review
+`install -d /srv/...` therefore succeeded while execution failed. The original
+five-minute default expiry also regularly elapsed before an operator could review
 the request. [Privilege approvals](../PRIVILEGE_APPROVALS.md) and the
 [administrator reference](../PRIVILEGE_BROKER_REFERENCE.md) own durable behavior.
 
@@ -27,6 +27,10 @@ the request. [Privilege approvals](../PRIVILEGE_APPROVALS.md) and the
 - Cover approval, rejection, literal argument transport, executor ownership,
   failures/timeouts, database migration, expiry, and existing setup preservation.
   Run focused tests, `make check`, and `make coverage` in the project environment.
+- Retain a separate readable source-activation receipt when refresh converts a
+  setup snapshot to a managed checkout with private Git metadata. Diagnostics
+  must identify recorded activation separately from observed Git and successful
+  setup; never expose private paths, branch names, or configuration.
 - Publish tested source, refresh the VM through its existing approved maintenance
   operation, then exercise the actual approved `/srv` directory creation. Update
   this VM's expiry explicitly and verify it on a fresh request.
@@ -54,11 +58,35 @@ The approved refresh activated source but its setup replay failed. Recovery
 qualified the new executor without replaying setup. Normalize both downloaded
 snapshot code and subsequent managed-checkout runtime updates under the private
 job umask, retaining private metadata and runtime data. The 24 focused refresh
-cases, `make check`, and `make coverage` pass; the wider suite runs 5,481 cases
+cases and 67 receipt/manifest/support cases pass. `make check` and `make coverage`
+pass; the wider suite runs 5,485 cases
 with five platform/expensive-test skips. Wheel, CLI documentation, links,
 compilation and generated assets pass.
+
+The source-activation receipt is implemented separately from saved setup and
+observed Git. It remains readable when managed Git metadata is private, rejects
+unsafe/malformed records, and preserves truthful unknown/recorded distinctions.
 
 Remaining: inspect the limited root-owned failure marker, resolve the setup
 replay failure, and qualify the published permission fix on the managed VM.
 Keep the non-secret policy readable by the approval identity when changing its
 window; the administrator reference documents the required mode and recovery.
+
+## Next scoped improvements
+
+After refresh recovery is qualified, prioritize these observations from the
+Antistatic workload rather than duplicating newer container/resource tooling:
+
+- **Artifact storage:** add an explicit private artifact-root setup option with
+  ownership/path/mount validation and bounded doctor capacity reporting. Keep
+  project completion, verification, links and migration under project control;
+  never infer disposability from age or use timed temporary/public web roots.
+- **CLI context:** preserve intentional unmanaged developer launchers, expose
+  invoked versus managed-source context explicitly, and report known revision
+  differences without inventing a deployed revision when evidence is unavailable.
+  Source-activation receipts and manual comparison are the current first slice.
+- **Maintenance diagnostics:** retain only fixed failure categories and validated
+  setup phase/index/class metadata. Correlate it with the maintenance attempt;
+  omit privileged output, configuration, credentials and unrelated stale markers.
+  Cover partial source activation, private umasks, service restart and recovery
+  on a disposable Debian/systemd target before broadening automatic maintenance.

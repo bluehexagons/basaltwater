@@ -15,7 +15,7 @@ from lib.arg_parser import create_setup_argument_parser
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
 from lib.cachyos import is_cachyos
 from lib.channel_manager import get_channel_info, managed_repository_path, switch_channel, upgrade_channel
-from lib.installation_info import INSTALLATION_METADATA_FILENAME
+from lib.installation_info import INSTALLATION_METADATA_FILENAME, REFRESH_METADATA_FILENAME, write_refresh_source_metadata
 from lib.config import AGENT_TOOLS, SetupConfig
 from lib.machine_state import SETUP_CONFIG_FILE, _validate_setup_config
 from lib.maintenance_lock import maintenance_lock
@@ -27,6 +27,7 @@ _SOURCE_URL = "https://github.com/bluehexagons/basaltwater.git"
 _SNAPSHOT_SOURCE_NAMES = {
     "basaltwater.py", "remote_setup.py", "lib", "plugins", "game", "desktop",
     "web", "smb", "security", "sync", "common", "deploy", INSTALLATION_METADATA_FILENAME,
+    REFRESH_METADATA_FILENAME,
 }
 
 
@@ -142,6 +143,7 @@ def _apply_refresh(
         # Git updates in an existing managed checkout inherit the same umask.
         # Reconcile only owned runtime source, preserving retained private data.
         _normalize_downloaded_source(repository, runtime_only=True)
+        write_refresh_source_metadata(repository)
         print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}", flush=True)
         print(f"Repeating saved local {config.system_type} setup for {config.username}", flush=True)
         # Keep saved options private and start the upgraded runner in a fresh process.
