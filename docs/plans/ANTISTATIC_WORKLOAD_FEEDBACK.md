@@ -22,8 +22,8 @@ its enlarged 64 GiB disk, retaining its start and UUIDs. Reviewed project
 archives moved about 4.94 GiB from home to a private `/srv` destination with
 verified contents and links; home currently has about 39 GiB available.
 
-The owner has rerun setup. At post-setup inspection, the developer launcher
-observed clean source `7405b82`; the managed runtime independently reported a
+The owner has rerun setup again. At the latest inspection, the developer launcher
+observed clean source `443c844`; the managed runtime independently reported a
 setup-snapshot receipt for that same revision. Antistatic's selected Node, npm
 and native prerequisites
 pass its own doctor, and its TypeScript/native build succeeds. T3 readiness and
@@ -47,24 +47,27 @@ was replayed during this development review.
   Antistatic's own before/after menu captures exercise native loading, shaders,
   fonts, assets and PNG output. Software graphics continues to support
   correctness work without supplying physical-GPU timing, HDR or motion review.
-- **Capacity diagnostics are useful, with a remaining interpretation issue.**
-  Home and root have ample headroom and no host errors were reported. The first
-  sample explicitly marked memory ballooning and brief swap-in activity, with
-  zero recent memory-pressure averages. T3's historical service peak exceeded
-  that sample's smaller guest RAM but remained below configured capacity.
-  Contextualize that warning with ballooning, capacity and service lifetime;
+- **Capacity interpretation is improved.** The new doctor reports available
+  guest memory, configured capacity, pressure, swap activity, workload limits
+  and T3's separate historical peak. The latest sample has about 37.7 GiB free
+  on home and 7.5 GiB on root, no warnings/errors, zero recent memory-pressure
+  averages and idle swap I/O. The earlier ballooned-RAM warning is addressed;
   a peak collected before RAM changed is not evidence of current exhaustion.
-- **OOM outcomes need explicit diagnostic evidence.** A development probe was
+- **OOM evidence is now explicit and scoped.** A previous development probe was
   killed with exit 137 after its captures completed. Its next operation tried
   to construct a full assertion diff for differing PNG buffers. Replacing that
   probe assertion with bounded byte equality allowed the same rendered flow to
   finish; ordinary interactive motion is not an exact same-frame pixel oracle.
-  The user-readable T3 cgroup reports one cumulative `oom_kill`, while host
-  doctor remains healthy afterwards. No pre-event counter or readable kernel
-  journal was available to attribute that counter precisely. Include readable
-  OOM event counters and anonymous/file memory in support diagnostics, scoped to
-  the service lifetime; use before/after deltas for job attribution and retain
-  unknown freshness honestly. Do not infer a game-renderer leak from this probe.
+  The updated doctor and support bundle expose anonymous/file memory, limits,
+  hierarchical OOM counters, a cgroup counter epoch and the service invocation.
+  The existing cumulative `oom_kill` remains one; it is historical evidence,
+  without a pre-event sample to identify the killed job. Peak time/capacity stay
+  explicitly unknown. Compare snapshots from the same epoch/invocation rather
+  than inferring a game-renderer leak from that probe.
+- **GTK runtime provisioning is appropriate.** The host has `libgtk-3-bin`,
+  `libgtk-3-0t64` and NSS. The updated game-development bundle selects runtime
+  GTK without unnecessary development headers. Keep GTK addon headers as a
+  separate project requirement; this inspection does not qualify Animator UI.
 - **Useful caches survived setup.** Existing dependencies and incremental
   native build products remain usable. Retain SDK and compiler caches while
   storage has headroom; no broad cleanup was needed for these development runs.
@@ -76,6 +79,8 @@ was replayed during this development review.
 
 Detailed logs, snapshots, captures and CPU paint probes remain in Antistatic's
 ignored `local-artifacts/projects/2026-10-12-post-setup-development/` workspace.
+The latest host/build/capture evidence is in
+`local-artifacts/projects/2026-10-12-environment-enhancements/`.
 
 ### Additional targeted maintenance checks
 
@@ -84,19 +89,31 @@ agent-play client: a runner could exit before a descendant holding inherited
 pipes. Its benchmark/IPC runner fixes and identity-checked temporary disposal
 are project responsibilities, not evidence of failed host maintenance.
 
-Review the remaining plain captured `subprocess.run` calls in Basaltwater's
-cache/cleanup commands and maintenance-review wrapper for output-memory bounds,
-descendant ownership and interruption. Existing `agent_probe`, streamed-process
-helpers and systemd control-group execution already provide relevant owners;
-do not create another process manager. Keep mocked unit coverage, and add the
-leader-exits-first/TERM-resistant descendant case to disposable qualification.
+Commit `8be57cd` moves cache/cleanup captures and maintenance review onto existing
+bounded process owners. It covers shared stdout/stderr budgets, deadlines,
+interruption and a leader exiting before pipe-holding descendants. The latest
+local check passes 34 focused memory, bounded-maintenance, cleanup-identity and
+game-development tests. Keep those owners, and retain the real descendant case
+in disposable qualification; unit fixtures do not qualify a live maintenance job.
 
-Generic rebuildable-cache and stale-tool-temporary cleanup should revalidate
-directory identity/ownership and active use immediately before deletion. The
-vendor release collectors already check device/inode identity; extend that
-contract where generic cleanup still acts on a previously inventoried pathname.
-Cover replaced directories and recreated disposed paths, and preserve useful
-project reports/captures rather than extending host age-based retention to them.
+The same commit adds generic cleanup identity/ownership and active-use checks,
+private isolation before disposal, and explicit recovery on mismatch/failure.
+Replaced directories and recreated original paths have focused coverage.
+Preserve useful project reports/captures rather than extending host age-based
+retention to them. These recommendations are implemented, not another open queue.
+
+### Project runtime discovery
+
+One remaining development usability improvement is to distinguish PATH tool
+inventory from a repository's selected runtime in the manifest. On this host,
+the general manifest/development doctor sees Node 24.21.0/npm 11.19.0, while
+`basaltw node doctor --project . --json` correctly selects Antistatic's Node
+26.10.0/npm 12.1.0. Both observations are valid, but an agent consuming only the
+manifest could choose the wrong toolchain. Expose an optional bounded project
+selection record with its metadata source, observed versions and compatibility
+issues, reusing the existing Node doctor rather than running project scripts or
+changing PATH/default aliases. Missing pins must remain a reported prerequisite.
+Antistatic's own selector remains the build/publishing contract.
 
 ## Recommended order and acceptance
 
@@ -160,18 +177,17 @@ because it is old, and never place private captures in public preview roots.
 Test reruns, ownership conflicts, absent mounts and full destinations without
 mutating a real host.
 
-### 4. Improve resource interpretation before adding cleanup
+### 4. Retain the improved resource interpretation
 
 Owners: the T3 VM diagnostic baseline and CLI host audit above.
 
-During archival and tests, T3's cgroup memory warning could coexist with healthy
-host capacity and idle swap. That cgroup includes agent/build descendants and
-file cache. Show available host memory, configured versus ballooned guest
-capacity, anonymous versus file-backed usage, pressure, swap activity, limits
-and OOM/restart counters where readable. Treat
-unavailable fields as unknown. Do not label a high aggregate percentage a leak
-without pressure or growth evidence. Validate quiet, file-cache-heavy and
-constrained workloads using bounded observations.
+The diagnostic slice is delivered in `009395f` and usable after setup. T3's
+cgroup includes agent/build descendants and file cache. Retain available host
+memory, configured versus ballooned capacity, anonymous/file usage, pressure,
+swap activity, limits and scoped OOM/service counters. Treat unavailable fields
+as unknown and validate quiet, file-cache-heavy and constrained workloads with
+bounded observations. Do not label a high aggregate percentage a leak without
+pressure or growth evidence; do not reset limits or prune caches from diagnosis.
 
 For packaging storage, retain the newer container graph-root diagnostics and
 resource controls. Report peak build/copy headroom on each involved filesystem;
