@@ -7,6 +7,7 @@ from dataclasses import replace
 import os
 from pathlib import Path
 import pwd
+import re
 import shlex
 import stat
 import sys
@@ -204,6 +205,30 @@ def load_saved_setup() -> tuple[list[str], SetupConfig]:
     arguments = record["arguments"]
     config = _parse_saved_arguments(arguments)
     return arguments, config
+
+
+def inspect_successful_setup_source() -> dict[str, str | None] | None:
+    """Read only allowlisted source evidence; never return saved arguments."""
+    try:
+        path = _record_path().with_name("last-report.json")
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            return None
+        value = read_json_file(str(path), max_bytes=256 * 1024)
+        if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+                or value["schema_version"] != 1 or not isinstance(value.get("source"), dict)):
+            return None
+        commit = value["source"].get("commit")
+        completed = value.get("completed_at")
+        if (commit is not None and (not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40,64}", commit))
+                or not isinstance(completed, str) or len(completed) > 40
+                or any(ord(char) < 32 or ord(char) == 127 for char in completed)
+                or datetime.fromisoformat(completed).tzinfo is None):
+            return None
+        return {"commit": commit, "completed_at": completed}
+    except (OSError, ValueError, KeyError, UnicodeError):
+        return None
 
 
 def run_refresh_command(args: argparse.Namespace) -> int:

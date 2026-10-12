@@ -130,6 +130,33 @@ human approvals stay in private VM state. Older Basaltwater versions reject
 the extension and need upgrading. See [VM game publishing](GAME_PUBLISHING.md)
 for uploads, translations and review.
 
+## Installed CLI and source context
+
+Use `basaltw agent manifest --installation-context --capability installation
+--json` to compare the invoked CLI with the managed source. Default roots are
+the existing account's `~/.local/share/basaltwater` on CachyOS and
+`/opt/basaltwater` on other managed hosts. A custom installation can pass
+`--managed-source /absolute/source`, which also requests this context.
+Neither flag changes a launcher, checkout, setup record or service.
+
+`installation_context` keeps invoked/managed provenance, source-activation
+and copied-snapshot receipts, and CachyOS's last successful setup receipt
+separate. `same_revision` compares full known commit IDs only: true means the
+recorded revisions agree, false means they differ, and null means evidence
+is unavailable. Dirty/unknown worktree state remains in the source records;
+revision agreement does not verify identical files or a completed setup.
+Code-only upgrades can legitimately differ from the last setup revision.
+An intentional developer launcher is retained even when its checkout differs.
+
+On CachyOS, the optional view also observes the managed T3 web unit's state and
+invocation through the existing owned user bus. It never starts a bus/service,
+reads logs or command arguments, or infers loaded code from installed files.
+The service source remains null without a revision receipt; desktop T3 is a
+separate application and is not qualified by this unit observation. Other hosts'
+running-service and last-successful-setup context remain unobserved here.
+Unknown/older receipt schemas, unsafe files and missing revisions stay unknown;
+saved setup arguments and private paths are omitted from source context.
+
 ## Select a project Node version
 
 Selection uses `--version` when given, otherwise the nearest `.node-version`

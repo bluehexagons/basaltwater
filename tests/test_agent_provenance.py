@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from lib.agent_probe import ProbeResult
-from lib.installation_info import inspect_installation_provenance, read_refresh_source_metadata, write_refresh_source_metadata
+from lib.installation_info import inspect_installation_context, inspect_installation_provenance, read_refresh_source_metadata, write_refresh_source_metadata
+from lib import installation_info
 from lib import agent_environment, agent_support
 
 
@@ -161,3 +163,116 @@ class ProvenanceTests(unittest.TestCase):
         self.assertIsNone(support["basaltwater"]["setup_snapshot"])
         self.assertNotIn("private-file", json.dumps(support))
         self.assertNotIn("private-branch", json.dumps(support))
+
+    def test_context_distinguishes_developer_managed_activation_and_setup_revisions(self) -> None:
+        managed_root = self.root / "managed"
+        managed_root.mkdir()
+        entry = managed_root / "basaltwater.py"
+        entry.write_text("preserve this source")
+        invoked = {"commit": "a" * 40, "dirty": True, "evidence_source": "running-git"}
+        managed = {"commit": "b" * 40, "dirty": False, "evidence_source": "running-git",
+                   "refresh_receipt": {"commit": "c" * 40}, "setup_snapshot": {"commit": "d" * 40}}
+        with patch.object(installation_info, "inspect_installation_provenance", side_effect=[invoked, managed]), \
+                patch("lib.cachyos.is_cachyos", return_value=True), \
+                patch("lib.cachyos_refresh.inspect_successful_setup_source", return_value={"commit": "e" * 40}), \
+                patch.object(installation_info, "_cachyos_service_context", return_value={"state": "active", "source": None}):
+            result = inspect_installation_context(str(self.root), managed_root=str(managed_root))
+        self.assertEqual(result["invoked"], invoked)
+        self.assertEqual(result["managed"], managed)
+        self.assertEqual(result["managed_source_selection"], "explicit")
+        self.assertEqual(result["same_revision"], {"invoked_managed": False, "managed_activation": False,
+            "managed_snapshot": False, "managed_last_setup": False, "managed_service": None})
+        self.assertEqual(entry.read_text(), "preserve this source")
+        self.assertNotIn(str(self.root), json.dumps(result))
+
+    def test_context_keeps_old_reader_missing_revisions_unknown_and_does_not_probe_other_hosts(self) -> None:
+        (self.root / "basaltwater.py").write_text("never executed")
+        for managed in ({"commit": None}, {"commit": "short"}, {"commit": "a" * 40, "dirty": None}):
+            with self.subTest(managed=managed), \
+                    patch.object(installation_info, "inspect_installation_provenance", side_effect=[{"commit": "a" * 40}, managed]), \
+                    patch("lib.cachyos.is_cachyos", return_value=False), \
+                    patch.object(installation_info, "_cachyos_service_context") as service, \
+                    patch("lib.cachyos_refresh.inspect_successful_setup_source") as receipt:
+                result = inspect_installation_context(str(self.root / "developer"), managed_root=str(self.root))
+            self.assertEqual(result["same_revision"]["invoked_managed"], True if len(managed["commit"] or "") == 40 else None)
+            self.assertIsNone(result["same_revision"]["managed_activation"])
+            self.assertIsNone(result["service_context"])
+            self.assertIsNone(result["last_successful_setup"])
+            service.assert_not_called()
+            receipt.assert_not_called()
+
+    def test_same_source_reuses_observation_and_missing_managed_source_is_not_a_match(self) -> None:
+        (self.root / "basaltwater.py").write_text("never executed")
+        with patch.object(installation_info, "inspect_installation_provenance", return_value={"commit": "a" * 40}) as inspect, \
+                patch("lib.cachyos.is_cachyos", return_value=False):
+            result = inspect_installation_context(str(self.root), managed_root=str(self.root))
+            self.assertTrue(result["same_revision"]["invoked_managed"])
+            inspect.assert_called_once_with(str(self.root))
+            (self.root / "basaltwater.py").unlink()
+            result = inspect_installation_context(str(self.root), managed_root=str(self.root))
+        self.assertIsNone(result["managed"])
+        self.assertIsNone(result["same_revision"]["invoked_managed"])
+
+    def test_successful_native_setup_receipt_omits_arguments_and_rejects_unsafe_or_old_metadata(self) -> None:
+        from lib.cachyos_refresh import inspect_successful_setup_source
+
+        path = self.root / "last-report.json"
+        valid = {"schema_version": 1, "source": {"commit": "a" * 40, "channel": "dev"},
+                 "completed_at": "2026-10-12T12:00:00+00:00", "arguments": ["private-credential"]}
+        with patch("lib.cachyos_refresh._record_path", return_value=self.root / "last-setup.json"):
+            self.assertIsNone(inspect_successful_setup_source())
+            for value in (valid, {**valid, "source": {"commit": None}}):
+                path.write_text(json.dumps(value))
+                path.chmod(0o600)
+                result = inspect_successful_setup_source()
+                self.assertEqual(result, {"commit": value["source"]["commit"], "completed_at": valid["completed_at"]})
+                self.assertNotIn("private-credential", json.dumps(result))
+            for value in ({**valid, "schema_version": 2}, {**valid, "schema_version": True},
+                          {**valid, "source": {"commit": "bad"}}, {**valid, "completed_at": "not-a-date"},
+                          {**valid, "completed_at": "2026-10-12T12:00:00"}):
+                path.write_text(json.dumps(value))
+                self.assertIsNone(inspect_successful_setup_source())
+            path.write_text(" " * (256 * 1024 + 1))
+            self.assertIsNone(inspect_successful_setup_source())
+            path.write_text(json.dumps(valid))
+            path.chmod(0o644)
+            self.assertIsNone(inspect_successful_setup_source())
+            path.unlink()
+            path.symlink_to(self.root / "pyproject.toml")
+            self.assertIsNone(inspect_successful_setup_source())
+
+    def test_service_identity_never_infers_loaded_revision_or_activates_a_missing_bus(self) -> None:
+        for loaded, active, invocation, expected in (
+            ("loaded", "active", "b" * 32, "active"), ("loaded", "inactive", "", "inactive"),
+            ("not-found", "inactive", "", "absent"), ("loaded", "private-secret", "", "unknown"),
+        ):
+            with self.subTest(loaded=loaded, active=active), \
+                    patch("lib.cachyos_doctor._owned_socket", return_value=True), \
+                    patch.object(installation_info.os, "getuid", return_value=1000), \
+                    patch.object(installation_info.os, "geteuid", return_value=1000), \
+                    patch("lib.cachyos_doctor._probe", return_value=("ok",
+                          f"LoadState={loaded}\nActiveState={active}\nInvocationID={invocation}")) as probe:
+                result = installation_info._cachyos_service_context()
+            self.assertEqual(result["state"], expected)
+            self.assertIsNone(result["source"])
+            self.assertNotIn("private-secret", json.dumps(result))
+            self.assertEqual(probe.call_args.args[0][:4],
+                             ["/usr/bin/systemctl", "--user", "show", "basaltwater-cachyos-t3.service"])
+        with patch("lib.cachyos_doctor._owned_socket", return_value=False), \
+                patch("lib.cachyos_doctor._probe") as probe:
+            self.assertEqual(installation_info._cachyos_service_context()["state"], "unknown")
+        probe.assert_not_called()
+
+    def test_version_metadata_reader_is_bounded_regular_and_nonblocking(self) -> None:
+        metadata = self.root / "pyproject.toml"
+        for kind in ("oversized", "symlink", "fifo"):
+            with self.subTest(kind=kind):
+                metadata.unlink()
+                if kind == "oversized":
+                    metadata.write_bytes(b"x" * 65537)
+                elif kind == "symlink":
+                    metadata.symlink_to(self.root / "missing")
+                else:
+                    os.mkfifo(metadata)
+                with patch.object(installation_info.importlib_metadata, "version", return_value="1.0.0"):
+                    self.assertEqual(installation_info._project_version(str(self.root)), "1.0.0")

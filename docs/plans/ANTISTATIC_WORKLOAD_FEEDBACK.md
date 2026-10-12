@@ -54,11 +54,15 @@ is separate from the restored development baseline.
 
 Owner: [CLI host audit](AGENT_CLI_MAINTENANCE_AUDIT_2026-08-09.md).
 
-Extend receipt-backed discovery with a compact comparison of invoked source,
-managed source, activation/setup receipts and observed service context. Preserve
-intentional developer launchers. Test mixed reader versions and interrupted
-activation; unavailable revisions stay unknown. Retain fixed, job-correlated
-failure categories without privileged output or stale markers.
+Delivered through optional `agent manifest --installation-context`, with an
+explicit `--managed-source` override for custom installations. It compares
+invoked/managed revisions and activation/snapshot receipts; CachyOS additionally
+provides its last successful setup source and observed managed-web unit identity.
+Developer launchers are preserved, and unavailable revisions remain unknown.
+Fixtures cover older/missing receipts, differing revisions, unsafe/bounded
+metadata and unavailable services. Existing job-correlated failure categories
+remain with their owner. Loaded service revision receipts and the interrupted
+activation/recovery matrix still need qualification on the separate system.
 
 ### 4. Provide optional private artifact storage
 

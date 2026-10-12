@@ -17,7 +17,7 @@ from lib.agent_browser import browser_context_inventory
 from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
-from lib.installation_info import inspect_installation_provenance
+from lib.installation_info import inspect_installation_context, inspect_installation_provenance
 from lib.game_development import NATIVE_COMMANDS
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
@@ -168,6 +168,10 @@ def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--project-runtime", action="store_true",
                         help="Probe the project's selected Node/npm without installs or project execution")
+    parser.add_argument("--installation-context", action="store_true",
+                        help="Compare invoked and managed source, receipts and observed service context")
+    parser.add_argument("--managed-source", metavar="PATH",
+                        help="Explicit managed source directory for installation context (implies --installation-context)")
     parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "development", "publishing", "web"),
                         help="Return only relevant discovery fields; repeat as needed")
 
@@ -316,7 +320,8 @@ def _native_development(repository: str) -> dict[str, object]:
     }
 
 
-def inspect_environment(repository: str, *, project_runtime: bool = False) -> dict[str, object]:
+def inspect_environment(repository: str, *, project_runtime: bool = False,
+                        installation_context: bool = False, managed_source: str | None = None) -> dict[str, object]:
     root = agent_workspace._repository_root(repository)
     home = agent_workspace._effective_home()
     project = load_project_environment(root)
@@ -366,7 +371,12 @@ def inspect_environment(repository: str, *, project_runtime: bool = False) -> di
     state = agent_workspace._worktree_record(root)
     mappings = project["deployments"]
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    installation = inspect_installation_provenance(source_root)
+    context = None
+    if installation_context or managed_source is not None:
+        context = inspect_installation_context(source_root, managed_root=managed_source)
+        installation = context["invoked"]
+    else:
+        installation = inspect_installation_provenance(source_root)
     runtime = None
     if project_runtime:
         from lib.node_toolchain import inspect_project_node_context
@@ -375,6 +385,7 @@ def inspect_environment(repository: str, *, project_runtime: bool = False) -> di
     return {
         "schema_version": 1,
         "basaltwater": installation,
+        "installation_context": context,
         "host_profile": "cachyos-workstation" if native_desktop else "debian-managed",
         "tools": tools,
         "skills": skills,
@@ -424,7 +435,7 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     scopes = set(capabilities)
     if "web" in scopes:
         scopes.update(("workspace", "browser", "development"))
-    fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime"}
+    fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime", "installation_context"}
     tools = set()
     if "workspace" in scopes:
         fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
@@ -453,7 +464,9 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
 
 def run_manifest_command(args: argparse.Namespace) -> int:
     try:
-        result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False))
+        result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False),
+                                     installation_context=getattr(args, "installation_context", False),
+                                     managed_source=getattr(args, "managed_source", None))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
@@ -471,6 +484,10 @@ def run_manifest_command(args: argparse.Namespace) -> int:
     workspace = result["workspace"]
     if installation := result.get("basaltwater"):
         print(f"Basaltwater: {installation['version']} ({installation['commit'] or 'revision unrecorded'})")
+    if context := result.get("installation_context"):
+        print("Source revisions: " + ", ".join(
+            name + "=" + ("unknown" if same is None else "same" if same else "different")
+            for name, same in context["same_revision"].items()))
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
     if runtime := result.get("project_runtime"):

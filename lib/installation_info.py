@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import pwd
 import re
+import stat
 import subprocess
 from importlib import metadata as importlib_metadata
 from typing import Any
@@ -27,9 +30,15 @@ def _project_version(project_root: str) -> str:
 
     pyproject_path = os.path.join(project_root, "pyproject.toml")
     try:
-        with open(pyproject_path, encoding="utf-8") as file_obj:
+        descriptor = os.open(pyproject_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as file_obj:
+            if not stat.S_ISREG(os.fstat(file_obj.fileno()).st_mode):
+                raise ValueError("Project version metadata must be regular")
+            body = file_obj.read(65537)
+            if len(body) > 65536:
+                raise ValueError("Project version metadata exceeds its size limit")
             in_project = False
-            for raw_line in file_obj:
+            for raw_line in body.decode("utf-8").splitlines():
                 line = raw_line.strip()
                 if line.startswith("[") and line.endswith("]"):
                     in_project = line == "[project]"
@@ -42,7 +51,7 @@ def _project_version(project_root: str) -> str:
                 )
                 if match and _VERSION_RE.fullmatch(match.group(1)):
                     return match.group(1)
-    except OSError:
+    except (OSError, ValueError, UnicodeError):
         pass
 
     try:
@@ -235,4 +244,85 @@ def inspect_installation_provenance(installation_root: str) -> JSONDict:
         "setup_snapshot": snapshot,
         "refresh_receipt": refresh,
         "running_source": source,
+    }
+
+
+def _same_revision(left: object, right: object) -> bool | None:
+    commits = [value.get("commit") if isinstance(value, dict) else None for value in (left, right)]
+    if any(not isinstance(commit, str) or not _COMMIT_RE.fullmatch(commit) for commit in commits):
+        return None
+    return commits[0] == commits[1]
+
+
+def _cachyos_service_context() -> JSONDict:
+    """Observe managed web unit identity without guessing its loaded source."""
+    from lib.cachyos_doctor import _owned_socket, _probe
+
+    uid = os.getuid()
+    result = {"unit": "basaltwater-cachyos-t3.service", "state": "unknown",
+              "invocation_id": None, "source": None}
+    if uid == 0 or os.geteuid() != uid or not _owned_socket(Path(f"/run/user/{uid}/bus"), uid):
+        return result
+    status, output = _probe([
+        "/usr/bin/systemctl", "--user", "show", result["unit"],
+        "--property=LoadState", "--property=ActiveState", "--property=InvocationID",
+    ], uid)
+    lines = output.splitlines()
+    values = dict(line.split("=", 1) for line in lines if "=" in line)
+    if status != "ok" or len(lines) != 3 or set(values) != {"LoadState", "ActiveState", "InvocationID"}:
+        return result
+    if values["LoadState"] == "not-found":
+        result["state"] = "absent"
+    elif values["LoadState"] == "loaded" and values["ActiveState"] in {
+        "active", "inactive", "failed", "activating", "deactivating", "reloading",
+    }:
+        result["state"] = values["ActiveState"]
+        if re.fullmatch(r"[0-9a-f]{32}", values["InvocationID"]):
+            result["invocation_id"] = values["InvocationID"]
+    return result
+
+
+def inspect_installation_context(installation_root: str, *, managed_root: str | None = None) -> JSONDict:
+    """Compare known source receipts; never change a launcher or infer service code."""
+    from lib.cachyos import is_cachyos
+
+    invoked = inspect_installation_provenance(installation_root)
+    native = is_cachyos()
+    if managed_root is None:
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        target = home / ".local/share/basaltwater" if native else Path("/opt/basaltwater")
+    else:
+        validate_filesystem_path(managed_root)
+        target = Path(managed_root).expanduser()
+        validate_filesystem_path(str(target), must_exist=True)
+    managed = None
+    try:
+        if stat.S_ISREG((target / "basaltwater.py").lstat().st_mode):
+            managed = (invoked if target.resolve() == Path(installation_root).resolve()
+                       else inspect_installation_provenance(str(target)))
+    except OSError:
+        pass
+    activation = managed.get("refresh_receipt") if managed else None
+    snapshot = managed.get("setup_snapshot") if managed else None
+    last_setup = service = None
+    if native:
+        from lib.cachyos_refresh import inspect_successful_setup_source
+
+        last_setup = inspect_successful_setup_source()
+        service = _cachyos_service_context()
+    return {
+        "invoked": invoked,
+        "managed": managed,
+        "managed_source_selection": "explicit" if managed_root is not None else "profile-default",
+        "activation_receipt": activation,
+        "setup_snapshot": snapshot,
+        "last_successful_setup": last_setup,
+        "service_context": service,
+        "same_revision": {
+            "invoked_managed": _same_revision(invoked, managed),
+            "managed_activation": _same_revision(managed, activation),
+            "managed_snapshot": _same_revision(managed, snapshot),
+            "managed_last_setup": _same_revision(managed, last_setup),
+            "managed_service": _same_revision(managed, service.get("source") if service else None),
+        },
     }

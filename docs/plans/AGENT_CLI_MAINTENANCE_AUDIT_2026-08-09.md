@@ -15,6 +15,14 @@ existing owners. Fixture coverage does not qualify live setup or service
 recovery; the [disposable matrix](PRIVILEGE_EXECUTION_QUALIFICATION.md) remains
 pending, and historical failed requests are not replayed.
 
+The optional installation-context manifest now compares invoked and managed
+source with activation/snapshot receipts, retaining missing revisions as unknown.
+CachyOS adds successful setup source and managed-web service identity without
+inferring loaded code or replacing developer launchers. Use the
+[source-context contract](../PROJECT_TOOLING.md#installed-cli-and-source-context)
+for custom managed roots and comparison limits. Local fixtures/workstation checks
+do not qualify Debian service revision or interrupted activation/recovery.
+
 ## Scope and recommended baseline
 
 This review traced the terminal-only agent path from argument normalization and

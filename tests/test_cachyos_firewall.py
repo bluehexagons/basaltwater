@@ -86,8 +86,9 @@ class FirewallTests(unittest.TestCase):
                 firewall.preflight_firewall(self.config("--no-lan-access"))
 
     def test_preview_never_runs_commands_or_creates_state(self):
+        config = self.config("--lan-access", "--dry-run")
         with patch.object(firewall, "run") as command, patch.object(firewall.os, "open") as opened:
-            firewall.configure_firewall(self.config("--lan-access", "--dry-run"))
+            firewall.configure_firewall(config)
         command.assert_not_called()
         opened.assert_not_called()
 

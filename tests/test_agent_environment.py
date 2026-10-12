@@ -458,6 +458,31 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIn("basaltwater", result)
         probe.assert_not_called()
 
+    def test_explicit_managed_source_implies_context_without_replacing_invoked_identity(self) -> None:
+        parser = argparse.ArgumentParser()
+        agent_cli.add_agent_subparser(parser.add_subparsers(dest="command"))
+        args = parser.parse_args(["agent", "manifest", self.directory, "--managed-source", self.directory,
+                                  "--capability", "installation", "--json"])
+        context = {"invoked": {"version": "2.0.0", "commit": "a" * 40},
+                   "managed": {"version": "2.0.0", "commit": "b" * 40},
+                   "same_revision": {"invoked_managed": False, "managed_service": None}}
+        with (
+            patch.object(agent_workspace, "_repository_root", return_value=self.directory),
+            patch.object(agent_workspace, "_effective_home", return_value=self.directory),
+            patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "b" * 40, "dirty": False}),
+            patch.object(agent_environment.shutil, "which", return_value=None),
+            patch.object(agent_environment, "inspect_installation_context", return_value=context) as inspect,
+            redirect_stdout(output := StringIO()),
+        ):
+            passive = agent_environment.inspect_environment(self.directory)
+            self.assertIsNone(passive["installation_context"])
+            inspect.assert_not_called()
+            self.assertEqual(agent_cli.run_agent_command(args), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["basaltwater"], context["invoked"])
+        self.assertEqual(result["installation_context"], context)
+        self.assertEqual(inspect.call_args.kwargs["managed_root"], self.directory)
+
 
 if __name__ == "__main__":
     unittest.main()
