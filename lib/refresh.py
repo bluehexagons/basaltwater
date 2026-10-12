@@ -27,7 +27,7 @@ from lib.validation import validate_channel, validate_filesystem_path
 
 _SOURCE_URL = "https://github.com/bluehexagons/basaltwater.git"
 _SNAPSHOT_SOURCE_NAMES = {
-    "basaltwater.py", "remote_setup.py", "lib", "plugins", "game", "desktop",
+    "basaltwater.py", "remote_setup.py", "pyproject.toml", "lib", "plugins", "game", "desktop",
     "web", "smb", "security", "sync", "common", "deploy", INSTALLATION_METADATA_FILENAME,
     REFRESH_METADATA_FILENAME,
 }

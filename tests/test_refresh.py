@@ -84,12 +84,15 @@ class DebianRefreshTests(unittest.TestCase):
             (self.root / "lib").mkdir(mode=0o700)
             (self.root / "lib/helper.py").write_text("source")
             (self.root / "lib/helper.py").chmod(0o600)
+            (self.root / "pyproject.toml").write_text('[project]\nversion = "2.0.0rc1"\n')
+            (self.root / "pyproject.toml").chmod(0o600)
             (self.root / ".git").mkdir(mode=0o700)
             return {"commit": "new", "channel": "dev"}
         self.upgrade.side_effect = upgrade
         def execute(command, **kwargs):
             self.assertEqual(stat.S_IMODE((self.root / "lib").stat().st_mode), 0o755)
             self.assertEqual(stat.S_IMODE((self.root / "lib/helper.py").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((self.root / "pyproject.toml").stat().st_mode), 0o644)
             self.assertEqual(stat.S_IMODE((self.root / ".git").stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o600)
             return subprocess.CompletedProcess(command, 0)

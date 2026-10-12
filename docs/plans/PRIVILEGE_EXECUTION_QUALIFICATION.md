@@ -69,8 +69,11 @@ unsafe/malformed records, and preserves truthful unknown/recorded distinctions.
 Maintenance status now persists fixed stages and one-based command indices
 before effects and reports validated failure categories without exception text.
 
-Remaining: install the tested fixes through guarded state-link compatibility
-recovery, verify the saved-setup preview, and qualify the complete setup replay.
+Guarded compatibility recovery is qualified on the VM: the sole untracked item
+was the root-owned managed state symlink, the exact tested source was installed,
+permissions and the readable receipt are verified, and saved setup passes its
+dry run. The TLS-verified approval challenge remains healthy. Remaining:
+qualify the complete setup replay with the repaired public origin and permissions.
 Keep the non-secret policy readable by the approval identity when changing its
 window; the administrator reference documents the required mode and recovery.
 
