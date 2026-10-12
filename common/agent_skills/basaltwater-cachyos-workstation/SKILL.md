@@ -30,8 +30,11 @@ desktop user, adding flags such as `--python`, `--node`, `--godot`, `--av-tools`
 `--gl-tools`, `--gaming`, `--sunshine`, `--moonlight`, `--obs`, `--blender`,
 `--kdenlive`, `--krita`, `--inkscape`, `--scribus`, `--audacity`, `--ardour`,
 `--lmms`, `--freecad`, `--kicad`, `--shotcut`, `--gimp`, `--remmina`, or
-`--sysadmin-tools`. Material/publishing options are `--material-maker`, `--etcher`,
-`--butler`, and `--steamcmd`. Preview with `--dry-run`. Keep the desired flags on reruns;
+`--sysadmin-tools`. Material options include `--material-maker` and `--etcher`.
+Final builds and publishing belong on Debian; do not add storefront tooling or
+request publishing credentials for this development/testing role. Preserve any
+existing optional software selections rather than uninstalling them implicitly.
+Preview with `--dry-run`. Keep the desired flags on reruns;
 this profile does not populate the generic saved-host `patch`/`deploy` workflow.
 For the same selection, use `basaltw refresh --dry-run`, then `basaltw refresh`
 to upgrade Basaltwater on its selected channel and repeat the last successful
@@ -66,7 +69,13 @@ never repair an installation failure with a partial `pacman -Sy` upgrade.
 Use the original manager for updates to externally managed tools.
 
 For native game and Animator development, `--game-dev` supplies CMake/native
-libraries, debugging/caching tools, Xvfb/xauth and Electron host libraries.
+libraries, Clang/format/tidy, compiler-rt/LLVM sanitizer runtime and symbolizer,
+glslang, GDB/strace/Valgrind/ccache, Xvfb/xauth and Electron host libraries.
+Add `--go` for Go development and `--godot` for its native editor/runtime.
+Projects own compiler/formatter/engine pins and actual sanitizer/shader tests;
+installed commands are prerequisites only. Use the same revision, fixtures and
+recipes for Debian/CachyOS comparisons, recording hardware versus software
+renderer evidence separately.
 `--node-versions` prepares user-local NVM without choosing a runtime or changing
 shell defaults. Use `basaltw node install` when a project needs its committed
 pin; it prepares missing user-local NVM on demand, so an earlier

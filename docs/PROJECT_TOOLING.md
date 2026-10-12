@@ -14,12 +14,16 @@ basaltw node exec -- npm test
 
 ## Related checkouts and host roles
 
-CachyOS workstations and Debian hosts both support game development. CachyOS
-provides the interactive KDE, game, Animator, and asset-authoring environment;
-Debian also provides validation, builds, CI, publishing, and server workloads.
+CachyOS workstations and Debian hosts both support Antistatic and Godot
+development/testing. CachyOS provides the interactive KDE, hardware playtest,
+Animator, and asset-authoring environment; Debian also provides reproducible
+validation, final builds, release qualification, CI, publishing, and servers.
 Use the profile and diagnostics for the actual OS. A successful host doctor
 establishes prerequisites; each repository still owns its validation gates.
-Release binaries retain the project's SDK and ABI requirements on either OS.
+Use CachyOS development binaries for local testing; final release artifacts and
+publishing credentials belong on the Debian build/publishing host. See the
+[development comparison](CACHYOS_GAME_DEVELOPMENT.md#comparable-development-checks)
+for shared project gates and distinct hardware/software evidence.
 
 Both profiles clone primary repositories under `~/repos` by default. Set
 `--agent-workspace /absolute/path` to choose another root. Keep related

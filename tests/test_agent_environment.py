@@ -99,7 +99,12 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertEqual(result["host_profile"], "cachyos-workstation")
         self.assertEqual(result["health_command"], "basaltw local cachyos-doctor --json")
         self.assertIn("native CachyOS workstation", result["publishing"]["instructions"][0])
-        self.assertIn("interactive terminal login", result["publishing"]["instructions"][0])
+        self.assertEqual(result["publishing"]["readiness"], "outside-host-role")
+        self.assertIsNone(result["publishing"]["management_command"])
+        self.assertEqual(result["development"]["intended_use"], "development-and-testing")
+        self.assertEqual(result["development"]["final_build_host"], "debian")
+        for command in ("butler login", "steamcmd +login", "publish upload", "publish auth"):
+            self.assertNotIn(command, " ".join(result["publishing"]["instructions"]))
         self.assertNotIn("on this VM", " ".join(result["publishing"]["instructions"]))
         self.assertEqual(result["browser"]["preferred_provider"], "active-session")
         execute.assert_not_called()
@@ -344,6 +349,8 @@ class TestAgentEnvironment(unittest.TestCase):
         self.assertIn("workspace", scoped)
         self.assertIn("project-tool", scoped["tools"])
         self.assertIn("recipe-tool", scoped["tools"])
+        for command in ("clang-format", "clang-tidy", "glslangValidator", "llvm-symbolizer", "strace", "valgrind"):
+            self.assertEqual(scoped["tools"][command], "/bin/" + command)
         self.assertNotIn("blender", scoped["tools"])
         self.assertNotIn("publishing", scoped)
         self.assertNotIn("desktop_applications", scoped)

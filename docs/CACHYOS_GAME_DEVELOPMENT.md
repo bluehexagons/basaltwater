@@ -1,11 +1,11 @@
 # Antistatic development on CachyOS
 
 Use `agent_cachyos` on an existing, fully updated CachyOS KDE workstation.
-The primary workstation role is remote Godot development and playtesting; see
-the [remote development guide](CACHYOS_DEVELOPMENT.md). This guide covers the
-secondary Antistatic/native/Electron workflow: editing and running the core
-game, its direct TypeScript dependencies, Blender source assets, and Antistatic
-Animator. Production builds, publishing, and servers use separate systems.
+The workstation supports Godot and Antistatic development and playtesting on
+hardware, locally or through the [remote development workflow](CACHYOS_DEVELOPMENT.md).
+This guide covers editing/testing the native game, its TypeScript/Go components,
+Blender source assets, and Antistatic Animator. Final builds, release
+qualification, publishing, and servers belong on the designated Debian systems.
 Rolling desktop tools need not reproduce a release SDK or Debian's reviewed
 compiler, formatter, graphics, or packaged-runtime baseline.
 
@@ -16,7 +16,7 @@ normal desktop account, without `sudo`:
 
 ```fish
 basaltw setup agent_cachyos localhost --t3code-desktop \
-  --node --python --git-lfs --game-dev --blender --dry-run
+  --node --python --go --godot --git-lfs --game-dev --blender --dry-run
 ```
 
 Remove `--dry-run` to apply. `--node` and `--python` select the general language
@@ -29,9 +29,10 @@ See [local setup](CACHYOS.md) for T3 modes and package prompts, and
 
 | Option | Capability |
 | --- | --- |
-| `--game-dev` | CMake, Ninja, Python, pkg-config, GDB, ccache; SDL3/SDL3_image, FreeType, Vorbis, libusb, GLEW, OpenAL; Xvfb/xauth/OpenGL diagnostics; GTK3/NSS/audio/X11 host libraries used by project-installed Electron |
+| `--game-dev` | CMake/Ninja, Clang/format/tidy, compiler-rt/LLVM sanitizer runtime and symbolizer, glslang, GDB/strace/Valgrind/ccache; SDL3/SDL3_image, FreeType, Vorbis, libusb, GLEW, OpenAL; Xvfb/xauth/OpenGL diagnostics; Electron host libraries |
 | `--node` | Node/npm/pnpm when missing; existing PATH runtimes retain their original manager |
 | `--node-versions` | User-local NVM for explicit per-project Node installs; no runtime download, shell initialization, or default-version change during setup |
+| `--go`, `--godot` | Explicit Go tools and native Godot editor/runtime; project Godot/.NET requirements remain separate |
 | `--git-lfs` | Git LFS and missing user filter defaults for model source repositories |
 | `--blender` | Native Blender, Wayland decorations, and existing task-scoped KDE automation prerequisites |
 | `--av-tools`, `--gl-tools` | Optional asset processing and additional Vulkan/API-trace diagnostics |
@@ -54,9 +55,38 @@ The bundle installs host libraries for project-installed Electron.
 Animator's lockfile owns its Electron version and supported desktop
 baseline; launch it through its npm scripts. GTK3/NSS are also runtime
 dependencies of [Arch's Electron package](https://archlinux.org/packages/extra/x86_64/electron44/).
-No sandbox override is configured. Compiler/formatter/shader-validation pins,
-managed Playwright, Windows cross-compilation, containers, and storefront
-publishing are outside this development setup.
+No sandbox override is configured. Distro compiler/formatter/shader tools are
+development prerequisites, not replacements for project pins. Arch's
+[Clang tools](https://archlinux.org/packages/extra/x86_64/clang/files/),
+[compiler-rt](https://archlinux.org/packages/extra/x86_64/compiler-rt/files/),
+[LLVM symbolizer](https://archlinux.org/packages/extra/x86_64/llvm/files/) and
+[glslang](https://archlinux.org/packages/extra/x86_64/glslang/files/) provide the
+commands/runtime. Projects own actual sanitizer, formatting and shader checks;
+package presence does not verify compiler/runtime compatibility. Managed
+Playwright, Windows cross-compilation, release containers and storefront
+publishing are outside this workstation role.
+
+## Comparable development checks
+
+Use the same project revision, runtime pins, fixtures and declared recipes on
+both hosts. Comparable outcomes do not require matching rolling package versions.
+
+| Work | Debian coding/build host | CachyOS hardware workstation |
+| --- | --- | --- |
+| TypeScript/Go and native correctness | Project Node/Go pins, CMake builds, tests and sanitizer recipes | The same project checks with selected runtimes and native tooling |
+| Godot development | Matching project engine, asset import, bounded headless tests and software captures | Matching project engine, import/tests plus native editor and hardware playtests |
+| Shader/capture review | glslang and controlled Xvfb/software references | glslang and software references plus explicitly tested Wayland/Xwayland/offscreen hardware contexts |
+| Final builds/publication | Reviewed release SDK, ABI/export/package gates and publishing credentials | Handoff tested source/evidence; development builds remain local test binaries |
+
+Discover native tools with `basaltw agent manifest PATH --capability development
+--json`; use `basaltw local cachyos-doctor --json` for saved CachyOS selections.
+For Godot, `basaltw desktop --native develop doctor --project PATH --json` reads
+project/engine prerequisites; explicitly import assets before editor/run tests.
+See [Godot project tasks](CACHYOS_DEVELOPMENT.md). Check the project's engine
+version and .NET requirements rather than upgrading its project to match a
+rolling package. Record actual compiler, shader tool, SDL source, engine,
+renderer/backend, fixtures and recipe outcomes with private evidence.
+Host diagnosis never runs project builds or grants capture/input consent.
 
 ## Select each project's Node version
 

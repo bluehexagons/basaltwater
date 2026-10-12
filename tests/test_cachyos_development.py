@@ -69,14 +69,17 @@ class CachyOSDevelopmentTests(unittest.TestCase):
             packages = steps.cachyos_packages(self.config("--game-dev"))
         for package in ("cmake", "python", "pkgconf", "sdl3", "sdl3_image", "freetype2",
                         "libvorbis", "libusb", "glew", "openal", "gdb", "ccache",
-                        "xorg-server-xvfb", "xorg-xauth", "gtk3", "nss"):
+                        "xorg-server-xvfb", "xorg-xauth", "gtk3", "nss",
+                        "clang", "compiler-rt", "llvm", "glslang", "strace", "valgrind"):
             self.assertIn(package, packages)
         self.assertTrue(set(steps.CACHYOS_AUTOMATION_PACKAGES) <= set(packages))
-        for package in ("electron", "podman", "steamcmd", "cachyos-gaming-meta", "clang"):
+        for package in ("electron", "podman", "steamcmd", "butler", "cachyos-gaming-meta"):
             self.assertNotIn(package, packages)
         with patch.object(steps.shutil, "which", return_value="/usr/bin/available"):
             default = steps.cachyos_packages(self.config())
         self.assertNotIn("sdl3", default)
+        for package in ("clang", "compiler-rt", "llvm", "glslang", "strace", "valgrind"):
+            self.assertNotIn(package, default)
         self.assertFalse(steps.desktop_automation_requested(self.config("--node-versions")))
 
     def test_node_preparation_follows_packages_and_dry_run_never_executes(self):
@@ -208,6 +211,12 @@ class CachyOSDevelopmentTests(unittest.TestCase):
         with patch.object(development.shutil, "which", return_value=None), \
                 self.assertRaisesRegex(RuntimeError, "command missing"):
             development.report_game_dev_readiness(self.config("--game-dev"))
+        for missing in ("clang", "clang-format", "clang-tidy", "llvm-symbolizer", "glslangValidator"):
+            with self.subTest(command=missing), \
+                    patch.object(development.shutil, "which", side_effect=lambda name, **kw: None if name == missing else "/usr/bin/available"), \
+                    patch.object(steps, "_user_run") as run, self.assertRaisesRegex(RuntimeError, missing):
+                development.report_game_dev_readiness(self.config("--game-dev"))
+            run.assert_not_called()
         with patch.object(development.shutil, "which", return_value="/usr/bin/available"), \
                 patch.object(steps, "_user_run", return_value=subprocess.CompletedProcess([], 1)), \
                 self.assertRaisesRegex(RuntimeError, "module missing: sdl3"):

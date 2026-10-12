@@ -30,7 +30,7 @@ DEBIAN_GAME_PACKAGES = (
     "libgtk-3-dev", "libnss3", "libnotify4", "libxss1", "libxtst6", "libgbm-dev",
 )
 NATIVE_COMMANDS = (
-    "cc", "cmake", "ninja", "python3", "pkg-config", "gdb", "ccache",
+    "cc", "cmake", "ninja", "python3", "pkg-config", "gdb", "ccache", "strace", "valgrind",
     "Xvfb", "xvfb-run", "xauth", "glxinfo", "clang-format", "clang-tidy", "glslangValidator",
 )
 NATIVE_MODULES = (

@@ -69,12 +69,18 @@ desktop instructions; it does not establish that a desktop session is attached.
 `host_profile` distinguishes the native CachyOS workstation from the Debian
 management profile; it does not infer that a Debian host is a VM.
 `publishing` inventories Butler and SteamCMD on the active PATH and links the
-[publishing guide](GAME_PUBLISHING.md). Its `readiness` remains `unverified`;
+[publishing guide](GAME_PUBLISHING.md). Debian `readiness` remains `unverified`;
 discovery never reads native session files, opens the publishing database, runs
 provider tools or contacts a storefront. Guidance directs human authentication
 to a configured Debian HTTPS panel or the owner's interactive terminal. On
-CachyOS it describes native provider login and the unqualified management
-workflow, without assuming VM services. Authorized unattended uploads use
+CachyOS `publishing.readiness` is `outside-host-role` and `management_command`
+is null: this workstation is for Antistatic/Godot development and testing, with
+final builds and publication handed to Debian. Installed tools remain inventory;
+discovery does not direct provider sign-in or uploads here. CachyOS development
+records include `intended_use: development-and-testing` and
+`final_build_host: debian`. Development-scoped tool inventory includes native
+compiler/debugger, sanitizer-symbolizer, shader and capture prerequisites.
+Authorized unattended uploads on the publishing host use
 `basaltw publish`. Agents can prepare drafts and translations, while exact public
 text approval and confirmation belong to a human. Steam default/public releases
 stay manual on Steamworks. Reviewed post exports remain human editor handoffs.

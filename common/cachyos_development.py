@@ -20,6 +20,10 @@ GAME_DEV_MODULES = (
 GAME_DEV_PACKAGES = (
     "cmake", "ninja", "python", "pkgconf", "sdl3", "sdl3_image", "freetype2",
     "libvorbis", "libusb", "glew", "openal", "gdb", "ccache",
+    # Development checks use distro tools; project SDK/formatter pins still
+    # belong to the project. compiler-rt and llvm supply sanitizer runtimes
+    # and symbolization rather than assuming the clang driver includes them.
+    "clang", "compiler-rt", "llvm", "glslang", "strace", "valgrind",
     "xorg-server-xvfb", "xorg-xauth", "mesa-utils",
     # npm's project-pinned Electron supplies the executable, not these host
     # libraries. Do not replace it with a distro Electron or disable its sandbox.
@@ -28,7 +32,8 @@ GAME_DEV_PACKAGES = (
 )
 GAME_DEV_COMMANDS = (
     "cc", "cmake", "ninja", "python", "pkg-config", "gdb", "ccache", "Xvfb",
-    "xvfb-run", "xauth", "glxinfo",
+    "xvfb-run", "xauth", "glxinfo", "clang", "clang-format", "clang-tidy",
+    "llvm-symbolizer", "glslangValidator", "strace", "valgrind",
 )
 
 

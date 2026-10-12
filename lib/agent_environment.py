@@ -17,6 +17,7 @@ from lib.agent_skill_catalog import inspect_skill_catalogs
 from lib.atomic_io import read_json_file
 from lib.cachyos import is_cachyos
 from lib.installation_info import inspect_installation_provenance
+from lib.game_development import NATIVE_COMMANDS
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_host
 
@@ -123,6 +124,7 @@ TOOLS = (
     "git", "gh", "codex", "claude", "opencode", "node", "npm", "yarn",
     "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make",
     "cmake", "godot", "godot-mono", "dotnet", "glxinfo", "apitrace", "ffmpeg", "ffprobe",
+    *NATIVE_COMMANDS, "clang", "llvm-symbolizer",
     "magick", "convert", "identify", "exiftool",
     "pdfinfo", "pdftoppm", "pdftotext",
     "sox", "soxi", "arecord", "aplay", "amidi", "aconnect", "pactl", "paplay", "parecord",
@@ -142,12 +144,14 @@ PUBLISHING_INSTRUCTIONS = [
 
 def _publishing_instructions(native_desktop: bool) -> list[str]:
     if native_desktop:
-        authentication = (
-            "This is a native CachyOS workstation. Publishing management is qualified on Debian; "
-            "no VM web panel is assumed here. When authentication is needed, the owner uses "
-            "the installed provider's interactive terminal login (butler login or steamcmd +login BUILD_ACCOUNT). "
-            "Do not put passwords or tokens in command arguments."
-        )
+        return [
+            "This is a native CachyOS workstation for Antistatic/Godot development and testing. "
+            "Use the Debian build/publishing host for final builds, release qualification and uploads.",
+            "Native editor runs, project tests, sanitizer fixtures and private local previews belong here. "
+            "A development binary or hardware playtest does not qualify a release SDK or publish an artifact.",
+            "Publishing tools on PATH are inventory only. Storefront credentials and sign-in belong "
+            "on the designated Debian publishing host, outside this workstation workflow.",
+        ]
     else:
         authentication = (
             "On a Debian publishing host, use Publishing in a configured HTTPS web panel for human sign-in, "
@@ -341,13 +345,15 @@ def inspect_environment(repository: str) -> dict[str, object]:
         },
         "publishing": {
             "tools": {name: tools[name] for name in ("butler", "steamcmd")},
-            "readiness": "unverified", "management_command": "basaltw publish status --json",
+            "readiness": "outside-host-role" if native_desktop else "unverified",
+            "management_command": None if native_desktop else "basaltw publish status --json",
             "guide": PUBLISHING_GUIDE, "instructions": _publishing_instructions(native_desktop),
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
         "development": {
             "role": "remote-godot-development",
+            "intended_use": "development-and-testing", "final_build_host": "debian",
             "secondary_workflows": ["electron", "native-applications", "native-games"],
             "readiness": "unverified",
             "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md",
@@ -398,6 +404,7 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     if "development" in scopes:
         fields.update(("development", "required_tools", "recipes", "project_source"))
         tools.update(("node", "npm", "yarn", "pnpm", "corepack", "python3", "uv", "go", "gcc", "g++", "make", "cmake", "godot", "godot-mono", "dotnet"))
+        tools.update((*NATIVE_COMMANDS, "clang", "llvm-symbolizer"))
         tools.update(result["required_tools"])
         tools.update(tool for recipe in result["recipes"].values() for tool in recipe["requires"])
     if "publishing" in scopes:
@@ -458,7 +465,8 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print(f"  {development['instructions']}")
     publishing = result["publishing"]
     installed = [name for name, path in publishing["tools"].items() if path]
-    print("Publishing tools: " + (", ".join(installed) if installed else "none on PATH") + " (readiness and authentication unverified)")
+    qualification = "outside this development/testing role" if publishing["readiness"] == "outside-host-role" else "readiness and authentication unverified"
+    print("Publishing tools: " + (", ".join(installed) if installed else "none on PATH") + f" ({qualification})")
     if installed:
         print(f"Publishing guide: {publishing['guide']}")
         for instruction in publishing["instructions"]:
