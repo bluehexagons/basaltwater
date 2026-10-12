@@ -560,6 +560,8 @@ class TestDevelopmentWorker(unittest.TestCase):
 class TestDevelopmentManifest(unittest.TestCase):
     def test_native_task_commands_are_discovered_without_project_execution(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(agent_workspace, "_repository_root", return_value=temporary), patch.object(agent_workspace, "_effective_home", return_value=temporary), patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}), patch.object(agent_environment, "is_cachyos", return_value=True), patch.object(agent_environment.shutil, "which", return_value=None), patch.object(agent_environment.subprocess, "run") as execute:
+            Path(temporary, "project.godot").write_text('[application]\nconfig/features=PackedStringArray("4.7")\n')
+            Path(temporary, "package.json").write_text('{"scripts":{"test":"must never execute"}}')
             result = agent_environment.inspect_environment(temporary)
         commands = result["development"]
         self.assertEqual(commands["role"], "remote-godot-development")
@@ -569,7 +571,53 @@ class TestDevelopmentManifest(unittest.TestCase):
         self.assertEqual(commands["node_script_prefix_argv"][4], "node")
         self.assertEqual(commands["recipe_check_prefix_argv"][4], "check")
         self.assertIn("electron", commands["secondary_workflows"])
+        self.assertEqual(commands["project"]["kind"], "godot")
+        self.assertEqual(commands["project"]["minimum_engine_version"], "4.7")
+        self.assertEqual(commands["project"]["node"]["scripts"], ["test"])
         execute.assert_not_called()
+
+    def test_non_godot_projects_do_not_advertise_engine_tasks(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(agent_workspace, "_repository_root", return_value=temporary), patch.object(agent_workspace, "_effective_home", return_value=temporary), patch.object(agent_workspace, "_worktree_record", return_value={"branch": "main", "head": "a" * 40, "dirty": False}), patch.object(agent_environment, "is_cachyos", return_value=True), patch.object(agent_environment.shutil, "which", return_value=None), patch.object(agent_environment.subprocess, "run") as execute, patch.object(development, "session_environment") as session:
+            for node in (False, True):
+                with self.subTest(node=node):
+                    if node:
+                        Path(temporary, "package.json").write_text(json.dumps({
+                            "scripts": {"doctor": "must never execute", "build": "secret script body"},
+                            "engines": {"node": ">=26.4.0"},
+                        }))
+                    commands = agent_environment.inspect_environment(temporary)["development"]
+                    self.assertEqual(commands["role"], "node-development" if node else "native-development")
+                    self.assertEqual(commands["project"]["kind"], "node" if node else "native")
+                    for task in ("godot_editor_argv", "godot_run_argv", "godot_import_argv"):
+                        self.assertIsNone(commands[task])
+                    self.assertNotIn("Import Godot", commands["instructions"])
+                    self.assertIsNotNone(commands["application_prefix_argv"])
+                    if node:
+                        self.assertEqual(commands["node_script_prefix_argv"][4], "node")
+                        self.assertEqual(commands["project"]["node"]["scripts"], ["build", "doctor"])
+                        self.assertEqual(commands["project"]["node"]["node_requirement"], ">=26.4.0")
+                        self.assertNotIn("secret script body", json.dumps(commands))
+                    else:
+                        self.assertIsNone(commands["node_script_prefix_argv"])
+            execute.assert_not_called()
+            session.assert_not_called()
+
+    def test_discovery_rejects_unsafe_project_metadata_without_execution(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(agent_environment.subprocess, "run") as execute:
+            for name in ("package.json", "project.godot"):
+                metadata = Path(temporary, name)
+                for kind in ("symlink", "fifo", "oversized"):
+                    with self.subTest(name=name, kind=kind):
+                        if kind == "symlink":
+                            metadata.symlink_to(Path(temporary, "missing"))
+                        elif kind == "fifo":
+                            os.mkfifo(metadata)
+                        else:
+                            metadata.write_bytes(b" " * (1024 * 1024 + 1))
+                        with self.assertRaises((OSError, ValueError)):
+                            agent_environment._native_development(temporary)
+                        metadata.unlink()
+            execute.assert_not_called()
 
 
 if __name__ == "__main__":

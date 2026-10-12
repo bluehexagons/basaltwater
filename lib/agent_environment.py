@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import shlex
 import shutil
@@ -275,6 +276,44 @@ def load_project_environment(repository: str) -> dict[str, object]:
     }
 
 
+def _native_development(repository: str) -> dict[str, object]:
+    """Advertise project-specific tasks using the existing bounded metadata reader."""
+    from desktop.development import project_info
+    from desktop.development_workflows import package_info
+
+    root = Path(repository)
+    project = project_info(root)
+    godot = project["kind"] == "godot"
+    package = root / "package.json"
+    if godot and (package.exists() or package.is_symlink()):
+        project["node"] = package_info(root)
+    prefix = ["basaltw", "desktop", "--native", "develop"]
+    target = ["--project", repository, "--json"]
+    return {
+        "role": {"godot": "remote-godot-development", "node": "node-development",
+                 "native": "native-development"}[project["kind"]],
+        "project": project,
+        "intended_use": "development-and-testing", "final_build_host": "debian",
+        "secondary_workflows": ["electron", "native-applications", "native-games"],
+        "readiness": "unverified",
+        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md",
+        "doctor_argv": [*prefix, "doctor", *target],
+        "godot_editor_argv": [*prefix, "editor", *target] if godot else None,
+        "godot_run_argv": [*prefix, "run", *target] if godot else None,
+        "godot_import_argv": [*prefix, "import", *target] if godot else None,
+        "node_script_prefix_argv": [*prefix, "node", *target] if "node" in project else None,
+        "recipe_check_prefix_argv": [*prefix, "check", *target],
+        "application_prefix_argv": [*prefix, "exec", "--project", repository, "--"],
+        "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. "
+        + ("Import Godot assets before testing; bounded headless runs do not verify GPU/input. " if godot else "")
+        + "Use node for a declared package script with the project's selected installed Node runtime, "
+        "and check for a declared project recipe with private revision/settings evidence. "
+        "Tasks retain bounded logs and status after client disconnect. Capture/input still require "
+        "separate approved portal control. Honor human pause; record actual playtest outcomes "
+        "separately from prerequisites and process exit status.",
+    }
+
+
 def inspect_environment(repository: str) -> dict[str, object]:
     root = agent_workspace._repository_root(repository)
     home = agent_workspace._effective_home()
@@ -351,21 +390,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
         },
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
-        "development": {
-            "role": "remote-godot-development",
-            "intended_use": "development-and-testing", "final_build_host": "debian",
-            "secondary_workflows": ["electron", "native-applications", "native-games"],
-            "readiness": "unverified",
-            "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md",
-            "doctor_argv": ["basaltw", "desktop", "--native", "develop", "doctor", "--project", root, "--json"],
-            "godot_editor_argv": ["basaltw", "desktop", "--native", "develop", "editor", "--project", root, "--json"],
-            "godot_run_argv": ["basaltw", "desktop", "--native", "develop", "run", "--project", root, "--json"],
-            "godot_import_argv": ["basaltw", "desktop", "--native", "develop", "import", "--project", root, "--json"],
-            "node_script_prefix_argv": ["basaltw", "desktop", "--native", "develop", "node", "--project", root, "--json"],
-            "recipe_check_prefix_argv": ["basaltw", "desktop", "--native", "develop", "check", "--project", root, "--json"],
-            "application_prefix_argv": ["basaltw", "desktop", "--native", "develop", "exec", "--project", root, "--"],
-            "instructions": "Launch explicitly in the owned logged-in KDE session from T3 or SSH. Import Godot assets before testing; bounded headless runs do not verify GPU/input. Use node for a declared package script with the project's selected installed Node runtime, and check for a declared project recipe with private revision/settings evidence. Tasks retain bounded logs and status after client disconnect. Capture/input still require separate approved portal control. Honor human pause; record actual playtest outcomes separately from prerequisites and process exit status.",
-        } if native_desktop else None,
+        "development": _native_development(root) if native_desktop else None,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),

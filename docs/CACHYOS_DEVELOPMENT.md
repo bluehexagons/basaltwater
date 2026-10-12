@@ -63,6 +63,16 @@ Use the project's actual checkout or [managed worktree](PROJECT_TOOLING.md).
 Consult its `AGENTS.md`, engine requirements, launch arguments, test recipes,
 and save-data conventions before executing project code.
 
+`agent manifest` reads the same bounded project metadata as `develop doctor`.
+Its development role describes the chosen project: Godot, Node, or generic
+native development. Godot editor/run/import commands are null without
+`project.godot`; the Node script prefix is null without `package.json`.
+Package metadata includes script names and the declared Node requirement,
+without script bodies or runtime execution. A project containing both files
+advertises both workflows. Discovery never checks the live graphical session;
+use `develop doctor` for session prerequisites and the project's own checks
+for runtime/build compatibility.
+
 ```fish
 basaltw agent manifest /absolute/project --json
 basaltw local cachyos-doctor --json
