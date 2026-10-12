@@ -349,8 +349,17 @@ the target and replaces the target's `/opt/basaltwater` runtime with it while
 preserving `/opt/basaltwater/state`. The snapshot includes its project version,
 source commit, branch, and whether the controller checkout was dirty, so
 `basaltw channel` on the target reports exactly what that setup run
-deployed. A target snapshot is not a Git worktree: switch or upgrade the
+deployed. To replace a snapshot from the controller, switch or upgrade the
 controller channel first, then rerun `setup` or `patch` to update the target.
+Alternatively, [Debian refresh](COMMAND_LINE.md#refresh-this-machine) downloads
+the snapshot's branch into a managed target checkout and repeats saved setup.
+Downloaded source is made readable before activation even under a private
+administrative-job umask; Git/channel metadata and retained runtime data keep
+their existing private permissions. The previous source remains in a private
+adjacent backup. A failed setup can follow successful source activation, so
+inspect both the installed source and setup result before retrying.
+Subsequent managed-checkout refreshes reconcile only runtime source permissions;
+retained state and application data are excluded.
 
 ## Unsupported orchestration hosts
 

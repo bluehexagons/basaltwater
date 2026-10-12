@@ -32,6 +32,14 @@ administrator's existing value. Commands always require individual approval.
 The broker reads policy for every request and before execution, so a
 change invalidates an outstanding request.
 
+Keep the non-secret policy root-owned with mode `0644`: the dedicated approval
+account also reads it at startup. An atomic rewrite must explicitly retain that
+mode; a writer's private default of `0600` prevents the HTTPS service from
+starting. Keep `auth.json`, `server.key`, and broker audit state private. If the
+approval page refuses connections after a policy edit, inspect the service
+through root SSH or the VM console and restore the policy's readable mode;
+the page cannot approve its own recovery.
+
 Registering a service grants every effect of restarting it. Audit its unit,
 drop-ins, environment, executable, scripts, configuration, dependencies, and
 lifecycle hooks first. Never register a root service that consumes

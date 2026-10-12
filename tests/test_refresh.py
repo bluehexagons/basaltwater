@@ -76,6 +76,23 @@ class DebianRefreshTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 1)
         self.run.assert_not_called()
 
+    def test_managed_upgrade_reconciles_code_modes_before_setup_without_changing_data(self):
+        def upgrade(repo):
+            (self.root / "lib").mkdir(mode=0o700)
+            (self.root / "lib/helper.py").write_text("source")
+            (self.root / "lib/helper.py").chmod(0o600)
+            (self.root / ".git").mkdir(mode=0o700)
+            return {"commit": "new", "channel": "dev"}
+        self.upgrade.side_effect = upgrade
+        def execute(command, **kwargs):
+            self.assertEqual(stat.S_IMODE((self.root / "lib").stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE((self.root / "lib/helper.py").stat().st_mode), 0o644)
+            self.assertEqual(stat.S_IMODE((self.root / ".git").stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o600)
+            return subprocess.CompletedProcess(command, 0)
+        self.run.side_effect = execute
+        self.assertEqual(self.invoke(), 0)
+
     def test_dry_run_never_changes_source_or_invokes_target(self):
         with patch.object(refresh, "get_channel_info", return_value={"channel": "stable"}), \
                 patch("sys.stdout", new_callable=io.StringIO) as output:
@@ -189,6 +206,44 @@ class SnapshotActivationTests(unittest.TestCase):
             refresh._upgrade_snapshot(str(self.source), "dev")
         self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
         self.assertEqual((self.source / "deployments/app").read_text(), "application data")
+
+    def test_private_job_umask_keeps_code_readable_and_retained_state_private(self):
+        self.state.chmod(0o700)
+        (self.state / "setup.json").chmod(0o600)
+        def private_clone(command, **kwargs):
+            result = self.clone(command, **kwargs)
+            staged = Path(command[-1])
+            (staged / "lib").mkdir()
+            (staged / "lib/helper.py").write_text("source")
+            (staged / "basaltwater.py").chmod(0o700)
+            (staged / ".basaltwater").mkdir()
+            (staged / ".basaltwater/channel.json").write_text("{}")
+            return result
+        self.run.side_effect = private_clone
+        previous_umask = os.umask(0o077)
+        try:
+            refresh._upgrade_snapshot(str(self.source), "dev")
+        finally:
+            os.umask(previous_umask)
+        for relative, mode in (("lib", 0o755), ("lib/helper.py", 0o644),
+                               ("basaltwater.py", 0o755), (".git", 0o700),
+                               (".basaltwater", 0o700), (".basaltwater/channel.json", 0o600)):
+            self.assertEqual(stat.S_IMODE((self.source / relative).stat().st_mode), mode, relative)
+        self.assertEqual(stat.S_IMODE(self.state.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((self.state / "setup.json").stat().st_mode), 0o600)
+
+    def test_linked_downloaded_source_is_rejected_before_activation(self):
+        for directory in (False, True):
+            with self.subTest(directory=directory):
+                def linked_clone(command, **kwargs):
+                    result = self.clone(command, **kwargs)
+                    (Path(command[-1]) / "linked").symlink_to(self.state if directory else self.state / "setup.json")
+                    return result
+                self.run.side_effect = linked_clone
+                with self.assertRaisesRegex(ValueError, "regular files and directories"):
+                    refresh._upgrade_snapshot(str(self.source), "dev")
+                self.assertEqual((self.source / "basaltwater.py").read_text(), "old source")
+                self.assertEqual((self.source / "state/setup.json").read_text(), "saved options")
 
     def test_activation_failure_restores_snapshot_and_runtime_data(self):
         rename = os.rename

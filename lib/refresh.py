@@ -43,6 +43,28 @@ def _refresh_channel(info: dict[str, object]) -> str:
     return channel
 
 
+def _normalize_downloaded_source(staged: str, *, runtime_only: bool = False) -> None:
+    """Make code readable under private job umasks without touching runtime data."""
+    def walk_error(error):
+        raise error
+
+    for directory, directories, files in os.walk(staged, onerror=walk_error):
+        if directory == staged:
+            if runtime_only:
+                directories[:] = [name for name in directories if name in _SNAPSHOT_SOURCE_NAMES]
+                files = [name for name in files if name in _SNAPSHOT_SOURCE_NAMES]
+        os.chmod(directory, 0o755)
+        for name in (*directories, *files):
+            path = os.path.join(directory, name)
+            mode = os.lstat(path).st_mode
+            if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+                raise ValueError(f"Downloaded source must be regular files and directories: {path}")
+            if stat.S_ISREG(mode):
+                os.chmod(path, 0o755 if mode & 0o111 else 0o644)
+        if directory == staged:
+            directories[:] = [name for name in directories if name not in {".git", ".basaltwater"}]
+
+
 def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
     """Stage a managed checkout and retain runtime data with rollback on activation."""
     from lib.privilege_policy import protected_path
@@ -64,6 +86,9 @@ def _upgrade_snapshot(repository: str, channel: str) -> dict[str, object]:
         write_text_atomic(os.path.join(staged, ".basaltwater", "managed-install"), "basaltwater-v1\n")
         with open(os.path.join(staged, ".git", "info", "exclude"), "a", encoding="utf-8") as exclusions:
             exclusions.write("\n/deployments/\n/worktrees/\n/agent_payload/\n/device_pairing_payload/\n/web_panel_payload/\n/.remote_setup_args.json\n")
+        # Administrative jobs inherit a private umask. Normalize only the new
+        # source, before retained state or deployment data enters the tree.
+        _normalize_downloaded_source(staged)
         # The controller stages just these source entries. Preserve all other
         # top-level runtime data without copying potentially large deployments.
         data_names = sorted(set(os.listdir(repository)) - _SNAPSHOT_SOURCE_NAMES)
@@ -114,6 +139,9 @@ def _apply_refresh(
             _upgrade_snapshot(repository, channel)
             if info.get("installation_type") == "setup-snapshot" else upgrade_channel(repository)
         )
+        # Git updates in an existing managed checkout inherit the same umask.
+        # Reconcile only owned runtime source, preserving retained private data.
+        _normalize_downloaded_source(repository, runtime_only=True)
         print(f"Basaltwater is at {str(info['commit'])[:12]} on {info['channel']}", flush=True)
         print(f"Repeating saved local {config.system_type} setup for {config.username}", flush=True)
         # Keep saved options private and start the upgraded runner in a fresh process.

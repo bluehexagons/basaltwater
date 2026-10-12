@@ -1,6 +1,6 @@
 # Privilege execution qualification
 
-## Status: active
+## Status: implementation delivered; refresh recovery qualification active
 
 Repair approved command execution on broker-managed Debian VMs and give human
 review a practical expiry window. The observed VM has a 64 GiB home disk with
@@ -41,10 +41,24 @@ checks here until qualification completes.
 ## Implementation evidence
 
 The executor, review-window defaults, safe execution metadata and audit migration
-are implemented. A response-size preflight also rejects requests whose duplicated
-review argv would exceed the socket protocol limit before creating a pending
-request. The 75 focused cases pass. `make check` and `make coverage` pass with
-5,478 cases / five platform or expensive-test skips; wheel, CLI documentation,
-link, compilation and generated-asset checks pass. Broker/approval confinement
-remains enabled. Live refresh, directory creation, explicit policy-window update
-and home growth remain the next qualification steps.
+are implemented. A response-size preflight rejects requests whose duplicated
+review argv would exceed the socket protocol limit before persistence. Broker and
+approval confinement remain enabled. The deployed executor creates the private
+`/srv` artifact parent successfully with exit code zero, and new VM requests
+have a 3,600-second review window. The confirmed home partition and ext4 grew
+online to the enlarged 64 GiB drive with their original start and UUIDs. Private
+text and binary partition-table backups remain in the broker state directory;
+host/container-storage diagnostics report healthy capacity and maintenance.
+
+The approved refresh activated source but its setup replay failed. Recovery
+qualified the new executor without replaying setup. Normalize both downloaded
+snapshot code and subsequent managed-checkout runtime updates under the private
+job umask, retaining private metadata and runtime data. The 24 focused refresh
+cases, `make check`, and `make coverage` pass; the wider suite runs 5,481 cases
+with five platform/expensive-test skips. Wheel, CLI documentation, links,
+compilation and generated assets pass.
+
+Remaining: inspect the limited root-owned failure marker, resolve the setup
+replay failure, and qualify the published permission fix on the managed VM.
+Keep the non-secret policy readable by the approval identity when changing its
+window; the administrator reference documents the required mode and recovery.
