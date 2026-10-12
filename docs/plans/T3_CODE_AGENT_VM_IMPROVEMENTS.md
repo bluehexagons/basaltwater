@@ -56,6 +56,16 @@ Completed in `6c050dc`.
 - Extend the managed T3 skill to choose native preview when available and the
   explicit Playwright fallback for SSH-only sessions.
 
+The 2026-10-12 Antistatic follow-up adds ballooning-aware historical-peak warnings
+and timestamped anonymous/file/swap, pressure/limits and cumulative OOM evidence
+for the current workload and T3 service. Unknown peak-time capacity, missing
+counters and service/cgroup changes remain explicit; one OOM count does not
+attribute a job or establish a leak. The
+[resource contract](../PROJECT_TOOLING.md#effective-workload-limits) owns the
+operator guidance. Quiet, cache-heavy, malformed and constrained cgroup cases
+have fixture coverage; disposable service-lifetime qualification remains with
+the [refresh matrix](PRIVILEGE_EXECUTION_QUALIFICATION.md).
+
 ### Phase 2: bounded storage lifecycle
 
 Implemented with conservative ownership boundaries. npm `_npx` workspaces and
@@ -63,17 +73,27 @@ numbered T3 log rotations are now bounded by the user maintenance job.
 Playwright already records every consuming installation in its shared `.links`
 registry and performs reference-aware garbage collection; Basaltwater will not
 add a competing directory-deletion mechanism that could remove another
-client's browser. Codex standalone releases remain diagnostic-only vendor
-rollback state.
+client's browser. Codex standalone retention now validates complete vendor
+releases, retaining current, prior rollback and every executing release;
+unfamiliar entries remain diagnostic-only.
 
 - Bound stale npm `npx` workspaces independently of npm's content cache.
 - Prune only rotated T3 provider and trace logs, retaining current log files
   and recent diagnostic history.
 - Preserve Playwright's reference-aware shared-browser lifecycle and verify its
   garbage collection during pinned version upgrades.
-- Report extra Codex standalone releases without deleting vendor-managed
-  rollback state automatically.
+- Apply validated standalone-release retention with dry-run diagnostics,
+  preserving active/rollback releases and unrecognized entries.
 - Add dry-run and real-VM coverage for every cleanup boundary.
+
+Generic cache/temp disposal now rechecks inventoried identity, ownership and
+active use before privately isolating the entry; recreated original/disposal
+paths and failed/interrupted removal are covered by temporary fixtures. Shared
+maintenance captures bound output and runtime using existing streaming/group
+supervision. CachyOS user-cache reconciliation uses these same protections and
+its package inventories now have byte limits. No new collector, project-evidence
+retention, image pruning or live cleanup was introduced by this follow-up;
+operator contracts are in [maintenance](../MAINTENANCE.md#cleanup-and-state-safety).
 
 ### Phase 3: task isolation and operator evidence
 

@@ -137,6 +137,8 @@ using the exact candidate commit, saved desktop selection and `UMask=0077`:
 | QF-09 | An old running reader omits newer fields honestly; stale markers cannot explain a new failure, and new readers expose only fixed correlated metadata. | Not run; target pending |
 | QF-10 | Reconnect a real T3 client and shared desktop, then run a small native GL/capture workload; record software renderer separately from hardware qualification. | Not run; target pending |
 | QF-11 | Long native build/capture, an unpushed commit and disconnected client survive the reviewed maintenance hold/readiness lifecycle; expiry and job runtime stay independent. | Not run; target pending |
+| QF-12 | A leader exits before a pipe-holding, TERM-resistant descendant. Output/deadline/interruption bounds still stop the owned group; separately verify managed control-group stop handles workers that create their own sessions. No failed or uncertain action is replayed. | Not run; target pending |
+| QF-13 | During existing cleanup on disposable owned fixtures, replace inventoried paths, recreate originals and interrupt deletion after isolation. Preserve replacements and private recovery data, verify log pointers/permissions and recover explicitly without overwriting new paths. | Not run; target pending |
 
 Retain private commands/logs and snapshots on the disposable target. Commit only
 the reviewed case ID, exact source, expected/observed outcome and recovery result.
@@ -162,7 +164,8 @@ qualification to the existing project owners.
   Source-activation receipts and manual comparison are the current first slice.
 - **Maintenance diagnostics:** retain only fixed failure categories and validated
   setup phase/index/class metadata. Fixed maintenance stage/index/category
-  reporting is delivered; correlating a target setup marker remains a follow-on.
+  reporting and job-correlated target setup context are delivered; live lifecycle
+  qualification remains pending.
   Omit privileged output, configuration, credentials and unrelated stale markers.
   Cover partial source activation, private umasks, service restart and recovery
   on a disposable Debian/systemd target before broadening automatic maintenance.

@@ -19,6 +19,7 @@ from lib.disk_utils import get_disk_usage_details
 from lib.kernel_cleanup import obsolete_kernel_packages, obsolete_manual_kernels
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
+from lib.cleanup_paths import process_uses_path, remove_checked_path
 from lib.maintenance_defaults import (
     APT_LOCK_OPTIONS,
     CLEANUP_COMMAND_TIMEOUT_SECONDS,
@@ -42,6 +43,7 @@ from lib.proxmox_preflight import (
 )
 from lib.notifications import load_notification_configs_from_state, send_notification_safe
 from lib.types import JSONDict
+from lib.streamed_process import CommandOutputLimitError, run_captured
 from lib.validation import validate_filesystem_path, validate_positive_integer
 
 
@@ -94,8 +96,8 @@ def run_command(
     env: dict[str, str] | None = None,
     timeout: int = CLEANUP_COMMAND_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a command and capture its output."""
-    return subprocess.run(command, capture_output=True, text=True, env=env, timeout=timeout)
+    """Capture bounded output under the shared process-group supervisor."""
+    return run_captured(command, env=env, timeout=timeout)
 
 
 def run_cleanup_command(
@@ -110,6 +112,9 @@ def run_cleanup_command(
         details = f"timed out after {CLEANUP_COMMAND_TIMEOUT_SECONDS}s"
         log_event(logger, f"{action} timed out", level=WARNING, stderr=details)
         return f"{action}: {details}"
+    except CommandOutputLimitError as exc:
+        log_event(logger, f"{action} output exceeded its limit", level=WARNING)
+        return f"{action}: {exc}"
     except OSError as exc:
         details = str(exc)
         log_event(logger, f"{action} could not run", level=WARNING, stderr=details)
@@ -274,6 +279,9 @@ def audit_package_database() -> str | None:
         details = "timed out after 60s"
         log_event(logger, "Package database audit timed out", level=WARNING, error=details)
         return f"package database audit: {details}"
+    except CommandOutputLimitError as exc:
+        log_event(logger, "Package database audit output exceeded its limit", level=WARNING)
+        return f"package database audit: {exc}"
     except OSError as exc:
         details = str(exc)
         log_event(logger, "Package database audit could not run", level=WARNING, error=details)
@@ -389,9 +397,13 @@ def cleanup_stale_crash_reports(
         try:
             if not entry.is_file(follow_symlinks=False):
                 continue
-            if entry.stat(follow_symlinks=False).st_mtime > cutoff:
+            expected = entry.stat(follow_symlinks=False)
+            if expected.st_mtime > cutoff:
                 continue
-            os.unlink(entry.path)
+            if not remove_checked_path(entry.path, expected, uid=expected.st_uid,
+                                       in_use=lambda: process_uses_path(entry.path, uid=expected.st_uid),
+                                       on_isolated=lambda recovery: log_event(logger, "Isolated stale crash report for disposal", path=entry.path, recovery_path=recovery)):
+                continue
             removed_count += 1
         except OSError as exc:
             details = str(exc)
@@ -401,6 +413,7 @@ def cleanup_stale_crash_reports(
                 level=WARNING,
                 path=entry.path,
                 error=details,
+                recovery_path=getattr(exc, "recovery_path", None),
             )
             failures.append(f"{entry.path}: {details}")
 
@@ -448,10 +461,10 @@ def cleanup_stale_basaltwater_tmp_artifacts(
             stat_result = os.lstat(path)
             if stat_result.st_mtime > cutoff:
                 continue
-            if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path)
-            else:
-                os.unlink(path)
+            if not remove_checked_path(path, stat_result, uid=stat_result.st_uid,
+                                       in_use=lambda: process_uses_path(path, uid=stat_result.st_uid),
+                                       on_isolated=lambda recovery: log_event(logger, "Isolated stale Basaltwater artifact for disposal", path=path, recovery_path=recovery)):
+                continue
             removed.append(name)
         except OSError as exc:
             details = str(exc)
@@ -461,6 +474,7 @@ def cleanup_stale_basaltwater_tmp_artifacts(
                 level=WARNING,
                 path=path,
                 error=details,
+                recovery_path=getattr(exc, "recovery_path", None),
             )
             failures.append(f"{path}: {details}")
 

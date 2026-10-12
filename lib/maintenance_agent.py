@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.agent_probe import run_probe
 from lib.maintenance_agent_config import (
     CONFIG_FILE, CONTROL_DIR, DATA_DIR, DEFAULTS, POLICY_FILE, REPORT_FILE,
     add_policy_arguments, validate_policy,
@@ -110,14 +111,9 @@ def load_reports(path: str = REPORT_FILE) -> dict[str, Any]:
 
 
 def _command(arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    try:
-        result = subprocess.run(arguments, check=False, capture_output=True, text=True, timeout=15,
-                                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
-    except (OSError, subprocess.SubprocessError):
-        return subprocess.CompletedProcess(arguments, 1, "", "")
-    if len(result.stdout.encode("utf-8")) > 64 * 1024:
-        return subprocess.CompletedProcess(arguments, 1, "", "")
-    return result
+    result = run_probe(arguments, timeout=15, max_bytes=64 * 1024,
+                       env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"})
+    return subprocess.CompletedProcess(arguments, 1 if result.issue else 0, result.output, "")
 
 
 def collect_checks(context: dict[str, Any], *, security: bool) -> list[dict[str, str]]:
@@ -396,14 +392,14 @@ def _review_as_user(owner: pwd.struct_passwd, policy: dict[str, Any], context: d
     script = str(Path(__file__).resolve().parents[1] / "common/service_tools/maintenance_agent.py")
     payload = {"home": owner.pw_dir, "policy": policy, "context": context, "issues": issues, "selection": selection}
     try:
-        result = subprocess.run(["/usr/sbin/runuser", "-u", owner.pw_name, "--", "/usr/bin/python3", script, "--review"],
-                                input=json.dumps(payload), text=True, capture_output=True, check=False,
+        result = run_probe(["/usr/sbin/runuser", "-u", owner.pw_name, "--", "/usr/bin/python3", script, "--review"],
+                                input_data=json.dumps(payload).encode("utf-8"), max_bytes=16384,
                                 timeout=(policy["timeout"] * 60) + 30,
                                 env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": owner.pw_dir, "USER": owner.pw_name,
                                      "LOGNAME": owner.pw_name, "LANG": "C.UTF-8"}, cwd=owner.pw_dir)
-        if result.returncode or len(result.stdout.encode()) > 16384:
+        if result.issue:
             raise ValueError("Review worker failed")
-        value = json.loads(result.stdout)
+        value = json.loads(result.output)
         if (not isinstance(value, dict) or value.get("status") not in ("completed", "failed", "cancelled")
                 or not isinstance(value.get("output"), str)):
             raise ValueError("Invalid review result")

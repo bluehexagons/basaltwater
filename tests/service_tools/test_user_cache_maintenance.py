@@ -97,7 +97,7 @@ class TestUserCacheHelpers(unittest.TestCase):
                 )
             )
 
-    @patch("common.service_tools.user_cache_maintenance.subprocess.run")
+    @patch("common.service_tools.user_cache_maintenance.run_captured")
     def test_tool_command_loads_home_scoped_nvm(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         context = self._context("/home/agent")

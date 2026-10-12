@@ -281,6 +281,17 @@ system logrotate policy, removes recognized crash-report files older than 30
 days, and removes only exact basaltwater-owned temporary artifact names older
 than seven days in `/tmp` and `/var/tmp`.
 
+Cleanup commands use the shared process-group streaming supervisor with a
+ten-minute deadline and a combined 256 KiB stdout/stderr capture limit, while
+individual inventory checks can use shorter deadlines. Timeout, output overflow
+or interruption terminates the owned group, including pipe-holding descendants
+after the leader exits. Group cleanup can add two five-second grace periods;
+descendants that create their own sessions require the managed service's
+control-group stop semantics. Failed commands are reported, never immediately
+replayed to recover output. The maintenance-review wrapper separately bounds
+its protocol to 16 KiB and its existing model runtime plus 30 seconds; it keeps
+failed/interrupted attempts charged and omits raw worker errors.
+
 The cleanup job also runs noninteractive `apt-get autoremove --purge` on APT
 hosts other than Proxmox. On those hosts this removes packages APT has marked
 as unused, including superseded kernels, while APT's kernel-retention policy
@@ -415,8 +426,28 @@ running. Symbolic links and paths outside the configured user's home are never f
 removed. OpenCode data under `.local/share/opencode` and Codex sessions,
 memories, credentials, plugins, and unrecognized package layouts are persistent
 state and are not cleanup targets. Root-only setups retain system cleanup but
-intentionally skip the user-cache timer. Preview the user job without changing
-files with:
+intentionally skip the user-cache timer.
+
+Generic rebuildable-cache, stale-tool-temp, named Basaltwater-temp and crash-file
+disposal rechecks device/inode, ownership, type, modification time and observable
+active use immediately before acting. Parent directories are opened without
+following links. Selected entries move into a private `0700` sibling disposal
+directory before deletion, so a recreated original pathname is preserved. Dry
+runs validate without moving or removing data. A changed entry is refused; a
+race during isolation or failed/interrupted deletion retains remaining data
+privately, with the recovery location in local maintenance logs. Disposal
+directories are excluded from automatic retention and require explicit recovery;
+inspect their owner/identity and any recreated original before restoring data.
+Never overwrite a new original path or treat a retained disposal as proof of
+successful cleanup. Project reports, captures and SDK/image caches do not become
+cleanup candidates because of their age.
+
+On CachyOS, setup's pacman/paccache inventory uses the same bounded capture
+owner with a 1 MiB output ceiling per query. An incomplete, timed-out or oversized
+inventory stops before deletion. Its package transaction, file identity and
+installed-version checks remain separate from generic user-cache disposal.
+
+Preview the user job without changing files:
 
 ```bash
 sudo -u USER /usr/bin/python3 \

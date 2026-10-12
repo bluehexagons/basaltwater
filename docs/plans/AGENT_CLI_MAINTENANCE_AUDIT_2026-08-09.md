@@ -6,6 +6,15 @@ also landed; version policy, workload-aware restarts, and fleet observability
 still require larger design work. The narrow `agent_vm` and
 `agent_workstation` profile shorthands have also landed.
 
+This document retains audit-time observations and former command names. Use
+the current [maintenance contract](../MAINTENANCE.md) and `basaltw` references
+for operations. The 2026-10-12 Antistatic slice delivers ballooning-aware memory
+interpretation, readable OOM counters without cgroup paths, bounded cache/cleanup and
+maintenance-review captures, and identity-checked private disposal through the
+existing owners. Fixture coverage does not qualify live setup or service
+recovery; the [disposable matrix](PRIVILEGE_EXECUTION_QUALIFICATION.md) remains
+pending, and historical failed requests are not replayed.
+
 ## Scope and recommended baseline
 
 This review traced the terminal-only agent path from argument normalization and
@@ -29,7 +38,7 @@ An explicit `--agent-tool` list replaces the profile's GitHub CLI and Codex
 defaults, allowing any supported provider combination. No language runtime is
 implicit; add packages and runtimes with their individual flags.
 
-## Maintenance currently applied
+## Maintenance observed at audit time
 
 On a Debian VM or bare-metal `agent_vm` target, the terminal-agent setup
 inherits these host jobs:

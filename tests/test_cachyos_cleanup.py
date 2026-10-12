@@ -16,6 +16,7 @@ from unittest.mock import patch
 from common import cachyos_cleanup as cleanup
 from common import cachyos_steps
 from lib.agent_storage import cleanup_t3_rotated_logs
+from lib.streamed_process import CommandOutputLimitError
 from lib.validation import validate_arch_package_name
 
 
@@ -36,6 +37,7 @@ class PackageCleanupTests(unittest.TestCase):
         stack.enter_context(patch.object(cleanup.os, "geteuid", return_value=0))
         stack.enter_context(patch.object(cleanup, "is_dry_run", return_value=False))
         self.run = stack.enter_context(patch.object(cleanup, "run", side_effect=self.command))
+        self.capture = stack.enter_context(patch.object(cleanup, "run_captured", side_effect=self.command))
         actual_lstat = Path.lstat
 
         def root_owned(path):
@@ -80,7 +82,7 @@ class PackageCleanupTests(unittest.TestCase):
         self.assertFalse(signature.exists())
         for path in (recent, partial, installed, active, unrelated):
             self.assertTrue(path.exists())
-        command = self.run.call_args_list[0].args[0]
+        command = self.capture.call_args_list[0].args[0]
         self.assertIn("--dryrun", command)
         self.assertNotIn("--remove", command)
         self.assertNotIn("--min-mtime", command)
@@ -90,7 +92,8 @@ class PackageCleanupTests(unittest.TestCase):
         old = self.archive("example-1.0-1-x86_64.pkg.tar.zst")
         self.assertEqual(cleanup.prune_package_cache(dry_run=True), 1)
         self.assertTrue(old.exists())
-        self.assertTrue(all(call.args[0][0] != "sudo" for call in self.run.call_args_list))
+        self.assertTrue(all(call.args[0][0] != "sudo" for call in self.capture.call_args_list))
+        self.run.assert_not_called()
 
     def test_installed_arch_names_and_epochs_are_retained_after_downgrades(self):
         self.installed = "lm_sensors 1:1.0-1\nexample@stable 1.0-1\n"
@@ -151,8 +154,8 @@ class PackageCleanupTests(unittest.TestCase):
         link.symlink_to(target)
         self.candidates.append(link)
         self.assertEqual(cleanup.prune_package_cache(dry_run=False), 0)
-        self.run.side_effect = None
-        self.run.return_value = subprocess.CompletedProcess([], 0, "unknown format", "")
+        self.capture.side_effect = None
+        self.capture.return_value = subprocess.CompletedProcess([], 0, "unknown format", "")
         with self.assertRaisesRegex(RuntimeError, "Unrecognized"):
             cleanup.prune_package_cache(dry_run=False)
         self.assertEqual(target.read_text(), "keep")
@@ -160,7 +163,18 @@ class PackageCleanupTests(unittest.TestCase):
     def test_setup_dry_run_does_not_inventory_or_elevate(self):
         cleanup.cleanup_cachyos_packages(SimpleNamespace(dry_run=True))
         self.run.assert_not_called()
+        self.capture.assert_not_called()
         self.available.assert_not_called()
+
+    def test_bounded_inventory_failure_preserves_archives_and_never_elevates(self):
+        old = self.archive("example-1.0-1-x86_64.pkg.tar.zst")
+        for error in (CommandOutputLimitError("limit"), subprocess.TimeoutExpired("inventory", 30)):
+            with self.subTest(error=type(error).__name__):
+                self.capture.side_effect = error
+                with self.assertRaisesRegex(RuntimeError, "no archives were removed"):
+                    cleanup.prune_package_cache(dry_run=False)
+                self.assertTrue(old.exists())
+        self.run.assert_not_called()
 
     def test_apply_wrapper_uses_sudo_only_when_preview_finds_candidates(self):
         with patch.object(cleanup, "prune_package_cache", return_value=0):

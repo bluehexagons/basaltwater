@@ -19,6 +19,8 @@ def run_streamed(
     input_data: bytes | None = None, cwd: str | None = None,
     env: dict[str, str] | None = None,
     interactive: bool = False,
+    on_error: Callable[[str], None] | None = None,
+    discard_stderr: bool = False,
 ) -> int:
     """Relay UTF-8 output while feeding stdin, without unbounded pipe waits.
 
@@ -29,22 +31,29 @@ def run_streamed(
     interactive callers may omit the deadline to allow time for a prompt.
     """
     bound = _validate_timeout(timeout)
+    if on_error is not None and discard_stderr:
+        raise ValueError("Cannot capture and discard stderr together")
     if bound is None and not interactive:
         raise ValueError("Streaming requires a finite deadline")
     deadline = time.monotonic() + bound if bound is not None else None
     process = subprocess.Popen(
         command, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL if discard_stderr else subprocess.PIPE if on_error is not None else subprocess.STDOUT,
         bufsize=0, cwd=cwd, env=env, start_new_session=not interactive,
     )
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    pending = ""
     offset = 0
     try:
         with selectors.DefaultSelector() as selector:
             assert process.stdout is not None
             os.set_blocking(process.stdout.fileno(), False)
             selector.register(process.stdout, selectors.EVENT_READ)
+            readers = {process.stdout: (codecs.getincrementaldecoder("utf-8")(errors="replace"), "", on_output)}
+            if on_error is not None:
+                assert process.stderr is not None
+                os.set_blocking(process.stderr.fileno(), False)
+                selector.register(process.stderr, selectors.EVENT_READ)
+                readers[process.stderr] = (codecs.getincrementaldecoder("utf-8")(errors="replace"), "", on_error)
             if process.stdin is not None:
                 os.set_blocking(process.stdin.fileno(), False)
                 selector.register(process.stdin, selectors.EVENT_WRITE)
@@ -64,14 +73,16 @@ def run_streamed(
                             key.fileobj.close()
                     else:
                         chunk = os.read(key.fd, 65536)
+                        decoder, pending, callback = readers[key.fileobj]
                         pending += decoder.decode(chunk, final=not chunk)
                         while "\n" in pending:
                             line, pending = pending.split("\n", 1)
-                            on_output(line + "\n")
+                            callback(line + "\n")
                         if not chunk or len(pending) >= 65536:
                             if pending:
-                                on_output(pending)
+                                callback(pending)
                                 pending = ""
+                        readers[key.fileobj] = (decoder, pending, callback)
                         if not chunk:
                             selector.unregister(key.fileobj)
                             key.fileobj.close()
@@ -92,6 +103,39 @@ def run_streamed(
             pass
         raise
     finally:
-        for stream in (process.stdin, process.stdout):
+        for stream in (process.stdin, process.stdout, process.stderr if on_error is not None else None):
             if stream is not None:
                 stream.close()
+
+
+class CommandOutputLimitError(subprocess.SubprocessError):
+    """A bounded capture exceeded its shared stdout/stderr byte budget."""
+
+
+def run_captured(
+    command: list[str], *, timeout: float, max_bytes: int = 256 * 1024,
+    input_data: bytes | None = None, cwd: str | None = None,
+    env: dict[str, str] | None = None, capture_stderr: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    """Capture through the shared streaming supervisor, never unlimited pipes."""
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("Capture byte limit must be a positive integer")
+    output: list[str] = []
+    errors: list[str] = []
+    used = 0
+    def append(target: list[str], text: str) -> None:
+        nonlocal used
+        used += len(text.encode("utf-8"))
+        if used > max_bytes:
+            raise CommandOutputLimitError(f"Command output exceeded {max_bytes} bytes")
+        target.append(text)
+    try:
+        returncode = run_streamed(
+            command, timeout=timeout, on_output=lambda text: append(output, text),
+            on_error=(lambda text: append(errors, text)) if capture_stderr else None,
+            discard_stderr=not capture_stderr, input_data=input_data, cwd=cwd, env=env,
+        )
+    except CommandTimeoutError as exc:
+        # Preserve the captured-subprocess timeout interface used by callers.
+        raise subprocess.TimeoutExpired(command, timeout) from exc
+    return subprocess.CompletedProcess(command, returncode, "".join(output), "".join(errors))

@@ -21,6 +21,7 @@ def setUpModule() -> None:
     for target, kwargs in (
         ("maintenance_lock", {"side_effect": lambda: nullcontext(True)}),
         ("is_proxmox_host", {"return_value": False}),
+        ("process_uses_path", {"return_value": False}),
     ):
         mocker = patch.object(cleanup_maintenance, target, **kwargs)
         mocker.start()

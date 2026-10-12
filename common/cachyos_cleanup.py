@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import time
 
@@ -17,6 +18,7 @@ if __package__ in {None, ""}:
 from lib.config import SetupConfig
 from lib.maintenance_defaults import CLEANUP_COMMAND_TIMEOUT_SECONDS
 from lib.remote_utils import is_dry_run, run
+from lib.streamed_process import run_captured
 from lib.validation import validate_arch_package_name, validate_filesystem_path
 
 
@@ -65,11 +67,13 @@ def prune_package_cache(*, dry_run: bool) -> int:
         return 0
     # Age options make paccache recurse into download-* directories. Select
     # surplus top-level archives without them and apply our own age checks.
-    preview = run([
-        PACCACHE, "--dryrun", "--verbose", "--verbose", "--null", "--nocolor",
-        "--cachedir", str(PACKAGE_CACHE), "--keep", str(KEEP_VERSIONS),
-    ], capture_output=True, check=False, env=_ENVIRONMENT,
-        timeout=CLEANUP_COMMAND_TIMEOUT_SECONDS)
+    try:
+        preview = run_captured([
+            PACCACHE, "--dryrun", "--verbose", "--verbose", "--null", "--nocolor",
+            "--cachedir", str(PACKAGE_CACHE), "--keep", str(KEEP_VERSIONS),
+        ], env=_ENVIRONMENT, max_bytes=1024 * 1024, timeout=CLEANUP_COMMAND_TIMEOUT_SECONDS)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Pacman cache inventory failed or exceeded its limits; no archives were removed") from exc
     if preview.returncode or (preview.stderr or "").strip():
         raise RuntimeError("Pacman cache inventory failed; inspect paccache locally and rerun setup")
     output = preview.stdout or ""
@@ -81,8 +85,10 @@ def prune_package_cache(*, dry_run: bool) -> int:
     if (header != "==> Candidate packages:" or not separator or not delimiter
             or not re.fullmatch(r"\s*==> finished dry run: [0-9]+ candidates \(disk space saved: [^\n]+\)\s*", summary)):
         raise RuntimeError("Unrecognized paccache inventory; no package archives were removed")
-    query = run(["/usr/bin/pacman", "-Q"], capture_output=True, check=False,
-                env=_ENVIRONMENT, timeout=30)
+    try:
+        query = run_captured(["/usr/bin/pacman", "-Q"], env=_ENVIRONMENT, timeout=30, max_bytes=1024 * 1024)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Installed package inventory failed or exceeded its limits; no archives were removed") from exc
     if query.returncode or (query.stderr or "").strip():
         raise RuntimeError("Cannot inspect installed package versions; no archives were removed")
     installed = {}

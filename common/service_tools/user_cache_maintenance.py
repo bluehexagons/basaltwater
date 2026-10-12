@@ -23,6 +23,7 @@ from lib.agent_storage import (
     cleanup_codex_standalone_releases as reconcile_codex_standalone_releases,
     cleanup_t3_rotated_logs as reconcile_t3_rotated_logs,
 )
+from lib.cleanup_paths import process_uses_path, remove_checked_path
 from lib.logging_utils import get_service_logger, log_event
 from lib.t3code_runtime import (
     is_known_t3_service_protocol,
@@ -47,6 +48,7 @@ from lib.maintenance_defaults import (
     USER_CACHE_PRESSURE_MIN_BYTES,
 )
 from lib.types import BYTES_PER_MB, JSONDict
+from lib.streamed_process import CommandOutputLimitError, run_captured
 from lib.validation import validate_filesystem_path
 
 
@@ -162,12 +164,10 @@ def run_tool_command(
             f"exec {shlex.join(command)}",
         )
     )
-    return subprocess.run(
+    return run_captured(
         # Do not use a login shell here. Unattended maintenance must not depend
         # on, execute, or have its output polluted by interactive profile files.
         ["/bin/bash", "-c", "; ".join(shell_parts)],
-        capture_output=True,
-        text=True,
         cwd=context.home,
         env=_tool_environment(context),
         timeout=CLEANUP_COMMAND_TIMEOUT_SECONDS,
@@ -200,6 +200,9 @@ def run_cleanup_command(
         details = f"timed out after {CLEANUP_COMMAND_TIMEOUT_SECONDS}s"
         log_event(logger, f"{action} timed out", level=WARNING, error=details)
         return f"{action}: {details}"
+    except CommandOutputLimitError as exc:
+        log_event(logger, f"{action} output exceeded its limit", level=WARNING)
+        return f"{action}: {exc}"
     except OSError as exc:
         details = str(exc)
         log_event(logger, f"{action} could not run", level=WARNING, error=details)
@@ -389,52 +392,6 @@ def tool_is_active(process_names: tuple[str, ...], proc_root: str = "/proc") -> 
     return False
 
 
-def process_uses_path(path: str, proc_root: str = "/proc") -> bool:
-    """Check accessible cwd/executable links and current-user argument vectors."""
-    current_uid = os.getuid()
-    absolute_path = os.path.abspath(path)
-    encoded_path = os.fsencode(absolute_path)
-    try:
-        process_entries = os.scandir(proc_root)
-    except OSError:
-        return True
-
-    with process_entries:
-        for entry in process_entries:
-            if not entry.name.isdigit():
-                continue
-            try:
-                if entry.stat(follow_symlinks=False).st_uid != current_uid:
-                    continue
-            except (FileNotFoundError, ProcessLookupError):
-                continue
-            except OSError:
-                return True
-            # Non-dumpable user daemons (systemd, ssh-agent, etc.) commonly
-            # hide these links. Their readable argv must still be checked;
-            # one hidden cwd must not mark every user cache as occupied.
-            for link in ("cwd", "exe"):
-                try:
-                    target = os.readlink(os.path.join(entry.path, link))
-                    if os.path.commonpath((os.path.abspath(target), absolute_path)) == absolute_path:
-                        return True
-                except (OSError, ValueError):
-                    pass
-            try:
-                with open(os.path.join(entry.path, "cmdline"), "rb") as handle:
-                    arguments = handle.read()
-                if any(
-                    argument == encoded_path or argument.startswith(encoded_path + os.sep.encode())
-                    for argument in arguments.split(b"\0")
-                ):
-                    return True
-            except (FileNotFoundError, ProcessLookupError):
-                continue
-            except OSError:
-                return True
-    return False
-
-
 def storage_pressure(path: str) -> bool:
     """Check available space on the cache's filesystem, including reserved blocks."""
     try:
@@ -479,6 +436,12 @@ def cleanup_managed_directory(
     dry_run: bool,
 ) -> list[str]:
     """Remove a rebuildable cache when stale or oversized and its tool is idle."""
+    try:
+        expected = os.lstat(path)
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        return [f"{label} inventory: {exc}"]
     usage, failure = inventory_cache(context, label, path)
     if failure:
         return [failure]
@@ -505,6 +468,18 @@ def cleanup_managed_directory(
         )
         return []
 
+    try:
+        if not stat.S_ISDIR(expected.st_mode):
+            raise OSError("managed cache path is not a directory")
+        if not remove_checked_path(path, expected, uid=context.uid, dry_run=dry_run,
+                                   in_use=lambda: defer_active_cache(path, process_names),
+                                   on_isolated=lambda recovery: log_event(logger, "Isolated rebuildable cache for disposal", path=path, recovery_path=recovery)):
+            return []
+    except OSError as exc:
+        details = str(exc)
+        log_event(logger, "Failed to remove rebuildable user cache", level=WARNING,
+                  cache=label, path=path, error=details, recovery_path=getattr(exc, "recovery_path", None))
+        return [f"{label} cleanup: {details}"]
     if dry_run:
         log_event(
             logger,
@@ -514,22 +489,6 @@ def cleanup_managed_directory(
             reason=", ".join(reasons),
         )
         return []
-
-    try:
-        if not os.path.isdir(path):
-            raise OSError("managed cache path is not a directory")
-        shutil.rmtree(path)
-    except OSError as exc:
-        details = str(exc)
-        log_event(
-            logger,
-            "Failed to remove rebuildable user cache",
-            level=WARNING,
-            cache=label,
-            path=path,
-            error=details,
-        )
-        return [f"{label} cleanup: {details}"]
 
     log_event(
         logger,
@@ -575,8 +534,13 @@ def cleanup_stale_children(
         if entry.is_symlink():
             continue
         try:
+            expected = entry.stat(follow_symlinks=False)
             usage = cache_usage(entry.path)
             if usage.newest_mtime is None or usage.newest_mtime >= cutoff:
+                continue
+            if not remove_checked_path(entry.path, expected, uid=context.uid, dry_run=dry_run,
+                                       in_use=lambda: defer_active_cache(entry.path, process_names),
+                                       on_isolated=lambda recovery: log_event(logger, "Isolated stale tool entry for disposal", path=entry.path, recovery_path=recovery)):
                 continue
             if dry_run:
                 log_event(
@@ -586,10 +550,6 @@ def cleanup_stale_children(
                     path=entry.path,
                 )
                 continue
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(entry.path)
-            else:
-                os.unlink(entry.path)
             removed_count += 1
         except OSError as exc:
             details = str(exc)
@@ -600,6 +560,7 @@ def cleanup_stale_children(
                 cache=label,
                 path=entry.path,
                 error=details,
+                recovery_path=getattr(exc, "recovery_path", None),
             )
             failures.append(f"{entry.path}: {details}")
 

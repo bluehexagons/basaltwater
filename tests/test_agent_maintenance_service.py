@@ -15,6 +15,7 @@ import basaltwater
 from common import maintenance_agent_steps as steps
 from lib import maintenance_agent as agent
 from lib.agent_tasks import codex_command, validate_task
+from lib.agent_probe import ProbeResult
 from lib.atomic_io import write_json_atomic
 from lib.config import SetupConfig
 from lib.maintenance_agent_config import DEFAULTS, setup_policy, validate_policy
@@ -265,18 +266,19 @@ class MaintenanceExecutionTest(unittest.TestCase):
     def test_review_is_dropped_to_named_account_without_a_shell_or_inherited_environment(self) -> None:
         owner = SimpleNamespace(pw_name="agent", pw_dir="/home/agent")
         selection = {"model": "test-mini", "effort": "low"}
-        with patch.object(agent.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout='{"status":"completed","output":"done"}')) as run:
+        with patch.object(agent, "run_probe", return_value=ProbeResult(output='{"status":"completed","output":"done"}')) as run:
             self.assertEqual(agent._review_as_user(owner, DEFAULTS, {"units": []}, [ISSUE], selection)["status"], "completed")
         self.assertEqual(run.call_args.args[0][:5], ["/usr/sbin/runuser", "-u", "agent", "--", "/usr/bin/python3"])
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertNotIn("OPENAI_API_KEY", run.call_args.kwargs["env"])
-        self.assertIn("issues", json.loads(run.call_args.kwargs["input"]))
+        self.assertIn("issues", json.loads(run.call_args.kwargs["input_data"]))
+        self.assertEqual(run.call_args.kwargs["max_bytes"], 16384)
 
     def test_invalid_worker_results_fail_the_review_without_crashing_the_supervisor(self) -> None:
         owner = SimpleNamespace(pw_name="agent", pw_dir="/home/agent")
         selection = {"model": "test-mini", "effort": "low"}
         for result in ({"status": [], "output": "done"}, {"status": "completed", "output": 42}, []):
-            with self.subTest(result=result), patch.object(agent.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=json.dumps(result))):
+            with self.subTest(result=result), patch.object(agent, "run_probe", return_value=ProbeResult(output=json.dumps(result))):
                 self.assertEqual(agent._review_as_user(owner, DEFAULTS, {"units": []}, [ISSUE], selection)["status"], "failed")
 
     def test_review_refuses_root_and_isolated_runner_is_inspect_only(self) -> None:
