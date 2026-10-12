@@ -232,6 +232,19 @@ SDK; run the project's bootstrap and doctor after setup. Basaltwater never
 builds checkout code during provisioning. CachyOS has its own
 [`--game-dev` bundle](CACHYOS_GAME_DEVELOPMENT.md) for development work.
 
+GTK is a runtime prerequisite for Animator/Electron. Debian's `libgtk-3-bin`
+pulls the release's GTK shared library, including its t64 package name, without
+requesting `libgtk-3-dev`. Native GTK addon development is a separate project
+requirement. Those headers can transitively require a D-Bus runtime version that
+conflicts with newer libraries already installed alongside XRDP. The game
+bundle excludes optional recommendations and refuses package removals; it does
+not change APT pins or force downgrades to resolve conflicts. If APT reports
+"held broken packages", inspect the named dependencies with `apt-cache policy`
+and check `apt-mark showhold` separately rather than assuming an actual hold.
+After updating the controller checkout, rerun the same saved setup with
+`--game-dev` to recover a failed bundle install. Setup verifies the requested
+packages before recording the bundle as selected.
+
 The development doctor also inventories native commands and pkg-config module
 versions without launching a window or testing GPU acceleration. A saved Debian
 `--game-dev` selection makes missing host commands or dependency modules a

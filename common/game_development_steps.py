@@ -22,11 +22,17 @@ def install_game_development(config: SetupConfig) -> None:
         validate_package_name(package)
     missing = [package for package in DEBIAN_GAME_PACKAGES if not is_package_installed(package)]
     if missing:
-        result = run([*shlex.split(_APT_GET), "install", "-y", "-qq", *missing], check=False,
+        result = run([*shlex.split(_APT_GET), "install", "-y", "-qq",
+                      "--no-install-recommends", "--no-remove", *missing], check=False,
                      env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"})
         remaining = [package for package in missing if not is_package_installed(package)]
         if result.returncode or remaining:
-            raise RuntimeError("Game development packages failed to install: " + ", ".join(remaining or missing))
+            raise RuntimeError(
+                "Game development packages failed to install: " + ", ".join(remaining or missing)
+                + "; inspect APT's dependency output and apt-cache policy for the conflicting packages. "
+                "A dependency conflict does not establish that packages are held; "
+                "do not force runtime downgrades or change distribution pins to bypass it."
+            )
     record_game_development_selection(config)
     print("  Game development host prerequisites ready; run the project's SDL bootstrap and doctor")
 

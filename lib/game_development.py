@@ -27,7 +27,10 @@ DEBIAN_GAME_PACKAGES = (
     "libudev-dev", "libwayland-dev", "libwebp-dev", "libx11-dev", "libxcursor-dev",
     "libxext-dev", "libxfixes-dev", "libxi-dev", "libxinerama-dev",
     "libxkbcommon-dev", "libxrandr-dev", "libxrender-dev",
-    "libgtk-3-dev", "libnss3", "libnotify4", "libxss1", "libxtst6", "libgbm-dev",
+    # Electron needs GTK's shared runtime, not its native-addon headers. The
+    # stable bin package pulls the correct GTK runtime across the t64 rename
+    # without introducing exact-version AT-SPI/D-Bus development dependencies.
+    "libgtk-3-bin", "libnss3", "libnotify4", "libxss1", "libxtst6", "libgbm-dev",
 )
 NATIVE_COMMANDS = (
     "cc", "cmake", "ninja", "python3", "pkg-config", "gdb", "ccache", "strace", "valgrind",

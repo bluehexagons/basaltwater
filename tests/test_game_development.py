@@ -52,21 +52,52 @@ class GameDevelopmentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SetupConfig(host="vm.example", username="human", system_type=profile, install_game_dev=True)
         self.assertFalse(any("sdl" in package for package in development.DEBIAN_GAME_PACKAGES))
-        for package in ("libgtk-3-dev", "libnss3", "libgbm-dev", "xvfb", "xauth", "cmake", "glslang-tools"):
+        for package in ("libgtk-3-bin", "libnss3", "libgbm-dev", "xvfb", "xauth", "cmake", "glslang-tools"):
             self.assertIn(package, development.DEBIAN_GAME_PACKAGES)
 
     def test_missing_packages_install_without_downloads_or_project_execution(self):
-        missing = {"libgtk-3-dev", "cmake"}
+        missing = {"libgtk-3-bin", "cmake"}
         with patch("common.common_steps.is_package_installed", side_effect=lambda name: name not in missing), \
                 patch.object(steps, "run", side_effect=lambda *_args, **_kwargs: missing.clear() or subprocess.CompletedProcess([], 0)) as run:
             steps.install_game_development(self.config)
         command = run.call_args.args[0]
         self.assertIn("install", command)
-        self.assertEqual(command[-2:], ["cmake", "libgtk-3-dev"])
+        self.assertEqual(command[-2:], ["cmake", "libgtk-3-bin"])
+        self.assertIn("--no-install-recommends", command)
+        self.assertIn("--no-remove", command)
         self.assertNotIn("update", command)
         self.assertEqual(run.call_args.kwargs["env"]["DEBIAN_FRONTEND"], "noninteractive")
         self.assertEqual(json.loads(self.receipt.read_text()), {"schema_version": 1, "selected": True})
         self.assertEqual(self.receipt.stat().st_mode & 0o777, 0o644)
+
+    def test_newer_dbus_runtime_does_not_require_matching_gtk_development_stack(self):
+        # Stable GTK headers transitively select libdbus-1-dev at the stable
+        # version. Its exact runtime dependency cannot match the already newer
+        # D-Bus installed alongside XRDP; the runtime-only request avoids it.
+        installed = {"libdbus-1-3": "1.16.2-5+b1"}
+
+        def install(command, **_options):
+            if "libgtk-3-dev" in command:
+                return subprocess.CompletedProcess(command, 100)
+            for package in development.DEBIAN_GAME_PACKAGES:
+                installed[package] = "fixture"
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch("common.common_steps.is_package_installed", side_effect=lambda name: name in installed), \
+                patch.object(steps, "run", side_effect=install):
+            steps.install_game_development(self.config)
+        self.assertEqual(installed["libdbus-1-3"], "1.16.2-5+b1")
+        self.assertTrue(json.loads(self.receipt.read_text())["selected"])
+
+    def test_incomplete_install_preserves_prior_selection_even_with_success_exit(self):
+        self.receipt.parent.mkdir()
+        self.receipt.write_text('{"schema_version":1,"selected":false}')
+        before = self.receipt.read_bytes()
+        with patch("common.common_steps.is_package_installed", side_effect=lambda name: name != "cmake"), \
+                patch.object(steps, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                self.assertRaisesRegex(RuntimeError, "failed to install: cmake"):
+            steps.install_game_development(self.config)
+        self.assertEqual(self.receipt.read_bytes(), before)
 
     def test_existing_packages_need_no_apt_and_deselection_keeps_packages(self):
         with patch("common.common_steps.is_package_installed", return_value=True), patch.object(steps, "run") as run:
