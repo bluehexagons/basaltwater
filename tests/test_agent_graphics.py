@@ -22,10 +22,12 @@ class GraphicsTests(unittest.TestCase):
         with patch.object(graphics, "run_probe", return_value=ProbeResult(
             "Accelerated: no\nVideo memory: 123456789 MB\nOpenGL renderer string: llvmpipe (LLVM 19.1.7, 256 bits)\nOpenGL core profile version string: 4.5 Mesa 25.0.7\n"
         )) as probe:
-            result = graphics.inspect_graphics_context("xvfb")
+            result = graphics.inspect_graphics_context("xvfb", require_software=True)
         self.assertTrue(result["healthy"])
         self.assertTrue(result["context_created"])
         self.assertFalse(result["accelerated"])
+        self.assertTrue(result["software_renderer"])
+        self.assertTrue(result["software_required"])
         for field in ("rendering_verified", "hardware_profiling_qualified", "physical_display_qualified", "hdr_qualified", "input_latency_qualified"):
             self.assertFalse(result[field])
         self.assertNotIn("123456789", json.dumps(result))
@@ -39,8 +41,40 @@ class GraphicsTests(unittest.TestCase):
             result = graphics.inspect_graphics_context("display")
         self.assertTrue(result["healthy"])
         self.assertTrue(result["accelerated"])
+        self.assertFalse(result["software_renderer"])
+        self.assertFalse(result["software_required"])
         self.assertFalse(result["physical_display_qualified"])
         self.assertEqual(probe.call_args.args[0], ["/usr/bin/glxinfo", "-B"])
+
+    def test_software_requirement_uses_observed_renderer_not_environment_or_acceleration_alone(self):
+        for acceleration, software in (("yes", False), ("no", None), ("", None)):
+            with self.subTest(acceleration=acceleration), \
+                    patch.dict(graphics.os.environ, {"LIBGL_ALWAYS_SOFTWARE": "1", "GALLIUM_DRIVER": "llvmpipe"}), \
+                    patch.object(graphics, "run_probe", return_value=ProbeResult(
+                        f"Accelerated: {acceleration}\nOpenGL renderer string: Other GPU\nOpenGL version string: 4.6 Mesa\n"
+                    )):
+                required = graphics.inspect_graphics_context("xvfb", require_software=True)
+                ordinary = graphics.inspect_graphics_context("xvfb")
+            self.assertTrue(required["process_exit_success"])
+            self.assertTrue(required["context_created"])
+            self.assertIs(required["software_renderer"], software)
+            self.assertFalse(required["healthy"])
+            self.assertEqual(required["issues"], ["software_renderer_unverified"])
+            self.assertTrue(ordinary["healthy"])
+            self.assertEqual(ordinary["issues"], [])
+
+    def test_software_names_need_a_complete_context_and_whole_tokens(self):
+        for renderer, version, expected in (("softpipe", "3.3 Mesa", True),
+                                             ("SwiftShader Device", "4.1", True),
+                                             ("notllvmpipe", "4.6", None),
+                                             ("llvmpipe", "", None)):
+            with self.subTest(renderer=renderer, version=version), \
+                    patch.object(graphics, "run_probe", return_value=ProbeResult(
+                        f"OpenGL renderer string: {renderer}\nOpenGL version string: {version}\n"
+                    )):
+                result = graphics.inspect_graphics_context("xvfb", require_software=True)
+            self.assertIs(result["software_renderer"], expected)
+            self.assertEqual(result["healthy"], expected is True)
 
     def test_missing_display_and_tools_do_not_launch(self):
         with patch.dict(graphics.os.environ, {}, clear=True), patch.object(graphics, "run_probe") as probe:
@@ -73,7 +107,8 @@ class GraphicsTests(unittest.TestCase):
     def test_parser_requires_context_and_dispatches_doctor(self):
         parser = argparse.ArgumentParser()
         add_agent_subparser(parser.add_subparsers(dest="command"))
-        args = parser.parse_args(["agent", "graphics", "doctor", "--context", "xvfb", "--json"])
-        with patch.object(graphics, "inspect_graphics_context", return_value={"healthy": False}), redirect_stdout(output := StringIO()):
+        args = parser.parse_args(["agent", "graphics", "doctor", "--context", "xvfb", "--require-software", "--json"])
+        with patch.object(graphics, "inspect_graphics_context", return_value={"healthy": False}) as inspect, redirect_stdout(output := StringIO()):
             self.assertEqual(run_agent_command(args), 1)
+        inspect.assert_called_once_with("xvfb", require_software=True)
         self.assertEqual(json.loads(output.getvalue()), {"healthy": False})

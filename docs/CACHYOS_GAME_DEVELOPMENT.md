@@ -176,7 +176,13 @@ For selected game tooling it also records parseable `cc`, Clang, Clang-Format,
 Clang-Tidy and LLVM symbolizer versions using bounded terminal-only probes.
 Null versions remain unverified; an installed command does not establish
 compatibility with a project's lint configuration or compiler baseline.
-It never launches the game or Animator, builds repository code, or tests the GPU.
+The CachyOS bundle supplies distribution LLVM, without installing a specific
+LLVM major or versioned aliases. Antistatic's lint/format scripts prefer
+`clang-tidy-19`/`clang-format-19` when available and otherwise select the
+unversioned tools. The doctor's versions describe those unversioned host tools,
+not a project-selected LLVM or a reviewed formatting baseline. Projects that
+require an exact LLVM must arrange and verify that toolchain separately.
+The doctor never launches the game or Animator, builds repository code, or tests the GPU.
 Run the game's doctor/build and open Animator after setup. Difficult native,
 formatter, screenshot, and full-suite validation can remain on the Debian VM;
 record the host on which a check actually ran.
@@ -192,8 +198,11 @@ isolated GLX context; `--context display` uses the invoking session's existing
 display (GLX/Xwayland), leaving native Wayland unqualified. It reports process
 and context outcomes, renderer/version and software/accelerated status without
 claiming frame rendering, GPU timing, physical HDR or latency. Ordinary discovery
-does not launch this probe. Use `basaltw agent resources --json` for the current
-process's affinity, visible inherited cgroup limits and timestamped pressure.
+does not launch this probe. Add `--require-software` to fail unless that GLX
+context reports a recognized software renderer; it does not change drivers or
+qualify a separate application's context. Use `basaltw agent resources --json`
+for the current process's affinity, visible inherited cgroup limits and
+timestamped pressure.
 See [native context checks and compiler caching](PROJECT_TOOLING.md#opt-in-native-graphics-context-check)
 for shared Debian/CachyOS recipes. Existing container engines can use the
 [storage/preflight commands](PROJECT_TOOLING.md#container-storage-and-sdk-headroom)
@@ -207,6 +216,15 @@ and GL renderer in the application's logs:
 | Native KDE Wayland | Interactive rendering, monitor scale and desktop behavior | Requested window/capture sizes can exceed the compositor's backing surface; inspect full image content |
 | Isolated Xvfb/X11 with Mesa llvmpipe | Repeatable project screenshots and software reference comparisons | Does not qualify the hardware GPU, native Wayland or monitor behavior |
 | SDL offscreen, when the application supports GL with that driver | Hardware captures independent of desktop window size | Driver support and GPU/software selection must be verified by the project; does not qualify desktop interaction |
+
+`LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe` are configuration requests,
+not proof of software coverage. On this host, SDL offscreen/EGL fixtures have
+emitted a warning that the API explicitly selects a hardware device despite
+the software request. That warning alone does not identify the final GL
+renderer either. Retain both and qualify each fixture from the actual renderer.
+A separate llvmpipe GLX probe does not qualify an offscreen/EGL test.
+Antistatic's god-ray fixture honors `SDL_VIDEODRIVER=x11`; fixtures that force
+offscreen need their own driver/renderer verification.
 
 For an isolated Xvfb capture, explicitly select `SDL_VIDEODRIVER=x11` and remove
 `WAYLAND_DISPLAY` from the child environment so SDL does not prefer the personal

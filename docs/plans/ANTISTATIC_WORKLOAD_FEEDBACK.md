@@ -11,9 +11,19 @@ rendered agent-play. Source/setup receipts matched `443c844` at inspection;
 this does not identify code loaded by long-running services. No current VM
 development blocker or new OOM event was observed.
 
-CachyOS builds and native/graphics smoke checks also pass. Its remaining
-Clang-Tidy fixture failure belongs to Antistatic. Both hosts' llvmpipe captures
-verify software rendering; physical GPU, HDR and latency remain unqualified.
+CachyOS builds and native/graphics smoke checks also pass. The Antistatic owner
+resolved the isolated Clang-Tidy fixture failure with explicit checks for newer
+LLVM tools. CachyOS intentionally supplies distribution LLVM; its doctor reports
+observed unversioned tool versions without asserting project pin compatibility.
+Both hosts' observed llvmpipe captures verify software rendering for those
+captures; this does not qualify every native fixture. SDL offscreen/EGL on
+CachyOS can choose hardware despite software environment flags. Physical GPU,
+HDR and latency remain unqualified.
+Local follow-up passed all seven C lint script fixtures and the god-ray X11
+fixture, which reported llvmpipe (LLVM 23.1.1). This invocation's god-ray
+offscreen test also reported llvmpipe while emitting the EGL hardware-device
+warning; neither warning nor environment flags alone qualify its renderer.
+Other forced-offscreen fixtures remain outside that software qualification.
 
 Delivered: broker execution/approval fixes, memory/OOM context (`009395f`),
 bounded maintenance captures and identity-checked cleanup (`8be57cd`), GTK
@@ -82,8 +92,12 @@ and owner-scoped, preserving useful SDK/dependency caches.
 
 ## Return to the Antistatic owner
 
-- Give Clang-Tidy fixtures explicit nonempty checks for newer LLVM tools;
-  preserve the reviewed lint/format baseline instead of downgrading the host.
+- Preserve the explicit Clang-Tidy fixture checks and reviewed lint/format
+  baseline. LLVM 19 preference and distribution LLVM readiness are separate.
+- Verify each graphics fixture's actual driver/renderer. The god-ray fixture
+  honors X11 for Xvfb/llvmpipe coverage; forced-offscreen fixtures need their own
+  evidence. Basaltwater's GLX doctor now supports `--require-software`, which
+  qualifies only its probe context and cannot qualify an application's EGL path.
 - Use project-selected `npm ci` to correct checkout dependency drift; Basaltwater
   provisioning intentionally does not install repository dependencies.
 - Measure ccache benefit before choosing a CMake compiler-launcher default.

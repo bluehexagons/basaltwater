@@ -73,7 +73,9 @@ libraries, Clang/format/tidy, compiler-rt/LLVM sanitizer runtime and symbolizer,
 glslang, GDB/strace/Valgrind/ccache, Xvfb/xauth and Electron host libraries.
 Add `--go` for Go development and `--godot` for its native editor/runtime.
 Projects own compiler/formatter/engine pins and actual sanitizer/shader tests;
-installed commands are prerequisites only. Use the same revision, fixtures and
+the bundle supplies distribution LLVM rather than a pinned LLVM major.
+Doctor versions describe unversioned host commands, not project selection.
+Installed commands are prerequisites only. Use the same revision, fixtures and
 recipes for Debian/CachyOS comparisons, recording hardware versus software
 renderer evidence separately.
 `--node-versions` prepares user-local NVM without choosing a runtime or changing
@@ -200,6 +202,10 @@ isolated GLX context probe. `--context display` uses the invoking graphical
 session's existing DISPLAY and only checks GLX/Xwayland. Neither qualifies
 native Wayland, project frames, hardware timing, physical HDR or input latency;
 software contexts can still be healthy for subsequent correctness captures.
+Add `--require-software` to reject an accelerated or unknown renderer in that
+GLX probe. Software environment flags are requests, not evidence: SDL
+offscreen/EGL can choose hardware despite them. Projects must observe/assert
+their own SDL driver and renderer; a GLX result does not qualify another context.
 Ordinary manifest/support and workstation prerequisite diagnosis stay non-launching.
 
 After a refresh, run a reviewed project graphics recipe explicitly with

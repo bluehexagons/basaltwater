@@ -324,6 +324,8 @@ On Debian or CachyOS, explicitly select the context to probe:
 
 ```bash
 basaltw agent graphics doctor --context xvfb --json
+# Require an observed software renderer before software reference work:
+basaltw agent graphics doctor --context xvfb --require-software --json
 # From the intended logged-in graphical session (GLX/Xwayland):
 basaltw agent graphics doctor --context display --json
 ```
@@ -340,6 +342,19 @@ process outcome, context creation, renderer/OpenGL version, and acceleration.
 Missing tools/display, a failed process, and exit success without a recognized
 context are separate outcomes. Software Mesa can pass context readiness for
 subsequent correctness captures; unknown acceleration remains `null`.
+`software_renderer` is true for a recognized software renderer, false for an
+observed accelerated context, and null when software selection is unverified.
+`--require-software` keeps the context/process observations but returns nonzero
+with `software_renderer_unverified` for an accelerated or unknown renderer.
+An `Accelerated: no` field alone does not establish software selection.
+The option checks the observed renderer; it does not force a driver.
+
+Mesa's [renderer environment variables](https://docs.mesa3d.org/envvars.html)
+configure requests such as `LIBGL_ALWAYS_SOFTWARE=1` and `GALLIUM_DRIVER=llvmpipe`;
+their presence is not renderer evidence. This probe checks GLX only. A project
+using SDL offscreen/EGL must report and assert its own actual SDL driver and
+GL renderer, even if the GLX probe passes. Fixtures that override the driver
+to offscreen do not become X11 fixtures by running them inside Xvfb.
 `rendering_verified` stays false until a project renders and checks a frame.
 GPU timing, physical display, HDR and input/display latency remain unqualified
 even after an accelerated context succeeds. Xvfb results describe that virtual
