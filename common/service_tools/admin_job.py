@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import math
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -16,8 +17,10 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, "/opt/basaltwater")
 
 from lib.admin_actions import ADMIN_ACTIONS, ADMIN_STATE, ADMIN_TIMEOUT, ADMIN_UNIT, action_spec
+from lib.admin_status import FAILURE_LABELS, JOB_ID_ENV, STAGE_LABELS, setup_details, valid_job_id
 from lib.atomic_io import read_json_file, write_json_atomic
-from lib.machine_state import SETUP_CONFIG_FILE, can_manage_system_services, can_restart_system
+from lib.machine_state import STATE_DIR, SETUP_CONFIG_FILE, can_manage_system_services, can_restart_system
+from lib.operation_state import OperationStateStore
 from lib.installation_info import INSTALLATION_METADATA_FILENAME, read_installation_metadata
 from lib.privilege_policy import protected_path
 from lib.remote_utils import read_os_release
@@ -30,12 +33,26 @@ ENVIRONMENT = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 SOURCE = "/opt/basaltwater"
-JOB_STAGES = {"preflight", "source_verification", "command"}
-JOB_FAILURES = {
-    "action_unavailable", "source_rejected", "command_timeout",
-    "execution_unavailable", "execution_rejected", "nonzero_exit",
-    "command_signal", "job_interrupted",
-}
+
+
+def current_setup_context(job: dict) -> dict | None:
+    """Read only a protected marker correlated with this refresh invocation."""
+    if job.get("action") != "refresh" or not valid_job_id(job.get("job_id")) or job.get("stage") != "command":
+        return None
+    try:
+        # The installed state directory can be a managed symlink. Validate its
+        # resolved root-owned destination, while refusing a linked marker file.
+        path = os.path.join(os.path.realpath(STATE_DIR), "setup-operation.json")
+        protected_path(path)
+        record = OperationStateStore(path).load()
+        if record is None or record.operation_type != "target_setup" or record.context.get("maintenance_job_id") != job["job_id"]:
+            return None
+        return setup_details({"job_id": job["job_id"], "phase": record.phase,
+                              **{key: record.context.get(key) for key in (
+                                  "setup_stage", "step_index", "step_count", "error_type",
+                              )}}, job["job_id"])
+    except (OSError, ValueError, RuntimeError):
+        return None
 
 
 def availability() -> dict[str, str]:
@@ -106,14 +123,18 @@ def job_status() -> dict:
                 or type(value.get("started")) not in {int, float} or not math.isfinite(value["started"])
                 or value.get("finished") is not None and (type(value["finished"]) not in {int, float} or not math.isfinite(value["finished"]))
                 or value.get("exit_code") is not None and type(value["exit_code"]) is not int
-                or value.get("stage") is not None and value["stage"] not in JOB_STAGES
-                or value.get("failure") is not None and value["failure"] not in JOB_FAILURES
+                or value.get("stage") is not None and value["stage"] not in STAGE_LABELS
+                or value.get("failure") is not None and value["failure"] not in FAILURE_LABELS
+                or value.get("job_id") is not None and not valid_job_id(value["job_id"])
                 or value.get("command_index") is not None and (
                     type(value["command_index"]) is not int or not 1 <= value["command_index"] <= 32)):
             raise ValueError("Invalid maintenance result")
         result = {key: value.get(key) for key in (
-            "action", "status", "started", "finished", "exit_code", "stage", "command_index", "failure",
+            "action", "status", "started", "finished", "exit_code", "stage", "command_index", "failure", "job_id",
         )}
+        result["setup_context"] = setup_details(value.get("setup_context"), value.get("job_id"))
+        if result["setup_context"] is None and result["status"] == "running":
+            result["setup_context"] = current_setup_context(value)
         if result["status"] == "running" and active in {"inactive", "failed"}:
             result["status"] = "interrupted"
             result["failure"] = "job_interrupted"
@@ -170,7 +191,7 @@ def run_action(action: str) -> int:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.path.lexists(ADMIN_STATE):
             protected_path(ADMIN_STATE)
-        value = {"action": action, "status": "running", "started": time.time(), "finished": None,
+        value = {"action": action, "job_id": secrets.token_hex(16), "status": "running", "started": time.time(), "finished": None,
                  "exit_code": None, "stage": "preflight", "command_index": None, "failure": None}
         write_json_atomic(ADMIN_STATE, value, mode=0o600)
         try:
@@ -188,7 +209,7 @@ def run_action(action: str) -> int:
                 write_json_atomic(ADMIN_STATE, value, mode=0o600)
                 result = subprocess.run(
                     argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    cwd="/", env=ENVIRONMENT, close_fds=True, check=False,
+                    cwd="/", env={**ENVIRONMENT, **({JOB_ID_ENV: value["job_id"]} if action == "refresh" else {})}, close_fds=True, check=False,
                     timeout=max(1, deadline - time.monotonic()),
                 )
                 exit_code = result.returncode
@@ -209,6 +230,7 @@ def run_action(action: str) -> int:
             raise
         finally:
             value["finished"] = time.time()
+            value["setup_context"] = current_setup_context(value)
             write_json_atomic(ADMIN_STATE, value, mode=0o600)
         return 0 if value["status"] == "succeeded" else 1
 

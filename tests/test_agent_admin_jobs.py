@@ -16,6 +16,10 @@ from common.service_tools import admin_job, privilege_broker
 from lib.admin_actions import ADMIN_ACTIONS, ADMIN_HELPER, ADMIN_TIMEOUT, ADMIN_UNIT, dispatch_argv
 from lib.privilege_policy import operation_plan
 from lib.privilege_execution import ExecutionResult
+from lib.admin_status import JOB_ID_ENV
+from lib.operation_state import OperationStateStore
+from lib.config import SetupConfig
+import remote_setup
 from tests.test_agent_privilege_broker import policy
 
 
@@ -91,6 +95,7 @@ class AdminJobTests(unittest.TestCase):
         self.source_validator = admin_job.trusted_refresh_source
         self.availability_checker = admin_job.availability
         for name, replacement in (("ADMIN_STATE", self.path), ("protected_path", Mock()),
+                                  ("STATE_DIR", self.directory.name),
                                   ("availability", Mock(return_value={})), ("trusted_refresh_source", Mock())):
             patcher = patch.object(admin_job, name, replacement)
             patcher.start()
@@ -141,6 +146,71 @@ class AdminJobTests(unittest.TestCase):
         self.assertEqual(value["stage"], "source_verification")
         self.assertEqual(value["failure"], "source_rejected")
         self.assertNotIn("root-secret", json.dumps(value))
+
+    def test_refresh_failure_captures_only_its_own_setup_marker_and_survives_later_markers(self):
+        marker = self.directory.name + "/setup-operation.json"
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        def execute(argv, **kwargs):
+            self.assertEqual(kwargs["env"][JOB_ID_ENV], json.loads(Path(self.path).read_text())["job_id"])
+            with patch.dict(os.environ, kwargs["env"], clear=True):
+                remote_setup._begin_setup_operation(config)
+                remote_setup._transition_setup_operation("applying", {"step_index": 3, "step_count": 5,
+                                                                      "step": "private configuration path"})
+                remote_setup._record_setup_failure(RuntimeError("root-secret"))
+            remote_setup._active_setup_operation[0].close()
+            remote_setup._active_setup_operation = None
+            return Mock(returncode=1)
+        with patch.object(remote_setup, "SETUP_OPERATION_FILE", marker), \
+                patch.object(remote_setup, "record_setup_activity"), \
+                patch.object(admin_job.subprocess, "run", side_effect=execute):
+            self.assertEqual(admin_job.run_action("refresh"), 1)
+        saved = json.loads(Path(self.path).read_text())
+        self.assertEqual(saved["setup_context"], {"job_id": saved["job_id"], "phase": "recovery",
+                        "setup_stage": "steps", "step_index": 3, "step_count": 5, "error_type": "RuntimeError"})
+        newer = json.loads(Path(marker).read_text())
+        newer["context"]["maintenance_job_id"] = "b" * 32
+        Path(marker).write_text(json.dumps(newer))
+        with patch.object(admin_job, "unit_state", return_value="inactive"):
+            result = admin_job.job_status()["latest"]
+        self.assertEqual(result["setup_context"], saved["setup_context"])
+        self.assertNotIn("private", json.dumps(result))
+        self.assertNotIn("root-secret", json.dumps(result))
+
+    def test_stale_legacy_and_invalid_markers_cannot_explain_a_new_job(self):
+        marker = self.directory.name + "/setup-operation.json"
+        store = OperationStateStore(marker)
+        store.begin("target_setup", "server_lite", "applying", context={"maintenance_job_id": "a" * 32,
+                            "setup_stage": "pre_steps", "error_type": "RuntimeError", "secret": "root-secret"})
+        store.close()
+        job = {"action": "refresh", "job_id": "b" * 32, "stage": "command"}
+        self.assertIsNone(admin_job.current_setup_context(job))
+        job["job_id"] = "a" * 32
+        self.assertEqual(admin_job.current_setup_context(job)["setup_stage"], "pre_steps")
+        with patch.object(admin_job, "OperationStateStore") as reader:
+            self.assertIsNone(admin_job.current_setup_context({"action": "refresh", "stage": "command"}))
+            self.assertIsNone(admin_job.current_setup_context({**job, "action": "refresh-preview"}))
+            reader.assert_not_called()
+        Path(marker).write_text('{"version": "root-secret"}')
+        self.assertIsNone(admin_job.current_setup_context(job))
+        Path(marker).unlink()
+        Path(marker).symlink_to(self.path)
+        with patch.object(admin_job, "protected_path", side_effect=ValueError("unsafe private marker")):
+            self.assertIsNone(admin_job.current_setup_context(job))
+
+    def test_process_loss_reports_correlated_context_without_replaying(self):
+        marker = self.directory.name + "/setup-operation.json"
+        store = OperationStateStore(marker)
+        store.begin("target_setup", "server_lite", "applying", context={"maintenance_job_id": "a" * 32,
+                    "setup_stage": "steps", "step_index": 2, "step_count": 4})
+        store.close()
+        Path(self.path).write_text(json.dumps({"action": "refresh", "status": "running", "started": 123,
+                                             "job_id": "a" * 32, "stage": "command", "command_index": 1}))
+        with patch.object(admin_job, "unit_state", return_value="inactive"), \
+                patch.object(admin_job.subprocess, "run") as execute:
+            result = admin_job.job_status()["latest"]
+        self.assertEqual(result["status"], "interrupted")
+        self.assertEqual(result["setup_context"]["step_index"], 2)
+        execute.assert_not_called()
 
     def test_launch_error_and_timeout_have_fixed_categories(self):
         for exception, failure in ((OSError("root-secret"), "execution_unavailable"),

@@ -69,6 +69,21 @@ uncertain and is never retried.
 Check status before submitting a replacement request. A reboot reported as
 `dispatched` is not proof that the VM returned.
 
+For a refresh or another long Admin-screen job, inspect existing work without
+requesting an action:
+
+```bash
+basaltw agent privilege admin-status --json
+```
+
+This returns owned request IDs, maintenance unit state, and the latest job's
+fixed stage, command index, failure category and correlated setup context.
+It returns nonzero for a failed/interrupted latest job or unavailable status.
+Missing fields from older brokers remain unknown. A source activation receipt
+does not prove setup success or that services loaded that revision. Preserve
+recovery evidence and diagnose before another approved refresh; this command
+never replays, approves, cancels or stops work.
+
 Approved commands run in a separate supervised root service with host
 filesystem, device and network access. The broker's own filesystem sandbox
 remains enabled. Review every argument and any referenced executable/configuration

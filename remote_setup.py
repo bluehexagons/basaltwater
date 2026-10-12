@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib.arg_parser import create_setup_argument_parser
+from lib.admin_status import JOB_ID_ENV, valid_job_id
 from lib.config import SetupConfig
 from lib.homebox_config import validate_homebox_settings
 from lib.display import print_setup_summary
@@ -78,7 +79,11 @@ def _begin_setup_operation(config: SetupConfig) -> None:
         "machine_type": config.machine_type,
         "system_type": config.system_type,
         "username": config.username,
+        "setup_stage": "pre_steps",
     }
+    job_id = os.environ.get(JOB_ID_ENV)
+    if valid_job_id(job_id):
+        context["maintenance_job_id"] = job_id
     try:
         existing = store.load()
         matching_recovery = bool(
@@ -136,6 +141,10 @@ def _transition_setup_operation(phase: str, context: dict[str, object]) -> None:
     if _active_setup_operation is None:
         return
     store, record = _active_setup_operation
+    context = dict(context)
+    if valid_job_id(record.context.get("maintenance_job_id")):
+        context["maintenance_job_id"] = record.context["maintenance_job_id"]
+    context["setup_stage"] = "steps" if "step_index" in context else record.context.get("setup_stage", "pre_steps")
     updated = store.transition(record.operation_id, phase, context=context)
     _active_setup_operation = (store, updated)
 

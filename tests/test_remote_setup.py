@@ -17,6 +17,7 @@ import remote_setup
 from lib.config import SetupConfig
 from lib.machine_state import get_machine_type
 from lib.operation_state import OperationStateError, OperationStateStore
+from lib.admin_status import JOB_ID_ENV
 from lib.remote_utils import set_dry_run
 
 
@@ -32,6 +33,28 @@ class TestRemoteSetupArgsFile(unittest.TestCase):
         if remote_setup._active_setup_operation is not None:
             remote_setup._active_setup_operation[0].close()
         remote_setup._active_setup_operation = None
+
+    def test_refresh_job_identity_is_replaced_on_recovery_and_retained_through_failure(self):
+        config = SetupConfig(host="localhost", username="root", system_type="server_lite")
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(remote_setup, "SETUP_OPERATION_FILE", os.path.join(directory, "operation.json")), \
+                patch.object(remote_setup, "record_setup_activity"):
+            with patch.dict(os.environ, {JOB_ID_ENV: "a" * 32}):
+                remote_setup._begin_setup_operation(config)
+            remote_setup._record_setup_failure(RuntimeError("private details"))
+            first = remote_setup._active_setup_operation[1]
+            self.assertEqual(first.context["setup_stage"], "pre_steps")
+            remote_setup._active_setup_operation[0].close()
+            remote_setup._active_setup_operation = None
+            with patch.dict(os.environ, {JOB_ID_ENV: "b" * 32}):
+                remote_setup._begin_setup_operation(config)
+            remote_setup._transition_setup_operation("applying", {"step_index": 1, "step_count": 3})
+            remote_setup._record_setup_failure(PermissionError("private details"))
+            second = remote_setup._active_setup_operation[1]
+            self.assertEqual(second.operation_id, first.operation_id)
+            self.assertEqual(second.context["maintenance_job_id"], "b" * 32)
+            self.assertEqual(second.context["setup_stage"], "steps")
+            self.assertEqual(second.context["error_type"], "PermissionError")
 
     def test_failed_main_releases_ownership_and_allows_matching_retry_in_process(self):
         config = SetupConfig(host="localhost", username="root", system_type="server_lite")

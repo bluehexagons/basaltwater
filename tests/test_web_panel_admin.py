@@ -58,6 +58,24 @@ class AdminScreenTests(unittest.TestCase):
         self.assertIn('href="/logs"', document)
         self.assertNotIn('href="/admin?action=', document)
 
+    def test_safe_job_diagnostics_and_correlated_setup_context_are_visible(self):
+        latest = {"action": "refresh", "status": "failed", "stage": "command", "command_index": 1,
+                  "failure": "nonzero_exit", "job_id": "a" * 32,
+                  "setup_context": {"job_id": "a" * 32, "phase": "recovery", "setup_stage": "steps",
+                                    "step_index": 3, "step_count": 4, "error_type": "RuntimeError", "secret": "root-secret"}}
+        with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
+            document = render_admin(self.state, _PAGE_STYLE, {})
+        for text in ("Command index", "Command exited unsuccessfully", "Setup phase", "RuntimeError"):
+            self.assertIn(text, document)
+        self.assertNotIn("root-secret", document)
+        latest.update(stage="root-secret", failure="root-secret", command_index=True)
+        latest["setup_context"]["job_id"] = "b" * 32
+        with patch("common.service_tools.web_panel_admin.exchange", return_value={**status(), "latest": latest}):
+            document = render_admin(self.state, _PAGE_STYLE, {})
+        self.assertIn("Unavailable", document)
+        self.assertNotIn("root-secret", document)
+        self.assertNotIn("Setup phase", document)
+
     def test_one_time_review_ticket_prevents_repeated_submission(self):
         ticket = self.manager.ticket("refresh")
         with patch("common.service_tools.web_panel_admin.exchange", side_effect=[status(), {"state": "pending"}]) as exchange:

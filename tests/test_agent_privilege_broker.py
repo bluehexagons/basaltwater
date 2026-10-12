@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 import io
 import json
 import os
@@ -202,8 +202,6 @@ class BrokerTests(unittest.TestCase):
         request = self.request()
         self.broker.decide(request["id"], request["digest"], True, "operator")
         def inspect(plan):
-            import sqlite3
-            from contextlib import closing
             with closing(sqlite3.connect(self.path)) as db:
                 self.assertEqual(db.execute("SELECT state FROM requests").fetchone()[0], "executing")
             return ExecutionResult("succeeded", exit_code=0)
@@ -267,7 +265,7 @@ class BrokerTests(unittest.TestCase):
         request = self.request()
         self.broker.decide(request["id"], request["digest"], False, "operator")
         self.broker.db.close()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute("ALTER TABLE requests DROP COLUMN execution")
         self.broker = Broker(self.path, lambda: self.policy, self.runner)
         self.assertEqual(self.broker.status(request["id"])["state"], "denied")

@@ -9,6 +9,7 @@ import sys
 import time
 
 from lib.privilege_policy import DEFAULT_REQUEST_TTL_SECONDS, MAX_MESSAGE, MAX_REQUEST_TTL_SECONDS, REQUEST_SOCKET, canonical
+from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, sanitize_admin_status
 
 
 def exchange(message: dict, path: str = REQUEST_SOCKET) -> dict:
@@ -47,9 +48,40 @@ def add_privilege_parser(commands: argparse._SubParsersAction) -> None:
             sub.add_argument("--timeout", type=int, default=DEFAULT_REQUEST_TTL_SECONDS)
     password = actions.add_parser("password-hash", help="Create an approval password hash on the administrator's device")
     password.add_argument("--username", required=True)
+    status = actions.add_parser("admin-status", help="Read owned maintenance requests and safe job diagnostics")
+    status.add_argument("--json", action="store_true")
+
+
+def _admin_status(args: argparse.Namespace) -> int:
+    try:
+        result = sanitize_admin_status(exchange({"action": "admin-status"}))
+    except (OSError, ValueError, RuntimeError):
+        print(json.dumps({"ok": False, "issue": "maintenance_status_unavailable",
+                          "remediation": "Check broker access/version and existing request status before submitting work."}))
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print("Maintenance service: " + result["unit_state"])
+        latest = result["latest"]
+        if latest:
+            print(f"Latest job: {latest.get('action', 'unavailable')} ({latest['status']})")
+            print("Stage: " + STAGE_LABELS.get(latest.get("stage"), "Unavailable"))
+            print("Command index: " + str(latest.get("command_index") or "Unavailable"))
+            print("Failure: " + FAILURE_LABELS.get(latest.get("failure"), "Unavailable"))
+            if setup := latest.get("setup_context"):
+                print("Setup phase: " + setup["phase"])
+                print("Setup stage: " + (setup["setup_stage"] or "Unavailable"))
+                print("Setup step: " + str(setup["step_index"] or "Unavailable"))
+                print("Error class: " + (setup["error_type"] or "Unavailable"))
+        for request in result["requests"]:
+            print(f"{request['id']}: {request['state']} ({request['action']})")
+    return 1 if result["unit_state"] == "unavailable" or result["latest"].get("status") in {"failed", "interrupted", "unavailable"} else 0
 
 
 def run_privilege_command(args: argparse.Namespace) -> int:
+    if args.privilege_command == "admin-status":
+        return _admin_status(args)
     try:
         if args.privilege_command == "password-hash":
             from lib.privilege_auth import password_record

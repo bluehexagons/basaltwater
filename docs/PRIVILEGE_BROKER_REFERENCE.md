@@ -84,6 +84,9 @@ The approval page checks the configured Host and Origin, uses per-request CSRF
 tokens, escapes agent-supplied text, disables caching and framing, and has no
 unauthenticated request feed. Login failures are globally limited to 20 per
 minute. Keep access source-restricted: flooding can affect availability.
+Approval origins currently support DNS names and IPv4 literals. Literal IPv6
+origins are not supported by host validation; bracket formatting alone does not
+qualify that transport contract.
 
 ## Audit, limits, and recovery
 
@@ -138,6 +141,20 @@ interrupted jobs. Exception text and output remain private. Older results keep
 unknown stage/category values instead of inventing diagnostics; invalid values
 make the result unavailable. An inactive unit with a running record is reported
 as interrupted and is never retried automatically.
+
+The CLI's `agent privilege admin-status --json` and the panel show the fixed
+diagnostics. Each helper invocation records a random `job_id` before effects;
+refresh passes it only through its clean child environment. The target setup
+marker retains that identity through steps, failure and explicit recovery.
+Only a protected, schema-validated marker for that exact job can supply
+`setup_context`: phase, pre-step/step stage, numeric step index/count and an
+allowlisted error class. Step names, exception text, configuration and root
+output are omitted. The helper persists safe context with its final result,
+so a later marker cannot replace an older job's explanation. Process-loss
+inspection can correlate a still-running record before marking it interrupted.
+Legacy records without a job identity and unrelated/corrupt/missing markers
+leave context unknown. New readers cannot reconstruct diagnostics omitted by
+an older running broker; source files and loaded service code remain separate.
 
 There can be only one pending/approved/executing administration request at a
 time. A new `admin-status` requester message returns bounded owned request

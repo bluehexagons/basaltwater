@@ -13,6 +13,7 @@ from typing import Any
 from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading, render_icon
 from common.service_tools.web_panel_agent_tools import tool_link
 from lib.admin_actions import ADMIN_ACTIONS, action_spec
+from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, job_diagnostics
 from lib.privilege_client import exchange
 from lib.privilege_policy import ID_PATTERN
 from lib.validators import validate_host
@@ -195,6 +196,17 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         tone = "complete" if status == "succeeded" else "failed" if status in {"failed", "interrupted", "unavailable"} else ""
         body += f'<aside class="status {tone}" role="status"><strong>Latest job: {escape(title)}</strong><dl class="admin-result">'
         for label, value in (("Result", status), ("Started", _timestamp(latest.get("started"))), ("Finished", _timestamp(latest.get("finished")) if latest.get("finished") is not None else "—"), ("Exit code", latest.get("exit_code") if latest.get("exit_code") is not None else "—")):
+            body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
+        diagnostics = job_diagnostics(latest)
+        details = [("Stage", STAGE_LABELS.get(diagnostics["stage"], "Unavailable")),
+                   ("Command index", diagnostics["command_index"] or "Unavailable"),
+                   ("Failure", FAILURE_LABELS.get(diagnostics["failure"], "Unavailable"))]
+        setup = diagnostics["setup_context"]
+        if setup:
+            details.extend((("Setup phase", setup["phase"]), ("Setup stage", setup["setup_stage"] or "Unavailable"),
+                            ("Setup step", setup["step_index"] or "Unavailable"),
+                            ("Error class", setup["error_type"] or "Unavailable")))
+        for label, value in details:
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
     body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
