@@ -130,6 +130,13 @@ the environment when T3 reports that `access:write` is unavailable.
 
 ## T3 Connect management
 
+An authorization job remains active until its managed restart request has been
+written or its failure recorded. Another authorization or unlink cannot race
+that finalization. A successful command exit with a failed restart request is
+shown as needing attention; neither a completed command nor a restart request
+proves the service restarted or that a client can use the relay. Verify current
+relay status separately.
+
 The authenticated `/devices` page includes a **T3 Connect** section. Choose **Start
 authorization** to run T3's supported `t3 connect link --headless` flow. The
 page cleans up terminal control sequences and displays readable installation

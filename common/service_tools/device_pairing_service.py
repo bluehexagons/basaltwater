@@ -363,10 +363,7 @@ class ConnectJob:
             with self._lock:
                 if process.stdin is not None:
                     process.stdin.close()
-        with self._lock:
-            self._returncode = returncode if returncode is not None else 1
-            self._finished_at = time.monotonic()
-            self._process = None
+        error = None
         if returncode == 0:
             request_path = self.config["restart_request"]
             try:
@@ -377,11 +374,20 @@ class ConnectJob:
                 )
                 os.close(descriptor)
             except OSError:
-                with self._lock:
-                    self._error = (
-                        "Connect completed, but the T3 service restart "
-                        "could not be requested"
-                    )
+                error = (
+                    "Connect completed, but the T3 service restart "
+                    "could not be requested"
+                )
+        # Completion includes publication of the restart request. Keep a new
+        # authorization/unlink from racing that effect, and publish any error
+        # together with the final process state.
+        with self._lock:
+            if self._process is process:
+                if error is not None:
+                    self._error = error
+                self._returncode = returncode if returncode is not None else 1
+                self._finished_at = time.monotonic()
+                self._process = None
 
     def start(self) -> None:
         with self._lock:
@@ -864,6 +870,12 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
                 '<div class="notice info"><strong>Authorization in progress</strong>'
                 "<p>The known relay-install confirmation is accepted automatically. "
                 "When T3 asks for an authorization code or response, enter it here.</p></div>"
+            )
+        elif finished and returncode == 0 and error_text:
+            progress_block = (
+                '<div class="notice info"><strong>Authorization command completed</strong>'
+                "<p>The managed restart request needs attention. Check the error "
+                "and verify relay status before using Connect.</p></div>"
             )
         elif finished and returncode == 0:
             progress_block = (
