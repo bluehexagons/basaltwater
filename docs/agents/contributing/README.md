@@ -60,11 +60,18 @@ make check
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
 
-Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows pull
-Docker's official Debian image from its
-[public ECR repository](https://gallery.ecr.aws/docker/library/debian) to avoid
-Docker Hub's anonymous pull limit. Container initialization failures happen
-before checkout or tests; inspect the failing workflow step before changing code.
+Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows run
+[`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on a hosted
+runner. It tries Docker's official Debian image from
+[public ECR](https://gallery.ecr.aws/docker/library/debian), Google's
+[Docker Hub cache](https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images),
+then Docker Hub, with a two-minute bound per pull. This keeps registry fallback
+inside a runnable step; job-container initialization would fail before fallback.
+The selected `actions/setup-python` interpreter is mounted read-only and creates
+a private container venv; checks still run in Debian. Only image pulls fall back:
+failed package installation, checks and coverage are never replayed. Cleanup
+removes only that invocation's named container. An all-registry failure means
+checks did not start. Inspect the failed step before changing application code.
 For changes exercised by CI, also run `make coverage` after `make check`; the
 branch workflow runs both, and coverage executes the suite with instrumentation.
 

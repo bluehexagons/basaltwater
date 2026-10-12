@@ -14,36 +14,27 @@ jobs:
   test:
     name: Python ${{ matrix.python-version }} (Debian Trixie)
     runs-on: ubuntu-latest
-    # Docker's official ECR publication avoids Docker Hub's anonymous pull limit.
-    container: public.ecr.aws/docker/library/debian:trixie
     strategy:
       fail-fast: false
       matrix:
         # Trixie ships Python 3.13; keep routine branch and PR checks focused
         # on the interpreter used by the supported Debian CI environment.
         python-version: ['3.13']
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
-      - name: Install Debian dependencies
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
-            ca-certificates fish git make
-
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Python
+        id: python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install build 'coverage>=7.0'
-
-      - name: Run checks
-        run: make check
-
-      - name: Report coverage
-        run: make coverage
+      # A normal step can recover from registry limits; job-container
+      # initialization fails before any fallback step can execute.
+      - name: Run Debian checks and coverage
+        env:
+          BASALTWATER_CI_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: python3 scripts/run_debian_ci.py --python "$BASALTWATER_CI_PYTHON" --tool-cache "$RUNNER_TOOL_CACHE" --coverage
