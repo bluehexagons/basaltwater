@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -202,6 +203,27 @@ class SnapshotActivationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
         self.assertIn("/deployments/", (self.source / ".git/info/exclude").read_text())
 
+    def test_activated_state_symlink_leaves_a_real_git_checkout_clean(self):
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        def git(root, *arguments):
+            return subprocess.run(["git", "-C", str(root), *arguments], check=True,
+                                  capture_output=True, text=True, env=environment)
+        def clone(command, **kwargs):
+            staged = Path(command[-1])
+            staged.mkdir()
+            git(staged, "init", "--initial-branch=main")
+            (staged / "basaltwater.py").write_text("new source")
+            (staged / ".gitignore").write_bytes((Path(__file__).parents[1] / ".gitignore").read_bytes())
+            git(staged, "add", ".gitignore", "basaltwater.py")
+            git(staged, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-m", "fixture")
+            return subprocess.CompletedProcess(command, 0)
+        self.run.side_effect = clone
+        refresh._upgrade_snapshot(str(self.source), "dev")
+        self.assertTrue((self.source / "state").is_symlink())
+        self.assertEqual(git(self.source, "status", "--porcelain", "--untracked-files=all").stdout, "")
+
     def test_download_failure_preserves_installed_snapshot(self):
         self.run.side_effect = None
         self.run.return_value = subprocess.CompletedProcess([], 1)
@@ -315,6 +337,35 @@ class DebianSavedStateTests(unittest.TestCase):
         self.assertTrue(config.install_python)
         self.assertEqual(config.agent_repos, ["https://github.com/example/project.git"])
         self.assertEqual(self.path.read_bytes(), before)
+
+    def test_approval_origin_survives_target_serialization_and_fresh_setup_parsing(self):
+        from lib.arg_parser import create_setup_argument_parser
+        from remote_setup import config_from_remote_args
+
+        config = SetupConfig(host="localhost", username="human", system_type="agent_vm",
+                             machine_type="vm", privilege_broker_port=9444)
+        data = config.to_dict()
+        data["system_type"] = config.system_type
+        self.path.write_text(json.dumps(data))
+        self.path.chmod(0o600)
+        before = self.path.read_bytes()
+        for origin, expected in (("https://192.0.2.12:9444", "192.0.2.12"),
+                                 ("https://vm.example:9444", "vm.example")):
+            with self.subTest(origin=origin), \
+                    patch("lib.privilege_policy.load_policy", return_value={"origin": origin, "requester_uid": 1000}), \
+                    patch.object(refresh.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)):
+                restored = refresh._debian_setup()
+            parser = create_setup_argument_parser("Refresh", for_remote=True, allow_steps=True)
+            arguments = refresh.shlex.split(" ".join(restored.to_remote_args()))
+            parsed = config_from_remote_args(parser.parse_args(arguments))
+            self.assertEqual(parsed.privilege_broker_host, expected)
+        self.assertEqual(self.path.read_bytes(), before)
+        for policy in ({"origin": "https://vm.example:9445", "requester_uid": 1000},
+                       {"origin": "https://vm.example:9444", "requester_uid": 1001}):
+            with self.subTest(policy=policy), patch("lib.privilege_policy.load_policy", return_value=policy), \
+                    patch.object(refresh.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
+                    self.assertRaisesRegex(ValueError, "different port or requester"):
+                refresh._debian_setup()
 
     def test_saved_agents_survive_new_profile_defaults_and_target_reparse(self):
         from lib.arg_parser import create_setup_argument_parser

@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import pwd
 import shlex
 import shutil
 import stat
 import sys
 import tempfile
+from urllib.parse import urlsplit
 
 from lib.arg_parser import create_setup_argument_parser
 from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
@@ -193,6 +195,20 @@ def _debian_setup() -> SetupConfig:
         raise ValueError("refresh requires a completed full Debian setup")
     if config.enable_rdp:
         config.rdp_existing_password = True
+    if config.privilege_broker_port is not None and not config.disable_privilege_broker:
+        # The remote transport host is intentionally absent from saved setup.
+        # Restore the reviewed origin from protected policy instead of changing
+        # the live approval endpoint to localhost during a target-side replay.
+        from lib.privilege_policy import load_policy
+
+        policy = load_policy()
+        origin = urlsplit(policy["origin"])
+        if (not origin.hostname or origin.port != config.privilege_broker_port
+                or pwd.getpwnam(config.username).pw_uid != policy["requester_uid"]):
+            raise ValueError("Saved setup and privilege policy have different port or requester identity")
+        # to_remote_args carries the approval host from its transport-host field.
+        config.host = origin.hostname
+        config.privilege_broker_host = origin.hostname
     return config
 
 

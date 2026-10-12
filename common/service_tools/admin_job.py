@@ -30,6 +30,12 @@ ENVIRONMENT = {
     "GIT_TERMINAL_PROMPT": "0",
 }
 SOURCE = "/opt/basaltwater"
+JOB_STAGES = {"preflight", "source_verification", "command"}
+JOB_FAILURES = {
+    "action_unavailable", "source_rejected", "command_timeout",
+    "execution_unavailable", "execution_rejected", "nonzero_exit",
+    "command_signal", "job_interrupted",
+}
 
 
 def availability() -> dict[str, str]:
@@ -99,11 +105,18 @@ def job_status() -> dict:
                 or value.get("status") not in {"running", "succeeded", "failed", "interrupted"}
                 or type(value.get("started")) not in {int, float} or not math.isfinite(value["started"])
                 or value.get("finished") is not None and (type(value["finished"]) not in {int, float} or not math.isfinite(value["finished"]))
-                or value.get("exit_code") is not None and type(value["exit_code"]) is not int):
+                or value.get("exit_code") is not None and type(value["exit_code"]) is not int
+                or value.get("stage") is not None and value["stage"] not in JOB_STAGES
+                or value.get("failure") is not None and value["failure"] not in JOB_FAILURES
+                or value.get("command_index") is not None and (
+                    type(value["command_index"]) is not int or not 1 <= value["command_index"] <= 32)):
             raise ValueError("Invalid maintenance result")
-        result = {key: value.get(key) for key in ("action", "status", "started", "finished", "exit_code")}
+        result = {key: value.get(key) for key in (
+            "action", "status", "started", "finished", "exit_code", "stage", "command_index", "failure",
+        )}
         if result["status"] == "running" and active in {"inactive", "failed"}:
             result["status"] = "interrupted"
+            result["failure"] = "job_interrupted"
     except FileNotFoundError:
         result = {}
     except (OSError, ValueError, RuntimeError, TypeError, OverflowError):
@@ -157,16 +170,22 @@ def run_action(action: str) -> int:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if os.path.lexists(ADMIN_STATE):
             protected_path(ADMIN_STATE)
-        value = {"action": action, "status": "running", "started": time.time(), "finished": None, "exit_code": None}
+        value = {"action": action, "status": "running", "started": time.time(), "finished": None,
+                 "exit_code": None, "stage": "preflight", "command_index": None, "failure": None}
         write_json_atomic(ADMIN_STATE, value, mode=0o600)
         try:
             if action in availability():
+                value["failure"] = "action_unavailable"
                 raise ValueError("Action is unavailable on this host")
             if action in {"refresh", "refresh-preview"}:
+                value["stage"] = "source_verification"
+                write_json_atomic(ADMIN_STATE, value, mode=0o600)
                 trusted_refresh_source()
             deadline = time.monotonic() + ADMIN_TIMEOUT
             exit_code = 0
-            for argv in commands(action):
+            for index, argv in enumerate(commands(action), 1):
+                value.update(stage="command", command_index=index)
+                write_json_atomic(ADMIN_STATE, value, mode=0o600)
                 result = subprocess.run(
                     argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     cwd="/", env=ENVIRONMENT, close_fds=True, check=False,
@@ -174,12 +193,19 @@ def run_action(action: str) -> int:
                 )
                 exit_code = result.returncode
                 if exit_code:
+                    value["failure"] = "command_signal" if exit_code < 0 else "nonzero_exit"
                     break
             value.update(status="failed" if exit_code else "succeeded", exit_code=exit_code)
-        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
-            value.update(status="failed")
+        except subprocess.TimeoutExpired:
+            value.update(status="failed", failure="command_timeout")
+        except (OSError, ValueError, RuntimeError) as exc:
+            failure = value["failure"] or (
+                "source_rejected" if value["stage"] == "source_verification" else
+                "execution_unavailable" if isinstance(exc, OSError) else "execution_rejected"
+            )
+            value.update(status="failed", failure=failure)
         except BaseException:
-            value.update(status="interrupted")
+            value.update(status="interrupted", failure="job_interrupted")
             raise
         finally:
             value["finished"] = time.time()

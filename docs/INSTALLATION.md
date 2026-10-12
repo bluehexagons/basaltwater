@@ -360,6 +360,10 @@ adjacent backup. A failed setup can follow successful source activation, so
 inspect both the installed source and setup result before retrying.
 Subsequent managed-checkout refreshes reconcile only runtime source permissions;
 retained state and application data are excluded.
+The root `state` link is ignored as a path rather than a directory, keeping the
+converted checkout clean for later upgrades. A broker-enabled Debian refresh
+restores its approval hostname from the protected policy and verifies its port
+and requester UID, preserving the existing HTTPS approval origin during replay.
 
 ## Unsupported orchestration hosts
 

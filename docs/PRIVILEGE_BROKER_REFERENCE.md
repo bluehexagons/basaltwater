@@ -130,6 +130,15 @@ and file lock prevent concurrent maintenance; cancelling a pending broker
 request does not stop an already dispatched job. Use administrator access to
 investigate or stop that unit deliberately.
 
+Sanitized job status includes a fixed stage (`preflight`, `source_verification`,
+or `command`), one-based command index and fixed failure category. Each stage
+is persisted before its effects. Categories distinguish unavailable actions,
+rejected source, timeout, launch/validation errors, child failure/signal and
+interrupted jobs. Exception text and output remain private. Older results keep
+unknown stage/category values instead of inventing diagnostics; invalid values
+make the result unavailable. An inactive unit with a running record is reported
+as interrupted and is never retried automatically.
+
 There can be only one pending/approved/executing administration request at a
 time. A new `admin-status` requester message returns bounded owned request
 metadata and sanitized job state; it cannot execute actions, decide requests, or

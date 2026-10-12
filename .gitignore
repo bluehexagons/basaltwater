@@ -211,5 +211,5 @@ __marimo__/
 .basaltwater-refresh.json
 # The default installed source prefix also contains native T3 user state.
 /cachyos-t3/
-state/
+/state
 artifacts/

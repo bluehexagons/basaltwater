@@ -57,20 +57,30 @@ host/container-storage diagnostics report healthy capacity and maintenance.
 The approved refresh activated source but its setup replay failed. Recovery
 qualified the new executor without replaying setup. Normalize both downloaded
 snapshot code and subsequent managed-checkout runtime updates under the private
-job umask, retaining private metadata and runtime data. The 24 focused refresh
-cases and 67 receipt/manifest/support cases pass. `make check` and `make coverage`
-pass; the wider suite runs 5,485 cases
+job umask, retaining private metadata and runtime data. The 26 focused refresh
+cases and 67 receipt/manifest/support cases pass. The combined refresh, broker
+and maintenance diagnostic set runs 74 cases. The wider gate runs 5,491 cases
 with five platform/expensive-test skips. Wheel, CLI documentation, links,
 compilation and generated assets pass.
 
 The source-activation receipt is implemented separately from saved setup and
 observed Git. It remains readable when managed Git metadata is private, rejects
 unsafe/malformed records, and preserves truthful unknown/recorded distinctions.
+Maintenance status now persists fixed stages and one-based command indices
+before effects and reports validated failure categories without exception text.
 
-Remaining: inspect the limited root-owned failure marker, resolve the setup
-replay failure, and qualify the published permission fix on the managed VM.
+Remaining: install the tested fixes through guarded state-link compatibility
+recovery, verify the saved-setup preview, and qualify the complete setup replay.
 Keep the non-secret policy readable by the approval identity when changing its
 window; the administrator reference documents the required mode and recovery.
+
+The limited live diagnostic confirms protected official source with one dirty
+entry, and a setup recovery marker from before the first step. The directory-only
+`state/` ignore misses the installed `state` symlink; a real-Git activation case
+now covers that lifecycle. Replay also reconstructs the reviewed approval origin
+from policy rather than replacing it with the local transport placeholder.
+The pre-step RuntimeError is consistent with the private-umask desktop logout
+helper permission failure; the complete setup replay remains to be qualified.
 
 ## Next scoped improvements
 
@@ -86,7 +96,8 @@ Antistatic workload rather than duplicating newer container/resource tooling:
   differences without inventing a deployed revision when evidence is unavailable.
   Source-activation receipts and manual comparison are the current first slice.
 - **Maintenance diagnostics:** retain only fixed failure categories and validated
-  setup phase/index/class metadata. Correlate it with the maintenance attempt;
-  omit privileged output, configuration, credentials and unrelated stale markers.
+  setup phase/index/class metadata. Fixed maintenance stage/index/category
+  reporting is delivered; correlating a target setup marker remains a follow-on.
+  Omit privileged output, configuration, credentials and unrelated stale markers.
   Cover partial source activation, private umasks, service restart and recovery
   on a disposable Debian/systemd target before broadening automatic maintenance.

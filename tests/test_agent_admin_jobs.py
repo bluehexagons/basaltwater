@@ -103,6 +103,8 @@ class AdminJobTests(unittest.TestCase):
         def execute(argv, **kwargs):
             value = json.loads(Path(self.path).read_text())
             self.assertEqual(value["status"], "running")
+            self.assertEqual(value["stage"], "command")
+            self.assertEqual(value["command_index"], 1)
             self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
             self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
             self.assertEqual(kwargs["env"], admin_job.ENVIRONMENT)
@@ -114,7 +116,41 @@ class AdminJobTests(unittest.TestCase):
         value = json.loads(Path(self.path).read_text())
         self.assertEqual(value["status"], "failed")
         self.assertEqual(value["exit_code"], 7)
+        self.assertEqual(value["failure"], "nonzero_exit")
         self.assertIsNotNone(value["finished"])
+
+    def test_second_command_progress_is_durable_and_failures_keep_safe_categories(self):
+        def execute(argv, **kwargs):
+            value = json.loads(Path(self.path).read_text())
+            return Mock(returncode=0 if value["command_index"] == 1 else -15)
+        with patch.object(admin_job.subprocess, "run", side_effect=execute) as run:
+            self.assertEqual(admin_job.run_action("update-packages"), 1)
+            self.assertEqual(run.call_count, 2)
+        value = json.loads(Path(self.path).read_text())
+        self.assertEqual(value["command_index"], 2)
+        self.assertEqual(value["failure"], "command_signal")
+        with patch.object(admin_job, "unit_state", return_value="inactive"):
+            self.assertEqual(admin_job.job_status()["latest"]["command_index"], 2)
+
+    def test_source_rejection_is_reported_without_private_exception_details(self):
+        with patch.object(admin_job, "trusted_refresh_source", side_effect=ValueError("root-secret")), \
+                patch.object(admin_job.subprocess, "run") as run:
+            self.assertEqual(admin_job.run_action("refresh"), 1)
+        run.assert_not_called()
+        value = json.loads(Path(self.path).read_text())
+        self.assertEqual(value["stage"], "source_verification")
+        self.assertEqual(value["failure"], "source_rejected")
+        self.assertNotIn("root-secret", json.dumps(value))
+
+    def test_launch_error_and_timeout_have_fixed_categories(self):
+        for exception, failure in ((OSError("root-secret"), "execution_unavailable"),
+                                   (subprocess.TimeoutExpired("root-secret", 1), "command_timeout")):
+            with self.subTest(failure=failure), patch.object(admin_job.subprocess, "run", side_effect=exception) as run:
+                self.assertEqual(admin_job.run_action("update-packages"), 1)
+                run.assert_called_once()
+                value = json.loads(Path(self.path).read_text())
+                self.assertEqual(value["failure"], failure)
+                self.assertNotIn("root-secret", json.dumps(value))
 
     def test_check_then_reload_never_reloads_invalid_nginx_configuration(self):
         with patch.object(admin_job.subprocess, "run", return_value=Mock(returncode=1)) as run:
@@ -155,6 +191,7 @@ class AdminJobTests(unittest.TestCase):
         with patch.object(admin_job, "unit_state", return_value="inactive"):
             result = admin_job.job_status()
             self.assertEqual(result["latest"]["status"], "interrupted")
+            self.assertEqual(result["latest"]["failure"], "job_interrupted")
             self.assertNotIn("root-secret", json.dumps(result))
         with patch.object(admin_job, "unit_state", return_value="unavailable"):
             self.assertEqual(admin_job.job_status()["unit_state"], "unavailable")
@@ -165,6 +202,22 @@ class AdminJobTests(unittest.TestCase):
             Path(self.path).write_text(json.dumps(values))
             with patch.object(admin_job, "unit_state", return_value="inactive"):
                 self.assertEqual(admin_job.job_status()["latest"], {"status": "unavailable"})
+
+    def test_invalid_diagnostics_are_rejected_and_legacy_results_remain_readable(self):
+        legacy = {"action": "refresh", "status": "failed", "started": 123,
+                  "finished": 124, "exit_code": 1}
+        for diagnostics in ({}, {"stage": "root-secret"}, {"failure": "root-secret"},
+                            {"failure": []}, {"command_index": True}, {"command_index": 0}):
+            with self.subTest(diagnostics=diagnostics):
+                Path(self.path).write_text(json.dumps({**legacy, **diagnostics}))
+                with patch.object(admin_job, "unit_state", return_value="inactive"):
+                    latest = admin_job.job_status()["latest"]
+                if diagnostics:
+                    self.assertEqual(latest, {"status": "unavailable"})
+                else:
+                    self.assertEqual(latest["exit_code"], 1)
+                    self.assertIsNone(latest["stage"])
+                    self.assertIsNone(latest["failure"])
 
     def test_availability_requires_managed_debian_source_and_matching_capabilities(self):
         with patch.object(admin_job, "can_manage_system_services", return_value=True), patch.object(admin_job, "can_restart_system", return_value=True), patch.object(admin_job, "read_os_release", return_value={"ID": "debian"}), patch.object(admin_job.os.path, "isfile", return_value=True), patch.object(admin_job, "read_json_file", return_value={"channel": "dev"}):
