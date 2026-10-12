@@ -14,7 +14,7 @@ from typing import Optional
 from lib.atomic_io import write_json_atomic
 from lib.agent_readiness import sanitize_browser_context, sanitize_development_readiness
 from lib.agent_containers import sanitize_container_storage
-from lib.agent_resources import sanitize_workload_limits
+from lib.agent_resources import sanitize_t3_resources, sanitize_workload_limits
 from lib.installation_info import inspect_installation_provenance
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
@@ -217,7 +217,7 @@ def build_agent_support_bundle(
             },
             "container_storage": sanitize_container_storage(host.get("container_storage")),
             "workload_limits": sanitize_workload_limits(host.get("workload_limits")),
-            "t3_service": host["t3_service"],
+            "t3_service": sanitize_t3_resources(host["t3_service"]),
             "maintenance": host["maintenance"],
             "maintenance_hold": host["maintenance_hold"],
             "reboot_pending": host["reboot_pending"],

@@ -29,6 +29,15 @@ includes descendant agents/builds; a different service lifetime is not a leak
 or improvement measurement. Choose concurrency from workload measurements,
 memory and storage demand, rather than host CPU count alone.
 
+Read current availability/pressure separately from historical service peaks.
+Ballooned RAM can be smaller than the capacity present when a peak occurred;
+peak time/capacity are unknown. `t3_service.memory_accounting` distinguishes
+anonymous memory, file cache, limits and cumulative readable OOM events. A
+single `oom_kill` counter or exit 137 does not identify a job or prove a leak.
+Compare before/after snapshots with the same known service invocation and
+`counter_epoch`, respecting local versus hierarchical event scope. Missing
+counters stay unknown; no diagnosis changes limits or cleans caches.
+
 When SDK/container copies fail for space, opt into
 `basaltw agent doctor --capability host --container-storage --json` or
 `basaltw agent containers inspect --engine podman --json`. Check graph-root

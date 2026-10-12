@@ -336,6 +336,39 @@ renders and agents can share a service budget. Choose concurrency using those
 limits, memory and storage demand, concurrent work, and measurements of the
 project's actual workload; raw guest CPU count alone is insufficient.
 
+`memory_accounting` adds a timestamped, read-only breakdown for the invoking
+process's cgroup on either OS. Debian host/support records also include a
+separate `t3_service.memory_accounting` for the service cgroup reported by
+systemd. Anonymous and file-backed bytes, swap, inherited max/high, memory
+pressure and readable OOM event counts remain `null` when unavailable. v1 uses
+hierarchical `total_rss`/`total_cache` rather than presenting local values as
+descendant totals; its usage counter is approximate and unavailable swap/high
+values are not invented. No kernel journal, process arguments or cgroup paths
+appear in support snapshots.
+
+OOM counters are cumulative evidence. `events.scope` distinguishes hierarchical
+v2 counters from local v1 or `memory_localevents` counters. `counter_epoch`
+identifies the observed cgroup directory by device/inode; T3 additionally
+reports a validated service invocation and active-since monotonic timestamp.
+Its `restart_count` is systemd's `NRestarts` count of automatic restarts,
+excluding manual restarts, rather than a durable restart history; see the
+[systemd contract](https://github.com/systemd/systemd/issues/29348).
+Compare before/after samples from
+the same known epoch, invocation and boot for job attribution. A single count
+or exit 137 does not identify the killed job, event time or cause. Counter
+changes narrow the interval; concurrent service descendants still require
+corroborating job evidence. A changed cgroup directory during collection
+leaves accounting unavailable. See the kernel's
+[v2 event/statistics](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory)
+and [v1 accounting](https://docs.kernel.org/admin-guide/cgroup-v1/memory.html).
+
+T3's historical peak is compared with observed guest capacity for an advisory
+warning, rather than smaller currently ballooned RAM. Peak-time capacity and
+timestamp remain unknown. Its current high-share warning includes descendants
+and file cache; available host memory, pressure, swap activity and actual limits
+are needed to interpret it. Neither a high aggregate percentage nor a historical
+OOM count establishes a leak or current exhaustion.
+
 ## Build for an older release baseline
 
 A newer VM's libc and native libraries can exceed a project's supported

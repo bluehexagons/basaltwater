@@ -21,7 +21,7 @@ from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
 from lib.agent_containers import inspect_container_storage
-from lib.agent_resources import inspect_workload_limits
+from lib.agent_resources import inspect_service_memory, inspect_workload_limits, sanitize_t3_resources
 from lib.local_http import open_loopback
 from lib.vendor_installer import POLICIES, download_installer
 from lib.agent_maintenance import (
@@ -1657,29 +1657,35 @@ def inspect_host_readiness(
 
     t3_properties = _systemd_properties(
         _T3_SERVICE_NAME,
-        ("MemoryCurrent", "MemoryPeak", "TasksCurrent"),
+        ("MemoryCurrent", "MemoryPeak", "TasksCurrent", "ControlGroup", "InvocationID",
+         "ActiveEnterTimestampMonotonic", "NRestarts"),
         user=True,
     )
-    t3_resources = {
+    t3_resources = sanitize_t3_resources({
         "scope": "service-with-descendants",
         "memory_current_bytes": _optional_systemd_integer(
             t3_properties.get("MemoryCurrent")
         ),
         "memory_peak_bytes": _optional_systemd_integer(t3_properties.get("MemoryPeak")),
         "tasks_current": _optional_systemd_integer(t3_properties.get("TasksCurrent")),
-    }
+        "invocation_id": t3_properties.get("InvocationID"),
+        "active_since_monotonic_usec": _optional_systemd_integer(t3_properties.get("ActiveEnterTimestampMonotonic")),
+        "restart_count": _optional_systemd_integer(t3_properties.get("NRestarts")),
+        "memory_accounting": inspect_service_memory(t3_properties.get("ControlGroup")),
+    })
     if (
         memory_total
         and t3_resources["memory_current_bytes"] is not None
         and int(t3_resources["memory_current_bytes"]) * 5 >= memory_total * 4
     ):
-        warnings.append("T3 Code currently accounts for at least 80% of guest memory")
+        basis = "currently ballooned guest memory" if memory_ballooned else "guest memory"
+        warnings.append(f"T3 Code currently accounts for at least 80% of {basis}; this includes descendants and file cache, so check available memory and pressure")
     if (
-        memory_total
+        memory_capacity
         and t3_resources["memory_peak_bytes"] is not None
-        and int(t3_resources["memory_peak_bytes"]) > memory_total
+        and int(t3_resources["memory_peak_bytes"]) > memory_capacity
     ):
-        warnings.append("T3 Code's recorded memory peak exceeded guest memory")
+        warnings.append("T3 Code's historical memory peak exceeded currently observed guest capacity; peak-time capacity is unknown")
 
     maintenance = _maintenance_status()
     warnings.extend(str(item) for item in maintenance["warnings"])

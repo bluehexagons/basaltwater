@@ -33,13 +33,14 @@ def _unescape(value: str) -> str:
     return re.sub(r"\\(040|011|012|134)", lambda match: chr(int(match[1], 8)), value)
 
 
-def _hierarchies(proc: Path) -> dict[str, tuple[Path, Path, bool]]:
-    memberships = {}
-    for line in (_read(proc / "self/cgroup") or "").splitlines():
-        fields = line.split(":", 2)
-        if len(fields) == 3:
-            for controller in fields[1].split(",") if fields[1] else ["v2"]:
-                memberships[controller] = fields[2]
+def _hierarchies(proc: Path, memberships: dict[str, str] | None = None) -> dict[str, tuple[Path, Path, bool]]:
+    if memberships is None:
+        memberships = {}
+        for line in (_read(proc / "self/cgroup") or "").splitlines():
+            fields = line.split(":", 2)
+            if len(fields) == 3:
+                for controller in fields[1].split(",") if fields[1] else ["v2"]:
+                    memberships[controller] = fields[2]
     hierarchies = {}
     for line in (_read(proc / "self/mountinfo") or "").splitlines():
         fields = line.split()
@@ -160,6 +161,129 @@ def _pressure(path: Path) -> dict:
     return {"available": bool(records), **records}
 
 
+def _counter(value: object) -> int | None:
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,20}", value):
+        number = int(value)
+        return number if number < 2**64 - 1 else None
+    return value if type(value) is int and 0 <= value < 2**64 - 1 else None
+
+
+def _counters(path: Path, names: tuple[str, ...]) -> dict:
+    values = {}
+    for line in (_read(path) or "").splitlines():
+        fields = line.split()
+        if fields and fields[0] in names:
+            # Duplicate or malformed known fields are unknown, not zero.
+            value = _counter(fields[1]) if len(fields) == 2 else None
+            values[fields[0]] = value if fields[0] not in values else None
+    return {name: values.get(name) for name in names}
+
+
+def _event_scope(proc: Path, mount: Path) -> str | None:
+    for line in (_read(proc / "self/mountinfo") or "").splitlines():
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            if separator >= 6 and Path(_unescape(fields[4])) == mount and fields[separator + 1] == "cgroup2":
+                options = (fields[5] + "," + fields[separator + 3]).split(",")
+                return "local" if "memory_localevents" in options else "hierarchical"
+        except (ValueError, IndexError):
+            continue
+    return None
+
+
+def _memory_accounting(hierarchy: tuple[Path, Path, bool] | None, *, proc: Path, v1: bool = False) -> dict:
+    result = {
+        "sampled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "cgroup_version": "v1" if v1 else "v2" if hierarchy else "unavailable",
+        "counter_epoch": None, "current_bytes": None, "anonymous_bytes": None,
+        "file_bytes": None, "swap_bytes": None,
+        "events": {"scope": "local" if v1 else None, "cumulative": True,
+                   "job_attribution": "requires-before-after-same-epoch", "values": {}},
+        "memory_max": _limit(None, "memory.max"),
+        "memory_high": _limit(None, "memory.high"),
+        "pressure": {"available": False},
+    }
+    if hierarchy is not None:
+        leaf, mount, _complete = hierarchy
+        try:
+            before = leaf.stat()
+            result["counter_epoch"] = f"{before.st_dev}:{before.st_ino}"
+            stats = _counters(leaf / "memory.stat", ("total_rss", "total_cache") if v1 else ("anon", "file"))
+            result.update(
+                memory_max=_limit(hierarchy, "memory.limit_in_bytes" if v1 else "memory.max", v1=v1),
+                memory_high=_limit(None if v1 else hierarchy, "memory.high"),
+                current_bytes=_counter((_read(leaf / ("memory.usage_in_bytes" if v1 else "memory.current")) or "").strip()),
+                anonymous_bytes=stats["total_rss" if v1 else "anon"],
+                file_bytes=stats["total_cache" if v1 else "file"],
+                swap_bytes=None if v1 else _counter((_read(leaf / "memory.swap.current") or "").strip()),
+                pressure={"available": False} if v1 else _pressure(leaf / "memory.pressure"),
+            )
+            events = _counters(leaf / ("memory.oom_control" if v1 else "memory.events"),
+                               ("oom_kill",) if v1 else ("low", "high", "max", "oom", "oom_kill", "oom_group_kill"))
+            result["events"].update(scope="local" if v1 else _event_scope(proc, mount), values=events)
+            after = leaf.stat()
+            if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+                return _memory_accounting(None, proc=proc)
+        except OSError:
+            return _memory_accounting(None, proc=proc)
+    return sanitize_memory_accounting(result)
+
+
+def inspect_service_memory(control_group: object, *, proc_root: str = "/proc") -> dict:
+    """Read only the requested systemd service cgroup, never another workload."""
+    validate_filesystem_path(proc_root)
+    proc = Path(proc_root)
+    try:
+        if not isinstance(control_group, str):
+            raise ValueError("No service cgroup")
+        validate_filesystem_path(control_group)
+        if (not control_group.startswith("/") or control_group == "/"
+                or os.path.normpath(control_group) != control_group):
+            raise ValueError("Invalid service cgroup")
+        hierarchies = _hierarchies(proc, {"v2": control_group, "memory": control_group})
+        legacy = hierarchies.get("memory")
+        return _memory_accounting(legacy or hierarchies.get("v2"), proc=proc, v1=legacy is not None)
+    except (OSError, ValueError):
+        return _memory_accounting(None, proc=proc)
+
+
+def sanitize_memory_accounting(value: object) -> dict:
+    record = value if isinstance(value, dict) else {}
+    events = record.get("events") if isinstance(record.get("events"), dict) else {}
+    values = events.get("values") if isinstance(events.get("values"), dict) else {}
+    counters = {name: _counter(values.get(name)) for name in ("low", "high", "max", "oom", "oom_kill", "oom_group_kill")}
+    pressure = sanitize_workload_limits({"pressure": {"workload": {"memory": record.get("pressure")}}}, include_accounting=False)["pressure"]["workload"]["memory"]
+    limits = sanitize_workload_limits(record, include_accounting=False)
+    epoch, sampled = record.get("counter_epoch"), record.get("sampled_at")
+    result = {
+        "sampled_at": sampled if isinstance(sampled, str) and re.fullmatch(r"[0-9T:.Z+\-]{20,40}", sampled) else None,
+        "cgroup_version": record.get("cgroup_version") if record.get("cgroup_version") in ("v1", "v2") else "unavailable",
+        "counter_epoch": epoch if isinstance(epoch, str) and re.fullmatch(r"[0-9]{1,20}:[0-9]{1,20}", epoch) else None,
+        **{name: _counter(record.get(name)) for name in ("current_bytes", "anonymous_bytes", "file_bytes", "swap_bytes")},
+        "events": {"available": any(value is not None for value in counters.values()),
+                   "scope": events.get("scope") if events.get("scope") in ("local", "hierarchical") else None,
+                   "cumulative": True, "job_attribution": "requires-before-after-same-epoch", "values": counters},
+        "memory_max": limits["memory_max"], "memory_high": limits["memory_high"], "pressure": pressure,
+    }
+    result["available"] = any(result[name] is not None for name in ("current_bytes", "anonymous_bytes", "file_bytes", "swap_bytes")) or result["events"]["available"]
+    return result
+
+
+def sanitize_t3_resources(value: object) -> dict:
+    record = value if isinstance(value, dict) else {}
+    invocation = record.get("invocation_id")
+    active_since = _counter(record.get("active_since_monotonic_usec"))
+    return {"scope": "service-with-descendants",
+            **{name: _counter(record.get(name)) for name in (
+                "memory_current_bytes", "memory_peak_bytes", "tasks_current", "restart_count",
+            )},
+            "active_since_monotonic_usec": active_since if active_since else None,
+            "invocation_id": invocation if isinstance(invocation, str) and re.fullmatch(r"[0-9a-f]{32}", invocation) and invocation != "0" * 32 else None,
+            "peak_sampled_at": None, "memory_capacity_at_peak_bytes": None,
+            "memory_accounting": sanitize_memory_accounting(record.get("memory_accounting"))}
+
+
 def inspect_workload_limits(*, proc_root: str = "/proc") -> dict:
     """Observe this command's workload, not guest capacity or another service."""
     validate_filesystem_path(proc_root)
@@ -182,7 +306,7 @@ def inspect_workload_limits(*, proc_root: str = "/proc") -> dict:
     bounds = [value for value in (affinity, cpu["value"]) if value is not None]
     budget = min(bounds) if bounds else None
     version = "hybrid" if v2 and len(hierarchies) > 1 else "v2" if v2 else "v1" if hierarchies else "unavailable"
-    return {"sampled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    result = {"sampled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "scope": "current-process", "ancestry_scope": "visible-cgroup-mount",
             "affinity_available": affinity is not None,
             "affinity_cpu_count": affinity, "cgroup_version": version,
@@ -191,9 +315,11 @@ def inspect_workload_limits(*, proc_root: str = "/proc") -> dict:
             "pressure": {"guest": {name: _pressure(proc / "pressure" / name) for name in ("cpu", "memory", "io")},
                          "workload": {name: _pressure(v2[0] / (name + ".pressure")) if v2 else {"available": False}
                                       for name in ("cpu", "memory", "io")}}}
+    result["memory_accounting"] = _memory_accounting(legacy_memory or v2, proc=proc, v1=legacy_memory is not None)
+    return result
 
 
-def sanitize_workload_limits(value: object) -> dict:
+def sanitize_workload_limits(value: object, *, include_accounting: bool = True) -> dict:
     """Keep numeric measurements, fixed scopes, and availability flags only."""
     record = value if isinstance(value, dict) else {}
     def number(value: object) -> int | float | None:
@@ -218,10 +344,13 @@ def sanitize_workload_limits(value: object) -> dict:
                     groups[name] = {key: number(group.get(key)) for key in ("avg10", "avg60", "avg300", "total_microseconds")}
             pressure[scope][resource] = {"available": item.get("available") is True, **groups}
     timestamp = record.get("sampled_at")
-    return {"sampled_at": timestamp if isinstance(timestamp, str) and re.fullmatch(r"[0-9T:.Z+\-]{20,40}", timestamp) else None,
+    result = {"sampled_at": timestamp if isinstance(timestamp, str) and re.fullmatch(r"[0-9T:.Z+\-]{20,40}", timestamp) else None,
             "scope": "current-process", "ancestry_scope": "visible-cgroup-mount",
             "affinity_available": record.get("affinity_available") is True,
             "affinity_cpu_count": number(record.get("affinity_cpu_count")),
             "cgroup_version": record.get("cgroup_version") if record.get("cgroup_version") in ("v1", "v2", "hybrid") else "unavailable",
             **limits, "cpu_budget_upper_bound": number(record.get("cpu_budget_upper_bound")),
             "cpu_budget_is_concurrency_recommendation": False, "pressure": pressure}
+    if include_accounting:
+        result["memory_accounting"] = sanitize_memory_accounting(record.get("memory_accounting"))
+    return result

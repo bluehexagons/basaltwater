@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from lib.atomic_io import write_json_atomic
 from lib.agent_containers import sanitize_container_storage
-from lib.agent_resources import sanitize_workload_limits
+from lib.agent_resources import sanitize_t3_resources, sanitize_workload_limits
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 
@@ -184,7 +184,7 @@ def _sanitize_host(record: JSONDict) -> JSONDict:
         },
         "container_storage": sanitize_container_storage(record.get("container_storage")),
         "workload_limits": sanitize_workload_limits(record.get("workload_limits")),
-        "t3_service": _safe_mapping(record.get("t3_service")),
+        "t3_service": sanitize_t3_resources(record.get("t3_service")),
         "maintenance": _safe_mapping(record.get("maintenance")),
         "maintenance_hold": _safe_mapping(record.get("maintenance_hold")),
         "reboot_pending": record.get("reboot_pending") is True,
