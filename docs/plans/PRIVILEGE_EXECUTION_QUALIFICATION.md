@@ -97,12 +97,21 @@ setup replay remains to be qualified.
 
 ## Disposable lifecycle matrix — awaiting target allocation (2026-10-12)
 
-The affected VM is `codebox`. The current maintainer VM has no saved `codebox`
-configuration, its Basaltwater history is empty, and accessible diagnostic files
-contain no matching refresh record. The latest failing stage therefore remains
-unknown. No request was replayed and no recovery snapshot was removed. Hardware
-for a disposable Debian/systemd target is not allocated yet; fixture coverage
-and passing CI are preparation, not live qualification.
+The owner has since rerun setup on the affected development host. Read-only
+observation shows a managed setup-snapshot receipt at `7405b82`, matching the
+clean developer launcher source at inspection. Antistatic's prerequisite doctor,
+TypeScript/native build and actual Xvfb selection-screen captures work. This
+qualifies a usable post-setup development baseline; it does not qualify the
+broker's interrupted refresh/recovery path or explain the retained failed job.
+The [workload feedback](ANTISTATIC_WORKLOAD_FEEDBACK.md) records the current
+experience and targeted follow-ups. No broker request was replayed.
+
+The affected VM is `codebox`. The maintainer's pre-rerun inspection found no
+saved `codebox` configuration, an empty Basaltwater history and no accessible
+matching refresh record. That inspection did not establish the failed job's
+stage. No request was replayed and no recovery snapshot was removed. Hardware
+for the disposable Debian/systemd matrix remains unallocated in this record;
+fixture coverage and passing CI are preparation, not live qualification.
 
 Maintenance readers now expose fixed stage/index/category fields in the Admin
 screen and `agent privilege admin-status --json`. New job identities correlate

@@ -1,6 +1,6 @@
 # Antistatic development workload feedback
 
-Status: reference and scoped handoff, updated 2026-10-11. Recommendations feed
+Status: reference and scoped handoff, updated 2026-10-12. Recommendations feed
 the existing owners below; this document does not open a parallel implementation
 queue. Finish the P0 refresh qualification before scheduling additional host
 mutation work.
@@ -22,14 +22,81 @@ its enlarged 64 GiB disk, retaining its start and UUIDs. Reviewed project
 archives moved about 4.94 GiB from home to a private `/srv` destination with
 verified contents and links; home currently has about 39 GiB available.
 
-Source activation is not full setup qualification. The latest approved refresh
-dispatched successfully, activated commit `39aa8cf`, then reported setup failure
-with exit code 1. The running broker's response still omits the newer diagnostic
-fields, so the failing stage is unknown from that response. The approval page
-continues to return its HTTPS authentication challenge, and Xvfb can create an
-OpenGL 4.5 llvmpipe context. These observations permit continued game development;
-they do not establish successful setup, loaded-service revisions, hardware GPU
-performance, or shared-desktop reconnect health.
+The owner has rerun setup. At post-setup inspection, the developer launcher
+observed clean source `7405b82`; the managed runtime independently reported a
+setup-snapshot receipt for that same revision. Antistatic's selected Node, npm
+and native prerequisites
+pass its own doctor, and its TypeScript/native build succeeds. T3 readiness and
+Xvfb GLX context checks pass. Real project selection-screen captures also run,
+which is stronger rendering evidence than context creation alone.
+
+This restores a usable development baseline. The previous broker refresh
+failure remains historical recovery evidence in the qualification owner; it
+should not be described as the current host's development blocker. Matching
+source and setup receipts still do not identify revisions loaded by long-running
+services or qualify the disposable failure/recovery matrix. No broker request
+was replayed during this development review.
+
+## Post-setup Antistatic experience
+
+- **Native tooling and runtime selection work together.** The project selects
+  Node 26.10.0 and npm 12.1.0 through its existing selector. SDL3 3.4.14,
+  SDL3-image 3.4.4, FreeType, OpenAL, GLEW, Vorbis and libusb are discoverable.
+  Keep project minimums/pins independent of Basaltwater's general tool updates.
+- **Headless graphics is usable.** Xvfb exposes OpenGL 4.5 through llvmpipe;
+  Antistatic's own before/after menu captures exercise native loading, shaders,
+  fonts, assets and PNG output. Software graphics continues to support
+  correctness work without supplying physical-GPU timing, HDR or motion review.
+- **Capacity diagnostics are useful, with a remaining interpretation issue.**
+  Home and root have ample headroom and no host errors were reported. The first
+  sample explicitly marked memory ballooning and brief swap-in activity, with
+  zero recent memory-pressure averages. T3's historical service peak exceeded
+  that sample's smaller guest RAM but remained below configured capacity.
+  Contextualize that warning with ballooning, capacity and service lifetime;
+  a peak collected before RAM changed is not evidence of current exhaustion.
+- **OOM outcomes need explicit diagnostic evidence.** A development probe was
+  killed with exit 137 after its captures completed. Its next operation tried
+  to construct a full assertion diff for differing PNG buffers. Replacing that
+  probe assertion with bounded byte equality allowed the same rendered flow to
+  finish; ordinary interactive motion is not an exact same-frame pixel oracle.
+  The user-readable T3 cgroup reports one cumulative `oom_kill`, while host
+  doctor remains healthy afterwards. No pre-event counter or readable kernel
+  journal was available to attribute that counter precisely. Include readable
+  OOM event counters and anonymous/file memory in support diagnostics, scoped to
+  the service lifetime; use before/after deltas for job attribution and retain
+  unknown freshness honestly. Do not infer a game-renderer leak from this probe.
+- **Useful caches survived setup.** Existing dependencies and incremental
+  native build products remain usable. Retain SDK and compiler caches while
+  storage has headroom; no broad cleanup was needed for these development runs.
+- **Capture repeatability belongs to the project.** Initial Versus image
+  differences came from its documented random cosmetic appearances, not host
+  setup. Antistatic adds an explicit fixed-appearance capture control and
+  recorded settings for exact comparisons. Basaltwater should continue to
+  expose environment evidence while projects own state and pixel oracles.
+
+Detailed logs, snapshots, captures and CPU paint probes remain in Antistatic's
+ignored `local-artifacts/projects/2026-10-12-post-setup-development/` workspace.
+
+### Additional targeted maintenance checks
+
+The latest Antistatic pass found and fixed another group-ownership gap in its
+agent-play client: a runner could exit before a descendant holding inherited
+pipes. Its benchmark/IPC runner fixes and identity-checked temporary disposal
+are project responsibilities, not evidence of failed host maintenance.
+
+Review the remaining plain captured `subprocess.run` calls in Basaltwater's
+cache/cleanup commands and maintenance-review wrapper for output-memory bounds,
+descendant ownership and interruption. Existing `agent_probe`, streamed-process
+helpers and systemd control-group execution already provide relevant owners;
+do not create another process manager. Keep mocked unit coverage, and add the
+leader-exits-first/TERM-resistant descendant case to disposable qualification.
+
+Generic rebuildable-cache and stale-tool-temporary cleanup should revalidate
+directory identity/ownership and active use immediately before deletion. The
+vendor release collectors already check device/inode identity; extend that
+contract where generic cleanup still acts on a previously inventoried pathname.
+Cover replaced directories and recreated disposed paths, and preserve useful
+project reports/captures rather than extending host age-based retention to them.
 
 ## Recommended order and acceptance
 
@@ -41,8 +108,9 @@ with the existing [transactional execution](TRANSACTIONAL_EXECUTION.md) and
 
 Reproduce both fresh snapshot activation and managed-checkout refresh under
 `UMask=0077`, including the managed state symlink and saved desktop setup.
-Diagnose the latest failure before another live replay. Do not infer its cause
-from the earlier logout-helper permission failure or interpret a collected
+Diagnose the retained failed broker job before another broker-driven live
+replay. Do not infer its cause from the earlier logout-helper permission failure
+or interpret a collected
 transient unit as successful maintenance.
 
 Acceptance must cover partial source activation, a failed pre-step and later
@@ -58,12 +126,12 @@ be automatically replayed.
 Owners: the privilege qualification plan and
 [CLI host audit](AGENT_CLI_MAINTENANCE_AUDIT_2026-08-09.md).
 
-Carry the implemented fixed maintenance stage, command index and failure category
-through the operator surfaces. Correlate a validated setup recovery marker with
-the specific maintenance job before reporting its phase or step; stale markers
-must not explain a newer failure. Keep exception text, root command output,
-configuration and credentials private. Test mixed old/new reader versions and
-interrupted jobs, with unknown fields represented honestly.
+The correlated diagnostic slice is implemented: operator surfaces now carry
+fixed maintenance stage/index/category and validated job-specific setup context.
+Keep exception text, root command output, configuration and credentials private.
+Qualify mixed old/new reader versions and interrupted jobs on the disposable
+target, with unknown fields represented honestly. Stale markers must not explain
+a newer failure.
 
 Separately report the invoked CLI source, managed filesystem source, recorded
 activation, last successful setup, and running-service context where observed.
@@ -98,8 +166,9 @@ Owners: the T3 VM diagnostic baseline and CLI host audit above.
 
 During archival and tests, T3's cgroup memory warning could coexist with healthy
 host capacity and idle swap. That cgroup includes agent/build descendants and
-file cache. Show available host memory, anonymous versus file-backed usage,
-pressure, swap activity, limits and OOM/restart counters where readable. Treat
+file cache. Show available host memory, configured versus ballooned guest
+capacity, anonymous versus file-backed usage, pressure, swap activity, limits
+and OOM/restart counters where readable. Treat
 unavailable fields as unknown. Do not label a high aggregate percentage a leak
 without pressure or growth evidence. Validate quiet, file-cache-heavy and
 constrained workloads using bounded observations.
@@ -141,8 +210,10 @@ are different limits; increasing one must not silently increase the other.
 ## Handoff boundary
 
 No additional Basaltwater feature implementation is scheduled by this record.
-The next Basaltwater agent should start with the current privilege qualification
-status, gather safe diagnostics for the failed replay, and complete the disposable
-lifecycle matrix before proposing another live refresh. Antistatic work resumes
-on its existing graphics plan; its build and publishing tools remain independent
-of Basaltwater.
+The next Basaltwater agent should retain the verified post-setup development
+baseline, follow the current privilege qualification owner, and complete the
+disposable lifecycle matrix before proposing another live refresh. Resolve
+historical recovery evidence through correlated safe status or administrator
+evidence; do not replay an uncertain request to obtain it. Antistatic continues
+its existing graphics/UI work, and its build and publishing tools remain
+independent of Basaltwater.
