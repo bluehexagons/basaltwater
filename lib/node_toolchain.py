@@ -16,6 +16,7 @@ import sys
 import tempfile
 
 from lib.atomic_io import read_json_file
+from lib.agent_probe import run_probe
 from lib.node_runtime_ownership import mark_runtime, runtime_owner
 from lib.validation import validate_filesystem_path, validate_no_control_characters
 
@@ -24,6 +25,15 @@ Version = tuple[int, int, int]
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
 _PARTIAL = re.compile(r"v?(\d+)(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?")
 _TOKEN = re.compile(r"(>=|<=|>|<|=|\^|~)?\s*(v?\d+(?:\.(?:\d+|[xX*])){0,2}|[xX*])")
+MAX_RUNTIME_ENTRIES = 256
+
+
+class NodeSelectionUnavailable(ValueError):
+    """Valid project requirements could not be resolved to an installed runtime."""
+
+    def __init__(self, message: str, *, issue: str = "project_node_unavailable") -> None:
+        super().__init__(message)
+        self.issue = issue
 
 
 def _version(text: str) -> Version:
@@ -168,7 +178,7 @@ def _resolve_alias(specification: str, nvm_dir: Path) -> str:
                 raise ValueError('Invalid NVM LTS alias')
             alias = _read_pin(nvm_dir / "alias" / specification)
             if alias is None:
-                raise ValueError(f"NVM alias {specification!r} is unavailable; specify an installed Node version")
+                raise NodeSelectionUnavailable(f"NVM alias {specification!r} is unavailable; specify an installed Node version")
             specification = alias
         else:
             return specification
@@ -208,6 +218,31 @@ def _probe_environment(directory: str) -> dict[str, str]:
     }
 
 
+def _probe_version(command: str, *, cwd: str, environment: dict[str, str]) -> str | None:
+    result = run_probe([command, "--version"], cwd=cwd, env=environment, timeout=10, max_bytes=4096)
+    if result.issue is not None:
+        return None
+    try:
+        return ".".join(map(str, _version(result.output)))
+    except ValueError:
+        return None
+
+
+def _installed_nodes(nvm_root: Path):
+    """Bound directory discovery as well as the version subprocesses."""
+    try:
+        entries = os.scandir(nvm_root / "versions" / "node")
+    except FileNotFoundError:
+        return
+    with entries:
+        for index, entry in enumerate(entries):
+            if index >= MAX_RUNTIME_ENTRIES:
+                raise NodeSelectionUnavailable("NVM runtime inventory exceeds its entry limit; inspect the installation",
+                                               issue="project_node_inventory_limit")
+            if _VERSION.fullmatch(entry.name) and entry.name.startswith("v"):
+                yield Path(entry.path) / "bin" / "node"
+
+
 def select_node(project: str = ".", *, version: str | None = None,
                 nvm_dir: str | None = None) -> NodeSelection:
     pin, source, engines = project_requirements(project)
@@ -220,7 +255,7 @@ def select_node(project: str = ".", *, version: str | None = None,
     if engines:
         satisfies((0, 0, 0), engines)
     candidates = []
-    for path in (() if path_default else (nvm_root / "versions" / "node").glob("v*/bin/node")):
+    for path in (() if path_default else _installed_nodes(nvm_root)):
         if not path.is_file() or not os.access(path, os.X_OK):
             continue
         try:
@@ -236,12 +271,11 @@ def select_node(project: str = ".", *, version: str | None = None,
         actual = None
         if executable:
             with tempfile.TemporaryDirectory(prefix="basaltwater-node-selection-", dir="/tmp") as probe:
-                result = subprocess.run([executable, "--version"], cwd=probe, env=_probe_environment(probe),
-                                        capture_output=True, text=True, timeout=10, check=False)
-            if result.returncode == 0:
-                actual = _version(result.stdout)
+                observed = _probe_version(executable, cwd=probe, environment=_probe_environment(probe))
+            if observed is not None:
+                actual = _version(observed)
         if actual is None or not satisfies(actual, requirement) or (engines and not satisfies(actual, engines)):
-            raise ValueError(
+            raise NodeSelectionUnavailable(
                 f"No installed Node matches {specification!r}"
                 + (f" and engines {engines!r}" if engines else "")
                 + f". Run basaltw node install --version {shlex.quote(version or pin or 'VERSION')} "
@@ -253,9 +287,7 @@ def select_node(project: str = ".", *, version: str | None = None,
                          "nvm" if Path(executable).is_relative_to(nvm_root / "versions/node") else "path")
 
 
-def inspect_project_node(project: str, *, version: str | None = None) -> dict[str, object]:
-    """Check the selected interpreter/npm without running project scripts."""
-    selection = select_node(project, version=version)
+def _npm_requirement(project: str) -> str | None:
     npm_requirement = None
     current = Path(project).resolve()
     for directory in (current, *current.parents):
@@ -273,19 +305,20 @@ def inspect_project_node(project: str, *, version: str | None = None) -> dict[st
             break
         if os.path.lexists(directory / ".git"):
             break
+    return npm_requirement
+
+
+def inspect_project_node(project: str, *, version: str | None = None) -> dict[str, object]:
+    """Check the selected interpreter/npm without running project scripts."""
+    selection = select_node(project, version=version)
+    npm_requirement = _npm_requirement(project)
     tools: dict[str, str | None] = {"node": None, "npm": None}
     issues: list[str] = []
     with tempfile.TemporaryDirectory(prefix="basaltwater-project-node-", dir="/tmp") as probe:
         environment = selection.environment(_probe_environment(probe))
         for name in tools:
-            try:
-                command = Path(selection.executable).with_name(name)
-                result = subprocess.run([str(command), "--version"], cwd=probe, env=environment,
-                                        capture_output=True, text=True, timeout=10, check=False)
-                if result.returncode == 0:
-                    tools[name] = ".".join(map(str, _version(result.stdout)))
-            except (OSError, ValueError, subprocess.SubprocessError):
-                pass
+            tools[name] = _probe_version(str(Path(selection.executable).with_name(name)),
+                                         cwd=probe, environment=environment)
             if tools[name] is None:
                 issues.append("project_" + name + "_unusable")
     if tools["node"] and tools["node"] != selection.version:
@@ -298,6 +331,20 @@ def inspect_project_node(project: str, *, version: str | None = None) -> dict[st
                               if selection.runtime_source == "nvm" else None),
         "npm_requirement": npm_requirement,
     }
+
+
+def inspect_project_node_context(project: str) -> dict[str, object]:
+    """Retain declarations even when the optional discovery cannot select Node."""
+    pin, source, engines = project_requirements(project)
+    metadata = {"pin": pin, "pin_source": source, "pin_status": "present" if pin else "absent",
+                "node_requirement": engines}
+    try:
+        report = inspect_project_node(project)
+    except NodeSelectionUnavailable as exc:
+        report = {"healthy": False, "selection": None, "tools": {"node": None, "npm": None},
+                  "issues": [exc.issue], "maintenance_owner": None,
+                  "npm_requirement": _npm_requirement(project)}
+    return {**report, "metadata": metadata}
 
 
 def add_node_subparser(subparsers: argparse._SubParsersAction) -> None:

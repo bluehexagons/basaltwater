@@ -13,7 +13,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from lib.node_toolchain import inspect_project_node, run_node_command, select_node, satisfies
+from lib.agent_probe import ProbeResult
+from lib.node_toolchain import inspect_project_node, inspect_project_node_context, run_node_command, select_node, satisfies
 from lib.node_runtime_ownership import runtime_owner
 
 
@@ -67,7 +68,7 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertEqual(self.select().version, '24.21.0')
         (self.nvm / 'alias/default').unlink()
         with patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), patch(
-            'lib.node_toolchain.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'v22.23.2\n', '')
+            'lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2\n')
         ):
             self.assertEqual(self.select().version, '22.23.2')
 
@@ -84,8 +85,7 @@ class NodeToolchainTests(unittest.TestCase):
         (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=27'}}))
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
                 patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
-                patch('lib.node_toolchain.subprocess.run',
-                      return_value=subprocess.CompletedProcess([], 0, 'v27.1.0\n')):
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v27.1.0\n')):
             selection = self.select()
             self.assertEqual(selection.runtime_source, 'path')
             self.assertEqual(selection.source, str(self.project / '.nvmrc'))
@@ -225,6 +225,7 @@ class NodeToolchainTests(unittest.TestCase):
             bootstrap = stack.enter_context(patch('common.cachyos_development.prepare_project_node_versions'))
             stack.enter_context(patch('lib.node_toolchain.subprocess.run',
                                      return_value=subprocess.CompletedProcess([], 0, 'v22.23.2')))
+            stack.enter_context(patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v22.23.2')))
             for command in ('status', 'env', 'doctor', 'exec'):
                 args = argparse.Namespace(node_command=command, project=str(self.project), version=None,
                                           json=True, argv=['--', 'node', '--version'])
@@ -246,6 +247,8 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertNotEqual(options['cwd'], str(self.project))
             self.assertIn('v22.23.2/bin', command[0])
             self.assertEqual(command[1:], ['--version'])
+            self.assertEqual(options['timeout'], 10)
+            self.assertEqual(options['max_bytes'], 4096)
             self.assertEqual(options['env']['COREPACK_ENABLE_NETWORK'], '0')
             user_config = Path(options['env']['NPM_CONFIG_USERCONFIG'])
             global_config = Path(options['env']['NPM_CONFIG_GLOBALCONFIG'])
@@ -257,10 +260,10 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertEqual(options['env']['NPM_CONFIG_UPDATE_NOTIFIER'], 'false')
             self.assertNotIn('NODE_OPTIONS', options['env'])
             self.assertNotIn('PRIVATE_TOKEN', options['env'])
-            return subprocess.CompletedProcess(command, 0, 'v22.23.2' if Path(command[0]).name == 'node' else '11.19.0')
+            return ProbeResult('v22.23.2' if Path(command[0]).name == 'node' else '11.19.0')
 
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'NODE_OPTIONS': '--require=./project-code.js', 'PRIVATE_TOKEN': 'secret'}), \
-                patch('lib.node_toolchain.subprocess.run', side_effect=probe) as run:
+                patch('lib.node_toolchain.run_probe', side_effect=probe) as run:
             result = inspect_project_node(str(self.project))
         self.assertTrue(result['healthy'])
         self.assertEqual(result['selection']['version'], '22.23.2')
@@ -272,15 +275,15 @@ class NodeToolchainTests(unittest.TestCase):
         (self.project / '.nvmrc').write_text('22')
         (self.project / 'package.json').write_text(json.dumps({'engines': {'npm': '>=11.18.0'}}))
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
-            'lib.node_toolchain.subprocess.run', side_effect=[
-                subprocess.CompletedProcess([], 0, 'v24.21.0'), subprocess.CompletedProcess([], 0, '10.9.0'),
+            'lib.node_toolchain.run_probe', side_effect=[
+                ProbeResult('v24.21.0'), ProbeResult('10.9.0'),
             ]
         ):
             result = inspect_project_node(str(self.project))
         self.assertFalse(result['healthy'])
         self.assertEqual(result['issues'], ['project_node_version_mismatch', 'project_npm_engine_mismatch'])
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), patch(
-            'lib.node_toolchain.subprocess.run', side_effect=FileNotFoundError
+            'lib.node_toolchain.run_probe', return_value=ProbeResult(issue='probe_unavailable')
         ):
             result = inspect_project_node(str(self.project))
         self.assertEqual(result['issues'], ['project_node_unusable', 'project_npm_unusable'])
@@ -293,11 +296,11 @@ class NodeToolchainTests(unittest.TestCase):
             self.assertTrue(Path(options['cwd']).is_dir())
             self.assertNotIn('NODE_OPTIONS', options['env'])
             self.assertNotIn('LD_PRELOAD', options['env'])
-            return subprocess.CompletedProcess(command, 0, 'v22.23.2' if command[0].endswith('/node') else '11.19.0')
+            return ProbeResult('v22.23.2' if command[0].endswith('/node') else '11.19.0')
 
         with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'NODE_OPTIONS': '--require=project.js', 'LD_PRELOAD': '/private'}), \
                 patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
-                patch('lib.node_toolchain.subprocess.run', side_effect=probe) as run, \
+                patch('lib.node_toolchain.run_probe', side_effect=probe) as run, \
                 patch('lib.node_toolchain.runtime_owner', return_value='automatic') as owner:
             result = inspect_project_node(str(self.project))
         self.assertTrue(result['healthy'])
@@ -305,6 +308,56 @@ class NodeToolchainTests(unittest.TestCase):
         self.assertIsNone(result['maintenance_owner'])
         owner.assert_not_called()
         self.assertEqual(run.call_count, 3)
+
+    def test_missing_runtime_keeps_pin_and_engine_context_without_installation(self):
+        (self.project / '.nvmrc').write_text('28')
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=28', 'npm': '>=12'}}))
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.node_toolchain.shutil.which', return_value='/usr/bin/node'), \
+                patch('lib.node_toolchain.run_probe', return_value=ProbeResult('v24.21.0')), \
+                patch('lib.node_toolchain.subprocess.run') as execute, \
+                patch('lib.node_toolchain.mark_runtime') as mark:
+            result = inspect_project_node_context(str(self.project))
+        self.assertFalse(result['healthy'])
+        self.assertIsNone(result['selection'])
+        self.assertEqual(result['issues'], ['project_node_unavailable'])
+        self.assertEqual(result['tools'], {'node': None, 'npm': None})
+        self.assertEqual(result['npm_requirement'], '>=12')
+        self.assertEqual(result['metadata'], {'pin': '28', 'pin_source': str(self.project / '.nvmrc'),
+                                             'pin_status': 'present', 'node_requirement': '>=28'})
+        execute.assert_not_called()
+        mark.assert_not_called()
+
+    def test_absent_pin_is_explicit_and_diagnosis_does_not_change_shell_or_alias(self):
+        (self.project / 'package.json').write_text(json.dumps({'engines': {'node': '>=26'}}))
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm), 'PATH': '/fixture/other-node'}), \
+                patch('lib.node_toolchain.run_probe', side_effect=[ProbeResult('v26.10.0'), ProbeResult('12.1.0')]):
+            before = dict(os.environ)
+            result = inspect_project_node_context(str(self.project))
+            self.assertEqual(dict(os.environ), before)
+        self.assertTrue(result['healthy'])
+        self.assertEqual(result['metadata']['pin_status'], 'absent')
+        self.assertIsNone(result['metadata']['pin_source'])
+        self.assertEqual(result['selection']['source'], 'package.json engines')
+        self.assertEqual(result['selection']['version'], '26.10.0')
+        self.assertEqual((self.nvm / 'alias/default').read_text(), '24')
+
+    def test_runtime_inventory_limit_and_failed_version_probes_remain_unqualified(self):
+        (self.project / '.nvmrc').write_text('22')
+        with patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                patch('lib.node_toolchain.MAX_RUNTIME_ENTRIES', 2), \
+                patch('lib.node_toolchain.run_probe') as probe:
+            result = inspect_project_node_context(str(self.project))
+        self.assertEqual(result['issues'], ['project_node_inventory_limit'])
+        self.assertIsNone(result['selection'])
+        probe.assert_not_called()
+        for issue in ('probe_timeout', 'probe_output_limit', 'probe_failed'):
+            with self.subTest(issue=issue), patch.dict(os.environ, {'NVM_DIR': str(self.nvm)}), \
+                    patch('lib.node_toolchain.run_probe', return_value=ProbeResult(issue=issue)):
+                result = inspect_project_node_context(str(self.project))
+            self.assertFalse(result['healthy'])
+            self.assertEqual(result['issues'], ['project_node_unusable', 'project_npm_unusable'])
+            self.assertEqual(result['tools'], {'node': None, 'npm': None})
 
 
 if __name__ == '__main__':

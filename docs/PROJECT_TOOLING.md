@@ -201,6 +201,22 @@ runtime options, and Corepack downloads excluded. Its JSON includes selection,
 observed versions, issues, and maintenance ownership. No downloads or project
 commands run; an unusable tool or incompatible npm returns a nonzero status.
 
+Use `basaltw agent manifest --project-runtime --capability development --json`
+to include that diagnosis alongside PATH tool inventory. The optional
+`project_runtime` record keeps selection/executable provenance, observed Node/npm,
+engine compatibility issues, pin value/source and `pin_status` separately from
+`tools`, which still describes the invoking shell. Without the flag the field
+is null and no Node/npm version probes run. An absent pin is explicit even when
+engines or the default select a runtime. An unavailable runtime keeps declarations
+and fixed issues with a null selection; manifest remains an inventory command,
+while `node doctor` is the executable readiness gate.
+
+Version probes use the shared process supervisor with a ten-second deadline and
+4 KiB stdout limit each, outside repository and personal npm configuration.
+NVM discovery examines at most 256 directory entries; an oversized inventory
+is reported for inspection. Neither command installs tools, executes package
+scripts, changes the shell PATH or modifies NVM's default alias.
+
 `basaltw agent doctor --capability development` inventories the managed tools
 independently of the current checkout. Node/package-manager version probes run
 in a private temporary directory using the selected installation's interpreter;

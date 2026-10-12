@@ -26,13 +26,15 @@ and native tool version inventory (`b0b962a`). Preserve these contracts.
 
 Owner: [project tooling](../PROJECT_TOOLING.md).
 
-The Debian manifest inventories PATH Node 24.21.0/npm 11.19.0, while
-`basaltw node doctor --project . --json` correctly selects Antistatic's Node
-26.10.0/npm 12.1.0. Add optional project selection context to the manifest,
-reusing that owner. Include metadata source, observed versions, compatibility
-issues and missing-pin status. Test differing PATH/project versions and absent
-runtimes. Discovery must remain bounded, without installs, project execution
-or changes to PATH/default aliases.
+Delivered through `agent manifest --project-runtime`: optional selection context
+reuses the Node doctor and keeps PATH inventory distinct from project-selected
+Node/npm. It includes metadata source, observed versions, compatibility issues
+and explicit pin status. Missing runtimes retain declarations with a null
+selection. Version output/process lifetime and installed-runtime discovery are
+bounded; no installs, project execution or PATH/default-alias changes occur.
+Fixtures cover differing PATH/project selections, missing pins/runtimes, failed
+probes and oversized inventories. CachyOS validation is local; Debian live
+qualification belongs to the separate development system.
 
 ### 2. Complete disposable refresh/recovery qualification
 

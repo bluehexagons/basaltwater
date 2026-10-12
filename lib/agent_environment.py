@@ -166,6 +166,8 @@ def add_manifest_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("manifest", help="Show tools, workspace conventions and declared deployment mappings")
     parser.add_argument("repository", nargs="?", default=".")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--project-runtime", action="store_true",
+                        help="Probe the project's selected Node/npm without installs or project execution")
     parser.add_argument("--capability", action="append", choices=("installation", "workspace", "skills", "browser", "development", "publishing", "web"),
                         help="Return only relevant discovery fields; repeat as needed")
 
@@ -314,7 +316,7 @@ def _native_development(repository: str) -> dict[str, object]:
     }
 
 
-def inspect_environment(repository: str) -> dict[str, object]:
+def inspect_environment(repository: str, *, project_runtime: bool = False) -> dict[str, object]:
     root = agent_workspace._repository_root(repository)
     home = agent_workspace._effective_home()
     project = load_project_environment(root)
@@ -365,6 +367,11 @@ def inspect_environment(repository: str) -> dict[str, object]:
     mappings = project["deployments"]
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     installation = inspect_installation_provenance(source_root)
+    runtime = None
+    if project_runtime:
+        from lib.node_toolchain import inspect_project_node_context
+
+        runtime = inspect_project_node_context(root)
     return {
         "schema_version": 1,
         "basaltwater": installation,
@@ -391,6 +398,7 @@ def inspect_environment(repository: str) -> dict[str, object]:
         "desktop_applications": desktop,
         "desktop_skills": desktop_skills if desktop else [],
         "development": _native_development(root) if native_desktop else None,
+        "project_runtime": runtime,
         "workspace": {
             "repository": root, "branch": state["branch"], "commit": state["head"],
             "dirty": state["dirty"], "repository_root": os.path.join(home, "repos"),
@@ -416,7 +424,7 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
     scopes = set(capabilities)
     if "web" in scopes:
         scopes.update(("workspace", "browser", "development"))
-    fields = {"schema_version", "host_profile", "basaltwater", "health_command"}
+    fields = {"schema_version", "host_profile", "basaltwater", "health_command", "project_runtime"}
     tools = set()
     if "workspace" in scopes:
         fields.update(("workspace", "project_source", "deployments", "current_deployment", "undeclared_branches"))
@@ -445,7 +453,7 @@ def scoped_environment(result: dict[str, object], capabilities: list[str]) -> di
 
 def run_manifest_command(args: argparse.Namespace) -> int:
     try:
-        result = inspect_environment(args.repository)
+        result = inspect_environment(args.repository, project_runtime=getattr(args, "project_runtime", False))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
@@ -465,6 +473,14 @@ def run_manifest_command(args: argparse.Namespace) -> int:
         print(f"Basaltwater: {installation['version']} ({installation['commit'] or 'revision unrecorded'})")
     print(f"Repository: {workspace['repository']} ({workspace['branch'] or 'detached'}, {workspace['commit'][:12]})")
     print("Available tools: " + ", ".join(name for name, path in result["tools"].items() if path))
+    if runtime := result.get("project_runtime"):
+        selected = runtime["selection"]
+        print("Project Node: " + (selected["version"] + " (" + selected["runtime_source"] + ")"
+                                   if selected else "unavailable"))
+        print(f"  Pin: {runtime['metadata']['pin_status']}; observed Node/npm: "
+              f"{runtime['tools']['node'] or 'unknown'}/{runtime['tools']['npm'] or 'unknown'}")
+        if runtime["issues"]:
+            print("  Issues: " + ", ".join(runtime["issues"]))
     for catalog in result["skills"]["catalogs"]:
         print(f"Skill catalog: {catalog['path']} ({', '.join(catalog['providers'])}; session access unverified)")
         for entry in catalog["skills"]:
