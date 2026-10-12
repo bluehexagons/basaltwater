@@ -172,6 +172,10 @@ see [native desktop work](CACHYOS_DESKTOP.md). Package setup grants no consent.
 
 `basaltw local cachyos-doctor --json` inventories the saved selections, native
 development commands/packages, system pkg-config modules, and NVM loadability.
+For selected game tooling it also records parseable `cc`, Clang, Clang-Format,
+Clang-Tidy and LLVM symbolizer versions using bounded terminal-only probes.
+Null versions remain unverified; an installed command does not establish
+compatibility with a project's lint configuration or compiler baseline.
 It never launches the game or Animator, builds repository code, or tests the GPU.
 Run the game's doctor/build and open Animator after setup. Difficult native,
 formatter, screenshot, and full-suite validation can remain on the Debian VM;

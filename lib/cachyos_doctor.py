@@ -24,6 +24,11 @@ from lib.validators import validate_username
 SCHEMA_VERSION = 1
 PROBE_TIMEOUT = 3.0
 OUTPUT_LIMIT = 16384
+# These terminal-only version queries do not create a graphics context or run
+# project code. Keep GUI applications and Xvfb on presence-only discovery.
+DEVELOPMENT_VERSION_COMMANDS = frozenset((
+    "cc", "clang", "clang-format", "clang-tidy", "llvm-symbolizer",
+))
 BROWSER_PACKAGES = ("chromium", "firefox", "brave-bin", "cachy-browser", "librewolf-bin")
 PACKAGES = (
     "plasma-workspace", "kwin", "wayland", "pipewire", "wireplumber",
@@ -157,6 +162,15 @@ def _owned_socket(path: Path, uid: int) -> bool:
         return False
 
 
+def _observed_version(status: str, output: str) -> str | None:
+    """Retain a version token only; failed probes and raw tool output stay private."""
+    if status != "ok":
+        return None
+    match = re.search(r"(?<![0-9.])\d+\.\d+(?:\.\d+)?[a-zA-Z0-9.+_-]*",
+                      output[:512], re.ASCII)
+    return match[0] if match and _VERSION.fullmatch(match[0]) else None
+
+
 def saved_selection():
     from lib.cachyos_refresh import load_saved_setup
 
@@ -209,11 +223,17 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
                 for command in GAME_DEV_COMMANDS:
                     if command == "python" and config.install_python:
                         continue  # The language selection performs its version probe below.
-                    available = shutil.which(command) is not None
+                    executable = shutil.which(command)
+                    available = executable is not None
+                    version = None
+                    if executable and command in DEVELOPMENT_VERSION_COMMANDS:
+                        status, output = _probe([executable, "--version"], uid)
+                        version = _observed_version(status, output)
                     observed_commands.add(command)
                     record("tool." + command.lower(), "available" if available else "failed",
                            "Selected development command found; project behavior not tested." if available
-                           else "Selected development command missing; rerun --game-dev.", selected=True)
+                           else "Selected development command missing; rerun --game-dev.",
+                           selected=True, version=version)
                 for module in GAME_DEV_MODULES:
                     status, output = _probe(["/usr/bin/pkg-config", "--modversion", module], uid)
                     version = output.strip() if status == "ok" and _VERSION.fullmatch(output.strip()) else None
@@ -304,8 +324,7 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
             for command in commands:
                 executable = shutil.which(command)
                 status, output = _probe([executable, "version" if command == "go" else "--version"], uid) if executable else ("missing", "")
-                match = re.search(r"(?<![0-9.])\d+\.\d+(?:\.\d+)?[a-zA-Z0-9.+_-]*", output[:512])
-                version = match[0] if match and _VERSION.fullmatch(match[0]) else None
+                version = _observed_version(status, output)
                 record("tool." + command, "available" if status == "ok" else "failed",
                        "Selected executable passed its version check." if status == "ok"
                        else "Selected executable missing or version check failed; rerun setup or inspect its original manager.",

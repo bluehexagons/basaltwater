@@ -115,6 +115,62 @@ issues, reusing the existing Node doctor rather than running project scripts or
 changing PATH/default aliases. Missing pins must remain a reported prerequisite.
 Antistatic's own selector remains the build/publishing contract.
 
+## CachyOS workstation review
+
+The separate 2026-10-12 workstation review used Antistatic `5aabc788` and
+Basaltwater's managed `dev` installation. Its saved selection includes game
+development, Go, Node, Godot, Blender and T3 desktop. Selected prerequisites
+are available, no system/user units are failed, root/home have about 386 GiB
+free, and the observed workload has no memory pressure or cumulative OOM kills.
+These are workstation observations, separate from the Debian VM evidence above.
+
+Antistatic selects NVM Node 26.11.0/npm 11.20.0; the shell's system tools are
+Node 26.11.1/npm 12.2.0. Its doctor and TypeScript/native build pass with SDL3
+3.4.18 and SDL3-image 3.4.8. The initial full suite passes all 29 CTest cases,
+native loading/shader/resize/replay smoke, software GL fallback, and OpenGL 3.3
+screenshot smoke before stopping at two Clang-Tidy tooling fixtures. Basaltwater's
+isolated Xvfb probe reports healthy OpenGL 4.6 with Mesa llvmpipe. These checks
+do not qualify physical-GPU timing, HDR, input or streamed playtesting.
+
+The checkout's installed translations were 0.1.96 while its lockfile required
+0.1.102. Reinstalling with the project-selected `npm ci` restores the locked
+dependencies; rebuilding and rerunning the unit runner then passes all 201
+suites. TypeScript checks also pass. Basaltwater's package setup intentionally
+does not install repository dependencies; project presence alone is insufficient
+readiness evidence.
+
+Two Basaltwater discovery improvements are delivered:
+
+- Commit `59acb12` makes the native development manifest project-aware. Antistatic
+  advertises Node script names and requirements, with null Godot task commands.
+  Godot and mixed projects retain their applicable commands. Metadata stays
+  bounded and discovery executes no project code or session probes.
+- The CachyOS doctor records bounded compiler, formatter, lint-tool and symbolizer
+  versions for selected game development. GCC 16.2.1 and LLVM tools 23.1.1 are
+  observed here; missing/unparseable versions stay unknown. Installed commands
+  still do not establish project compatibility.
+
+Consider these project-owned follow-ups:
+
+- Give the Clang-Tidy fixtures an explicit nonempty check configuration. On the
+  installed tool, the default `clang-diagnostic-*` selection produces "no checks
+  enabled" for standalone temporary sources. An isolated probe with
+  `--checks=clang-analyzer-*` reports the expected compiler diagnostic. Keep the
+  project's reviewed lint/format baseline explicit; do not downgrade the host
+  or rewrite game formatting solely to match a rolling tool.
+- Consider opting into a CMake compiler launcher for incremental development.
+  ccache is installed, but the current Antistatic CMake cache has no compiler
+  launcher. Measure repeated builds before choosing a project default.
+- Declare a small graphics recipe in `basaltwater-agent.json` if retained
+  post-update evidence is useful. Antistatic currently declares CI commands in
+  `basaltwater.json`, which is a separate manifest; no agent graphics recipe is
+  declared. The project should own backend/settings/assertions, while Basaltwater
+  retains the environment and logs.
+
+Logs are retained in Antistatic's ignored
+`local-artifacts/projects/2026-10-12-basaltwater-workstation-review/` directory.
+No full setup refresh or desktop-service restart was needed for this review.
+
 ## Recommended order and acceptance
 
 ### 1. Qualify refresh and recovery on disposable Debian/systemd

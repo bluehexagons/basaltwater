@@ -255,6 +255,53 @@ class DoctorTests(unittest.TestCase):
                 self.assertEqual(nvm["version"], "0.40.6")
                 self.assertNotIn(temporary, json.dumps(report))
 
+    def test_selected_compiler_versions_exclude_raw_output_and_graphics_launches(self):
+        from common.cachyos_development import GAME_DEV_COMMANDS
+        from lib.config import SetupConfig
+
+        config = SetupConfig(host="localhost", username="alice", system_type="agent_cachyos",
+                             agent_tools=[], install_game_dev=True)
+        outputs = {
+            "cc": ("ok", "cc (GCC) 16.2.1\nprivate compiler path\n"),
+            "clang": ("ok", "clang version 23.1.1\nInstalledDir: /private/compiler\n"),
+            "clang-format": ("ok", "clang-format version 23.1.1\n"),
+            "clang-tidy": ("ok", "LLVM (http://llvm.org/):\n  LLVM version 23.1.1\n"),
+            "llvm-symbolizer": ("error", "failed tool 23.1.1 with private error\n"),
+        }
+        self.probe.side_effect = lambda command, uid: outputs.get(
+            Path(command[0]).name, self.healthy_probe(command, uid))
+        with patch.object(doctor.shutil, "which", side_effect=lambda name: "/fixture/" + name):
+            report = doctor.collect_cachyos_doctor(config=config)
+        records = {item["name"]: item for item in report["capabilities"]}
+        for command in doctor.DEVELOPMENT_VERSION_COMMANDS:
+            self.assertEqual(records["tool." + command]["state"], "available")
+            self.assertEqual(records["tool." + command]["version"],
+                             "16.2.1" if command == "cc" else None if command == "llvm-symbolizer" else "23.1.1")
+        probed = [call.args[0] for call in self.probe.call_args_list if call.args[0][0].startswith("/fixture/")]
+        for command in GAME_DEV_COMMANDS:
+            with self.subTest(command=command):
+                self.assertEqual(["/fixture/" + command, "--version"] in probed,
+                                 command in doctor.DEVELOPMENT_VERSION_COMMANDS)
+        self.assertNotIn("private", json.dumps(report))
+        config.install_game_dev = False
+        self.probe.reset_mock()
+        with patch.object(doctor.shutil, "which", side_effect=lambda name: "/fixture/" + name):
+            doctor.collect_cachyos_doctor(config=config)
+        self.assertFalse(any(Path(call.args[0][0]).name in doctor.DEVELOPMENT_VERSION_COMMANDS
+                             for call in self.probe.call_args_list))
+
+    def test_version_tokens_remain_unknown_when_unparseable_or_outside_probe_prefix(self):
+        for status, output, expected in (
+            ("ok", "clang version 23.1.1", "23.1.1"),
+            ("ok", "custom build", None),
+            ("ok", "x" * 512 + " 23.1.1", None),
+            ("ok", "version ２３.１.１", None),
+            ("error", "clang version 23.1.1", None),
+            ("output-limit", "clang version 23.1.1", None),
+        ):
+            with self.subTest(status=status, output=output[:40]):
+                self.assertEqual(doctor._observed_version(status, output), expected)
+
     def test_selected_native_commands_are_checked_without_launching_them(self):
         from lib.config import SetupConfig
 
