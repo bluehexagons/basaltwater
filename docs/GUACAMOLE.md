@@ -253,7 +253,9 @@ profile still needs qualification on a disposable VM.
 
 The browser follow-up corrected mouse/touch event registration against
 Guacamole 1.6's `onEach` API and selected its existing Image/data-URI rendering
-path. The ImageDecoder path in that release leaves VideoFrames and decoders
+path. Pointer coordinates also account for display centering and scrolling in
+fullscreen, while clamping drag releases at the display edges. The ImageDecoder
+path in that release leaves VideoFrames and decoders
 open and can block frame acknowledgements when image decoding rejects.
 The fallback uses load/error handlers that release the display queue. A
 closed or failed WebSocket tunnel now clears the client and controls directly,

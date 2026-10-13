@@ -104,11 +104,18 @@
         if (!client || !controlled) return;
         screen.focus({preventScroll: true});
         const display = client.getDisplay();
+        const screenBounds = screen.getBoundingClientRect();
+        const displayBounds = displayElement.getBoundingClientRect();
+        // Fullscreen centers the display within the input container. Translate
+        // its mouse coordinates to the display origin, including scrolling.
+        const state = {...event.state,
+            x: event.state.x - (displayBounds.left - screenBounds.left + screen.scrollLeft),
+            y: event.state.y - (displayBounds.top - screenBounds.top + screen.scrollTop)};
         // Drag release events may lie outside the scaled display. Clamp their
         // position while preserving button releases, so buttons cannot stick.
-        event.state.x = Math.max(0, Math.min(event.state.x, (display.getWidth() - 1) * display.getScale()));
-        event.state.y = Math.max(0, Math.min(event.state.y, (display.getHeight() - 1) * display.getScale()));
-        client.sendMouseState(event.state, true);
+        state.x = Math.max(0, Math.min(state.x, (display.getWidth() - 1) * display.getScale()));
+        state.y = Math.max(0, Math.min(state.y, (display.getHeight() - 1) * display.getScale()));
+        client.sendMouseState(state, true);
     }
 
     byId("connect-form").addEventListener("submit", async event => {
