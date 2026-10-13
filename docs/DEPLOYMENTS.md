@@ -286,6 +286,12 @@ units.
   Node projects may pin the build version with `.nvmrc` at the root and in
   conventional `frontend/`, `client/`, or `web/` packages. Build caches survive
   release replacement without being shared between applications.
+- Build homes under `/var/lib/basaltwater/build-users` remain private to their
+  respective accounts. Every deployment repairs home ownership and permissions,
+  restores a traverse-only ACL on the root-private state parent after runtime
+  staging, and verifies access as the build user before installing tools.
+  Existing build accounts receive the same repair on reruns; sibling state and
+  credential file modes are preserved.
 - Static output directories and service binaries are checked before any active
   service is stopped. A declared binary must exist and be executable.
 - Existing release files are replaced only after services are stopped. Static

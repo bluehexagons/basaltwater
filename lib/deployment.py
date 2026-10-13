@@ -33,6 +33,7 @@ from lib.deploy_utils import (
 from lib.systemd_service import cleanup_service, create_managed_service
 from lib.project_manifest import Component, Manifest, has_placeholder, load_manifest, render_template
 from lib.validation import validate_filesystem_path
+from lib.validators import validate_username
 
 
 SYSTEMD_UNIT_DIR = "/etc/systemd/system"
@@ -466,17 +467,47 @@ class DeploymentOrchestrator:
         return self._capped_identity("build", os.path.basename(dest_path.rstrip("/")))
 
     def _ensure_build_user(self, username: str) -> None:
-        result = run(f"id {shlex.quote(username)}", check=False)
-        if result.returncode == 0:
-            return
-        home_dir = os.path.join("/var/lib/basaltwater/build-users", username)
-        result = run(
-            "useradd --system --user-group --create-home "
-            f"--home-dir {shlex.quote(home_dir)} --shell /usr/sbin/nologin {shlex.quote(username)}",
-            check=False,
-        )
+        """Create the account and restore access to its private persistent home."""
+        if not validate_username(username):
+            raise ValueError(f"Invalid build username: {username}")
+        home_dir = self._build_home(username)
+        build_root = os.path.dirname(home_dir)
+        state_root = os.path.dirname(build_root)
+        for directory in (state_root, build_root, home_dir):
+            validate_filesystem_path(directory)
+            if os.path.realpath(directory) != directory:
+                raise ValueError(f"Build directory cannot contain a symlink: {directory}")
+
+        run(["mkdir", "-p", "--mode=0700", "--", state_root, build_root])
+        run(["chown", "root:root", "--", build_root])
+        run(["chmod", "0711", "--", build_root])
+        result = run(f"id {shlex.quote(username)}", check=False, capture_output=True)
         if result.returncode != 0:
-            raise RuntimeError(f"Could not create build user {username}")
+            result = run(
+                "useradd --system --user-group --create-home "
+                f"--home-dir {shlex.quote(home_dir)} --shell /usr/sbin/nologin {shlex.quote(username)}",
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Could not create build user {username}")
+
+        run(["mkdir", "-p", "--mode=0700", "--", home_dir])
+        run(["chown", f"{username}:{username}", "--", home_dir])
+        run(["chmod", "0700", "--", home_dir])
+        if shutil.which("setfacl") is None:
+            run(["apt-get", "-o", "DPkg::Lock::Timeout=60", "install", "-y", "-qq", "acl"])
+        # Runtime staging chmods the shared state parent to 0700, masking ACLs.
+        # Restore traversal on every deploy without exposing sibling state.
+        run(["setfacl", "-m", f"u:{username}:--x", "--", state_root])
+        for permission in ("-x", "-w"):
+            result = run(
+                ["runuser", "-u", username, "--", "/usr/bin/test", permission, home_dir],
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                error = self._get_command_error(result, "permission denied")
+                raise RuntimeError(f"Build user {username} cannot access its home {home_dir}: {error}")
 
     @staticmethod
     def _build_home(username: str) -> str:

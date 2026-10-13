@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,6 +14,110 @@ from lib.config import SetupConfig
 from lib.deployment import DeploymentOrchestrator
 from lib.project_manifest import Component, Manifest, WorkflowStep
 from lib.setup_common import prepare_deployments
+
+
+class BuildUserHomeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name) / 'state'
+        self.build_root = self.state / 'build-users'
+        self.home = self.build_root / 'build-example'
+        self.home.mkdir(parents=True)
+        self.state.chmod(0o700)
+        self.home.chmod(0o700)
+        self.orchestrator = DeploymentOrchestrator()
+        home = patch.object(self.orchestrator, '_build_home', return_value=str(self.home))
+        home.start()
+        self.addCleanup(home.stop)
+        executable = patch('lib.deployment.shutil.which', return_value='/usr/bin/setfacl')
+        executable.start()
+        self.addCleanup(executable.stop)
+
+    @patch('lib.deployment.run')
+    def test_existing_account_restores_traversal_and_preserves_private_files(self, run):
+        run.return_value = subprocess.CompletedProcess([], 0)
+        key = self.home / 'deploy-key'
+        key.write_text('private fixture', encoding='utf-8')
+        key.chmod(0o600)
+        self.orchestrator._ensure_build_user('build-example')
+
+        commands = [invocation.args[0] for invocation in run.call_args_list]
+        self.assertFalse(any(isinstance(command, str) and command.startswith('useradd ') for command in commands))
+        self.assertIn(['setfacl', '-m', 'u:build-example:--x', '--', str(self.state)], commands)
+        self.assertIn(['chown', 'root:root', '--', str(self.build_root)], commands)
+        self.assertIn(['chmod', '0711', '--', str(self.build_root)], commands)
+        self.assertIn(['chown', 'build-example:build-example', '--', str(self.home)], commands)
+        self.assertIn(['chmod', '0700', '--', str(self.home)], commands)
+        for permission in ('-x', '-w'):
+            self.assertIn(
+                ['runuser', '-u', 'build-example', '--', '/usr/bin/test', permission, str(self.home)],
+                commands,
+            )
+        self.assertFalse(any(
+            isinstance(command, list) and command[0] in {'chmod', 'chown'}
+            and ('-R' in command or str(self.state) in command)
+            for command in commands
+        ))
+        self.assertEqual(os.stat(self.state).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(key).st_mode & 0o777, 0o600)
+        self.assertEqual(key.read_text(encoding='utf-8'), 'private fixture')
+
+    @patch('lib.deployment.run')
+    def test_new_account_gets_home_access_before_toolchain_setup(self, run):
+        def result(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 1 if isinstance(command, str) and command.startswith('id ') else 0)
+
+        run.side_effect = result
+        self.orchestrator._ensure_build_user('build-example')
+        commands = [invocation.args[0] for invocation in run.call_args_list]
+        creation = [command for command in commands if isinstance(command, str) and command.startswith('useradd ')]
+        self.assertEqual(len(creation), 1)
+        self.assertIn(f'--home-dir {self.home}', creation[0])
+        self.assertIn('--shell /usr/sbin/nologin', creation[0])
+        grant = next(index for index, command in enumerate(commands) if isinstance(command, list) and command[0] == 'setfacl')
+        probe = next(index for index, command in enumerate(commands) if isinstance(command, list) and command[0] == 'runuser')
+        self.assertLess(grant, probe)
+
+    @patch('lib.deployment.run', return_value=subprocess.CompletedProcess([], 0))
+    def test_missing_acl_tools_are_installed_before_granting_access(self, run):
+        with patch('lib.deployment.shutil.which', return_value=None):
+            self.orchestrator._ensure_build_user('build-example')
+        commands = [invocation.args[0] for invocation in run.call_args_list]
+        package = next(index for index, command in enumerate(commands) if isinstance(command, list) and command[0] == 'apt-get')
+        grant = next(index for index, command in enumerate(commands) if isinstance(command, list) and command[0] == 'setfacl')
+        self.assertLess(package, grant)
+        self.assertEqual(commands[package][-1], 'acl')
+
+    @patch('lib.deployment.run')
+    def test_inaccessible_home_fails_with_account_and_path(self, run):
+        def result(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 1 if isinstance(command, list) and command[0] == 'runuser' else 0, '', 'denied')
+
+        run.side_effect = result
+        with self.assertRaisesRegex(RuntimeError, f'Build user build-example cannot access its home {self.home}'):
+            self.orchestrator._ensure_build_user('build-example')
+
+    @patch('lib.deployment.run')
+    def test_invalid_username_is_rejected_before_mutations(self, run):
+        with self.assertRaisesRegex(ValueError, 'Invalid build username'):
+            self.orchestrator._ensure_build_user('../other')
+        run.assert_not_called()
+
+    @patch('lib.deployment.run')
+    def test_symlinked_home_or_parent_is_rejected_before_mutations(self, run):
+        for directory in (self.home, self.build_root, self.state):
+            with self.subTest(directory=directory):
+                relocated = directory.with_name(directory.name + '-original')
+                directory.rename(relocated)
+                directory.symlink_to(relocated, target_is_directory=True)
+                try:
+                    with self.assertRaisesRegex(ValueError, 'cannot contain a symlink'):
+                        self.orchestrator._ensure_build_user('build-example')
+                    run.assert_not_called()
+                finally:
+                    directory.unlink()
+                    relocated.rename(directory)
 
 
 class DeploymentProjectToolingTests(unittest.TestCase):
