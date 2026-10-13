@@ -52,6 +52,14 @@ setup/deploy flow and verify the resulting settings before upgrading. It writes
 the current persistent desktop-session policy. Review that policy change before
 resuming desktop work. Do not delete saved configurations to bypass this check.
 
+These checks apply when loading or rerunning the selected saved setup. A new
+VM address with no saved setup does not load other hosts' configurations, and
+name/tag lookup decodes only the record it selects. Unrelated retired fields
+therefore do not block new provisioning or lookup of a current setup. Explicit
+workspace-wide setup inventories still validate every record. Proxmox VM
+migration validates its identity, provider binding, and storage separately and
+preserves other saved policy fields; it does not upgrade those policies.
+
 For a system installation, perform the system pass first on that host:
 
 ```bash

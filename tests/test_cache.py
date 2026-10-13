@@ -11,10 +11,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+from lib.atomic_io import write_json_atomic
 from lib.cache import (
     get_cache_path_for_host,
     save_setup_command,
     load_setup_command,
+    load_all_setup_cache_records,
+    load_all_setup_commands,
     merge_setup_configs,
     rename_setup_command,
 )
@@ -290,6 +293,126 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                 self.assertEqual(loaded.friendly_name, 'My Server')
                 self.assertEqual(loaded.tags, ['prod'])
                 self.assertEqual(len(os.listdir(history_dir)), 1)
+
+
+class TestScopedSetupLookup(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        workspace = patch.dict(os.environ, {"BASALTWATER_WORKSPACE": temporary.name})
+        workspace.start()
+        self.addCleanup(workspace.stop)
+
+    def _save_legacy(self):
+        path = get_cache_path_for_host("192.168.0.25")
+        write_json_atomic(path, {
+            "host": "192.168.0.25", "system_type": "server_web",
+            "name": "Older server", "tags": ["legacy"], "args": {
+                "username": "admin", "api_subdomain": None,
+                "install_ruby": False, "reset_migrations": False,
+            },
+        })
+        return path
+
+    def _save_current(self, **overrides):
+        values = {"host": "192.168.0.50", "username": "agent", "system_type": "server_lite",
+                  "friendly_name": "New agent", "tags": ["agents"]}
+        values.update(overrides)
+        config = SetupConfig(**values)
+        save_setup_command(config)
+        return get_cache_path_for_host(config.host)
+
+    def test_new_ip_does_not_scan_unrelated_legacy_state(self):
+        self._save_legacy()
+        with patch("lib.cache.iter_setup_cache_records", side_effect=AssertionError("unexpected inventory scan")):
+            for address in ("192.168.0.50", "2001:db8::50"):
+                with self.subTest(address=address):
+                    self.assertIsNone(load_setup_command(address))
+
+    def test_new_ip_cannot_resolve_to_another_hosts_name_or_tag(self):
+        self._save_current(host="192.168.0.25", friendly_name="192.168.0.50", tags=["192.168.0.51"])
+        self.assertIsNone(load_setup_command("192.168.0.50"))
+        self.assertIsNone(load_setup_command("192.168.0.51"))
+
+    def test_new_vm_provisioning_metadata_ignores_unrelated_retired_setup(self):
+        import basaltwater
+        from argparse import Namespace
+
+        path = self._save_legacy()
+        with open(path, "rb") as file_obj:
+            original = file_obj.read()
+        for host in ("192.168.0.50", "192.168.0.50/24"):
+            with self.subTest(host=host):
+                config = SetupConfig(host=host, username="agent", system_type="server_lite",
+                                     machine_type="vm", hosted_node="ts1")
+                self.assertIsNone(basaltwater._load_cached_provisioning_metadata(config))
+                self.assertFalse(basaltwater._reuse_cached_provisioning_metadata(config, Namespace()))
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), original)
+
+    def test_name_and_tag_decode_only_the_selected_current_setup(self):
+        path = self._save_legacy()
+        self._save_current()
+        with open(path, "rb") as file_obj:
+            original = file_obj.read()
+        for alias in ("NEW AGENT", "AGENTS"):
+            with self.subTest(alias=alias):
+                self.assertEqual(load_setup_command(alias).host, "192.168.0.50")
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), original)
+
+    def test_unknown_name_does_not_decode_unrelated_retired_setup(self):
+        self._save_legacy()
+        self.assertIsNone(load_setup_command("unknown-vm.example"))
+
+    def test_explicit_legacy_host_name_and_tag_still_require_upgrade(self):
+        path = self._save_legacy()
+        with open(path, "rb") as file_obj:
+            original = file_obj.read()
+        for alias in ("192.168.0.25", "Older server", "legacy"):
+            with self.subTest(alias=alias), self.assertRaisesRegex(StateReadError, "Retired setup fields"):
+                load_setup_command(alias)
+        with open(path, "rb") as file_obj:
+            self.assertEqual(file_obj.read(), original)
+
+    def test_full_inventories_still_validate_all_saved_setups(self):
+        self._save_legacy()
+        self._save_current()
+        for inventory in (load_all_setup_commands, load_all_setup_cache_records):
+            with self.subTest(inventory=inventory.__name__), self.assertRaisesRegex(StateReadError, "Retired setup fields"):
+                inventory()
+
+    def test_argument_name_and_csv_tags_take_precedence_over_display_metadata(self):
+        path = self._save_current()
+        with open(path, encoding="utf-8") as file_obj:
+            data = json.load(file_obj)
+        data.update({"name": "Stale name", "tags": ["stale-tag"]})
+        data["args"]["tags"] = " agents , , production "
+        write_json_atomic(path, data)
+        self.assertIsNone(load_setup_command("Stale name"))
+        self.assertIsNone(load_setup_command("stale-tag"))
+        self.assertEqual(load_setup_command("New agent").host, "192.168.0.50")
+        self.assertEqual(load_setup_command("production").tags, ["agents", "production"])
+
+    def test_shared_tag_retains_friendly_name_ordering(self):
+        self._save_current(host="192.168.0.25", friendly_name="Zebra", tags=["shared"])
+        self._save_current(host="192.168.0.50", friendly_name="Alpha", tags=["shared"])
+        self.assertEqual(load_setup_command("shared").host, "192.168.0.50")
+
+    def test_invalid_lookup_metadata_cannot_be_treated_as_unrelated(self):
+        path = self._save_current()
+        with open(path, encoding="utf-8") as file_obj:
+            data = json.load(file_obj)
+        data["args"]["tags"] = [123]
+        write_json_atomic(path, data)
+        with self.assertRaisesRegex(StateReadError, "lookup name or tags"):
+            load_setup_command("unmatched-name")
+
+    def test_disappeared_selected_setup_is_not_a_cache_miss(self):
+        self._save_current()
+        with patch("lib.cache._load_cache_file", return_value=None):
+            with self.assertRaisesRegex(StateReadError, "disappeared during lookup"):
+                load_setup_command("New agent")
 
 
 class TestMergeSetupConfigs(unittest.TestCase):

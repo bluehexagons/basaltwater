@@ -17,7 +17,7 @@ from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
 from lib.validators import validate_host, validate_username
 from lib.validation import (
-    _memory_string_kib, validate_filesystem_path, validate_network_interface_name,
+    _memory_string_kib, validate_filesystem_path, validate_network_interface_name, validate_network_ip,
     validate_no_control_characters, validate_proxmox_storage_name, validate_system_hostname,
     validate_vm_storage_name,
 )
@@ -401,20 +401,42 @@ def _load_cache_file(cache_path: str, host: str) -> Optional[SetupConfig]:
 
 
 def _find_cache_by_name(name: str) -> Optional[SetupConfig]:
+    """Select a name/tag using lookup metadata before decoding setup policy."""
     needle = name.lower()
-    for config in load_all_setup_commands():
-        if needle == (config.friendly_name or "").lower() or any(
-            needle == tag.lower() for tag in config.tags or []
+    matches: list[tuple[str, str, dict[str, Any]]] = []
+    for path, record in iter_setup_cache_records():
+        args = record["args"]
+        friendly_name = args.get("friendly_name", record.get("name"))
+        tags = args.get("tags", record.get("tags")) or []
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        if ((friendly_name is not None and not isinstance(friendly_name, str))
+                or not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags)):
+            raise StateReadError(path, "invalid setup lookup name or tags")
+        if needle == (friendly_name or "").lower() or any(
+            needle == tag.lower() for tag in tags
         ):
-            return config
-    return None
+            matches.append((friendly_name or record["host"], path, record))
+    if not matches:
+        return None
+    # Retain the existing friendly-name/host ordering for shared tags.
+    _label, path, record = min(matches, key=lambda match: (match[0].lower(), match[1]))
+    config = _load_cache_file(path, record["host"])
+    if config is None:
+        raise StateReadError(path, "selected setup cache disappeared during lookup")
+    return config
 
 
 def load_setup_command(host: str) -> Optional[SetupConfig]:
+    """Load the exact host, or resolve a non-IP name/tag to its selected setup."""
     cache_path = get_cache_path_for_host(host)
     if os.path.lexists(cache_path):
         return _load_cache_file(cache_path, host)
-    return _find_cache_by_name(host)
+    try:
+        validate_network_ip(host, "Setup cache address")
+    except ValueError:
+        return _find_cache_by_name(host)
+    return None
 
 
 def load_all_setup_commands(workspace: Optional[str] = None) -> list[SetupConfig]:
