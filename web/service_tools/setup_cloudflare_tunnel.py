@@ -18,7 +18,7 @@ import shutil
 import tempfile
 from typing import Optional, Any
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '../..'))
 
 from lib.types import StrDict, JSONDict
 from lib.atomic_io import write_json_atomic, write_text_atomic
@@ -259,12 +259,14 @@ def generate_config_yml(tunnel: JSONDict, sites: list[StrDict]) -> str:
     return "\n".join(config_lines)
 
 
-def save_state(tunnel: JSONDict, sites: list[StrDict]):
+def save_state(tunnel: JSONDict, sites: list[StrDict], *, pending_activation: bool = False):
     """Save tunnel state for future runs."""
     state: JSONDict = {
         'tunnel': tunnel,
         'sites': sites
     }
+    if pending_activation:
+        state['pending_activation'] = True
     
     os.makedirs(CONFIG_DIR, mode=0o755, exist_ok=True)
     
@@ -284,6 +286,8 @@ def load_state() -> Optional[dict[str, Any]]:
 
     if not isinstance(state, dict):
         raise ValueError("Cloudflare tunnel state must be a JSON object")
+    if not isinstance(state.get('pending_activation', False), bool):
+        raise ValueError("Cloudflare tunnel state has an invalid pending_activation flag")
     tunnel = state.get('tunnel')
     if not isinstance(tunnel, dict):
         raise ValueError("Cloudflare tunnel state is missing its tunnel object")
@@ -318,7 +322,7 @@ def _write_config_file(config_file: str, content: str) -> None:
     try:
         write_text_atomic(temporary_path, content, mode=0o600)
         result = run_command(
-            ['cloudflared', 'tunnel', 'ingress', 'validate', '--config', temporary_path],
+            ['cloudflared', 'tunnel', '--config', temporary_path, 'ingress', 'validate'],
             check=False,
             capture_output=True,
         )
@@ -339,7 +343,7 @@ def _config_is_valid(config_file: str) -> bool:
     if not os.path.isfile(config_file):
         return False
     result = run_command(
-        ['cloudflared', 'tunnel', 'ingress', 'validate', '--config', config_file],
+        ['cloudflared', 'tunnel', '--config', config_file, 'ingress', 'validate'],
         check=False,
         capture_output=True,
     )
@@ -350,8 +354,18 @@ def _config_is_valid(config_file: str) -> bool:
     return True
 
 
-def _ensure_service_running() -> bool:
+def _ensure_service_running(*, restart: bool = False) -> bool:
     """Start the installed service when possible and verify it is active."""
+    if restart:
+        result = run_command(
+            ['systemctl', 'restart', 'cloudflared'],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or '').strip()
+            print(f"  ⚠ Cloudflared restart failed: {detail or 'restart failed'}")
+            return False
     result = run_command(
         ['systemctl', 'is-active', 'cloudflared'],
         check=False,
@@ -399,12 +413,18 @@ def install_and_start_service():
     """Install and start the cloudflared service."""
     print("\nInstalling cloudflared service...")
     
-    run_command(['cloudflared', 'service', 'install'])
+    existing = run_command(
+        ['systemctl', 'show', 'cloudflared', '--property=LoadState', '--value'],
+        check=False,
+        capture_output=True,
+    )
+    if existing.returncode != 0 or existing.stdout.strip() != 'loaded':
+        run_command(['cloudflared', '--config', f'{CONFIG_DIR}/config.yml', 'service', 'install'])
     
     print("✓ Service installed")
     
     print("\nStarting cloudflared service...")
-    run_command(['systemctl', 'start', 'cloudflared'])
+    run_command(['systemctl', 'restart', 'cloudflared'])
     run_command(['systemctl', 'enable', 'cloudflared'])
     
     print("✓ Service started and enabled")
@@ -451,6 +471,8 @@ def main(interactive: bool = True, auto_update: bool = False):
         sites = discover_nginx_sites()
         if not sites:
             return False
+        if not os.path.isfile(tunnel['credentials_file']):
+            raise ValueError(f"Tunnel credentials are missing: {tunnel['credentials_file']}")
 
         old_sites = state.get('sites', [])
         old_site_keys = {
@@ -463,17 +485,24 @@ def main(interactive: bool = True, auto_update: bool = False):
         }
         config_file = f"{CONFIG_DIR}/config.yml"
         config_needs_update = (
-            old_site_keys != new_site_keys
+            state.get('pending_activation', False)
+            or old_site_keys != new_site_keys
             or not _config_is_valid(config_file)
-            or not os.path.isfile(tunnel['credentials_file'])
         )
 
         if config_needs_update:
+            # A config repair can require activation even when its route set
+            # is unchanged. Persist that obligation before replacing the file.
+            save_state(tunnel, old_sites, pending_activation=True)
             config_content = generate_config_yml(tunnel, sites)
             _write_config_file(config_file, config_content)
+        # Commit discovered routes only after the daemon has loaded them. If
+        # restart fails, pending_activation makes the next refresh retry it.
+        if not _ensure_service_running(restart=config_needs_update):
+            return False
+        if config_needs_update:
             save_state(tunnel, sites)
-
-        return _ensure_service_running()
+        return True
     
     # Interactive mode falls through to show configuration and return True on success
     if state:
@@ -530,6 +559,10 @@ def main(interactive: bool = True, auto_update: bool = False):
             break
         
         tunnel = create_tunnel(tunnel_name)
+        # Preserve a newly created tunnel even if service installation is
+        # deferred or fails. Empty applied routes force the next refresh to
+        # restart with the generated ingress rather than trusting stale state.
+        save_state(tunnel, [], pending_activation=True)
     else:
         tunnel = state['tunnel']
         print(f"\n✓ Using existing tunnel: {tunnel['name']}")
@@ -565,10 +598,10 @@ def main(interactive: bool = True, auto_update: bool = False):
     config_file = f"{CONFIG_DIR}/config.yml"
     
     print(f"\nWriting configuration to {config_file}...")
+    if state:
+        save_state(tunnel, state['sites'], pending_activation=True)
     _write_config_file(config_file, config_content)
     print("✓ Configuration file created")
-    
-    save_state(tunnel, sites)
     
     show_tunnel_info(tunnel, sites)
     
@@ -580,6 +613,7 @@ def main(interactive: bool = True, auto_update: bool = False):
             raise RuntimeError(
                 "cloudflared did not become active; direct HTTP/HTTPS ports remain open"
             )
+        save_state(tunnel, sites)
         _close_public_web_ports()
         
         print("\n" + "=" * 50)

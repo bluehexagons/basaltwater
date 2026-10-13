@@ -12,6 +12,8 @@ from lib.remote_utils import run
 
 NGINX_CLOUDFLARE_CONF = "/etc/nginx/conf.d/cloudflare.conf"
 NGINX_CLOUDFLARE_CONF_DIR = "/etc/nginx/conf.d"
+CLOUDFLARE_SETUP_HELPER = "/usr/local/bin/setup-cloudflare-tunnel"
+CLOUDFLARE_SETUP_SOURCE = "/opt/basaltwater/web/service_tools/setup_cloudflare_tunnel.py"
 
 
 def _allow_antistatic_direct_access_for_cloudflare(config: SetupConfig) -> bool:
@@ -146,18 +148,18 @@ def configure_nginx_for_cloudflare(config: SetupConfig) -> None:
 
 def install_cloudflared_service_helper(config: SetupConfig) -> None:
     """Create symlink for Cloudflare tunnel setup script."""
-    helper_script = "/usr/local/bin/setup-cloudflare-tunnel"
-    source_script = "/opt/basaltwater/web/service_tools/setup_cloudflare_tunnel.py"
-    
-    if os.path.exists(helper_script):
-        print("  ✓ Cloudflare tunnel setup script already available")
-        return
-    
+    helper_script = CLOUDFLARE_SETUP_HELPER
+    source_script = CLOUDFLARE_SETUP_SOURCE
     if not os.path.exists(source_script):
-        print(f"  ⚠ Source script not found: {source_script}")
-        return
+        raise RuntimeError(f"Cloudflare setup script not found: {source_script}")
+    if os.path.lexists(helper_script):
+        if not os.path.islink(helper_script):
+            raise RuntimeError(f"Refusing to replace unmanaged Cloudflare helper: {helper_script}")
+        if os.readlink(helper_script) == source_script:
+            print("  ✓ Cloudflare tunnel setup script already available")
+            return
     
-    run(f"ln -sf {source_script} {helper_script}")
+    run(["ln", "-sfn", source_script, helper_script])
     
     print(f"  ✓ Linked setup script: {helper_script}")
     print(f"  Run 'sudo setup-cloudflare-tunnel' to configure the tunnel")
@@ -166,7 +168,7 @@ def install_cloudflared_service_helper(config: SetupConfig) -> None:
 def run_cloudflare_tunnel_setup(config: SetupConfig) -> bool:
     """Update and verify an existing tunnel; return False when none exists."""
     del config
-    helper_script = "/opt/basaltwater/web/service_tools/setup_cloudflare_tunnel.py"
+    helper_script = CLOUDFLARE_SETUP_SOURCE
     
     if not os.path.exists(helper_script):
         raise RuntimeError(f"Cloudflare setup script not found: {helper_script}")

@@ -14,7 +14,8 @@ basaltw setup server_web example.com deploy \
 
 The setup flow first:
 
-- configures Nginx to trust Cloudflare source ranges;
+- configures Nginx to trust Cloudflare source ranges and the IPv4/IPv6 loopback
+  connection from cloudflared for `CF-Connecting-IP` restoration;
 - creates `/etc/cloudflared/README.md`; and
 - installs `/usr/local/bin/setup-cloudflare-tunnel`.
 
@@ -30,6 +31,8 @@ origin over local HTTP without forcing an HTTP-to-HTTPS redirect. Proxied
 applications still receive `X-Forwarded-Proto: https` so they generate secure
 external URLs correctly. Keep SSH reachable through your management network
 before enabling the firewall changes.
+Static subpath and directory redirects remain relative so the local HTTP
+origin cannot send visitors to a public HTTP URL or an internal port.
 
 ## Create or update a tunnel
 
@@ -50,6 +53,12 @@ Generated tunnel and Nginx configurations are validated before activation. A
 non-interactive refresh compares complete hostname/origin entries, repairs a
 missing or invalid config, and verifies that the service is active; it reports
 failure when the service cannot be started instead of claiming success.
+Changed ingress restarts cloudflared before recording the routes as applied;
+failed restarts leave the prior route state and a `pending_activation` flag so
+the next refresh retries even when only repairing an unchanged route set.
+An unchanged, valid configuration leaves the running daemon alone.
+Interactive updates reuse the installed service. A restart briefly interrupts
+existing tunnel connections; use replicas if uninterrupted edge access is needed.
 
 After adding or removing an Nginx site, rerun the helper to refresh ingress
 entries. A setup or patch run with `--cloudflare` also attempts a non-interactive

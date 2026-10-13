@@ -311,27 +311,19 @@ def generate_self_signed_cert(
 
 
 def _make_cache_maps(domain_slug: str) -> tuple[str, str, str]:
-    """Generate map blocks for caching and return variable names."""
+    """Let assets revalidate across releases, including fixed-name JS and sprites."""
     expires_var = f"$assets_expires_{domain_slug}"
     cc_var = f"$assets_cc_{domain_slug}"
     
     maps = fr"""
 map $uri {expires_var} {{
     default                    off;
-    ~*\.(jpg|jpeg|png|gif|webp|svg|ico)$  1y;
-    ~*\.(mp4|webm|ogg|mov|avi|flv|wmv)$   1y;
-    ~*\.(woff|woff2|ttf|eot|otf)$         1y;
-    ~*\.(css|js)$                         1y;
-    ~*\.(pdf|txt|xml|json)$               30d;
+    ~*\.(jpg|jpeg|png|gif|webp|svg|ico|mp4|webm|ogg|mov|avi|flv|wmv|woff|woff2|ttf|eot|otf|css|js|pdf|txt|xml|json)$  -1;
 }}
 
 map $uri {cc_var} {{
     default                    "";
-    ~*\.(jpg|jpeg|png|gif|webp|svg|ico)$  "public, immutable";
-    ~*\.(mp4|webm|ogg|mov|avi|flv|wmv)$   "public, immutable";
-    ~*\.(woff|woff2|ttf|eot|otf)$         "public, immutable";
-    ~*\.(css|js)$                         "public, immutable";
-    ~*\.(pdf|txt|xml|json)$               "public";
+    ~*\.(jpg|jpeg|png|gif|webp|svg|ico|mp4|webm|ogg|mov|avi|flv|wmv|woff|woff2|ttf|eot|otf|css|js|pdf|txt|xml|json)$  "public, must-revalidate";
 }}
 """
     return maps, expires_var, cc_var
@@ -404,9 +396,16 @@ def _make_static_location(path: str, serve_path: str, index_file: str, try_files
                          expires_var: Optional[str] = None, cc_var: Optional[str] = None) -> str:
     """Generate a static file serving location block."""
     directive = "root" if path == "/" else "alias"
+    prefix = "/" if path == "/" else path.rstrip("/") + "/"
+    directory = serve_path.rstrip("/") + "/"
+    redirect = "" if path == "/" else f"""    location = {path.rstrip('/')} {{
+        return 301 {prefix}$is_args$args;
+    }}
+
+"""
     
     content = [
-        f"        {directive} {serve_path};",
+        f"        {directive} {directory};",
         f"        index {index_file};",
         "        autoindex off;",
         "        charset utf-8;",
@@ -420,8 +419,8 @@ def _make_static_location(path: str, serve_path: str, index_file: str, try_files
 
     body = "\n".join(content)
     
-    return f"""    {comment}
-    location {path} {{
+    return redirect + f"""    {comment}
+    location {prefix} {{
 {body}
     }}"""
 
@@ -481,6 +480,9 @@ def generate_merged_nginx_config(
     server_name_directive = f"server_name {domain};" if domain else "server_name _;"
     default_server = " default_server" if is_default else ""
     symlink_policy = '\n    disable_symlinks on;' if disable_symlinks else ''
+    # The tunnel reaches this listener over HTTP, but visitors use HTTPS.
+    # Relative redirects preserve the public scheme, hostname and port.
+    redirect_policy = '\n    absolute_redirect off;' if not enable_https_redirect else ''
     
     domain_slug = _config_name_for_domain(domain)
     cache_maps, expires_var, cc_var = _make_cache_maps(domain_slug)
@@ -552,7 +554,7 @@ def generate_merged_nginx_config(
     listen 80{default_server};
     listen [::]:80{default_server};
 
-    {server_name_directive}{symlink_policy}
+    {server_name_directive}{symlink_policy}{redirect_policy}
 {http_content}
 }}
 

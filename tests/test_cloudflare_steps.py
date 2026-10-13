@@ -12,9 +12,11 @@ from unittest.mock import call, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.config import SetupConfig
+from web import cloudflare_steps
 from web.cloudflare_steps import (
     configure_cloudflare_firewall,
     configure_nginx_for_cloudflare,
+    install_cloudflared_service_helper,
     run_cloudflare_tunnel_setup,
 )
 
@@ -114,7 +116,10 @@ class TestConfigureNginxForCloudflare(unittest.TestCase):
                 configure_nginx_for_cloudflare(_make_config())
 
             with open(conf_path, encoding="utf-8") as generated:
-                self.assertIn("set_real_ip_from", generated.read())
+                content = generated.read()
+                self.assertIn("set_real_ip_from 127.0.0.1;", content)
+                self.assertIn("set_real_ip_from ::1;", content)
+                self.assertIn("real_ip_header CF-Connecting-IP;", content)
         mock_run.assert_has_calls([
             call("nginx -t", check=False, capture_output=True),
             call("systemctl reload nginx", check=False, capture_output=True),
@@ -138,6 +143,31 @@ class TestConfigureNginxForCloudflare(unittest.TestCase):
 
 
 class TestRunCloudflareTunnelSetup(unittest.TestCase):
+    def test_helper_replaces_a_retired_runtime_link(self):
+        with TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "current.py")
+            helper = os.path.join(tmp, "helper")
+            with open(source, "w", encoding="utf-8") as script:
+                script.write("# current runtime\n")
+            os.symlink("/opt/infra_tools/retired.py", helper)
+            with patch.object(cloudflare_steps, "CLOUDFLARE_SETUP_SOURCE", source), \
+                    patch.object(cloudflare_steps, "CLOUDFLARE_SETUP_HELPER", helper), \
+                    patch.object(cloudflare_steps, "run") as run:
+                install_cloudflared_service_helper(_make_config())
+            run.assert_called_once_with(["ln", "-sfn", source, helper])
+
+    def test_helper_preserves_an_unmanaged_file(self):
+        with TemporaryDirectory() as tmp:
+            helper = os.path.join(tmp, "helper")
+            with open(helper, "w", encoding="utf-8") as script:
+                script.write("# manual helper\n")
+            with patch.object(cloudflare_steps, "CLOUDFLARE_SETUP_SOURCE", helper), \
+                    patch.object(cloudflare_steps, "CLOUDFLARE_SETUP_HELPER", helper), \
+                    patch.object(cloudflare_steps, "run") as run:
+                with self.assertRaisesRegex(RuntimeError, "unmanaged"):
+                    install_cloudflared_service_helper(_make_config())
+            run.assert_not_called()
+
     @patch("web.cloudflare_steps.os.path.exists")
     @patch("web.cloudflare_steps.run")
     def test_missing_tunnel_state_retains_direct_ports(self, mock_run, mock_exists):

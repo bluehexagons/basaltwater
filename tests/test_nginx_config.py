@@ -138,6 +138,9 @@ class TestMakeCacheMaps(unittest.TestCase):
         self.assertIn('map', maps)
         self.assertIn('css', maps)
         self.assertIn('js', maps)
+        self.assertNotIn('immutable', maps)
+        self.assertIn('must-revalidate', maps)
+        self.assertNotIn('1y', maps)
 
 
 class TestMakeProxyLocation(unittest.TestCase):
@@ -174,7 +177,17 @@ class TestMakeStaticLocation(unittest.TestCase):
     def test_subpath_static(self):
         result = _make_static_location('/blog', '/var/www/blog/', 'index.html', '$uri =404', '# Blog')
         self.assertIn('alias /var/www/blog/', result)
-        self.assertIn('location /blog', result)
+        self.assertIn('location /blog/ {', result)
+        self.assertIn('location = /blog {', result)
+        self.assertIn('return 301 /blog/$is_args$args;', result)
+
+    def test_subpath_normalizes_location_and_alias_without_matching_siblings(self):
+        result = _make_static_location('/foodguide/', '/var/www/guide/html', 'index.html index.htm', '$uri =404', '# Guide')
+        self.assertIn('location /foodguide/ {', result)
+        self.assertIn('alias /var/www/guide/html/;', result)
+        self.assertIn('location = /foodguide {', result)
+        self.assertNotIn('location /foodguide {', result)
+        self.assertNotIn('location /foodguide//', result)
 
 
 class TestGenerateMergedNginxConfig(unittest.TestCase):
@@ -284,6 +297,18 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
         http_block = config[: http_block_end]
         self.assertIn('root /var/www/html', http_block)
         self.assertIn('acme-challenge', http_block)
+        self.assertIn('absolute_redirect off;', http_block)
+
+    def test_cloudflare_static_subpath_keeps_slash_redirect_and_query(self):
+        config = generate_merged_nginx_config('example.com', [
+            {'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site'},
+            {'path': '/foodguide/', 'needs_proxy': False, 'serve_path': '/var/www/guide/html'},
+        ], enable_https_redirect=False)
+        http_block = config.split('server {\n    listen 443 ssl')[0]
+        self.assertIn('absolute_redirect off;', http_block)
+        self.assertIn('return 301 /foodguide/$is_args$args;', http_block)
+        self.assertIn('alias /var/www/guide/html/;', http_block)
+        self.assertIn('root /var/www/site/;', http_block)
 
     def test_hsts_header_present(self):
         deployments = [{
