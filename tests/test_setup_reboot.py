@@ -14,7 +14,7 @@ import basaltwater
 from lib.config import SetupConfig
 from lib.proxmox_maintenance import ProxmoxMaintenanceReport
 from lib.state_read import StateReadError
-from lib import setup_reboot
+from lib import proxmox_vm_restart, setup_reboot
 
 
 OLD_BOOT_ID = "12345678-1234-4234-8234-123456789abc"
@@ -238,6 +238,194 @@ class RestartWorkflowTests(unittest.TestCase):
             self.assertEqual(setup_reboot.restart_after_setup(_config(), wait_for_restart=True), 1)
         prepare.assert_not_called()
         self.request.assert_not_called()
+
+
+class ManagedVMRestartWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.status = self.enterContext(patch.object(setup_reboot, "_restart_status", return_value="needed"))
+        self.request = self.enterContext(patch.object(setup_reboot, "_request_restart", return_value=True))
+        self.boot = self.enterContext(patch.object(setup_reboot, "_boot_id", return_value=OLD_BOOT_ID))
+        self.wait = self.enterContext(patch.object(setup_reboot, "_wait_for_remote_restart", return_value=True))
+        self.health = self.enterContext(patch("lib.sysadmin_health.run_health", return_value=0))
+        self.proxmox_health = self.enterContext(patch.object(setup_reboot, "_verify_proxmox_restart"))
+        self.pending = self.enterContext(patch.object(setup_reboot, "pending_vm_restart", return_value=107))
+        self.provider_restart = self.enterContext(patch.object(setup_reboot, "request_vm_restart"))
+        self.config = _config(host="192.0.2.41", machine_type="vm", hosted_node="pve.example.test")
+
+    def test_pending_hardware_restarts_without_guest_marker_and_waits_for_guest_health(self) -> None:
+        for status in ("clear", "needed"):
+            with self.subTest(status=status):
+                self.status.return_value = status
+                order = MagicMock()
+                for name, mock in (("boot", self.boot), ("provider", self.provider_restart),
+                                   ("wait", self.wait), ("health", self.health)):
+                    order.attach_mock(mock, name)
+                self.assertEqual(setup_reboot.restart_after_setup(self.config, wait_for_restart=True), 0)
+                self.assertEqual([call[0] for call in order.mock_calls], ["boot", "provider", "wait", "health"])
+                self.provider_restart.assert_called_with(self.config, 107)
+                self.wait.assert_called_with(self.config, OLD_BOOT_ID)
+                self.health.assert_called_with(self.config.host, self.config.username, self.config.ssh_key)
+        self.request.assert_not_called()
+        self.proxmox_health.assert_not_called()
+
+    def test_no_pending_hardware_retains_marker_behavior(self) -> None:
+        self.pending.return_value = None
+        self.status.return_value = "clear"
+        self.assertEqual(setup_reboot.restart_after_setup(self.config), 0)
+        self.request.assert_not_called()
+        self.status.return_value = "needed"
+        self.assertEqual(setup_reboot.restart_after_setup(self.config), 0)
+        self.request.assert_called_once_with(self.config)
+        self.provider_restart.assert_not_called()
+
+    def test_failed_inspection_or_provider_restart_never_falls_back(self) -> None:
+        for failure in (ValueError("ambiguous identity"), OSError("SSH failed"),
+                        subprocess.TimeoutExpired("ssh", 30), RuntimeError("locked")):
+            with self.subTest(failure=failure):
+                self.pending.side_effect = failure
+                self.assertEqual(setup_reboot.restart_after_setup(self.config), 1)
+        self.provider_restart.assert_not_called()
+        self.pending.side_effect = None
+        self.provider_restart.side_effect = RuntimeError("shutdown timed out")
+        self.assertEqual(setup_reboot.restart_after_setup(self.config, wait_for_restart=True), 1)
+        self.wait.assert_not_called()
+        self.health.assert_not_called()
+        self.request.assert_not_called()
+
+    def test_dry_run_and_non_managed_targets_skip_provider(self) -> None:
+        self.assertEqual(setup_reboot.restart_after_setup(_config(
+            machine_type="vm", hosted_node="pve.example.test", dry_run=True,
+        )), 0)
+        for config in (_config(machine_type="vm"), _config(machine_type="container", hosted_node="pve.example.test")):
+            self.assertEqual(setup_reboot.restart_after_setup(config), 0)
+        self.pending.assert_not_called()
+        self.provider_restart.assert_not_called()
+
+    def test_failed_boot_read_prevents_hardware_restart(self) -> None:
+        self.boot.return_value = None
+        self.assertEqual(setup_reboot.restart_after_setup(self.config, wait_for_restart=True), 1)
+        self.provider_restart.assert_not_called()
+
+    def test_provider_restart_without_wait_skips_guest_checks(self) -> None:
+        self.status.return_value = "clear"
+        self.assertEqual(setup_reboot.restart_after_setup(self.config), 0)
+        self.provider_restart.assert_called_once_with(self.config, 107)
+        self.boot.assert_not_called()
+        self.wait.assert_not_called()
+        self.health.assert_not_called()
+
+    def test_real_provider_inspection_and_restart_path_uses_api_pending_fields(self) -> None:
+        self.pending.side_effect = proxmox_vm_restart.pending_vm_restart
+        self.provider_restart.side_effect = proxmox_vm_restart.request_vm_restart
+        self.status.return_value = "clear"
+        results = [
+            _result(json.dumps([{"vmid": 107, "name": "vm-192-0-2-41", "status": "running"},
+                                {"vmid": 108, "status": "running"}])),
+            _result('{"ipconfig0":"ip=192.0.2.41/24"}'),
+            _result('[{"key":"memory","value":"4096","pending":"8192"}]'),
+            _result(),
+        ]
+        with patch.object(proxmox_vm_restart, "run", side_effect=results) as run:
+            self.assertEqual(setup_reboot.restart_after_setup(self.config), 0)
+        self.assertEqual([call.args[0][-1] for call in run.call_args_list], [
+            "pvesh get /nodes/localhost/qemu --output-format json",
+            "pvesh get /nodes/localhost/qemu/107/config --output-format json",
+            "pvesh get /nodes/localhost/qemu/107/pending --output-format json",
+            "qm reboot 107 --timeout 180",
+        ])
+        self.request.assert_not_called()
+
+    def test_bad_api_json_stops_before_any_restart(self) -> None:
+        self.pending.side_effect = proxmox_vm_restart.pending_vm_restart
+        with patch.object(proxmox_vm_restart, "run", return_value=_result("invalid JSON")):
+            self.assertEqual(setup_reboot.restart_after_setup(self.config), 1)
+        self.request.assert_not_called()
+        self.provider_restart.assert_not_called()
+
+
+class ProxmoxVMPendingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = _config(host="192.0.2.41", machine_type="vm", hosted_node="pve.example.test",
+                              friendly_name="test-vm", hosted_user="operator", hosted_key="/keys/provider")
+        self.guest = {"vmid": 107, "name": "test-vm", "status": "running"}
+        self.observed = {"ipconfig0": "ip=192.0.2.41/24,gw=192.0.2.1"}
+        self.api = self.enterContext(patch.object(proxmox_vm_restart, "_api"))
+
+    def inspect(self, rows):
+        self.api.side_effect = [[self.guest], self.observed, rows]
+        return proxmox_vm_restart.pending_vm_restart(self.config)
+
+    def test_current_values_do_not_trigger_restart_but_pending_zero_and_deletion_do(self) -> None:
+        for rows, expected in (([], None), ([{"key": "memory", "value": 8192}], None),
+                               ([{"key": "memory", "value": 4096, "pending": 8192}], 107),
+                               ([{"key": "balloon", "pending": 0}], 107),
+                               ([{"key": "hostpci0", "value": "device", "delete": 1}], 107),
+                               ([{"key": "hostpci0", "value": "device", "delete": 2}], 107)):
+            with self.subTest(rows=rows):
+                self.assertEqual(self.inspect(rows), expected)
+        self.assertEqual(self.api.call_args.args[1], "/nodes/localhost/qemu/107/pending")
+
+    def test_bad_pending_payloads_fail_closed(self) -> None:
+        for rows in ({}, None, [None], [{}], [{"key": "memory"}],
+                     [{"key": "memory", "delete": "0", "value": 4096}],
+                     [{"key": "memory", "pending": None}], [{"key": "memory", "pending": {}}],
+                     [{"key": "unsafe\n", "pending": 8192}]):
+            with self.subTest(rows=rows), self.assertRaises(ValueError):
+                self.inspect(rows)
+
+    def test_missing_duplicate_and_mismatched_identity_is_rejected(self) -> None:
+        for guests in ([], [self.guest, self.guest], [{**self.guest, "name": "another-vm"}],
+                       [{**self.guest, "vmid": "107"}], [{**self.guest, "vmid": 99}], [None]):
+            self.api.side_effect = [guests]
+            with self.subTest(guests=guests), self.assertRaises(ValueError):
+                proxmox_vm_restart.pending_vm_restart(self.config)
+        self.observed = {"ipconfig0": "ip=192.0.2.42/24"}
+        with self.assertRaisesRegex(ValueError, "setup address"):
+            self.inspect([])
+
+    def test_hostname_override_and_secondary_ipconfig_are_supported(self) -> None:
+        self.config.system_hostname = "renamed-vm"
+        self.guest["name"] = "renamed-vm"
+        self.observed = {"ipconfig0": "ip=dhcp", "ipconfig1": "ip=192.0.2.41/24"}
+        self.assertEqual(self.inspect([{"key": "cores", "pending": 4}]), 107)
+
+    def test_locked_or_stopped_vm_is_rejected(self) -> None:
+        for guest, observed in (({**self.guest, "status": "stopped"}, self.observed),
+                                ({**self.guest, "lock": "backup"}, self.observed),
+                                (self.guest, {**self.observed, "lock": "snapshot"})):
+            self.api.side_effect = [[guest], observed, [{"key": "memory", "pending": 8192}]]
+            with self.subTest(guest=guest, observed=observed), self.assertRaises(ValueError):
+                proxmox_vm_restart.pending_vm_restart(self.config)
+
+    def test_provider_request_preserves_separate_credentials_and_bounded_graceful_reboot(self) -> None:
+        with (
+            patch.object(proxmox_vm_restart, "run", return_value=_result()) as run,
+            patch.object(proxmox_vm_restart, "get_ssh_control_path", return_value="/provider/control") as control,
+            patch("lib.ssh_utils.get_workspace_known_hosts_path", return_value="/workspace/known_hosts"),
+        ):
+            proxmox_vm_restart.request_vm_restart(self.config, 107)
+        command = run.call_args.args[0]
+        self.assertIn("StrictHostKeyChecking=yes", command)
+        self.assertIn("UserKnownHostsFile=/workspace/known_hosts", command)
+        self.assertIn("/keys/provider", command)
+        self.assertEqual(command[-2:], ["operator@pve.example.test", "qm reboot 107 --timeout 180"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 240)
+        control.assert_called_once_with("pve.example.test", "operator", "/keys/provider")
+
+    def test_invalid_provider_inputs_and_command_failures_do_not_succeed(self) -> None:
+        with patch.object(proxmox_vm_restart, "run", return_value=_result()) as run:
+            for field, value in (("hosted_node", "-unsafe"), ("hosted_user", "unsafe;user")):
+                original = getattr(self.config, field)
+                setattr(self.config, field, value)
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    proxmox_vm_restart.request_vm_restart(self.config, 107)
+                setattr(self.config, field, original)
+            with self.assertRaises(ValueError):
+                proxmox_vm_restart.request_vm_restart(self.config, True)
+            run.assert_not_called()
+            run.return_value = _result(returncode=1)
+            with self.assertRaises(RuntimeError):
+                proxmox_vm_restart.request_vm_restart(self.config, 107)
 
 
 class RestartTransportTests(unittest.TestCase):

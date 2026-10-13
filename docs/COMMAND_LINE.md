@@ -330,15 +330,26 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `--auto-restart` / `--no-auto-restart` | Control normal automatic restarts |
 | `--auto-restart-force-days N` | Force restart after N days of deferrals |
 | `--auto-restart-grace N` | Warning period before an automatic restart |
-| `--restart-if-needed` | After successful setup, restart the target when `/run/reboot-required` exists |
+| `--restart-if-needed` | After successful setup, restart for `/run/reboot-required` or pending Proxmox VM configuration |
 | `--wait-for-restart` | With `--restart-if-needed` on a remote target, wait for a new boot and run `basaltw health` |
 
 ### Restart after setup
 
 `--restart-if-needed` checks the target after a successful setup and requests a
-restart only when `/run/reboot-required` is present. It does not treat a newer
-installed kernel without that marker as sufficient evidence to reboot. The
-flag is a one-time action: it may interrupt active sessions and work. On Proxmox,
+restart when `/run/reboot-required` is present or a VM with `--provision-on`
+has pending Proxmox configuration changes, including RAM or vCPU changes.
+The VM's expected Proxmox name and configured setup address must match uniquely.
+Pending replacements and removals trigger a provider-side `qm reboot`, which
+gracefully shuts down and starts the VM to apply the changes. This applies all
+queued changes, including changes made through the Proxmox GUI. Provider SSH
+uses `--provision-user` and `--provision-key`; an inspection or restart failure
+returns nonzero without falling back to an in-guest reboot. The shutdown has a
+180-second timeout and never forces the VM off. Without `--wait-for-restart`,
+the command waits for the provider operation but skips guest SSH and health
+verification. VMs without `--provision-on` retain the reboot-marker check.
+It does not treat a newer installed kernel without that marker as sufficient
+evidence to reboot. The flag is a one-time action: it may interrupt active
+sessions and work. On Proxmox hosts,
 it authorizes graceful guest shutdown in the node's configured shutdown order
 before rebooting. Health failures, active tasks, and locked guests block the
 request. Shutdown never forces guests off; any guest still running afterward

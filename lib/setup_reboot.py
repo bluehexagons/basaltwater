@@ -16,6 +16,7 @@ from uuid import UUID
 from lib.config import SetupConfig
 from lib.machine_state import can_restart_system
 from lib.maintenance_lock import maintenance_lock
+from lib.proxmox_vm_restart import pending_vm_restart, request_vm_restart
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_batch_mode
 from lib.validators import validate_host, validate_username
@@ -383,7 +384,7 @@ def _verify_proxmox_restart(config: SetupConfig) -> bool:
 
 
 def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) -> int:
-    """Restart after successful setup when the target has a reboot marker."""
+    """Restart for a reboot marker or pending managed VM configuration."""
 
     if wait_for_restart and config.host in _LOCAL_HOSTS:
         print("Error: --wait-for-restart requires a remote setup target")
@@ -401,7 +402,14 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
     status = _restart_status(config)
     if status is None:
         return 1
-    if status == "clear":
+    vmid = None
+    if config.machine_type == "vm" and config.hosted_node and status in {"clear", "needed"}:
+        try:
+            vmid = pending_vm_restart(config)
+        except (CommandTimeoutError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+            print(f"Error checking pending VM configuration for {config.host}: {exc}")
+            return 1
+    if status == "clear" and vmid is None:
         print(f"  ✓ No restart required on {config.host}")
         return 0
     if status == "unsupported":
@@ -421,10 +429,18 @@ def restart_after_setup(config: SetupConfig, *, wait_for_restart: bool = False) 
 
     print(f"  Restart required on {config.host}; requesting restart")
     restart_unit = f"basaltwater-setup-reboot-{secrets.token_hex(6)}" if proxmox else None
-    requested = (
-        _request_restart(config, proxmox=True, restart_unit=restart_unit)
-        if proxmox else _request_restart(config)
-    )
+    if vmid is not None:
+        try:
+            request_vm_restart(config, vmid)
+        except (CommandTimeoutError, OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
+            print(f"Error restarting Proxmox VM {vmid}: {exc}")
+            return 1
+        requested = True
+    else:
+        requested = (
+            _request_restart(config, proxmox=True, restart_unit=restart_unit)
+            if proxmox else _request_restart(config)
+        )
     if not requested:
         return 1
     if proxmox:
