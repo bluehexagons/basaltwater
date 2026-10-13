@@ -497,7 +497,7 @@ def generate_merged_nginx_config(
     
     locations: StrList = []
     
-    locations.append("""    location /.well-known/acme-challenge/ {
+    locations.append("""    location ^~ /.well-known/acme-challenge/ {
         root /var/www/letsencrypt;
     }""")
     

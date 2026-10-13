@@ -301,6 +301,19 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
         config = generate_merged_nginx_config('example.com', deployments)
         self.assertIn('acme-challenge', config)
 
+    def test_acme_challenge_is_exempt_from_hidden_file_deny_regex(self):
+        deployments = [{'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site'}]
+        for redirects in (True, False):
+            with self.subTest(redirects=redirects):
+                config = generate_merged_nginx_config(
+                    'example.com', deployments, enable_https_redirect=redirects,
+                )
+                self.assertIn('location ^~ /.well-known/acme-challenge/ {', config)
+                self.assertIn('location ~ /\\. {', config)
+                for block in config.split('server {')[1:]:
+                    self.assertIn('location ^~ /.well-known/acme-challenge/ {', block)
+                    self.assertIn('root /var/www/letsencrypt;', block)
+
     def test_http2_directive_not_deprecated(self):
         """http2 should use the standalone directive, not the deprecated listen parameter."""
         deployments = [{

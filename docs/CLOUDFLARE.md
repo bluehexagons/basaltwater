@@ -37,6 +37,22 @@ before enabling the firewall changes.
 Static subpath and directory redirects remain relative so the local HTTP
 origin cannot send visitors to a public HTTP URL or an internal port.
 
+Repository deployments skip Let's Encrypt origin certificate requests when
+`--cloudflare` is enabled, including when `--ssl` is also present in the setup
+configuration. Cloudflare manages the browser-facing certificate; the local
+HTTP origin does not need Certbot. This lets initial tunnel activation proceed
+before public hostname routing is configured.
+
+## Local testing with a hosts file
+
+A client's hosts-file override affects that client only. Let's Encrypt's
+validation servers cannot see it, so it cannot satisfy an HTTP-01 challenge for
+a hostname without public DNS. It also does not create a Cloudflare DNS route.
+An override pointing directly at the VM bypasses Cloudflare and its edge
+certificate: use the local HTTP origin or explicitly trust the generated
+self-signed Nginx certificate for local HTTPS testing. After tunnel activation
+closes direct web ports, origin tests can use an SSH port forward.
+
 ## Create or update a tunnel
 
 The setup run starts the wizard automatically when no tunnel exists. First-time
@@ -78,10 +94,14 @@ sudo journalctl -u cloudflared -n 100 --no-pager
 sudo sed -n '1,160p' /etc/cloudflared/config.yml
 ```
 
-Point each hostname at the tunnel in Cloudflare DNS/Zero Trust. The generated
-ingress uses `http://localhost:80`; keep the catch-all `http_status:404` rule
-last. See the generated `/etc/cloudflared/README.md` for manual configuration
-steps.
+Point each hostname at the tunnel in Cloudflare DNS/Zero Trust with a proxied
+CNAME targeting `<TUNNEL_UUID>.cfargotunnel.com`. The helper manages local
+ingress and the daemon; it does not create or replace public DNS records.
+Missing hostname records or records pointing at an old tunnel still need to be
+configured in the Cloudflare account. The generated ingress uses
+`http://localhost:80`; keep the catch-all `http_status:404` rule last. See the
+generated `/etc/cloudflared/README.md` for manual configuration steps and
+[Cloudflare's DNS instructions](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/dns/).
 
 ## Webhooks and direct services
 

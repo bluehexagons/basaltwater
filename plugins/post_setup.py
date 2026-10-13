@@ -103,7 +103,9 @@ def build_post_setup_steps(
             ("Configuring manifest public UDP access, if any", configure_udp),
         ))
 
-        if config.enable_ssl:
+        # Cloudflare supplies public HTTPS; this origin is reached over local
+        # HTTP. Do not block tunnel activation on unnecessary ACME validation.
+        if config.enable_ssl and not config.enable_cloudflare:
             def configure_ssl(_config: SetupConfig) -> None:
                 if not deployments:
                     return

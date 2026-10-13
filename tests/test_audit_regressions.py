@@ -257,6 +257,39 @@ class SetupSafetyTests(unittest.TestCase):
             plan.index("Verifying Cloudflare tunnel activation"),
         )
 
+    def test_tunnel_deployments_reach_activation_without_origin_certbot(self) -> None:
+        config = SetupConfig(
+            host="host", username="person", system_type="server_web",
+            enable_cloudflare=True, enable_ssl=True, ssl_email="ops@example.com",
+            deploy_specs=[["example.com", "https://example.com/site.git"]],
+        )
+        deployment = {
+            "domain": "example.com", "path": "/", "needs_proxy": False,
+            "serve_path": "/var/www/example_com", "project_type": "static",
+        }
+        steps = build_post_setup_steps(config, lambda *_args: ("/staged/site", "commit"))
+        events = []
+        with (
+            patch("web.cloudflare_steps.create_cloudflared_config_directory"),
+            patch("web.cloudflare_steps.configure_nginx_for_cloudflare"),
+            patch("web.cloudflare_steps.install_cloudflared_service_helper"),
+            patch("deploy.deploy_steps.deploy_repository", return_value=[deployment]),
+            patch("deploy.network_steps.configure_public_udp"),
+            patch("lib.nginx_config.create_nginx_sites_for_groups", side_effect=lambda *_args, **_kwargs: events.append("nginx")) as nginx,
+            patch("web.ssl_steps.install_certbot") as certbot,
+            patch("web.ssl_steps.setup_ssl_for_deployments") as ssl,
+            patch("web.cloudflare_steps.run_cloudflare_tunnel_setup", side_effect=lambda *_args, **_kwargs: events.append("tunnel") or True) as tunnel,
+            patch("web.cloudflare_steps.configure_cloudflare_firewall") as firewall,
+        ):
+            for _name, function in steps:
+                function(config)
+        certbot.assert_not_called()
+        ssl.assert_not_called()
+        nginx.assert_called_once_with({"example.com": [deployment]}, enable_https_redirect=False)
+        tunnel.assert_called_once_with(config, allow_create=True)
+        firewall.assert_called_once_with(config)
+        self.assertEqual(events, ["nginx", "tunnel"])
+
     def test_display_redacts_webhook_url_without_changing_replay_config(self) -> None:
         config = SetupConfig(
             host="host", username="person", system_type="server_web",
