@@ -28,7 +28,7 @@ git config --global --add safe.directory /workspace
 export PATH=/opt/basaltwater-ci-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 python3 --version
 python3 -m pip install --upgrade pip
-python3 -m pip install argcomplete build 'coverage>=7.0'
+python3 -m pip install '.[dev,completion]'
 make check
 """
 

@@ -52,13 +52,15 @@ checks; it includes wheel building and coverage:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install '.[dev]'
+.venv/bin/python -m pip install '.[dev,completion]'
 source .venv/bin/activate  # In fish: source .venv/bin/activate.fish
 make check
 ```
 
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
+CI installs the same `dev` and `completion` extras from `pyproject.toml`, so new
+test dependencies such as Guacamole's aiohttp are included automatically.
 
 Routine CI uses Python 3.13 in Debian Trixie. Branch and release workflows run
 [`scripts/run_debian_ci.py`](../../../scripts/run_debian_ci.py) on a hosted
