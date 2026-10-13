@@ -391,6 +391,34 @@ class TestProxmoxCliAudit(_CliFixture):
         self.assertEqual(payload["resources"][0]["errors"], ["Cluster is not quorate"])
 
 
+class TestProxmoxCliMigration(_CliFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        for name, address in (("pve1", "10.0.0.10"), ("pve2", "10.0.0.11")):
+            add_proxmox_host(ProxmoxHost(name=name, address=address), self.workspace)
+
+    @patch("lib.proxmox_cli.migrate_guest")
+    def test_offline_storage_and_timeout_are_forwarded(self, mock_migrate):
+        rc, out = self._run("migrate", "pve1", "100", "pve2",
+                            "--target-storage", "local", "--timeout", "14400", "--dry-run")
+        self.assertEqual(rc, 0)
+        self.assertIn("Would migrate", out)
+        self.assertEqual(mock_migrate.call_args.args[1], 100)
+        self.assertEqual(mock_migrate.call_args.kwargs, {
+            "online": False, "with_local_disks": False, "target_storage": "local",
+            "timeout": 14400, "dry_run": True,
+        })
+
+    @patch("lib.proxmox_cli.migrate_guest")
+    def test_migration_error_returns_nonzero_without_success_message(self, mock_migrate):
+        from lib.proxmox_migrate import ProxmoxMigrateError
+        mock_migrate.side_effect = ProxmoxMigrateError("Inspect both nodes before retrying")
+        rc, out = self._run("migrate", "pve1", "100", "pve2")
+        self.assertEqual(rc, 1)
+        self.assertIn("Inspect both nodes", out)
+        self.assertNotIn("Migrated", out)
+
+
 class TestProxmoxPlanRebalanceApply(_CliFixture):
     """End-to-end tests for `proxmox plan rebalance --apply` wiring.
 
@@ -499,6 +527,18 @@ class TestProxmoxPlanRebalanceApply(_CliFixture):
         self.assertEqual(rc, 0)
         self.assertIn("Hot: hot", out)
         self.assertIn("cool", out)
+
+    def test_apply_forwards_destination_storage_and_timeout(self) -> None:
+        list_calls = self._guests()
+        with self._patches(list_calls)[0], self._patches(list_calls)[1], \
+             patch("lib.proxmox_cli.migrate_guest") as mock_migrate:
+            rc, _ = self._run(
+                "plan", "rebalance", "--apply", "101", "--yes", "--dry-run",
+                "--target-storage", "local", "--timeout", "14400",
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(mock_migrate.call_args.kwargs["target_storage"], "local")
+        self.assertEqual(mock_migrate.call_args.kwargs["timeout"], 14400)
 
 
 class TestProxmoxCliNotifications(_CliFixture):

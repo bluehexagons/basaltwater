@@ -272,6 +272,39 @@ class TestShellDestroyConfirmation(_ShellFixture):
             self.shell.dispatch("destroy 999")
 
 
+class TestShellMigration(_ShellFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        for name, address in (("pve1", "10.0.0.10"), ("pve2", "10.0.0.11")):
+            add_proxmox_host(ProxmoxHost(name=name, address=address), self.workspace)
+        self.shell.dispatch("use pve1")
+
+    @patch("lib.proxmox_shell.migrate_guest")
+    def test_storage_timeout_and_dry_run_are_honored(self, mock_migrate):
+        self.shell.dispatch("migrate 100 pve2 --target-storage local --timeout 14400 --dry-run")
+        self.assertEqual(mock_migrate.call_args.kwargs, {
+            "online": False, "with_local_disks": False, "target_storage": "local",
+            "timeout": 14400, "dry_run": True,
+        })
+        self.assert_output_contains("Would migrate")
+        self.assertNotIn("Migrated", "\n".join(self.outputs))
+
+    @patch("lib.proxmox_shell.migrate_guest")
+    def test_online_local_disk_flags_are_forwarded(self, mock_migrate):
+        self.shell.dispatch("migrate 100 pve2 --online --with-local-disks")
+        self.assertTrue(mock_migrate.call_args.kwargs["online"])
+        self.assertTrue(mock_migrate.call_args.kwargs["with_local_disks"])
+
+    @patch("lib.proxmox_shell.migrate_guest")
+    def test_unknown_and_incomplete_options_do_not_migrate(self, mock_migrate):
+        for options in ("--dryrun", "--target-storage", "--timeout", "--timeout nope",
+                        "--target-storage --dry-run", "unexpected"):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):
+                    self.shell.dispatch(f"migrate 100 pve2 {options}")
+        mock_migrate.assert_not_called()
+
+
 class TestShellMisc(_ShellFixture):
     def test_help_lists_commands(self) -> None:
         self.shell.dispatch("help")

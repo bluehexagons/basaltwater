@@ -16,7 +16,7 @@ from lib.cluster_update import run_cluster_update
 from lib.proxmox_cluster_join import ProxmoxClusterJoinError, run_cluster_join
 from lib.proxmox_backup import BackupInfo, ProxmoxBackupError, create_backup, list_backups
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
-from lib.proxmox_migrate import ProxmoxMigrateError, migrate_guest
+from lib.proxmox_migrate import DEFAULT_MIGRATION_TIMEOUT, ProxmoxMigrateError, migrate_guest
 from lib.proxmox_maintenance import (
     collect_maintenance_report,
     format_maintenance_report,
@@ -440,6 +440,13 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         help="Migrate local disks during --apply",
     )
     plan_rebalance_p.add_argument(
+        "--target-storage", help="Destination pool for migrated local disks during --apply",
+    )
+    plan_rebalance_p.add_argument(
+        "--timeout", type=int, default=DEFAULT_MIGRATION_TIMEOUT,
+        help="Noninteractive migration SSH wait in seconds (default: 3600)",
+    )
+    plan_rebalance_p.add_argument(
         "--yes",
         "-y",
         action="store_true",
@@ -505,6 +512,14 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         "--with-local-disks",
         action="store_true",
         help="Migrate local disks to the target node storage",
+    )
+    migrate.add_argument(
+        "--target-storage",
+        help="Destination pool for migrated local disks (default: retain source pool names)",
+    )
+    migrate.add_argument(
+        "--timeout", type=int, default=DEFAULT_MIGRATION_TIMEOUT,
+        help="Noninteractive migration SSH wait in seconds (default: 3600)",
     )
     migrate.add_argument(
         "--dry-run",
@@ -1279,6 +1294,8 @@ def _cmd_plan_rebalance(args: argparse.Namespace, workspace: Optional[str]) -> i
         target_host,
         online=args.online,
         with_local_disks=args.with_local_disks,
+        target_storage=args.target_storage,
+        timeout=args.timeout,
         dry_run=args.dry_run,
     )
     prefix = "Would migrate" if args.dry_run else "Migrated"
@@ -1327,6 +1344,8 @@ def _cmd_migrate(args: argparse.Namespace, workspace: Optional[str]) -> int:
         target,
         online=args.online,
         with_local_disks=args.with_local_disks,
+        target_storage=args.target_storage,
+        timeout=args.timeout,
         dry_run=args.dry_run,
     )
     prefix = "Would migrate" if args.dry_run else "Migrated"

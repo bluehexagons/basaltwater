@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 from lib.proxmox_backup import ProxmoxBackupError, create_backup, list_backups
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
-from lib.proxmox_migrate import ProxmoxMigrateError, migrate_guest
+from lib.proxmox_migrate import DEFAULT_MIGRATION_TIMEOUT, ProxmoxMigrateError, migrate_guest
 from lib.proxmox_storage import ProxmoxStorageError, delete_volume, list_orphaned_volumes
 from lib.proxmox_summary import ProxmoxSummaryError, format_node_summary, get_node_summary
 from lib.proxmox_hosts import (
@@ -103,7 +103,9 @@ Available commands:
   backups <vmid>              List backups for a guest
   backup <vmid> [--storage POOL] [--mode snapshot|suspend|stop]
                               Create an immediate vzdump backup
-  migrate <vmid> <target>     Migrate a guest to another registered host
+  migrate <vmid> <target> [--online] [--with-local-disks]
+          [--target-storage POOL] [--timeout SECONDS] [--dry-run]
+                              Migrate a guest to another registered cluster host
   clean-disks [--delete] [--yes]
                               List (and optionally delete) orphaned volumes
   help                        Show this help text
@@ -764,16 +766,47 @@ class ProxmoxShell:
     def _cmd_migrate(self, args: list[str]) -> None:
         host = self._require_host()
         if len(args) < 2:
-            raise ValueError("Usage: migrate <vmid> <target-host> [--online]")
+            raise ValueError("Usage: migrate <vmid> <target-host> [migration options]")
         vmid = self._parse_vmid([args[0]], "migrate")
         target_name = args[1]
-        online = "--online" in args
+        online = False
+        with_local_disks = False
+        dry_run = False
+        target_storage: str | None = None
+        timeout = DEFAULT_MIGRATION_TIMEOUT
+        i = 2
+        while i < len(args):
+            option = args[i]
+            if option == "--online":
+                online = True
+            elif option == "--with-local-disks":
+                with_local_disks = True
+            elif option == "--dry-run":
+                dry_run = True
+            elif option in {"--target-storage", "--timeout"}:
+                i += 1
+                if i >= len(args) or args[i].startswith("--"):
+                    raise ValueError(f"{option} requires a value")
+                if option == "--target-storage":
+                    target_storage = args[i]
+                else:
+                    try:
+                        timeout = int(args[i])
+                    except ValueError:
+                        raise ValueError("--timeout requires an integer")
+            else:
+                raise ValueError(f"Unknown migration option: {option!r}")
+            i += 1
         target = find_proxmox_host(target_name, self.state.workspace)
         if not target:
             raise ValueError(f"No registered host matching '{target_name}'")
-        migrate_guest(host, vmid, target, online=online)
+        migrate_guest(
+            host, vmid, target, online=online, with_local_disks=with_local_disks,
+            target_storage=target_storage, timeout=timeout, dry_run=dry_run,
+        )
+        prefix = "Would migrate" if dry_run else "Migrated"
         self._output(
-            f"  Migrated VMID {vmid} from {host.name} to {target.name}."
+            f"  {prefix} VMID {vmid} from {host.name} to {target.name}."
         )
 
     def _cmd_clean_disks(self, args: list[str]) -> None:

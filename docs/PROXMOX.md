@@ -614,7 +614,7 @@ verified metadata drift only: setup still does not move, resize, or detach an
 existing disk. New named mounted disks are the exception and use the additive
 workflow above.
 
-For an offline GUI migration, rerun the saved setup command with the new
+After a CLI or GUI migration, rerun the saved setup command with the new
 `--provision-on` destination. Basaltwater keeps the explicit destination host,
 credentials, and bridge instead of restoring the cached source binding. It
 requires the old source VM to be stopped or absent and the destination to have
@@ -968,6 +968,7 @@ migrates when `--apply VMID` is supplied; use `--dry-run` to preview the
 migration command and `--yes` to skip its confirmation prompt. `--to HOST`
 overrides the top-ranked destination. Online migration and local-disk transfer
 have the same storage and cluster prerequisites as the direct `migrate` command.
+`--target-storage POOL` and `--timeout SECONDS` are also available with `--apply`.
 
 List and create immediate `vzdump` backups:
 
@@ -993,14 +994,70 @@ Migrate a guest between registered cluster nodes:
 ```bash
 basaltw proxmox migrate pve1 101 pve2 --dry-run
 basaltw proxmox migrate pve1 101 pve2 \
-  --online --with-local-disks
+  --online --with-local-disks --target-storage local-lvm
 ```
 
 `--online` keeps a VM running and requires suitable shared or migrated storage.
-`--with-local-disks` copies local disks to target-node storage. Use the dry run
-first for production migrations.
+`--with-local-disks` enables live transfer of QEMU local disks; stopped VMs can
+transfer local disks without it. `--target-storage POOL` selects one destination
+pool for the migrated local disks instead of retaining their source pool names.
+The pool must be active on the destination and accept `images` for QEMU VMs or
+`rootdir` for LXC. In particular, a pool named `local` often permits only backup,
+ISO, and template content: inspect `proxmox probe TARGET` and explicitly enable
+VM images in Proxmox storage settings if required. Basaltwater does not change
+storage content policy. Shared disks remain shared; inspect every disk and
+any ISO, snippet, passthrough device, or bind mount before moving a guest.
+
+Both hosts must belong to the same Proxmox cluster, with quorum and working
+node-to-node SSH. The noninteractive migration SSH wait defaults to 3600 seconds;
+use `--timeout SECONDS` for a longer copy. Interactive SSH retains the shared
+passphrase policy: it has no wall-clock deadline and can be interrupted with
+Ctrl-C. Neither a timeout nor interruption reliably cancels a native Proxmox
+task. If the command times out, is interrupted, or loses its connection,
+inspect the Proxmox task log and both nodes before retrying,
+unlocking, or starting a guest. Migration is never retried automatically.
+Proxmox enforces its native guest locks, cluster, storage, and device checks.
+Live migration also requires compatible CPUs; Basaltwater's default `host` CPU
+model makes an offline move preferable between different hardware generations.
+
+Use a dry run before shutting down an offline VM. It performs read-only live
+guest, node-name, and destination-pool inspections, then prints the native
+command; it does not transfer disks or prove that the complete migration will
+succeed. A normal run verifies that the guest is present on the destination
+before reporting success. The interactive shell supports the same migration
+flags and rejects unknown options, including misspelled dry-run flags.
+
+For an offline move to a differently named pool, obtain the VMID from
+`proxmox ls`, verify a recoverable backup and enough space for all disks, then
+run the steps in order, stopping on any error:
+
+```bash
+basaltw proxmox probe pve2
+basaltw proxmox migrate pve1 101 pve2 --target-storage local --timeout 14400 --dry-run
+basaltw vm shutdown pve1 101 --timeout 180
+basaltw proxmox migrate pve1 101 pve2 --target-storage local --timeout 14400
+basaltw proxmox config pve2 101
+basaltw vm start pve2 101
+basaltw vm health pve2 101
+```
+
+Migration moves the provider guest but does not rewrite saved setup declarations
+on any controller. On the controller that holds those setups, use
+`basaltw cmd NAME` to reconstruct each command, change `--provision-on` to the
+destination, and repeat every `--storage NAME POOL AMOUNT` with its new pool and
+unchanged logical name and size. Retain the original profile, user, network,
+mounts, caches, swap policy, credentials, and other setup options. Do not change
+the image staging pool solely because guest disks moved. For SSD-backed disks,
+add `--disk-ssd NAME` for each managed device that should advertise SSD latency.
+Run the revised setup to verify and save the binding; this performs normal
+guest setup as well as provider verification. Repeat it for every controller
+workspace that manages the VM. Local-name commands such as `vm show NAME`
+continue to use the old host until this rebind succeeds.
+
 Migration requires a successful QEMU or LXC guest lookup and a resolved
-destination node name. Failed lookups stop the operation rather than guessing
+live source and destination node name, regardless of cached facts. Invalid
+VMIDs, storage IDs, timeouts, and same-node destinations stop before mutation.
+Failed lookups stop the operation rather than guessing
 the guest type or using a controller registry alias as the node name.
 
 ## Orphaned volumes and stuck locks
