@@ -126,15 +126,30 @@
             password = "";
             const result = await pending;
             attachment = result.attachment;
-            const current = new Guacamole.Client(new Guacamole.WebSocketTunnel("/desktop/ws"));
+            const tunnel = new Guacamole.WebSocketTunnel("/desktop/ws");
+            const current = new Guacamole.Client(tunnel);
             client = current;
-            displayElement = client.getDisplay().getElement();
+            const display = client.getDisplay();
+            // Guacamole 1.6's ImageDecoder path retains VideoFrames/decoders
+            // and leaves the display queue blocked when decoding rejects.
+            // Use its existing Image/data-URI path, whose load/error handlers
+            // always release the rendering queue, for this client instance.
+            display.drawStream = (layer, x, y, stream, mimetype) => {
+                const reader = new Guacamole.DataURIReader(stream, mimetype);
+                reader.onend = () => display.draw(layer, x, y, reader.getURI());
+            };
+            displayElement = display.getElement();
             screen.appendChild(displayElement);
             client.getDisplay().onresize = scale;
-            client.onerror = () => {
+            client.onerror = tunnel.onerror = () => {
                 if (client !== current) return;
-                connectionError = "Desktop connection failed. Reconnect after checking the Unix password and desktop readiness.";
+                connectionError = "Desktop stream failed. Reconnect after checking desktop readiness.";
                 status.textContent = connectionError;
+            };
+            tunnel.onstatechange = state => {
+                if (client !== current || state !== Guacamole.Tunnel.State.CLOSED) return;
+                reset();
+                status.textContent = connectionError || "Desktop connection closed. Reconnect to the running desktop.";
             };
             client.onstatechange = state => {
                 if (client !== current) return;
@@ -152,9 +167,9 @@
             // Input helpers attach once to the persistent screen container.
             if (!mouse) {
                 mouse = new Guacamole.Mouse(screen);
-                mouse.on(["mousedown", "mouseup", "mousemove"], sendMouse);
+                mouse.onEach(["mousedown", "mouseup", "mousemove"], sendMouse);
                 const touch = new Guacamole.Mouse.Touchscreen(screen);
-                touch.on(["mousedown", "mouseup", "mousemove"], sendMouse);
+                touch.onEach(["mousedown", "mouseup", "mousemove"], sendMouse);
                 keyboard = new Guacamole.Keyboard(screen);
                 keyboard.onkeydown = keysym => {
                     if (client && controlled) { client.sendKeyEvent(1, keysym); return false; }

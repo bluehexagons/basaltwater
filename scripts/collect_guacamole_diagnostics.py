@@ -9,12 +9,14 @@ import json
 import os
 from pathlib import Path
 import platform
+import pwd
 import re
 import shutil
 import subprocess
 
 OUTPUT_LIMIT = 65536
 SOURCE_ROOT = Path("/opt/basaltwater")
+DESKTOP_CONFIG = Path("/etc/basaltwater/desktop.json")
 
 
 def redact(text: str) -> str:
@@ -51,10 +53,32 @@ def source_info(path: Path) -> dict:
         return dict(path=str(path), error=type(error).__name__)
 
 
+def desktop_status() -> dict:
+    """Use the installed runtime directly when the orchestration CLI is absent."""
+    executable = shutil.which("basaltw") or shutil.which("basaltwater")
+    if os.getuid() != 0 and executable:
+        return capture([executable, "desktop", "status", "--json"])
+    command = ["/usr/bin/python3", "-c",
+               "import sys,json; sys.path.insert(0, '/opt/basaltwater'); "
+               "from desktop.session_runtime import status; print(json.dumps(status()))"]
+    if os.getuid() == 0:
+        try:
+            info = DESKTOP_CONFIG.lstat()
+            if (DESKTOP_CONFIG.is_symlink() or not DESKTOP_CONFIG.is_file()
+                    or info.st_uid != 0 or info.st_mode & 0o022 or info.st_size > 16384):
+                raise ValueError("Unsafe desktop configuration")
+            owner = json.loads(DESKTOP_CONFIG.read_text())["username"]
+            if not isinstance(owner, str) or pwd.getpwnam(owner).pw_uid == 0:
+                raise ValueError("A non-root desktop owner is required")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            return dict(error=f"{type(error).__name__}: could not determine the managed desktop owner")
+        command = ["/usr/sbin/runuser", "-u", owner, "--", *command]
+    return capture(command)
+
+
 def collect() -> dict:
     elevate = [] if os.getuid() == 0 else ["sudo", "-n"]
-    executable = shutil.which("basaltw") or shutil.which("basaltwater") or "basaltw"
-    desktop = capture([executable, "desktop", "status", "--json"])
+    desktop = desktop_status()
     if desktop.get("returncode") == 0:
         try:
             value = json.loads(desktop["stdout"])

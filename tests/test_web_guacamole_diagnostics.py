@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from scripts import collect_guacamole_diagnostics as diagnostics
 
@@ -56,6 +58,40 @@ class DiagnosticsTests(unittest.TestCase):
             info = diagnostics.source_info(source)
             self.assertIn("sha256", info)
             self.assertNotIn("private source", json.dumps(info))
+
+    def test_root_collects_desktop_status_as_managed_non_root_owner_without_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "desktop.json"
+            config.write_text('{"username":"agent"}')
+            config.chmod(0o644)
+            info = list(config.lstat())
+            info[4] = 0
+            with patch.object(diagnostics, "DESKTOP_CONFIG", config), \
+                    patch.object(diagnostics.os, "getuid", return_value=0), \
+                    patch.object(diagnostics.shutil, "which", return_value=None), \
+                    patch.object(Path, "lstat", return_value=os.stat_result(info)), \
+                    patch.object(diagnostics.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=1000)), \
+                    patch.object(diagnostics, "capture", return_value={}) as capture:
+                diagnostics.desktop_status()
+            self.assertEqual(capture.call_args.args[0][:5], ["/usr/sbin/runuser", "-u", "agent", "--", "/usr/bin/python3"])
+            self.assertIn("desktop.session_runtime", capture.call_args.args[0][-1])
+
+    def test_root_refuses_unsafe_owner_configuration_and_root_account(self):
+        for mode in (0o644, 0o666):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / "desktop.json"
+                config.write_text('{"username":"root"}')
+                config.chmod(mode)
+                info = list(config.lstat())
+                info[4] = 0
+                with patch.object(diagnostics, "DESKTOP_CONFIG", config), \
+                        patch.object(diagnostics.os, "getuid", return_value=0), \
+                        patch.object(diagnostics.shutil, "which", return_value=None), \
+                        patch.object(Path, "lstat", return_value=os.stat_result(info)), \
+                        patch.object(diagnostics.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=0)), \
+                        patch.object(diagnostics, "capture") as capture:
+                    self.assertIn("error", diagnostics.desktop_status())
+                    capture.assert_not_called()
 
 
 if __name__ == "__main__":

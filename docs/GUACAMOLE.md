@@ -204,6 +204,9 @@ the desktop owner. Run `sudo -v` first to allow the collector's noninteractive
 log reads. Redirect the output to a private file (for example, set `umask 077`
 before redirecting to `guacamole-diagnostics.json`). The collector records
 bounded service/XRDP logs, desktop state, package versions and source hashes.
+If run as root, it reads the managed desktop owner from root-owned configuration
+and queries status as that account. When the orchestration CLI is absent, it
+uses the installed desktop runtime directly.
 It does not restart services or collect screenshots, password files, environment
 dumps or secret configuration. Review the output before sharing; credential
 redaction is best effort, and log text may contain private account or host names.
@@ -247,3 +250,16 @@ take/observe/resume/disconnect, external-resume feedback, remaining-time
 display, and 1280 px and 390 px viewport layouts. Systemd startup/rollback and
 signal handling have isolated mocked tests; the complete hardened systemd
 profile still needs qualification on a disposable VM.
+
+The browser follow-up corrected mouse/touch event registration against
+Guacamole 1.6's `onEach` API and selected its existing Image/data-URI rendering
+path. The ImageDecoder path in that release leaves VideoFrames and decoders
+open and can block frame acknowledgements when image decoding rejects.
+The fallback uses load/error handlers that release the display queue. A
+closed or failed WebSocket tunnel now clears the client and controls directly,
+so a stream disconnect is reported as a closed connection rather than being
+discovered by a later status poll as an expired attachment. A
+synthetic stream test with the real pinned JavaScript client exercised an
+invalid first image, subsequent changing PNG frames, mouse/keyboard input after
+takeover, and continued view-only enforcement. This covers browser streaming
+and input; qualify the complete desktop connection again on the testing VM.
