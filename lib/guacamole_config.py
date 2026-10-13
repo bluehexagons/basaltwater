@@ -11,8 +11,17 @@ if TYPE_CHECKING:
     from lib.config import SetupConfig
 
 VERSION = "1.6.0"
+BUILD_VERSION = "1.6.0-bw1"
+PACKAGE_VERSION = "1.6.0-1+bw1"
+PACKAGE_NAME = "basaltwater-guacamole"
+BUILD_REPOSITORY = "bluehexagons/basaltwater-guacamole"
+# SHA-256 of reviewed release assets; never trust a remotely supplied checksum.
+BINARY_HASHES = {
+    "amd64": "ec32c33d98a8430b133efcb5fd21fa475455f74c484bda1686e5d4eaa6d67810",
+    "arm64": "7ea7332da16ba4448246dff9cdf46fc24f7582fdaf7d0331a9461dc5bd2fc5d2",
+}
 RELEASE_ROOT = "/opt/basaltwater-guacamole"
-RELEASE = f"{RELEASE_ROOT}/{VERSION}"
+RELEASE = f"{RELEASE_ROOT}/{BUILD_VERSION}"
 CONFIG = "/etc/basaltwater/guacamole.json"
 HTTP_SOCKET = "/run/basaltwater-guacamole/http.sock"
 RDP_SOCKET = "/run/basaltwater-guacamole-rdp/rdp.sock"

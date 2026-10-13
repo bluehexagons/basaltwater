@@ -8,7 +8,7 @@ import hashlib
 import io
 import os
 from pathlib import Path
-import tarfile
+import subprocess
 import tempfile
 import time
 import unittest
@@ -92,39 +92,117 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
-    def test_archive_refuses_paths_links_and_special_files(self):
-        for name, kind in (("../escape", tarfile.REGTYPE), ("/absolute", tarfile.REGTYPE), ("link", tarfile.SYMTYPE), ("fifo", tarfile.FIFOTYPE)):
-            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                bundle = root / "source.tar.gz"
-                with tarfile.open(bundle, "w:gz") as archive:
-                    info = tarfile.TarInfo(name)
-                    info.type = kind
-                    info.linkname = "../escape"
-                    archive.addfile(info)
-                with self.assertRaises(RuntimeError):
-                    setup.extract_source(bundle, root / "extracted")
+    def test_pinned_architectures_are_available_on_debian_trixie(self):
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch), \
+                    patch.object(setup, "read_os_release", return_value=dict(ID="debian", VERSION_CODENAME="trixie")), \
+                    patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 0, arch)):
+                self.assertEqual(setup.binary_architecture(), arch)
 
-    def test_archive_preserves_executable_without_special_permission_bits(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            bundle = root / "source.tar.gz"
-            with tarfile.open(bundle, "w:gz") as archive:
-                info = tarfile.TarInfo("source/configure")
-                info.mode, info.size = 0o4777, 4
-                archive.addfile(info, io.BytesIO(b"test"))
-            setup.extract_source(bundle, root / "extracted")
-            target = root / "extracted/source/configure"
-            self.assertEqual(target.read_bytes(), b"test")
-            self.assertEqual(target.stat().st_mode & 0o7777, 0o755)
+    def test_unsupported_platforms_fail_before_package_mutation(self):
+        for distribution, arch in (
+            (dict(ID="ubuntu", VERSION_CODENAME="noble"), "amd64"),
+            (dict(ID="debian", VERSION_CODENAME="bookworm"), "amd64"),
+            (dict(ID="debian", VERSION_CODENAME="trixie"), "riscv64"),
+        ):
+            with self.subTest(distribution=distribution, arch=arch), \
+                    patch.object(setup, "read_os_release", return_value=distribution), \
+                    patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 0, arch)) as run:
+                with self.assertRaises(RuntimeError):
+                    setup.binary_architecture()
+                self.assertFalse(any("apt-get" in call.args[0] for call in run.call_args_list))
 
     def test_download_verifies_reviewed_hash_not_remote_checksum(self):
+        payload = b"approved binary"
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(payload)) as request, \
+                patch.dict(setup.BINARY_HASHES, amd64=hashlib.sha256(payload).hexdigest()):
+            self.assertEqual(setup.download_package("amd64", Path(temporary)).read_bytes(), payload)
+            self.assertIn(f"/releases/download/v{setup.BUILD_VERSION}/", request.call_args.args[0])
+            self.assertNotIn("latest", request.call_args.args[0])
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(b"tampered")), \
+                patch.dict(setup.BINARY_HASHES, amd64=hashlib.sha256(payload).hexdigest()):
+            with self.assertRaisesRegex(RuntimeError, "checksum"):
+                setup.download_package("amd64", Path(temporary))
+
+    def test_verified_package_must_match_selected_name_version_and_architecture(self):
+        selected = [setup.PACKAGE_NAME, setup.PACKAGE_VERSION, "amd64"]
+        for fields in (selected, ["other", *selected[1:]],
+                       [selected[0], "0.1", selected[2]], [*selected[:2], "arm64"]):
+            with self.subTest(fields=fields), \
+                    patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 0, "\n".join(fields))):
+                if fields == selected:
+                    setup.validate_package(Path("/tmp/verified.deb"), "amd64")
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "metadata"):
+                        setup.validate_package(Path("/tmp/verified.deb"), "amd64")
+
+    def test_unchanged_installed_package_reuses_release_without_download_or_apt(self):
         with tempfile.TemporaryDirectory() as temporary:
-            payload = b"approved archive"
-            with patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(payload)), patch.dict(setup.SOURCE_HASHES, server=hashlib.sha256(payload).hexdigest()):
-                self.assertEqual(setup.download_source("server", Path(temporary)).read_bytes(), payload)
-            with patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(b"tampered")), self.assertRaisesRegex(RuntimeError, "checksum"):
-                setup.download_source("server", Path(temporary))
+            root = Path(temporary)
+            release = root / setup.BUILD_VERSION
+            release.mkdir()
+            selected = subprocess.CompletedProcess([], 0, f"installed\n{setup.PACKAGE_VERSION}\namd64\n")
+            with patch.object(setup, "RELEASE_ROOT", str(root)), patch.object(setup, "RELEASE", str(release)), \
+                    patch.object(setup, "_safe_directory"), patch.object(setup, "binary_architecture", return_value="amd64"), \
+                    patch.object(setup, "run", return_value=selected) as run, \
+                    patch.object(setup, "validate_installed_release") as validate, \
+                    patch.object(setup, "download_package") as download:
+                setup.install_release()
+                validate.assert_called_once_with(release, "amd64")
+                download.assert_not_called()
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.args[0][0], "dpkg-query")
+                run.return_value = subprocess.CompletedProcess([], 1, "")
+                with self.assertRaisesRegex(RuntimeError, "not owned"):
+                    setup.install_release()
+                download.assert_not_called()
+
+    def test_new_release_installs_local_verified_package_and_runtime_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            release = root / setup.BUILD_VERSION
+            def downloaded(arch, directory):
+                package = directory / "verified.deb"
+                package.write_bytes(b"verified")
+                return package
+            with patch.object(setup, "RELEASE_ROOT", str(root)), patch.object(setup, "RELEASE", str(release)), \
+                    patch.object(setup, "_safe_directory"), patch.object(setup, "binary_architecture", return_value="amd64"), \
+                    patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 1, "")) as run, \
+                    patch.object(setup, "download_package", side_effect=downloaded), \
+                    patch.object(setup, "validate_package") as validate, \
+                    patch.object(setup, "validate_installed_release") as installed:
+                setup.install_release()
+                validate.assert_called_once()
+                command = run.call_args.args[0]
+                self.assertEqual(command[:2], ["apt-get", "install"])
+                self.assertIn("--no-install-recommends", command)
+                self.assertTrue(command[-1].endswith("/verified.deb"))
+                installed.assert_called_once_with(release, "amd64")
+                self.assertEqual(setup.PACKAGES, ("python3-aiohttp",))
+
+    def test_installed_build_metadata_must_match_selected_architecture_and_version(self):
+        metadata = dict(upstream_version=setup.VERSION, build_version=setup.BUILD_VERSION,
+                        package_version=setup.PACKAGE_VERSION, architecture="amd64", distribution="trixie")
+        with patch.object(setup, "validate_release"), patch.object(setup, "read_json_file", return_value=metadata):
+            setup.validate_installed_release(Path("/tmp/release"), "amd64")
+            with self.assertRaisesRegex(RuntimeError, "unmanaged"):
+                setup.validate_installed_release(Path("/tmp/release"), "arm64")
+
+    def test_download_failure_never_installs_or_builds_unverified_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch.object(setup, "RELEASE_ROOT", str(root)), patch.object(setup, "RELEASE", str(root / "release")), \
+                    patch.object(setup, "_safe_directory"), patch.object(setup, "binary_architecture", return_value="amd64"), \
+                    patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 1, "")) as run, \
+                    patch.object(setup, "download_package", side_effect=RuntimeError("checksum mismatch")), \
+                    patch.object(setup, "validate_package") as validate:
+                with self.assertRaisesRegex(RuntimeError, "checksum"):
+                    setup.install_release()
+                validate.assert_not_called()
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.args[0][0], "dpkg-query")
 
     def test_namespace_and_fixed_relay_units_are_unprivileged(self):
         units = setup.render_units("agent", 1000, 1000)
@@ -147,21 +225,19 @@ class InstallerTests(unittest.TestCase):
                 setup.remove_guacamole()
             run.assert_not_called()
 
-    def test_slow_download_and_excess_archive_members_are_bounded(self):
+    def test_slow_and_oversized_binary_downloads_are_bounded(self):
         with tempfile.TemporaryDirectory() as temporary, \
                 patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(b"data")), \
                 patch.object(setup.time, "monotonic", side_effect=[0, 121]):
             with self.assertRaisesRegex(RuntimeError, "two minutes"):
-                setup.download_source("server", Path(temporary))
+                setup.download_package("amd64", Path(temporary))
         with tempfile.TemporaryDirectory() as temporary:
-            info = tarfile.TarInfo("directory")
-            info.type = tarfile.DIRTYPE
-            bundle = MagicMock()
-            bundle.__enter__.return_value = bundle
-            bundle.__iter__.return_value = iter([info] * 10001)
-            with patch.object(setup.tarfile, "open", return_value=bundle), self.assertRaisesRegex(RuntimeError, "extraction limits"):
-                setup.extract_source(Path(temporary) / "fixture.tar.gz", Path(temporary) / "extracted")
-            bundle.getmembers.assert_not_called()
+            source = MagicMock()
+            source.__enter__.return_value = source
+            source.read1.return_value.__len__.return_value = 64 * 1024 * 1024 + 1
+            with patch.object(setup.urllib.request, "urlopen", return_value=source):
+                with self.assertRaisesRegex(RuntimeError, "64 MiB"):
+                    setup.download_package("amd64", Path(temporary))
 
     def test_configuration_preflight_happens_before_removing_public_ingress(self):
         with patch.object(panel, "_preflight_web_panel_removal", return_value=(None, False)), \

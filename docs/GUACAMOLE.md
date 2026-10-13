@@ -2,8 +2,9 @@
 
 `--guacamole` installs an embedded browser client for the configured account's
 shared XRDP desktop. This is optional on non-root Debian server and workstation
-profiles, including `agent_vm`. It requires an HTTPS web panel. Proxmox hosts,
-CachyOS, WSL and custom-step profiles are unsupported.
+profiles, including `agent_vm`, on Debian 13 (Trixie), amd64 or arm64. It requires
+an HTTPS web panel. Proxmox hosts, CachyOS, WSL and custom-step profiles are
+unsupported.
 
 ## Install and open
 
@@ -118,19 +119,44 @@ valid desktop login.
 
 ## Installation and service isolation
 
-Setup downloads the Apache Guacamole 1.6.0 server and client source archives,
-checks the SHA-256 values pinned in Basaltwater's source, and builds a native
-RDP-only `guacd`. JavaScript modules are assembled directly from the verified
-client source. No Java, Tomcat, database, Docker daemon or VNC server is installed.
-Build dependencies and Python aiohttp come from Debian APT. The gateway uses
+Setup downloads a versioned `basaltwater-guacamole` Debian package from
+[the dedicated build repository](https://github.com/bluehexagons/basaltwater-guacamole).
+That repository pins Apache Guacamole 1.6.0 source archives and builds an RDP-only
+`guacd` with its JavaScript client in CI. It maintains build configuration rather
+than an Apache source fork. amd64 and arm64 packages are built natively and
+checked in fresh Debian containers without development packages.
+
+The installer verifies the package SHA-256 pinned in Basaltwater's source and
+checks its name, version and architecture before asking APT to install it.
+APT installs the package's declared runtime libraries; Python aiohttp also comes
+from Debian APT. Compilers and development headers stay in build CI. No Java,
+Tomcat, database, Docker daemon or VNC server is installed. The gateway uses
 Debian's FreeRDP 3 packages; upstream labels FreeRDP 3 support experimental.
 
-The completed release is published atomically at
-`/opt/basaltwater-guacamole/1.6.0`. Unchanged reruns reuse it. Guacamole release
-updates require a reviewed Basaltwater version/hash change; there is no separate
-automatic upstream release updater. Debian packages continue under the normal
-system update policy. An incomplete, unmanaged, writable or unsafe linked
-release stops setup, including on reruns.
+The initial binary release lives at `/opt/basaltwater-guacamole/1.6.0-bw1`.
+Unchanged reruns validate and reuse the installed package without downloading
+or rebuilding Guacamole. Unsupported distributions or architectures fail
+explicitly; there is no automatic source-build fallback. Binary release updates
+require a reviewed Basaltwater version/hash change; there is no separate
+automatic upstream release updater. Debian runtime libraries continue under
+the normal system update policy. An incomplete, unmanaged, writable or unsafe
+linked release stops setup, including on reruns.
+
+For the single testing server that used the earlier source installer, rerun the
+updated setup or patch with `--guacamole` directly. A preliminary
+`--no-guacamole` run is unnecessary. Setup installs the new package and restarts
+the services; browser connections must reconnect. After checking the new service,
+the old `/opt/basaltwater-guacamole/1.6.0` directory can be removed manually.
+The old build packages are also left for explicit cleanup, since other software
+may use them; new installations do not install them.
+
+The [initial binary release](https://github.com/bluehexagons/basaltwater-guacamole/releases/tag/v1.6.0-bw1)
+passed native builds and clean runtime installation/RDP negotiation on both
+architectures. The Basaltwater installer additionally passed a real public
+download, checksum and package validation, APT installation, release permission
+checks, and an unchanged rerun without another download in a disposable amd64
+container. An existing old source-release directory was preserved during that
+check; this does not qualify a live service upgrade on the testing VM.
 
 Both services run as the configured non-root account with systemd hardening.
 `basaltwater-guacamole.service` runs `guacd` and the browser tunnel in a private
@@ -176,13 +202,14 @@ readiness messages. Existing XRDP diagnostics remain available.
 basaltw patch 192.168.1.50 agent --no-guacamole
 ```
 
-Removal preserves the native release and desktop; it does not remove build
-packages, reset Unix passwords, or resume paused agents. A successful rerun
+Removal preserves the native package and desktop; it does not remove runtime
+libraries, reset Unix passwords, or resume paused agents. A successful rerun
 reconciles services and browser ingress. Setup refuses unmanaged service files.
 It checks managed configuration before changing browser ingress during removal.
 
-Validation covers configuration round trips, source integrity and extraction,
-native builds, origin/identity/CSRF checks, attachment replay and expiry,
+Validation covers configuration round trips, pinned binary integrity and package
+selection, native builds in release CI, origin/identity/CSRF checks, attachment
+replay and expiry,
 protocol framing, view-only enforcement and cooperative takeover. Browser
 rendering can be tested with a synthetic desktop; that alone does not establish
 real XRDP reconnect, keyboard-layout, GPU-editor or native-client coexistence

@@ -1,39 +1,30 @@
-"""Install a pinned RDP-only Guacamole gateway behind the HTTPS panel."""
+"""Install a verified Guacamole binary package behind the HTTPS panel."""
 
 from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import pwd
-import shutil
 import ssl
 import stat
-import tarfile
 import tempfile
 import time
+from urllib.parse import quote
 import urllib.request
 
-from lib.atomic_io import fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.guacamole_config import (
-    CONFIG, RDP_SERVICE, RELEASE, RELEASE_ROOT,
-    SERVICE, UNIT_MARKER, VERSION, validate_guacamole_settings,
+    BINARY_HASHES, BUILD_REPOSITORY, BUILD_VERSION, CONFIG, PACKAGE_NAME, PACKAGE_VERSION,
+    RDP_SERVICE, RELEASE, RELEASE_ROOT, SERVICE, UNIT_MARKER, VERSION, validate_guacamole_settings,
 )
 from lib.machine_state import can_manage_system_services
-from lib.remote_utils import install_package, is_dry_run, run
+from lib.remote_utils import install_package, is_dry_run, read_os_release, run
 from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, remove_units, replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path
 
-SOURCE_HASHES = {
-    "server": "8bc45675da96d7b6f39728160181e3d4ff3c08f460f6d26de5805b642bf13f2b",
-    "client": "81f9fd5a7b4377fb0ee295d0d4fec92e9667f2aafaa3d0ed8937f535deabdee4",
-}
-PACKAGES = (
-    "build-essential", "pkg-config", "libcairo2-dev", "libjpeg62-turbo-dev",
-    "libpng-dev", "uuid-dev", "libssl-dev", "freerdp3-dev", "libwebp-dev",
-    "python3-aiohttp",
-)
+PACKAGES = ("python3-aiohttp",)
 SCRIPT = "/opt/basaltwater/common/service_tools/guacamole_service.py"
 
 
@@ -44,109 +35,83 @@ def _safe_directory(path: Path) -> None:
     path.mkdir(parents=True, mode=0o755, exist_ok=True)
 
 
-def download_source(kind: str, directory: Path) -> Path:
-    """Bound and verify an exact Apache release before using its contents."""
-    name = f"guacamole-{kind}-{VERSION}.tar.gz"
+def binary_architecture() -> str:
+    """Reject unsupported targets before installing any Guacamole packages."""
+    distribution = read_os_release()
+    if distribution.get("ID") != "debian" or distribution.get("VERSION_CODENAME") != "trixie":
+        raise RuntimeError("--guacamole binary packages require Debian 13 (Trixie)")
+    arch = run(["dpkg", "--print-architecture"], capture_output=True).stdout.strip()
+    if arch not in BINARY_HASHES:
+        raise RuntimeError(f"No Guacamole binary package for Debian Trixie architecture {arch!r}")
+    return arch
+
+
+def download_package(architecture: str, directory: Path) -> Path:
+    """Bound and verify a release asset using the checksum reviewed in source."""
+    name = f"{PACKAGE_NAME}_{PACKAGE_VERSION}_trixie_{architecture}.deb"
     target = directory / name
+    validate_filesystem_path(str(target), must_exist=False)
+    url = f"https://github.com/{BUILD_REPOSITORY}/releases/download/v{BUILD_VERSION}/{quote(name, safe='')}"
     digest = hashlib.sha256()
-    # The version and hashes are reviewed in source; a remote checksum cannot
-    # redefine which artifact this setup trusts. Archive is a stable fallback.
-    for host in ("dlcdn.apache.org", "archive.apache.org/dist"):
-        try:
-            with urllib.request.urlopen(f"https://{host}/guacamole/{VERSION}/source/{name}", timeout=30) as source, target.open("wb") as output:
-                total = 0
-                deadline = time.monotonic() + 120
-                digest = hashlib.sha256()
-                # read1 returns after a single underlying read, so a trickling
-                # peer cannot defer deadline checks until 64 KiB accumulate.
-                while data := source.read1(65536):
-                    total += len(data)
-                    if time.monotonic() > deadline:
-                        raise RuntimeError("Guacamole source download exceeded two minutes")
-                    if total > 32 * 1024 * 1024:
-                        raise RuntimeError("Guacamole source exceeds 32 MiB")
-                    output.write(data)
-                    digest.update(data)
-            break
-        except OSError:
-            if host.startswith("archive"):
-                raise
-    if digest.hexdigest() != SOURCE_HASHES[kind]:
-        raise RuntimeError("Guacamole source checksum mismatch")
+    with urllib.request.urlopen(url, timeout=30) as source, target.open("xb") as output:
+        total = 0
+        deadline = time.monotonic() + 120
+        while data := source.read1(65536):
+            total += len(data)
+            if time.monotonic() > deadline:
+                raise RuntimeError("Guacamole binary download exceeded two minutes")
+            if total > 64 * 1024 * 1024:
+                raise RuntimeError("Guacamole binary exceeds 64 MiB")
+            output.write(data)
+            digest.update(data)
+    if digest.hexdigest() != BINARY_HASHES[architecture]:
+        raise RuntimeError("Guacamole binary checksum mismatch")
     return target
 
 
-def extract_source(archive: Path, directory: Path) -> None:
-    """Extract only bounded regular files and directories, never archive links."""
-    with tarfile.open(archive) as source:
-        size = 0
-        for index, member in enumerate(source):
-            size += member.size
-            if index >= 10000 or size > 128 * 1024 * 1024:
-                raise RuntimeError("Guacamole source archive exceeds extraction limits")
-            name = PurePosixPath(member.name)
-            if name.is_absolute() or ".." in name.parts or not (member.isdir() or member.isfile()):
-                raise RuntimeError("Unsafe Guacamole source archive entry")
-            target = directory.joinpath(*name.parts)
-            validate_filesystem_path(str(target), must_exist=False)
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with source.extractfile(member) as stream, target.open("xb") as output:
-                    shutil.copyfileobj(stream, output)
-                target.chmod(0o755 if member.mode & 0o111 else 0o644)
-                # Autotools release archives contain generated files. Preserve
-                # their timestamps so make never tries to regenerate them with
-                # a different host autoconf/automake toolchain.
-                os.utime(target, (member.mtime, member.mtime))
+def validate_package(package: Path, architecture: str) -> None:
+    """Confirm the verified asset is the exact package this setup selected."""
+    result = run(["dpkg-deb", "--show", "--showformat=${Package}\n${Version}\n${Architecture}\n",
+                  str(package)], capture_output=True)
+    if result.stdout.splitlines() != [PACKAGE_NAME, PACKAGE_VERSION, architecture]:
+        raise RuntimeError("Guacamole binary package metadata mismatch")
+
+
+def validate_installed_release(release: Path, architecture: str) -> None:
+    validate_release(release)
+    metadata = read_json_file(str(release / ".basaltwater-release.json"))
+    expected = dict(upstream_version=VERSION, build_version=BUILD_VERSION,
+                    package_version=PACKAGE_VERSION, architecture=architecture,
+                    distribution="trixie")
+    if not isinstance(metadata, dict) or any(metadata.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("Refusing an unmanaged Guacamole release")
 
 
 def install_release() -> None:
-    """Publish a complete release atomically; unchanged reruns reuse it."""
+    """Install a pinned binary and its runtime dependencies; reuse unchanged installs."""
+    arch = binary_architecture()
     root, release = Path(RELEASE_ROOT), Path(RELEASE)
     _safe_directory(root)
+    installed = run(
+        ["dpkg-query", "--show", "--showformat=${db:Status-Status}\n${Version}\n${Architecture}\n", PACKAGE_NAME],
+        capture_output=True, check=False,
+    )
+    selected = installed.returncode == 0 and installed.stdout.splitlines() == ["installed", PACKAGE_VERSION, arch]
     if release.exists() or release.is_symlink():
         _safe_directory(release)
-        if read_json_file(str(release / "release.json")) != {"version": VERSION, "sources": SOURCE_HASHES}:
-            raise RuntimeError("Refusing an unmanaged Guacamole release")
-        validate_release(release)
+        validate_installed_release(release, arch)
+        if not selected:
+            raise RuntimeError("Guacamole release is not owned by the expected installed package")
         return
-    with tempfile.TemporaryDirectory(prefix=".guacamole-build-", dir=root) as temporary:
-        workspace = Path(temporary)
-        for kind in SOURCE_HASHES:
-            extract_source(download_source(kind, workspace), workspace)
-        server = workspace / f"guacamole-server-{VERSION}"
-        run([
-            "./configure", f"--prefix={RELEASE}", "--with-rdp", "--without-vnc",
-            "--without-ssh", "--without-telnet", "--without-terminal", "--without-pulse",
-            "--without-vorbis", "--without-libavcodec", "--without-libavformat",
-            "--without-libavutil", "--without-libswscale", "--disable-kubernetes",
-            "--disable-guacenc", "--disable-guaclog", f"--with-freerdp-plugin-dir={RELEASE}/lib/freerdp3",
-            # Debian's FreeRDP 3 headers mark legacy struct members deprecated.
-            # Guacamole 1.6 supports that API; retain other compiler errors.
-            "CFLAGS=-O2 -Wno-error=deprecated-declarations",
-        ], cwd=str(server), timeout=300)
-        run(["make", "-j2"], cwd=str(server), timeout=1800)
-        staging = workspace / "staging"
-        run(["make", "install", f"DESTDIR={staging}"], cwd=str(server), timeout=300)
-        staged_release = staging / RELEASE.lstrip("/")
-        if not list((staged_release / "lib").glob("libguac-client-rdp.so*")):
-            raise RuntimeError("Guacamole was built without RDP support")
-        share = staged_release / "share"
-        share.mkdir(mode=0o755, exist_ok=True)
-        client = workspace / f"guacamole-client-{VERSION}"
-        javascript = client / "guacamole-common-js/src/main/webapp"
-        modules = sorted((javascript / "modules").glob("*.js"))
-        namespace = javascript / "modules/Namespace.js"
-        files = [javascript / "common/license.js", namespace, *(p for p in modules if p != namespace)]
-        write_text_atomic(str(share / "all.js"), "\n".join(p.read_text() for p in files), mode=0o644)
-        for name in ("LICENSE", "NOTICE"):
-            shutil.copyfile(client / name, share / name)
-        write_json_atomic(str(staged_release / "release.json"), {"version": VERSION, "sources": SOURCE_HASHES}, mode=0o644)
-        validate_release(staged_release)
-        fsync_tree(str(staged_release))
-        rename_path_durable(str(staged_release), RELEASE)
+    with tempfile.TemporaryDirectory(prefix=".guacamole-package-", dir=root) as temporary:
+        directory = Path(temporary)
+        package = download_package(arch, directory)
+        validate_package(package, arch)
+        # APT's unprivileged downloader needs access to this verified local file.
+        directory.chmod(0o755)
+        package.chmod(0o644)
+        run(["apt-get", "install", "-y", "--no-install-recommends", "--reinstall", str(package)], timeout=600)
+    validate_installed_release(release, arch)
 
 
 def validate_release(release: Path) -> None:
@@ -280,10 +245,10 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
         raise RuntimeError("Guacamole requires a machine that can manage system services")
     preflight_units()
     preflight_configuration()
+    install_release()
     for package in PACKAGES:
         if not install_package(package, package, ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package]):
             raise RuntimeError(f"Failed to install Guacamole dependency: {package}")
-    install_release()
     account = pwd.getpwnam(config.username)
     if account.pw_uid == 0:
         raise RuntimeError("Guacamole cannot run as root")
