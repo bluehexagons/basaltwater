@@ -81,6 +81,19 @@ the next refresh retries even when only repairing an unchanged route set.
 An unchanged, valid configuration leaves the running daemon alone.
 Interactive updates reuse the installed service. A restart briefly interrupts
 existing tunnel connections; use replicas if uninterrupted edge access is needed.
+New installations keep the connection established by `cloudflared service
+install` instead of immediately restarting it. Refreshes also install a missing
+service, so a saved tunnel can recover from an interrupted service installation
+without another login or tunnel creation.
+
+Setup installs `/etc/systemd/system/cloudflared.service.d/50-basaltwater-startup.conf`
+with a finite 120-second startup allowance for DNS retries and automatic
+QUIC/HTTP2 transport fallback. It retains the service's readiness notification;
+a process that has not connected cannot pass activation merely by running.
+Service commands have bounded waits. Startup failures print the cloudflared
+version, selected systemd properties, and the last 40 journal entries, omitting
+settings and redacting inline authentication secrets. Pending routes stay
+unapplied and setup leaves the firewall unchanged until activation succeeds.
 
 After adding or removing an Nginx site, rerun the helper to refresh ingress
 entries. A setup or patch run with `--cloudflare` also attempts a non-interactive
@@ -91,8 +104,19 @@ Verify the service and generated routes:
 ```bash
 sudo systemctl status cloudflared
 sudo journalctl -u cloudflared -n 100 --no-pager
+sudo systemctl show cloudflared -p Type -p TimeoutStartUSec -p Result -p ExecMainStatus
 sudo sed -n '1,160p' /etc/cloudflared/config.yml
 ```
+
+A service startup timeout does not identify the connection failure by itself.
+Inspect the journal for DNS resolution, transport timeouts, or credential
+errors. The VM needs working DNS for Cloudflare's tunnel endpoints and outbound
+port 7844: UDP for QUIC or TCP for HTTP/2. The default automatic protocol can
+fall back when one transport is blocked; neither can connect if both are
+blocked. Check host and provider/network firewalls using
+[Cloudflare's connectivity guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/troubleshoot-tunnels/connectivity-prechecks/).
+Client hosts-file overrides for site domains do not replace this outbound
+connection and do not cause the daemon to become ready.
 
 Point each hostname at the tunnel in Cloudflare DNS/Zero Trust with a proxied
 CNAME targeting `<TUNNEL_UUID>.cfargotunnel.com`. The helper manages local

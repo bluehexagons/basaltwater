@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..
 
 from lib.types import StrDict, JSONDict
 from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.remote_utils import CommandTimeoutError, run as run_bounded_command
 from lib.validators import validate_host
 from lib.validation import validate_cloudflare_tunnel_name
 from lib.setup_prompts import setup_input
@@ -37,16 +38,32 @@ CLOUDFLARE_APT_SOURCE_CONTENT = (
     "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] "
     "https://pkg.cloudflare.com/cloudflared any main\n"
 )
+SERVICE_STARTUP_DROP_IN = "/etc/systemd/system/cloudflared.service.d/50-basaltwater-startup.conf"
+SERVICE_STARTUP_CONTENT = (
+    "# Allow DNS retries and automatic tunnel transport fallback before readiness.\n"
+    "[Service]\n"
+    "TimeoutStartSec=120s\n"
+)
+SERVICE_COMMAND_TIMEOUT = 240
 
 
-def run_command(cmd: list[str], check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
+def run_command(
+    cmd: list[str], check: bool = True, capture_output: bool = False,
+    *, timeout: Optional[float] = None,
+) -> subprocess.CompletedProcess[str]:
     """Run a command and optionally capture output."""
+    if timeout is not None:
+        # Service installation spawns systemctl. Bound the entire process group
+        # so a timed-out child cannot keep captured output pipes open forever.
+        return run_bounded_command(
+            cmd, check=check, capture_output=capture_output, timeout=timeout,
+        )
     try:
         result = subprocess.run(
             cmd,
             check=check,
             capture_output=capture_output,
-            text=True
+            text=True,
         )
         return result
     except subprocess.CalledProcessError as e:
@@ -356,40 +373,86 @@ def _config_is_valid(config_file: str) -> bool:
     return True
 
 
+def _run_service_command(cmd: list[str], *, timeout: float = 30) -> subprocess.CompletedProcess[str]:
+    """Bound service operations and retain failures for diagnostic reporting."""
+    try:
+        return run_command(cmd, check=False, capture_output=True, timeout=timeout)
+    except (CommandTimeoutError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(cmd, 124, "", f"Command timed out after {timeout}s")
+    except OSError as exc:
+        return subprocess.CompletedProcess(cmd, 127, "", str(exc))
+
+
+def _redact_service_output(output: str) -> str:
+    """Avoid printing cloudflared's settings or inline authentication secrets."""
+    lines = []
+    for line in output.splitlines():
+        if re.search(r'\bSettings:', line, re.IGNORECASE):
+            lines.append("[cloudflared settings omitted]")
+            continue
+        lines.append(re.sub(
+            r'''(?i)((?:--token(?:=|\s+)|["']?\b(?:token|tunnel[_-]?secret|authorization)'''
+            r'''["']?\s*[:=]\s*)["']?(?:Bearer\s+)?)([^\s"',}\]]+)''',
+            r'\1[redacted]',
+            line,
+        ))
+    return "\n".join(lines)
+
+
+def _show_service_diagnostics() -> None:
+    """Include the daemon's errors rather than only systemctl's timeout summary."""
+    print("\nCloudflared startup diagnostics:")
+    commands = (
+        ['cloudflared', '--version'],
+        ['systemctl', 'show', 'cloudflared',
+         '--property=LoadState,ActiveState,SubState,Type,TimeoutStartUSec,Result,ExecMainStatus'],
+        ['journalctl', '-u', 'cloudflared.service', '-n', '40', '--no-pager', '--output=cat'],
+    )
+    for command in commands:
+        result = _run_service_command(command, timeout=10)
+        detail = "\n".join(
+            part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
+        )
+        if detail:
+            print(_redact_service_output(detail))
+    print(
+        "Tunnel startup needs working DNS and outbound Cloudflare connectivity on "
+        "port 7844 (UDP for QUIC or TCP for HTTP/2). Check the VM/provider firewall "
+        "and the journal errors above; hosts-file entries for your sites do not establish this connection."
+    )
+
+
 def _ensure_service_running(*, restart: bool = False) -> bool:
     """Start the installed service when possible and verify it is active."""
     if restart:
-        result = run_command(
+        result = _run_service_command(
             ['systemctl', 'restart', 'cloudflared'],
-            check=False,
-            capture_output=True,
+            timeout=SERVICE_COMMAND_TIMEOUT,
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or '').strip()
-            print(f"  ⚠ Cloudflared restart failed: {detail or 'restart failed'}")
+            print(f"  ⚠ Cloudflared restart failed: {_redact_service_output(detail) or 'restart failed'}")
+            _show_service_diagnostics()
             return False
-    result = run_command(
+    result = _run_service_command(
         ['systemctl', 'is-active', 'cloudflared'],
-        check=False,
-        capture_output=True,
     )
     if result.returncode != 0:
-        result = run_command(
-            ['systemctl', 'enable', '--now', 'cloudflared'],
-            check=False,
-            capture_output=True,
+        result = _run_service_command(
+            ['systemctl', 'start', 'cloudflared'],
+            timeout=SERVICE_COMMAND_TIMEOUT,
         )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or '').strip()
-            print(f"  ⚠ Cloudflared service is not running: {detail or 'start failed'}")
+            print(f"  ⚠ Cloudflared service is not running: {_redact_service_output(detail) or 'start failed'}")
+            _show_service_diagnostics()
             return False
-        result = run_command(
+        result = _run_service_command(
             ['systemctl', 'is-active', 'cloudflared'],
-            check=False,
-            capture_output=True,
         )
     if result.returncode != 0:
         print("  ⚠ Cloudflared service did not become active")
+        _show_service_diagnostics()
         return False
     return True
 
@@ -411,25 +474,53 @@ def _close_public_web_ports() -> None:
     print("✓ Direct HTTP/HTTPS ports closed after tunnel verification")
 
 
-def install_and_start_service():
-    """Install and start the cloudflared service."""
+def install_and_start_service(*, restart: bool = False) -> bool:
+    """Recover incomplete installs and verify readiness without restarting a new service."""
     print("\nInstalling cloudflared service...")
-    
-    existing = run_command(
+
+    # cloudflared service install starts the daemon itself. Install the drop-in
+    # first so both that initial start and later retries receive a finite grace
+    # period, retaining Type=notify's connection readiness check.
+    os.makedirs(os.path.dirname(SERVICE_STARTUP_DROP_IN), mode=0o755, exist_ok=True)
+    write_text_atomic(SERVICE_STARTUP_DROP_IN, SERVICE_STARTUP_CONTENT, mode=0o644)
+    result = _run_service_command(['systemctl', 'daemon-reload'])
+    if result.returncode != 0:
+        print(f"  ⚠ Could not reload cloudflared service configuration: {_redact_service_output(result.stderr or result.stdout)}")
+        _show_service_diagnostics()
+        return False
+
+    existing = _run_service_command(
         ['systemctl', 'show', 'cloudflared', '--property=LoadState', '--value'],
-        check=False,
-        capture_output=True,
     )
-    if existing.returncode != 0 or existing.stdout.strip() != 'loaded':
-        run_command(['cloudflared', '--config', f'{CONFIG_DIR}/config.yml', 'service', 'install'])
+    load_state = existing.stdout.strip()
+    if existing.returncode != 0 or load_state not in ('loaded', 'not-found'):
+        print(f"  ⚠ Could not inspect cloudflared service: {_redact_service_output(existing.stderr or load_state)}")
+        _show_service_diagnostics()
+        return False
+    newly_installed = load_state == 'not-found'
+    if newly_installed:
+        result = _run_service_command(
+            ['cloudflared', '--config', f'{CONFIG_DIR}/config.yml', 'service', 'install'],
+            timeout=SERVICE_COMMAND_TIMEOUT,
+        )
+        if result.returncode != 0:
+            print(f"  ⚠ Cloudflared service installation or initial startup failed: {_redact_service_output(result.stderr or result.stdout)}")
+            _show_service_diagnostics()
+            return False
     
     print("✓ Service installed")
     
-    print("\nStarting cloudflared service...")
-    run_command(['systemctl', 'restart', 'cloudflared'])
-    run_command(['systemctl', 'enable', 'cloudflared'])
-    
+    print("\nVerifying cloudflared service...")
+    result = _run_service_command(['systemctl', 'enable', 'cloudflared'])
+    if result.returncode != 0:
+        print(f"  ⚠ Could not enable cloudflared service: {_redact_service_output(result.stderr or result.stdout)}")
+        _show_service_diagnostics()
+        return False
+    if not _ensure_service_running(restart=restart and not newly_installed):
+        return False
+
     print("✓ Service started and enabled")
+    return True
 
 
 def show_tunnel_info(tunnel: JSONDict, sites: list[StrDict]):
@@ -500,7 +591,7 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
             _write_config_file(config_file, config_content)
         # Commit discovered routes only after the daemon has loaded them. If
         # restart fails, pending_activation makes the next refresh retry it.
-        if not _ensure_service_running(restart=config_needs_update):
+        if not install_and_start_service(restart=config_needs_update):
             return False
         if config_needs_update:
             save_state(tunnel, sites)
@@ -604,8 +695,7 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
     proceed = setup_input("Install and start the tunnel service? (y/n): ").strip().lower()
     
     if proceed == 'y':
-        install_and_start_service()
-        if not _ensure_service_running():
+        if not install_and_start_service(restart=True):
             raise RuntimeError(
                 "cloudflared did not become active; direct HTTP/HTTPS ports remain open"
             )

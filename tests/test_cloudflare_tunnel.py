@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import stat
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import call, patch
 
@@ -147,8 +149,8 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         ) as create, patch.object(tunnel_setup, "save_state"), patch.object(
             tunnel_setup, "discover_nginx_sites", return_value=sites
         ), patch.object(tunnel_setup, "_write_config_file"), patch.object(
-            tunnel_setup, "install_and_start_service"
-        ), patch.object(tunnel_setup, "_ensure_service_running", side_effect=[False, True]), patch.object(
+            tunnel_setup, "install_and_start_service", side_effect=[False, True]
+        ), patch.object(
             tunnel_setup, "_close_public_web_ports"
         ) as close:
             with self.assertRaisesRegex(RuntimeError, "did not become active"):
@@ -239,6 +241,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             ["systemctl", "is-active", "cloudflared"],
             check=False,
             capture_output=True,
+            timeout=30,
         )
 
     def test_ensure_service_running_reports_start_and_activation_failures(self):
@@ -269,9 +272,11 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         )
         for results, expected in cases:
             with self.subTest(expected=expected, calls=len(results)):
-                with patch.object(tunnel_setup, "run_command", side_effect=results) as run_command:
+                with patch.object(tunnel_setup, "run_command", side_effect=results) as run_command, \
+                        patch.object(tunnel_setup, "_show_service_diagnostics") as diagnostics:
                     self.assertEqual(tunnel_setup._ensure_service_running(), expected)
                 self.assertEqual(run_command.call_count, len(results))
+                self.assertEqual(diagnostics.call_count, 0 if expected else 1)
 
     def test_close_public_web_ports_installs_ufw_when_missing(self):
         with patch.object(tunnel_setup.shutil, "which", return_value=None), patch.object(
@@ -291,22 +296,128 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
     def test_restart_failure_is_not_reported_as_a_successful_refresh(self):
         with patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
             returncode=1, stdout="", stderr="restart failed",
-        )) as run_command:
+        )) as run_command, patch.object(tunnel_setup, "_show_service_diagnostics") as diagnostics:
             self.assertFalse(tunnel_setup._ensure_service_running(restart=True))
         run_command.assert_called_once_with(
             ["systemctl", "restart", "cloudflared"], check=False, capture_output=True,
+            timeout=tunnel_setup.SERVICE_COMMAND_TIMEOUT,
         )
+        diagnostics.assert_called_once()
 
     def test_existing_service_is_restarted_without_reinstallation(self):
-        with patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
-            returncode=0, stdout="loaded\n", stderr="",
-        )) as run_command:
-            tunnel_setup.install_and_start_service()
-        self.assertEqual(run_command.call_args_list, [
-            call(["systemctl", "show", "cloudflared", "--property=LoadState", "--value"], check=False, capture_output=True),
-            call(["systemctl", "restart", "cloudflared"]),
-            call(["systemctl", "enable", "cloudflared"]),
+        with tempfile.TemporaryDirectory() as tmp:
+            drop_in = os.path.join(tmp, "cloudflared.service.d", "50-basaltwater-startup.conf")
+            with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", drop_in), \
+                    patch.object(tunnel_setup, "run_command", return_value=SimpleNamespace(
+                        returncode=0, stdout="loaded\n", stderr="",
+                    )) as run_command:
+                self.assertTrue(tunnel_setup.install_and_start_service(restart=True))
+            with open(drop_in, encoding="utf-8") as config:
+                self.assertIn("TimeoutStartSec=120s", config.read())
+            self.assertEqual(stat.S_IMODE(os.stat(drop_in).st_mode), 0o644)
+        self.assertEqual([item.args[0] for item in run_command.call_args_list], [
+            ["systemctl", "daemon-reload"],
+            ["systemctl", "show", "cloudflared", "--property=LoadState", "--value"],
+            ["systemctl", "enable", "cloudflared"],
+            ["systemctl", "restart", "cloudflared"],
+            ["systemctl", "is-active", "cloudflared"],
         ])
+
+    def test_new_service_keeps_initial_connection_and_has_grace_before_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drop_in = os.path.join(tmp, "cloudflared.service.d", "50-basaltwater-startup.conf")
+
+            def command_result(command, **_kwargs):
+                with open(drop_in, encoding="utf-8") as config:
+                    self.assertIn("TimeoutStartSec=120s", config.read())
+                stdout = "not-found\n" if "--property=LoadState" in command else "active\n"
+                return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+            with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", drop_in), \
+                    patch.object(tunnel_setup, "run_command", side_effect=command_result) as run_command:
+                self.assertTrue(tunnel_setup.install_and_start_service(restart=True))
+        commands = [item.args[0] for item in run_command.call_args_list]
+        self.assertIn(
+            ["cloudflared", "--config", "/etc/cloudflared/config.yml", "service", "install"],
+            commands,
+        )
+        self.assertNotIn(["systemctl", "restart", "cloudflared"], commands)
+        self.assertNotIn(["systemctl", "start", "cloudflared"], commands)
+
+    def test_service_command_bounds_timeout_and_handles_missing_executable(self):
+        command = ["systemctl", "restart", "cloudflared"]
+        for error, expected in (
+            (tunnel_setup.CommandTimeoutError("systemctl restart cloudflared", 240), 124),
+            (FileNotFoundError("systemctl unavailable"), 127),
+        ):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(tunnel_setup, "run_bounded_command", side_effect=error) as run_command:
+                result = tunnel_setup._run_service_command(command, timeout=240)
+                self.assertEqual(result.returncode, expected)
+                self.assertTrue(result.stderr)
+                run_command.assert_called_once_with(command, check=False, capture_output=True, timeout=240)
+
+    def test_service_configuration_failures_do_not_start_or_reinstall(self):
+        ok = SimpleNamespace(returncode=0, stdout="", stderr="")
+        failure = SimpleNamespace(returncode=1, stdout="", stderr="systemd unavailable")
+        loaded = SimpleNamespace(returncode=0, stdout="loaded", stderr="")
+        masked = SimpleNamespace(returncode=0, stdout="masked", stderr="")
+        for results in ([failure], [ok, failure], [ok, masked], [ok, loaded, failure]):
+            with self.subTest(calls=len(results)), tempfile.TemporaryDirectory() as tmp:
+                with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", os.path.join(tmp, "startup.conf")), \
+                        patch.object(tunnel_setup, "run_command", side_effect=results), \
+                        patch.object(tunnel_setup, "_show_service_diagnostics") as diagnostics, \
+                        patch.object(tunnel_setup, "_ensure_service_running") as ensure:
+                    self.assertFalse(tunnel_setup.install_and_start_service(restart=True))
+                diagnostics.assert_called_once()
+                ensure.assert_not_called()
+
+    def test_service_install_failure_reports_diagnostics_and_can_be_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drop_in = os.path.join(tmp, "startup.conf")
+            ok = SimpleNamespace(returncode=0, stdout="", stderr="")
+            missing = SimpleNamespace(returncode=0, stdout="not-found\n", stderr="")
+            loaded = SimpleNamespace(returncode=0, stdout="loaded\n", stderr="")
+            timeout = subprocess.TimeoutExpired(["cloudflared", "service", "install"], 240)
+            with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", drop_in), \
+                    patch.object(tunnel_setup, "run_command", side_effect=[ok, missing, timeout]) as run_command, \
+                    patch.object(tunnel_setup, "_show_service_diagnostics") as diagnostics:
+                self.assertFalse(tunnel_setup.install_and_start_service(restart=True))
+                diagnostics.assert_called_once()
+                run_command.assert_called_with(
+                    ["cloudflared", "--config", "/etc/cloudflared/config.yml", "service", "install"],
+                    check=False, capture_output=True, timeout=240,
+                )
+            # A timed-out installation may already have written the unit. A
+            # retry reuses it and activates the still-pending configuration.
+            with patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", drop_in), \
+                    patch.object(tunnel_setup, "run_command", side_effect=[ok, loaded, ok, ok, ok]) as run_command:
+                self.assertTrue(tunnel_setup.install_and_start_service(restart=True))
+            commands = [item.args[0] for item in run_command.call_args_list]
+            self.assertIn(["systemctl", "restart", "cloudflared"], commands)
+            self.assertFalse(any(item[0] == "cloudflared" for item in commands))
+
+    def test_diagnostics_show_connection_errors_and_redact_inline_secrets(self):
+        journal = (
+            "INF Settings: map[token:settings-secret]\n"
+            'ERR token="inline-secret" TunnelSecret:json-secret\n'
+            "ERR Authorization: Bearer bearer-secret\n"
+            "ERR failed to dial QUIC: timeout\n"
+        )
+        results = [
+            SimpleNamespace(returncode=0, stdout="cloudflared version 2026.5.2", stderr=""),
+            SimpleNamespace(returncode=0, stdout="Result=timeout", stderr=""),
+            SimpleNamespace(returncode=0, stdout=journal, stderr=""),
+        ]
+        output = io.StringIO()
+        with patch.object(tunnel_setup, "run_command", side_effect=results) as run_command, redirect_stdout(output):
+            tunnel_setup._show_service_diagnostics()
+        self.assertIn("Result=timeout", output.getvalue())
+        self.assertIn("failed to dial QUIC: timeout", output.getvalue())
+        self.assertIn("7844", output.getvalue())
+        for secret in ("settings-secret", "inline-secret", "json-secret", "bearer-secret"):
+            self.assertNotIn(secret, output.getvalue())
+        self.assertTrue(all(item.kwargs["timeout"] == 10 for item in run_command.call_args_list))
 
     def test_non_interactive_refresh_returns_false_when_no_sites_are_discovered(self):
         with patch.object(tunnel_setup, "check_root"), patch.object(
@@ -338,7 +449,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         ), patch.object(tunnel_setup, "_write_config_file") as write_config, patch.object(
             tunnel_setup, "save_state"
         ) as save_state, patch.object(
-            tunnel_setup, "_ensure_service_running", return_value=True
+            tunnel_setup, "install_and_start_service", return_value=True
         ):
             self.assertTrue(tunnel_setup.main(interactive=False))
 
@@ -361,7 +472,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 patch.object(tunnel_setup, "discover_nginx_sites", return_value=sites), \
                 patch.object(tunnel_setup.os.path, "isfile", return_value=True), \
                 patch.object(tunnel_setup, "_write_config_file"), \
-                patch.object(tunnel_setup, "_ensure_service_running", side_effect=[False, True]) as ensure_service, \
+                patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service, \
                 patch.object(tunnel_setup, "save_state") as save_state:
             self.assertFalse(tunnel_setup.main(interactive=False))
             save_state.assert_called_once_with(state["tunnel"], state["sites"], pending_activation=True)
@@ -384,7 +495,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, "discover_nginx_sites", return_value=sites), \
                     patch.object(tunnel_setup, "_config_is_valid", side_effect=[False, True]), \
                     patch.object(tunnel_setup, "_write_config_file"), \
-                    patch.object(tunnel_setup, "_ensure_service_running", side_effect=[False, True]) as ensure_service:
+                    patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service:
                 tunnel_setup.save_state(tunnel, sites)
                 self.assertFalse(tunnel_setup.main(interactive=False))
                 self.assertTrue(tunnel_setup.load_state()["pending_activation"])
@@ -403,7 +514,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 patch.object(tunnel_setup, "discover_nginx_sites", return_value=[{"hostname": "example.com", "service": "http://localhost:80"}]), \
                 patch.object(tunnel_setup.os.path, "isfile", return_value=False), \
                 patch.object(tunnel_setup, "_write_config_file") as write_config, \
-                patch.object(tunnel_setup, "_ensure_service_running") as ensure_service:
+                patch.object(tunnel_setup, "install_and_start_service") as ensure_service:
             with self.assertRaisesRegex(ValueError, "credentials are missing"):
                 tunnel_setup.main(interactive=False)
         write_config.assert_not_called()
@@ -437,19 +548,23 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             command_results = [
                 SimpleNamespace(returncode=0, stdout="", stderr=""),
                 SimpleNamespace(returncode=0, stdout="", stderr=""),
+                SimpleNamespace(returncode=0, stdout="not-found", stderr=""),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
+                SimpleNamespace(returncode=0, stdout="", stderr=""),
                 SimpleNamespace(returncode=0, stdout="active", stderr=""),
             ]
             with patch.object(tunnel_setup, "STATE_FILE", state_path), \
                     patch.object(tunnel_setup, "CONFIG_DIR", config_dir), \
+                    patch.object(tunnel_setup, "SERVICE_STARTUP_DROP_IN", os.path.join(tmp, "startup.conf")), \
                     patch.object(tunnel_setup, "NGINX_SITES_DIR", nginx_dir), \
                     patch.object(tunnel_setup, "check_root"), \
                     patch.object(tunnel_setup, "install_cloudflared"), \
                     patch.object(tunnel_setup, "run_command", side_effect=command_results) as run_command:
                 self.assertTrue(tunnel_setup.main(interactive=False))
 
-            self.assertEqual(run_command.call_args_list[1], call(
-                ["systemctl", "restart", "cloudflared"], check=False, capture_output=True,
-            ))
+            commands = [item.args[0] for item in run_command.call_args_list]
+            self.assertIn(["cloudflared", "--config", os.path.join(config_dir, "config.yml"), "service", "install"], commands)
+            self.assertNotIn(["systemctl", "restart", "cloudflared"], commands)
 
             with open(os.path.join(config_dir, "config.yml"), encoding="utf-8") as config:
                 self.assertIn("example.com", config.read())
