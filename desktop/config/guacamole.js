@@ -17,10 +17,14 @@
     let pollTimer = null;
     let revision = 0;
     let connectionError = "";
+    let pageActive = true;
 
     function controls(connected) {
-        for (const id of ["take", "observe", "resume"])
+        for (const id of ["take", "observe", "resume", "logout", "confirm-logout", "cancel-logout"])
             byId(id).disabled = !connected || busy;
+        byId("take").disabled = !connected || busy || controlled;
+        byId("take").setAttribute("aria-pressed", String(controlled));
+        byId("take").textContent = controlled ? "You have control" : "Take control";
         byId("fullscreen").disabled = !connected;
         byId("disconnect").disabled = busy;
         byId("connect").disabled = connected || busy || client !== null;
@@ -53,6 +57,7 @@
         connected = false;
         attachment = null;
         displayElement = null;
+        byId("logout-confirmation").hidden = true;
         revision++;
         clearTimeout(pollTimer);
         pollTimer = null;
@@ -66,6 +71,7 @@
     function showState(result) {
         if (!result.controlled) observe();
         controlled = result.controlled;
+        controls(connected);
         status.textContent = controlled ? "You control the desktop. Agent desktop actions are paused."
             : result.paused ? "Observing only. Agent desktop actions remain paused."
             : "Observing only. Agent desktop actions are enabled.";
@@ -122,7 +128,7 @@
         event.preventDefault();
         if (busy || client) return;
         busy = true;
-        revision++;
+        const attempt = ++revision;
         connectionError = "";
         controls(false);
         status.textContent = "Connecting to the shared desktop…";
@@ -132,6 +138,10 @@
             const pending = post("session", {password});
             password = "";
             const result = await pending;
+            if (!pageActive || revision !== attempt) {
+                await post("disconnect", {session: result.attachment}).catch(() => {});
+                return;
+            }
             attachment = result.attachment;
             const tunnel = new Guacamole.WebSocketTunnel("/desktop/ws");
             const current = new Guacamole.Client(tunnel);
@@ -156,7 +166,7 @@
             tunnel.onstatechange = state => {
                 if (client !== current || state !== Guacamole.Tunnel.State.CLOSED) return;
                 reset();
-                status.textContent = connectionError || "Desktop connection closed. Reconnect to the running desktop.";
+                status.textContent = connectionError || "Desktop connection ended. Browser control released. Connect again to start or rejoin the desktop.";
             };
             client.onstatechange = state => {
                 if (client !== current) return;
@@ -168,7 +178,7 @@
                     scheduleStatus();
                 } else if (state === 5) {
                     reset();
-                    status.textContent = connectionError || "Disconnected. The desktop remains running; agent pause is unchanged.";
+                    status.textContent = connectionError || "Desktop connection ended. Browser control released. Connect again to start or rejoin the desktop.";
                 }
             };
             // Input helpers attach once to the persistent screen container.
@@ -224,9 +234,38 @@
         try {
             await post("disconnect", {session: attachment});
             reset();
-            status.textContent = "Disconnected. The desktop remains running; agent pause is unchanged.";
+            status.textContent = "Disconnected. The desktop remains running. Browser control released; any separate agent pause is preserved.";
         } catch (error) { status.textContent = error.message; }
         finally { busy = false; controls(connected); }
+    });
+    byId("logout").addEventListener("click", () => {
+        if (!connected || busy) return;
+        releaseKeys();
+        byId("logout-confirmation").hidden = false;
+        byId("confirm-logout").focus();
+    });
+    byId("cancel-logout").addEventListener("click", () => {
+        byId("logout-confirmation").hidden = true;
+        byId("logout").focus();
+    });
+    byId("confirm-logout").addEventListener("click", async () => {
+        if (!attachment || !connected || busy) return;
+        const current = client;
+        const ticket = attachment;
+        revision++;
+        observe();
+        busy = true;
+        byId("logout-confirmation").hidden = true;
+        controls(connected);
+        try {
+            const result = await post("logout", {session: ticket});
+            if (client !== current || attachment !== ticket) return;
+            showState(result);
+            status.textContent = "Desktop logout requested. Resolve any unsaved-work dialogs in the desktop. The connection closes when logout finishes.";
+            if (controlled) screen.focus({preventScroll: true});
+        } catch (error) {
+            if (client === current && attachment === ticket) status.textContent = error.message;
+        } finally { busy = false; controls(connected); }
     });
     byId("fullscreen").addEventListener("click", () => {
         screen.requestFullscreen().catch(() => { status.textContent = "Fullscreen is unavailable in this browser."; });
@@ -234,5 +273,18 @@
     screen.addEventListener("blur", releaseKeys);
     window.addEventListener("resize", scale);
     document.addEventListener("fullscreenchange", scale);
-    window.addEventListener("pagehide", () => { if (client) client.disconnect(); });
+    window.addEventListener("pagehide", () => {
+        pageActive = false;
+        const ticket = attachment;
+        reset();
+        status.textContent = "Disconnected. Browser control released. Connect again to rejoin the desktop.";
+        // Also revoke a pending attachment before its WebSocket is ready.
+        // The server handles dropped sockets and lease expiry independently.
+        if (ticket) fetch("/desktop/disconnect", {
+            method: "POST", credentials: "same-origin", cache: "no-store", keepalive: true,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({csrf, session: ticket})
+        }).catch(() => {});
+    });
+    window.addEventListener("pageshow", () => { pageActive = true; controls(connected); });
 })();

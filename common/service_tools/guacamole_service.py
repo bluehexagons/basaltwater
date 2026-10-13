@@ -62,10 +62,15 @@ def load_configuration(path: str) -> dict:
     return value
 
 
-async def desktop_call(action: str, *, generation: str | None = None, geometry: list[int] | None = None) -> dict:
+async def desktop_call(action: str, *, generation: str | None = None, geometry: list[int] | None = None,
+                       pause_token: str | None = None) -> dict:
     payload = {"action": action}
     if generation is not None:
-        payload.update(generation=generation, geometry=geometry)
+        payload["generation"] = generation
+        if geometry is not None:
+            payload["geometry"] = geometry
+    if action.startswith("browser-"):
+        payload["pause_token"] = pause_token
     function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request(payload)
     return await asyncio.wait_for(asyncio.to_thread(function), 65 if action == "start" else 35)
 
@@ -81,6 +86,7 @@ class Session:
     attached: bool = False
     ready: bool = False
     controlled: bool = False
+    pause_token: str | None = field(default=None, repr=False)
     keys: set[str] = field(default_factory=set)
     pointer: list[str] | None = None
     socket: web.WebSocketResponse | None = None
@@ -159,14 +165,17 @@ class Gateway:
         if request.query:
             raise web.HTTPBadRequest(text="Invalid desktop URL")
         content = f'''<section class="desktop-panel"><h2>Shared desktop</h2>
-<p>Connect to observe the agent. Take control pauses agent desktop actions; resume remains explicit.</p>
+<p>Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control.</p>
 <form id="connect-form"><input type="hidden" id="csrf" value="{self.csrf}">
 <label>Account <input value="{html.escape(self.config['username'], quote=True)}" readonly autocomplete="username"></label>
 <label>Unix account password <input id="password" type="password" required maxlength="1024" autocomplete="off"></label>
 <button id="connect">Connect to desktop</button></form>
-<div class="desktop-controls"><button id="take" disabled>Take control</button>
+<div class="desktop-controls"><button id="take" class="primary-control" aria-pressed="false" disabled>Take control</button>
 <button id="observe" disabled>Observe only</button><button id="resume" disabled>Resume agent</button>
 <button id="disconnect" type="button">Disconnect browser session</button><button id="fullscreen" disabled>Fullscreen</button></div>
+<div class="logout-controls"><button id="logout" type="button" disabled>Log out desktop</button>
+<span id="logout-confirmation" hidden>Log out and close desktop applications?
+<button id="confirm-logout" type="button">Log out desktop now</button><button id="cancel-logout" type="button">Cancel</button></span></div>
 <p id="status" role="status" aria-live="polite">Disconnected</p>
 <p id="lifetime">Connections last at most one hour and expire after ten minutes without input or a control action.</p>
 <div id="screen" tabindex="0" aria-label="Remote desktop"></div>
@@ -199,7 +208,16 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             raise web.HTTPBadRequest(text="Enter the Unix account password")
         async with self.lock:
             if self.session is not None:
-                raise web.HTTPConflict(text="A browser session is already open; disconnect it first")
+                old = self.session
+                snapshot = await desktop_call("status")
+                if (not old.closed.is_set() and snapshot.get("state") == "running"
+                        and snapshot.get("generation") == old.generation
+                        and snapshot.get("geometry") == old.geometry
+                        and (old.attached or time.monotonic() - old.created < ATTACH_TIMEOUT)
+                        and time.monotonic() - old.created < MAX_SESSION
+                        and time.monotonic() - old.activity < IDLE_TIMEOUT):
+                    raise web.HTTPConflict(text="A browser session is already open; disconnect it first")
+                await self.retire(old)
             # Starting is an explicit authenticated action. It reuses the
             # managed display and never starts a second GUI or stores a password.
             snapshot = await desktop_call("start")
@@ -223,12 +241,20 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 or snapshot.get("generation") != session.generation
                 or snapshot.get("geometry") != session.geometry):
             session.revoke()
-            raise web.HTTPConflict(text="Desktop session changed; reconnect")
+            if self.session is session:
+                self.session = None
+            message = ("Desktop logged out. Connect to start a new desktop."
+                       if snapshot.get("state") in {"stopped", "stopping"}
+                       else "Desktop session changed; reconnect")
+            raise web.HTTPConflict(text=message)
 
     def state(self, session: Session, snapshot: dict) -> dict:
         self.check_snapshot(session, snapshot)
-        if snapshot.get("paused") is not True:
+        if (snapshot.get("paused") is not True
+                or snapshot.get("browser_pause") != session.pause_token):
             session.release_input()
+        if snapshot.get("browser_pause") != session.pause_token:
+            session.pause_token = None
         now = time.monotonic()
         remaining = max(0, int(MAX_SESSION - (now - session.created)))
         idle = max(0, int(IDLE_TIMEOUT - (now - session.activity)))
@@ -237,6 +263,38 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             raise web.HTTPConflict(text="Desktop session expired; reconnect")
         return {"controlled": session.controlled, "paused": snapshot.get("paused") is True,
                 "expires_in": remaining, "idle_expires_in": idle}
+
+    async def retire(self, session: Session) -> None:
+        """Invalidate before conditionally releasing this connection's pause."""
+        session.revoke()
+        if self.session is session:
+            self.session = None
+        token, session.pause_token = session.pause_token, None
+        if token is not None:
+            # A replaced desktop, explicit local pause, or later browser owner
+            # cannot be resumed by this session's cleanup. The supervisor's
+            # short lease also recovers from failed cleanup or a gateway crash.
+            with contextlib.suppress(OSError, ValueError, RuntimeError, asyncio.TimeoutError):
+                await desktop_call("browser-release", generation=session.generation, pause_token=token)
+
+    async def refresh_control(self, session: Session, snapshot: dict) -> dict:
+        self.state(session, snapshot)
+        if session.pause_token is not None:
+            snapshot = await desktop_call("browser-refresh", generation=session.generation,
+                                          geometry=session.geometry, pause_token=session.pause_token)
+            self.state(session, snapshot)
+        return snapshot
+
+    async def take_control(self, session: Session) -> dict:
+        snapshot = await desktop_call("browser-take", generation=session.generation,
+                                      geometry=session.geometry, pause_token=session.pause_token)
+        token = snapshot.get("browser_pause")
+        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+            raise RuntimeError("Desktop supervisor needs updating before browser control")
+        session.pause_token = token
+        self.check_snapshot(session, snapshot)
+        session.controlled = snapshot.get("paused") is True
+        return snapshot
 
     async def status(self, request: web.Request) -> web.Response:
         value = await self.form(request, {"session"})
@@ -258,10 +316,13 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             snapshot = await desktop_call("status")
             self.state(session, snapshot)
             action = value["action"]
-            if action != "observe":
-                snapshot = await desktop_call("pause" if action == "take" else "resume",
+            if action == "take":
+                snapshot = await self.take_control(session)
+            elif action == "resume":
+                snapshot = await desktop_call("resume",
                                               generation=session.generation, geometry=session.geometry)
                 self.check_snapshot(session, snapshot)
+                session.pause_token = None
             session.controlled = action == "take" and snapshot.get("paused") is True
             session.activity = time.monotonic()
             return web.json_response(self.state(session, snapshot))
@@ -269,14 +330,35 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
     async def disconnect(self, request: web.Request) -> web.Response:
         value = await self.form(request, {"session"})
         async with self.lock:
-            session = self.selected_session(value["session"]) if value["session"] is not None else self.session
+            identifier = value["session"]
+            # A just-logged-out page may race the WebSocket cleanup. Treat its
+            # disconnect as complete only when no replacement slot exists.
+            if self.session is None and isinstance(identifier, str) and re.fullmatch(r"[A-Za-z0-9_-]{43}", identifier):
+                session = None
+            else:
+                session = self.selected_session(identifier) if identifier is not None else self.session
             if session:
-                session.revoke()
-                self.session = None
+                await self.retire(session)
         if session:
             await session.close()
-        # Disconnect never resumes an agent or logs out applications.
         return web.json_response({"disconnected": True})
+
+    async def logout(self, request: web.Request) -> web.Response:
+        value = await self.form(request, {"session"})
+        async with self.lock:
+            session = self.selected_session(value["session"])
+            if not session.ready:
+                raise web.HTTPConflict(text="Connect before logging out the desktop")
+            session.release_input()
+            self.state(session, await desktop_call("status"))
+            snapshot = await self.take_control(session)
+            result = await desktop_call("browser-logout", generation=session.generation,
+                                        geometry=session.geometry, pause_token=session.pause_token)
+            session.activity = time.monotonic()
+            # Keep the display/input alive for unsaved-work dialogs or a
+            # canceled logout. The watcher closes it when the desktop ends.
+            return web.json_response({**self.state(session, snapshot),
+                                      "logout_requested": result.get("logout_requested") is True})
 
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
         self.authenticate(request, origin=True)
@@ -315,8 +397,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             async with self.lock:
-                if self.session is session:
-                    self.session = None
+                await self.retire(session)
             await session.close()
         return ws
 
@@ -390,7 +471,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 if self.session is not session or session.closed.is_set():
                     return
                 try:
-                    self.state(session, await desktop_call("status"))
+                    await self.refresh_control(session, await desktop_call("status"))
                 except web.HTTPConflict:
                     return
 
@@ -399,8 +480,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             await asyncio.sleep(1)
             async with self.lock:
                 if self.session and not self.session.attached and time.monotonic() - self.session.created >= ATTACH_TIMEOUT:
-                    self.session.revoke()
-                    self.session = None
+                    await self.retire(self.session)
 
 
 CSS = """
@@ -412,7 +492,13 @@ header,.desktop-panel{padding:20px;border:1px solid var(--line);border-radius:12
 .eyebrow{color:var(--accent);font-size:.85rem}h1{margin:10px 0}p{line-height:1.6}label{display:flex;flex-direction:column;gap:6px}
 form,.desktop-controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:16px 0}
 button,input{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px}
-input{color:var(--text);background:var(--bg)}button{color:var(--panel);background:var(--accent);cursor:pointer}
+input{color:var(--text);background:var(--bg)}button{color:var(--text);background:var(--bg);cursor:pointer}
+#connect,.primary-control{color:var(--panel);background:var(--accent);font-weight:700}
+.primary-control{font-size:1.15rem;padding:14px 22px;border:2px solid var(--accent)}
+.primary-control[aria-pressed="true"]{box-shadow:0 0 0 3px var(--line)}
+.logout-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
+#logout-confirmation:not([hidden]){display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
 button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:auto;width:100%;min-height:240px;background:#111}
 #screen:fullscreen{display:flex;align-items:center;justify-content:center}#status{font-weight:600}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:10px}
 footer{padding:20px;color:var(--muted)}@media(max-width:900px){.sidebar{position:static;width:auto}.nav-links{display:flex;overflow:auto}.nav-links a{flex:none}.nav-group{display:none}main{margin:0;padding:12px}}
@@ -446,11 +532,16 @@ def create_app(config: dict) -> web.Application:
     app.router.add_post("/desktop/control", gateway.control)
     app.router.add_post("/desktop/status", gateway.status)
     app.router.add_post("/desktop/disconnect", gateway.disconnect)
+    app.router.add_post("/desktop/logout", gateway.logout)
     app.router.add_get("/desktop/ws", gateway.websocket)
 
     async def shutdown(application):
-        if gateway.session:
-            await gateway.session.close()
+        async with gateway.lock:
+            session = gateway.session
+            if session:
+                await gateway.retire(session)
+        if session:
+            await session.close()
     app.on_shutdown.append(shutdown)
 
     async def lifecycle(application):
@@ -458,8 +549,7 @@ def create_app(config: dict) -> web.Application:
         yield
         expiry.cancel()
         await asyncio.gather(expiry, return_exceptions=True)
-        if gateway.session:
-            await gateway.session.close()
+        await shutdown(application)
     app.cleanup_ctx.append(lifecycle)
     return app
 

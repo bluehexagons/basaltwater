@@ -437,17 +437,134 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             await read_instruction(reader)
 
 
+class BrowserOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(patch.object(desktop, "geometry", return_value=[1600, 900]))
+        stack.enter_context(patch.object(desktop, "window_manager_ready", return_value=True))
+        stack.enter_context(patch.dict(os.environ, DISPLAY=":10"))
+        self.process = MagicMock(pid=12345)
+        self.process.poll.return_value = None
+        self.session = desktop.DesktopSession(dict(username="agent", desktop="xfce"), self.process)
+        self.scope = dict(generation=self.session.generation, geometry=[1600, 900])
+
+    def take(self, token=None):
+        return self.session.handle(dict(action="browser-take", pause_token=token, **self.scope))["browser_pause"]
+
+    def test_release_restores_prior_pause_and_revokes_agent_lease(self):
+        for paused in (False, True):
+            self.session.paused = paused
+            self.session.lease = "old-agent-lease"
+            token = self.take()
+            self.assertTrue(self.session.paused)
+            self.assertIsNone(self.session.lease)
+            # Repeated take retains the original pre-browser pause state.
+            self.assertEqual(self.take(token), token)
+            self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
+            self.assertEqual(self.session.paused, paused)
+            self.assertIsNone(self.session.browser_pause)
+
+    def test_local_pause_or_resume_replaces_browser_ownership(self):
+        for action in ("pause", "resume"):
+            token = self.take()
+            self.session.handle(dict(action=action))
+            self.session.handle(dict(action="browser-release", pause_token=token, **self.scope))
+            self.assertEqual(self.session.paused, action == "pause")
+            self.assertIsNone(self.session.browser_pause)
+
+    def test_stale_cleanup_cannot_resume_later_browser_owner(self):
+        stale = self.take()
+        self.session.handle(dict(action="browser-release", pause_token=stale, **self.scope))
+        current = self.take()
+        self.assertNotEqual(stale, current)
+        self.session.handle(dict(action="browser-release", pause_token=stale, **self.scope))
+        self.assertTrue(self.session.paused)
+        self.assertEqual(self.session.browser_pause, current)
+
+    def test_timeout_recovers_from_crash_but_preserves_separate_pause(self):
+        for paused in (False, True):
+            self.session.paused = paused
+            self.take()
+            self.session.browser_pause_until = 0
+            state = self.session.handle(dict(action="status"))
+            self.assertEqual(state["paused"], paused)
+            self.assertIsNone(state["browser_pause"])
+            if not paused:
+                self.assertIn("lease", self.session.handle(dict(action="acquire", generation=self.session.generation)))
+
+    def test_refresh_renews_only_the_current_unexpired_owner(self):
+        token = self.take()
+        self.session.browser_pause_until = time.monotonic() + 5
+        self.session.handle(dict(action="browser-refresh", pause_token=token, **self.scope))
+        self.assertGreater(self.session.browser_pause_until, time.monotonic() + 40)
+        self.session.browser_pause_until = 0
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.session.handle(dict(action="browser-refresh", pause_token=token, **self.scope))
+        self.assertFalse(self.session.paused)
+
+    def test_scope_and_owner_are_required_before_mutating_or_logging_out(self):
+        token = self.take()
+        with patch.object(desktop.subprocess, "Popen") as popen:
+            for action in ("browser-take", "browser-refresh", "browser-logout", "browser-release"):
+                for scope in ({}, self.scope | dict(generation="stale")):
+                    with self.subTest(action=action, scope=scope), self.assertRaises(ValueError):
+                        self.session.handle(dict(action=action, pause_token=token, **scope))
+            for action in ("browser-take", "browser-refresh", "browser-logout"):
+                for invalid in (None, "wrong", [], True):
+                    with self.subTest(action=action, token=invalid), self.assertRaises(ValueError):
+                        self.session.handle(dict(action=action, pause_token=invalid, **self.scope))
+                with self.assertRaisesRegex(ValueError, "geometry"):
+                    self.session.handle(dict(action=action, pause_token=token, **(self.scope | dict(geometry=[800, 600]))))
+                with self.assertRaisesRegex(ValueError, "geometry"):
+                    self.session.handle(dict(action=action, pause_token=token, generation=self.session.generation))
+            popen.assert_not_called()
+        self.assertTrue(self.session.paused)
+        self.assertEqual(self.session.browser_pause, token)
+
+    def test_cleanup_after_resize_or_during_logout_still_releases_own_pause(self):
+        token = self.take()
+        self.process.poll.return_value = 0
+        self.session.handle(dict(action="browser-release", generation=self.session.generation, pause_token=token))
+        self.assertFalse(self.session.paused)
+
+    def test_browser_logout_preserves_pause_and_allows_normal_application_dialogs(self):
+        token = self.take()
+        with patch.object(desktop.subprocess, "Popen") as popen:
+            result = self.session.handle(dict(action="browser-logout", pause_token=token, **self.scope))
+            self.assertTrue(result["logout_requested"])
+            popen.assert_called_once_with(["xfce4-session-logout", "--logout"], process_group=self.process.pid)
+        self.assertTrue(self.session.paused)
+        self.assertEqual(self.session.browser_pause, token)
+        self.process.terminate.assert_not_called()
+
+
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.stack = ExitStack()
         self.snapshot = dict(state="running", generation="generation-1", geometry=[1600, 900], paused=False)
+        self.pause_serial = 0
+        self.prior_pause = False
         async def desktop_call(action, **scope):
-            if scope and (scope["generation"] != self.snapshot["generation"] or scope["geometry"] != self.snapshot["geometry"]):
+            if scope and (scope["generation"] != self.snapshot["generation"]
+                          or (scope.get("geometry") is not None and scope["geometry"] != self.snapshot["geometry"])):
                 raise RuntimeError("Desktop session changed")
-            if action == "pause":
+            if action == "browser-take":
+                if self.snapshot.get("browser_pause") is None:
+                    self.prior_pause = self.snapshot["paused"]
+                    self.pause_serial += 1
+                    self.snapshot["browser_pause"] = f"{self.pause_serial:032x}"
                 self.snapshot["paused"] = True
+            elif action == "browser-release" and scope["pause_token"] == self.snapshot.get("browser_pause"):
+                self.snapshot["paused"] = self.prior_pause
+                self.snapshot["browser_pause"] = None
+            elif action == "browser-refresh" and scope["pause_token"] != self.snapshot.get("browser_pause"):
+                raise RuntimeError("Browser control expired")
+            elif action == "browser-logout":
+                return dict(logout_requested=True)
             elif action == "resume":
                 self.snapshot["paused"] = False
+                self.snapshot["browser_pause"] = None
             return dict(self.snapshot)
         self.desktop_call = self.stack.enter_context(patch.object(service, "desktop_call", side_effect=desktop_call))
         self.app = service.create_app(dict(username="agent", origins=["https://desktop-vm:9443"], certificate="a" * 64))
@@ -506,13 +623,13 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 409)
         self.assertFalse(self.gateway.session.controlled)
 
-    async def test_take_observe_resume_and_disconnect_do_not_implicitly_resume(self):
+    async def test_take_observe_resume_and_disconnect_release_browser_pause(self):
         attachment = await self.session()
         self.gateway.session.attached = True
         self.gateway.session.ready = True
         result = await self.post("control", session=attachment, action="take")
         self.assertTrue((await result.json())["controlled"])
-        self.desktop_call.assert_awaited_with("pause", generation="generation-1", geometry=[1600, 900])
+        self.desktop_call.assert_awaited_with("browser-take", generation="generation-1", geometry=[1600, 900], pause_token=None)
         self.assertTrue(self.snapshot["paused"])
         result = await self.post("control", session=attachment, action="observe")
         self.assertFalse((await result.json())["controlled"])
@@ -524,7 +641,93 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await self.post("disconnect")
         self.assertIsNone(self.gateway.session)
         self.assertEqual(old.password, "")
+        self.assertFalse(self.snapshot["paused"])
+
+    async def test_disconnect_preserves_preexisting_and_replacement_manual_pauses(self):
+        for mode in ("preexisting", "replacement"):
+            with self.subTest(mode=mode):
+                self.snapshot["paused"] = mode == "preexisting"
+                attachment = await self.session()
+                current = self.gateway.session
+                current.ready = True
+                await self.post("control", session=attachment, action="take")
+                if mode == "replacement":
+                    self.snapshot["browser_pause"] = None
+                await self.post("disconnect", session=attachment)
+                self.assertTrue(self.snapshot["paused"])
+
+    async def test_external_pause_revokes_browser_input_without_resuming(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        current.ready = True
+        await self.post("control", session=attachment, action="take")
+        self.snapshot["browser_pause"] = None
+        result = await self.post("status", session=attachment)
+        self.assertFalse((await result.json())["controlled"])
+        await self.post("disconnect", session=attachment)
         self.assertTrue(self.snapshot["paused"])
+
+    async def test_stopped_or_changed_desktop_releases_stale_slot_before_reconnect(self):
+        for mode in ("state", "generation", "geometry"):
+            with self.subTest(mode=mode):
+                await self.session()
+                old = self.gateway.session
+                if mode == "state":
+                    self.snapshot["state"] = "stopped"
+                elif mode == "generation":
+                    self.snapshot["generation"] = "replacement"
+                else:
+                    self.snapshot["geometry"] = [1280, 720]
+                response = await self.post("session", password="reconnect")
+                # Starting a stopped fixture is deliberately unavailable, but
+                # its stale slot must already be revoked before that attempt.
+                self.assertEqual(response.status, 503 if mode == "state" else 200)
+                self.assertTrue(old.closed.is_set())
+                self.assertEqual(old.password, "")
+                await self.post("disconnect", session=None)
+                self.snapshot.update(state="running", generation="generation-1", geometry=[1600, 900])
+
+    async def test_logged_out_status_and_disconnect_do_not_block_new_connection(self):
+        attachment = await self.session()
+        old = self.gateway.session
+        old.ready = True
+        self.snapshot["state"] = "stopped"
+        result = await self.post("status", session=attachment)
+        self.assertEqual(result.status, 409)
+        self.assertIn("logged out", await result.text())
+        self.assertIsNone(self.gateway.session)
+        self.assertEqual((await self.post("disconnect", session=attachment)).status, 200)
+        self.snapshot["state"] = "running"
+        self.assertNotEqual(await self.session(), attachment)
+
+    async def test_logout_is_scoped_and_keeps_control_for_unsaved_work_or_cancellation(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        result = await self.post("logout", session=attachment)
+        self.assertEqual(result.status, 409)
+        current.ready = True
+        result = await self.post("logout", session=attachment)
+        self.assertEqual(result.status, 200, await result.text())
+        self.assertTrue((await result.json())["logout_requested"])
+        self.assertTrue(current.controlled)
+        self.desktop_call.assert_any_await("browser-logout", generation="generation-1",
+                                           geometry=[1600, 900], pause_token=current.pause_token)
+        self.assertFalse(current.closed.is_set())
+        self.snapshot["state"] = "stopping"
+        with patch.object(service.asyncio, "sleep", new=AsyncMock()):
+            await self.gateway.watch(current)
+        self.assertTrue(current.closed.is_set())
+        self.assertIsNone(self.gateway.session)
+
+    async def test_logout_rejects_stale_session_and_untrusted_origin(self):
+        attachment = await self.session()
+        self.gateway.session.ready = True
+        self.snapshot["generation"] = "replacement"
+        self.assertEqual((await self.post("logout", session=attachment)).status, 409)
+        self.assertFalse(any(call.args[0] == "browser-logout" for call in self.desktop_call.call_args_list))
+        response = await self.client.post("/desktop/logout", headers=self.headers | {"Origin": "https://evil.test"},
+                                          json={"csrf": self.gateway.csrf, "session": attachment})
+        self.assertEqual(response.status, 403)
 
     async def test_session_generation_change_blocks_takeover(self):
         attachment = await self.session()
@@ -533,7 +736,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.snapshot["generation"] = "replacement"
         result = await self.post("control", session=attachment, action="take")
         self.assertEqual(result.status, 409)
-        self.assertFalse(self.gateway.session.controlled)
+        self.assertIsNone(self.gateway.session)
         self.assertFalse(self.snapshot["paused"])
 
     async def test_control_rejects_non_string_actions_without_system_calls(self):
@@ -556,6 +759,14 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         finally:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+
+    async def test_reconnect_reaps_expired_pending_attachment_without_waiting_for_timer(self):
+        await self.session()
+        old = self.gateway.session
+        old.created -= service.ATTACH_TIMEOUT + 1
+        self.assertNotEqual(await self.session(), old.identifier)
+        self.assertTrue(old.closed.is_set())
+        self.assertEqual(old.password, "")
 
     async def test_status_revokes_external_resume_without_extending_inactivity(self):
         attachment = await self.session()
@@ -675,10 +886,61 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(current.keys)
         self.assertIsNone(current.pointer)
 
-    async def test_application_shutdown_releases_input_and_revokes_session(self):
-        await self.session()
+    async def test_socket_close_native_eof_and_idle_expiry_return_control_to_agents(self):
+        for ending in ("browser", "native", "idle"):
+            with self.subTest(ending=ending):
+                attachment = await self.session()
+                reader = asyncio.StreamReader()
+                writer = MagicMock(drain=AsyncMock(), is_closing=MagicMock(return_value=False))
+                with patch.object(self.gateway, "login", new=AsyncMock(return_value=(reader, writer, "$native"))):
+                    ws = await self.client.ws_connect("/desktop/ws?attachment=" + attachment,
+                                                     headers=self.headers, protocols=("guacamole",))
+                await ws.receive()
+                current = self.gateway.session
+                current.upstream = writer
+                reader.feed_data(instruction("sync", "1").encode())
+                await ws.receive()
+                self.assertEqual((await self.post("control", session=attachment, action="take")).status, 200)
+                current.keys.add("65")
+                current.pointer = ["10", "20"]
+                if ending == "browser":
+                    await ws.close()
+                else:
+                    if ending == "native":
+                        reader.feed_eof()
+                    else:
+                        current.activity -= service.IDLE_TIMEOUT + 1
+                    message = await ws.receive(timeout=3)
+                    self.assertIn(message.type, (WSMsgType.CLOSE, WSMsgType.CLOSED))
+                    await ws.close()
+                for _ in range(100):
+                    if self.gateway.session is None:
+                        break
+                    await asyncio.sleep(.01)
+                self.assertIsNone(self.gateway.session)
+                self.assertFalse(self.snapshot["paused"])
+                writes = [call.args[0] for call in writer.write.call_args_list]
+                self.assertIn(instruction("key", "65", "0").encode(), writes)
+                self.assertIn(instruction("mouse", "10", "20", "0").encode(), writes)
+
+    async def test_watch_refreshes_browser_lease_without_extending_user_inactivity(self):
+        attachment = await self.session()
         current = self.gateway.session
-        current.ready = current.controlled = True
+        current.ready = True
+        await self.post("control", session=attachment, action="take")
+        activity = current.activity
+        with patch.object(service.asyncio, "sleep", new=AsyncMock(side_effect=[None, asyncio.CancelledError])):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.gateway.watch(current)
+        self.desktop_call.assert_any_await("browser-refresh", generation=current.generation,
+                                           geometry=current.geometry, pause_token=current.pause_token)
+        self.assertEqual(current.activity, activity)
+
+    async def test_application_shutdown_releases_input_and_revokes_session(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        current.ready = True
+        await self.post("control", session=attachment, action="take")
         current.keys.add("65")
         current.upstream = MagicMock(is_closing=MagicMock(return_value=False))
         await self.app.shutdown()
@@ -687,6 +949,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(current.controlled)
         current.upstream.write.assert_called_once_with(instruction("key", "65", "0").encode())
         current.upstream.close.assert_called()
+        self.assertFalse(self.snapshot["paused"])
 
     async def test_upstream_login_failure_discards_password_and_frees_slot(self):
         attachment = await self.session()

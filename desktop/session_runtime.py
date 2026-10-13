@@ -38,6 +38,7 @@ SESSION_COMMANDS = {
 MAX_MESSAGE = 65536
 START_REQUEST_TIMEOUT = 30
 START_READY_TIMEOUT = 30
+BROWSER_CONTROL_TIMEOUT = 45
 
 
 def configuration() -> dict[str, Any]:
@@ -286,6 +287,9 @@ class DesktopSession:
         self.process = process
         self.generation = secrets.token_hex(16)
         self.paused = False
+        self.browser_pause: str | None = None
+        self.browser_pause_until = 0.0
+        self.browser_prior_pause = False
         self.lease: str | None = None
         self.lease_until = 0.0
         self.children: list[subprocess.Popen[Any]] = []
@@ -293,6 +297,7 @@ class DesktopSession:
         self.elements: dict[str, dict[str, Any]] = {}
 
     def snapshot_status(self) -> dict[str, Any]:
+        self.expire_browser_control()
         state = "stopping" if self.process.poll() is not None else "starting"
         size = None
         detail = None
@@ -309,6 +314,7 @@ class DesktopSession:
             "generation": self.generation, "desktop": self.config["desktop"],
             "username": self.config["username"], "display": os.environ["DISPLAY"],
             "geometry": size, "paused": self.paused,
+            "browser_pause": self.browser_pause,
             "pid": self.process.pid,
             "control_active": self.lease is not None and time.monotonic() < self.lease_until,
         }
@@ -316,26 +322,73 @@ class DesktopSession:
             result["detail"] = detail
         return result
 
+    def expire_browser_control(self) -> None:
+        """Recover agent access even when the browser gateway dies abruptly."""
+        if self.browser_pause is not None and time.monotonic() >= self.browser_pause_until:
+            self.release_browser_control()
+
+    def release_browser_control(self) -> None:
+        self.paused = self.browser_prior_pause
+        self.browser_pause = None
+        self.browser_pause_until = 0.0
+
+    def logout(self) -> dict[str, Any]:
+        """Request normal logout, allowing applications to ask about unsaved work."""
+        commands = {
+            "xfce": ["xfce4-session-logout", "--logout"],
+            "i3": ["i3-msg", "exit"],
+            "cinnamon": ["cinnamon-session-quit", "--logout"],
+            "lxqt": ["lxqt-leave", "--logout"],
+        }
+        self.children.append(subprocess.Popen(commands[self.config["desktop"]], process_group=self.process.pid))
+        return {"logout_requested": True, "generation": self.generation}
+
     def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.expire_browser_control()
         action = payload.get("action")
         if action == "status":
             return self.snapshot_status()
-        if action in ("pause", "resume") and "generation" in payload:
+        browser_actions = ("browser-take", "browser-refresh", "browser-release", "browser-logout")
+        if action in browser_actions or (action in ("pause", "resume") and "generation" in payload):
             # Remote human handoffs must not act on a replacement desktop.
             # The local pause/resume command can still target the current one.
-            if payload["generation"] != self.generation:
+            if payload.get("generation") != self.generation:
                 raise ValueError("Desktop session changed; inspect it again")
+            # Cleanup is conditional on ownership and generation, even after
+            # resizing or while the window manager is shutting down.
+            if action == "browser-release":
+                if self.browser_pause is not None and payload.get("pause_token") == self.browser_pause:
+                    self.release_browser_control()
+                return self.snapshot_status()
             snapshot = self.snapshot_status()
             if snapshot["state"] != "running":
                 raise RuntimeError("Desktop is not ready for control handoff")
-            if "geometry" in payload and payload["geometry"] != snapshot["geometry"]:
+            if (action in browser_actions or "geometry" in payload) and payload.get("geometry") != snapshot["geometry"]:
                 raise ValueError("Desktop geometry changed; inspect it again")
+        if action in browser_actions:
+            token = payload.get("pause_token")
+            if action == "browser-take" and self.browser_pause is None and token is None:
+                self.browser_prior_pause = self.paused
+                self.browser_pause = secrets.token_hex(16)
+                self.paused = True
+                self.lease = None
+                self.elements.clear()
+            elif self.browser_pause is None or token != self.browser_pause:
+                raise ValueError("Browser control expired or belongs to another connection")
+            self.browser_pause_until = time.monotonic() + BROWSER_CONTROL_TIMEOUT
+            if action == "browser-logout":
+                return self.logout()
+            return self.snapshot_status()
         if action == "pause":
+            # An explicit local pause replaces browser ownership, so closing
+            # that browser cannot undo the administrator's pause.
+            self.browser_pause = None
             self.paused = True
             self.lease = None
             self.elements.clear()
             return self.snapshot_status()
         if action == "resume":
+            self.browser_pause = None
             self.paused = False
             return self.snapshot_status()
         if payload.get("generation") != self.generation:
@@ -468,14 +521,7 @@ class DesktopSession:
                 del self.launches[next(iter(self.launches))]
             return {"pid": process.pid, "generation": self.generation, "launch": launch}
         if action == "logout":
-            commands = {
-                "xfce": ["xfce4-session-logout", "--logout"],
-                "i3": ["i3-msg", "exit"],
-                "cinnamon": ["cinnamon-session-quit", "--logout"],
-                "lxqt": ["lxqt-leave", "--logout"],
-            }
-            self.children.append(subprocess.Popen(commands[self.config["desktop"]], process_group=self.process.pid))
-            return {"logout_requested": True, "generation": self.generation}
+            return self.logout()
         if action == "input":
             if payload.get("geometry") != geometry():
                 raise ValueError("Desktop geometry changed; capture a new screenshot")
@@ -541,6 +587,7 @@ def serve() -> int:
             signal.signal(signal.SIGTERM, stop)
             try:
                 while process.poll() is None:
+                    session.expire_browser_control()
                     session.children = [child for child in session.children if child.poll() is None]
                     try:
                         connection, _ = server.accept()

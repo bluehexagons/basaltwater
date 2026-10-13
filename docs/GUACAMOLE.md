@@ -52,14 +52,22 @@ New browser connections are view-only. The gateway enforces this even if a
 client modifies the JavaScript or sends keyboard/pointer instructions directly.
 
 - **Take control** pauses cooperative agent desktop actions, then enables
-  browser keyboard and pointer input. Click the display to focus keyboard input.
+  browser keyboard and pointer input. It is the prominent primary control and
+  changes to **You have control** while active. Click the display to focus keyboard input.
 - **Observe only** disables browser input and retains the agent's pause state.
 - **Resume agent** disables browser input and explicitly resumes agent actions.
 - **Disconnect browser session** revokes the current browser connection,
   scoped to this page's attachment. A disconnected page can revoke the active
   connection from another tab. A stale page cannot revoke a replacement
-  connection with its old attachment. Disconnect does not resume the agent,
-  log out the desktop, or close applications.
+  connection with its old attachment. Disconnect releases this browser's control
+  and restores the pause state that existed before takeover. It preserves any
+  separate pause set before or during the connection. The desktop and applications
+  keep running. Closing the tab or losing the stream performs the same cleanup.
+- **Log out desktop** asks for confirmation, takes control, and requests a
+  normal desktop logout. This ends the desktop and its applications. The browser
+  remains usable for unsaved-work dialogs; canceling logout retains control until
+  you observe, resume, or disconnect. Successful logout clears the browser session
+  automatically, so the next connection can start a new desktop directly.
 - **Fullscreen** changes the browser view. The client scales the display locally;
   it does not request live XRDP resolution changes.
 
@@ -76,7 +84,13 @@ only after the native tunnel supplies its first display sync. Canceling a login
 revokes its pending handshake immediately. The page serializes control requests
 and refreshes authoritative status every three seconds, so an external resume
 also clears the browser's control indicator. The gateway independently checks
-pause state before accepting keyboard or pointer input.
+pause state and browser ownership before accepting keyboard or pointer input.
+An explicit local pause or resume replaces browser ownership and disables its
+input. Browser ownership has a 45-second lease, refreshed by the gateway while
+the connection is alive. If the gateway crashes or cleanup fails, the supervisor
+expires that lease and restores the previous pause state. Cleanup is conditional
+on the original desktop generation and ownership token; it cannot resume a
+replacement desktop or undo a later administrator pause.
 
 Clipboard, drive/file transfer, printing, audio, SFTP and recording are disabled.
 Browser instructions cannot select hosts, ports, protocols, other users, existing
@@ -96,14 +110,15 @@ seconds and claimable once. The Unix password is discarded after the native
 handshake or when the unused attachment expires. The capability appears only
 in the initial WebSocket URL; access logs retain only the existing
 privacy-preserving authentication-failure records, and no Unix password is
-included in a URL. Refreshing requires disconnecting an existing
-browser session and signing into XRDP again.
+included in a URL. Refreshing releases this page's connection; sign into XRDP
+again to reconnect. An active connection in another tab must still be disconnected
+explicitly. Logged-out, replaced and expired sessions do not block a new login.
 
 Connections expire after one hour, or ten minutes without accepted control
 input or a control action. Network pings and display updates do not extend
 user inactivity. An observation-only connection therefore expires after ten
-minutes unless a control action occurs. Expiry leaves desktop applications and
-the agent pause state intact.
+minutes unless a control action occurs. Expiry leaves desktop applications running
+and releases any browser-owned control, while preserving separate agent pauses.
 
 The page displays the remaining session and inactivity limits. Select
 **Observe only** to deliberately continue observing. Status polling does not
@@ -167,8 +182,9 @@ which forwards only to the host's `127.0.0.1:3389` XRDP listener. Nginx reaches
 the HTTP application through a separate Unix socket restricted to the account
 and its web-service group. No raw Guacamole port is exposed on the host.
 Orderly service stops revoke sessions and release held browser keys/buttons
-before terminating native children. Forced termination cannot guarantee input
-release; disconnect or switch to observation before maintenance when possible.
+and browser-owned pauses before terminating native children. Forced termination
+cannot guarantee input release, but the supervisor expires the browser pause
+lease. Disconnect before maintenance when possible.
 
 Both services report readiness to systemd only after their listeners are
 established. The gateway additionally waits for `guacd` to listen. Setup waits
@@ -216,7 +232,8 @@ basaltw patch 192.168.1.50 agent --no-guacamole
 ```
 
 Removal preserves the native package and desktop; it does not remove runtime
-libraries, reset Unix passwords, or resume paused agents. A successful rerun
+libraries or reset Unix passwords. Stopping browser access releases its control;
+separate agent pauses are preserved. A successful rerun
 reconciles services and browser ingress. Setup refuses unmanaged service files.
 It checks managed configuration before changing browser ingress during removal.
 
@@ -265,3 +282,11 @@ synthetic stream test with the real pinned JavaScript client exercised an
 invalid first image, subsequent changing PNG frames, mouse/keyboard input after
 takeover, and continued view-only enforcement. This covers browser streaming
 and input; qualify the complete desktop connection again on the testing VM.
+
+The control-lifetime follow-up adds supervisor regression coverage for ownership,
+stale cleanup, explicit local pauses, crash recovery, scoped browser logout and
+application dialog handling. Gateway checks cover desktop logout/replacement
+cleanup, reconnection, and preservation of separate pauses. Updating this runtime
+requires the current desktop to log out; normal setup already requests that
+logout before installing it. Save work before rerunning setup, then reload the
+desktop page.
