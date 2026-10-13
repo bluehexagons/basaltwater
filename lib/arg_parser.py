@@ -1065,6 +1065,12 @@ def add_setup_arguments(
         help="Remove the managed web panel and its Basic Auth credentials",
     )
     parser.add_argument(
+        "--guacamole",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Install an embedded browser desktop in the HTTPS web panel; enables a shared desktop without opening RDP ingress. --no-guacamole removes browser access",
+    )
+    parser.add_argument(
         "--web-panel-payload",
         action="store_true",
         help=argparse.SUPPRESS,

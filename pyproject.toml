@@ -16,7 +16,7 @@ Issues = "https://github.com/bluehexagons/basaltwater/issues"
 
 [project.optional-dependencies]
 completion = ["argcomplete>=3.0.0"]
-dev = ["build", "coverage>=7.0"]
+dev = ["build", "coverage>=7.0", "aiohttp>=3.11,<4"]
 
 [project.scripts]
 basaltw = "basaltwater:main"
@@ -54,5 +54,5 @@ common = [
     "agent_skills/*/agents/**/*",
 ]
 lib = ["t3code_native_probe.cjs"]
-desktop = ["config/*.template"]
+desktop = ["config/*.template", "config/*.js"]
 web = ["config/*"]

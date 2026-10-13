@@ -163,6 +163,11 @@ def build_web_panel_manifest(
                 "probe": {"kind": "homebox", "port": homebox["port"]},
             })
 
+    if config.guacamole:
+        services.append({"label": "Desktop (Guacamole)",
+                         "url": _http_url(host, config.web_panel_port, "https") + "desktop/",
+                         "description": "Observe the shared desktop or take control from the agent"})
+
     for label, spec, default_port, description in (
         ("Antistatic lobby", config.antistatic_server, 8080, "Game lobby"),
         ("Antistatic DB", config.antistatic_db, 8081, "Game database"),
@@ -225,6 +230,7 @@ def build_web_panel_manifest(
             "t3_github_readiness": config.github_auth_payload,
             "t3_git_identity_readiness": config.git_identity_payload,
             "notification_ingest": config.web_panel_notification_ingest is True,
+            "guacamole": config.guacamole is True,
         },
     }
     if config.web_panel_port is not None:
@@ -240,10 +246,13 @@ def render_web_panel_nginx(
     cert_path: str | None = None,
     key_path: str | None = None,
     notification_ingest: bool = False,
+    guacamole: bool = False,
 ) -> str:
     """Render the Basic-Auth reverse proxy for the Unix-socket app."""
 
     ssl = cert_path is not None and key_path is not None
+    if guacamole and not ssl:
+        raise ValueError("Guacamole browser access requires HTTPS")
     listen_options = " ssl" if ssl else ""
     tls = ""
     if ssl:
@@ -280,6 +289,32 @@ def render_web_panel_nginx(
         proxy_send_timeout 10s;
     }}
 """
+    desktop_location = ""
+    if guacamole:
+        from lib.guacamole_config import HTTP_SOCKET
+
+        desktop_location = f"""
+    location ^~ /desktop/ {{
+        limit_req zone=basaltwater_web_panel_auth burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://unix:{HTTP_SOCKET};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Guacamole-User $remote_user;
+        proxy_set_header Authorization "";
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 90s;
+        proxy_send_timeout 90s;
+        proxy_buffering off;
+        # Preserve fail2ban's authentication-failure evidence without logging
+        # request URLs, attachment capabilities, or credentials.
+        access_log {WEB_PANEL_AUTH_FAILURE_LOG} basaltwater_web_panel_auth
+            if=$basaltwater_web_panel_auth_failure;
+    }}
+"""
     return f"""{_NGINX_MARKER}
 limit_req_zone $binary_remote_addr zone=basaltwater_web_panel_auth:10m rate=120r/m;
 {ingest_zone}
@@ -302,6 +337,7 @@ server {{
     auth_basic_user_file {WEB_PANEL_AUTH_FILE};
     client_max_body_size 16k;
 {ingest_location}
+{desktop_location}
 
     location / {{
         limit_req zone=basaltwater_web_panel_auth burst=5 nodelay;
@@ -971,7 +1007,11 @@ def remove_web_panel() -> None:
     """Remove the panel, authentication data, and public Nginx listener."""
 
     nginx_content, link_exists = _preflight_web_panel_removal()
+    from desktop.guacamole_steps import preflight_units, remove_guacamole
+
+    preflight_units()
     _remove_nginx_site(nginx_content, link_exists)
+    remove_guacamole()
     units_changed = False
     if os.path.exists(WEB_PANEL_SERVICE_FILE):
         run(f"systemctl disable --now {WEB_PANEL_SERVICE_NAME}.service", check=False)
@@ -1031,6 +1071,10 @@ def remove_web_panel() -> None:
 def configure_web_panel(config: SetupConfig) -> None:
     """Install, update, or remove the optional web panel."""
 
+    from lib.guacamole_config import validate_guacamole_settings
+
+    validate_guacamole_settings(config)
+
     if is_dry_run():
         action = "remove" if config.disable_web_panel else "configure"
         print(f"  [DRY-RUN] Would {action} the web panel")
@@ -1077,6 +1121,10 @@ def configure_web_panel(config: SetupConfig) -> None:
         write_json_atomic(WEB_PANEL_MANIFEST, manifest, mode=0o644, sort_keys=True)
         _configure_audit_exporter(account.pw_gid)
         _configure_service(config, account.pw_dir)
+        if config.guacamole:
+            from desktop.guacamole_steps import configure_guacamole
+
+            configure_guacamole(config, identities)
         nginx_changed = _write_nginx_site(
             render_web_panel_nginx(
                 identities,
@@ -1084,6 +1132,7 @@ def configure_web_panel(config: SetupConfig) -> None:
                 cert_path=cert_path,
                 key_path=key_path,
                 notification_ingest=ingest_enabled,
+                guacamole=config.guacamole is True,
             )
         )
         if not ingest_enabled:
@@ -1091,6 +1140,10 @@ def configure_web_panel(config: SetupConfig) -> None:
             # route have stopped accepting it, so an interrupted setup does not
             # break a still-running endpoint.
             _install_ingest_token(False, account.pw_gid)
+        if not config.guacamole:
+            from desktop.guacamole_steps import remove_guacamole
+
+            remove_guacamole()
     except Exception:
         if auth_changed:
             _restore_auth_file(previous_auth)

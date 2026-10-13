@@ -1,0 +1,504 @@
+#!/usr/bin/env python3
+"""Authenticated, bounded desktop tunnel and fixed private XRDP relay.
+
+The HTTP socket is reachable only by the panel account and Nginx. Nginx must
+overwrite the authenticated identity and transport headers. guacd and the
+TCP RDP relay run inside this service's private network namespace.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import codecs
+import contextlib
+from dataclasses import dataclass, field
+import html
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import socket
+import stat
+import sys
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from aiohttp import WSMsgType, web
+
+from common.service_tools.guacamole_protocol import Parser, filter_instruction, handshake, instruction
+from common.service_tools.web_panel_templates import panel_navigation, render_document
+from desktop import session_runtime as desktop
+from lib.atomic_io import read_json_file
+from lib.guacamole_config import HTTP_SOCKET, RDP_SOCKET, RELEASE
+from lib.validation import validate_filesystem_path
+from lib.validators import validate_username
+
+ASSETS = Path(__file__).resolve().parents[2] / "desktop/config"
+MAX_SESSION = 3600
+IDLE_TIMEOUT = 600
+ATTACH_TIMEOUT = 30
+BODY_LIMIT = 8192
+
+
+def load_configuration(path: str) -> dict:
+    validate_filesystem_path(path, must_exist=True)
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError("Guacamole configuration must be a root-owned regular file")
+    value = read_json_file(path, max_bytes=16384)
+    if (not isinstance(value, dict) or value.get("version") != 1
+            or not validate_username(value.get("username", ""))
+            or type(value.get("uid")) is not int or value["uid"] != os.getuid() or value["uid"] == 0
+            or type(value.get("socket_gid")) is not int or value["socket_gid"] < 0
+            or not isinstance(value.get("certificate"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value["certificate"])
+            or not isinstance(value.get("origins"), list) or not 1 <= len(value["origins"]) <= 64
+            or any(not isinstance(origin, str) or not origin.startswith("https://") or len(origin) > 300 for origin in value["origins"])):
+        raise ValueError("Invalid Guacamole configuration")
+    return value
+
+
+async def desktop_call(action: str) -> dict:
+    function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request({"action": action})
+    return await asyncio.wait_for(asyncio.to_thread(function), 65 if action == "start" else 35)
+
+
+@dataclass
+class Session:
+    identifier: str
+    generation: str
+    geometry: list[int]
+    password: str = field(repr=False)
+    created: float = field(default_factory=time.monotonic)
+    activity: float = field(default_factory=time.monotonic)
+    attached: bool = False
+    ready: bool = False
+    controlled: bool = False
+    keys: set[str] = field(default_factory=set)
+    pointer: list[str] | None = None
+    socket: web.WebSocketResponse | None = None
+    upstream: asyncio.StreamWriter | None = None
+
+    def release_input(self) -> None:
+        """Release held keys/buttons whenever browser control ends."""
+        self.controlled = False
+        if self.upstream is not None and not self.upstream.is_closing():
+            for key in self.keys:
+                self.upstream.write(instruction("key", key, "0").encode())
+            if self.pointer is not None:
+                self.upstream.write(instruction("mouse", *self.pointer, "0").encode())
+        self.keys.clear()
+        self.pointer = None
+
+    async def close(self) -> None:
+        self.ready = False
+        self.release_input()
+        self.password = ""
+        if self.upstream is not None:
+            self.upstream.close()
+        if self.socket is not None and self.socket.prepared:
+            await self.socket.close()
+
+
+class Gateway:
+    def __init__(self, config: dict):
+        self.config = config
+        self.csrf = secrets.token_urlsafe(32)
+        self.session: Session | None = None
+        self.lock = asyncio.Lock()
+
+    def authenticate(self, request: web.Request, *, origin: bool = False) -> None:
+        expected = "https://" + request.headers.get("Host", "")
+        if (request.headers.get("X-Forwarded-Proto") != "https"
+                or request.headers.get("X-Guacamole-User") != self.config["username"]
+                or expected not in self.config["origins"]
+                or (origin and request.headers.get("Origin") != expected)):
+            raise web.HTTPForbidden(text="Desktop access denied")
+
+    async def form(self, request: web.Request, allowed: set[str]) -> dict:
+        self.authenticate(request, origin=True)
+        if request.query or request.content_type != "application/json":
+            raise web.HTTPBadRequest(text="Invalid desktop request")
+        try:
+            # read_json_file's duplicate-key rule is also applied to requests.
+            def pairs(items):
+                result = {}
+                for key, value in items:
+                    if key in result:
+                        raise ValueError("Duplicate field")
+                    result[key] = value
+                return result
+            value = json.loads(await request.text(), object_pairs_hook=pairs)
+        except (ValueError, UnicodeError):
+            raise web.HTTPBadRequest(text="Invalid desktop request") from None
+        if (not isinstance(value, dict) or set(value) != allowed | {"csrf"}
+                or not isinstance(value.get("csrf"), str)
+                or not secrets.compare_digest(value["csrf"].encode("utf-8"), self.csrf.encode("ascii"))):
+            raise web.HTTPForbidden(text="Invalid desktop request")
+        return value
+
+    async def page(self, request: web.Request) -> web.Response:
+        self.authenticate(request)
+        if request.query:
+            raise web.HTTPBadRequest(text="Invalid desktop URL")
+        content = f'''<section class="desktop-panel"><h2>Shared desktop</h2>
+<p>Connect to observe the agent. Take control pauses agent desktop actions; resume remains explicit.</p>
+<form id="connect-form"><input type="hidden" id="csrf" value="{self.csrf}">
+<label>Account <input value="{html.escape(self.config['username'], quote=True)}" readonly autocomplete="username"></label>
+<label>Unix account password <input id="password" type="password" required maxlength="1024" autocomplete="off"></label>
+<button id="connect">Connect to desktop</button></form>
+<div class="desktop-controls"><button id="take" disabled>Take control</button>
+<button id="observe" disabled>Observe only</button><button id="resume" disabled>Resume agent</button>
+<button id="disconnect" type="button">Disconnect browser session</button><button id="fullscreen" disabled>Fullscreen</button></div>
+<p id="status" role="status" aria-live="polite">Disconnected</p>
+<div id="screen" tabindex="0" aria-label="Remote desktop"></div>
+<p>Clipboard, file transfer, audio and recording are disabled. Closing this connection keeps the desktop running.
+Keep administrator sign-ins and privilege approvals on your own device.</p>
+<noscript>JavaScript is required for the browser desktop.</noscript></section>'''
+        navigation = list(panel_navigation())
+        navigation.insert(2, ("/desktop/", "Desktop", "desktop"))
+        page = render_document(title="Desktop", style=CSS,
+                               header='<header><p class="eyebrow">Workspace</p><h1>Desktop</h1></header>',
+                               content=content, navigation=navigation,
+                               footer='<footer>Basaltwater · Guacamole</footer>')
+        page = page.replace("</body>", '<script src="/desktop/assets/all.js"></script><script src="/desktop/assets/desktop.js"></script></body>')
+        return web.Response(text=page, content_type="text/html")
+
+    async def asset(self, request: web.Request) -> web.Response:
+        self.authenticate(request)
+        if request.query:
+            raise web.HTTPBadRequest(text="Invalid asset URL")
+        paths = {"all.js": Path(RELEASE) / "share/all.js", "desktop.js": ASSETS / "guacamole.js"}
+        path = paths.get(request.match_info["name"])
+        if path is None:
+            raise web.HTTPNotFound()
+        return web.Response(body=path.read_bytes(), content_type="application/javascript")
+
+    async def connect(self, request: web.Request) -> web.Response:
+        value = await self.form(request, {"password"})
+        password = value.pop("password")
+        if not isinstance(password, str) or not 1 <= len(password) <= 1024 or "\0" in password:
+            raise web.HTTPBadRequest(text="Enter the Unix account password")
+        async with self.lock:
+            if self.session is not None:
+                raise web.HTTPConflict(text="A browser session is already open; disconnect it first")
+            # Starting is an explicit authenticated action. It reuses the
+            # managed display and never starts a second GUI or stores a password.
+            snapshot = await desktop_call("start")
+            if snapshot.get("state") != "running" or not snapshot.get("generation"):
+                raise web.HTTPServiceUnavailable(text="Shared desktop is unavailable")
+            geometry = snapshot.get("geometry")
+            if not isinstance(geometry, list) or len(geometry) != 2 or any(type(n) is not int or not 1 <= n <= 16384 for n in geometry):
+                raise web.HTTPServiceUnavailable(text="Desktop geometry is unavailable")
+            self.session = Session(secrets.token_urlsafe(32), snapshot["generation"], geometry, password)
+            return web.json_response({"attachment": self.session.identifier, "expires_in": ATTACH_TIMEOUT})
+
+    def selected_session(self, identifier: str) -> Session:
+        session = self.session
+        if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", identifier) or session is None or not secrets.compare_digest(identifier, session.identifier):
+            raise web.HTTPForbidden(text="Desktop session expired")
+        return session
+
+    async def control(self, request: web.Request) -> web.Response:
+        value = await self.form(request, {"session", "action"})
+        if not isinstance(value["action"], str) or value["action"] not in {"take", "observe", "resume"}:
+            raise web.HTTPBadRequest(text="Invalid desktop action")
+        async with self.lock:
+            session = self.selected_session(value["session"])
+            if not session.ready:
+                raise web.HTTPConflict(text="Connect before taking control")
+            session.release_input()
+            snapshot = await desktop_call("status")
+            if snapshot.get("state") != "running" or snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry:
+                await session.close()
+                raise web.HTTPConflict(text="Desktop session changed; reconnect")
+            action = value["action"]
+            if action != "observe":
+                snapshot = await desktop_call("pause" if action == "take" else "resume")
+                if snapshot.get("generation") != session.generation:
+                    await session.close()
+                    raise web.HTTPConflict(text="Desktop session changed; reconnect")
+            session.controlled = action == "take" and snapshot.get("paused") is True
+            session.activity = time.monotonic()
+            return web.json_response({"controlled": session.controlled, "paused": snapshot.get("paused", False)})
+
+    async def disconnect(self, request: web.Request) -> web.Response:
+        await self.form(request, set())
+        async with self.lock:
+            if self.session:
+                await self.session.close()
+                self.session = None
+        # Disconnect never resumes an agent or logs out applications.
+        return web.json_response({"disconnected": True})
+
+    async def websocket(self, request: web.Request) -> web.WebSocketResponse:
+        self.authenticate(request, origin=True)
+        if set(request.query) != {"attachment"} or len(request.query.getall("attachment")) != 1:
+            raise web.HTTPForbidden(text="Invalid desktop attachment")
+        ws = web.WebSocketResponse(protocols=("guacamole",), heartbeat=20, max_msg_size=65536, compress=False)
+        if not ws.can_prepare(request).ok or "guacamole" not in [p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")]:
+            raise web.HTTPBadRequest(text="A Guacamole WebSocket is required")
+        async with self.lock:
+            session = self.selected_session(request.query["attachment"])
+            if session.attached or time.monotonic() - session.created >= ATTACH_TIMEOUT:
+                raise web.HTTPForbidden(text="Desktop attachment expired or already used")
+            session.attached = True
+            session.socket = ws
+            # Claim once before any asynchronous work, including upstream login.
+        tasks = []
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", 4822, limit=65536), 5)
+            session.upstream = writer
+            try:
+                identifier = await asyncio.wait_for(handshake(reader, writer, self.config["username"], session.password,
+                                                             self.config["certificate"], session.geometry), 30)
+            finally:
+                session.password = ""
+            await ws.prepare(request)
+            session.ready = True
+            await ws.send_str(instruction("", identifier))
+            tasks = [asyncio.create_task(self.to_browser(reader, ws)),
+                     asyncio.create_task(self.from_browser(session, writer, ws)),
+                     asyncio.create_task(self.watch(session))]
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        except (OSError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+            if not ws.prepared:
+                raise web.HTTPBadGateway(text="Desktop login failed; check the Unix password and XRDP readiness") from None
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await session.close()
+            if self.session is session:
+                self.session = None
+        return ws
+
+    async def to_browser(self, reader: asyncio.StreamReader, ws: web.WebSocketResponse) -> None:
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        while data := await reader.read(65536):
+            text = decoder.decode(data)
+            if text:
+                await ws.send_str(text)
+        decoder.decode(b"", final=True)
+
+    async def from_browser(self, session: Session, writer: asyncio.StreamWriter, ws: web.WebSocketResponse) -> None:
+        parser = Parser()
+        async for message in ws:
+            if message.type != WSMsgType.TEXT:
+                return
+            elements_list = parser.feed(message.data)
+            async with self.lock:
+                if self.session is not session:
+                    return
+                if any(elements[0] in {"key", "mouse"} for elements in elements_list) and session.controlled:
+                    snapshot = await desktop_call("status")
+                    if snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry or snapshot.get("paused") is not True:
+                        session.release_input()
+                for elements in elements_list:
+                    # Guacamole's tunnel ping belongs to this WebSocket layer,
+                    # not guacd. It cannot renew user inactivity or authorize input.
+                    if elements[0] == "" and len(elements) == 3 and elements[1] == "ping" and elements[2].isascii() and elements[2].isdigit():
+                        await ws.send_str(instruction(*elements))
+                        continue
+                    accepted = filter_instruction(elements, session.controlled)
+                    if accepted is not None:
+                        if elements[0] == "key":
+                            if elements[2] == "1":
+                                if len(session.keys) >= 64:
+                                    raise ValueError("Too many simultaneously held keys")
+                                session.keys.add(elements[1])
+                            else:
+                                session.keys.discard(elements[1])
+                        elif elements[0] == "mouse":
+                            session.pointer = elements[1:3] if elements[3] != "0" else None
+                        writer.write(accepted.encode("utf-8"))
+                        if elements[0] in {"key", "mouse"}:
+                            session.activity = time.monotonic()
+                await writer.drain()
+
+    async def watch(self, session: Session) -> None:
+        while self.session is session:
+            await asyncio.sleep(2)
+            now = time.monotonic()
+            if now - session.created >= MAX_SESSION or now - session.activity >= IDLE_TIMEOUT:
+                return
+            snapshot = await desktop_call("status")
+            if snapshot.get("state") != "running" or snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry:
+                return
+            if snapshot.get("paused") is not True:
+                session.release_input()
+
+    async def expire_pending(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            async with self.lock:
+                if self.session and not self.session.attached and time.monotonic() - self.session.created >= ATTACH_TIMEOUT:
+                    await self.session.close()
+                    self.session = None
+
+
+CSS = """
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}
+.sidebar{position:fixed;inset:0 auto 0 0;width:235px;padding:24px 12px;background:var(--panel);overflow:auto}
+.sidebar a{display:flex;gap:10px;padding:10px;text-decoration:none;color:var(--text);border-radius:8px}
+.nav-group{color:var(--muted);font-size:.8rem;margin:20px 10px 8px}main{margin-left:235px;padding:24px;max-width:1920px}
+header,.desktop-panel{padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--panel);margin-bottom:20px}
+.eyebrow{color:var(--accent);font-size:.85rem}h1{margin:10px 0}p{line-height:1.6}label{display:flex;flex-direction:column;gap:6px}
+form,.desktop-controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:16px 0}
+button,input{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px}
+input{color:var(--text);background:var(--bg)}button{color:var(--panel);background:var(--accent);cursor:pointer}
+button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:auto;width:100%;min-height:240px;background:#111}
+#screen:fullscreen{display:flex;align-items:center;justify-content:center}#status{font-weight:600}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:10px}
+footer{padding:20px;color:var(--muted)}@media(max-width:900px){.sidebar{position:static;width:auto}.nav-links{display:flex;overflow:auto}.nav-links a{flex:none}.nav-group{display:none}main{margin:0;padding:12px}}
+"""
+
+
+def create_app(config: dict) -> web.Application:
+    gateway = Gateway(config)
+
+    @web.middleware
+    async def security(request, handler):
+        try:
+            response = await handler(request)
+        except web.HTTPException as exc:
+            response = exc
+        except (OSError, ValueError, RuntimeError, asyncio.TimeoutError):
+            response = web.Response(status=503, text="Desktop unavailable; inspect the desktop and service readiness")
+        if not response.prepared:
+            response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                                     "Content-Security-Policy": "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        return response
+
+    app = web.Application(client_max_size=BODY_LIMIT, middlewares=[security])
+    app["gateway"] = gateway
+    app.router.add_get("/desktop/", gateway.page)
+    app.router.add_get("/desktop/assets/{name}", gateway.asset)
+    app.router.add_post("/desktop/session", gateway.connect)
+    app.router.add_post("/desktop/control", gateway.control)
+    app.router.add_post("/desktop/disconnect", gateway.disconnect)
+    app.router.add_get("/desktop/ws", gateway.websocket)
+
+    async def lifecycle(application):
+        expiry = asyncio.create_task(gateway.expire_pending())
+        yield
+        expiry.cancel()
+        await asyncio.gather(expiry, return_exceptions=True)
+        if gateway.session:
+            await gateway.session.close()
+    app.cleanup_ctx.append(lifecycle)
+    return app
+
+
+async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    while data := await reader.read(65536):
+        writer.write(data)
+        await writer.drain()
+
+
+async def relay(reader, writer, *, outside: bool) -> None:
+    """The only namespace escape is a fixed, account-private local XRDP socket."""
+    upstream = None
+    tasks = []
+    try:
+        other_reader, upstream = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", 3389) if outside else asyncio.open_unix_connection(RDP_SOCKET), 5)
+        tasks = [asyncio.create_task(pipe(reader, upstream)), asyncio.create_task(pipe(other_reader, writer))]
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except OSError:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        writer.close()
+        if upstream:
+            upstream.close()
+
+
+def private_socket(path: str, gid: int | None = None) -> socket.socket:
+    validate_filesystem_path(path, must_exist=False)
+    if os.path.lexists(path):
+        info = os.lstat(path)
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+            raise ValueError("Refusing an unsafe Guacamole socket")
+        os.unlink(path)
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(path)
+    os.chmod(path, 0o600 if gid is None else 0o660)
+    if gid is not None:
+        os.chown(path, -1, gid)
+    listener.listen(16)
+    listener.setblocking(False)
+    return listener
+
+
+async def serve(config: dict | None) -> None:
+    if config is None:
+        listener = private_socket(RDP_SOCKET)
+        server = await asyncio.start_unix_server(lambda r, w: relay(r, w, outside=True), sock=listener)
+        async with server:
+            await server.serve_forever()
+        return
+    app = create_app(config)
+    runner = web.AppRunner(app, access_log=None, shutdown_timeout=10)
+    process = None
+    server = None
+    try:
+        server = await asyncio.start_server(lambda r, w: relay(r, w, outside=False), "127.0.0.1", 3389)
+        process = await asyncio.create_subprocess_exec(f"{RELEASE}/sbin/guacd", "-f", "-b", "127.0.0.1", "-l", "4822", "-L", "error",
+                                                     "-p", str(Path(HTTP_SOCKET).parent / "guacd.pid"),
+                                                     env={**os.environ, "LD_LIBRARY_PATH": f"{RELEASE}/lib"},
+                                                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        # Fail startup if the pinned native gateway does not listen promptly.
+        for _ in range(50):
+            if process.returncode is not None:
+                raise RuntimeError("guacd failed to start")
+            try:
+                _, writer = await asyncio.open_connection("127.0.0.1", 4822)
+                writer.close()
+                await writer.wait_closed()
+                break
+            except OSError:
+                await asyncio.sleep(.1)
+        else:
+            raise RuntimeError("guacd startup timed out")
+        await runner.setup()
+        await web.SockSite(runner, private_socket(HTTP_SOCKET, config["socket_gid"])).start()
+        await process.wait()
+        raise RuntimeError("guacd stopped")
+    finally:
+        await runner.cleanup()
+        if server:
+            server.close()
+            await server.wait_closed()
+        if process and process.returncode is None:
+            process.terminate()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(process.wait(), 5)
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--config")
+    mode.add_argument("--rdp-relay", action="store_true")
+    args = parser.parse_args()
+    try:
+        asyncio.run(serve(None if args.rdp_relay else load_configuration(args.config)))
+    except KeyboardInterrupt:
+        return 0
+    except (OSError, ValueError, RuntimeError):
+        print("Guacamole startup failed; check managed configuration, sockets and runtime dependencies", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

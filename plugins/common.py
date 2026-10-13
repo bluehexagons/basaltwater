@@ -378,6 +378,10 @@ def extend_web_panel_steps(
 ) -> None:
     """Append the optional authenticated web panel."""
 
+    from lib.guacamole_config import validate_guacamole_settings
+
+    validate_guacamole_settings(config)
+
     if config.privilege_broker_port is not None or config.disable_privilege_broker:
         from common.privilege_broker_steps import configure_privilege_broker
 

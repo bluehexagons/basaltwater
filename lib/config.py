@@ -470,6 +470,7 @@ class SetupConfig:
     web_panel_payload: bool = False
     web_panel_notification_ingest: Optional[bool] = None
     disable_web_panel: bool = False
+    guacamole: Optional[bool] = None
     maintenance_agent: Optional[bool] = None
     maintenance_agent_interval: Optional[int] = None
     maintenance_agent_routines: Optional[bool] = None
@@ -599,6 +600,13 @@ class SetupConfig:
     include_web_firewall: bool = False
 
     def __post_init__(self) -> None:
+        if self.disable_web_panel:
+            self.guacamole = False
+        if self.guacamole:
+            self.include_desktop = True
+        from lib.guacamole_config import validate_guacamole_settings
+
+        validate_guacamole_settings(self, complete=False)
         # "full" deployment mode means "always pull fresh repositories and
         # rebuild everything" (a full redeploy). That necessarily implies
         # full_deploy, so keep the two in sync. Without this, passing
@@ -1273,6 +1281,8 @@ class SetupConfig:
                 args.append("--web-panel-payload")
             if self.web_panel_notification_ingest is True:
                 args.append("--web-panel-notification-ingest")
+        if self.guacamole is not None:
+            args.append("--guacamole" if self.guacamole else "--no-guacamole")
 
         if self.browser_automation:
             args.append(
@@ -1839,6 +1849,8 @@ class SetupConfig:
                 cmd_parts.append(f"--web-panel {self.web_panel_port}")
             if self.web_panel_notification_ingest is True:
                 cmd_parts.append("--web-panel-notification-ingest")
+        if self.guacamole is not None:
+            cmd_parts.append("--guacamole" if self.guacamole else "--no-guacamole")
 
         if self.disable_browser_automation:
             cmd_parts.append("--no-browser-automation")
@@ -2176,6 +2188,7 @@ class SetupConfig:
         data['web_panel_notification_ingest'] = bool(
             self.web_panel_notification_ingest
         )
+        data['guacamole'] = bool(self.guacamole)
         data['notification_strict_https'] = bool(self.notification_strict_https)
         if self.enable_syncthing and not self.syncthing_root:
             data['syncthing_root'] = DEFAULT_SYNCTHING_ROOT
@@ -2723,6 +2736,7 @@ class SetupConfig:
                 args, 'web_panel_notification_ingest'
             ),
             disable_web_panel=disable_web_panel,
+            guacamole=_optional_bool_arg(args, 'guacamole'),
             maintenance_agent=_optional_bool_arg(args, 'maintenance_agent'),
             maintenance_agent_interval=_optional_int_arg(args, 'maintenance_agent_interval'),
             maintenance_agent_routines=_optional_bool_arg(args, 'maintenance_agent_routines'),

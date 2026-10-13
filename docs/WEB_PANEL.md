@@ -10,6 +10,7 @@ under the panel account; no T3 Code installation is required.
 | Check host health | Overview | Uptime, load average, memory, swap, resource pressure, kernel, reboot state, and update timers |
 | Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
+| Observe or control an agent desktop | Desktop (Guacamole), under Services | Optional browser access to the existing shared XRDP desktop |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
@@ -122,6 +123,17 @@ password for [privilege approvals](PRIVILEGE_APPROVALS.md).
 With `--ssl`, the panel uses a suitable existing certificate or the managed VM
 CA. Enroll that CA on your client when required; see [Client CA trust](CLIENT_CA_TRUST.md).
 Without TLS, Basic Auth crosses the network as plaintext.
+
+## Browser desktop
+
+Add `--guacamole` to an HTTPS panel setup to install an embedded browser desktop.
+It enables the shared desktop without opening RDP ingress. Open **Desktop
+(Guacamole)** under **Services**, enter the setup account's Unix password, and
+connect to observe. **Take control** pauses agent desktop actions; **Resume
+agent** is explicit. The panel password and Unix password remain separate.
+Use `--no-guacamole` to remove browser access while retaining the desktop.
+See [Guacamole browser desktop](GUACAMOLE.md) for installation, limits,
+security boundaries and recovery.
 
 ## Git and credential settings
 
