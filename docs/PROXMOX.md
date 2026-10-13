@@ -1016,8 +1016,13 @@ VM images in Proxmox storage settings if required. Basaltwater does not change
 storage content policy. Shared disks retain their pool and volume identity.
 The plan checks aggregate free space for all local disks, including cloud-init
 and unused volumes, and verifies every declared bridge exists on the destination.
-Detach local ISO media first. External cloud-init snippets, hooks, passthrough
-devices, and host-path disks or bind mounts require operator-managed migration.
+Detach local ISO media first. External cloud-init snippets, hooks, custom QEMU
+arguments, passthrough devices, host serial/parallel devices, and host-path disks
+or bind mounts require operator-managed migration. Serial sockets are supported.
+Guests with snapshots also require operator-managed migration: this workflow
+verifies the current disk layout and cannot verify snapshot-only volumes or
+snapshot-backend compatibility. These checks run again before shutdown and
+destination activation, so a resource added after inspection is rejected.
 
 Both hosts must belong to the same Proxmox cluster, with quorum and working
 node-to-node SSH. Inspection verifies matching cluster CA identities and
@@ -1033,9 +1038,17 @@ shutdown with a 180-second default, configurable with `--shutdown-timeout`.
 Shutdown failure or a guest that remains running stops the workflow before
 transfer; it never forces power off. After the native transfer, Basaltwater
 verifies the destination's identity, network, hardware, disk attachments,
-properties, pools, and actual volume existence and minimum sizes, and verifies
-the source configuration is absent. QEMU
-also requires no live process at the source's recorded guest PID. The command
+properties, boot settings, pools, and actual volume existence and minimum sizes,
+and verifies the source configuration is absent. Informational QEMU disk sizes
+may be corrected by Proxmox during the move; verification accepts corrections
+to the inspected volume capacity, including decimal and bare-byte size formats.
+Minimum disk capacity comes from the actual source volume, so stale size
+metadata cannot hide a truncated destination or validate an oversized saved
+storage declaration. EFI variable capacity follows the native firmware layout;
+TPM state is verified against the source state file even when Proxmox reports
+its fixed 4 MiB allocation. Other disk properties remain unchanged. These rules
+follow [Proxmox's native size correction](https://github.com/proxmox/qemu-server/blob/master/src/PVE/QemuMigrate.pm).
+QEMU also requires no live process at the source's recorded guest PID. The command
 then updates matching saved setups and starts a guest that was originally
 running. An originally stopped guest remains stopped. LXC follows this offline
 workflow; `--online` and `--with-local-disks` are QEMU-only options.
@@ -1055,8 +1068,11 @@ basaltw proxmox migrate pve1 agent-dev-01 pve2 \
   --target-storage local --timeout 14400 --resume
 ```
 
-Resume rejects an active native task. When the guest is verified on the
-destination, it finishes configuration checks, saved updates, and power-state
+Resume rejects an active native task. A recovery dry run performs the same
+destination checks when the transfer is complete and previews only the remaining
+saved updates and startup. It also rejects an uncertain source-side transfer
+instead of previewing a copy that execution would refuse. When the guest is
+verified on the destination, it finishes configuration checks, saved updates, and power-state
 restoration without repeating the disk transfer. A failed shutdown can be
 resumed safely. An uncertain transfer whose guest remains on the source is
 never replayed automatically, including with `--resume`; complete native recovery

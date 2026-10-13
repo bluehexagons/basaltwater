@@ -14,7 +14,8 @@ from lib.operation_state import OperationStateError, OperationStateStore
 from lib.proxmox_guest import ProvisionError, remote_proxmox_locks
 from lib.proxmox_hosts import ProxmoxHost
 from lib.proxmox_migration_setups import (
-    apply_setup_updates, drive_parts, guest_address, prepare_setup_updates, validate_setup_updates,
+    apply_setup_updates, drive_parts, guest_address, prepare_setup_updates, provider_size_bytes,
+    validate_setup_updates,
 )
 from lib.remote_utils import CommandTimeoutError, run
 from lib.ssh_utils import build_ssh_command, get_ssh_control_path, ssh_process_timeout
@@ -22,14 +23,17 @@ from lib.validation import (
     validate_filesystem_path, validate_network_ip, validate_positive_integer, validate_proxmox_storage_name,
 )
 from lib.validators import validate_host, validate_ip_address, validate_username
-from lib.vm_storage import storage_size_kib
 from lib.workspace import get_known_hosts_path, normalize_workspace_dir
 
 
 DEFAULT_MIGRATION_TIMEOUT = 3600
 DEFAULT_SHUTDOWN_TIMEOUT = 180
 _DRIVE = re.compile(r"(?:scsi|sata|ide|virtio|mp|unused)\d+|efidisk0|tpmstate0|rootfs")
-_IDENTITY = re.compile(r"(?:net|ipconfig|serial)\d+|name|hostname|smbios1|vmgenid|memory|balloon|cpu|cores|sockets|bios|machine|scsihw|ostype|onboot|startup|agent|vga|protection")
+_IDENTITY = re.compile(
+    r"(?:net|ipconfig|serial|numa)\d+|name|hostname|smbios1|vmgenid|memory|balloon|cpu|cores|sockets|"
+    r"bios|machine|scsihw|ostype|onboot|startup|agent|vga|protection|boot|bootdisk|kvm|numa|vcpus|"
+    r"hotplug|arch|features|unprivileged|nameserver|searchdomain"
+)
 
 
 class ProxmoxMigrateError(Exception):
@@ -150,6 +154,13 @@ def _config(host: ProxmoxHost, node: str, kind: str, vmid: int, workspace: str) 
         raise ProxmoxMigrateError("Invalid guest configuration")
     if config.get("lock") or any("pending" in row or row.get("delete") for row in pending):
         raise ProxmoxMigrateError("Guest has a lock or pending configuration changes; resolve them before migration")
+    if (any(config.get(key) for key in ("cicustom", "hookscript", "args", "ivshmem", "hostpci", "hostusb"))
+            or any(re.fullmatch(r"hostpci\d+|usb\d+|virtiofs\d+|parallel\d+|dev\d+|lxc\.mount\.entry", key)
+                   or (re.fullmatch(r"serial\d+", key) and config[key] != "socket") for key in config)):
+        raise ProxmoxMigrateError("External snippets, hooks, and host-local devices require operator-managed migration")
+    snapshots = _rows(_api(host, path + "/snapshot", workspace), "snapshot")
+    if any(row.get("name") != "current" for row in snapshots):
+        raise ProxmoxMigrateError("Guests with snapshots require operator-managed migration; the current disk plan cannot verify snapshot-only volumes")
     return config
 
 
@@ -212,10 +223,23 @@ def _disk_plan(source: ProxmoxHost, target: ProxmoxHost, config: dict[str, Any],
         size = volumes[volume_key].get(volume)
         if type(size) is not int or size <= 0:
             raise ProxmoxMigrateError(f"Cannot verify the size of guest volume {volume!r}")
+        source_size = size
+        destination_size = source_size
+        if plan["kind"] == "qemu" and device == "efidisk0":
+            script = (f"my $conf = PVE::QemuConfig->load_config({plan['vmid']}); "
+                      "print PVE::QemuServer::get_efivars_size($conf);")
+            destination_size = validate_positive_integer(_run(
+                source, shlex.join(["perl", "-MPVE::QemuConfig", "-MPVE::QemuServer", "-e", script]),
+                workspace,
+            ).strip(), "Proxmox EFI variables size")
+        elif plan["kind"] == "qemu" and device == "tpmstate0":
+            destination_size = 4 * 1024 ** 2  # Native TPM allocation size; state files can be smaller.
         if options.get("size"):
-            size = max(size, storage_size_kib(options["size"]) * 1024)
+            size = max(size, provider_size_bytes(options["size"]))
+        size = max(size, destination_size)
         disks[device] = {"source_volume": volume, "source_pool": pool, "target_pool": destination,
-                         "shared": shared, "bytes": size, "options": options, "content": content}
+                         "shared": shared, "bytes": size, "source_bytes": source_size,
+                         "destination_size": destination_size, "options": options, "content": content}
         if not shared:
             required[destination] = required.get(destination, 0) + size
     if not disks:
@@ -268,7 +292,13 @@ def _verify_config(config: dict[str, Any], plan: dict[str, Any], *, destination:
     for device, disk in plan["disks"].items():
         volume, properties = drive_parts(config[device])
         expected_pool = disk["target_pool"] if destination else disk["source_pool"]
-        if (volume.partition(":")[0] != expected_pool or properties != disk["options"]
+        expected_properties = dict(disk["options"])
+        if destination and plan["kind"] == "qemu" and properties.get("size") != expected_properties.get("size"):
+            if ("size" not in properties or provider_size_bytes(properties["size"])
+                    != disk.get("destination_size", disk["bytes"])):
+                raise ProxmoxMigrateError(f"Guest disk {device} has an unverified size change")
+            expected_properties["size"] = properties["size"]
+        if (volume.partition(":")[0] != expected_pool or properties != expected_properties
                 or ((not destination or disk["shared"]) and volume != disk["source_volume"])):
             raise ProxmoxMigrateError(f"Guest disk {device} does not match the verified migration plan")
 
@@ -302,7 +332,8 @@ def _verify_destination_volumes(target: ProxmoxHost, config: dict[str, Any],
                 inventory[volume] = size
             inventories[key] = inventory
         volume, _options = drive_parts(config[device])
-        minimum = storage_size_kib(disk["options"]["size"]) * 1024 if "size" in disk["options"] else disk["bytes"]
+        minimum = (disk.get("destination_size", disk["bytes"]) if device == "efidisk0"
+                   else disk.get("source_bytes", disk["bytes"]))
         if inventories[key].get(volume, 0) < minimum:
             raise ProxmoxMigrateError(f"Destination volume for {device} is missing or smaller than the verified disk")
 
@@ -340,12 +371,32 @@ def _migration_command(plan: dict[str, Any]) -> str:
     return shlex.join(parts)
 
 
-def _execute(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], workspace: str,
-             store: OperationStateStore, operation_id: str, phase: str) -> None:
-    guest = _location(target, plan, workspace)
+def _transfer_pending(guest: dict[str, Any], plan: dict[str, Any], phase: str) -> bool:
     if guest["node"] == plan["source_node"]:
         if phase not in {"prepared", "shutting_down", "stopped"}:
             raise ProxmoxMigrateError("Previous migration has an uncertain outcome on the source; inspect its task log. Resume will not replay it")
+        return True
+    if guest["node"] != plan["target_node"]:
+        raise ProxmoxMigrateError("Guest is on an unexpected cluster node")
+    return False
+
+
+def _verify_destination(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], workspace: str) -> None:
+    _no_tasks(source, target, plan, workspace)
+    if _location(target, plan, workspace)["node"] != plan["target_node"]:
+        raise ProxmoxMigrateError("Migration did not place the guest exclusively on the destination")
+    config = _config(target, plan["target_node"], plan["kind"], plan["vmid"], workspace)
+    _verify_config(config, plan, destination=True)
+    _verify_destination_volumes(target, config, plan, workspace)
+    _verify_bridges(target, plan["identity"], workspace)
+    _verify_source_absent(source, plan, workspace)
+    _check_conflicts(target, plan, workspace)
+
+
+def _execute(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], workspace: str,
+             store: OperationStateStore, operation_id: str, phase: str) -> None:
+    guest = _location(target, plan, workspace)
+    if _transfer_pending(guest, plan, phase):
         _verify_config(_config(source, plan["source_node"], plan["kind"], plan["vmid"], workspace), plan, destination=False)
         if phase == "prepared" and (_status(source, plan["source_node"], plan, workspace) == "running") != plan["was_running"]:
             raise ProxmoxMigrateError("Guest power state changed after inspection; inspect it before resuming")
@@ -363,22 +414,14 @@ def _execute(source: ProxmoxHost, target: ProxmoxHost, plan: dict[str, Any], wor
         store.transition(operation_id, "migrating")
         print(f"  Migrating {plan['guest_name']} ({plan['vmid']}) to {target.name}")
         _run(source, _migration_command(plan), workspace, timeout=plan["timeout"], mutation=True)
-    elif guest["node"] != plan["target_node"]:
-        raise ProxmoxMigrateError("Guest is on an unexpected cluster node")
 
     store.transition(operation_id, "verifying")
-    _no_tasks(source, target, plan, workspace)
-    if _location(target, plan, workspace)["node"] != plan["target_node"]:
-        raise ProxmoxMigrateError("Migration did not place the guest exclusively on the destination")
-    destination_config = _config(target, plan["target_node"], plan["kind"], plan["vmid"], workspace)
-    _verify_config(destination_config, plan, destination=True)
-    _verify_destination_volumes(target, destination_config, plan, workspace)
-    _verify_source_absent(source, plan, workspace)
-    _check_conflicts(target, plan, workspace)
+    _verify_destination(source, target, plan, workspace)
     print("  Verified destination identity, network, hardware, and disk configuration")
 
     store.transition(operation_id, "updating_setups")
     apply_setup_updates(plan["setup_updates"], workspace)
+    _verify_config(_config(target, plan["target_node"], plan["kind"], plan["vmid"], workspace), plan, destination=True)
     if plan["was_running"]:
         store.transition(operation_id, "starting")
         if _status(target, plan["target_node"], plan, workspace) == "stopped":
@@ -464,8 +507,6 @@ def migrate_guest(
             config = _config(src_host, source_cluster["name"], guest["type"], guest["vmid"], workspace)
             if config["name" if guest["type"] == "qemu" else "hostname"] != guest["name"]:
                 raise ProxmoxMigrateError("Guest inventory and configuration names disagree")
-            if config.get("cicustom") or config.get("hookscript") or any(re.fullmatch(r"hostpci\d+|usb\d+|virtiofs\d+", key) for key in config):
-                raise ProxmoxMigrateError("External snippets, hooks, and passthrough devices require operator-managed migration")
             plan = {**request, "identity": {key: value for key, value in config.items() if _IDENTITY.fullmatch(key)}}
             plan["was_running"] = _status(src_host, plan["source_node"], plan, workspace) == "running"
             plan["disks"] = _disk_plan(src_host, target_host, config, plan, workspace)
@@ -482,9 +523,27 @@ def migrate_guest(
         print(f"  Power state after migration: {'running' if plan['was_running'] else 'stopped'}")
         print(f"  Saved setups to update in {workspace}: {len(plan['setup_updates'])}")
         if dry_run:
-            print(f"  [DRY-RUN] {'Graceful shutdown → ' if not online and plan['was_running'] else ''}"
-                  f"{_migration_command(plan)} → verify configuration → update saved setups"
-                  f"{' → start' if plan['was_running'] and not online else ''}")
+            pending = _transfer_pending(_location(target_host, plan, workspace), plan, phase)
+            steps = []
+            if pending:
+                _verify_config(_config(src_host, plan["source_node"], plan["kind"], plan["vmid"], workspace),
+                               plan, destination=False)
+                state = _status(src_host, plan["source_node"], plan, workspace)
+                if phase == "prepared" and (state == "running") != plan["was_running"]:
+                    raise ProxmoxMigrateError("Guest power state changed after inspection; inspect it before resuming")
+                if not online and state == "running":
+                    steps.append("Graceful shutdown")
+                steps.extend([_migration_command(plan), "verify destination"])
+            else:
+                _verify_destination(src_host, target_host, plan, workspace)
+                state = _status(target_host, plan["target_node"], plan, workspace)
+                if not plan["was_running"] and state != "stopped":
+                    raise ProxmoxMigrateError("Originally stopped guest unexpectedly started on the destination")
+                steps.append("verify destination (transfer already complete)")
+            steps.append("update saved setups")
+            if plan["was_running"] and ((pending and not online) or state == "stopped"):
+                steps.append("start")
+            print(f"  [DRY-RUN] {' → '.join(steps)}")
             return
         with ExitStack() as locks:
             for update in sorted(plan["setup_updates"], key=lambda update: update["host"]):

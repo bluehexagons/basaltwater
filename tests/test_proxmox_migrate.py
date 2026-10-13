@@ -19,6 +19,7 @@ from lib.cache import get_cache_path_for_host, load_setup_command, save_setup_co
 from lib.config import SetupConfig
 from lib.proxmox_hosts import ProxmoxHost, add_proxmox_host
 from lib.proxmox_migrate import ProxmoxMigrateError, _run, migrate_guest
+from lib.proxmox_migration_setups import provider_size_bytes
 from lib.setup_common import _apply_hosted_proxmox_defaults
 
 
@@ -43,6 +44,7 @@ class TestMigrateGuest(unittest.TestCase):
         self.quorate = 1
         self.tasks = []
         self.pending = []
+        self.snapshots = [{"name": "current"}]
         self.bridges = [{"ifname": "vmbr0"}]
         self.extra_guests = []
         self.other_configs = {}
@@ -50,8 +52,10 @@ class TestMigrateGuest(unittest.TestCase):
         self.failure = None
         self.ignore_shutdown = False
         self.before_migration = None
+        self.after_transfer = None
+        self.efi_size = 528 * 1024
         self.config = {
-            "name": self.name, "memory": 4096, "cpu": "host", "onboot": 1,
+            "name": self.name, "memory": 4096, "cpu": "host", "onboot": 1, "boot": "order=scsi0",
             "net0": "virtio=02:00:00:00:00:01,bridge=vmbr0",
             "ipconfig0": "ip=10.0.0.50/24,gw=10.0.0.1",
             "scsi0": "hdd:vm-100-disk-0,size=8G,discard=on,ssd=0",
@@ -88,6 +92,9 @@ class TestMigrateGuest(unittest.TestCase):
             return self.ca[host.name] + "  /etc/pve/pve-root-ca.pem\n"
         if command == "ip -j link show type bridge":
             return json.dumps(self.bridges)
+        if tokens[0] == "perl":
+            self.assertIn("PVE::QemuServer::get_efivars_size($conf)", tokens[-1])
+            return str(self.efi_size)
         if command.startswith("test ! -e /etc/pve/local/"):
             if self.node != "pve2" or self.failure == "source_runtime":
                 raise ProxmoxMigrateError("source still has a guest configuration or running process")
@@ -107,6 +114,8 @@ class TestMigrateGuest(unittest.TestCase):
                 return json.dumps(self.tasks)
             if path.endswith("/pending"):
                 return json.dumps(self.pending)
+            if path.endswith("/snapshot"):
+                return json.dumps(self.snapshots)
             if path.endswith("/config"):
                 self.assertIn("--current", tokens)
                 if path.split("/")[-2] != "100":
@@ -141,6 +150,21 @@ class TestMigrateGuest(unittest.TestCase):
                 {**volume, "volid": volume["volid"].replace("hdd:", "local:", 1)}
                 for volume in self.volumes
             ]
+            if self.kind == "qemu":
+                for device in ("scsi0", "scsi1", "ide2", "efidisk0", "tpmstate0"):
+                    if device not in self.destination_config:
+                        continue
+                    volume, *properties = self.destination_config[device].split(",")
+                    row = next(row for row in self.destination_volumes if row["volid"] == volume)
+                    if volume.startswith("shared:") and device not in {"efidisk0", "tpmstate0"}:
+                        continue
+                    size = self.efi_size if device == "efidisk0" else 4 * 1024 ** 2 if device == "tpmstate0" else row["size"]
+                    properties = [option for option in properties if not option.startswith("size=")]
+                    self.destination_config[device] = ",".join([volume, *properties, f"size={size}"])
+                    if device == "efidisk0":
+                        row["size"] = size
+            if self.after_transfer:
+                self.after_transfer()
             if self.failure == "missing_destination_volume":
                 self.destination_volumes.pop(0)
             if self.failure == "undersized_destination_volume":
@@ -293,6 +317,39 @@ class TestMigrateGuest(unittest.TestCase):
         self.assertEqual(self.state, "running")
         self.assertEqual(load_setup_command("10.0.0.50").hosted_node, self.target.address)
 
+    def test_resume_dry_run_verifies_completed_transfer_and_only_previews_remaining_work(self):
+        self._save_setup()
+        self.failure = "lost_result"
+        with self.assertRaises(ProxmoxMigrateError):
+            self._migrate()
+        self.failure = None
+        before = {str(p): p.read_bytes() for p in Path(self.workspace).rglob("*") if p.is_file()}
+        actions = list(self.actions)
+        output = self._migrate(resume=True, dry_run=True)
+        self.assertIn("transfer already complete", output)
+        self.assertIn("update saved setups → start", output)
+        self.assertNotIn("qm migrate", output)
+        self.assertEqual(actions, self.actions)
+        self.assertEqual(before, {str(p): p.read_bytes() for p in Path(self.workspace).rglob("*") if p.is_file()})
+
+    def test_resume_dry_run_rejects_missing_destination_data(self):
+        self.failure = "lost_result"
+        with self.assertRaises(ProxmoxMigrateError):
+            self._migrate()
+        self.failure = None
+        self.destination_volumes.pop(0)
+        with self.assertRaisesRegex(ProxmoxMigrateError, "missing or smaller"):
+            self._migrate(resume=True, dry_run=True)
+        self.assertEqual(self.state, "stopped")
+
+    def test_resume_dry_run_does_not_promise_replaying_an_uncertain_source_transfer(self):
+        self.failure = "migration"
+        with self.assertRaises(ProxmoxMigrateError):
+            self._migrate()
+        with self.assertRaisesRegex(ProxmoxMigrateError, "will not replay"):
+            self._migrate(resume=True, dry_run=True)
+        self.assertEqual(len(self.actions), 2)
+
     def test_start_failure_keeps_destination_binding_and_can_resume(self):
         self._save_setup()
         self.failure = "start"
@@ -393,11 +450,138 @@ class TestMigrateGuest(unittest.TestCase):
             self._migrate()
         self.assertEqual(self.actions, [])
 
+    def test_native_informational_size_correction_preserves_larger_actual_disk(self):
+        self._save_setup()
+        self.volumes[0]["size"] = 12 * GIB
+        self._migrate()
+        self.assertIn(f"size={12 * GIB}", self.destination_config["scsi0"])
+        self.assertEqual(self.state, "running")
+        self.assertEqual(load_setup_command("10.0.0.50").container_storage[0], ["root", "local", "8G"])
+
+    def test_native_size_added_to_disk_without_size_metadata_is_allowed(self):
+        self.config["scsi0"] = self.config["scsi0"].replace(",size=8G", "")
+        self._migrate()
+        self.assertEqual(self.state, "running")
+
+    def test_destination_cannot_shrink_to_stale_informational_size(self):
+        path = self._save_setup()
+        original = path.read_bytes()
+        self.volumes[0]["size"] = 12 * GIB
+        def shrink():
+            self.destination_volumes[0]["size"] = 8 * GIB
+            self.destination_config["scsi0"] = self.destination_config["scsi0"].replace(
+                f"size={12 * GIB}", "size=8G")
+        self.after_transfer = shrink
+        with self.assertRaisesRegex(ProxmoxMigrateError, "smaller than the verified disk"):
+            self._migrate()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.state, "stopped")
+
+    def test_unexpected_informational_size_change_does_not_start(self):
+        def change_size():
+            self.destination_config["scsi0"] = self.destination_config["scsi0"].replace(
+                f"size={8 * GIB}", "size=20G")
+        self.after_transfer = change_size
+        with self.assertRaisesRegex(ProxmoxMigrateError, "unverified size change"):
+            self._migrate()
+        self.assertEqual(self.state, "stopped")
+
+    def test_saved_capacity_must_fit_actual_volume_despite_larger_metadata(self):
+        path = self._save_setup()
+        original = path.read_bytes()
+        self.volumes[0]["size"] = 4 * GIB
+        with self.assertRaisesRegex(ProxmoxMigrateError, "smaller than saved disk"):
+            self._migrate()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.actions, [])
+
+    def test_native_efi_and_tpm_size_normalization_preserves_special_disks(self):
+        self.config["efidisk0"] = "hdd:vm-100-disk-2,size=4M,efitype=4m,pre-enrolled-keys=1"
+        self.config["tpmstate0"] = "hdd:vm-100-disk-3,size=16K,version=v2.0"
+        self.volumes.extend([{"volid": "hdd:vm-100-disk-2", "size": 4 * 1024 ** 2},
+                             {"volid": "hdd:vm-100-disk-3", "size": 16 * 1024}])
+        self._migrate()
+        self.assertIn(f"size={self.efi_size}", self.destination_config["efidisk0"])
+        self.assertIn(f"size={4 * 1024 ** 2}", self.destination_config["tpmstate0"])
+        self.assertEqual(self.state, "running")
+
+    def test_invalid_native_efi_size_blocks_before_shutdown(self):
+        self.config["efidisk0"] = "hdd:vm-100-disk-2,size=4M,efitype=4m"
+        self.volumes.append({"volid": "hdd:vm-100-disk-2", "size": 4 * 1024 ** 2})
+        self.efi_size = 0
+        with self.assertRaisesRegex(ProxmoxMigrateError, "EFI variables size"):
+            self._migrate()
+        self.assertEqual(self.actions, [])
+
+    def test_provider_sizes_accept_native_formats_and_reject_invalid_values(self):
+        for value, expected in (("1.5G", GIB * 3 // 2), ("8GiB", 8 * GIB), ("528K", 528 * 1024),
+                                ("540673", 540673), ("2T", 2 * 1024 ** 4)):
+            with self.subTest(value=value):
+                self.assertEqual(provider_size_bytes(value), expected)
+        for value in ("0G", "-1G", "nan", "1e3G", "8G\n", "1Q", "١G", ""):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                provider_size_bytes(value)
+
+    def test_boot_configuration_drift_does_not_start_or_update(self):
+        path = self._save_setup()
+        original = path.read_bytes()
+        self.after_transfer = lambda: self.destination_config.update({"boot": "order=net0"})
+        with self.assertRaisesRegex(ProxmoxMigrateError, "identity or hardware changed"):
+            self._migrate()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.state, "stopped")
+
+    def test_snapshots_are_rejected_before_shutdown(self):
+        self.snapshots.append({"name": "before-upgrade"})
+        with self.assertRaisesRegex(ProxmoxMigrateError, "snapshot-only volumes"):
+            self._migrate()
+        self.assertEqual(self.actions, [])
+
+    def test_hook_added_after_inspection_blocks_before_shutdown(self):
+        real_transport = self._fake_run
+        def transport(host, command, workspace, **options):
+            if "/nodes/pve1/qemu/100/config" in command and self.leases.call_count == 2:
+                self.config["hookscript"] = "hdd:snippets/new-hook.pl"
+            return real_transport(host, command, workspace, **options)
+        self.transport.side_effect = transport
+        with self.assertRaisesRegex(ProxmoxMigrateError, "External snippets, hooks"):
+            self._migrate()
+        self.assertEqual(self.actions, [])
+
+    def test_hook_added_during_saved_update_blocks_before_start(self):
+        self._save_setup()
+        from lib.proxmox_migration_setups import apply_setup_updates
+        def update(updates, workspace):
+            apply_setup_updates(updates, workspace)
+            self.destination_config["hookscript"] = "local:snippets/new-hook.pl"
+        with patch("lib.proxmox_migrate.apply_setup_updates", side_effect=update):
+            with self.assertRaisesRegex(ProxmoxMigrateError, "External snippets, hooks"):
+                self._migrate()
+        self.assertEqual(self.state, "stopped")
+        self.assertFalse(any(" start " in command for _, command in self.actions))
+
+    def test_destination_bridge_disappearing_during_transfer_blocks_start_and_updates(self):
+        path = self._save_setup()
+        original = path.read_bytes()
+        self.after_transfer = lambda: self.bridges.clear()
+        with self.assertRaisesRegex(ProxmoxMigrateError, "bridge.*unavailable"):
+            self._migrate()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.state, "stopped")
+
+    def test_serial_socket_is_portable(self):
+        self.config["serial0"] = "socket"
+        self._migrate()
+        self.assertEqual(self.state, "running")
+
     def test_local_iso_and_external_resources_block_before_shutdown(self):
         original = copy.deepcopy(self.config)
         for additions in ({"ide3": "hdd:iso/cloudinit-installer.iso,media=cdrom"},
                           {"cicustom": "user=local:snippets/custom.yaml"},
-                          {"hostpci0": "0000:00:01.0"}, {"hookscript": "local:snippets/hook.pl"}):
+                          {"hostpci0": "0000:00:01.0"}, {"hookscript": "local:snippets/hook.pl"},
+                          {"serial0": "/dev/ttyS0"}, {"parallel0": "/dev/parport0"},
+                          {"ivshmem": "size=32"}, {"args": "-drive file=/tmp/local.img"},
+                          {"dev0": "path=/dev/dri/renderD128"}):
             with self.subTest(additions=additions):
                 self.config = {**original, **additions}
                 with self.assertRaises(ProxmoxMigrateError):

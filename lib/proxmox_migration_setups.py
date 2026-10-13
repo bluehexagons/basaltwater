@@ -9,7 +9,19 @@ from lib.cache import PROVIDER_BINDING_FIELDS, load_all_setup_cache_records, upd
 from lib.config import SetupConfig
 from lib.proxmox_guest import _build_guest_hostname
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host
+from lib.validation import validate_positive_integer
 from lib.vm_storage import storage_disk_serials, storage_size_kib
+
+
+def provider_size_bytes(value: str) -> int:
+    """Parse Proxmox informational sizes, including decimals and bare bytes."""
+    match = re.fullmatch(r"([0-9]+)(?:\.([0-9]+))?([KMGT](?:iB)?)?", value)
+    if not match:
+        raise ValueError("Invalid Proxmox disk size")
+    fraction = match[2] or ""
+    multiplier = 1024 ** ("KMGT".index(match[3][0]) + 1) if match[3] else 1
+    size = int(match[1] + fraction) * multiplier // 10 ** len(fraction)
+    return validate_positive_integer(str(size), "Proxmox disk size")
 
 
 def drive_parts(value: str) -> tuple[str, dict[str, str]]:
@@ -85,7 +97,7 @@ def prepare_setup_updates(
             disk = disks[candidates[0]]
             if len(spec) == 3 and spec[1] != disk["source_pool"]:
                 raise ValueError(f"Saved disk pool disagrees with the source for {logical!r}")
-            if disk["bytes"] < storage_size_kib(spec[-1]) * 1024:
+            if disk.get("source_bytes", disk["bytes"]) < storage_size_kib(spec[-1]) * 1024:
                 raise ValueError(f"Source disk is smaller than saved disk {logical!r}")
             storage.append([logical, disk["target_pool"], spec[-1]])
         if not storage:
