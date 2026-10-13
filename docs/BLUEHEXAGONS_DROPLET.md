@@ -1,7 +1,7 @@
 # bluehexagons_droplet deployment
 
 This runbook prepares a fresh Debian web server for the portfolio, Go Click,
-Don't Starve Food Guide, and private Design Works Homes static site. The saved
+Don't Starve Food Guide, and an optional private static site. The saved
 Basaltwater name is `bluehexagons_droplet`; the Linux hostname uses hyphens
 because system hostnames do not accept underscores.
 
@@ -9,12 +9,13 @@ because system hostnames do not accept underscores.
 
 Use the updated main branches of Basaltwater and the application repositories.
 `basaltw` must launch the updated Basaltwater code; an older separately installed
-copy will retain its old behavior. The controller needs Git access to all four
-repositories, including the private `bluehexagons/designworkshomes` repository.
-Check it without placing tokens in a URL:
+copy will retain its old behavior. The controller needs Git access to every
+repository. Keep private repository identifiers and deployment domains in your
+private configuration; replace `PRIVATE_REPO_URL` and `PRIVATE_SITE_DOMAIN`
+below locally. Check private repository access without placing tokens in a URL:
 
 ```bash
-git ls-remote https://github.com/bluehexagons/designworkshomes.git HEAD
+git ls-remote PRIVATE_REPO_URL HEAD
 ```
 
 Use the controller's existing HTTPS credential helper, or replace that URL
@@ -34,7 +35,7 @@ basaltw setup server_web SERVER_IP deploy \
   --deploy bluehexagons.com https://github.com/bluehexagons/bluehexagons.git \
   --deploy clicker.bluehexagons.com https://github.com/bluehexagons/goclick.git \
   --deploy foodguide.bluehexagons.com https://github.com/bluehexagons/foodguide.git \
-  --deploy designworkshomes.com https://github.com/bluehexagons/designworkshomes.git
+  --deploy PRIVATE_SITE_DOMAIN PRIVATE_REPO_URL
 ```
 
 The Food Guide manifest adds `bluehexagons.com/foodguide/` to the same Nginx
@@ -59,7 +60,7 @@ public HTTPS; Nginx serves cloudflared over local HTTP.
 | `bluehexagons.com/` | Static portfolio from `dist/` | Node 24 via `.nvmrc`; TypeScript, thumbnails and Vite; default build excludes the shop/API |
 | `clicker.bluehexagons.com/` | Manifest Go service on an automatically allocated loopback port | Go version from `go.mod`; embedded frontend, pure-Go SQLite, dedicated runtime account, `/up` health check, secure cookies and proxy IP trust |
 | `foodguide.bluehexagons.com/` and `bluehexagons.com/foodguide/` | Two static manifest components using `html/` | Node 24, development dependencies, TypeScript modules and Sharp sprite generation |
-| `designworkshomes.com/` | Private source, public static output | Controller Git credentials; only HTML, content, styles, scripts and slideshow files copied into the public output |
+| `PRIVATE_SITE_DOMAIN/` | Private source, public static output | Controller Git credentials; copy only the site's public assets into its serving directory |
 
 Goclick's release is `/var/www/clicker_bluehexagons_com`. Its database lives at
 `/var/www/.basaltwater_shared/clicker_bluehexagons_com/server/data/goclick.db`;
@@ -77,7 +78,7 @@ curl -fsS -H 'Host: bluehexagons.com' http://127.0.0.1/ -o /dev/null
 curl -fsS -H 'Host: bluehexagons.com' http://127.0.0.1/foodguide/ -o /dev/null
 curl -fsS -H 'Host: foodguide.bluehexagons.com' http://127.0.0.1/ -o /dev/null
 curl -fsS -H 'Host: clicker.bluehexagons.com' http://127.0.0.1/up
-curl -fsS -H 'Host: designworkshomes.com' http://127.0.0.1/ -o /dev/null
+curl -fsS -H 'Host: PRIVATE_SITE_DOMAIN' http://127.0.0.1/ -o /dev/null
 ```
 
 On the server, run:
@@ -123,7 +124,7 @@ sudo systemctl status nginx cloudflared app-clicker_bluehexagons_com-server.serv
 curl -fsS https://clicker.bluehexagons.com/up
 curl -fsS https://bluehexagons.com/foodguide/img/sprites/sprites.json -o /dev/null
 curl -fsS https://foodguide.bluehexagons.com/img/sprites/sprites.json -o /dev/null
-curl -fsS https://designworkshomes.com/ -o /dev/null
+curl -fsS https://PRIVATE_SITE_DOMAIN/ -o /dev/null
 ```
 
 ## Audit scope and remaining work
