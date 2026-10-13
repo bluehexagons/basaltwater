@@ -1112,6 +1112,15 @@ use retained `bw-NAME` or `it-NAME` serials. A partial identity match or stale
 saved disk declaration blocks the move before shutdown. No matching setup is
 also valid for an unmanaged guest and is reported in the plan.
 
+Migration inspects saved guest identity, provider access, and storage declarations
+without loading or replaying the full setup profile. Unrelated setup options,
+including retired application fields such as `api_subdomain`, `install_ruby`,
+and `reset_migrations`, do not block the move. Matching older records receive
+only the verified provider updates and retain their other fields. Invalid
+matching identity or storage still blocks shutdown. Unreadable JSON or an
+invalid record structure also blocks inspection because its relationship to the
+guest cannot be established safely.
+
 Updates replace only the provider host, its verified SSH user/key path, the
 unchanged primary bridge, and each disk's actual destination pool. Logical disk
 names and amounts, guest credentials, mounts, caches, swap and SSD policy,
@@ -1119,8 +1128,11 @@ image staging, other setup options, run metadata, and history are preserved.
 SSD emulation is an explicit disk policy and is not inferred from a pool name.
 Concurrent changes to identity or provider fields require inspection; unrelated
 edits survive. Each cache write is atomic and private, and partial updates can
-be resumed. Local-name commands such as `vm show NAME` immediately use the new
-binding after success. Workspaces on other controllers cannot be discovered or
+be resumed. Local-name commands such as `vm show NAME` use the new binding when
+the workspace's saved setups satisfy the current setup schema. Migration does
+not upgrade retired setup policy; loading or rerunning those full configurations
+still requires the [setup-version upgrade](BASALTWATER_MIGRATION.md).
+Workspaces on other controllers cannot be discovered or
 rewritten by this command; use the verified out-of-band rebind workflow above
 on each additional controller.
 

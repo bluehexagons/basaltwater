@@ -5,11 +5,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from lib.cache import PROVIDER_BINDING_FIELDS, load_all_setup_cache_records, update_setup_provider_binding
-from lib.config import SetupConfig
+from lib.cache import (
+    PROVIDER_BINDING_FIELDS, iter_setup_cache_records, update_setup_provider_binding,
+    validate_setup_provider_binding,
+)
 from lib.proxmox_guest import _build_guest_hostname
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host
+from lib.state_read import StateReadError
 from lib.validation import validate_positive_integer
+from lib.validators import validate_host
 from lib.vm_storage import storage_disk_serials, storage_size_kib
 
 
@@ -57,32 +61,40 @@ def prepare_setup_updates(
     name = identity["name" if kind == "qemu" else "hostname"]
     address = guest_address(identity, kind)
     source_names = {value.lower().rstrip(".") for value in (source.name, source.address, source_node)}
-    for record in load_all_setup_cache_records(workspace):
+    for path, record in iter_setup_cache_records(workspace):
         args = record["args"]
         node = args.get("hosted_node")
         if not node:
             continue
+        if not validate_host(node):
+            raise StateReadError(path, "invalid saved Proxmox binding")
         registered = find_proxmox_host(node, workspace)
         binding = registered.address if registered else node
         if binding.lower().rstrip(".") not in source_names:
             continue
-        config = SetupConfig.from_dict(record["host"], record["system_type"], args)
-        expected_name = config.system_hostname or _build_guest_hostname(
-            config.host, config.friendly_name or record.get("name"),
-            default_prefix="vm" if config.machine_type == "vm" else "guest",
+        friendly_name = args.get("friendly_name") or record.get("name")
+        hostname = args.get("system_hostname")
+        if ((friendly_name is not None and not isinstance(friendly_name, str))
+                or (hostname is not None and not isinstance(hostname, str))):
+            raise StateReadError(path, "invalid saved guest identity")
+        expected_name = hostname or _build_guest_hostname(
+            record["host"], friendly_name,
+            default_prefix="vm" if args.get("machine_type") == "vm" else "guest",
         )
-        if expected_name.lower() != name.lower() and config.host != address:
+        if expected_name.lower() != name.lower() and record["host"] != address:
             continue
-        if (expected_name.lower() != name.lower() or config.host != address
-                or (config.machine_type == "vm") != (kind == "qemu")):
+        try:
+            storage_specs = validate_setup_provider_binding(args)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise StateReadError(path, "invalid saved guest identity, provider binding, or storage") from exc
+        if (expected_name.lower() != name.lower() or record["host"] != address
+                or (args["machine_type"] == "vm") != (kind == "qemu")):
             raise ValueError(f"Saved setup identity does not match guest {name!r}: {record['host']}")
         storage = []
-        for spec in config.container_storage or []:
+        for spec in storage_specs:
             if spec[0] == "template":
                 storage.append(list(spec))
                 continue
-            if len(spec) not in (2, 3):
-                raise ValueError(f"Invalid saved disk declaration for {record['host']}")
             logical = spec[0]
             if logical == "root":
                 candidates = ["scsi0" if kind == "qemu" else "rootfs"]
@@ -100,13 +112,11 @@ def prepare_setup_updates(
             if disk.get("source_bytes", disk["bytes"]) < storage_size_kib(spec[-1]) * 1024:
                 raise ValueError(f"Source disk is smaller than saved disk {logical!r}")
             storage.append([logical, disk["target_pool"], spec[-1]])
-        if not storage:
-            raise ValueError(f"Saved guest {record['host']} has no verifiable storage declaration")
         if any(update["host"] == record["host"] for update in updates):
             raise ValueError(f"Ambiguous saved setup cache records for {record['host']}")
         bridge_match = re.search(r"(?:^|,)bridge=([^,]+)", str(identity.get("net0", "")))
         bridge = bridge_match.group(1) if bridge_match else None
-        if config.hosted_bridge and config.hosted_bridge != bridge:
+        if args.get("hosted_bridge") and args["hosted_bridge"] != bridge:
             raise ValueError(f"Saved bridge disagrees with the source for {record['host']}")
         changed = {
             "hosted_node": target.address, "hosted_user": target.user,
@@ -118,7 +128,7 @@ def prepare_setup_updates(
         }
         updates.append({
             "host": record["host"], "system_type": record["system_type"],
-            "name": config.friendly_name or record.get("name") or record["host"],
+            "name": friendly_name or record["host"],
             "expected": {key: args.get(key) for key in compared}, "updates": changed,
         })
     return updates
@@ -151,7 +161,7 @@ def validate_setup_updates(plan: dict[str, Any]) -> None:
                 or changed["hosted_user"] != plan["target_user"] or changed["hosted_key"] != plan["target_key"]
                 or changed["hosted_bridge"] != bridge):
             raise ValueError("Recorded setup update disagrees with verified destination")
-        old = {spec[0]: spec for spec in update["expected"]["container_storage"]}
+        old = {spec[0]: spec for spec in validate_setup_provider_binding(update["expected"])}
         new = {spec[0]: spec for spec in changed["container_storage"]}
         if old.keys() != new.keys() or len(new) != len(changed["container_storage"]):
             raise ValueError("Recorded setup update changes logical disk identities")

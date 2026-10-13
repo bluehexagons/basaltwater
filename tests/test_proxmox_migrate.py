@@ -15,12 +15,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lib.atomic_io import write_json_atomic
-from lib.cache import get_cache_path_for_host, load_setup_command, save_setup_command
+from lib.cache import (
+    get_cache_path_for_host, load_all_setup_cache_records, load_setup_command, save_setup_command,
+)
 from lib.config import SetupConfig
 from lib.proxmox_hosts import ProxmoxHost, add_proxmox_host
 from lib.proxmox_migrate import ProxmoxMigrateError, _run, migrate_guest
 from lib.proxmox_migration_setups import provider_size_bytes
 from lib.setup_common import _apply_hosted_proxmox_defaults
+from lib.state_read import StateReadError
 
 
 GIB = 1024 ** 3
@@ -141,13 +144,15 @@ class TestMigrateGuest(unittest.TestCase):
                 self.before_migration()
             if self.failure == "migration":
                 raise ProxmoxMigrateError("native migration failed")
+            storage_option = "--targetstorage" if self.kind == "qemu" else "--target-storage"
+            destination_pool = tokens[tokens.index(storage_option) + 1] if storage_option in tokens else "hdd"
             self.destination_config = copy.deepcopy(self.config)
             for key, value in self.destination_config.items():
                 if isinstance(value, str) and value.startswith("hdd:"):
-                    self.destination_config[key] = value.replace("hdd:", "local:", 1)
+                    self.destination_config[key] = value.replace("hdd:", destination_pool + ":", 1)
             self.node = "pve2"
             self.destination_volumes = [
-                {**volume, "volid": volume["volid"].replace("hdd:", "local:", 1)}
+                {**volume, "volid": volume["volid"].replace("hdd:", destination_pool + ":", 1)}
                 for volume in self.volumes
             ]
             if self.kind == "qemu":
@@ -191,7 +196,7 @@ class TestMigrateGuest(unittest.TestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             migrate_guest(self.source, options.pop("guest", 100), self.target,
-                          target_storage="local", workspace=self.workspace, **options)
+                          target_storage=options.pop("target_storage", "local"), workspace=self.workspace, **options)
         return output.getvalue()
 
     def _save_setup(self):
@@ -248,6 +253,130 @@ class TestMigrateGuest(unittest.TestCase):
         self.assertEqual(self.actions, [])
         self.assertEqual(before, {str(p): p.read_bytes() for p in Path(self.workspace).rglob("*") if p.is_file()})
         self.leases.assert_not_called()
+
+    def test_unrelated_retired_setup_fields_do_not_block_local_lvm_move(self):
+        self._save_setup()
+        path = Path(get_cache_path_for_host("192.168.0.25"))
+        retired = {"api_subdomain": None, "install_ruby": False, "reset_migrations": False}
+        write_json_atomic(str(path), {"host": "192.168.0.25", "system_type": "server_web", "args": retired})
+        original = path.read_bytes()
+        self.target_pools = [self._pool("local-lvm")]
+        self._migrate(guest=self.name, target_storage="local-lvm", timeout=28800)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(load_setup_command("10.0.0.50").container_storage[0], ["root", "local-lvm", "8G"])
+        self.assertIn(("pve1", "qm migrate 100 pve2 --targetstorage local-lvm"), self.actions)
+        self.assertEqual(self.state, "running")
+        with self.assertRaisesRegex(StateReadError, "Retired setup fields"):
+            load_all_setup_cache_records(self.workspace)
+
+    def test_unrelated_old_guest_on_same_source_is_not_loaded_as_a_full_setup(self):
+        self._save_setup()
+        path = Path(get_cache_path_for_host("10.0.0.51"))
+        write_json_atomic(str(path), {"host": "10.0.0.51", "system_type": "removed-profile", "args": {
+            "hosted_node": self.source.address, "machine_type": "vm", "friendly_name": "another-guest",
+            "install_ruby": True, "timezone": {"invalid": "unused by migration"},
+        }})
+        original = path.read_bytes()
+        self._migrate()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.state, "running")
+
+    def test_matching_legacy_setup_binding_is_updated_without_replaying_or_dropping_retired_policy(self):
+        path = self._save_setup()
+        original = json.loads(path.read_text())
+        original["args"].update({"api_subdomain": "old-api", "install_ruby": True, "reset_migrations": True,
+                                 "removed_profile_option": "SENSITIVE LEGACY POLICY"})
+        original["system_type"] = "removed-profile"
+        write_json_atomic(str(path), original)
+        self._migrate()
+        current = json.loads(path.read_text())
+        changed = {"hosted_node", "hosted_user", "hosted_key", "hosted_bridge", "container_storage"}
+        self.assertEqual({key: value for key, value in current["args"].items() if key not in changed},
+                         {key: value for key, value in original["args"].items() if key not in changed})
+        self.assertEqual({key: value for key, value in current.items() if key != "args"},
+                         {key: value for key, value in original.items() if key != "args"})
+        self.assertEqual(current["args"]["hosted_node"], self.target.address)
+        self.assertEqual(current["args"]["container_storage"][0], ["root", "local", "8G"])
+        self.assertEqual(self.state, "running")
+        result = Path(str(self._marker()) + ".last.json").read_text()
+        self.assertNotIn("SENSITIVE LEGACY POLICY", result)
+        self.assertNotIn("reset_migrations", result)
+        with self.assertRaisesRegex(StateReadError, "Retired setup fields"):
+            load_setup_command("10.0.0.50")
+
+    def test_legacy_setup_dry_run_and_resume_preserve_policy(self):
+        path = self._save_setup()
+        record = json.loads(path.read_text())
+        record["args"]["install_ruby"] = True
+        write_json_atomic(str(path), record)
+        original = path.read_bytes()
+        self._migrate(dry_run=True)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(self.actions, [])
+        self.failure = "start"
+        with self.assertRaisesRegex(ProxmoxMigrateError, "start failed"):
+            self._migrate()
+        self.failure = None
+        self._migrate(resume=True)
+        current = json.loads(path.read_text())
+        self.assertTrue(current["args"]["install_ruby"])
+        self.assertEqual(current["args"]["hosted_node"], self.target.address)
+        self.assertEqual(self.state, "running")
+        self.assertEqual(len([command for _, command in self.actions if " migrate " in command]), 1)
+
+    def test_legacy_flat_root_declaration_is_verified_and_resolved_to_destination(self):
+        path = self._save_setup()
+        record = json.loads(path.read_text())
+        record["args"].update({"install_ruby": False, "container_storage": ["root", "8G"]})
+        write_json_atomic(str(path), record)
+        self._migrate()
+        self.assertEqual(json.loads(path.read_text())["args"]["container_storage"], [["root", "local", "8G"]])
+        self.assertEqual(self.state, "running")
+
+    def test_legacy_lxc_binding_retains_template_pool_and_retired_policy(self):
+        path = self._save_setup()
+        record = json.loads(path.read_text())
+        record["args"].update({"machine_type": "unprivileged", "reset_migrations": False,
+                                "container_storage": [["root", "hdd", "8G"], ["template", "hdd"]]})
+        write_json_atomic(str(path), record)
+        self.kind = "lxc"
+        self.config = {"hostname": self.name, "net0": "name=eth0,bridge=vmbr0,ip=10.0.0.50/24",
+                       "rootfs": "hdd:vm-100-disk-0,size=8G"}
+        self._migrate()
+        current = json.loads(path.read_text())["args"]
+        self.assertEqual(current["container_storage"], [["root", "local", "8G"], ["template", "hdd"]])
+        self.assertFalse(current["reset_migrations"])
+        self.assertEqual(current["hosted_node"], self.target.address)
+        self.assertEqual(self.state, "running")
+
+    def test_invalid_relevant_legacy_binding_still_blocks_before_shutdown(self):
+        path = self._save_setup()
+        original = json.loads(path.read_text())
+        original["args"]["install_ruby"] = False
+        cases = (("container_storage", [["root", "hdd", "0G"]]),
+                 ("container_storage", [["root", "hdd", "8G"], ["root", "hdd", "8G"]]),
+                 ("container_storage", [["root", "hdd", "8G"], ["bad/name", "hdd", "16G"]]),
+                 ("container_storage", "root hdd 8G"), ("machine_type", "hardware"),
+                 ("hosted_bridge", "vmbr0\n"), ("hosted_key", "/tmp/key\n"))
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                record = copy.deepcopy(original)
+                record["args"][key] = value
+                write_json_atomic(str(path), record)
+                before = path.read_bytes()
+                with self.assertRaises(ProxmoxMigrateError):
+                    self._migrate()
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(self.actions, [])
+
+    def test_unreadable_cache_cannot_be_treated_as_an_unrelated_setup(self):
+        self._save_setup()
+        path = Path(self.workspace) / "setups" / "broken.json"
+        path.write_text("{not-json")
+        with self.assertRaisesRegex(ProxmoxMigrateError, "malformed JSON"):
+            self._migrate()
+        self.assertEqual(path.read_text(), "{not-json")
+        self.assertEqual(self.actions, [])
 
     def test_stopped_guest_remains_stopped(self):
         self.state = "stopped"

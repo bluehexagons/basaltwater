@@ -8,14 +8,19 @@ import re
 import time
 import uuid
 from dataclasses import asdict
+from collections.abc import Iterator
 from typing import Optional, Any
 
 from lib.state_read import StateReadError, read_state_object
-from lib.config import RetiredSetupConfigError, SetupConfig
+from lib.config import RetiredSetupConfigError, SetupConfig, _normalize_nested_specs
 from lib.concurrency import resource_lock
 from lib.atomic_io import write_json_atomic
 from lib.validators import validate_host, validate_username
-from lib.validation import validate_filesystem_path
+from lib.validation import (
+    _memory_string_kib, validate_filesystem_path, validate_network_interface_name,
+    validate_no_control_characters, validate_proxmox_storage_name, validate_system_hostname,
+    validate_vm_storage_name,
+)
 from lib.workspace import get_history_dir, get_setup_cache_dir
 
 
@@ -102,6 +107,52 @@ PROVIDER_BINDING_FIELDS = frozenset({
 })
 
 
+def validate_setup_provider_binding(args: dict[str, Any]) -> list[list[str]]:
+    """Validate migration metadata without interpreting guest-setup policies."""
+    if not validate_host(args.get("hosted_node")):
+        raise ValueError("Invalid saved Proxmox node")
+    user = args.get("hosted_user", "root")
+    if user is not None and not validate_username(user):
+        raise ValueError("Invalid saved Proxmox user")
+    if args.get("hosted_key") is not None:
+        validate_filesystem_path(args["hosted_key"])
+    if args.get("hosted_bridge") is not None:
+        validate_network_interface_name(args["hosted_bridge"])
+    if args.get("machine_type") not in {"vm", "privileged", "unprivileged"}:
+        raise ValueError("Saved setup does not declare a supported Proxmox guest type")
+    if args.get("system_hostname"):
+        validate_system_hostname(args["system_hostname"])
+    if args.get("friendly_name") is not None:
+        validate_no_control_characters(args["friendly_name"], "Saved guest name")
+    specs = _normalize_nested_specs(args.get("container_storage"))
+    if not specs:
+        raise ValueError("Saved guest has no storage declaration")
+    seen = set()
+    for spec in specs:
+        if not isinstance(spec, list) or not spec or not all(isinstance(value, str) for value in spec):
+            raise ValueError("Invalid saved storage declaration")
+        logical = spec[0]
+        if logical in seen:
+            raise ValueError("Duplicate saved logical disk")
+        seen.add(logical)
+        if logical == "template":
+            if len(spec) not in (1, 2):
+                raise ValueError("Invalid saved template storage")
+            if len(spec) == 2:
+                validate_proxmox_storage_name(spec[1], "Saved template pool")
+            continue
+        if logical != "root":
+            validate_vm_storage_name(logical)
+        if len(spec) not in (2, 3):
+            raise ValueError("Invalid saved disk declaration")
+        if len(spec) == 3:
+            validate_proxmox_storage_name(spec[1], "Saved disk pool")
+        _memory_string_kib(spec[-1], "Saved disk size")
+    if "root" not in seen:
+        raise ValueError("Saved guest has no root disk declaration")
+    return specs
+
+
 def update_setup_provider_binding(
     host: str,
     *,
@@ -137,7 +188,7 @@ def update_setup_provider_binding(
         if not original and not already_applied:
             raise ValueError(f"Saved setup provider binding changed during migration for {host}")
         current.update(updates)
-        SetupConfig.from_dict(host, system_type, current)
+        validate_setup_provider_binding(current)
         write_json_atomic(cache_path, data, mode=0o600)
 
 
@@ -386,22 +437,30 @@ def load_all_setup_commands(workspace: Optional[str] = None) -> list[SetupConfig
     return sorted(configs, key=lambda config: (config.friendly_name or config.host).lower())
 
 
-def load_all_setup_cache_records(workspace: Optional[str] = None) -> list[dict[str, Any]]:
-    """Return validated raw records for inventory, display, and replay."""
+def iter_setup_cache_records(workspace: Optional[str] = None) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Read structural records; callers validate the fields their operation uses."""
     cache_dir = get_setup_cache_dir(workspace)
     if not os.path.exists(cache_dir):
-        return []
+        return
     try:
         filenames = sorted(os.listdir(cache_dir))
     except OSError as exc:
         raise StateReadError(cache_dir, "unreadable setup cache directory") from exc
-    records: list[dict[str, Any]] = []
     for filename in filenames:
         if not filename.endswith(".json"):
             continue
         path = os.path.join(cache_dir, filename)
         record = _cache_record(path)
-        if record is None or _load_cache_file(path, record["host"]) is None:
+        if record is None:
+            raise StateReadError(path, "cache disappeared during inventory")
+        yield path, record
+
+
+def load_all_setup_cache_records(workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    """Return fully validated records for setup inventory, display, and replay."""
+    records: list[dict[str, Any]] = []
+    for path, record in iter_setup_cache_records(workspace):
+        if _load_cache_file(path, record["host"]) is None:
             raise StateReadError(path, "cache disappeared during inventory")
         records.append(record)
     return records
