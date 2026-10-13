@@ -19,6 +19,7 @@ is a separate operator decision that can discard newer writes.
 | Static release | `/var/www/.basaltwater_shared/<app>/static-operation.json` | Staging/previous/failed paths |
 | Systemd replacement or removal | `/etc/systemd/system/.basaltwater-unit-operation.json` | `backup_dir/previous.json` with old files, modes, ownership, and activation states |
 | Deployment Nginx reconciliation | `/etc/nginx/.basaltwater-nginx-operation.json` | `backup_dir/previous.json` with previous site files, links and selected generated certificate/key files |
+| Proxmox guest migration | `<controller-workspace>/migrations/<cluster-CA-prefix>-<VMID>.json` | Source/destination identity, original power state, verified disk plan, and narrow saved-setup updates |
 
 Release paths follow the configured deployment base. Static and manifest entry
 points share a deployment lock and check both markers, so switching deployment
@@ -61,6 +62,9 @@ make them safe to share.
 | Units `replacing`, `removing`, `rolling-back` or `rollback-failed` | Some files and activated/stopped units may have changed | Restore `previous.json`: remove files recorded as null, restore others with recorded mode/owner, reload systemd, and restore enabled/runtime-enabled and active states. Restore the service before rearming its timer/path. Do not restart unrelated executing oneshots. |
 | Nginx `staging` | Snapshot preparation | Deployment sites and TLS files have not changed. Inspect any recorded snapshot before resolving the marker. |
 | Nginx `applying`, `verifying`, `rolling-back` or `recovery` | Sites, enabled links, TLS files and loaded workers may differ | Restore each absolute path in `previous.json`: null means previously absent; regular-file contents are base64 with mode/uid/gid; links record target/uid/gid. Restore all files and links before validation. Run `nginx -t`, reload Nginx and verify activity and routing before resolving the marker. |
+| Proxmox migration `prepared`, `shutting_down`, or `stopped` | Guest may have shut down; disk transfer has not been issued | Inspect native tasks and power state, then use the same `proxmox migrate` command with `--resume`. Shutdown is graceful and verified before transfer. |
+| Proxmox migration `migrating` | Native disk transfer may be incomplete or finished despite a lost SSH result | Inspect both nodes and the native task log. `--resume` refuses active tasks and never replays an uncertain transfer that still has the guest on the source. A verified destination can continue without copying again. |
+| Proxmox migration `verifying`, `updating_setups`, or `starting` | Guest may be on the destination; some saved bindings may be updated; startup may have finished | `--resume` rechecks destination identity/disks and source config/process absence, preserves concurrent edits, accepts already applied cache updates, and restores the original power state. |
 
 For a first deployment with no previous release, recovery removes the rejected
 new release and new units. For manifest recovery, `previous_ports: null` means
@@ -101,6 +105,19 @@ If setup cannot persist its failure details, the original error is still
 reported and the marker may remain `in_progress`. Inspect it explicitly before
 retrying. A matching automatic retry also refuses a marker that changed after
 it was inspected, even when its operation ID is unchanged.
+
+Proxmox migration recovery belongs to the controller workspace that issued the
+move. Keep the native task log, marker, and `.last.json` evidence. Do not force
+unlock a guest or start a source copy to work around an unfinished checkpoint.
+Repeat the original migration options, including storage and timeouts, with
+`--resume --dry-run` before applying recovery; see the
+[migration workflow](PROXMOX.md#placement-backups-and-migration).
+An uncertain transfer left on the source requires native recovery and explicit
+verification of the source configuration, disks, power state, destination
+artifacts, and absence of active tasks before resolving its marker. Resolve it
+from the controller's installed environment, not from a guest. Saved bindings
+are per-file atomic updates rather than one multi-file transaction; resumed
+verification finishes partial updates without reverting unrelated current edits.
 
 ## Verify before resolving the marker
 

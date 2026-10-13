@@ -18,7 +18,9 @@ from typing import Callable, Optional
 
 from lib.proxmox_backup import ProxmoxBackupError, create_backup, list_backups
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
-from lib.proxmox_migrate import DEFAULT_MIGRATION_TIMEOUT, ProxmoxMigrateError, migrate_guest
+from lib.proxmox_migrate import (
+    DEFAULT_MIGRATION_TIMEOUT, DEFAULT_SHUTDOWN_TIMEOUT, ProxmoxMigrateError, migrate_guest,
+)
 from lib.proxmox_storage import ProxmoxStorageError, delete_volume, list_orphaned_volumes
 from lib.proxmox_summary import ProxmoxSummaryError, format_node_summary, get_node_summary
 from lib.proxmox_hosts import (
@@ -103,8 +105,9 @@ Available commands:
   backups <vmid>              List backups for a guest
   backup <vmid> [--storage POOL] [--mode snapshot|suspend|stop]
                               Create an immediate vzdump backup
-  migrate <vmid> <target> [--online] [--with-local-disks]
-          [--target-storage POOL] [--timeout SECONDS] [--dry-run]
+  migrate <vmid|name> <target> [--online] [--with-local-disks]
+          [--target-storage POOL] [--timeout SECONDS]
+          [--shutdown-timeout SECONDS] [--resume] [--dry-run]
                               Migrate a guest to another registered cluster host
   clean-disks [--delete] [--yes]
                               List (and optionally delete) orphaned volumes
@@ -766,14 +769,16 @@ class ProxmoxShell:
     def _cmd_migrate(self, args: list[str]) -> None:
         host = self._require_host()
         if len(args) < 2:
-            raise ValueError("Usage: migrate <vmid> <target-host> [migration options]")
-        vmid = self._parse_vmid([args[0]], "migrate")
+            raise ValueError("Usage: migrate <vmid|name> <target-host> [migration options]")
+        vmid = args[0]
         target_name = args[1]
         online = False
         with_local_disks = False
         dry_run = False
+        resume = False
         target_storage: str | None = None
         timeout = DEFAULT_MIGRATION_TIMEOUT
+        shutdown_timeout = DEFAULT_SHUTDOWN_TIMEOUT
         i = 2
         while i < len(args):
             option = args[i]
@@ -783,7 +788,9 @@ class ProxmoxShell:
                 with_local_disks = True
             elif option == "--dry-run":
                 dry_run = True
-            elif option in {"--target-storage", "--timeout"}:
+            elif option == "--resume":
+                resume = True
+            elif option in {"--target-storage", "--timeout", "--shutdown-timeout"}:
                 i += 1
                 if i >= len(args) or args[i].startswith("--"):
                     raise ValueError(f"{option} requires a value")
@@ -791,9 +798,13 @@ class ProxmoxShell:
                     target_storage = args[i]
                 else:
                     try:
-                        timeout = int(args[i])
+                        seconds = int(args[i])
                     except ValueError:
-                        raise ValueError("--timeout requires an integer")
+                        raise ValueError(f"{option} requires an integer")
+                    if option == "--timeout":
+                        timeout = seconds
+                    else:
+                        shutdown_timeout = seconds
             else:
                 raise ValueError(f"Unknown migration option: {option!r}")
             i += 1
@@ -802,11 +813,12 @@ class ProxmoxShell:
             raise ValueError(f"No registered host matching '{target_name}'")
         migrate_guest(
             host, vmid, target, online=online, with_local_disks=with_local_disks,
-            target_storage=target_storage, timeout=timeout, dry_run=dry_run,
+            target_storage=target_storage, timeout=timeout, shutdown_timeout=shutdown_timeout,
+            dry_run=dry_run, workspace=self.state.workspace, resume=resume,
         )
         prefix = "Would migrate" if dry_run else "Migrated"
         self._output(
-            f"  {prefix} VMID {vmid} from {host.name} to {target.name}."
+            f"  {prefix} guest {vmid} from {host.name} to {target.name}."
         )
 
     def _cmd_clean_disks(self, args: list[str]) -> None:

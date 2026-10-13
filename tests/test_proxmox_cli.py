@@ -403,10 +403,11 @@ class TestProxmoxCliMigration(_CliFixture):
                             "--target-storage", "local", "--timeout", "14400", "--dry-run")
         self.assertEqual(rc, 0)
         self.assertIn("Would migrate", out)
-        self.assertEqual(mock_migrate.call_args.args[1], 100)
+        self.assertEqual(mock_migrate.call_args.args[1], "100")
         self.assertEqual(mock_migrate.call_args.kwargs, {
             "online": False, "with_local_disks": False, "target_storage": "local",
-            "timeout": 14400, "dry_run": True,
+            "timeout": 14400, "shutdown_timeout": 180, "dry_run": True,
+            "workspace": self.workspace, "resume": False,
         })
 
     @patch("lib.proxmox_cli.migrate_guest")
@@ -417,6 +418,16 @@ class TestProxmoxCliMigration(_CliFixture):
         self.assertEqual(rc, 1)
         self.assertIn("Inspect both nodes", out)
         self.assertNotIn("Migrated", out)
+
+    @patch("lib.proxmox_cli.migrate_guest")
+    def test_guest_name_shutdown_timeout_and_resume_are_forwarded(self, mock_migrate):
+        rc, out = self._run("migrate", "pve1", "agent-one", "pve2", "--resume",
+                            "--shutdown-timeout", "240", "--target-storage", "local")
+        self.assertEqual(rc, 0)
+        self.assertIn("Migrated guest agent-one", out)
+        self.assertEqual(mock_migrate.call_args.args[1], "agent-one")
+        self.assertTrue(mock_migrate.call_args.kwargs["resume"])
+        self.assertEqual(mock_migrate.call_args.kwargs["shutdown_timeout"], 240)
 
 
 class TestProxmoxPlanRebalanceApply(_CliFixture):

@@ -97,6 +97,50 @@ def _get_history_path_for_run(host: str, operation: str, end_time: float) -> str
     )
 
 
+PROVIDER_BINDING_FIELDS = frozenset({
+    "hosted_node", "hosted_user", "hosted_key", "hosted_bridge", "container_storage",
+})
+
+
+def update_setup_provider_binding(
+    host: str,
+    *,
+    expected: dict[str, Any],
+    updates: dict[str, Any],
+    system_type: str,
+    workspace: str | None = None,
+) -> None:
+    """Apply a verified migration binding without overwriting concurrent edits.
+
+    Compare only the inspected identity and provider fields. Unrelated current
+    arguments and run/history metadata survive. An already applied update is
+    accepted so recovery can finish a partially updated set of records.
+    """
+    if not validate_host(host) or not updates or not updates.keys() <= PROVIDER_BINDING_FIELDS:
+        raise ValueError("Invalid setup provider binding update")
+    if not updates.keys() <= expected.keys():
+        raise ValueError("Provider binding updates require inspected original values")
+    if not validate_host(updates.get("hosted_node")) or not validate_username(updates.get("hosted_user")):
+        raise ValueError("Invalid destination setup transport")
+    if updates.get("hosted_key") is not None:
+        validate_filesystem_path(updates["hosted_key"])
+    cache_path = _cache_path_for_host(host, workspace)
+    with resource_lock("setup-cache", cache_path, wait=True):
+        data = _cache_record(cache_path)
+        if data is None or data["host"] != host or data["system_type"] != system_type:
+            raise ValueError(f"Saved setup identity changed during migration for {host}")
+        current = data["args"]
+        original = all(current.get(key) == value for key, value in expected.items())
+        already_applied = all(
+            current.get(key) == updates.get(key, value) for key, value in expected.items()
+        )
+        if not original and not already_applied:
+            raise ValueError(f"Saved setup provider binding changed during migration for {host}")
+        current.update(updates)
+        SetupConfig.from_dict(host, system_type, current)
+        write_json_atomic(cache_path, data, mode=0o600)
+
+
 def _write_history_entry(
     config: SetupConfig,
     *,

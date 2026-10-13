@@ -284,7 +284,8 @@ class TestShellMigration(_ShellFixture):
         self.shell.dispatch("migrate 100 pve2 --target-storage local --timeout 14400 --dry-run")
         self.assertEqual(mock_migrate.call_args.kwargs, {
             "online": False, "with_local_disks": False, "target_storage": "local",
-            "timeout": 14400, "dry_run": True,
+            "timeout": 14400, "shutdown_timeout": 180, "dry_run": True,
+            "workspace": self.workspace, "resume": False,
         })
         self.assert_output_contains("Would migrate")
         self.assertNotIn("Migrated", "\n".join(self.outputs))
@@ -294,6 +295,13 @@ class TestShellMigration(_ShellFixture):
         self.shell.dispatch("migrate 100 pve2 --online --with-local-disks")
         self.assertTrue(mock_migrate.call_args.kwargs["online"])
         self.assertTrue(mock_migrate.call_args.kwargs["with_local_disks"])
+
+    @patch("lib.proxmox_shell.migrate_guest")
+    def test_guest_name_and_resume_are_forwarded(self, mock_migrate):
+        self.shell.dispatch("migrate agent-one pve2 --resume --shutdown-timeout 240")
+        self.assertEqual(mock_migrate.call_args.args[1], "agent-one")
+        self.assertTrue(mock_migrate.call_args.kwargs["resume"])
+        self.assertEqual(mock_migrate.call_args.kwargs["shutdown_timeout"], 240)
 
     @patch("lib.proxmox_shell.migrate_guest")
     def test_unknown_and_incomplete_options_do_not_migrate(self, mock_migrate):

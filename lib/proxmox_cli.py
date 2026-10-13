@@ -16,7 +16,9 @@ from lib.cluster_update import run_cluster_update
 from lib.proxmox_cluster_join import ProxmoxClusterJoinError, run_cluster_join
 from lib.proxmox_backup import BackupInfo, ProxmoxBackupError, create_backup, list_backups
 from lib.proxmox_guest import probe_proxmox_cluster, probe_proxmox_host
-from lib.proxmox_migrate import DEFAULT_MIGRATION_TIMEOUT, ProxmoxMigrateError, migrate_guest
+from lib.proxmox_migrate import (
+    DEFAULT_MIGRATION_TIMEOUT, DEFAULT_SHUTDOWN_TIMEOUT, ProxmoxMigrateError, migrate_guest,
+)
 from lib.proxmox_maintenance import (
     collect_maintenance_report,
     format_maintenance_report,
@@ -347,10 +349,10 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
 
     plan = sub.add_parser(
         "plan",
-        help="Read-only placement and rebalance advisor",
+        help="Placement and rebalance advisor",
         description=(
             "Suggest where to put a new guest, or which guests on overloaded "
-            "nodes could be moved. Read-only: prints rankings, never migrates."
+            "nodes could be moved. Rebalance --apply performs a selected migration."
         ),
     )
     plan_sub = plan.add_subparsers(dest="plan_command", help="Plan subcommand")
@@ -444,7 +446,11 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
     )
     plan_rebalance_p.add_argument(
         "--timeout", type=int, default=DEFAULT_MIGRATION_TIMEOUT,
-        help="Noninteractive migration SSH wait in seconds (default: 3600)",
+        help="Native migration/start SSH wait in seconds (default: 3600)",
+    )
+    plan_rebalance_p.add_argument(
+        "--shutdown-timeout", type=int, default=DEFAULT_SHUTDOWN_TIMEOUT,
+        help="Graceful shutdown timeout in seconds during offline migration (default: 180)",
     )
     plan_rebalance_p.add_argument(
         "--yes",
@@ -455,7 +461,7 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
     plan_rebalance_p.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --apply, print the migrate command without executing it",
+        help="With --apply, inspect and preview the complete migration workflow",
     )
     plan_rebalance_p.set_defaults(_handler=_cmd_plan_rebalance)
 
@@ -501,7 +507,7 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
         help="Migrate a guest to another cluster node",
     )
     migrate.add_argument("host", help="Source registered host name or address")
-    migrate.add_argument("vmid", type=int, help="Guest VMID")
+    migrate.add_argument("vmid", help="Guest VMID or exact Proxmox guest name")
     migrate.add_argument("target", help="Target registered host name or address")
     migrate.add_argument(
         "--online",
@@ -519,12 +525,20 @@ def add_proxmox_subparser(subparsers: argparse._SubParsersAction) -> argparse.Ar
     )
     migrate.add_argument(
         "--timeout", type=int, default=DEFAULT_MIGRATION_TIMEOUT,
-        help="Noninteractive migration SSH wait in seconds (default: 3600)",
+        help="Native migration/start SSH wait in seconds (default: 3600)",
+    )
+    migrate.add_argument(
+        "--shutdown-timeout", type=int, default=DEFAULT_SHUTDOWN_TIMEOUT,
+        help="Graceful shutdown timeout in seconds during offline migration (default: 180)",
+    )
+    migrate.add_argument(
+        "--resume", action="store_true",
+        help="Inspect an unfinished migration and finish verified destination work without replaying an uncertain transfer",
     )
     migrate.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the remote migrate command without executing it",
+        help="Inspect and preview shutdown, transfer, saved setup updates, and startup",
     )
     migrate.set_defaults(_handler=_cmd_migrate)
 
@@ -1275,7 +1289,7 @@ def _cmd_plan_rebalance(args: argparse.Namespace, workspace: Optional[str]) -> i
     print(
         f"\n--apply: migrate VMID {args.apply} ({source_guest.name}, "
         f"{source_guest.guest_type}) from {source_host.name} to {target_host.name}"
-        + (" [online]" if args.online else "")
+        + (" [online]" if args.online else " [offline: graceful shutdown and power-state restoration]")
         + (" [with-local-disks]" if args.with_local_disks else "")
         + (" [dry-run]" if args.dry_run else "")
     )
@@ -1296,7 +1310,9 @@ def _cmd_plan_rebalance(args: argparse.Namespace, workspace: Optional[str]) -> i
         with_local_disks=args.with_local_disks,
         target_storage=args.target_storage,
         timeout=args.timeout,
+        shutdown_timeout=args.shutdown_timeout,
         dry_run=args.dry_run,
+        workspace=workspace,
     )
     prefix = "Would migrate" if args.dry_run else "Migrated"
     print(
@@ -1346,10 +1362,13 @@ def _cmd_migrate(args: argparse.Namespace, workspace: Optional[str]) -> int:
         with_local_disks=args.with_local_disks,
         target_storage=args.target_storage,
         timeout=args.timeout,
+        shutdown_timeout=args.shutdown_timeout,
         dry_run=args.dry_run,
+        workspace=workspace,
+        resume=args.resume,
     )
     prefix = "Would migrate" if args.dry_run else "Migrated"
-    print(f"{prefix} VMID {args.vmid} from {src.name} to {target.name}.")
+    print(f"{prefix} guest {args.vmid} from {src.name} to {target.name}.")
     return 0
 
 

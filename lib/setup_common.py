@@ -1204,7 +1204,10 @@ def _apply_hosted_proxmox_defaults(
         if not config.ssh_key and registered_host_key:
             config.ssh_key = registered_host_key
 
-    if not config.hosted_key and config.ssh_key and guest_key_was_provided:
+    # A registered host with no key deliberately uses OpenSSH's default
+    # identity/configuration. Keep that policy distinct from the guest key,
+    # including when replaying a binding verified by migration.
+    if host is None and not config.hosted_key and config.ssh_key and guest_key_was_provided:
         config.hosted_key = config.ssh_key
 
     if not validate_host(str(config.hosted_node)):
