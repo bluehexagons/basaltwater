@@ -38,6 +38,18 @@ Plaintext admin requests are rejected.
 
 ## Custom internal port
 
+For multiple client release lines, deploy repository manifests with repeated
+`--deploy DOMAIN 'URL#branch=NAME'` options; see [Deployments](DEPLOYMENTS.md).
+Each domain receives its own service account, persistent data, and automatic
+HTTP port. The built-in `--antistatic-server` option installs one latest-release
+service and does not select a maintenance branch.
+
+Only one process should enable `-stun-port 3478`; the other processes can share
+that responder with `-stun-port 0`. Manifest deployments do not infer public UDP
+firewall rules from application arguments: allow 3478/udp in both the host and
+provider firewall and use a DNS-only STUN hostname pointing at the server's
+public IP. Cloudflare tunnels carry the HTTP services separately.
+
 The default internal port is 8080. Specify another port after the hostname:
 
 ```bash

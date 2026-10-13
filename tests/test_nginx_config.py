@@ -148,6 +148,8 @@ class TestMakeProxyLocation(unittest.TestCase):
         result = _make_proxy_location('/', 3000, '# Backend')
         self.assertIn('proxy_pass http://127.0.0.1:3000', result)
         self.assertIn('location /', result)
+        self.assertIn('proxy_set_header X-Forwarded-For $remote_addr;', result)
+        self.assertNotIn('$proxy_add_x_forwarded_for', result)
 
     def test_subpath_location(self):
         result = _make_proxy_location('/api', 4000, '# API')

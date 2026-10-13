@@ -340,7 +340,7 @@ def _make_proxy_location(path: str, port: int, comment: str, enable_websocket: b
         f"        proxy_pass http://127.0.0.1:{port}{slash};",
         "        proxy_set_header Host $host;",
         "        proxy_set_header X-Real-IP $remote_addr;",
-        "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "        proxy_set_header X-Forwarded-For $remote_addr;",
         f"        proxy_set_header X-Forwarded-Proto {forwarded_proto};",
         "",
         "        # Performance optimizations for dynamic backends",

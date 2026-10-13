@@ -20,7 +20,19 @@ Repositories with the same final name (for example, two different `site.git`
 URLs) receive distinct upload paths based on their complete URLs. Deployment
 source trees must not contain symlinks or special files; the controller checks
 this before reading the manifest or uploading the source.
-Git URLs must not contain embedded HTTP credentials, query strings, or fragments.
+Git URLs must not contain embedded HTTP credentials or query strings. An optional
+`#branch=NAME` or `#tag=NAME` selects an explicit branch or tag; all other fragments
+are rejected. Quote URLs with selectors:
+
+```bash
+basaltw setup server_web web.example.com deploy \
+  --deploy app.example.com 'https://github.com/example/app.git#branch=main' \
+  --deploy stable.example.com 'https://github.com/example/app.git#branch=release/stable'
+```
+
+Each source selector receives its own cache and upload path. Setup fetches the
+selected ref on every run and stops if it is missing, including during dry runs.
+Without a selector, deployments continue to follow the repository's default branch.
 Use the controller's Git credential helper or SSH key for private repositories.
 Displayed commands also replace sensitive URLs from older saved configurations
 with a placeholder that must be filled in before replay.

@@ -545,6 +545,20 @@ def validate_antistatic_settings(config: "SetupConfig") -> None:
         raise ValueError("Antistatic admin password must not contain control characters")
 
 
+def validate_git_ref_name(ref: str) -> str:
+    """Validate a branch or tag name before constructing an explicit refspec."""
+    if (
+        not isinstance(ref, str)
+        or len(ref) > 1024
+        or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._/-]*", ref)
+        or ref.endswith(".")
+        or ".." in ref
+        or any(not part or part.startswith(".") or part.endswith(".lock") for part in ref.split("/"))
+    ):
+        raise ValueError("Invalid deployment Git branch or tag name")
+    return ref
+
+
 def validate_deploy_git_url(git_url: str) -> None:
     """Keep credentials and option-like values out of deployment Git URLs."""
     if not isinstance(git_url, str) or not git_url or not git_url.strip():
@@ -554,15 +568,16 @@ def validate_deploy_git_url(git_url: str) -> None:
     validate_no_control_characters(git_url, "Deploy git URL")
     if git_url.startswith("-"):
         raise ValueError("Deploy git URL must not start with an option")
-    parsed = urlparse(git_url)
-    if parsed.query or parsed.fragment:
-        raise ValueError("Deploy git URL must not contain a query or fragment")
+    from lib.deploy_utils import parse_repository_source, repository_stage_name
+
+    repository_url, _ref = parse_repository_source(git_url)
+    parsed = urlparse(repository_url)
+    if parsed.query:
+        raise ValueError("Deploy git URL must not contain a query")
     if parsed.scheme != "ssh" and "@" in parsed.netloc:
         raise ValueError("Deploy git URL must not contain embedded credentials")
     if parsed.scheme == "ssh" and parsed.password is not None:
         raise ValueError("Deploy SSH URL must not contain an embedded password")
-    from lib.deploy_utils import repository_stage_name
-
     try:
         repository_stage_name(git_url)
     except ValueError as exc:

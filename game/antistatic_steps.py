@@ -277,7 +277,7 @@ WorkingDirectory={ANTISTATIC_DATA_DIR}
 Environment=ANTISTATIC_DATA_DIR={ANTISTATIC_DATA_DIR}
 EnvironmentFile=-{ANTISTATIC_ENV_FILE}
 ExecStart={ANTISTATIC_BINARY}{host_args} -port {port}{stun_args}{proxy_args}
-ExecStartPost=/usr/bin/curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 1 --max-time 2 http://127.0.0.1:{port}/health
+ExecStartPost=/usr/bin/curl --fail --silent --show-error --header "X-Real-IP: 127.0.0.1" --retry 5 --retry-connrefused --retry-delay 1 --max-time 2 http://127.0.0.1:{port}/health
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=40s

@@ -142,7 +142,7 @@ class SetupSafetyTests(unittest.TestCase):
             "https://example.com/site.git#secret",
         ):
             with self.subTest(git_url=git_url):
-                with self.assertRaisesRegex(ValueError, "credentials|query or fragment"):
+                with self.assertRaisesRegex(ValueError, "credentials|query|selectors"):
                     validate_deploy_specs([["example.com", git_url]])
         validate_deploy_specs([["example.com", "git@example.com:owner/site.git"]])
         with self.assertRaisesRegex(ValueError, "query or fragment"):

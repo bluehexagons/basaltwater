@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -19,8 +20,83 @@ from lib.deploy_utils import (
     save_deployment_metadata,
     load_deployment_metadata,
     should_redeploy,
+    extract_repo_name,
+    parse_repository_source,
+    repository_stage_name,
 )
+from lib.command_display import redacted_git_url
+from lib.setup_common import _checkout_repository_ref, _refresh_repository_cache, clone_repository
 from lib.state_read import StateReadError
+from lib.validation import validate_deploy_git_url
+
+
+class TestRepositorySelection(unittest.TestCase):
+    url = "https://github.com/example/server.git"
+
+    def test_branch_tag_and_default_are_distinct_sources(self):
+        sources = [self.url, self.url + "#branch=release/stable", self.url + "#tag=v0.9.3"]
+        self.assertEqual(len({repository_stage_name(source) for source in sources}), 3)
+        for source, ref in zip(sources, (None, "refs/heads/release/stable", "refs/tags/v0.9.3")):
+            with self.subTest(source=source):
+                validate_deploy_git_url(source)
+                self.assertEqual(parse_repository_source(source), (self.url, ref))
+                self.assertEqual(extract_repo_name(source), "server")
+                self.assertEqual(redacted_git_url(source), source)
+
+    def test_unsafe_selectors_and_credentials_are_rejected(self):
+        for suffix in ("#token=secret", "#branch=", "#branch=-option", "#branch=../main",
+                       "#branch=main:other", "#branch=a//b", "#tag=a.lock/b", "#tag=a/.hidden",
+                       "#branch=main?secret", "#branch=a\\b", "#tag=v1#token=secret", "?token=secret#branch=main"):
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                validate_deploy_git_url(self.url + suffix)
+        credential_url = "https://token@github.com/example/server.git#branch=main"
+        with self.assertRaises(ValueError):
+            validate_deploy_git_url(credential_url)
+        self.assertEqual(redacted_git_url(credential_url), "https://REPLACE_WITH_GIT_URL")
+
+    @patch("lib.setup_common.subprocess.run")
+    def test_selected_ref_fetches_explicit_namespace_before_reset(self, run):
+        run.return_value = MagicMock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertTrue(_checkout_repository_ref(directory, "refs/heads/release/stable"))
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
+        self.assertEqual(commands[1][-3:], ["reset", "--hard", "refs/basaltwater/deploy"])
+        self.assertEqual(commands[2][-2:], ["clean", "-fdx"])
+
+    @patch("lib.setup_common.subprocess.run")
+    def test_missing_selected_ref_does_not_use_stale_checkout(self, run):
+        run.return_value = MagicMock(returncode=128, stderr="missing remote ref")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(_refresh_repository_cache(self.url + "#branch=missing", directory, "server"))
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0][-1], "+refs/heads/missing:refs/basaltwater/deploy")
+
+    @patch("lib.setup_common.subprocess.run")
+    def test_new_cache_clones_base_url_then_selects_ref(self, run):
+        run.return_value = MagicMock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            cache = os.path.join(directory, "cache")
+            self.assertTrue(_refresh_repository_cache(self.url + "#tag=v0.9.3", cache, "server"))
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0], ["git", "clone", "--no-checkout", "--", self.url, cache])
+        self.assertEqual(commands[1][-1], "+refs/tags/v0.9.3:refs/basaltwater/deploy")
+
+    @patch("lib.deploy_utils.get_git_commit_hash", return_value="selected-commit")
+    @patch("lib.setup_common._refresh_repository_cache")
+    @patch("lib.setup_common.subprocess.run")
+    def test_dry_run_fetches_selected_branch_without_touching_cache(self, run, refresh, _commit):
+        run.return_value = MagicMock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            result = clone_repository(self.url + "#branch=release/stable", directory,
+                                      cache_dir=os.path.join(directory, "cache"), dry_run=True)
+        self.assertEqual(result[1], "selected-commit")
+        refresh.assert_not_called()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn("--no-checkout", commands[0])
+        self.assertEqual(commands[0][-2], self.url)
+        self.assertIn("--depth", commands[1])
+        self.assertEqual(commands[1][-1], "+refs/heads/release/stable:refs/basaltwater/deploy")
 
 
 class TestParseDeploySpec(unittest.TestCase):

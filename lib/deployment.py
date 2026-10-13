@@ -25,6 +25,7 @@ from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, snapshot
 from lib.deploy_utils import (
     create_safe_directory_name,
     detect_project_type,
+    extract_repo_name,
     get_project_root,
     save_deployment_metadata,
     should_redeploy
@@ -103,7 +104,7 @@ class DeploymentOrchestrator:
                             match = re.search(r'-p (\d+)', content)
                             if match:
                                 used_ports.add(int(match.group(1)))
-                            match = re.search(r'--port (\d+)', content)
+                            match = re.search(r'(?<!\S)--?port\s+(\d+)', content)
                             if match:
                                 used_ports.add(int(match.group(1)))
                             for match in re.finditer(r'(?:PORT=|LISTEN_ADDR=[^\n]*:|GOCLICK_ADDR=[^\n]*:)(\d+)', content):
@@ -142,9 +143,7 @@ class DeploymentOrchestrator:
     def get_deployment_path(self, domain: Optional[str], path: str, git_url: str) -> str:
         dir_name = create_safe_directory_name(domain, path)
         
-        repo_name = git_url.rstrip('/').split('/')[-1]
-        if repo_name.endswith('.git'):
-            repo_name = repo_name[:-4]
+        repo_name = extract_repo_name(git_url)
         
         if dir_name:
             return os.path.join(self.base_dir, dir_name)
@@ -1425,15 +1424,17 @@ class DeploymentOrchestrator:
         """
         import time
         import urllib.error
+        import urllib.request
 
         url = f"http://127.0.0.1:{component.port}{component.health}"
+        request = urllib.request.Request(url, headers={"X-Real-IP": "127.0.0.1"})
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             try:
-                with open_loopback(url, timeout=min(3.0, remaining)) as resp:
+                with open_loopback(request, timeout=min(3.0, remaining)) as resp:
                     if 200 <= resp.status < 300:
                         print(f"  ✓ Health check passed for '{component.name}' ({url} → {resp.status})")
                         return

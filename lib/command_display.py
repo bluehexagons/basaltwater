@@ -10,6 +10,11 @@ from urllib.parse import urlsplit
 
 def _git_url_needs_redaction(value: str) -> bool:
     try:
+        if "#" in value:
+            from lib.validation import validate_deploy_git_url
+
+            validate_deploy_git_url(value)
+            return False
         parsed = urlsplit(value)
         return bool(
             parsed.query

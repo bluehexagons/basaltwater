@@ -10,12 +10,26 @@ from typing import Optional
 
 from lib.atomic_io import write_json_atomic
 from lib.state_read import StateReadError, read_state_object
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_git_ref_name
+
+
+def parse_repository_source(source: str) -> tuple[str, Optional[str]]:
+    """Split an optional #branch=NAME or #tag=NAME into an explicit Git ref."""
+    repository_url, separator, selector = source.partition("#")
+    if not separator:
+        return repository_url, None
+    kind, equals, name = selector.partition("=")
+    if not equals or kind not in {"branch", "tag"}:
+        raise ValueError("Deploy Git selectors must use #branch=NAME or #tag=NAME")
+    validate_git_ref_name(name)
+    namespace = "heads" if kind == "branch" else "tags"
+    return repository_url, f"refs/{namespace}/{name}"
 
 
 def extract_repo_name(git_url: str) -> str:
     """Return the human-readable final repository name from a Git URL."""
-    repo_name = git_url.rstrip('/').split('/')[-1]
+    repository_url, _ref = parse_repository_source(git_url)
+    repo_name = repository_url.rstrip('/').split('/')[-1]
     return repo_name.removesuffix('.git')
 
 

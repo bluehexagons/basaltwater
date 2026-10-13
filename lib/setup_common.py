@@ -139,13 +139,31 @@ def _repository_cache_path(cache_dir: str, git_url: str, repo_name: str) -> str:
     return os.path.join(cache_dir, f"{repo_name}-{url_digest}")
 
 
+def _checkout_repository_ref(repo_path: str, ref: str, *, shallow: bool = False) -> bool:
+    """Fetch the exact requested namespace; never reuse a missing or stale ref."""
+    depth = ["--depth", "1"] if shallow else []
+    for command in (
+        ["git", "-C", repo_path, "fetch", *depth, "--no-tags", "origin", f"+{ref}:refs/basaltwater/deploy"],
+        ["git", "-C", repo_path, "reset", "--hard", "refs/basaltwater/deploy"],
+        ["git", "-C", repo_path, "clean", "-fdx"],
+    ):
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(f"  Error selecting deployment ref {ref}: {result.stderr}")
+            return False
+    return True
+
+
 def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> bool:
     """Create or refresh one cache while its caller owns the cache lock."""
+    from lib.deploy_utils import parse_repository_source
+
+    repository_url, ref = parse_repository_source(git_url)
     if not os.path.exists(cache_path):
         print(f"  Caching {git_url}...")
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         result = subprocess.run(
-            ["git", "clone", "--", git_url, cache_path],
+            ["git", "clone", *(["--no-checkout"] if ref else []), "--", repository_url, cache_path],
             capture_output=True,
             text=True,
             timeout=300,
@@ -154,9 +172,11 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
             print(f"  Error cloning repository: {result.stderr}")
             return False
         print(f"  ✓ Cached to {cache_path}")
-        return True
+        return _checkout_repository_ref(cache_path, ref) if ref else True
 
     print(f"  Updating cached repository {repo_name}...")
+    if ref:
+        return _checkout_repository_ref(cache_path, ref)
     result = subprocess.run(
         ["git", "-C", cache_path, "fetch", "--all"],
         capture_output=True,
@@ -208,11 +228,12 @@ def _refresh_repository_cache(git_url: str, cache_path: str, repo_name: str) -> 
 
 
 def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = None, dry_run: bool = False) -> Optional[tuple[str, Optional[str]]]:
-    from lib.deploy_utils import extract_repo_name, repository_stage_name
+    from lib.deploy_utils import extract_repo_name, parse_repository_source, repository_stage_name
 
     try:
         validate_deploy_git_url(git_url)
         stage_name = repository_stage_name(git_url)
+        repository_url, ref = parse_repository_source(git_url)
     except ValueError as exc:
         print(f"  Error: {exc}")
         return None
@@ -227,13 +248,15 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
         print(f"  [DRY RUN] Cloning {git_url} for deployment preflight...")
         try:
             result = subprocess.run(
-                ["git", "clone", "--depth", "1", "--", git_url, clone_path],
+                ["git", "clone", "--depth", "1", *(["--no-checkout"] if ref else []), "--", repository_url, clone_path],
                 capture_output=True,
                 text=True,
                 timeout=300,
             )
             if result.returncode != 0:
                 print(f"  Error cloning repository for preflight: {result.stderr}")
+                return None
+            if ref and not _checkout_repository_ref(clone_path, ref, shallow=True):
                 return None
             from lib.deploy_utils import get_git_commit_hash
 
@@ -259,13 +282,9 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
             return None
     else:
         print(f"  Cloning {git_url}...")
-        if dry_run:
-            print(f"  [DRY RUN] Would clone to {clone_path}")
-            return (clone_path, None)
-        
         try:
             result = subprocess.run(
-                ["git", "clone", "--", git_url, clone_path],
+                ["git", "clone", *(["--no-checkout"] if ref else []), "--", repository_url, clone_path],
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -274,6 +293,8 @@ def clone_repository(git_url: str, temp_dir: str, cache_dir: Optional[str] = Non
                 print(f"  Error cloning repository: {result.stderr}")
                 return None
             print(f"  ✓ Cloned to {clone_path}")
+            if ref and not _checkout_repository_ref(clone_path, ref):
+                return None
             
             from lib.deploy_utils import get_git_commit_hash
             commit_hash = get_git_commit_hash(clone_path)

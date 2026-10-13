@@ -18,7 +18,7 @@ import unittest
 import urllib.error
 import urllib.request
 import urllib.response
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -201,6 +201,13 @@ class TestServiceContext(unittest.TestCase):
     def setUp(self):
         self.orch = DeploymentOrchestrator(base_dir="/var/www")
 
+    def test_inactive_service_port_is_reserved_for_single_dash_go_flags(self):
+        with patch("lib.deployment.os.path.exists", return_value=True), patch(
+            "lib.deployment.os.listdir", return_value=["app-stable-server.service"]
+        ), patch("builtins.open", mock_open(read_data="ExecStart=/srv/server -port 8123 -stun-port 3478\n")):
+            self.assertEqual(self.orch._get_used_ports(), {8123})
+            self.assertEqual(self.orch._get_used_ports({"app-stable-server"}), set())
+
     def test_resolves_binary_working_dir_env_file(self):
         comp = _service_component(
             working_dir="{{release_dir}}/server",
@@ -311,10 +318,11 @@ class TestServiceContext(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "within 30 seconds"):
                 self.orch._poll_health(component, timeout=30.0)
 
-        urlopen.assert_called_once_with(
-            "http://127.0.0.1:8090/health",
-            timeout=3.0,
-        )
+        urlopen.assert_called_once()
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8090/health")
+        self.assertEqual(request.get_header("X-real-ip"), "127.0.0.1")
+        self.assertEqual(urlopen.call_args.kwargs, {"timeout": 3.0})
         sleep.assert_not_called()
 
     @patch('lib.deployment.run')
