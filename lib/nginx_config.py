@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import ipaddress
 import os
 import shlex
@@ -312,6 +313,9 @@ def generate_self_signed_cert(
 
 def _make_cache_maps(domain_slug: str) -> tuple[str, str, str]:
     """Let assets revalidate across releases, including fixed-name JS and sprites."""
+    # Keep identifiers valid and short enough for Nginx's default hash buckets.
+    # Hash the original slug so replacing punctuation cannot alias site names.
+    domain_slug = hashlib.sha256(domain_slug.encode("utf-8")).hexdigest()[:16]
     expires_var = f"$assets_expires_{domain_slug}"
     cc_var = f"$assets_cc_{domain_slug}"
     

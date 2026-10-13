@@ -6,6 +6,7 @@ import base64
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -133,14 +134,35 @@ class TestCertificateIsUsable(unittest.TestCase):
 class TestMakeCacheMaps(unittest.TestCase):
     def test_returns_maps_and_vars(self):
         maps, expires_var, cc_var = _make_cache_maps('example_com')
-        self.assertIn('example_com', expires_var)
-        self.assertIn('example_com', cc_var)
+        self.assertTrue(expires_var.startswith('$assets_expires_'))
+        self.assertTrue(cc_var.startswith('$assets_cc_'))
         self.assertIn('map', maps)
         self.assertIn('css', maps)
         self.assertIn('js', maps)
         self.assertNotIn('immutable', maps)
         self.assertIn('must-revalidate', maps)
         self.assertNotIn('1y', maps)
+
+    def test_hyphenated_site_uses_valid_variable_identifiers(self):
+        maps, expires_var, cc_var = _make_cache_maps('mm0-beta_hexagonalhomelab_com')
+        for variable in (expires_var, cc_var):
+            self.assertRegex(variable, r'^\$[A-Za-z_][A-Za-z0-9_]*$')
+            self.assertIn(f'map $uri {variable} {{', maps)
+
+    def test_punctuation_does_not_alias_other_site_names(self):
+        variables = [
+            _make_cache_maps(slug)[1:]
+            for slug in ('a-b_c', 'a_b-c', 'a_b_c', 'a_2d_b_c', 'default')
+        ]
+        self.assertEqual(len(set(variables)), len(variables))
+
+    def test_long_site_names_use_short_variable_identifiers(self):
+        slug = '_'.join(('a' * 63, 'b' * 63, 'c' * 63, 'd' * 61))
+        maps, expires_var, cc_var = _make_cache_maps(slug)
+        for variable in (expires_var, cc_var):
+            self.assertRegex(variable, r'^\$[A-Za-z_][A-Za-z0-9_]*$')
+            self.assertLessEqual(len(variable), 40)
+            self.assertIn(f'map $uri {variable} {{', maps)
 
 
 class TestMakeProxyLocation(unittest.TestCase):
@@ -193,6 +215,27 @@ class TestMakeStaticLocation(unittest.TestCase):
 
 
 class TestGenerateMergedNginxConfig(unittest.TestCase):
+    def test_hyphenated_domain_defines_variables_used_by_static_and_proxy_routes(self):
+        deployments = [
+            {'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site'},
+            {'path': '/guide/', 'needs_proxy': False, 'serve_path': '/var/www/guide'},
+            {'path': '/api', 'needs_proxy': True, 'backend_port': 3007},
+        ]
+        domain = 'mm0-beta.hexagonalhomelab.com'
+        for redirects in (True, False):
+            with self.subTest(redirects=redirects):
+                config = generate_merged_nginx_config(
+                    domain, deployments, enable_https_redirect=redirects,
+                )
+                definitions = re.findall(r'^map \$uri (\$\S+) \{', config, re.MULTILINE)
+                self.assertEqual(len(definitions), 2)
+                for variable in definitions:
+                    self.assertRegex(variable, r'^\$[A-Za-z_][A-Za-z0-9_]*$')
+                references = re.findall(r'(?:expires|add_header Cache-Control) (\$\S+);', config)
+                self.assertGreaterEqual(len(references), 6)
+                self.assertEqual(set(references), set(definitions))
+                self.assertIn(f'server_name {domain};', config)
+
     def test_basic_static_config(self):
         deployments = [{
             'path': '/',

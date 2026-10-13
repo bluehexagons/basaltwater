@@ -44,6 +44,20 @@ Automatic swap sizing reads physical RAM from `/proc/meminfo` (`MemTotal` in
 kB, converted to MiB). `free` has no `--output=total` option. If `MemTotal` is
 missing, invalid, or unreadable, setup warns and leaves swap unchanged.
 
+## Nginx variables for deployment hostnames
+
+Hostnames and site filenames can contain hyphens, but generated Nginx variable
+references must use ASCII letters, digits, and underscores. `_make_cache_maps()`
+hashes each site's original slug into a short hexadecimal suffix, keeping names
+valid and within Nginx's default variable hash buckets even for long hostnames.
+Do not reuse a filename slug directly as a variable name or replace all
+punctuation with the same separator. Test configurations with hyphenated and
+long domains and both static and proxy routes.
+
+When a new configuration fails `nginx -t`, reconciliation restores and tests
+the previous configuration. A successful second test confirms rollback; the
+original setup step still fails so the rejected configuration can be corrected.
+
 ## Boolean CLI options on newer Python versions
 
 Pass `type` and `choices` only to argument actions that consume a value.
