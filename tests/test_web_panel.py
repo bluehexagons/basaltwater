@@ -282,6 +282,13 @@ class WebPanelPayloadTest(unittest.TestCase):
 
 
 class WebPanelLifecycleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        # Guacamole lifecycle is covered separately; panel tests must never
+        # inspect or remove services from the developer's machine.
+        self.enterContext(patch("desktop.guacamole_steps.preflight_units"))
+        self.enterContext(patch("desktop.guacamole_steps.preflight_configuration"))
+        self.remove_guacamole = self.enterContext(patch("desktop.guacamole_steps.remove_guacamole"))
+
     def test_service_script_loads_when_launched_outside_the_source_tree(self) -> None:
         script = os.path.abspath(
             os.path.join(
@@ -737,6 +744,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
             configure_web_panel(_config(web_panel_notification_ingest=False))
 
         self.assertEqual(order, ["service", "nginx", "token:False"])
+        self.remove_guacamole.assert_called_once_with()
 
     def test_audit_exporter_is_root_only_with_one_writable_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -889,6 +897,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
             self.assertTrue(os.path.exists(site))
             mock_run.assert_not_called()
+            self.remove_guacamole.assert_not_called()
 
     def test_removal_cleans_stale_nginx_files_when_nginx_is_absent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
