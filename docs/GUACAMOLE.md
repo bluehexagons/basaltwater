@@ -198,6 +198,16 @@ are service readiness failures. Native protocol logs are suppressed to keep
 credentials and desktop contents private; service errors provide bounded generic
 readiness messages. Existing XRDP diagnostics remain available.
 
+For a shareable JSON report, run
+`python3 scripts/collect_guacamole_diagnostics.py` from a Basaltwater checkout as
+the desktop owner. Run `sudo -v` first to allow the collector's noninteractive
+log reads. Redirect the output to a private file (for example, set `umask 077`
+before redirecting to `guacamole-diagnostics.json`). The collector records
+bounded service/XRDP logs, desktop state, package versions and source hashes.
+It does not restart services or collect screenshots, password files, environment
+dumps or secret configuration. Review the output before sharing; credential
+redaction is best effort, and log text may contain private account or host names.
+
 ```bash
 basaltw patch 192.168.1.50 agent --no-guacamole
 ```
