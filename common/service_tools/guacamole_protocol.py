@@ -17,15 +17,13 @@ class Parser:
 
     def __init__(self) -> None:
         self.buffer = ""
+        self.elements: list[str] = []
+        self.size = 0
 
     def feed(self, data: str) -> list[list[str]]:
         self.buffer += data
-        if len(self.buffer) > MAX_INSTRUCTION:
-            raise ValueError("Guacamole instruction is too large")
         results = []
         position = 0
-        elements: list[str] = []
-        beginning = 0
         while position < len(self.buffer):
             dot = self.buffer.find(".", position)
             if dot < 0:
@@ -36,7 +34,8 @@ class Parser:
             if not length_text or len(length_text) > 6 or any(c not in "0123456789" for c in length_text):
                 raise ValueError("Invalid Guacamole element length")
             length = int(length_text)
-            if length > MAX_INSTRUCTION:
+            size = len(length_text) + length + 2
+            if self.size + size > MAX_INSTRUCTION:
                 raise ValueError("Guacamole element is too large")
             end = dot + 1 + length
             if end >= len(self.buffer):
@@ -44,15 +43,18 @@ class Parser:
             separator = self.buffer[end]
             if separator not in ",;":
                 raise ValueError("Invalid Guacamole separator")
-            elements.append(self.buffer[dot + 1:end])
-            if len(elements) > 256:
+            self.elements.append(self.buffer[dot + 1:end])
+            self.size += size
+            if len(self.elements) > 256:
                 raise ValueError("Too many Guacamole elements")
             position = end + 1
             if separator == ";":
-                results.append(elements)
-                elements = []
-                beginning = position
-        self.buffer = self.buffer[beginning:]
+                results.append(self.elements)
+                self.elements = []
+                self.size = 0
+        self.buffer = self.buffer[position:]
+        if self.size + len(self.buffer) > MAX_INSTRUCTION:
+            raise ValueError("Guacamole instruction is too large")
         return results
 
 

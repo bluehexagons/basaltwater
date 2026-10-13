@@ -320,6 +320,16 @@ class DesktopSession:
         action = payload.get("action")
         if action == "status":
             return self.snapshot_status()
+        if action in ("pause", "resume") and "generation" in payload:
+            # Remote human handoffs must not act on a replacement desktop.
+            # The local pause/resume command can still target the current one.
+            if payload["generation"] != self.generation:
+                raise ValueError("Desktop session changed; inspect it again")
+            snapshot = self.snapshot_status()
+            if snapshot["state"] != "running":
+                raise RuntimeError("Desktop is not ready for control handoff")
+            if "geometry" in payload and payload["geometry"] != snapshot["geometry"]:
+                raise ValueError("Desktop geometry changed; inspect it again")
         if action == "pause":
             self.paused = True
             self.lease = None

@@ -55,8 +55,10 @@ client modifies the JavaScript or sends keyboard/pointer instructions directly.
 - **Observe only** disables browser input and retains the agent's pause state.
 - **Resume agent** disables browser input and explicitly resumes agent actions.
 - **Disconnect browser session** revokes the current browser connection,
-  including a connection from another tab. It does not resume the agent, log out
-  the desktop, or close applications.
+  scoped to this page's attachment. A disconnected page can revoke the active
+  connection from another tab. A stale page cannot revoke a replacement
+  connection with its old attachment. Disconnect does not resume the agent,
+  log out the desktop, or close applications.
 - **Fullscreen** changes the browser view. The client scales the display locally;
   it does not request live XRDP resolution changes.
 
@@ -66,6 +68,14 @@ the same display and disconnect the browser. Desktop restart or geometry changes
 require reconnecting. Pause is cooperative same-account coordination, not a
 sandbox. Keep sensitive administrator sign-ins and privilege approvals on your
 own device, outside the shared desktop.
+
+The gateway binds pause/resume to the observed desktop generation and geometry;
+the desktop supervisor checks these before changing state. Control is available
+only after the native tunnel supplies its first display sync. Canceling a login
+revokes its pending handshake immediately. The page serializes control requests
+and refreshes authoritative status every three seconds, so an external resume
+also clears the browser's control indicator. The gateway independently checks
+pause state before accepting keyboard or pointer input.
 
 Clipboard, drive/file transfer, printing, audio, SFTP and recording are disabled.
 Browser instructions cannot select hosts, ports, protocols, other users, existing
@@ -94,6 +104,11 @@ user inactivity. An observation-only connection therefore expires after ten
 minutes unless a control action occurs. Expiry leaves desktop applications and
 the agent pause state intact.
 
+The page displays the remaining session and inactivity limits. Select
+**Observe only** to deliberately continue observing. Status polling does not
+renew inactivity or extend the one-hour limit, and an expired session cannot
+be revived with a late control action.
+
 Changing the panel password prevents new connections but does not revoke an
 already upgraded WebSocket. Use **Disconnect browser session**, or restart
 `basaltwater-guacamole.service`, to revoke it immediately. Removing Guacamole
@@ -114,7 +129,8 @@ The completed release is published atomically at
 `/opt/basaltwater-guacamole/1.6.0`. Unchanged reruns reuse it. Guacamole release
 updates require a reviewed Basaltwater version/hash change; there is no separate
 automatic upstream release updater. Debian packages continue under the normal
-system update policy. An incomplete or unmanaged release stops setup.
+system update policy. An incomplete, unmanaged, writable or unsafe linked
+release stops setup, including on reruns.
 
 Both services run as the configured non-root account with systemd hardening.
 `basaltwater-guacamole.service` runs `guacd` and the browser tunnel in a private
@@ -124,6 +140,17 @@ ports. It has no route to the host's network or arbitrary remote machines.
 which forwards only to the host's `127.0.0.1:3389` XRDP listener. Nginx reaches
 the HTTP application through a separate Unix socket restricted to the account
 and its web-service group. No raw Guacamole port is exposed on the host.
+Orderly service stops revoke sessions and release held browser keys/buttons
+before terminating native children. Forced termination cannot guarantee input
+release; disconnect or switch to observation before maintenance when possible.
+
+Both services report readiness to systemd only after their listeners are
+established. The gateway additionally waits for `guacd` to listen. Setup waits
+for this notification inside the existing grouped unit transaction, so startup
+failure restores prior service definitions and activation state. On activation
+failure, setup also restores the prior non-secret gateway configuration and
+reloads an active restored gateway. Interrupted or failed rollback still needs
+the normal [transaction recovery](TRANSACTION_RECOVERY.md) workflow.
 
 The gateway pins the configured XRDP certificate's SHA-256 fingerprint.
 Certificate verification is not disabled. After changing the XRDP certificate,
@@ -152,6 +179,7 @@ basaltw patch 192.168.1.50 agent --no-guacamole
 Removal preserves the native release and desktop; it does not remove build
 packages, reset Unix passwords, or resume paused agents. A successful rerun
 reconciles services and browser ingress. Setup refuses unmanaged service files.
+It checks managed configuration before changing browser ingress during removal.
 
 Validation covers configuration round trips, source integrity and extraction,
 native builds, origin/identity/CSRF checks, attachment replay and expiry,
@@ -172,3 +200,13 @@ A collaborative browser preview separately passed
 synthetic desktop rendering and controls at desktop and narrow viewports.
 These checks do not qualify every desktop environment, keyboard layout,
 GPU editor, or coexistence with a native RDP client.
+
+The follow-up audit on the same date added regression checks for scoped
+handoffs, pending-login cancellation, stale disconnects, expiry enforcement,
+external resume, graceful shutdown, release permissions and links, bounded
+source handling, readiness notification, and configuration rollback. A
+synthetic collaborative preview passed failed-login recovery, reconnect,
+take/observe/resume/disconnect, external-resume feedback, remaining-time
+display, and 1280 px and 390 px viewport layouts. Systemd startup/rollback and
+signal handling have isolated mocked tests; the complete hardened systemd
+profile still needs qualification on a disposable VM.

@@ -8,20 +8,21 @@ from pathlib import Path, PurePosixPath
 import pwd
 import shutil
 import ssl
+import stat
 import tarfile
 import tempfile
 import time
 import urllib.request
 
-from lib.atomic_io import fsync_tree, read_json_file, rename_path_durable, write_json_atomic, write_text_atomic
+from lib.atomic_io import fsync_tree, read_json_file, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
 from lib.config import SetupConfig
 from lib.guacamole_config import (
-    CONFIG, HTTP_SOCKET, RDP_SERVICE, RDP_SOCKET, RELEASE, RELEASE_ROOT,
+    CONFIG, RDP_SERVICE, RELEASE, RELEASE_ROOT,
     SERVICE, UNIT_MARKER, VERSION, validate_guacamole_settings,
 )
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import install_package, is_dry_run, run
-from lib.unit_transaction import remove_units, replace_units, snapshot_unit_file
+from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, remove_units, replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path
 
 SOURCE_HASHES = {
@@ -56,7 +57,9 @@ def download_source(kind: str, directory: Path) -> Path:
                 total = 0
                 deadline = time.monotonic() + 120
                 digest = hashlib.sha256()
-                while data := source.read(65536):
+                # read1 returns after a single underlying read, so a trickling
+                # peer cannot defer deadline checks until 64 KiB accumulate.
+                while data := source.read1(65536):
                     total += len(data)
                     if time.monotonic() > deadline:
                         raise RuntimeError("Guacamole source download exceeded two minutes")
@@ -76,10 +79,11 @@ def download_source(kind: str, directory: Path) -> Path:
 def extract_source(archive: Path, directory: Path) -> None:
     """Extract only bounded regular files and directories, never archive links."""
     with tarfile.open(archive) as source:
-        members = source.getmembers()
-        if len(members) > 10000 or sum(member.size for member in members) > 128 * 1024 * 1024:
-            raise RuntimeError("Guacamole source archive exceeds extraction limits")
-        for member in members:
+        size = 0
+        for index, member in enumerate(source):
+            size += member.size
+            if index >= 10000 or size > 128 * 1024 * 1024:
+                raise RuntimeError("Guacamole source archive exceeds extraction limits")
             name = PurePosixPath(member.name)
             if name.is_absolute() or ".." in name.parts or not (member.isdir() or member.isfile()):
                 raise RuntimeError("Unsafe Guacamole source archive entry")
@@ -106,8 +110,7 @@ def install_release() -> None:
         _safe_directory(release)
         if read_json_file(str(release / "release.json")) != {"version": VERSION, "sources": SOURCE_HASHES}:
             raise RuntimeError("Refusing an unmanaged Guacamole release")
-        if not (release / "sbin/guacd").is_file() or not (release / "share/all.js").is_file():
-            raise RuntimeError("Guacamole release is incomplete; inspect it before rerunning setup")
+        validate_release(release)
         return
     with tempfile.TemporaryDirectory(prefix=".guacamole-build-", dir=root) as temporary:
         workspace = Path(temporary)
@@ -131,7 +134,7 @@ def install_release() -> None:
         if not list((staged_release / "lib").glob("libguac-client-rdp.so*")):
             raise RuntimeError("Guacamole was built without RDP support")
         share = staged_release / "share"
-        share.mkdir(exist_ok=True)
+        share.mkdir(mode=0o755, exist_ok=True)
         client = workspace / f"guacamole-client-{VERSION}"
         javascript = client / "guacamole-common-js/src/main/webapp"
         modules = sorted((javascript / "modules").glob("*.js"))
@@ -141,13 +144,34 @@ def install_release() -> None:
         for name in ("LICENSE", "NOTICE"):
             shutil.copyfile(client / name, share / name)
         write_json_atomic(str(staged_release / "release.json"), {"version": VERSION, "sources": SOURCE_HASHES}, mode=0o644)
+        validate_release(staged_release)
         fsync_tree(str(staged_release))
         rename_path_durable(str(staged_release), RELEASE)
 
 
+def validate_release(release: Path) -> None:
+    """Never reuse mutable code or libraries escaping the managed release."""
+    for path in (release, *release.rglob("*")):
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            if info.st_uid != 0 or not path.resolve(strict=True).is_relative_to(release.resolve()):
+                raise RuntimeError(f"Unsafe Guacamole release link: {path}")
+        elif (not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))
+              or info.st_uid != 0 or info.st_mode & 0o6022):
+            raise RuntimeError(f"Unsafe Guacamole release entry: {path}")
+    if (not (release / "sbin/guacd").is_file()
+            or not os.access(release / "sbin/guacd", os.X_OK)
+            or not (release / "share/all.js").is_file()
+            or not list((release / "lib").glob("libguac-client-rdp.so*"))):
+        raise RuntimeError("Guacamole release is incomplete; inspect it before rerunning setup")
+
+
 def render_units(username: str, uid: int, gid: int) -> dict[str, str]:
     """Confine guacd to a namespace containing only a fixed XRDP relay."""
-    hardened = f"""User={username}
+    hardened = f"""Type=notify
+NotifyAccess=main
+TimeoutStartSec=30
+User={username}
 Group={gid}
 UMask=0077
 NoNewPrivileges=true
@@ -164,7 +188,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET
 LimitCORE=0
 Restart=on-failure
 RestartSec=5
-KillMode=control-group
+KillMode=mixed
 TimeoutStopSec=15
 StandardOutput=null
 StandardError=journal
@@ -204,19 +228,46 @@ WantedBy=multi-user.target
 def preflight_units() -> None:
     for name in (SERVICE, RDP_SERVICE):
         previous = snapshot_unit_file(f"/etc/systemd/system/{name}.service")
-        if previous and UNIT_MARKER not in previous["content"]:
-            raise RuntimeError(f"Refusing unmanaged Guacamole service: {name}")
+        if previous and (previous["uid"] != 0 or previous["mode"] & 0o022 or UNIT_MARKER not in previous["content"]):
+            raise RuntimeError(f"Refusing unmanaged or unsafe Guacamole service: {name}")
+
+
+def preflight_configuration() -> None:
+    path = Path(CONFIG)
+    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
+        raise RuntimeError("Refusing unsafe Guacamole configuration")
 
 
 def remove_guacamole() -> None:
     """Remove only managed access services; retain the desktop and release."""
     preflight_units()
+    preflight_configuration()
     path = Path(CONFIG)
-    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
-        raise RuntimeError("Refusing unsafe Guacamole configuration")
     if any(Path(f"/etc/systemd/system/{name}.service").exists() for name in (SERVICE, RDP_SERVICE)):
         remove_units((f"{SERVICE}.service", f"{RDP_SERVICE}.service"))
     path.unlink(missing_ok=True)
+
+
+def configure_services(settings: dict, units: dict[str, str]) -> None:
+    """Restore the previous non-secret configuration on activation failure."""
+    preflight_configuration()
+    previous = snapshot_unit_file(CONFIG)
+    state = inspect_unit_state(f"{SERVICE}.service")
+    try:
+        write_json_atomic(CONFIG, settings, mode=0o644)
+        replace_units(units, activate=(f"{RDP_SERVICE}.service", f"{SERVICE}.service"))
+    except BaseException as error:
+        if previous is None:
+            remove_file_durable(CONFIG)
+        else:
+            write_text_atomic(CONFIG, **previous)
+        # Unit rollback restarts old definitions before returning. Reload their
+        # restored configuration too; leave unresolved unit recovery quiescent.
+        if state["ActiveState"] == "active" and not isinstance(error, UnitRecoveryError):
+            run(["systemctl", "restart", f"{SERVICE}.service"])
+            if inspect_unit_state(f"{SERVICE}.service")["ActiveState"] != "active":
+                raise RuntimeError("Guacamole configuration rollback needs service recovery") from error
+        raise
 
 
 def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
@@ -228,6 +279,7 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
     if not can_manage_system_services():
         raise RuntimeError("Guacamole requires a machine that can manage system services")
     preflight_units()
+    preflight_configuration()
     for package in PACKAGES:
         if not install_package(package, package, ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package]):
             raise RuntimeError(f"Failed to install Guacamole dependency: {package}")
@@ -242,17 +294,8 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
     origins = ["https://" + (f"[{host}]" if ":" in host else host) + (f":{config.web_panel_port}" if config.web_panel_port != 443 else "") for host in identities]
     validate_filesystem_path(CONFIG, must_exist=False)
     _safe_directory(Path(CONFIG).parent)
-    if Path(CONFIG).is_symlink() or (Path(CONFIG).exists() and (not Path(CONFIG).is_file() or Path(CONFIG).stat().st_uid != 0 or Path(CONFIG).stat().st_mode & 0o022)):
-        raise RuntimeError("Refusing unsafe Guacamole configuration")
-    write_json_atomic(CONFIG, {"version": 1, "username": config.username, "uid": account.pw_uid,
-                              "origins": origins, "certificate": fingerprint,
-                              "socket_gid": pwd.getpwnam("www-data").pw_gid}, mode=0o644)
-    replace_units(render_units(config.username, account.pw_uid, account.pw_gid),
-                  activate=(f"{RDP_SERVICE}.service", f"{SERVICE}.service"))
-    for _ in range(50):
-        if Path(HTTP_SOCKET).is_socket() and Path(RDP_SOCKET).is_socket():
-            break
-        time.sleep(.1)
-    else:
-        raise RuntimeError("Guacamole services did not create their private sockets")
+    configure_services({"version": 1, "username": config.username, "uid": account.pw_uid,
+                        "origins": origins, "certificate": fingerprint,
+                        "socket_gid": pwd.getpwnam("www-data").pw_gid},
+                       render_units(config.username, account.pw_uid, account.pw_gid))
     print("  ✓ Guacamole browser desktop configured (HTTPS panel only)")

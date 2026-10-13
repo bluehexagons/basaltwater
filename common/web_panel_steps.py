@@ -1007,9 +1007,10 @@ def remove_web_panel() -> None:
     """Remove the panel, authentication data, and public Nginx listener."""
 
     nginx_content, link_exists = _preflight_web_panel_removal()
-    from desktop.guacamole_steps import preflight_units, remove_guacamole
+    from desktop.guacamole_steps import preflight_configuration, preflight_units, remove_guacamole
 
     preflight_units()
+    preflight_configuration()
     _remove_nginx_site(nginx_content, link_exists)
     remove_guacamole()
     units_changed = False
@@ -1084,6 +1085,11 @@ def configure_web_panel(config: SetupConfig) -> None:
         return
     if config.web_panel_port is None:
         return
+
+    from desktop.guacamole_steps import preflight_configuration, preflight_units
+
+    preflight_units()
+    preflight_configuration()
 
     from common.godot_web_steps import (
         configure_internal_web_host,

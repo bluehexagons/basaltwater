@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import socket
 import stat
 import sys
@@ -61,8 +62,11 @@ def load_configuration(path: str) -> dict:
     return value
 
 
-async def desktop_call(action: str) -> dict:
-    function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request({"action": action})
+async def desktop_call(action: str, *, generation: str | None = None, geometry: list[int] | None = None) -> dict:
+    payload = {"action": action}
+    if generation is not None:
+        payload.update(generation=generation, geometry=geometry)
+    function = desktop.start if action == "start" else desktop.status if action == "status" else lambda: desktop.request(payload)
     return await asyncio.wait_for(asyncio.to_thread(function), 65 if action == "start" else 35)
 
 
@@ -81,24 +85,34 @@ class Session:
     pointer: list[str] | None = None
     socket: web.WebSocketResponse | None = None
     upstream: asyncio.StreamWriter | None = None
+    closed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def release_input(self) -> None:
         """Release held keys/buttons whenever browser control ends."""
         self.controlled = False
         if self.upstream is not None and not self.upstream.is_closing():
+            self._release_upstream_input()
+        self.keys.clear()
+        self.pointer = None
+
+    def _release_upstream_input(self) -> None:
+        with contextlib.suppress(OSError):
             for key in self.keys:
                 self.upstream.write(instruction("key", key, "0").encode())
             if self.pointer is not None:
                 self.upstream.write(instruction("mouse", *self.pointer, "0").encode())
-        self.keys.clear()
-        self.pointer = None
 
-    async def close(self) -> None:
+    def revoke(self) -> None:
+        """Invalidate immediately, including an in-flight native handshake."""
+        self.closed.set()
         self.ready = False
         self.release_input()
         self.password = ""
         if self.upstream is not None:
             self.upstream.close()
+
+    async def close(self) -> None:
+        self.revoke()
         if self.socket is not None and self.socket.prepared:
             await self.socket.close()
 
@@ -154,6 +168,7 @@ class Gateway:
 <button id="observe" disabled>Observe only</button><button id="resume" disabled>Resume agent</button>
 <button id="disconnect" type="button">Disconnect browser session</button><button id="fullscreen" disabled>Fullscreen</button></div>
 <p id="status" role="status" aria-live="polite">Disconnected</p>
+<p id="lifetime">Connections last at most one hour and expire after ten minutes without input or a control action.</p>
 <div id="screen" tabindex="0" aria-label="Remote desktop"></div>
 <p>Clipboard, file transfer, audio and recording are disabled. Closing this connection keeps the desktop running.
 Keep administrator sign-ins and privilege approvals on your own device.</p>
@@ -198,9 +213,38 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
 
     def selected_session(self, identifier: str) -> Session:
         session = self.session
-        if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", identifier) or session is None or not secrets.compare_digest(identifier, session.identifier):
+        if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", identifier) or session is None or session.closed.is_set() or not secrets.compare_digest(identifier, session.identifier):
             raise web.HTTPForbidden(text="Desktop session expired")
         return session
+
+    def check_snapshot(self, session: Session, snapshot: dict) -> None:
+        if (self.session is not session or session.closed.is_set()
+                or snapshot.get("state") != "running"
+                or snapshot.get("generation") != session.generation
+                or snapshot.get("geometry") != session.geometry):
+            session.revoke()
+            raise web.HTTPConflict(text="Desktop session changed; reconnect")
+
+    def state(self, session: Session, snapshot: dict) -> dict:
+        self.check_snapshot(session, snapshot)
+        if snapshot.get("paused") is not True:
+            session.release_input()
+        now = time.monotonic()
+        remaining = max(0, int(MAX_SESSION - (now - session.created)))
+        idle = max(0, int(IDLE_TIMEOUT - (now - session.activity)))
+        if not remaining or not idle:
+            session.revoke()
+            raise web.HTTPConflict(text="Desktop session expired; reconnect")
+        return {"controlled": session.controlled, "paused": snapshot.get("paused") is True,
+                "expires_in": remaining, "idle_expires_in": idle}
+
+    async def status(self, request: web.Request) -> web.Response:
+        value = await self.form(request, {"session"})
+        async with self.lock:
+            session = self.selected_session(value["session"])
+            if not session.ready:
+                raise web.HTTPConflict(text="Desktop display is not ready")
+            return web.json_response(self.state(session, await desktop_call("status")))
 
     async def control(self, request: web.Request) -> web.Response:
         value = await self.form(request, {"session", "action"})
@@ -212,25 +256,25 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 raise web.HTTPConflict(text="Connect before taking control")
             session.release_input()
             snapshot = await desktop_call("status")
-            if snapshot.get("state") != "running" or snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry:
-                await session.close()
-                raise web.HTTPConflict(text="Desktop session changed; reconnect")
+            self.state(session, snapshot)
             action = value["action"]
             if action != "observe":
-                snapshot = await desktop_call("pause" if action == "take" else "resume")
-                if snapshot.get("generation") != session.generation:
-                    await session.close()
-                    raise web.HTTPConflict(text="Desktop session changed; reconnect")
+                snapshot = await desktop_call("pause" if action == "take" else "resume",
+                                              generation=session.generation, geometry=session.geometry)
+                self.check_snapshot(session, snapshot)
             session.controlled = action == "take" and snapshot.get("paused") is True
             session.activity = time.monotonic()
-            return web.json_response({"controlled": session.controlled, "paused": snapshot.get("paused", False)})
+            return web.json_response(self.state(session, snapshot))
 
     async def disconnect(self, request: web.Request) -> web.Response:
-        await self.form(request, set())
+        value = await self.form(request, {"session"})
         async with self.lock:
-            if self.session:
-                await self.session.close()
+            session = self.selected_session(value["session"]) if value["session"] is not None else self.session
+            if session:
+                session.revoke()
                 self.session = None
+        if session:
+            await session.close()
         # Disconnect never resumes an agent or logs out applications.
         return web.json_response({"disconnected": True})
 
@@ -238,7 +282,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
         self.authenticate(request, origin=True)
         if set(request.query) != {"attachment"} or len(request.query.getall("attachment")) != 1:
             raise web.HTTPForbidden(text="Invalid desktop attachment")
-        ws = web.WebSocketResponse(protocols=("guacamole",), heartbeat=20, max_msg_size=65536, compress=False)
+        ws = web.WebSocketResponse(protocols=("guacamole",), heartbeat=20, timeout=2, max_msg_size=65536, compress=False)
         if not ws.can_prepare(request).ok or "guacamole" not in [p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")]:
             raise web.HTTPBadRequest(text="A Guacamole WebSocket is required")
         async with self.lock:
@@ -248,39 +292,57 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             session.attached = True
             session.socket = ws
             # Claim once before any asynchronous work, including upstream login.
-        tasks = []
+        tasks = [asyncio.create_task(session.closed.wait()), asyncio.create_task(self.login(session))]
         try:
-            reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", 4822, limit=65536), 5)
-            session.upstream = writer
-            try:
-                identifier = await asyncio.wait_for(handshake(reader, writer, self.config["username"], session.password,
-                                                             self.config["certificate"], session.geometry), 30)
-            finally:
-                session.password = ""
-            await ws.prepare(request)
-            session.ready = True
-            await ws.send_str(instruction("", identifier))
-            tasks = [asyncio.create_task(self.to_browser(reader, ws)),
-                     asyncio.create_task(self.from_browser(session, writer, ws)),
-                     asyncio.create_task(self.watch(session))]
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if session.closed.is_set():
+                raise web.HTTPConflict(text="Desktop attachment revoked")
+            reader, writer, identifier = tasks[1].result()
+            async with self.lock:
+                self.selected_session(session.identifier)
+                await ws.prepare(request)
+            await ws.send_str(instruction("", identifier))
+            tasks.extend([asyncio.create_task(self.to_browser(session, reader, ws)),
+                          asyncio.create_task(self.from_browser(session, writer, ws)),
+                          asyncio.create_task(self.watch(session))])
+            await asyncio.wait([tasks[0], *tasks[2:]], return_when=asyncio.FIRST_COMPLETED)
         except (OSError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError):
             if not ws.prepared:
                 raise web.HTTPBadGateway(text="Desktop login failed; check the Unix password and XRDP readiness") from None
         finally:
+            session.revoke()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            async with self.lock:
+                if self.session is session:
+                    self.session = None
             await session.close()
-            if self.session is session:
-                self.session = None
         return ws
 
-    async def to_browser(self, reader: asyncio.StreamReader, ws: web.WebSocketResponse) -> None:
+    async def login(self, session: Session):
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection("127.0.0.1", 4822, limit=65536), 5)
+            session.upstream = writer
+            if session.closed.is_set():
+                raise ValueError("Desktop attachment revoked")
+            identifier = await asyncio.wait_for(handshake(reader, writer, self.config["username"], session.password,
+                                                         self.config["certificate"], session.geometry), 30)
+            return reader, writer, identifier
+        finally:
+            session.password = ""
+
+    async def to_browser(self, session: Session, reader: asyncio.StreamReader, ws: web.WebSocketResponse) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")()
+        parser = Parser()
         while data := await reader.read(65536):
             text = decoder.decode(data)
             if text:
+                elements = parser.feed(text)
+                if not session.ready and any(row[0] == "sync" for row in elements):
+                    async with self.lock:
+                        self.check_snapshot(session, await desktop_call("status"))
+                        session.ready = True
                 await ws.send_str(text)
         decoder.decode(b"", final=True)
 
@@ -291,12 +353,11 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 return
             elements_list = parser.feed(message.data)
             async with self.lock:
-                if self.session is not session:
+                if self.session is not session or session.closed.is_set():
                     return
                 if any(elements[0] in {"key", "mouse"} for elements in elements_list) and session.controlled:
                     snapshot = await desktop_call("status")
-                    if snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry or snapshot.get("paused") is not True:
-                        session.release_input()
+                    self.state(session, snapshot)
                 for elements in elements_list:
                     # Guacamole's tunnel ping belongs to this WebSocket layer,
                     # not guacd. It cannot renew user inactivity or authorize input.
@@ -307,7 +368,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                     if accepted is not None:
                         if elements[0] == "key":
                             if elements[2] == "1":
-                                if len(session.keys) >= 64:
+                                if len(session.keys) >= 64 and elements[1] not in session.keys:
                                     raise ValueError("Too many simultaneously held keys")
                                 session.keys.add(elements[1])
                             else:
@@ -325,18 +386,20 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             now = time.monotonic()
             if now - session.created >= MAX_SESSION or now - session.activity >= IDLE_TIMEOUT:
                 return
-            snapshot = await desktop_call("status")
-            if snapshot.get("state") != "running" or snapshot.get("generation") != session.generation or snapshot.get("geometry") != session.geometry:
-                return
-            if snapshot.get("paused") is not True:
-                session.release_input()
+            async with self.lock:
+                if self.session is not session or session.closed.is_set():
+                    return
+                try:
+                    self.state(session, await desktop_call("status"))
+                except web.HTTPConflict:
+                    return
 
     async def expire_pending(self) -> None:
         while True:
             await asyncio.sleep(1)
             async with self.lock:
                 if self.session and not self.session.attached and time.monotonic() - self.session.created >= ATTACH_TIMEOUT:
-                    await self.session.close()
+                    self.session.revoke()
                     self.session = None
 
 
@@ -355,6 +418,8 @@ button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:aut
 footer{padding:20px;color:var(--muted)}@media(max-width:900px){.sidebar{position:static;width:auto}.nav-links{display:flex;overflow:auto}.nav-links a{flex:none}.nav-group{display:none}main{margin:0;padding:12px}}
 """
 
+GATEWAY_KEY = web.AppKey("gateway", Gateway)
+
 
 def create_app(config: dict) -> web.Application:
     gateway = Gateway(config)
@@ -364,7 +429,7 @@ def create_app(config: dict) -> web.Application:
         try:
             response = await handler(request)
         except web.HTTPException as exc:
-            response = exc
+            response = web.Response(body=exc.body, status=exc.status, headers=exc.headers)
         except (OSError, ValueError, RuntimeError, asyncio.TimeoutError):
             response = web.Response(status=503, text="Desktop unavailable; inspect the desktop and service readiness")
         if not response.prepared:
@@ -374,13 +439,19 @@ def create_app(config: dict) -> web.Application:
         return response
 
     app = web.Application(client_max_size=BODY_LIMIT, middlewares=[security])
-    app["gateway"] = gateway
+    app[GATEWAY_KEY] = gateway
     app.router.add_get("/desktop/", gateway.page)
     app.router.add_get("/desktop/assets/{name}", gateway.asset)
     app.router.add_post("/desktop/session", gateway.connect)
     app.router.add_post("/desktop/control", gateway.control)
+    app.router.add_post("/desktop/status", gateway.status)
     app.router.add_post("/desktop/disconnect", gateway.disconnect)
     app.router.add_get("/desktop/ws", gateway.websocket)
+
+    async def shutdown(application):
+        if gateway.session:
+            await gateway.session.close()
+    app.on_shutdown.append(shutdown)
 
     async def lifecycle(application):
         expiry = asyncio.create_task(gateway.expire_pending())
@@ -436,11 +507,26 @@ def private_socket(path: str, gid: int | None = None) -> socket.socket:
     return listener
 
 
+def notify_ready() -> None:
+    """Let systemd's unit transaction wait for actual listener readiness."""
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    elif not address.startswith("/"):
+        raise ValueError("Invalid service notification socket")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notifier:
+        notifier.settimeout(5)
+        notifier.sendto(b"READY=1", address)
+
+
 async def serve(config: dict | None) -> None:
     if config is None:
         listener = private_socket(RDP_SOCKET)
         server = await asyncio.start_unix_server(lambda r, w: relay(r, w, outside=True), sock=listener)
         async with server:
+            notify_ready()
             await server.serve_forever()
         return
     app = create_app(config)
@@ -451,7 +537,8 @@ async def serve(config: dict | None) -> None:
         server = await asyncio.start_server(lambda r, w: relay(r, w, outside=False), "127.0.0.1", 3389)
         process = await asyncio.create_subprocess_exec(f"{RELEASE}/sbin/guacd", "-f", "-b", "127.0.0.1", "-l", "4822", "-L", "error",
                                                      "-p", str(Path(HTTP_SOCKET).parent / "guacd.pid"),
-                                                     env={**os.environ, "LD_LIBRARY_PATH": f"{RELEASE}/lib"},
+                                                     env={**{key: value for key, value in os.environ.items() if key != "NOTIFY_SOCKET"},
+                                                          "LD_LIBRARY_PATH": f"{RELEASE}/lib"},
                                                      stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         # Fail startup if the pinned native gateway does not listen promptly.
         for _ in range(50):
@@ -468,6 +555,7 @@ async def serve(config: dict | None) -> None:
             raise RuntimeError("guacd startup timed out")
         await runner.setup()
         await web.SockSite(runner, private_socket(HTTP_SOCKET, config["socket_gid"])).start()
+        notify_ready()
         await process.wait()
         raise RuntimeError("guacd stopped")
     finally:
@@ -491,13 +579,32 @@ def main() -> int:
     mode.add_argument("--rdp-relay", action="store_true")
     args = parser.parse_args()
     try:
-        asyncio.run(serve(None if args.rdp_relay else load_configuration(args.config)))
+        asyncio.run(run_service(None if args.rdp_relay else load_configuration(args.config)))
     except KeyboardInterrupt:
         return 0
     except (OSError, ValueError, RuntimeError):
         print("Guacamole startup failed; check managed configuration, sockets and runtime dependencies", file=sys.stderr)
         return 1
     return 0
+
+
+async def run_service(config: dict | None) -> None:
+    """Release input and close tunnels before systemd terminates native children."""
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    stopping = False
+    def stop() -> None:
+        nonlocal stopping
+        stopping = True
+        task.cancel()
+    loop.add_signal_handler(signal.SIGTERM, stop)
+    try:
+        await serve(config)
+    except asyncio.CancelledError:
+        if not stopping:
+            raise
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import asyncio
 from contextlib import ExitStack
 import hashlib
 import io
+import os
 from pathlib import Path
 import tarfile
 import tempfile
@@ -19,7 +20,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from common.service_tools import guacamole_service as service
 from common.service_tools.guacamole_protocol import Parser, filter_instruction, handshake, instruction, read_instruction
 from common.web_panel_steps import build_web_panel_manifest, render_web_panel_nginx
+from common import web_panel_steps as panel
 from desktop import guacamole_steps as setup
+from desktop import session_runtime as desktop
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -130,17 +133,92 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("User=agent", gateway)
         self.assertIn("NoNewPrivileges=true", gateway)
         self.assertIn("LimitCORE=0", gateway)
-        self.assertIn("KillMode=control-group", gateway)
+        self.assertIn("KillMode=mixed", gateway)
+        self.assertIn("Type=notify", gateway)
+        self.assertIn("NotifyAccess=main", gateway)
         relay = units["basaltwater-guacamole-rdp.service"]
         self.assertIn("RuntimeDirectoryMode=0700", relay)
         self.assertNotIn("PrivateNetwork=true", relay)
         self.assertNotIn("User=root", "".join(units.values()))
 
     def test_refuses_unmanaged_units_before_any_mutation(self):
-        with patch.object(setup, "snapshot_unit_file", return_value={"content": "unmanaged"}), patch.object(setup, "run") as run:
+        with patch.object(setup, "snapshot_unit_file", return_value={"content": "unmanaged", "uid": 0, "mode": 0o644}), patch.object(setup, "run") as run:
             with self.assertRaises(RuntimeError):
                 setup.remove_guacamole()
             run.assert_not_called()
+
+    def test_slow_download_and_excess_archive_members_are_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(setup.urllib.request, "urlopen", return_value=io.BytesIO(b"data")), \
+                patch.object(setup.time, "monotonic", side_effect=[0, 121]):
+            with self.assertRaisesRegex(RuntimeError, "two minutes"):
+                setup.download_source("server", Path(temporary))
+        with tempfile.TemporaryDirectory() as temporary:
+            info = tarfile.TarInfo("directory")
+            info.type = tarfile.DIRTYPE
+            bundle = MagicMock()
+            bundle.__enter__.return_value = bundle
+            bundle.__iter__.return_value = iter([info] * 10001)
+            with patch.object(setup.tarfile, "open", return_value=bundle), self.assertRaisesRegex(RuntimeError, "extraction limits"):
+                setup.extract_source(Path(temporary) / "fixture.tar.gz", Path(temporary) / "extracted")
+            bundle.getmembers.assert_not_called()
+
+    def test_configuration_preflight_happens_before_removing_public_ingress(self):
+        with patch.object(panel, "_preflight_web_panel_removal", return_value=(None, False)), \
+                patch.object(setup, "preflight_units"), \
+                patch.object(setup, "preflight_configuration", side_effect=RuntimeError("unsafe")), \
+                patch.object(panel, "_remove_nginx_site") as remove:
+            with self.assertRaisesRegex(RuntimeError, "unsafe"):
+                panel.remove_web_panel()
+            remove.assert_not_called()
+
+    def test_failed_activation_restores_configuration_and_reloads_prior_service(self):
+        for previous in (None, dict(content='{"previous":true}', mode=0o640, uid=0, gid=0)):
+            with self.subTest(previous=previous), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "config.json"
+                active = previous is not None
+                state = dict(ActiveState="active" if active else "inactive")
+                with patch.object(setup, "CONFIG", str(path)), patch.object(setup, "preflight_configuration"), \
+                        patch.object(setup, "snapshot_unit_file", return_value=previous), \
+                        patch.object(setup, "inspect_unit_state", return_value=state), \
+                        patch.object(setup, "replace_units", side_effect=RuntimeError("startup failed")), \
+                        patch.object(setup, "write_text_atomic") as restore, patch.object(setup, "run") as run:
+                    with self.assertRaisesRegex(RuntimeError, "startup failed"):
+                        setup.configure_services({"new": True}, {})
+                    if active:
+                        restore.assert_called_once_with(str(path), **previous)
+                        run.assert_called_once_with(["systemctl", "restart", "basaltwater-guacamole.service"])
+                    else:
+                        self.assertFalse(path.exists())
+                        run.assert_not_called()
+
+    def test_release_refuses_mutable_files_and_links_outside_release(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            release = Path(temporary) / "release"
+            release.mkdir(mode=0o755)
+            for directory in ("sbin", "share", "lib"):
+                (release / directory).mkdir(parents=True, mode=0o755)
+            for name in ("sbin/guacd", "share/all.js", "lib/libguac-client-rdp.so.0"):
+                (release / name).write_text("fixture")
+                (release / name).chmod(0o755 if name.startswith("sbin") else 0o644)
+            (release / "lib/libguac-client-rdp.so").symlink_to("libguac-client-rdp.so.0")
+            # Inspect real temporary modes, while mocking the target root UID.
+            actual_lstat = Path.lstat
+            def root_owned(path):
+                result = list(actual_lstat(path))
+                result[4] = 0
+                return os.stat_result(result)
+            with patch.object(Path, "lstat", root_owned):
+                setup.validate_release(release)
+                (release / "share/all.js").chmod(0o666)
+                with self.assertRaisesRegex(RuntimeError, "Unsafe.*entry"):
+                    setup.validate_release(release)
+                (release / "share/all.js").chmod(0o644)
+                (release / "share/all.js").unlink()
+                (release / "share/all.js").symlink_to(Path(temporary) / "outside.js")
+                (Path(temporary) / "outside.js").write_text("outside")
+                with self.assertRaisesRegex(RuntimeError, "Unsafe.*link"):
+                    setup.validate_release(release)
 
     def test_socket_refuses_symlink_and_regular_file(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -154,6 +232,31 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(target.read_text(), "keep")
 
 class ProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sigterm_runs_graceful_service_cleanup(self):
+        entered = asyncio.Event()
+        cleaned = asyncio.Event()
+        async def serve(_config):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+        loop = asyncio.get_running_loop()
+        with patch.object(service, "serve", side_effect=serve), \
+                patch.object(loop, "add_signal_handler") as add, patch.object(loop, "remove_signal_handler") as remove:
+            worker = asyncio.create_task(service.run_service(None))
+            await asyncio.wait_for(entered.wait(), 1)
+            add.call_args.args[1]()
+            await asyncio.wait_for(worker, 1)
+            self.assertTrue(cleaned.is_set())
+            remove.assert_called_once_with(service.signal.SIGTERM)
+
+    def test_ready_notification_supports_filesystem_and_abstract_sockets(self):
+        for address, expected in (("/run/systemd/notify", "/run/systemd/notify"), ("@notify", "\0notify")):
+            with patch.dict(service.os.environ, NOTIFY_SOCKET=address), patch.object(service.socket, "socket") as socket:
+                service.notify_ready()
+                socket.return_value.__enter__.return_value.sendto.assert_called_once_with(b"READY=1", expected)
+
     async def test_native_startup_uses_listen_flag_and_private_pid_file(self):
         process = MagicMock(returncode=1)
         server = MagicMock(wait_closed=AsyncMock())
@@ -183,6 +286,36 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         for text in ("-1.x;", "١.a;", "9999999.x;", "1.ax", "65537.x;", "x" * 65537):
             with self.subTest(text=text[:20]), self.assertRaises(ValueError):
                 Parser().feed(text)
+
+    def test_parser_bounds_each_instruction_and_consumes_completed_elements(self):
+        parser = Parser()
+        self.assertEqual(parser.feed(instruction("nop") * 12000), [["nop"]] * 12000)
+        self.assertEqual(parser.feed("3.key,2.65,"), [])
+        self.assertEqual(parser.buffer, "")
+        self.assertEqual(parser.feed("1.1;"), [["key", "65", "1"]])
+        with self.assertRaises(ValueError):
+            parser.feed("1.x," * 257)
+
+    async def test_remote_handoff_is_generation_and_geometry_scoped(self):
+        with patch.object(desktop, "request", return_value={}) as request:
+            await service.desktop_call("pause", generation="desktop-1", geometry=[1600, 900])
+        request.assert_called_once_with({"action": "pause", "generation": "desktop-1", "geometry": [1600, 900]})
+
+    def test_supervisor_rejects_stale_handoffs_before_mutating_pause(self):
+        session = desktop.DesktopSession(dict(desktop="i3"), MagicMock())
+        session.snapshot_status = MagicMock(return_value=dict(state="running", geometry=[1600, 900]))
+        for action in ("pause", "resume"):
+            for generation, geometry in (("stale", [1600, 900]), (session.generation, [1280, 720])):
+                session.paused = action == "resume"
+                with self.assertRaises(ValueError):
+                    session.handle({"action": action, "generation": generation, "geometry": geometry})
+                self.assertEqual(session.paused, action == "resume")
+        session.handle({"action": "pause", "generation": session.generation, "geometry": [1600, 900]})
+        self.assertTrue(session.paused)
+        session.snapshot_status.return_value["state"] = "stopping"
+        with self.assertRaises(RuntimeError):
+            session.handle({"action": "resume", "generation": session.generation, "geometry": [1600, 900]})
+        self.assertTrue(session.paused)
 
     def test_modified_client_cannot_input_or_enable_transfers(self):
         self.assertIsNone(filter_instruction(["key", "65", "1"], False))
@@ -232,7 +365,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.stack = ExitStack()
         self.snapshot = dict(state="running", generation="generation-1", geometry=[1600, 900], paused=False)
-        async def desktop_call(action):
+        async def desktop_call(action, **scope):
+            if scope and (scope["generation"] != self.snapshot["generation"] or scope["geometry"] != self.snapshot["geometry"]):
+                raise RuntimeError("Desktop session changed")
             if action == "pause":
                 self.snapshot["paused"] = True
             elif action == "resume":
@@ -240,7 +375,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             return dict(self.snapshot)
         self.desktop_call = self.stack.enter_context(patch.object(service, "desktop_call", side_effect=desktop_call))
         self.app = service.create_app(dict(username="agent", origins=["https://desktop-vm:9443"], certificate="a" * 64))
-        self.gateway = self.app["gateway"]
+        self.gateway = self.app[service.GATEWAY_KEY]
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
         self.headers = {"Host": "desktop-vm:9443", "X-Forwarded-Proto": "https", "X-Guacamole-User": "agent", "Origin": "https://desktop-vm:9443"}
@@ -250,6 +385,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.stack.close()
 
     async def post(self, endpoint, **fields):
+        if endpoint == "disconnect" and "session" not in fields:
+            fields["session"] = self.gateway.session.identifier if self.gateway.session else None
         return await self.client.post("/desktop/" + endpoint, headers=self.headers, json={"csrf": self.gateway.csrf, **fields})
 
     async def session(self):
@@ -299,6 +436,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.gateway.session.ready = True
         result = await self.post("control", session=attachment, action="take")
         self.assertTrue((await result.json())["controlled"])
+        self.desktop_call.assert_awaited_with("pause", generation="generation-1", geometry=[1600, 900])
         self.assertTrue(self.snapshot["paused"])
         result = await self.post("control", session=attachment, action="observe")
         self.assertFalse((await result.json())["controlled"])
@@ -343,6 +481,66 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
 
+    async def test_status_revokes_external_resume_without_extending_inactivity(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        current.ready = True
+        await self.post("control", session=attachment, action="take")
+        activity = current.activity
+        self.snapshot["paused"] = False
+        result = await self.post("status", session=attachment)
+        self.assertEqual(result.status, 200)
+        state = await result.json()
+        self.assertFalse(state["controlled"])
+        self.assertFalse(state["paused"])
+        self.assertLessEqual(state["expires_in"], service.MAX_SESSION)
+        self.assertLessEqual(state["idle_expires_in"], service.IDLE_TIMEOUT)
+        self.assertEqual(current.activity, activity)
+        current.activity -= service.IDLE_TIMEOUT + 1
+        result = await self.post("control", session=attachment, action="take")
+        self.assertEqual(result.status, 409)
+        self.assertTrue(current.closed.is_set())
+        self.assertFalse(self.snapshot["paused"])
+
+    async def test_stale_disconnect_cannot_revoke_a_replacement_connection(self):
+        stale = await self.session()
+        await self.post("disconnect", session=stale)
+        current = await self.session()
+        result = await self.post("disconnect", session=stale)
+        self.assertEqual(result.status, 403)
+        self.assertEqual(self.gateway.session.identifier, current)
+        await self.post("disconnect", session=None)
+        self.assertIsNone(self.gateway.session)
+
+    async def test_disconnect_cancels_pending_login_and_cannot_resurrect_slot(self):
+        attachment = await self.session()
+        current = self.gateway.session
+        reader = asyncio.StreamReader()
+        writer = MagicMock(drain=AsyncMock(), is_closing=MagicMock(return_value=False))
+        entered = asyncio.Event()
+        canceled = asyncio.Event()
+        async def pending_login(*args):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                canceled.set()
+        self.stack.enter_context(patch.object(service.asyncio, "open_connection", new=AsyncMock(return_value=(reader, writer))))
+        self.stack.enter_context(patch.object(service, "handshake", side_effect=pending_login))
+        connection = asyncio.create_task(self.client.ws_connect("/desktop/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",)))
+        await asyncio.wait_for(entered.wait(), 2)
+        response = await self.post("disconnect", session=attachment)
+        self.assertEqual(response.status, 200)
+        replacement = await self.session()
+        with self.assertRaises(Exception) as failed:
+            await asyncio.wait_for(connection, 2)
+        self.assertEqual(failed.exception.status, 409)
+        self.assertTrue(canceled.is_set())
+        self.assertEqual(current.password, "")
+        self.assertFalse(current.ready)
+        writer.close.assert_called()
+        self.assertEqual(self.gateway.session.identifier, replacement)
+
     async def test_websocket_consumes_ticket_and_filters_modified_client_input(self):
         attachment = await self.session()
         reader = asyncio.StreamReader()
@@ -352,6 +550,12 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         ws = await self.client.ws_connect("/desktop/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",))
         self.assertEqual((await ws.receive()).data, instruction("", "$native"))
         self.assertEqual(self.gateway.session.password, "")
+        self.assertFalse(self.gateway.session.ready)
+        result = await self.post("control", session=attachment, action="take")
+        self.assertEqual(result.status, 409)
+        reader.feed_data(instruction("sync", "1").encode())
+        self.assertEqual((await ws.receive()).data, instruction("sync", "1"))
+        self.assertTrue(self.gateway.session.ready)
         handshake_mock.assert_awaited_once()
         with self.assertRaises(Exception) as replay:
             await self.client.ws_connect("/desktop/ws?attachment=" + attachment, headers=self.headers, protocols=("guacamole",))
@@ -394,6 +598,19 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(instruction("mouse", "100", "200", "0").encode(), messages)
         self.assertFalse(current.keys)
         self.assertIsNone(current.pointer)
+
+    async def test_application_shutdown_releases_input_and_revokes_session(self):
+        await self.session()
+        current = self.gateway.session
+        current.ready = current.controlled = True
+        current.keys.add("65")
+        current.upstream = MagicMock(is_closing=MagicMock(return_value=False))
+        await self.app.shutdown()
+        self.assertTrue(current.closed.is_set())
+        self.assertEqual(current.password, "")
+        self.assertFalse(current.controlled)
+        current.upstream.write.assert_called_once_with(instruction("key", "65", "0").encode())
+        current.upstream.close.assert_called()
 
     async def test_upstream_login_failure_discards_password_and_frees_slot(self):
         attachment = await self.session()

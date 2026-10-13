@@ -18,6 +18,8 @@ For a first experiment without a domain or SSH setup, follow the
 | Preview adding Python tools | `basaltw patch server.example admin --python --dry-run` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
 | Update shares only | `basaltw shares fileserver` | [Samba shares](SAMBA_SHARES.md) |
 | Rerun a saved setup | `basaltw deploy server.example` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
+| Add browser access to an existing HTTPS desktop panel | `basaltw patch server.example admin --guacamole` | [Guacamole browser desktop](GUACAMOLE.md) |
+| Remove browser desktop access | `basaltw patch server.example admin --no-guacamole` | [Guacamole removal](GUACAMOLE.md#diagnose-and-remove) |
 
 `server.example` is a placeholder: replace it with your Debian target's IP
 address or hostname, and replace `admin` with the account to configure there.
@@ -61,6 +63,7 @@ reruns; it does not populate the generic saved-host lifecycle above.
 | Change a local controller or workstation | [Local system maintenance](LOCAL_MAINTENANCE.md) |
 | Configure notification destinations or alert volume | [Notifications](NOTIFICATIONS.md) |
 | Inspect audit activity or receive remote notification logs | [Minimal web panel](WEB_PANEL.md) |
+| Observe or take control of a Debian VM desktop in the browser | [Guacamole browser desktop](GUACAMOLE.md) |
 | Publish an internal site or preview | [Internal HTTPS sites and previews](INTERNAL_WEB.md) |
 | Deploy an application or manifest | [Deployments and manifests](DEPLOYMENTS.md) |
 | Configure CI/CD | [CI/CD webhook system](CICD.md) |

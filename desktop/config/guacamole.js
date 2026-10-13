@@ -4,6 +4,7 @@
     const byId = id => document.getElementById(id);
     const screen = byId("screen");
     const status = byId("status");
+    const lifetime = byId("lifetime");
     const csrf = byId("csrf").value;
     let client = null;
     let attachment = null;
@@ -13,10 +14,15 @@
     let busy = false;
     let connected = false;
     let displayElement = null;
+    let pollTimer = null;
+    let revision = 0;
+    let connectionError = "";
 
     function controls(connected) {
-        for (const id of ["take", "observe", "resume", "fullscreen"])
-            byId(id).disabled = !connected;
+        for (const id of ["take", "observe", "resume"])
+            byId(id).disabled = !connected || busy;
+        byId("fullscreen").disabled = !connected;
+        byId("disconnect").disabled = busy;
         byId("connect").disabled = connected || busy || client !== null;
         byId("password").disabled = connected || busy || client !== null;
     }
@@ -42,14 +48,50 @@
 
     function reset() {
         observe();
-        if (client) client.disconnect();
+        const previous = client;
         client = null;
         connected = false;
         attachment = null;
         displayElement = null;
+        revision++;
+        clearTimeout(pollTimer);
+        pollTimer = null;
+        lifetime.textContent = "Connections last at most one hour and expire after ten minutes without input or a control action.";
+        if (previous) previous.disconnect();
         // Reuse input listeners between connections, changing their client.
         screen.replaceChildren();
         controls(false);
+    }
+
+    function showState(result) {
+        if (!result.controlled) observe();
+        controlled = result.controlled;
+        status.textContent = controlled ? "You control the desktop. Agent desktop actions are paused."
+            : result.paused ? "Observing only. Agent desktop actions remain paused."
+            : "Observing only. Agent desktop actions are enabled.";
+        lifetime.textContent = `Session expires in ${Math.ceil(result.expires_in / 60)} min; inactivity expires in ${Math.ceil(result.idle_expires_in / 60)} min. Select Observe only to keep observing.`;
+    }
+
+    function scheduleStatus() {
+        clearTimeout(pollTimer);
+        if (connected) pollTimer = setTimeout(refreshStatus, 3000);
+    }
+
+    async function refreshStatus() {
+        const current = client;
+        const ticket = attachment;
+        const observedRevision = revision;
+        try {
+            if (!busy && connected) {
+                const result = await post("status", {session: ticket});
+                if (client === current && revision === observedRevision) showState(result);
+            }
+        } catch (error) {
+            if (client === current && revision === observedRevision) {
+                reset();
+                status.textContent = error.message;
+            }
+        } finally { scheduleStatus(); }
     }
 
     function scale() {
@@ -73,6 +115,8 @@
         event.preventDefault();
         if (busy || client) return;
         busy = true;
+        revision++;
+        connectionError = "";
         controls(false);
         status.textContent = "Connecting to the shared desktop…";
         try {
@@ -82,20 +126,27 @@
             password = "";
             const result = await pending;
             attachment = result.attachment;
-            client = new Guacamole.Client(new Guacamole.WebSocketTunnel("/desktop/ws"));
+            const current = new Guacamole.Client(new Guacamole.WebSocketTunnel("/desktop/ws"));
+            client = current;
             displayElement = client.getDisplay().getElement();
             screen.appendChild(displayElement);
             client.getDisplay().onresize = scale;
-            client.onerror = () => { status.textContent = "Desktop connection failed. Reconnect after checking the Unix password and desktop readiness."; };
+            client.onerror = () => {
+                if (client !== current) return;
+                connectionError = "Desktop connection failed. Reconnect after checking the Unix password and desktop readiness.";
+                status.textContent = connectionError;
+            };
             client.onstatechange = state => {
+                if (client !== current) return;
                 if (state === 3) {
                     connected = true;
                     status.textContent = "Observing only. Select Take control to pause agent desktop actions.";
                     controls(true);
                     scale();
+                    scheduleStatus();
                 } else if (state === 5) {
                     reset();
-                    status.textContent = "Disconnected. The desktop remains running; agent pause is unchanged.";
+                    status.textContent = connectionError || "Disconnected. The desktop remains running; agent pause is unchanged.";
                 }
             };
             // Input helpers attach once to the persistent screen container.
@@ -122,25 +173,38 @@
 
     for (const action of ["take", "observe", "resume"]) {
         byId(action).addEventListener("click", async () => {
-            if (!attachment) return;
+            if (!attachment || !connected || busy) return;
+            const current = client;
+            const ticket = attachment;
+            revision++;
             observe();
+            busy = true;
+            controls(connected);
             try {
-                const result = await post("control", {session: attachment, action});
-                controlled = result.controlled;
-                status.textContent = controlled ? "You control the desktop. Agent desktop actions are paused."
-                    : result.paused ? "Observing only. Agent desktop actions remain paused."
-                    : "Observing only. Agent desktop actions are enabled.";
+                const result = await post("control", {session: ticket, action});
+                if (client !== current || attachment !== ticket) return;
+                showState(result);
                 if (controlled) screen.focus({preventScroll: true});
-            } catch (error) { status.textContent = error.message; }
+            } catch (error) {
+                if (client === current && attachment === ticket) status.textContent = error.message;
+            } finally {
+                busy = false;
+                controls(connected);
+            }
         });
     }
     byId("disconnect").addEventListener("click", async () => {
+        if (busy) return;
+        revision++;
         observe();
+        busy = true;
+        controls(connected);
         try {
-            await post("disconnect");
+            await post("disconnect", {session: attachment});
             reset();
             status.textContent = "Disconnected. The desktop remains running; agent pause is unchanged.";
         } catch (error) { status.textContent = error.message; }
+        finally { busy = false; controls(connected); }
     });
     byId("fullscreen").addEventListener("click", () => {
         screen.requestFullscreen().catch(() => { status.textContent = "Fullscreen is unavailable in this browser."; });

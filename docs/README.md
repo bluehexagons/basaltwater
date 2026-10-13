@@ -109,6 +109,7 @@ automation, T3 Code, skills, and hardening.
 | [HomeBox inventory](HOMEBOX.md) | Native setup, private onboarding, recurring updates, health, and complete backup/restore |
 | [Antistatic services](ANTISTATIC.md) | Lobby server, report administration, STUN, and antistatic-db |
 | [XRDP](XRDP.md) | Desktop RDP architecture, compatibility, and troubleshooting |
+| [Guacamole browser desktop](GUACAMOLE.md) | Optional `--guacamole` HTTPS access, observation, human control, session limits, and removal |
 | [Samba shares](SAMBA_SHARES.md) | Authenticated shares, credentials, access changes, removals, and SMB mounts |
 | [Managed Syncthing](SYNCTHING.md) | Private hub-and-spoke file exchange, HTTPS GUI administration, relays, and recovery |
 | [Storage operations](STORAGE_OPERATIONS.md) | Rsync mirrors, par2 protection, schedules, locks, and recovery |
