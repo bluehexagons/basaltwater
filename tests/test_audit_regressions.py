@@ -95,6 +95,31 @@ class DeploymentSafetyTests(unittest.TestCase):
 
 
 class SetupSafetyTests(unittest.TestCase):
+    def test_manifest_udp_is_allowed_before_initial_tunnel_creation(self) -> None:
+        manifest = {"version": 1, "components": [{
+            "name": "server", "type": "service", "domain": "{{domain}}", "port": 8080,
+            "exec": "/bin/true", "reverse_proxy": False,
+            "public_udp": [{"port": 3478, "hostname": "stun.example.com"}],
+        }]}
+        config = SetupConfig(host="host", username="person", system_type="server_web",
+                             enable_cloudflare=True, deploy_specs=[["app.example.com", "https://example.com/app.git"]])
+        events = []
+        with tempfile.TemporaryDirectory() as source:
+            with open(os.path.join(source, "basaltwater.json"), "w") as handle:
+                json.dump(manifest, handle)
+            steps = build_post_setup_steps(config, lambda *_args: (source, "commit"))
+            with patch("deploy.deploy_steps.deploy_repository", return_value=[]), patch(
+                "deploy.network_steps.configure_public_udp", side_effect=lambda listeners: events.append(("udp", listeners))
+            ), patch("web.cloudflare_steps.run_cloudflare_tunnel_setup", side_effect=lambda _config, **_kwargs: events.append(("tunnel", [])) or True) as tunnel, patch(
+                "web.cloudflare_steps.configure_cloudflare_firewall"
+            ):
+                for name, function in steps:
+                    if name != "Preparing Cloudflare tunnel support":
+                        function(config)
+            self.assertEqual([event[0] for event in events], ["udp", "tunnel"])
+            self.assertEqual(events[0][1][0].port, 3478)
+            tunnel.assert_called_once_with(config, allow_create=True)
+
     def test_runtime_staging_does_not_follow_controller_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = os.path.join(directory, "project")

@@ -3,7 +3,7 @@
 Cloudflare Tunnel Setup Script
 
 This script automates the complete setup of Cloudflare tunnels for deployed sites.
-It can be run directly on the server after the initial --cloudflare preconfiguration.
+It runs during interactive --cloudflare setup, or directly on the server.
 """
 
 from __future__ import annotations
@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..
 from lib.types import StrDict, JSONDict
 from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.validators import validate_host
+from lib.validation import validate_cloudflare_tunnel_name
+from lib.setup_prompts import setup_input
 
 
 CONFIG_DIR = "/etc/cloudflared"
@@ -117,10 +119,10 @@ def authenticate_cloudflare():
     print("\nAuthentication Required")
     print("=" * 50)
     print("You need to authenticate with Cloudflare.")
-    print("This will open a browser window for login.")
+    print("Open the login URL printed below in your own browser and authorize this server.")
     print()
     
-    input("Press Enter to continue with authentication...")
+    setup_input("Press Enter to continue with authentication...")
     
     print("\nRunning: cloudflared tunnel login")
     result = run_command(['cloudflared', 'tunnel', 'login'], check=False)
@@ -443,7 +445,7 @@ def show_tunnel_info(tunnel: JSONDict, sites: list[StrDict]):
     print()
 
 
-def main(interactive: bool = True, auto_update: bool = False):
+def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optional[str] = None):
     """
     Main setup workflow.
     
@@ -520,11 +522,11 @@ def main(interactive: bool = True, auto_update: bool = False):
             print("  3. Exit")
             
             while True:
-                choice = input("\nEnter choice (1-3): ").strip().lower()
+                choice = setup_input("\nEnter choice (1-3): ").strip().lower()
                 
                 if choice in ['3', 'exit', 'quit', 'q']:
                     print("Exiting...")
-                    sys.exit(0)
+                    return False
                 elif choice in ['2', 'new']:
                     state = None
                     break
@@ -542,23 +544,17 @@ def main(interactive: bool = True, auto_update: bool = False):
         authenticate_cloudflare()
         
         while True:
-            tunnel_name = input("\nEnter tunnel name (e.g., my-server): ").strip()
-            
-            if not tunnel_name:
-                print("✗ Tunnel name cannot be empty")
-                continue
-            
-            if not re.match(r'^[a-zA-Z0-9_-]+$', tunnel_name):
-                print("✗ Tunnel name can only contain letters, numbers, hyphens, and underscores")
-                continue
-            
-            if len(tunnel_name) > 64:
-                print("✗ Tunnel name too long (max 64 characters)")
+            default = f" [{tunnel_name}]" if tunnel_name else ""
+            chosen_name = setup_input(f"\nEnter tunnel name{default}: ").strip() or tunnel_name
+            try:
+                validate_cloudflare_tunnel_name(chosen_name)
+            except ValueError as exc:
+                print(f"✗ {exc}")
                 continue
             
             break
         
-        tunnel = create_tunnel(tunnel_name)
+        tunnel = create_tunnel(chosen_name)
         # Preserve a newly created tunnel even if service installation is
         # deferred or fails. Empty applied routes force the next refresh to
         # restart with the generated ingress rather than trusting stale state.
@@ -574,10 +570,10 @@ def main(interactive: bool = True, auto_update: bool = False):
         print("  ⚠ No sites discovered from nginx configuration")
         print("\nYou can manually add sites to the configuration.")
         
-        manual = input("Add a site manually? (y/n): ").strip().lower()
+        manual = setup_input("Add a site manually? (y/n): ").strip().lower()
         if manual == 'y':
             while True:
-                hostname = input("Enter hostname (e.g., example.com): ").strip()
+                hostname = setup_input("Enter hostname (e.g., example.com): ").strip()
                 if not hostname:
                     break
                 if validate_host(hostname):
@@ -605,7 +601,7 @@ def main(interactive: bool = True, auto_update: bool = False):
     
     show_tunnel_info(tunnel, sites)
     
-    proceed = input("Install and start the tunnel service? (y/n): ").strip().lower()
+    proceed = setup_input("Install and start the tunnel service? (y/n): ").strip().lower()
     
     if proceed == 'y':
         install_and_start_service()
@@ -624,6 +620,7 @@ def main(interactive: bool = True, auto_update: bool = False):
         print("2. Configure DNS for your domains to point to the tunnel")
         print("3. Monitor tunnel status: systemctl status cloudflared")
         print()
+        return True
     else:
         print("\n✓ Configuration saved")
         print(f"  Config file: {config_file}")
@@ -631,6 +628,7 @@ def main(interactive: bool = True, auto_update: bool = False):
         print("  cloudflared service install")
         print("  systemctl start cloudflared")
         print("  systemctl enable cloudflared")
+        return False
 
 
 def run_non_interactive_update() -> bool:
@@ -654,6 +652,8 @@ if __name__ == "__main__":
                        help='Run in non-interactive mode (only updates existing tunnels)')
     parser.add_argument('--auto-update', action='store_true',
                        help='Automatically update existing tunnel without prompts')
+    parser.add_argument('--tunnel-name', type=validate_cloudflare_tunnel_name,
+                       help='Suggested tunnel name for initial creation')
     
     args = parser.parse_args()
     
@@ -662,7 +662,8 @@ if __name__ == "__main__":
             success = main(interactive=False)
             sys.exit(0 if success else 1)
         else:
-            main(interactive=True, auto_update=args.auto_update)
+            success = main(interactive=True, auto_update=args.auto_update, tunnel_name=args.tunnel_name)
+            sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\n\n✗ Setup cancelled by user")
         sys.exit(1)

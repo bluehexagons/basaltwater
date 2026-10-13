@@ -28,6 +28,7 @@ except ImportError:
 
 from lib.atomic_io import write_json_atomic
 from lib.streamed_process import run_streamed
+from lib.setup_prompts import PROMPT_RELAY_ENV, answer_setup_prompt
 from lib.setup_payloads import PAYLOAD_NAMES, link_payloads, move_payloads, payload_workspace
 from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
@@ -533,6 +534,7 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
     print(f"{'='*60}")
     
     staged_urls: set[str] = set()
+    manifests = {}
     for position, (_deploy_spec, git_url) in enumerate(config.deploy_specs, 1):
         if git_url in staged_urls:
             continue
@@ -553,6 +555,7 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
                 "basaltwater version; use its pinned legacy release"
             )
         manifest = load_manifest(clone_path)
+        manifests[git_url] = manifest
         if manifest is not None and not manifest.components:
             raise RuntimeError('This manifest contains CI workflows only; there are no deployment components')
         if manifest is None and detect_project_type(clone_path) == "node":
@@ -569,6 +572,14 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
             commit_file = os.path.join(target_dir, f"{repo_name}.commit")
             with open(commit_file, 'w') as f:
                 f.write(commit_hash)
+
+    from lib.project_manifest import collect_public_udp
+
+    collect_public_udp([
+        (destination.strip(), manifests[git_url])
+        for specs, git_url in config.deploy_specs
+        for destination in specs.split(",") if destination.strip()
+    ])
 
 
 def _local_user_home() -> str:
@@ -1363,6 +1374,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
         os.environ.get("BASALTWATER_SETUP_TIMEOUT", "14400"), "Setup timeout",
     )
     _LAST_REMOTE_ACCESS_DETAILS.clear()
+    relay_prompts = bool(config.enable_cloudflare and sys.stdin.isatty() and sys.stdout.isatty())
+    prompt_options = {"on_input_request": answer_setup_prompt, "interactive": True} if relay_prompts else {}
     is_local = config.host in {"localhost", "127.0.0.1", "::1"}
     
     if is_local and not config.dry_run and os.geteuid() != 0:
@@ -1457,6 +1470,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             # status visible during long-running local installs.
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTHONDONTWRITEBYTECODE"] = "1"
+            env[PROMPT_RELAY_ENV] = "1" if relay_prompts else "0"
             
             try:
                 with _target_setup_lock(), payload_workspace(setup_timeout) as payload:
@@ -1469,6 +1483,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                         returncode = run_streamed(
                             command_tokens, timeout=setup_timeout,
                             on_output=_relay_setup_output, env=env, cwd=REMOTE_INSTALL_DIR,
+                            **prompt_options,
                         )
                     finally:
                         for name in PAYLOAD_NAMES:
@@ -1481,7 +1496,8 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 return finish_network_transition(config, 1)
         else:
             runtime_data = create_tar_from_dir(build_dir, exclude_payloads=True)
-            tar_data = runtime_data + _create_payload_archive(build_dir)
+            private_data = _create_payload_archive(build_dir)
+            tar_data = runtime_data + private_data
             
             # Receive code into a private staging tree before touching either
             # installation. Only the bounded first archive is consumed here;
@@ -1493,10 +1509,11 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                 f'head -c {len(runtime_data)} | tar xzf - -C "$basaltwater_stage" --no-same-owner; '
                 'cd "$basaltwater_stage"; '
                 'export PYTHONDONTWRITEBYTECODE=1; '
+                f'export {PROMPT_RELAY_ENV}={"1" if relay_prompts else "0"}; '
                 'exec 9>/run/lock/basaltwater-setup.lock; flock --exclusive --nonblock 9; '
                 f'python3 -u -m lib.setup_upgrade --username {shlex.quote(config.username)}; '
                 f'cd {shlex.quote(REMOTE_INSTALL_DIR)}; '
-                f'python3 -u -m lib.setup_payloads --timeout {setup_timeout}'
+                f'python3 -u -m lib.setup_payloads --timeout {setup_timeout} --payload-bytes {len(private_data)}'
             )
             locked_remote_shell_cmd = shlex.join(
                 [
@@ -1537,6 +1554,7 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     on_output=_relay_setup_output,
                     input_data=tar_data, env=ssh_env,
                     interactive=not batch_mode,
+                    **({"on_input_request": answer_setup_prompt} if relay_prompts else {}),
                 )
                 return finish_network_transition(config, returncode)
             except Exception as e:

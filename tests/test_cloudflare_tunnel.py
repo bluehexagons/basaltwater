@@ -135,6 +135,30 @@ class TestCloudflareTunnelState(unittest.TestCase):
 
 
 class TestCloudflareTunnelRefresh(unittest.TestCase):
+    def test_initial_creation_uses_suggested_name_and_only_closes_ports_after_activation(self):
+        tunnel = {"name": "example_droplet", "id": "id", "credentials_file": "/etc/cloudflared/id.json"}
+        sites = [{"hostname": "example.com", "service": "http://localhost:80"}]
+        with patch.object(tunnel_setup, "check_root"), patch.object(
+            tunnel_setup, "load_state", return_value=None
+        ), patch.object(tunnel_setup, "install_cloudflared"), patch.object(
+            tunnel_setup, "authenticate_cloudflare"
+        ), patch.object(tunnel_setup, "setup_input", side_effect=["", "y"]), patch.object(
+            tunnel_setup, "create_tunnel", return_value=tunnel
+        ) as create, patch.object(tunnel_setup, "save_state"), patch.object(
+            tunnel_setup, "discover_nginx_sites", return_value=sites
+        ), patch.object(tunnel_setup, "_write_config_file"), patch.object(
+            tunnel_setup, "install_and_start_service"
+        ), patch.object(tunnel_setup, "_ensure_service_running", side_effect=[False, True]), patch.object(
+            tunnel_setup, "_close_public_web_ports"
+        ) as close:
+            with self.assertRaisesRegex(RuntimeError, "did not become active"):
+                tunnel_setup.main(tunnel_name="example_droplet")
+            close.assert_not_called()
+            with patch.object(tunnel_setup, "setup_input", side_effect=["", "y"]):
+                self.assertTrue(tunnel_setup.main(tunnel_name="example_droplet"))
+            create.assert_called_with("example_droplet")
+            close.assert_called_once()
+
     def test_write_config_validation_failure_preserves_existing_file_and_cleans_temp(self):
         with tempfile.TemporaryDirectory() as tmp:
             config_path = os.path.join(tmp, "config.yml")

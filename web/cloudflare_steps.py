@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import os
 import shlex
+import sys
 
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.remote_utils import run
+from lib.setup_prompts import PROMPT_RELAY_ENV
+from lib.validation import validate_cloudflare_tunnel_name
 
 
 NGINX_CLOUDFLARE_CONF = "/etc/nginx/conf.d/cloudflare.conf"
@@ -79,7 +82,7 @@ def configure_cloudflare_firewall(config: SetupConfig) -> None:
     if antistatic_direct_access:
         print("  ✓ Firewall configured for Cloudflare tunnel with antistatic direct access")
     else:
-        print("  ✓ Firewall configured for Cloudflare tunnel (SSH only)")
+        print("  ✓ Firewall configured for Cloudflare tunnel; declared direct-service rules retained")
 
 
 def create_cloudflared_config_directory(config: SetupConfig) -> None:
@@ -162,12 +165,10 @@ def install_cloudflared_service_helper(config: SetupConfig) -> None:
     run(["ln", "-sfn", source_script, helper_script])
     
     print(f"  ✓ Linked setup script: {helper_script}")
-    print(f"  Run 'sudo setup-cloudflare-tunnel' to configure the tunnel")
 
 
-def run_cloudflare_tunnel_setup(config: SetupConfig) -> bool:
-    """Update and verify an existing tunnel; return False when none exists."""
-    del config
+def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = False) -> bool:
+    """Refresh a tunnel, or walk through initial creation when setup permits it."""
     helper_script = CLOUDFLARE_SETUP_SOURCE
     
     if not os.path.exists(helper_script):
@@ -175,9 +176,24 @@ def run_cloudflare_tunnel_setup(config: SetupConfig) -> bool:
     
     state_file = "/etc/cloudflared/tunnel-state.json"
     if not os.path.exists(state_file):
-        print("  ⚠ No existing Cloudflare tunnel found")
-        print("  Run 'sudo setup-cloudflare-tunnel' interactively to create a tunnel first")
-        return False
+        if not allow_create:
+            return False
+        can_prompt = os.environ.get(PROMPT_RELAY_ENV) == "1" or (sys.stdin.isatty() and sys.stdout.isatty())
+        if not can_prompt:
+            raise RuntimeError("Initial Cloudflare tunnel setup needs an interactive terminal; rerun this setup command from a terminal")
+        command = [sys.executable, "-u", helper_script]
+        if config.friendly_name:
+            try:
+                name = validate_cloudflare_tunnel_name(config.friendly_name)
+            except ValueError:
+                pass
+            else:
+                command.extend(["--tunnel-name", name])
+        print("  Starting the Cloudflare authentication and tunnel setup wizard...")
+        result = run(command, check=False, interactive=True, timeout=None)
+        if result.returncode != 0:
+            raise RuntimeError("Cloudflare tunnel creation or activation did not complete; direct HTTP/HTTPS access remains available")
+        return True
     
     print("  Updating Cloudflare tunnel configuration...")
     

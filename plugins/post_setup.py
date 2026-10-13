@@ -43,32 +43,46 @@ def build_post_setup_steps(
             configure_nginx_for_cloudflare(_config)
             install_cloudflared_service_helper(_config)
             print("  Public HTTP/HTTPS remain open until cloudflared is verified active")
-            print("  Run 'sudo setup-cloudflare-tunnel' to create a tunnel")
 
         steps.append(("Preparing Cloudflare tunnel support", prepare_cloudflare))
 
     if config.deploy_specs:
+        public_udp = []
+
         def deploy_repositories(_config: SetupConfig) -> None:
             from deploy.deploy_steps import deploy_repository
+            from lib.project_manifest import collect_public_udp, load_manifest
 
+            prepared = []
+            declared = []
             for deploy_specs_str, git_url in _config.deploy_specs or []:
                 source_path, commit_hash = repository_source(
                     git_url, _config.deployment_mode, _config.dry_run,
                 )
+                manifest = load_manifest(source_path)
                 for deploy_spec in deploy_specs_str.split(","):
                     deploy_spec = deploy_spec.strip()
                     if not deploy_spec:
                         continue
-                    infos = deploy_repository(
-                        source_path=source_path,
-                        deploy_spec=deploy_spec,
-                        git_url=git_url,
-                        commit_hash=commit_hash,
-                        full_deploy=_config.full_deploy,
-                        keep_source=True,
-                    )
-                    if infos:
-                        deployments.extend(infos)
+                    declared.append((deploy_spec, manifest))
+                    prepared.append((source_path, deploy_spec, git_url, commit_hash))
+            public_udp[:] = collect_public_udp(declared)
+            for source_path, deploy_spec, git_url, commit_hash in prepared:
+                infos = deploy_repository(
+                    source_path=source_path,
+                    deploy_spec=deploy_spec,
+                    git_url=git_url,
+                    commit_hash=commit_hash,
+                    full_deploy=_config.full_deploy,
+                    keep_source=True,
+                )
+                if infos:
+                    deployments.extend(infos)
+
+        def configure_udp(_config: SetupConfig) -> None:
+            from deploy.network_steps import configure_public_udp
+
+            configure_public_udp(public_udp)
 
         def configure_nginx(_config: SetupConfig) -> None:
             if not deployments:
@@ -86,6 +100,7 @@ def build_post_setup_steps(
         steps.extend((
             ("Deploying uploaded repositories", deploy_repositories),
             ("Configuring Nginx for deployed routes, if any", configure_nginx),
+            ("Configuring manifest public UDP access, if any", configure_udp),
         ))
 
         if config.enable_ssl:
@@ -110,7 +125,7 @@ def build_post_setup_steps(
                 run_cloudflare_tunnel_setup,
             )
 
-            if run_cloudflare_tunnel_setup(_config):
+            if run_cloudflare_tunnel_setup(_config, allow_create=True):
                 configure_cloudflare_firewall(_config)
             else:
                 print("  ℹ Direct HTTP/HTTPS access retained until a tunnel is configured")

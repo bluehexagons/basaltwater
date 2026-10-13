@@ -80,6 +80,21 @@ composition is documented in
 
 ## Manifest shape
 
+Service components may declare explicitly public UDP listeners:
+
+```json
+"public_udp": [{"port": 3478, "hostname": "stun.example.com"}]
+```
+
+Setup adds the host UFW allowances after successful repository deployments,
+including when Cloudflare Tunnel is enabled. The application must bind these
+ports itself; the manifest does not change its arguments. Ports must be literal
+integers from 1024 through 65535, with at most 32 listeners per component. Only
+one deployed service may own each public UDP port. `hostname` is optional and
+describes a DNS-only A/AAAA record for the VM's public IP; it does not create an
+HTTP route, tunnel ingress, or DNS record. Allow the same UDP port in a provider
+firewall when one is enabled. Existing unrelated UFW rules are preserved.
+
 The top-level object must contain `version: 1` and a `components` array.
 Deployment requires at least one component; a CI-only package may use an empty
 array when it declares `ci` workflows as described in

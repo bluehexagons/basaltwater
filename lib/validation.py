@@ -545,6 +545,20 @@ def validate_antistatic_settings(config: "SetupConfig") -> None:
         raise ValueError("Antistatic admin password must not contain control characters")
 
 
+def validate_network_port(port: int, name: str = "port", *, minimum: int = 1) -> int:
+    """Validate a literal network port without accepting booleans or strings."""
+    if type(port) is not int or not minimum <= port <= 65535:
+        raise ValueError(f"{name} must be an integer between {minimum} and 65535")
+    return port
+
+
+def validate_cloudflare_tunnel_name(name: str) -> str:
+    """Validate the name accepted by the interactive tunnel wizard."""
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name):
+        raise ValueError("Tunnel name must use 1–64 letters, digits, hyphens, or underscores")
+    return name
+
+
 def validate_git_ref_name(ref: str) -> str:
     """Validate a branch or tag name before constructing an explicit refspec."""
     if (

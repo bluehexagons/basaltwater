@@ -1,8 +1,11 @@
 # Cloudflare tunnels
 
 `--cloudflare` prepares a web host to use Cloudflare Tunnel as its public edge.
-It is a preconfiguration step; it does not authenticate to Cloudflare or create
-a tunnel by itself.
+On the first interactive setup run, it walks through authentication, tunnel
+creation, and service activation after the deployed Nginx routes are ready.
+Prompts appear in the original setup terminal over the same SSH connection;
+open the authentication URL in your own browser. `--name` supplies the suggested
+tunnel name. Later runs refresh the existing tunnel without prompting.
 
 ## Prepare a host
 
@@ -36,7 +39,10 @@ origin cannot send visitors to a public HTTP URL or an internal port.
 
 ## Create or update a tunnel
 
-Run the helper interactively on the configured host:
+The setup run starts the wizard automatically when no tunnel exists. First-time
+creation requires terminal input; an unattended run stops with an actionable
+error and leaves direct HTTP/HTTPS available. The helper remains available for
+manual recovery or configuration changes on the host:
 
 ```bash
 sudo setup-cloudflare-tunnel
@@ -89,6 +95,11 @@ Cloudflare Tunnel does not proxy UDP. An Antistatic deployment therefore keeps
 its direct UDP 3478 STUN access (and any required direct TCP service port) even
 when `--cloudflare` is enabled; the public IP must remain reachable for those
 ports. See [Antistatic services](./ANTISTATIC.md).
+Repository services can declare `public_udp` listeners in their manifest;
+setup opens those UFW rules before tunnel activation and retains them when
+closing public HTTP/HTTPS. Their optional hostnames describe DNS-only A/AAAA
+records pointing directly at the public server IP; they are not tunnel ingress
+routes. Provider firewall rules and DNS records still need configuration.
 
 ## Limitations and recovery
 

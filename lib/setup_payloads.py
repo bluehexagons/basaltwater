@@ -19,6 +19,7 @@ import time
 from lib.atomic_io import read_json_file, write_json_atomic
 from lib.remote_utils import run
 from lib.validation import validate_filesystem_path, validate_positive_integer
+from lib.setup_prompts import PROMPT_RELAY_ENV
 
 
 PAYLOAD_ROOT = "/run/basaltwater-setup"
@@ -126,19 +127,47 @@ def receive_payloads(stream, destination: str) -> None:
                     shutil.copyfileobj(source, target)
 
 
+class _BoundedPayloadReader:
+    """Expose archive EOF without closing the connection needed for prompts."""
+
+    def __init__(self, stream, size: int):
+        self.stream = stream
+        self.remaining = size
+
+    def read(self, size: int = -1) -> bytes:
+        size = self.remaining if size < 0 else min(size, self.remaining)
+        if not size:
+            return b""
+        data = self.stream.read(size)
+        if not data:
+            raise ValueError("Truncated setup payload archive")
+        self.remaining -= len(data)
+        return data
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=lambda value: validate_positive_integer(value, "timeout"), required=True)
+    parser.add_argument("--payload-bytes", type=lambda value: validate_positive_integer(value, "payload bytes"))
     args = parser.parse_args()
+    if args.payload_bytes is not None and args.payload_bytes > MAX_PAYLOAD_BYTES + 1024 * 1024:
+        raise ValueError("Compressed setup payload exceeds its size limit")
+    relay = os.environ.get(PROMPT_RELAY_ENV) == "1"
+    if relay and args.payload_bytes is None:
+        raise ValueError("Interactive setup requires a framed payload length")
     with payload_workspace(args.timeout) as payload:
-        receive_payloads(sys.stdin.buffer, payload)
+        stream = _BoundedPayloadReader(sys.stdin.buffer, args.payload_bytes) if args.payload_bytes else sys.stdin.buffer
+        receive_payloads(stream, payload)
+        if args.payload_bytes:
+            while stream.remaining:
+                stream.read(min(65536, stream.remaining))
         runtime = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         link_payloads(payload, runtime)
         try:
             return run([
                 sys.executable, "-u", os.path.join(runtime, "remote_setup.py"),
                 "--args-file", os.path.join(payload, ".remote_setup_args.json"),
-            ], check=False, timeout=args.timeout).returncode
+            ], check=False, timeout=args.timeout, interactive=relay).returncode
         finally:
             for name in PAYLOAD_NAMES:
                 path = os.path.join(runtime, name)

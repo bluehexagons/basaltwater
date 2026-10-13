@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -18,6 +19,7 @@ from lib.project_manifest import (
     load_manifest,
     parse_manifest,
     render_template,
+    collect_public_udp,
 )
 
 
@@ -51,6 +53,33 @@ def _manifest(*components: dict, version: object = 1) -> dict:
 
 
 class TestValidParse(unittest.TestCase):
+    def test_public_udp_with_optional_dns_hostname(self):
+        component = parse_manifest(_manifest(_service(public_udp=[
+            {"port": 3478, "hostname": "stun.example.com"}, {"port": 4000}
+        ]))).components[0]
+        self.assertEqual([(listener.port, listener.hostname) for listener in component.public_udp],
+                         [(3478, "stun.example.com"), (4000, None)])
+        from deploy.network_steps import configure_public_udp
+        with patch("deploy.network_steps.install_package", return_value=True), patch(
+            "deploy.network_steps.run"
+        ) as run:
+            configure_public_udp(component.public_udp)
+        self.assertEqual([call.args[0][2] for call in run.call_args_list], ["3478/udp", "4000/udp"])
+
+    def test_udp_ownership_conflict_is_rejected_across_deployment_instances(self):
+        manifest = parse_manifest(_manifest(_service(public_udp=[{"port": 3478}])))
+        with self.assertRaisesRegex(ValueError, "declared by both"):
+            collect_public_udp([("one.example.com", manifest), ("two.example.com", manifest)])
+
+    def test_no_listeners_do_not_install_or_change_firewall(self):
+        from deploy.network_steps import configure_public_udp
+        with patch("deploy.network_steps.install_package") as install, patch(
+            "deploy.network_steps.run"
+        ) as run:
+            configure_public_udp([])
+        install.assert_not_called()
+        run.assert_not_called()
+
     def test_multi_component(self):
         manifest = parse_manifest(_manifest(_static(), _service()))
         self.assertIsInstance(manifest, Manifest)
@@ -126,6 +155,15 @@ class TestValidParse(unittest.TestCase):
 
 
 class TestRejects(unittest.TestCase):
+    def test_public_udp_rejects_unsafe_or_ambiguous_declarations(self):
+        for value in (None, {}, [3478], [{"port": True}], [{"port": "3478"}],
+                      [{"port": 80}], [{"port": 65536}], [{"port": 3478, "hostname": "bad;host"}],
+                      [{"port": 3478, "hostname": "{{domain}}"}], [{"port": 3478, "unexpected": True}],
+                      [{"port": 3478}, {"port": 3478}], [{"port": 3478}] * 33):
+            with self.subTest(value=value):
+                self._assert_rejected(_manifest(_service(public_udp=value)))
+        self._assert_rejected(_manifest(_static(public_udp=[{"port": 3478}])), "unknown field")
+
     def _assert_rejected(self, data: object, needle: str = "") -> None:
         with self.assertRaises(ValueError) as ctx:
             parse_manifest(data)

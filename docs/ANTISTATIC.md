@@ -45,9 +45,10 @@ HTTP port. The built-in `--antistatic-server` option installs one latest-release
 service and does not select a maintenance branch.
 
 Only one process should enable `-stun-port 3478`; the other processes can share
-that responder with `-stun-port 0`. Manifest deployments do not infer public UDP
-firewall rules from application arguments: allow 3478/udp in both the host and
-provider firewall and use a DNS-only STUN hostname pointing at the server's
+that responder with `-stun-port 0`. Declare its host firewall allowance with
+`"public_udp": [{"port": 3478, "hostname": "stun.example.com"}]` in the owning
+service component. Setup opens the UFW rule automatically. Also allow 3478/udp
+in the provider firewall and point the DNS-only STUN hostname at the server's
 public IP. Cloudflare tunnels carry the HTTP services separately.
 
 The default internal port is 8080. Specify another port after the hostname:

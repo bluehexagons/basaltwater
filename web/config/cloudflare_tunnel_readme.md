@@ -2,10 +2,14 @@
 
 When a host is configured with `--cloudflare`, basaltwater installs
 `setup-cloudflare-tunnel` and prepares the Nginx origin for Cloudflare Tunnel.
+The first interactive setup run starts the wizard in the original setup
+terminal after deploying the sites. Open the authentication URL in your browser;
+the configuration's friendly name is suggested as the tunnel name. Subsequent
+setup runs refresh the saved tunnel automatically.
 
 ## Automated setup
 
-Run the helper on the configured host:
+For recovery or manual changes, run the helper on the configured host:
 
 ```bash
 sudo setup-cloudflare-tunnel
@@ -73,3 +77,7 @@ sudo sed -n '1,160p' /etc/cloudflared/config.yml
 
 Cloudflare Tunnel does not proxy UDP. Services such as Antistatic STUN still
 need their direct public UDP port and any required direct TCP port.
+Manifest service components can declare these through `public_udp`; setup
+opens the host UFW rules and retains them when closing web ports. Optional UDP
+hostnames must use DNS-only A/AAAA records for the server's public IP, with the
+same UDP allowance in any provider firewall.

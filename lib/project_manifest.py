@@ -24,6 +24,7 @@ from lib.validation import (
     validate_filesystem_path,
     validate_no_control_characters,
     validate_systemd_exec_command,
+    validate_network_port,
 )
 from lib.validators import validate_host
 from lib.publishing_languages import parse_publishing
@@ -102,7 +103,16 @@ _SERVICE_FIELDS = {
     "working_dir",
     "sqlite_backup",
     "backup_retention",
+    "public_udp",
 }
+
+
+@dataclass(frozen=True)
+class PublicUDP:
+    """A directly reachable UDP listener; its hostname is DNS-only guidance."""
+
+    port: int
+    hostname: Optional[str] = None
 
 
 @dataclass
@@ -128,6 +138,7 @@ class Component:
     runtime_env: StrDict = field(default_factory=dict)
     sqlite_backup: Optional[str] = None
     backup_retention: int = 10
+    public_udp: list[PublicUDP] = field(default_factory=list)
 
     @property
     def is_static(self) -> bool:
@@ -180,6 +191,23 @@ def load_manifest(repo_path: str) -> Optional[Manifest]:
         raise ValueError(f"{MANIFEST_FILENAME}: cannot read: {exc}") from exc
 
     return parse_manifest(data)
+
+
+def collect_public_udp(deployments: list[tuple[str, Optional[Manifest]]]) -> list[PublicUDP]:
+    """Reject competing UDP owners before deployment or firewall mutations."""
+    owners: dict[int, str] = {}
+    listeners: list[PublicUDP] = []
+    for destination, manifest in deployments:
+        if manifest is None:
+            continue
+        for component in manifest.components:
+            for listener in component.public_udp:
+                owner = f"{destination}/{component.name}"
+                if listener.port in owners:
+                    raise ValueError(f"Public UDP port {listener.port} is declared by both {owners[listener.port]} and {owner}")
+                owners[listener.port] = owner
+                listeners.append(listener)
+    return listeners
 
 
 def infer_manifest(repo_path: str) -> Optional[Manifest]:
@@ -441,8 +469,29 @@ def _parse_service(entry: dict, where: str, common: dict) -> Component:
         working_dir=working_dir,
         sqlite_backup=sqlite_backup,
         backup_retention=backup_retention,
+        public_udp=_parse_public_udp(entry.get("public_udp", []), where),
         **common,
     )
+
+
+def _parse_public_udp(value: object, where: str) -> list[PublicUDP]:
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValueError(f"{where}: public_udp must be an array with at most 32 listeners")
+    listeners: list[PublicUDP] = []
+    seen: set[int] = set()
+    for entry in value:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where}: public_udp listeners must be objects")
+        _reject_unknown_keys(entry, {"port", "hostname"}, where + " public_udp")
+        port = validate_network_port(entry.get("port"), where + " UDP port", minimum=MIN_PORT)
+        hostname = entry.get("hostname")
+        if hostname is not None and (not isinstance(hostname, str) or not validate_host(hostname)):
+            raise ValueError(f"{where}: invalid public_udp hostname")
+        if port in seen:
+            raise ValueError(f"{where}: duplicate public_udp port {port}")
+        seen.add(port)
+        listeners.append(PublicUDP(port, hostname))
+    return listeners
 
 
 def _parse_build(value: object, where: str) -> StrList:

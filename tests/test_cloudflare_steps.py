@@ -143,6 +143,39 @@ class TestConfigureNginxForCloudflare(unittest.TestCase):
 
 
 class TestRunCloudflareTunnelSetup(unittest.TestCase):
+    @patch.dict(os.environ, {"BASALTWATER_SETUP_PROMPT_RELAY": "1"})
+    @patch("web.cloudflare_steps.os.path.exists")
+    @patch("web.cloudflare_steps.run")
+    def test_initial_setup_starts_wizard_with_saved_friendly_name(self, run, exists):
+        exists.side_effect = lambda path: not path.endswith("tunnel-state.json")
+        run.return_value = SimpleNamespace(returncode=0)
+        config = _make_config()
+        config.friendly_name = "example_droplet"
+        self.assertTrue(run_cloudflare_tunnel_setup(config, allow_create=True))
+        command = run.call_args.args[0]
+        self.assertEqual(command[-2:], ["--tunnel-name", "example_droplet"])
+        self.assertEqual(run.call_args.kwargs, {"check": False, "interactive": True, "timeout": None})
+
+    @patch.dict(os.environ, {"BASALTWATER_SETUP_PROMPT_RELAY": "0"})
+    @patch("web.cloudflare_steps.sys.stdin.isatty", return_value=False)
+    @patch("web.cloudflare_steps.os.path.exists")
+    @patch("web.cloudflare_steps.run")
+    def test_unattended_initial_creation_fails_without_firewall_changes(self, run, exists, _tty):
+        exists.side_effect = lambda path: not path.endswith("tunnel-state.json")
+        with self.assertRaisesRegex(RuntimeError, "interactive terminal"):
+            run_cloudflare_tunnel_setup(_make_config(), allow_create=True)
+        run.assert_not_called()
+
+    @patch.dict(os.environ, {"BASALTWATER_SETUP_PROMPT_RELAY": "1"})
+    @patch("web.cloudflare_steps.os.path.exists")
+    @patch("web.cloudflare_steps.run")
+    def test_cancelled_creation_is_not_reported_as_success(self, run, exists):
+        exists.side_effect = lambda path: not path.endswith("tunnel-state.json")
+        run.return_value = SimpleNamespace(returncode=1)
+        with self.assertRaisesRegex(RuntimeError, "did not complete"):
+            run_cloudflare_tunnel_setup(_make_config(), allow_create=True)
+        run.assert_called_once()
+
     def test_helper_replaces_a_retired_runtime_link(self):
         with TemporaryDirectory() as tmp:
             source = os.path.join(tmp, "current.py")

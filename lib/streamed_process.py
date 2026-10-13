@@ -21,6 +21,7 @@ def run_streamed(
     interactive: bool = False,
     on_error: Callable[[str], None] | None = None,
     discard_stderr: bool = False,
+    on_input_request: Callable[[str], bytes | None] | None = None,
 ) -> int:
     """Relay UTF-8 output while feeding stdin, without unbounded pipe waits.
 
@@ -31,18 +32,21 @@ def run_streamed(
     interactive callers may omit the deadline to allow time for a prompt.
     """
     bound = _validate_timeout(timeout)
+    if on_input_request is not None and not interactive:
+        raise ValueError("Prompt responses require an interactive caller")
     if on_error is not None and discard_stderr:
         raise ValueError("Cannot capture and discard stderr together")
     if bound is None and not interactive:
         raise ValueError("Streaming requires a finite deadline")
     deadline = time.monotonic() + bound if bound is not None else None
     process = subprocess.Popen(
-        command, stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
+        command, stdin=subprocess.PIPE if input_data is not None or on_input_request is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL if discard_stderr else subprocess.PIPE if on_error is not None else subprocess.STDOUT,
         bufsize=0, cwd=cwd, env=env, start_new_session=not interactive,
     )
     offset = 0
+    pending_input = input_data or b""
     try:
         with selectors.DefaultSelector() as selector:
             assert process.stdout is not None
@@ -56,31 +60,49 @@ def run_streamed(
                 readers[process.stderr] = (codecs.getincrementaldecoder("utf-8")(errors="replace"), "", on_error)
             if process.stdin is not None:
                 os.set_blocking(process.stdin.fileno(), False)
+                if pending_input or on_input_request is None:
+                    selector.register(process.stdin, selectors.EVENT_WRITE)
+
+            def emit_output(text: str, callback: Callable[[str], None]) -> None:
+                nonlocal pending_input, offset
+                response = on_input_request(text) if on_input_request is not None else None
+                if response is None:
+                    callback(text)
+                    return
+                if not isinstance(response, bytes) or len(response) > 32768:
+                    raise ValueError("Invalid streamed prompt response")
+                if offset != len(pending_input) or process.stdin is None or process.stdin.closed:
+                    raise RuntimeError("Setup requested input before the upload completed")
+                pending_input, offset = response, 0
                 selector.register(process.stdin, selectors.EVENT_WRITE)
+
             while selector.get_map():
                 remaining = deadline - time.monotonic() if deadline is not None else None
                 if remaining is not None and remaining <= 0:
                     raise CommandTimeoutError(_command_text(command), bound)
                 for key, event in selector.select(remaining):
                     if event & selectors.EVENT_WRITE:
-                        assert input_data is not None
                         try:
-                            offset += os.write(key.fd, input_data[offset:offset + 65536])
+                            offset += os.write(key.fd, pending_input[offset:offset + 65536])
                         except BrokenPipeError:
-                            offset = len(input_data)
-                        if offset == len(input_data):
+                            offset = len(pending_input)
                             selector.unregister(key.fileobj)
                             key.fileobj.close()
+                            continue
+                        if offset == len(pending_input):
+                            selector.unregister(key.fileobj)
+                            if on_input_request is None:
+                                key.fileobj.close()
                     else:
                         chunk = os.read(key.fd, 65536)
                         decoder, pending, callback = readers[key.fileobj]
                         pending += decoder.decode(chunk, final=not chunk)
                         while "\n" in pending:
                             line, pending = pending.split("\n", 1)
-                            callback(line + "\n")
+                            emit_output(line + "\n", callback)
                         if not chunk or len(pending) >= 65536:
                             if pending:
-                                callback(pending)
+                                emit_output(pending, callback)
                                 pending = ""
                         readers[key.fileobj] = (decoder, pending, callback)
                         if not chunk:

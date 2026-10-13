@@ -15,6 +15,26 @@ from lib.setup_common import _create_payload_archive, create_tar_from_dir
 
 
 class TestSetupPayloads(unittest.TestCase):
+    def test_framed_archive_does_not_consume_later_prompt_answers(self):
+        with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as destination:
+            with open(os.path.join(source, ".remote_setup_args.json"), "w") as handle:
+                handle.write("[]")
+            archive = _create_payload_archive(source)
+            answer = b'"tunnel-name"\n'
+            stream = io.BytesIO(archive + answer)
+            framed = payloads._BoundedPayloadReader(stream, len(archive))
+            payloads.receive_payloads(framed, destination)
+            while framed.remaining:
+                framed.read(65536)
+            self.assertEqual(stream.read(), answer)
+            self.assertTrue(os.path.isfile(os.path.join(destination, ".remote_setup_args.json")))
+
+    def test_truncated_frame_is_rejected(self):
+        framed = payloads._BoundedPayloadReader(io.BytesIO(b"abc"), 4)
+        self.assertEqual(framed.read(4), b"abc")
+        with self.assertRaisesRegex(ValueError, "Truncated"):
+            framed.read(1)
+
     def test_runtime_archive_excludes_credentials_and_payload_extract_is_private(self):
         with tempfile.TemporaryDirectory() as directory:
             source = os.path.join(directory, "source")
