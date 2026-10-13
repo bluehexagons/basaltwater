@@ -10,9 +10,7 @@ Use `basaltw manifest init --dry-run` to propose a manifest from Node, Go,
 full-stack, or static project structure, then `basaltw manifest init` to create
 it. Existing files are preserved. Review the generated commands, output, and
 service settings before deployment; see [project tooling](PROJECT_TOOLING.md)
-for inference limits, CI workflows, and project Node selection. For the complete
-portfolio, Food Guide, Go Click and private static-site migration, see the
-[bluehexagons droplet runbook](BLUEHEXAGONS_DROPLET.md).
+for inference limits, CI workflows, and project Node selection.
 
 `--dry-run` performs a shallow clone into disposable local staging and validates
 the repository type and `basaltwater.json` without updating the persistent Git cache
@@ -106,12 +104,11 @@ letter or underscore followed by letters, digits, or underscores. Do not put
 secrets in a committed manifest.
 
 Static subpaths redirect to a trailing slash, retain query parameters, and use
-directory-bounded locations so `/foodguide/` cannot also match `/foodguide-other`.
+directory-bounded locations so `/guide/` cannot also match `/guide-other`.
 With `--cloudflare`, origin redirects remain relative to preserve public HTTPS.
-Generated asset cache headers require revalidation: fixed filenames such as
-Food Guide's modules and sprites must update with each release. Previously
-cached immutable responses may still need a browser reload and Cloudflare cache
-purge at cutover.
+Generated asset cache headers require revalidation: fixed JavaScript and image
+filenames must update with each release. Previously cached immutable responses
+may still need a browser reload and Cloudflare cache purge at cutover.
 
 ### Godot web application
 
