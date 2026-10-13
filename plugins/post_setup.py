@@ -42,7 +42,7 @@ def build_post_setup_steps(
             create_cloudflared_config_directory(_config)
             configure_nginx_for_cloudflare(_config)
             install_cloudflared_service_helper(_config)
-            print("  Public HTTP/HTTPS remain open until cloudflared is verified active")
+            print("  Direct web access policy will be applied after cloudflared is verified active")
 
         steps.append(("Preparing Cloudflare tunnel support", prepare_cloudflare))
 

@@ -523,6 +523,7 @@ class SetupConfig:
     enable_ssl: bool = False
     ssl_email: Optional[str] = None
     enable_cloudflare: bool = False
+    cloudflare_allow_direct: Optional[bool] = False
     enable_cicd: bool = False
     is_build_server: bool = False
     is_app_server: bool = False
@@ -600,6 +601,8 @@ class SetupConfig:
     include_web_firewall: bool = False
 
     def __post_init__(self) -> None:
+        if self.cloudflare_allow_direct is not None and not isinstance(self.cloudflare_allow_direct, bool):
+            raise ValueError("cloudflare_allow_direct must be a boolean")
         if self.disable_web_panel:
             self.guacamole = False
         if self.guacamole:
@@ -1351,6 +1354,10 @@ class SetupConfig:
         
         if self.enable_cloudflare:
             args.append("--cloudflare")
+            args.append(
+                "--cloudflare-allow-direct" if self.cloudflare_allow_direct
+                else "--no-cloudflare-allow-direct"
+            )
         
         if self.enable_cicd:
             args.append("--cicd")
@@ -1932,6 +1939,8 @@ class SetupConfig:
         # Cloudflare
         if self.enable_cloudflare:
             cmd_parts.append("--cloudflare")
+            if self.cloudflare_allow_direct:
+                cmd_parts.append("--cloudflare-allow-direct")
         
         # CI/CD
         if self.enable_cicd:
@@ -2190,6 +2199,7 @@ class SetupConfig:
         )
         data['guacamole'] = bool(self.guacamole)
         data['notification_strict_https'] = bool(self.notification_strict_https)
+        data['cloudflare_allow_direct'] = bool(self.cloudflare_allow_direct)
         if self.enable_syncthing and not self.syncthing_root:
             data['syncthing_root'] = DEFAULT_SYNCTHING_ROOT
         # Live activation is a one-shot controller operation. Persisting it
@@ -2799,6 +2809,7 @@ class SetupConfig:
             enable_ssl=enable_ssl,
             ssl_email=getattr(args, 'ssl_email', None),
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),
+            cloudflare_allow_direct=_optional_bool_arg(args, 'cloudflare_allow_direct'),
             enable_cicd=getattr(args, 'enable_cicd', False),
             is_build_server=is_build_server,
             is_app_server=is_app_server,

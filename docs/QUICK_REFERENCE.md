@@ -18,6 +18,8 @@ For a first experiment without a domain or SSH setup, follow the
 | Preview adding Python tools | `basaltw patch server.example admin --python --dry-run` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
 | Update shares only | `basaltw shares fileserver` | [Samba shares](SAMBA_SHARES.md) |
 | Rerun a saved setup | `basaltw deploy server.example` | [Saved configuration operations](OPERATIONS.md#patch-and-redeploy) |
+| Allow LAN web access alongside a tunnel | `basaltw patch server.example admin --lan-access` | [Cloudflare direct access](CLOUDFLARE.md#direct-access-alongside-the-tunnel) |
+| Allow unrestricted web access alongside a tunnel | `basaltw patch server.example admin --cloudflare-allow-direct` | [Cloudflare direct access](CLOUDFLARE.md#direct-access-alongside-the-tunnel) |
 | Add browser access to an existing HTTPS desktop panel | `basaltw patch server.example admin --guacamole` | [Guacamole browser desktop](GUACAMOLE.md) |
 | Remove browser desktop access | `basaltw patch server.example admin --no-guacamole` | [Guacamole removal](GUACAMOLE.md#diagnose-and-remove) |
 

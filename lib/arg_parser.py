@@ -1296,7 +1296,16 @@ def add_setup_arguments(
     parser.add_argument("--cloudflare", dest="enable_cloudflare", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
-                       help="Configure Cloudflare Tunnel; guide initial authentication and creation in this terminal, then close public HTTP/HTTPS after activation")
+                       help="Configure Cloudflare Tunnel; close unrestricted HTTP/HTTPS after activation, retaining --lan-access / --access-source access")
+    parser.add_argument(
+        "--cloudflare-allow-direct",
+        action=argparse.BooleanOptionalAction,
+        default=None if not for_remote else False,
+        help=(
+            "With --cloudflare, also allow unrestricted direct HTTP/HTTPS on TCP 80/443. "
+            "Otherwise only --lan-access / --access-source networks retain direct access"
+        ),
+    )
     parser.add_argument("--cicd", dest="enable_cicd", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,

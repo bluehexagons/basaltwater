@@ -8,9 +8,11 @@ import sys
 
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
+from lib.machine_state import can_manage_firewall
 from lib.remote_utils import run
 from lib.setup_prompts import PROMPT_RELAY_ENV
 from lib.validation import validate_cloudflare_tunnel_name
+from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall
 
 
 NGINX_CLOUDFLARE_CONF = "/etc/nginx/conf.d/cloudflare.conf"
@@ -47,6 +49,10 @@ def _allow_antistatic_direct_access_for_cloudflare(config: SetupConfig) -> bool:
 
 def configure_cloudflare_firewall(config: SetupConfig) -> None:
     """Configure firewall for Cloudflare tunnel and preserve required direct-access rules."""
+    sources = normalize_access_sources(config.effective_access_sources())
+    if not can_manage_firewall(config.machine_type):
+        print("  ✓ Skipping Cloudflare firewall policy (machine cannot manage UFW)")
+        return
     tunnel_status = run(
         "systemctl is-active --quiet cloudflared",
         check=False,
@@ -64,20 +70,11 @@ def configure_cloudflare_firewall(config: SetupConfig) -> None:
 
     run("ufw default deny incoming")
     run("ufw default allow outgoing")
-    # Remove the unrestricted rules a prior version created before applying
-    # UFW's SSH rate limit.  This preserves the intended brute-force control.
-    run("ufw delete allow ssh", check=False)
-    run("ufw delete allow 22/tcp", check=False)
-    run("ufw limit ssh")
-
-    # Explicitly remove web ports if they were added by previous steps
-    run("ufw delete allow 80/tcp", check=False)
-    run("ufw delete allow 443/tcp", check=False)
-    run("ufw delete allow 80", check=False)
-    run("ufw delete allow 443", check=False)
-
     antistatic_direct_access = _allow_antistatic_direct_access_for_cloudflare(config)
-    run("ufw --force enable")
+    reconcile_tunnel_firewall(
+        allow_direct=bool(config.cloudflare_allow_direct), sources=sources,
+        command_runner=run,
+    )
 
     if antistatic_direct_access:
         print("  ✓ Firewall configured for Cloudflare tunnel with antistatic direct access")
@@ -170,6 +167,13 @@ def install_cloudflared_service_helper(config: SetupConfig) -> None:
 def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = False) -> bool:
     """Refresh a tunnel, or walk through initial creation when setup permits it."""
     helper_script = CLOUDFLARE_SETUP_SOURCE
+    sources = normalize_access_sources(config.effective_access_sources())
+    policy_args = ['--allow-direct' if config.cloudflare_allow_direct else '--no-allow-direct']
+    if sources:
+        for source in sources:
+            policy_args.extend(['--access-source', source])
+    else:
+        policy_args.append('--clear-access-sources')
     
     if not os.path.exists(helper_script):
         raise RuntimeError(f"Cloudflare setup script not found: {helper_script}")
@@ -189,6 +193,7 @@ def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = Fal
                 pass
             else:
                 command.extend(["--tunnel-name", name])
+        command.extend(policy_args)
         print("  Starting the Cloudflare authentication and tunnel setup wizard...")
         result = run(command, check=False, interactive=True, timeout=None)
         if result.returncode != 0:
@@ -198,7 +203,7 @@ def run_cloudflare_tunnel_setup(config: SetupConfig, *, allow_create: bool = Fal
     print("  Updating Cloudflare tunnel configuration...")
     
     result = run(
-        f"python3 {shlex.quote(helper_script)} --non-interactive",
+        [sys.executable, '-u', helper_script, '--non-interactive', *policy_args],
         check=False,
         capture_output=True,
     )

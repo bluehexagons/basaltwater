@@ -566,7 +566,8 @@ populate Proxmox's standard `management` IP set, which covers the web GUI,
 SSH, VNC, and SPICE. Service-specific `--rdp-source`,
 `--web-interface-source`, and `--gogs-source` values remain available and are
 added to the generic set for that service. `--samba-source` provides the same
-service-only addition for SMB ingress. Cloudflare tunnels and intentionally
+service-only addition for SMB ingress. With Cloudflare Tunnel, generic sources
+also retain direct HTTP/HTTPS origin access from those networks. Intentionally
 public Antistatic endpoints retain their own exposure policy.
 
 Without a generic source or `--rdp-source`, enabling RDP keeps a globally
@@ -1451,7 +1452,19 @@ have not yet been qualified by this project.
 | `--full-deploy` | Always rebuild deployments even if unchanged |
 | `--ssl` | Enable TLS: Let's Encrypt for domains and an IP-SAN self-signed certificate for hostless Gogs |
 | `--ssl-email EMAIL` | Email for SSL registration |
-| `--cloudflare` | Configure Cloudflare Tunnel; close direct HTTP/HTTPS only after the tunnel is verified active |
+| `--cloudflare` | Configure Cloudflare Tunnel; after activation, retain direct HTTP/HTTPS only from `--lan-access` / `--access-source` networks unless unrestricted access is selected |
+| `--cloudflare-allow-direct` / `--no-cloudflare-allow-direct` | Enable unrestricted direct TCP 80/443 alongside the tunnel, or return to source-restricted/tunnel-only access |
+
+For hosts-file testing on the target's LAN, use `--cloudflare --lan-access`.
+Use `--access-source IP_OR_CIDR` for explicit LAN/VPN networks. The public tunnel
+continues to serve Cloudflare traffic; local clients reach Nginx directly.
+`--cloudflare-allow-direct` explicitly opens TCP 80/443 to any client, taking
+precedence over generic source restrictions for those two ports. The negative
+form returns to the generic source policy; clear `--lan-access` and explicit
+sources too when restoring tunnel-only mode through a patch. These choices are
+saved and passed to the tunnel helper on subsequent setup runs. See
+[direct access alongside a tunnel](CLOUDFLARE.md#direct-access-alongside-the-tunnel)
+for setup, patch, helper, and local hostname examples.
 
 Repos can also ship `basaltwater.json` manifests for multi-component deploys; see
 [Deployments and manifests](./DEPLOYMENTS.md) for the schema and examples.

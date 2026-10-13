@@ -45,6 +45,21 @@ class TestCloudflareTunnelState(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Could not load"):
                     tunnel_setup.load_state()
 
+    def test_saved_direct_policy_rejects_malformed_values(self):
+        state = {
+            'tunnel': {'name': 'example', 'id': 'id', 'credentials_file': '/etc/cloudflared/id.json'},
+            'sites': [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = os.path.join(tmp, 'state.json')
+            for field, value in (('allow_direct', 'false'), ('allow_direct', 1), ('access_sources', None), ('access_sources', ['example.com'])):
+                with self.subTest(field=field, value=value):
+                    with open(state_path, 'w', encoding='utf-8') as handle:
+                        json.dump({**state, field: value}, handle)
+                    with patch.object(tunnel_setup, 'STATE_FILE', state_path):
+                        with self.assertRaises(ValueError):
+                            tunnel_setup.load_state()
+
     def test_generated_yaml_quotes_values_and_validates_hosts(self):
         content = tunnel_setup.generate_config_yml(
             {
@@ -137,6 +152,62 @@ class TestCloudflareTunnelState(unittest.TestCase):
 
 
 class TestCloudflareTunnelRefresh(unittest.TestCase):
+    def test_failed_initial_activation_preserves_direct_policy_for_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials = os.path.join(tmp, 'tunnel.json')
+            with open(credentials, 'w', encoding='utf-8') as handle:
+                handle.write('{}')
+            tunnel = {'name': 'example', 'id': 'id', 'credentials_file': credentials}
+            sites = [{'hostname': 'example.com', 'service': 'http://localhost:80'}]
+            with patch.object(tunnel_setup, 'CONFIG_DIR', tmp), \
+                    patch.object(tunnel_setup, 'STATE_FILE', os.path.join(tmp, 'state.json')), \
+                    patch.object(tunnel_setup, 'check_root'), \
+                    patch.object(tunnel_setup, 'install_cloudflared'), \
+                    patch.object(tunnel_setup, 'authenticate_cloudflare'), \
+                    patch.object(tunnel_setup, 'create_tunnel', return_value=tunnel) as create, \
+                    patch.object(tunnel_setup, 'discover_nginx_sites', return_value=sites), \
+                    patch.object(tunnel_setup, '_write_config_file'), \
+                    patch.object(tunnel_setup, 'setup_input', side_effect=['', 'y']), \
+                    patch.object(tunnel_setup, 'install_and_start_service', side_effect=[False, True]), \
+                    patch.object(tunnel_setup, '_configure_firewall') as firewall:
+                with self.assertRaisesRegex(RuntimeError, 'did not become active'):
+                    tunnel_setup.main(tunnel_name='example', allow_direct=True)
+                saved = tunnel_setup.load_state()
+                self.assertTrue(saved['allow_direct'])
+                self.assertTrue(saved['pending_activation'])
+                firewall.assert_not_called()
+                self.assertTrue(tunnel_setup.main(interactive=False))
+                self.assertTrue(tunnel_setup.load_state()['allow_direct'])
+                self.assertNotIn('pending_activation', tunnel_setup.load_state())
+                firewall.assert_called_once_with(allow_direct=True, access_sources=[])
+                create.assert_called_once()
+
+    def test_unchanged_tunnel_preserves_sources_and_can_clear_direct_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            credentials = os.path.join(tmp, 'tunnel.json')
+            with open(credentials, 'w', encoding='utf-8') as handle:
+                handle.write('{}')
+            tunnel = {'name': 'example', 'id': 'id', 'credentials_file': credentials}
+            sites = [{'hostname': 'example.com', 'service': 'http://localhost:80'}]
+            with patch.object(tunnel_setup, 'CONFIG_DIR', tmp), \
+                    patch.object(tunnel_setup, 'STATE_FILE', os.path.join(tmp, 'state.json')), \
+                    patch.object(tunnel_setup, 'check_root'), \
+                    patch.object(tunnel_setup, 'install_cloudflared'), \
+                    patch.object(tunnel_setup, 'discover_nginx_sites', return_value=sites), \
+                    patch.object(tunnel_setup, '_config_is_valid', return_value=True), \
+                    patch.object(tunnel_setup, '_write_config_file') as write_config, \
+                    patch.object(tunnel_setup, 'install_and_start_service', return_value=True) as service, \
+                    patch.object(tunnel_setup, '_configure_firewall') as firewall:
+                tunnel_setup.save_state(tunnel, sites, allow_direct=True, access_sources=['192.168.0.52/24'])
+                self.assertTrue(tunnel_setup.main(interactive=False))
+                firewall.assert_called_with(allow_direct=True, access_sources=['192.168.0.0/24'])
+                self.assertTrue(tunnel_setup.main(interactive=False, allow_direct=False, access_sources=[]))
+                firewall.assert_called_with(allow_direct=False, access_sources=[])
+                self.assertFalse(tunnel_setup.load_state()['allow_direct'])
+                self.assertEqual(tunnel_setup.load_state()['access_sources'], [])
+                write_config.assert_not_called()
+                self.assertEqual(service.call_args_list, [call(restart=False), call(restart=False)])
+
     def test_initial_creation_uses_suggested_name_and_only_closes_ports_after_activation(self):
         tunnel = {"name": "example_droplet", "id": "id", "credentials_file": "/etc/cloudflared/id.json"}
         sites = [{"hostname": "example.com", "service": "http://localhost:80"}]
@@ -151,7 +222,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
         ), patch.object(tunnel_setup, "_write_config_file"), patch.object(
             tunnel_setup, "install_and_start_service", side_effect=[False, True]
         ), patch.object(
-            tunnel_setup, "_close_public_web_ports"
+            tunnel_setup, "_configure_firewall"
         ) as close:
             with self.assertRaisesRegex(RuntimeError, "did not become active"):
                 tunnel_setup.main(tunnel_name="example_droplet")
@@ -278,11 +349,11 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 self.assertEqual(run_command.call_count, len(results))
                 self.assertEqual(diagnostics.call_count, 0 if expected else 1)
 
-    def test_close_public_web_ports_installs_ufw_when_missing(self):
+    def test_firewall_policy_installs_ufw_when_missing(self):
         with patch.object(tunnel_setup.shutil, "which", return_value=None), patch.object(
-            tunnel_setup, "run_command"
-        ) as run_command:
-            tunnel_setup._close_public_web_ports()
+            tunnel_setup, "run_command", return_value=SimpleNamespace(returncode=0, stdout="Status: active\n")
+        ) as run_command, patch.object(tunnel_setup, "can_manage_firewall", return_value=True):
+            tunnel_setup._configure_firewall(allow_direct=False, access_sources=[])
 
         self.assertEqual(
             run_command.call_args_list[:2],
@@ -450,7 +521,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
             tunnel_setup, "save_state"
         ) as save_state, patch.object(
             tunnel_setup, "install_and_start_service", return_value=True
-        ):
+        ), patch.object(tunnel_setup, "_configure_firewall"):
             self.assertTrue(tunnel_setup.main(interactive=False))
 
         write_config.assert_not_called()
@@ -473,12 +544,13 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                 patch.object(tunnel_setup.os.path, "isfile", return_value=True), \
                 patch.object(tunnel_setup, "_write_config_file"), \
                 patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service, \
+                patch.object(tunnel_setup, "_configure_firewall"), \
                 patch.object(tunnel_setup, "save_state") as save_state:
             self.assertFalse(tunnel_setup.main(interactive=False))
-            save_state.assert_called_once_with(state["tunnel"], state["sites"], pending_activation=True)
+            save_state.assert_called_once_with(state["tunnel"], state["sites"], pending_activation=True, allow_direct=False, access_sources=[])
             self.assertTrue(tunnel_setup.main(interactive=False))
             self.assertEqual(ensure_service.call_args_list, [call(restart=True), call(restart=True)])
-            self.assertEqual(save_state.call_args_list[-1], call(state["tunnel"], sites))
+            self.assertEqual(save_state.call_args_list[-1], call(state["tunnel"], sites, allow_direct=False, access_sources=[]))
 
     def test_failed_config_repair_retries_activation_even_with_unchanged_routes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -495,6 +567,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, "discover_nginx_sites", return_value=sites), \
                     patch.object(tunnel_setup, "_config_is_valid", side_effect=[False, True]), \
                     patch.object(tunnel_setup, "_write_config_file"), \
+                    patch.object(tunnel_setup, "_configure_firewall"), \
                     patch.object(tunnel_setup, "install_and_start_service", side_effect=[False, True]) as ensure_service:
                 tunnel_setup.save_state(tunnel, sites)
                 self.assertFalse(tunnel_setup.main(interactive=False))
@@ -559,6 +632,7 @@ class TestCloudflareTunnelRefresh(unittest.TestCase):
                     patch.object(tunnel_setup, "NGINX_SITES_DIR", nginx_dir), \
                     patch.object(tunnel_setup, "check_root"), \
                     patch.object(tunnel_setup, "install_cloudflared"), \
+                    patch.object(tunnel_setup, "_configure_firewall"), \
                     patch.object(tunnel_setup, "run_command", side_effect=command_results) as run_command:
                 self.assertTrue(tunnel_setup.main(interactive=False))
 

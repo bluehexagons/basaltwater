@@ -22,10 +22,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..
 
 from lib.types import StrDict, JSONDict
 from lib.atomic_io import write_json_atomic, write_text_atomic
+from lib.machine_state import can_manage_firewall
 from lib.remote_utils import CommandTimeoutError, run as run_bounded_command
 from lib.validators import validate_host
 from lib.validation import validate_cloudflare_tunnel_name
 from lib.setup_prompts import setup_input
+from web.cloudflare_firewall import normalize_access_sources, reconcile_tunnel_firewall
 
 
 CONFIG_DIR = "/etc/cloudflared"
@@ -278,11 +280,18 @@ def generate_config_yml(tunnel: JSONDict, sites: list[StrDict]) -> str:
     return "\n".join(config_lines)
 
 
-def save_state(tunnel: JSONDict, sites: list[StrDict], *, pending_activation: bool = False):
+def save_state(
+    tunnel: JSONDict, sites: list[StrDict], *, pending_activation: bool = False,
+    allow_direct: bool = False, access_sources: list[str] | None = None,
+):
     """Save tunnel state for future runs."""
+    if not isinstance(allow_direct, bool):
+        raise ValueError("Cloudflare direct access must be a boolean")
     state: JSONDict = {
         'tunnel': tunnel,
-        'sites': sites
+        'sites': sites,
+        'allow_direct': allow_direct,
+        'access_sources': normalize_access_sources(access_sources),
     }
     if pending_activation:
         state['pending_activation'] = True
@@ -307,6 +316,11 @@ def load_state() -> Optional[dict[str, Any]]:
         raise ValueError("Cloudflare tunnel state must be a JSON object")
     if not isinstance(state.get('pending_activation', False), bool):
         raise ValueError("Cloudflare tunnel state has an invalid pending_activation flag")
+    if not isinstance(state.get('allow_direct', False), bool):
+        raise ValueError("Cloudflare tunnel state has an invalid allow_direct flag")
+    if 'access_sources' in state and not isinstance(state['access_sources'], list):
+        raise ValueError("Cloudflare tunnel state has an invalid access_sources list")
+    normalize_access_sources(state.get('access_sources', []))
     tunnel = state.get('tunnel')
     if not isinstance(tunnel, dict):
         raise ValueError("Cloudflare tunnel state is missing its tunnel object")
@@ -457,21 +471,21 @@ def _ensure_service_running(*, restart: bool = False) -> bool:
     return True
 
 
-def _close_public_web_ports() -> None:
-    """Close direct HTTP/HTTPS only after cloudflared is verified active."""
+def _configure_firewall(*, allow_direct: bool, access_sources: list[str]) -> None:
+    """Apply the requested direct web policy after verified tunnel activation."""
+    access_sources = normalize_access_sources(access_sources)
+    if not can_manage_firewall():
+        print("  ✓ Skipping Cloudflare firewall policy (machine cannot manage UFW)")
+        return
     if not shutil.which("ufw"):
         run_command(["apt-get", "update"])
         run_command(["apt-get", "install", "-y", "ufw"])
 
     run_command(["ufw", "default", "deny", "incoming"])
     run_command(["ufw", "default", "allow", "outgoing"])
-    run_command(["ufw", "delete", "allow", "ssh"], check=False)
-    run_command(["ufw", "delete", "allow", "22/tcp"], check=False)
-    run_command(["ufw", "limit", "ssh"])
-    for rule in ("80/tcp", "443/tcp", "80", "443"):
-        run_command(["ufw", "delete", "allow", rule], check=False)
-    run_command(["ufw", "--force", "enable"])
-    print("✓ Direct HTTP/HTTPS ports closed after tunnel verification")
+    reconcile_tunnel_firewall(
+        allow_direct=allow_direct, sources=access_sources, command_runner=run_command,
+    )
 
 
 def install_and_start_service(*, restart: bool = False) -> bool:
@@ -536,7 +550,10 @@ def show_tunnel_info(tunnel: JSONDict, sites: list[StrDict]):
     print()
 
 
-def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optional[str] = None):
+def main(
+    interactive: bool = True, auto_update: bool = False, tunnel_name: Optional[str] = None,
+    *, allow_direct: bool | None = None, access_sources: list[str] | None = None,
+):
     """
     Main setup workflow.
     
@@ -553,6 +570,14 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
     check_root()
 
     state = load_state()
+    if allow_direct is None:
+        allow_direct = state.get('allow_direct', False) if state else False
+    if not isinstance(allow_direct, bool):
+        raise ValueError("Cloudflare direct access must be a boolean")
+    if access_sources is None:
+        access_sources = state.get('access_sources', []) if state else []
+    access_sources = normalize_access_sources(access_sources)
+    policy = {'allow_direct': allow_direct, 'access_sources': access_sources}
     if not interactive:
         if not state:
             return False
@@ -586,15 +611,18 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
         if config_needs_update:
             # A config repair can require activation even when its route set
             # is unchanged. Persist that obligation before replacing the file.
-            save_state(tunnel, old_sites, pending_activation=True)
+            save_state(tunnel, old_sites, pending_activation=True, **policy)
             config_content = generate_config_yml(tunnel, sites)
             _write_config_file(config_file, config_content)
         # Commit discovered routes only after the daemon has loaded them. If
         # restart fails, pending_activation makes the next refresh retry it.
         if not install_and_start_service(restart=config_needs_update):
             return False
-        if config_needs_update:
-            save_state(tunnel, sites)
+        _configure_firewall(**policy)
+        if config_needs_update or any(state.get(key, default) != value for key, default, value in (
+            ('allow_direct', False, allow_direct), ('access_sources', [], access_sources),
+        )):
+            save_state(tunnel, sites, **policy)
         return True
     
     # Interactive mode falls through to show configuration and return True on success
@@ -649,7 +677,7 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
         # Preserve a newly created tunnel even if service installation is
         # deferred or fails. Empty applied routes force the next refresh to
         # restart with the generated ingress rather than trusting stale state.
-        save_state(tunnel, [], pending_activation=True)
+        save_state(tunnel, [], pending_activation=True, **policy)
     else:
         tunnel = state['tunnel']
         print(f"\n✓ Using existing tunnel: {tunnel['name']}")
@@ -686,7 +714,7 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
     
     print(f"\nWriting configuration to {config_file}...")
     if state:
-        save_state(tunnel, state['sites'], pending_activation=True)
+        save_state(tunnel, state['sites'], pending_activation=True, **policy)
     _write_config_file(config_file, config_content)
     print("✓ Configuration file created")
     
@@ -699,8 +727,8 @@ def main(interactive: bool = True, auto_update: bool = False, tunnel_name: Optio
             raise RuntimeError(
                 "cloudflared did not become active; direct HTTP/HTTPS ports remain open"
             )
-        save_state(tunnel, sites)
-        _close_public_web_ports()
+        _configure_firewall(**policy)
+        save_state(tunnel, sites, **policy)
         
         print("\n" + "=" * 50)
         print("Setup Complete!")
@@ -744,15 +772,25 @@ if __name__ == "__main__":
                        help='Automatically update existing tunnel without prompts')
     parser.add_argument('--tunnel-name', type=validate_cloudflare_tunnel_name,
                        help='Suggested tunnel name for initial creation')
+    parser.add_argument('--allow-direct', action=argparse.BooleanOptionalAction, default=None,
+                        help='Allow unrestricted direct HTTP/HTTPS alongside the tunnel; otherwise preserve saved policy')
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument('--access-source', dest='access_sources', action='append',
+                              help='Allow this direct-access IP/CIDR; repeat as needed, otherwise preserve saved sources')
+    source_group.add_argument('--clear-access-sources', dest='access_sources', action='store_const', const=[],
+                              help='Clear saved direct-access sources')
     
     args = parser.parse_args()
     
     try:
         if args.non_interactive:
-            success = main(interactive=False)
+            success = main(interactive=False, allow_direct=args.allow_direct, access_sources=args.access_sources)
             sys.exit(0 if success else 1)
         else:
-            success = main(interactive=True, auto_update=args.auto_update, tunnel_name=args.tunnel_name)
+            success = main(
+                interactive=True, auto_update=args.auto_update, tunnel_name=args.tunnel_name,
+                allow_direct=args.allow_direct, access_sources=args.access_sources,
+            )
             sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         print("\n\n✗ Setup cancelled by user")

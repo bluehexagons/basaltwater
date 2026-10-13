@@ -32,9 +32,14 @@ def _make_config(antistatic_server: str | None = None) -> SetupConfig:
 
 
 class TestConfigureCloudflareFirewall(unittest.TestCase):
+    def setUp(self):
+        capability = patch("web.cloudflare_steps.can_manage_firewall", return_value=True)
+        capability.start()
+        self.addCleanup(capability.stop)
+
     @patch("web.cloudflare_steps.run")
     def test_domain_antistatic_keeps_stun_direct_access(self, mock_run):
-        mock_run.return_value = SimpleNamespace(returncode=0)
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\n")
 
         configure_cloudflare_firewall(_make_config("lobby.example.com"))
 
@@ -48,15 +53,16 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                 call("ufw status 2>/dev/null | grep -q 'Status: active'", check=False),
                 call("ufw default deny incoming"),
                 call("ufw default allow outgoing"),
-                call("ufw delete allow ssh", check=False),
-                call("ufw delete allow 22/tcp", check=False),
-                call("ufw limit ssh"),
-                call("ufw delete allow 80/tcp", check=False),
-                call("ufw delete allow 443/tcp", check=False),
-                call("ufw delete allow 80", check=False),
-                call("ufw delete allow 443", check=False),
                 call("ufw allow 3478/udp comment 'antistatic STUN'"),
-                call("ufw --force enable"),
+                call(["ufw", "limit", "ssh"]),
+                call(["ufw", "delete", "allow", "ssh"], check=False),
+                call(["ufw", "delete", "allow", "22/tcp"], check=False),
+                call(["ufw", "delete", "allow", "80/tcp"], check=False),
+                call(["ufw", "delete", "allow", "443/tcp"], check=False),
+                call(["ufw", "delete", "allow", "80"], check=False),
+                call(["ufw", "delete", "allow", "443"], check=False),
+                call(["ufw", "--force", "enable"]),
+                call(["ufw", "status", "numbered"], check=False, capture_output=True),
             ]
         )
         commands = [call_args.args[0] for call_args in mock_run.call_args_list]
@@ -64,7 +70,7 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
 
     @patch("web.cloudflare_steps.run")
     def test_hostless_antistatic_keeps_direct_tcp_and_stun_access(self, mock_run):
-        mock_run.return_value = SimpleNamespace(returncode=0)
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout="Status: active\n")
 
         configure_cloudflare_firewall(_make_config(":8080"))
 
@@ -78,16 +84,17 @@ class TestConfigureCloudflareFirewall(unittest.TestCase):
                 call("ufw status 2>/dev/null | grep -q 'Status: active'", check=False),
                 call("ufw default deny incoming"),
                 call("ufw default allow outgoing"),
-                call("ufw delete allow ssh", check=False),
-                call("ufw delete allow 22/tcp", check=False),
-                call("ufw limit ssh"),
-                call("ufw delete allow 80/tcp", check=False),
-                call("ufw delete allow 443/tcp", check=False),
-                call("ufw delete allow 80", check=False),
-                call("ufw delete allow 443", check=False),
                 call("ufw allow 8080/tcp comment 'antistatic direct port'"),
                 call("ufw allow 3478/udp comment 'antistatic STUN'"),
-                call("ufw --force enable"),
+                call(["ufw", "limit", "ssh"]),
+                call(["ufw", "delete", "allow", "ssh"], check=False),
+                call(["ufw", "delete", "allow", "22/tcp"], check=False),
+                call(["ufw", "delete", "allow", "80/tcp"], check=False),
+                call(["ufw", "delete", "allow", "443/tcp"], check=False),
+                call(["ufw", "delete", "allow", "80"], check=False),
+                call(["ufw", "delete", "allow", "443"], check=False),
+                call(["ufw", "--force", "enable"]),
+                call(["ufw", "status", "numbered"], check=False, capture_output=True),
             ]
         )
 
@@ -153,7 +160,7 @@ class TestRunCloudflareTunnelSetup(unittest.TestCase):
         config.friendly_name = "example_droplet"
         self.assertTrue(run_cloudflare_tunnel_setup(config, allow_create=True))
         command = run.call_args.args[0]
-        self.assertEqual(command[-2:], ["--tunnel-name", "example_droplet"])
+        self.assertEqual(command[-4:], ["--tunnel-name", "example_droplet", "--no-allow-direct", "--clear-access-sources"])
         self.assertEqual(run.call_args.kwargs, {"check": False, "interactive": True, "timeout": None})
 
     @patch.dict(os.environ, {"BASALTWATER_SETUP_PROMPT_RELAY": "0"})

@@ -19,7 +19,23 @@ It installs `cloudflared` when needed, authenticates with Cloudflare, creates
 or reuses a tunnel, discovers enabled Nginx sites, writes the tunnel
 configuration, and can install and enable the systemd service. Direct public
 HTTP/HTTPS remains open until the helper verifies that service is active; only
-then does it close ports 80 and 443 with UFW.
+then does it apply the saved direct web access policy with UFW. By default it
+closes unrestricted ports 80 and 443. Setup's `--lan-access` / `--access-source`
+retain direct access from their networks; `--cloudflare-allow-direct` allows
+unrestricted direct HTTP/HTTPS alongside the tunnel.
+
+For local changes after setup, run one of:
+
+```bash
+sudo setup-cloudflare-tunnel --non-interactive --allow-direct
+sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source 192.168.0.0/24
+sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-sources
+```
+
+Omitting these options preserves the saved policy. LAN clients can use hosts-file
+entries mapping deployed hostnames to the VM and browse their HTTP URLs. This
+is direct origin access alongside the tunnel; a bare IP URL does not select a
+particular hostname-based Nginx site.
 
 The helper stores configuration and tunnel credentials under
 `/etc/cloudflared`. Its state file is

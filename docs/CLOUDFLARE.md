@@ -25,9 +25,10 @@ The setup flow first:
 Direct HTTP and HTTPS stay open during preconfiguration. If existing tunnel
 state is present, setup refreshes the ingress configuration and verifies that
 `cloudflared` is active. Only after that verification does it enable UFW's
-default-deny incoming policy, rate-limit SSH, and remove public 80/tcp and
-443/tcp allowances. A missing tunnel, failed refresh, or inactive service
-cannot trigger the port closure.
+default-deny incoming policy, configure SSH access, and remove public 80/tcp and
+443/tcp allowances unless unrestricted direct access is requested. Explicit or
+inferred access sources retain source-restricted direct web access. A missing
+tunnel, failed refresh, or inactive service cannot trigger the port closure.
 
 Because the Cloudflare edge provides public HTTPS, Nginx serves the tunnel
 origin over local HTTP without forcing an HTTP-to-HTTPS redirect. Proxied
@@ -51,7 +52,56 @@ a hostname without public DNS. It also does not create a Cloudflare DNS route.
 An override pointing directly at the VM bypasses Cloudflare and its edge
 certificate: use the local HTTP origin or explicitly trust the generated
 self-signed Nginx certificate for local HTTPS testing. After tunnel activation
-closes direct web ports, origin tests can use an SSH port forward.
+closes direct web ports, origin tests can use an SSH port forward or the direct
+access options below.
+
+## Direct access alongside the tunnel
+
+Use `--cloudflare --lan-access` to keep direct HTTP/HTTPS available from the
+target-adjacent private LAN. Debian infers IPv4 `/24` or IPv6 ULA `/64` from the
+setup target, unless an explicit static address supplies another prefix. The
+controller sends these resolved sources to the target; this does not infer the
+controller's LAN as a substitute for a remote target's network.
+
+```bash
+basaltw setup server_web 192.168.0.52 deploy --cloudflare --lan-access \
+  --deploy hexagonalhomelab.com https://github.com/example/site.git
+```
+
+For a specific LAN, VPN, or client, use repeatable `--access-source IP_OR_CIDR`
+instead. For unrestricted direct access on TCP 80 and 443, add
+`--cloudflare-allow-direct`. This explicit unrestricted option takes precedence
+over source restrictions for those two ports. `--no-cloudflare-allow-direct`
+returns them to the source-restricted policy, or tunnel-only access when no
+sources are configured. Clear saved LAN sources with `--no-lan-access` and
+explicit generic sources with `--no-access-source` when removing direct access
+through a patch. Include these options in your full setup command, or patch an
+already saved host:
+
+```bash
+basaltw patch 192.168.0.52 deploy --lan-access
+basaltw patch 192.168.0.52 deploy --cloudflare-allow-direct
+basaltw patch 192.168.0.52 deploy --no-cloudflare-allow-direct --no-lan-access --no-access-source
+```
+
+LAN clients reach Nginx directly alongside the public tunnel. Keep hosts-file
+entries pointing the deployed hostnames at the VM, and open their HTTP URLs
+for local testing. A bare IP or a `.local` hostname still needs a matching Nginx
+route to select the intended site; the firewall option does not create hostname
+aliases or a trusted local TLS certificate.
+
+Setup and the tunnel helper save the policy for reruns. The helper can also
+change it locally without an initial authentication wizard:
+
+```bash
+sudo setup-cloudflare-tunnel --non-interactive --allow-direct
+sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --access-source 192.168.0.0/24
+sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-sources
+```
+
+An unchanged ingress does not restart the tunnel for a firewall-only change.
+Owned stale direct-access rules are removed when narrowing sources or returning
+to tunnel-only mode. Antistatic and manifest UDP allowances remain independent.
 
 ## Create or update a tunnel
 
@@ -67,8 +117,8 @@ sudo setup-cloudflare-tunnel
 The helper installs `cloudflared` from Cloudflare's signed APT repository when needed, runs Cloudflare authentication,
 creates or reuses a tunnel, discovers hostnames from enabled Nginx sites, writes
 `/etc/cloudflared/config.yml`, and can install and enable the `cloudflared`
-systemd service. After verifying the service is active, the helper closes
-direct public HTTP/HTTPS access. Tunnel credentials and state are stored under
+systemd service. After verifying the service is active, the helper applies the
+saved direct-access policy. Tunnel credentials and state are stored under
 `/etc/cloudflared` with restrictive permissions.
 
 Generated tunnel and Nginx configurations are validated before activation. A
@@ -149,7 +199,7 @@ routes. Provider firewall rules and DNS records still need configuration.
 
 - `--cloudflare` changes Nginx behavior immediately and firewall behavior only
   after a tunnel becomes active. Ensure the SSH management route is ready.
-  SSH is rate-limited with UFW;
+  SSH follows generic access sources, or is rate-limited with UFW when none are set;
   add a management-network-specific rule separately if your policy needs one.
 - Tunnel creation requires an interactive browser login and Cloudflare account
   access; unattended setup cannot create the initial tunnel.
