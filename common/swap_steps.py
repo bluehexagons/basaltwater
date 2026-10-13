@@ -59,11 +59,15 @@ def _capture(command: str, *, check: bool = True):
 
 
 def get_total_ram_mb() -> int:
-    result = _capture("free --mebi --output=total | tail -n 1", check=False)
+    """Read physical RAM in MiB from Linux's locale-independent meminfo."""
     try:
-        return int(result.stdout.strip())
-    except (ValueError, AttributeError):
+        content = Path("/proc/meminfo").read_text(encoding="utf-8")
+    except OSError:
         return 0
+    match = re.search(
+        r"^MemTotal:[ \t]+([0-9]+)[ \t]+kB[ \t]*$", content, re.MULTILINE
+    )
+    return int(match.group(1)) // 1024 if match else 0
 
 
 def get_free_disk_mb() -> int:

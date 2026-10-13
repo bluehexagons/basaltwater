@@ -16,6 +16,8 @@ import time
 import urllib.parse
 
 if __package__ in {None, ""}:
+    # Isolated script execution excludes lib/ from standard-library lookup.
+    # Add only the trusted source root so package imports work from any cwd.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lib.atomic_io import write_json_atomic
@@ -44,7 +46,7 @@ def _policy(tool: str) -> tuple[str, str, str]:
 
 def installer_command(tool: str) -> str:
     _policy(tool)
-    return shlex.join(["/usr/bin/python3", os.path.abspath(__file__), tool, "--accept-vendor-channel"])
+    return shlex.join(["/usr/bin/python3", "-I", os.path.abspath(__file__), tool, "--accept-vendor-channel"])
 
 
 def _state_directory() -> Path:

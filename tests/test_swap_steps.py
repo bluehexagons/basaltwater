@@ -16,6 +16,59 @@ from lib.config import SetupConfig
 
 
 class TestConfigureSwap(unittest.TestCase):
+    @patch("common.swap_steps.run")
+    def test_ram_detection_reads_physical_memory_in_mib(self, mock_run):
+        for kib, expected in ((2097152, 2048), (1049600, 1025)):
+            with self.subTest(kib=kib), patch.object(
+                swap_steps.Path, "read_text",
+                return_value=(
+                    f"MemTotal:       {kib} kB\n"
+                    "MemAvailable:   512000 kB\n"
+                    "SwapTotal:      8388608 kB\n"
+                ),
+            ) as read:
+                self.assertEqual(swap_steps.get_total_ram_mb(), expected)
+                read.assert_called_once_with(encoding="utf-8")
+        mock_run.assert_not_called()
+
+    @patch("common.swap_steps.run")
+    def test_unavailable_or_invalid_ram_leaves_automatic_swap_unchanged(self, mock_run):
+        for content in (
+            "", "MemAvailable: 2097152 kB\n", "MemTotal: invalid kB\n",
+            "MemTotal: -1024 kB\n", "MemTotal: 2097152\n",
+            "MemTotal: 2097152 MB\n", "MemTotal: 0 kB\n",
+        ):
+            with (
+                self.subTest(content=content),
+                patch.object(swap_steps.Path, "read_text", return_value=content),
+                patch.object(swap_steps, "get_free_disk_mb") as disk,
+                patch("builtins.print") as output,
+            ):
+                self.assertIsNone(swap_steps._automatic_swap_file())
+                disk.assert_not_called()
+                output.assert_called_once_with(
+                    "  ⚠ Could not detect RAM size; leaving swap unchanged"
+                )
+        with patch.object(swap_steps.Path, "read_text", side_effect=OSError):
+            self.assertEqual(swap_steps.get_total_ram_mb(), 0)
+        mock_run.assert_not_called()
+
+    @patch("common.swap_steps.get_free_disk_mb", return_value=32768)
+    @patch("common.swap_steps.run")
+    def test_detected_ram_drives_automatic_swap_sizing(self, mock_run, _disk):
+        for ram_mib, swap_mib in (
+            (1024, 2048), (2048, 2048), (8191, 8191), (8192, 4096),
+        ):
+            with self.subTest(ram_mib=ram_mib), patch.object(
+                swap_steps.Path, "read_text",
+                return_value=f"MemTotal: {ram_mib * 1024} kB\n",
+            ):
+                area = swap_steps._automatic_swap_file()
+                self.assertIsNotNone(area)
+                self.assertEqual(area.path, "/swapfile")
+                self.assertEqual(area.size, f"{swap_mib}M")
+        mock_run.assert_not_called()
+
     def test_invalid_or_unsafe_state_blocks_swap_changes(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, 'swap.json')

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -45,6 +46,28 @@ class TestVendorInstaller(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     installer.install(tool, accept_vendor_channel=accepted)
             runner.assert_not_called()
+
+    def test_generated_command_starts_from_an_unrelated_directory(self):
+        environment = dict(os.environ, PYTHONPATH=str(Path(installer.__file__).parent))
+        # These modules must not override the standard library or trusted lib
+        # package when setup invokes the helper from a user's working directory.
+        for name in ("types.py", "lib.py", "sitecustomize.py"):
+            (self.downloads / name).write_text(
+                "raise RuntimeError('untrusted import')\n", encoding="utf-8",
+            )
+        for tool in installer.POLICIES:
+            with self.subTest(tool=tool):
+                result = subprocess.run(
+                    [*shlex.split(installer.installer_command(tool)), "--help"],
+                    cwd=self.downloads,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("--accept-vendor-channel", result.stdout)
 
     def test_download_records_exact_digest_and_private_file(self):
         with patch.object(installer, "run", side_effect=self.download):

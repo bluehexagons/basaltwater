@@ -30,6 +30,20 @@ that represents the action being changed. For invalid input, inspect
 For architecture and test expectations, see the
 [contributor guide](README.md).
 
+## Target-side helper imports and automatic swap
+
+Launch trusted scripts under `lib/` with `python3 -I /absolute/path/to/helper.py`
+when they bootstrap the source root for package imports. Executing them directly
+without isolated mode puts `lib/` on the import path before the standard library;
+`lib/types.py` can then shadow Python's `types` module before the bootstrap runs.
+Use `lib.vendor_installer.installer_command()` for shared vendor installers.
+Test generated commands in a fresh interpreter from an unrelated directory;
+importing the helper in the test process does not exercise script startup.
+
+Automatic swap sizing reads physical RAM from `/proc/meminfo` (`MemTotal` in
+kB, converted to MiB). `free` has no `--output=total` option. If `MemTotal` is
+missing, invalid, or unreadable, setup warns and leaves swap unchanged.
+
 ## Boolean CLI options on newer Python versions
 
 Pass `type` and `choices` only to argument actions that consume a value.
