@@ -343,7 +343,7 @@ class CodexTaskProtocolTests(unittest.TestCase):
         self.assertEqual(events.session_id, SESSION)
         self.assertEqual(events.report, report())
         self.assertEqual(events.usage, {"input_tokens": 15, "output_tokens": 5})
-        events.feed(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 4, "output_tokens": 2}}).encode() + b"\n")
+        events.feed(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 19, "output_tokens": 7}}).encode() + b"\n")
         self.assertEqual(events.usage, {"input_tokens": 19, "output_tokens": 7})
 
     def test_large_valid_report_survives_fragmented_provider_events(self) -> None:

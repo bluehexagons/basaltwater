@@ -155,11 +155,14 @@ class CodexEvents:
         elif event.get("type") == "turn.completed":
             self.final_turn_completed = True
             usage = event.get("usage")
-            if isinstance(usage, dict) and all(type(usage.get(name)) is int and 0 <= usage[name] <= 10**12
-                                                for name in ("input_tokens", "output_tokens")):
+            if (isinstance(usage, dict)
+                    and all(type(usage.get(name)) is int and 0 <= usage[name] <= 10**15
+                            for name in ("input_tokens", "output_tokens"))
+                    and all(usage[name] >= count for name, count in (self.usage or {}).items())):
                 if not self.usage_incomplete:
-                    self.usage = {name: (self.usage or {}).get(name, 0) + usage[name]
-                                  for name in ("input_tokens", "output_tokens")}
+                    # Codex exec reports cumulative thread totals, including
+                    # usage restored on resume; completion events are not additive.
+                    self.usage = {name: usage[name] for name in ("input_tokens", "output_tokens")}
             else:
                 self.usage_incomplete = True
                 self.usage = None
@@ -209,6 +212,12 @@ class TaskContextStore:
                 raise RuntimeError("Invalid task context source directory")
         if "persistence" in value and value["persistence"] not in PERSISTENCE_MODES:
             raise RuntimeError("Invalid task context persistence")
+        usage = value.get("session_usage")
+        if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
+                                  or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
+            raise RuntimeError("Invalid task conversation usage baseline")
+        if "last_run_id" in value and (not isinstance(value["last_run_id"], str) or not _ID.fullmatch(value["last_run_id"])):
+            raise RuntimeError("Invalid task context run ID")
         return value
 
     def save(self, identifier: str, value: dict[str, Any]) -> None:
@@ -225,6 +234,7 @@ class TaskContextStore:
         context = self.load(identifier)
         if context.get("persistence", task["persistence"]) != task["persistence"]:
             context.update(checkpoint="", session_id=None)
+            context.pop("session_usage", None)
             context.pop("last_run_id", None)
         context["persistence"] = task["persistence"]
         source = task["directory"]
@@ -274,12 +284,16 @@ class TaskContextStore:
         runs = private_directory(self.home, directory / "runs", create=True)
         schema = directory / "report-schema.json"
         write_json_atomic(str(schema), REPORT_SCHEMA)
+        baseline = {"input_tokens": 0, "output_tokens": 0}
+        if task["persistence"] == "conversation" and context["session_id"]:
+            baseline = context.get("session_usage") if task.get("last_run_id") == context.get("last_run_id") else None
         return {
             "context_directory": str(directory), "directory": execution_directory,
             "source_directory": source, "schema_path": str(schema),
             "log_path": str(runs / (run_id + ".jsonl")),
             "checkpoint": context["checkpoint"] if task["persistence"] != "fresh" else "",
             "session_id": context["session_id"] if task["persistence"] == "conversation" else None,
+            "usage_baseline": baseline,
         }
 
     def record(self, task: dict[str, Any], run: dict[str, Any]) -> None:
@@ -296,6 +310,11 @@ class TaskContextStore:
                 context["checkpoint"] = run["checkpoint"]
             if task["persistence"] == "conversation" and run.get("session_id"):
                 context["session_id"] = run["session_id"]
+            if task["persistence"] == "conversation":
+                # An interrupted/failed run can spend tokens without a final
+                # total. Invalidate the baseline instead of charging them twice
+                # or attributing an unknown amount to a later invocation.
+                context["session_usage"] = run.get("session_usage") if run.get("session_id") else None
             context["last_run_id"] = run["id"]
             self.save(identifier, context)
         receipts = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
@@ -313,6 +332,7 @@ class TaskContextStore:
     def reset(self, identifier: str) -> None:
         context = self.load(identifier)
         context.update(checkpoint="", session_id=None)
+        context.pop("session_usage", None)
         context.pop("last_run_id", None)
         self.save(identifier, context)
 
@@ -332,8 +352,14 @@ class TaskContextStore:
         runs = private_directory(self.home, self.directory(identifier) / "runs")
         if not runs.exists():
             return []
-        paths = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
-                       key=lambda path: path.lstat().st_mtime_ns, reverse=True)[:limit]
+        retained = []
+        for path in runs.glob("*.json"):
+            if _ID.fullmatch(path.stem):
+                try:
+                    retained.append((path.lstat().st_mtime_ns, path))
+                except FileNotFoundError:
+                    continue  # Retention can also remove records before sorting.
+        paths = [path for _, path in sorted(retained, key=lambda item: item[0], reverse=True)[:limit]]
         fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "message",
                   "output", "usage", "execution_directory", "context_directory", "log_path", "session_id"}
         history = []

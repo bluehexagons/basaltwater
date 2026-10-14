@@ -146,6 +146,17 @@ an invocation; they are not dollar budgets or provider-side hard caps. Missing
 usage with a token budget pauses work for inspection. Cached input is already
 included in input usage and is not counted twice. Raising a limit preserves
 past consumption. Resume resets the failure streak, not usage counters.
+Codex completion events contain cumulative conversation totals. Receipts keep
+those totals as `session_usage` and record only the invocation's new tokens in
+`usage`; a resumed conversation subtracts its saved private baseline. Repeated
+completion events are not added together. Missing/decreasing totals invalidate
+the baseline. The baseline must also match the task's last finished run, so a
+failed checkpoint write cannot charge already recorded tokens again.
+`show` reports `usage_baseline_valid`; compact listing retains `last_run_id` for
+receipt lookup. A token-limited conversation with an unknown baseline stops
+before launching another provider; inspect its receipts and reset context
+deliberately if appropriate. Older conversation records lack this baseline;
+past counters are preserved rather than guessed or rewritten.
 Missing usage from any provider turn makes the invocation's total unavailable;
 the runner never treats a partial total as the complete budget charge.
 Workspace preparation has its own bounded managed Git operations before the
@@ -225,7 +236,7 @@ retained receipt and repair storage before explicitly continuing.
 | Location | Contents |
 | --- | --- |
 | `~/.local/state/basaltwater/prompt-tasks/tasks.json` | Schema 2 task settings, counters and latest 40 runs; valid schema 1 state migrates without changing activation |
-| `~/.local/state/basaltwater/task-contexts/TASK_ID/context.json` | Checkpoint, exact session binding and owned workspace metadata |
+| `~/.local/state/basaltwater/task-contexts/TASK_ID/context.json` | Checkpoint, exact session binding, cumulative usage baseline and owned workspace metadata |
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/runs/` | Per-run JSON receipts and bounded raw JSONL/diagnostic logs |
 | `~/.local/share/basaltwater/task-workspaces/TASK_ID/` | Persistent or per-run empty task directories |
 | `~/.local/share/basaltwater/worktrees/` | Managed Git worktrees with separate ownership records |

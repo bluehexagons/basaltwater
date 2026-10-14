@@ -314,6 +314,9 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     managed_context = ""
     if runtime:
         task["_runtime"] = runtime
+        if runtime.get("session_id") and task["token_budget"] and runtime.get("usage_baseline") is None:
+            return {"status": "failed", "output": "", "message": "Conversation token usage baseline unavailable; inspect or reset context before continuing",
+                    "exit_code": None, "usage": None}
         managed_context = (
             "\nReturn a structured task report matching the supplied output schema. "
             "Use progress for useful unfinished work, waiting for an external event, blocked when "
@@ -458,7 +461,17 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
               "exit_code": returncode}
     if events is not None:
         events.feed(b"", final=True)
-        result.update(session_id=events.session_id, usage=events.usage if events.final_turn_completed else None)
+        total = events.usage if events.final_turn_completed and not events.protocol_error else None
+        baseline = runtime.get("usage_baseline")
+        usage = None
+        if total is not None and baseline is not None:
+            if any(total[name] < baseline[name] for name in baseline):
+                total = None
+                events.protocol_error = True
+                events.error = "Codex conversation token totals decreased; inspect its usage before continuing"
+            else:
+                usage = {name: total[name] - baseline[name] for name in baseline}
+        result.update(session_id=events.session_id, usage=usage, session_usage=total)
         if events.protocol_error or (task["persistence"] == "conversation" and not events.session_id):
             result.update(status="failed", message=events.error or "Codex did not identify its task conversation")
         elif events.report is not None and events.final_turn_completed:
@@ -596,8 +609,10 @@ class AgentTasks:
                 task.setdefault("consecutive_failures", 0)
                 for name, default in (("cancel_requested", False), ("attempts", 0), ("tokens_used", 0),
                                       ("daily_attempts", 0), ("usage_day", ""), ("stop_reason", ""),
-                                      ("events", []), ("event_keys", []), ("not_before", 0)):
+                                      ("events", []), ("event_keys", []), ("not_before", 0), ("last_run_id", None)):
                     task.setdefault(name, default)
+                if task["last_run_id"] is not None and (not isinstance(task["last_run_id"], str) or not _ID.fullmatch(task["last_run_id"])):
+                    raise ValueError("Invalid task last run ID")
                 if (type(task["cancel_requested"]) is not bool
                         or any(type(task[name]) is not int or not 0 <= task[name] <= 10**15
                                for name in ("attempts", "tokens_used", "daily_attempts"))
@@ -645,10 +660,11 @@ class AgentTasks:
                 exit_code = run.get("exit_code")
                 if exit_code is not None and type(exit_code) is not int:
                     raise ValueError("Invalid run exit code")
-                usage = run.get("usage")
-                if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
-                        or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
-                    raise ValueError("Invalid run usage")
+                for name in ("usage", "session_usage"):
+                    usage = run.get(name)
+                    if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
+                            or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
+                        raise ValueError("Invalid run usage")
             value["version"] = 2
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("Prompt task state is invalid") from exc
@@ -700,6 +716,7 @@ class AgentTasks:
                                    "request_key": request_key,
                                    "queued": run_now, "draft": draft, "auto_paused": False, "consecutive_failures": 0,
                                    "cancel_requested": False, "attempts": 0, "tokens_used": 0,
+                                   "last_run_id": None,
                                    "usage_day": "", "daily_attempts": 0, "stop_reason": "", "events": [], "event_keys": [],
                                    "not_before": 0,
                                    "next_run": (task["start_at"] or (now if now is not None else time.time()) + interval)
@@ -803,8 +820,11 @@ class AgentTasks:
             context = self.contexts.load(identifier)
             pending = context.get("persistence", task["persistence"]) != task["persistence"]
             if pending:
-                context.update(checkpoint="", session_id=None)
-            return {"directory": str(self.contexts.directory(identifier)), **context, "reset_pending": pending}
+                context.update(checkpoint="", session_id=None, session_usage=None)
+            usage_valid = not pending and (context["session_id"] is None
+                          or context.get("session_usage") is not None and task["last_run_id"] == context.get("last_run_id"))
+            return {"directory": str(self.contexts.directory(identifier)), **context, "reset_pending": pending,
+                    "usage_baseline_valid": usage_valid}
 
     def notify(self, identifier: str, message: str, *, key: str = "") -> bool:
         """Coalesce an authorized wake; payloads are evidence, not instructions."""
@@ -835,6 +855,7 @@ class AgentTasks:
         task = next((task for task in state["tasks"] if task["id"] == run["task"]["id"]), None)
         if task is None:
             return
+        task["last_run_id"] = run["id"]
         outcome = run.get("outcome")
         usage = run.get("usage")
         if isinstance(usage, dict):

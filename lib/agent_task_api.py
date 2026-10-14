@@ -105,7 +105,7 @@ class TaskAPI:
             if summary:
                 fields = {"id", "title", "directory", "interval", "persistence", "workspace", "executor", "start_at",
                           "enabled", "queued", "draft", "auto_paused", "next_run", "not_before", "attempts",
-                          "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget"}
+                          "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget", "last_run_id"}
                 state["tasks"] = [{key: value for key, value in task.items() if key in fields} for task in state["tasks"]]
                 run_fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "usage"}
                 state["runs"] = [{**{key: value for key, value in run.items() if key in run_fields},

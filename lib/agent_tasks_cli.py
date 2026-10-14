@@ -30,7 +30,7 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     create.add_argument("file", metavar="TASK_JSON")
     disposition = create.add_mutually_exclusive_group()
     disposition.add_argument("--run-now", action="store_true", help="Queue work now and activate its repeat schedule")
-    disposition.add_argument("--schedule", action="store_true", help="Activate work after its first interval")
+    disposition.add_argument("--schedule", action="store_true", help="Activate work at start_at or after its first interval")
     disposition.add_argument("--draft", action="store_true", help="Save inactive settings (the default)")
     create.add_argument("--request-key", default="", help="Idempotent creation key for retried requests")
     create.add_argument("--json", action="store_true")
