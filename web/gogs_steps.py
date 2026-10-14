@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -15,7 +16,9 @@ from lib.atomic_io import write_json_atomic, write_text_atomic
 from lib.auth_failure_bans import configure_nginx_auth_failure_ban
 from lib.config import SetupConfig
 from lib.credentials import get_runtime_credential
-from lib.nginx_config import SSL_CIPHERS, SSL_PROTOCOLS, generate_self_signed_cert, get_ssl_cert_path
+from lib.nginx_config import (
+    SSL_CIPHERS, SSL_PROTOCOLS, _make_tunnel_proto_map, generate_self_signed_cert, get_ssl_cert_path,
+)
 from lib.release_management import (
     detect_release_arch,
     fetch_preferred_verified_github_release_asset,
@@ -26,7 +29,10 @@ from lib.release_management import (
 )
 from lib.remote_utils import generate_password, is_service_active, run, user_exists
 from lib.unit_transaction import replace_units
-from lib.validation import validate_filesystem_path
+from lib.validation import (
+    validate_filesystem_path, validate_gogs_owned_directory, validate_gogs_settings,
+    validate_no_control_characters,
+)
 from web.cloudflare_steps import run_cloudflare_tunnel_setup
 from web.ssl_steps import install_certbot, obtain_letsencrypt_certificate, setup_certificate_renewal
 from web.web_steps import install_nginx
@@ -289,6 +295,11 @@ def install_or_update_gogs_release() -> tuple[str, bool, str]:
 
 def _ensure_git_user() -> str:
     git_home = _get_git_home()
+    validate_gogs_owned_directory(git_home, account_home=True)
+    _reject_symlinked_gogs_path(git_home)
+    ssh_dir = f"{git_home}/.ssh"
+    _reject_symlinked_gogs_path(ssh_dir)
+    _reject_symlinked_gogs_path(f"{ssh_dir}/authorized_keys")
     if not user_exists(GOGS_GIT_USER):
         run(
             f"useradd --create-home --home-dir {shlex.quote(git_home)} "
@@ -300,12 +311,13 @@ def _ensure_git_user() -> str:
         run(f"usermod -s /usr/bin/git-shell {shlex.quote(GOGS_GIT_USER)}")
         print(f"  ✓ Using existing system user: {GOGS_GIT_USER}")
 
-    ssh_dir = f"{git_home}/.ssh"
     run(f"mkdir -p {shlex.quote(ssh_dir)}")
     run(f"touch {shlex.quote(ssh_dir)}/authorized_keys")
     run(f"chmod 700 {shlex.quote(ssh_dir)}")
     run(f"chmod 600 {shlex.quote(ssh_dir)}/authorized_keys")
-    run(f"chown -R {shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)} {shlex.quote(git_home)}")
+    owner = f"{shlex.quote(GOGS_GIT_USER)}:{shlex.quote(GOGS_GIT_GROUP)}"
+    run(f"chown {owner} {shlex.quote(git_home)}")
+    run(f"chown -R {owner} {shlex.quote(ssh_dir)}")
     run(f"passwd -l {shlex.quote(GOGS_GIT_USER)}")
     return git_home
 
@@ -449,29 +461,39 @@ ENABLE_REGISTRATION_CAPTCHA = false
 """
 
 
+def _gogs_unit_quote(value: str, *, exec_arg: bool = False) -> str:
+    """Quote one systemd value, preserving literal specifiers and exec dollars."""
+    validate_no_control_characters(value, "Gogs systemd value")
+    escaped = value.replace("%", "%%")
+    if exec_arg:
+        escaped = escaped.replace("$", "$$")
+    return json.dumps(escaped, ensure_ascii=False)
+
+
 def generate_gogs_service(config_path: str) -> str:
     """Return a hardened systemd unit file for Gogs."""
     validate_filesystem_path(config_path)
     custom_dir = os.path.dirname(os.path.dirname(config_path))
-    mount_path = custom_dir.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    git_home = _get_git_home()
+    validate_filesystem_path(git_home)
     return f"""[Unit]
 Description=Gogs
 After=network.target ssh.service sshd.service
 Wants=network.target
-RequiresMountsFor="{mount_path}"
+RequiresMountsFor={_gogs_unit_quote(custom_dir)}
 
 [Service]
 Type=simple
 User={GOGS_GIT_USER}
 Group={GOGS_GIT_GROUP}
 WorkingDirectory={GOGS_CURRENT_DIR}
-ExecStart={GOGS_EXECUTABLE} web --config {config_path}
+ExecStart={_gogs_unit_quote(GOGS_EXECUTABLE, exec_arg=True)} web --config {_gogs_unit_quote(config_path, exec_arg=True)}
 Restart=always
 RestartSec=2s
-Environment=USER={GOGS_GIT_USER}
-Environment=HOME={_get_git_home()}
-Environment=GOGS_WORK_DIR={GOGS_CURRENT_DIR}
-Environment=GOGS_CUSTOM={custom_dir}
+Environment={_gogs_unit_quote('USER=' + GOGS_GIT_USER)}
+Environment={_gogs_unit_quote('HOME=' + git_home)}
+Environment={_gogs_unit_quote('GOGS_WORK_DIR=' + GOGS_CURRENT_DIR)}
+Environment={_gogs_unit_quote('GOGS_CUSTOM=' + custom_dir)}
 ProtectSystem=full
 PrivateDevices=yes
 PrivateTmp=yes
@@ -495,6 +517,11 @@ def generate_gogs_nginx_config(
     enable_ipv6: bool = True,
 ) -> str:
     """Return an nginx site config that proxies to Gogs."""
+    proto_map = ""
+    if cloudflare_origin:
+        proto_map, forwarded_proto = _make_tunnel_proto_map("gogs:" + server_name)
+        # The real-IP module validates the tunnel peer before restoring the visitor.
+        client_ip = "$remote_addr"
     cert_file, key_file = get_ssl_cert_path(server_name)
     zone_suffix = hashlib.sha256(server_name.encode("utf-8")).hexdigest()[:12]
     login_zone = f"basaltwater_gogs_login_{zone_suffix}"
@@ -612,7 +639,7 @@ def generate_gogs_nginx_config(
 {proxy_settings}    }}
 }}
 """
-    return f"""limit_req_zone {client_ip} zone={login_zone}:10m rate=5r/m;
+    return f"""{proto_map}limit_req_zone {client_ip} zone={login_zone}:10m rate=5r/m;
 
 map "$request_method:$status:$uri" ${login_failure} {{
     default 0;
@@ -674,8 +701,6 @@ def _write_gogs_nginx_config(
     config_name = _gogs_nginx_config_name(server_name)
     config_file = f"/etc/nginx/sites-available/{config_name}"
     enabled_link = f"/etc/nginx/sites-enabled/{config_name}"
-    forwarded_proto = "https" if config.enable_cloudflare else "$scheme"
-    client_ip = "$http_cf_connecting_ip" if config.enable_cloudflare else "$remote_addr"
     run("mkdir -p /var/www/letsencrypt/.well-known/acme-challenge")
     _remove_stale_gogs_nginx_sites(config_name)
     with open(config_file, "w", encoding="utf-8") as file_obj:
@@ -684,8 +709,7 @@ def _write_gogs_nginx_config(
                 server_name,
                 backend_port,
                 public_tls_port=public_tls_port,
-                forwarded_proto=forwarded_proto,
-                client_ip=client_ip,
+                forwarded_proto="$scheme",
                 cloudflare_origin=config.enable_cloudflare,
                 redirect_plain_http=bool(domain and config.enable_ssl),
                 loopback_only=loopback_only,
@@ -700,7 +724,7 @@ def _write_gogs_nginx_config(
     run("systemctl reload nginx")
     print("  ✓ nginx configured for Gogs")
 
-    if config.enable_ssl and domain:
+    if config.enable_ssl and domain and not config.enable_cloudflare:
         install_certbot(config)
         if not obtain_letsencrypt_certificate([domain], config.ssl_email, domain):
             raise RuntimeError("Could not obtain the requested Gogs TLS certificate")
@@ -710,8 +734,7 @@ def _write_gogs_nginx_config(
                     server_name,
                     backend_port,
                     public_tls_port=public_tls_port,
-                    forwarded_proto=forwarded_proto,
-                    client_ip=client_ip,
+                    forwarded_proto="$scheme",
                     cloudflare_origin=config.enable_cloudflare,
                     redirect_plain_http=True,
                     loopback_only=loopback_only,
@@ -1302,6 +1325,7 @@ def setup_gogs(config: SetupConfig) -> None:
     """Install and run Gogs with HTTP(S) and Git-over-SSH enabled."""
     if not config.gogs:
         return
+    validate_gogs_settings(config)
 
     domain, port = parse_gogs_spec(str(config.gogs[0]), strict=True)
     backend_port = _gogs_backend_port(config, port)

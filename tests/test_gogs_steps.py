@@ -493,13 +493,27 @@ class TestGenerateGogsConfig(unittest.TestCase):
         self.assertIn("HTTP_ADDR = 127.0.0.1", content)
         self.assertIn("EXTERNAL_URL = http://127.0.0.1:3000/", content)
 
-    def test_generate_service_uses_explicit_config_path(self):
+    @patch("web.gogs_steps._get_git_home", return_value="/home/git")
+    def test_generate_service_uses_explicit_config_path(self, _home):
         content = gogs_steps.generate_gogs_service("/srv/gogs/custom/conf/app.ini")
         self.assertIn("WorkingDirectory=/opt/gogs/current", content)
-        self.assertIn("ExecStart=/opt/gogs/current/gogs web --config /srv/gogs/custom/conf/app.ini", content)
-        self.assertIn("Environment=GOGS_WORK_DIR=/opt/gogs/current", content)
-        self.assertIn("Environment=GOGS_CUSTOM=/srv/gogs/custom", content)
+        self.assertIn('ExecStart="/opt/gogs/current/gogs" web --config "/srv/gogs/custom/conf/app.ini"', content)
+        self.assertIn('Environment="GOGS_WORK_DIR=/opt/gogs/current"', content)
+        self.assertIn('Environment="GOGS_CUSTOM=/srv/gogs/custom"', content)
         self.assertIn("User=git", content)
+
+    @patch("web.gogs_steps._get_git_home", return_value='/home/git "quoted" %n $HOME')
+    def test_service_keeps_config_paths_as_one_literal_argument(self, _home):
+        path = '/srv/git data "quoted" %n $CONFIG\\/custom/conf/app.ini'
+        content = gogs_steps.generate_gogs_service(path)
+        self.assertIn('--config "/srv/git data \\"quoted\\" %%n $$CONFIG\\\\/custom/conf/app.ini"', content)
+        self.assertIn('Environment="HOME=/home/git \\"quoted\\" %%n $HOME"', content)
+        self.assertIn('Environment="GOGS_CUSTOM=/srv/git data \\"quoted\\" %%n $CONFIG\\\\/custom"', content)
+
+    def test_service_refuses_control_characters_in_account_home(self):
+        with patch.object(gogs_steps, "_get_git_home", return_value="/home/git\nUser=root"):
+            with self.assertRaisesRegex(ValueError, "control characters"):
+                gogs_steps.generate_gogs_service("/srv/gogs/custom/conf/app.ini")
 
     def test_direct_nginx_http_redirects_to_https(self):
         content = gogs_steps.generate_gogs_nginx_config(
@@ -528,7 +542,11 @@ class TestGenerateGogsConfig(unittest.TestCase):
         self.assertIn("listen 80;", content)
         self.assertNotIn("listen 443", content)
         self.assertNotIn("return 301", content)
-        self.assertIn("proxy_set_header X-Forwarded-Proto https;", content)
+        self.assertIn('map "$realip_remote_addr:$http_x_forwarded_proto"', content)
+        self.assertIn("default $scheme;", content)
+        self.assertIn('"127.0.0.1:https" https;', content)
+        self.assertIn('"::1:https" https;', content)
+        self.assertIn("proxy_set_header X-Forwarded-Proto $origin_proto_", content)
 
     def test_hostless_ssl_listens_on_requested_ipv4_port(self):
         content = gogs_steps.generate_gogs_nginx_config(
@@ -566,9 +584,10 @@ class TestGenerateGogsConfig(unittest.TestCase):
         )
         self.assertNotIn("$http_authorization [$time_local]", content)
         self.assertIn(
-            "proxy_set_header X-Real-IP $http_cf_connecting_ip;",
+            "proxy_set_header X-Real-IP $remote_addr;",
             content,
         )
+        self.assertNotIn("$http_cf_connecting_ip", content)
 
     def test_redacted_admin_create_user_command_hides_password(self):
         command = gogs_steps._redacted_admin_create_user_command(
@@ -798,7 +817,159 @@ class TestGogsHostlessFirewall(unittest.TestCase):
         self.assertEqual(runner.call_args_list[-1].args[0], "ufw --force delete 1")
 
 
+class TestGogsGitUser(unittest.TestCase):
+    def test_account_system_or_shared_home_is_rejected_before_mutations(self):
+        for path in ("/", "/home", "/etc/git", "//etc/git", "/root", "/opt/gogs", "/var/lib/basaltwater"):
+            with (
+                self.subTest(path=path),
+                patch.object(gogs_steps, "_get_git_home", return_value=path),
+                patch.object(gogs_steps, "run") as run,
+                patch.object(gogs_steps, "user_exists") as user_exists,
+            ):
+                with self.assertRaisesRegex(ValueError, "dedicated data directory"):
+                    gogs_steps._ensure_git_user()
+                run.assert_not_called()
+                user_exists.assert_not_called()
+
+    def test_git_setup_does_not_recursively_reassign_unrelated_home_contents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = os.path.join(directory, 'git home "quoted" %n $HOME')
+            for existing in (False, True):
+                with (
+                    self.subTest(existing=existing),
+                    patch.object(gogs_steps, "_get_git_home", return_value=home),
+                    patch.object(gogs_steps, "user_exists", return_value=existing),
+                    patch.object(gogs_steps, "run") as run,
+                ):
+                    self.assertEqual(gogs_steps._ensure_git_user(), home)
+                    commands = [call.args[0] for call in run.call_args_list]
+                    self.assertIn(f"chown git:git {shlex.quote(home)}", commands)
+                    self.assertIn(f"chown -R git:git {shlex.quote(home + '/.ssh')}", commands)
+                    self.assertNotIn(f"chown -R git:git {shlex.quote(home)}", commands)
+
+    def test_symlinked_home_or_ssh_paths_are_rejected_before_mutations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = os.path.join(directory, "target")
+            os.mkdir(target)
+            for child in ("", ".ssh", ".ssh/authorized_keys"):
+                with self.subTest(child=child):
+                    home = os.path.join(directory, "git-home")
+                    linked_path = os.path.join(home, child) if child else home
+                    os.makedirs(os.path.dirname(linked_path), exist_ok=True)
+                    os.symlink(target, linked_path)
+                    try:
+                        with (
+                            patch.object(gogs_steps, "_get_git_home", return_value=home),
+                            patch.object(gogs_steps, "run") as run,
+                            patch.object(gogs_steps, "user_exists") as user_exists,
+                        ):
+                            with self.assertRaisesRegex(RuntimeError, "symlinked Gogs"):
+                                gogs_steps._ensure_git_user()
+                        run.assert_not_called()
+                        user_exists.assert_not_called()
+                    finally:
+                        os.unlink(linked_path)
+
+
 class TestGogsNginx(unittest.TestCase):
+    def test_system_or_shared_data_roots_are_rejected_before_target_mutations(self):
+        for path in ("/", "/etc", "//etc/nginx", "/etc/nginx", "/var/lib", "/home/admin", "/opt/basaltwater/state", "/opt/gogs/data", "/srv/../etc"):
+            with self.subTest(path=path):
+                config = SetupConfig(
+                    host="192.168.0.51", username="admin", system_type="server_web",
+                    gogs=["git.example.test", path], enable_cloudflare=True,
+                )
+                with patch.object(gogs_steps, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "dedicated data directory"):
+                        gogs_steps.setup_gogs(config)
+                run.assert_not_called()
+
+    def test_dedicated_data_subdirectories_remain_valid(self):
+        from lib.validation import validate_gogs_settings
+
+        for path in ("/srv/gogs", "/var/lib/gogs", "/data", "/home/git/gogs", "/opt/gogs-data"):
+            with self.subTest(path=path):
+                config = SetupConfig(
+                    host="192.168.0.51", username="admin", system_type="server_web",
+                    gogs=["git.example.test", path], enable_cloudflare=True,
+                )
+                validate_gogs_settings(config)
+
+    def test_data_path_whitespace_is_validated_before_any_target_work(self):
+        for path, message in ((" /srv/gogs", "absolute"),
+                              ("/srv/gogs\n", "control characters"),
+                              ("/srv/gogs\t", "control characters")):
+            with self.subTest(path=path):
+                config = SetupConfig(
+                    host="192.168.0.51", username="admin", system_type="server_web",
+                    gogs=["git.example.test", path], enable_cloudflare=True,
+                )
+                with (
+                    patch.object(gogs_steps, "run", side_effect=AssertionError("No target commands before validation")) as run,
+                    patch.object(gogs_steps, "_gogs_backing_filesystem", side_effect=AssertionError("No target probes before validation")) as filesystem,
+                ):
+                    with self.assertRaisesRegex(ValueError, message):
+                        gogs_steps.setup_gogs(config)
+                run.assert_not_called()
+                filesystem.assert_not_called()
+
+    def test_cloudflare_and_direct_tls_accept_lan_sources_but_public_acme_stays_unrestricted(self):
+        from lib.validation import validate_gogs_settings
+
+        config = SetupConfig(
+            host="192.168.0.51", username="admin", system_type="server_web",
+            gogs=["git.example.test:443"], enable_ssl=True, enable_cloudflare=True,
+            access_sources=["192.168.0.0/24"],
+        )
+        validate_gogs_settings(config)
+        config.enable_cloudflare = False
+        with self.assertRaisesRegex(ValueError, "public port 80"):
+            validate_gogs_settings(config)
+
+    def test_double_leading_slashes_do_not_hide_shared_data_overlap(self):
+        from lib.validation import validate_gogs_settings
+
+        for data, share in (("//srv/gogs", "/srv/gogs/repositories"),
+                            ("/srv/gogs", "//srv/gogs/repositories")):
+            with self.subTest(data=data, share=share):
+                config = SetupConfig(
+                    host="192.168.0.51", username="admin", system_type="server_web",
+                    gogs=["git.example.test", data], enable_cloudflare=True,
+                    samba_shares=[["admin", "git-data", share]],
+                )
+                with self.assertRaisesRegex(ValueError, "must not overlap"):
+                    validate_gogs_settings(config)
+
+    def test_cloudflare_ssl_retains_direct_tls_without_requesting_acme_on_first_run(self):
+        config = SetupConfig(
+            host="192.168.0.51", username="admin", system_type="server_web",
+            gogs=["git.example.test:443"], enable_ssl=True, enable_cloudflare=True,
+        )
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with (
+            patch.object(gogs_steps, "generate_self_signed_cert") as local_tls,
+            patch.object(gogs_steps, "get_ssl_cert_path", return_value=("/fixture/cert", "/fixture/key")),
+            patch.object(gogs_steps, "_remove_stale_gogs_nginx_sites"),
+            patch.object(gogs_steps.os.path, "exists", return_value=True),
+            patch.object(gogs_steps, "run", return_value=completed),
+            patch.object(gogs_steps, "install_certbot") as certbot,
+            patch.object(gogs_steps, "obtain_letsencrypt_certificate", side_effect=AssertionError("No origin ACME behind Cloudflare")) as acme,
+            patch.object(gogs_steps, "setup_certificate_renewal") as renewal,
+            patch.object(gogs_steps, "configure_nginx_auth_failure_ban"),
+            patch.object(gogs_steps, "run_cloudflare_tunnel_setup", return_value=True) as tunnel,
+            patch.object(gogs_steps, "open", create=True) as files,
+        ):
+            gogs_steps._write_gogs_nginx_config(config, "git.example.test", 443, 13000)
+        certbot.assert_not_called()
+        acme.assert_not_called()
+        renewal.assert_not_called()
+        local_tls.assert_called_once_with("git.example.test", [])
+        tunnel.assert_called_once_with(config)
+        content = files.return_value.__enter__.return_value.write.call_args.args[0]
+        self.assertIn("listen 80;", content)
+        self.assertIn("listen 443 ssl;", content)
+        self.assertNotIn("return 301", content)
+
     def test_invalid_nginx_configuration_fails_setup(self):
         config = SetupConfig(
             host="git.example.test",

@@ -21,8 +21,13 @@ The example is available at `https://git.example.com:3000/`; Gogs does not
 claim port 443. With `--ssl`, Basaltwater obtains and renews a Let's Encrypt
 certificate. Port 80 remains the ACME challenge and redirect listener. With
 `--cloudflare`, the nginx-to-Gogs connection remains private and the tunnel
-serves standard external HTTPS; public HTTP/HTTPS firewall ports are not
-opened and Gogs does not create a local port-443 listener.
+serves standard external HTTPS; Gogs does not open public HTTP/HTTPS firewall
+ports, and without `--ssl` it creates only the HTTP origin listener.
+When `--cloudflare` and `--ssl` are combined, Gogs skips origin ACME requests;
+the explicit SSL option retains a self-signed direct listener on the selected
+Gogs port. Choose `:443` plus the appropriate direct-access policy when LAN
+clients need HTTPS alongside the tunnel, and trust the origin certificate on
+those clients. The Cloudflare origin remains local HTTP.
 
 For a lab or private-network service, omit the hostname. With no source rules,
 Gogs stays on loopback and setup prints an SSH tunnel command:
@@ -74,6 +79,11 @@ valid. With `--cloudflare`, that value is the private backend port instead.
 Port 80 is reserved whenever nginx, TLS, a hostname, or Cloudflare is involved;
 a hostless plaintext direct listener may deliberately use it. The optional data
 path must be absolute and defaults to `/var/lib/gogs`.
+Use a dedicated data directory. Shared filesystem/account roots, operating-system
+trees, and Basaltwater or Gogs runtime directories are rejected before ownership
+changes, including when invoking target-side Gogs setup directly.
+Paths are validated as literal values; whitespace is not trimmed, and control
+characters are refused before target-side work.
 
 ## First login and Git access
 
@@ -93,6 +103,11 @@ password. In either case, setup records the initial value in the root-only file
 existing administrator account and does not rotate its password. Use a unique,
 high-entropy value and enable MFA for administrator accounts.
 
+Setup also checks an existing `git` account's home before changing it. System or
+shared roots and symlinks in the home, `.ssh`, or `authorized_keys` path are
+refused. Ownership changes cover the home directory itself and the managed SSH
+subtree; other contents of an existing home retain their ownership.
+
 Reverse-proxied deployments, including hostless `--ssl`, throttle password and
 MFA submission endpoints to five requests per minute per client with a small
 burst. Nginx also emits a
@@ -102,7 +117,10 @@ Fail2ban source ban. This covers Git/LFS and API Basic Auth without throttling
 successful high-volume transfers.
 Both the current Gogs API sign-in paths and the login/MFA paths used by older
 managed releases receive the request limit. Cloudflare deployments derive the
-client address from the trusted tunnel header. Plain-HTTP hostless mode does
+client address through Nginx's trusted real-IP handling. They honor the edge's
+HTTPS header only from the tunnel's loopback peer; direct clients retain their
+connection scheme and cannot choose another client's address for throttling.
+Plain-HTTP hostless mode does
 not pass through Nginx, so retain its private source restriction or use the
 default SSH tunnel. Gogs session cookies are marked secure whenever the managed
 external URL is HTTPS.
@@ -127,7 +145,11 @@ database under `data/gogs.db`, repositories, logs, completed LFS objects under
 `data/tmp/lfs-objects`. Gogs uses its local LFS backend explicitly; no separate
 LFS daemon or object store is required. Release binaries live under
 `/opt/gogs/releases`; `/opt/gogs/current` and `/usr/local/bin/gogs` point to
-the active release. Basaltwater requires the SHA-256 supplied in GitHub's
+the active release.
+Generated service arguments and environment retain spaces, quotes, backslashes,
+percent signs, and dollar signs in the data and account-home paths as literals.
+Refresh an older managed service through normal setup or patch to regenerate it.
+Basaltwater requires the SHA-256 supplied in GitHub's
 release asset metadata and verifies the downloaded archive before extracting
 or activating it. A failed activation restores the prior verified release;
 if no verified rollback target exists, setup stops the service. Setup also

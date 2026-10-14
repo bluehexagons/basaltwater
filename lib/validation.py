@@ -429,11 +429,11 @@ def validate_gogs_settings(config: "SetupConfig") -> None:
                 "Hostname-based Gogs requires --ssl or --cloudflare so credentials "
                 "are not sent over plaintext HTTP"
             )
-        if config.enable_ssl and config.effective_access_sources():
+        if config.enable_ssl and not config.enable_cloudflare and config.effective_access_sources():
             raise ValueError(
                 "Hostname-based Gogs with --ssl requires public port 80 for "
                 "Let's Encrypt HTTP-01 validation; remove source restrictions "
-                "or use --cloudflare without --ssl"
+                "or use --cloudflare for public HTTPS"
             )
         try:
             ipaddress.ip_address(domain)
@@ -476,14 +476,15 @@ def validate_gogs_settings(config: "SetupConfig") -> None:
 
     data_path = DEFAULT_GOGS_DATA_PATH
     if len(gogs) == 2:
-        data_path = str(gogs[1]).strip()
+        data_path = str(gogs[1])
         if not os.path.isabs(data_path):
             raise ValueError(f"Gogs data path must be absolute: {data_path}")
         validate_filesystem_path(data_path, must_exist=False)
 
-    normalized_data_path = os.path.normpath(data_path)
+    validate_gogs_owned_directory(data_path)
+    normalized_data_path = "/" + os.path.normpath(data_path).lstrip("/")
     if config.samba_metadata_cache:
-        normalized_cache_path = os.path.normpath(config.samba_metadata_cache)
+        normalized_cache_path = "/" + os.path.normpath(config.samba_metadata_cache).lstrip("/")
         common_path = os.path.commonpath(
             (normalized_data_path, normalized_cache_path)
         )
@@ -496,7 +497,7 @@ def validate_gogs_settings(config: "SetupConfig") -> None:
         if len(share_spec) < 3:
             continue
         share_name = share_spec[1]
-        normalized_share_path = os.path.normpath(share_spec[2])
+        normalized_share_path = "/" + os.path.normpath(share_spec[2]).lstrip("/")
         common_path = os.path.commonpath(
             (normalized_data_path, normalized_share_path)
         )
@@ -505,6 +506,39 @@ def validate_gogs_settings(config: "SetupConfig") -> None:
                 f"Samba share '{share_name}' at {share_spec[2]} must not overlap "
                 f"the live Gogs data path {data_path}"
             )
+
+
+def validate_gogs_owned_directory(path: str, *, account_home: bool = False) -> None:
+    """Reject directories that Gogs must never take ownership of."""
+    from web.gogs_steps import GOGS_INSTALL_ROOT
+
+    validate_filesystem_path(path, must_exist=False)
+    if not os.path.isabs(path):
+        raise ValueError(f"Gogs owned directory must be absolute: {path}")
+    # POSIX preserves exactly two leading slashes in normpath; Linux resolves
+    # them to the same root, so they must not bypass ownership/overlap checks.
+    normalized_path = "/" + os.path.normpath(path).lstrip("/")
+    protected_trees = (
+        "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/dev", "/proc",
+        "/sys", "/run", "/boot", "/root", "/opt/basaltwater",
+        "/var/lib/basaltwater", GOGS_INSTALL_ROOT,
+    )
+    shared_roots = {
+        "/", "/home", "/var", "/var/lib", "/var/log", "/var/cache",
+        "/srv", "/mnt", "/opt", "/tmp",
+    }
+    if (
+        normalized_path in shared_roots
+        or (not account_home and re.fullmatch(r"/home/[^/]+", normalized_path))
+        or any(
+            normalized_path == root or normalized_path.startswith(root + "/")
+            for root in protected_trees
+        )
+    ):
+        raise ValueError(
+            "Gogs must use a dedicated data directory or account home outside "
+            f"system, shared-root and Basaltwater runtime paths: {path}"
+        )
 
 
 def validate_antistatic_settings(config: "SetupConfig") -> None:

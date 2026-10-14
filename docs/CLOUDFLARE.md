@@ -190,16 +190,33 @@ generated `/etc/cloudflared/README.md` for manual configuration steps and
 
 ## Webhooks and direct services
 
+### Large uploads
+
+The Cloudflare edge has its own
+[upload limits](https://developers.cloudflare.com/cache/concepts/default-cache-behavior/#upload-limits),
+separate from the application's and Nginx's body limits. Free and Pro zones allow
+100 MB, and the zone's Maximum Upload Size can be lower. A local `129m` gateway
+limit therefore does not make a 128 MiB backup upload fit through Cloudflare.
+Check the zone policy before qualifying backup restores or large Git LFS uploads.
+Use an already authorized direct LAN/VPN HTTPS endpoint for larger local uploads,
+keeping the intended hostname and certificate verification, or use an upload
+workflow that splits requests into smaller parts. DNS-only records are not a
+tunnel route and do not provide the Cloudflare edge certificate.
+
+### Webhooks
+
 For a CI/CD webhook, use the dedicated
 [webhook tunnel route guide](../web/config/webhook_cloudflare_setup.md). Its
 Nginx listener uses `127.0.0.1:8080`, separate from the generated site origin on
 port 80 and the receiver on port 8765. The [CI/CD guide](./CICD.md) covers GitHub
 configuration, signature validation, and the receiver service.
 
-Cloudflare Tunnel does not proxy UDP. An Antistatic deployment therefore keeps
-its direct UDP 3478 STUN access (and any required direct TCP service port) even
-when `--cloudflare` is enabled; the public IP must remain reachable for those
-ports. See [Antistatic services](./ANTISTATIC.md).
+### Direct UDP services
+
+The public hostname routes generated here do not proxy UDP. An Antistatic
+deployment therefore keeps its direct UDP 3478 STUN access (and any required
+direct TCP service port) even when `--cloudflare` is enabled; the public IP must
+remain reachable for those ports. See [Antistatic services](./ANTISTATIC.md).
 Repository services can declare `public_udp` listeners in their manifest;
 setup opens those UFW rules before tunnel activation and retains them when
 closing public HTTP/HTTPS. Their optional hostnames describe DNS-only A/AAAA
