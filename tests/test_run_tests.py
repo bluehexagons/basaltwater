@@ -93,6 +93,65 @@ class TestRunTestsDurations(unittest.TestCase):
             rc = run_tests.main(["--durations", "1", "test_expensive_support"])
         self.assertEqual(rc, 0)
         self.assertIn("Slowest 1 tests:", stdout.getvalue())
+        self.assertIn("Total test time:", stdout.getvalue())
+
+
+class TestRunTestsSelectors(unittest.TestCase):
+    def test_file_stems_and_extensions_are_case_insensitive(self) -> None:
+        loader = unittest.TestLoader()
+        expected = run_tests._resolve_selector(loader, "test_expensive_support")
+        actual = run_tests._resolve_selector(loader, "TEST_EXPENSIVE_SUPPORT.PY")
+        self.assertEqual(
+            [test.id() for test in run_tests._iter_test_cases(actual)],
+            [test.id() for test in run_tests._iter_test_cases(expected)],
+        )
+
+    def test_windows_file_separators_work_on_linux(self) -> None:
+        loader = unittest.TestLoader()
+        expected = run_tests._resolve_selector(loader, "tests.test_expensive_support")
+        actual = run_tests._resolve_selector(loader, "tests\\test_expensive_support.py")
+        self.assertEqual(
+            [test.id() for test in run_tests._iter_test_cases(actual)],
+            [test.id() for test in run_tests._iter_test_cases(expected)],
+        )
+
+    def test_missing_selector_is_a_usage_error_without_a_test_run(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = run_tests.main(["test_selector_that_does_not_exist"])
+        self.assertEqual(status, 2)
+        self.assertIn("Could not resolve test selector", stderr.getvalue())
+        self.assertNotIn("All tests passed", stdout.getvalue())
+
+    def test_module_with_no_tests_cannot_report_success(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = run_tests.main(["tests.expensive_support"])
+        self.assertEqual(status, 2)
+        self.assertIn("no test cases", stderr.getvalue())
+        self.assertNotIn("All tests passed", stdout.getvalue())
+
+    def test_empty_discovery_or_named_suite_cannot_report_success(self) -> None:
+        for arguments in ([], ["--suite", "all"]):
+            with self.subTest(arguments=arguments):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with (
+                    patch.object(run_tests, "_build_suite", return_value=unittest.TestSuite()),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    status = run_tests.main(arguments)
+                self.assertEqual(status, 2)
+                self.assertIn("No tests selected", stderr.getvalue())
+                self.assertNotIn("All tests passed", stdout.getvalue())
+
+    def test_failed_lookup_does_not_poison_a_later_valid_selection(self) -> None:
+        loader = unittest.TestLoader()
+        with self.assertRaises(RuntimeError):
+            run_tests._resolve_selector(loader, "test_selector_that_does_not_exist")
+        self.assertEqual(loader.errors, [])
+        suite = run_tests._resolve_selector(loader, "tests.test_expensive_support.TestCategoryGating.test_category_env_var")
+        self.assertEqual(suite.countTestCases(), 1)
 
 
 class TestRunTestsOutput(unittest.TestCase):

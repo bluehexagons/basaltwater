@@ -1,14 +1,23 @@
 # Makefile for Basaltwater development tasks
-.PHONY: check test test-verbose coverage help clean compile docs-check brand-check package-check artifact-check
+.PHONY: check check-fast check-ci test test-verbose coverage help clean compile docs-check brand-check package-check artifact-check
+
+SUITE ?=
+TEST ?=
+TEST_ARGS ?=
+TEST_SELECTION = $(foreach suite,$(SUITE),--suite $(suite)) $(TEST)
+FULL_CHECKS = compile docs-check brand-check package-check artifact-check
 
 # Default target
 help:
 	@echo "Basaltwater development tasks:"
 	@echo ""
-	@echo "  make check             Run compile checks and the default test suite"
+	@echo "  make check-fast        Run local checks and smoke tests (or selected SUITE/TEST)"
+	@echo "  make check             Run all checks and the default test suite"
+	@echo "  make check-ci          Run all checks and the full suite once with coverage"
 	@echo "  make test              Run all tests (concise output, shows failures only)"
 	@echo "  make test-verbose      Run all tests with full verbose output"
 	@echo "  make test TEST=name    Run specific test file (e.g., TEST=test_scrub_par2)"
+	@echo "  make test SUITE=web    Run a named suite; space-separated suites may be combined"
 	@echo "  make compile           Check all Python files compile"
 	@echo "  make docs-check        Check CLI documentation and local Markdown links"
 	@echo "  make brand-check       Check generated identity assets are current"
@@ -18,15 +27,23 @@ help:
 	@echo "  make help              Show this help message"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make check                   # Run the same checks as CI"
+	@echo "  make check-fast              # Quick edit/test loop; no wheel build"
+	@echo "  make check-ci                # Run the same checks as branch CI"
 	@echo "  make test                    # Concise output, shows summary only"
 	@echo "  make test-verbose            # Full test names and all output"
 	@echo "  make test TEST=test_scrub_par2"
 	@echo "  make test TEST=service_tools/test_storage_ops"
+	@echo '  make test SUITE="web network" TEST_ARGS="--durations 20"'
 	@echo "  make coverage          Run the default suite with branch coverage"
 
-# Run the same checks as continuous integration.
-check: compile docs-check brand-check package-check artifact-check test
+# Full verification with or without coverage. CI does not repeat the suite.
+check: $(FULL_CHECKS) test
+
+check-ci: $(FULL_CHECKS) coverage
+
+# Use smoke tests by default; explicit selections replace that default.
+check-fast: compile docs-check package-check
+	@python3 run_tests.py $(if $(strip $(TEST_SELECTION)),$(TEST_SELECTION),--suite smoke) $(TEST_ARGS)
 
 docs-check:
 	@python3 scripts/check_cli_docs.py
@@ -41,13 +58,9 @@ package-check:
 artifact-check:
 	@python3 scripts/check_wheel_artifact.py
 
-# Run tests (all or specific if TEST variable is set)
+# Run all tests, or combine explicit modules and domain suites.
 test:
-ifdef TEST
-	@python3 run_tests.py $(TEST)
-else
-	@python3 run_tests.py
-endif
+	@python3 run_tests.py $(TEST_SELECTION) $(TEST_ARGS)
 
 # Run the default suite with reproducible branch coverage reporting. The
 # optional dev dependency is intentionally separate from the normal check.
@@ -58,7 +71,7 @@ coverage:
 
 # Run all tests with verbose output
 test-verbose:
-	@python3 run_tests.py -v
+	@python3 run_tests.py -v $(TEST_SELECTION) $(TEST_ARGS)
 
 # Check all Python files compile
 compile:

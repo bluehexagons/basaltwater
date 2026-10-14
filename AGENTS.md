@@ -51,8 +51,12 @@ git diff --check
 # Dry run test
 basaltw setup server_web test.com --dry-run
 
-# Run tests
-python3 -m unittest discover -s tests
+# Fast local checks; select the relevant suite while editing
+make check-fast
+make test SUITE=web
+
+# Full pre-commit checks and coverage in one test run
+make check-ci
 ```
 
 ## Key Files

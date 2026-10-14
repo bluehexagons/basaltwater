@@ -172,7 +172,8 @@ class WebPanelNotificationIdempotencyTest(unittest.TestCase):
             )
             WebPanelHandler.state = state
             server = _ThreadingTCPHTTPServer(("127.0.0.1", 0), WebPanelHandler)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread = threading.Thread(target=server.serve_forever,
+                                      kwargs={"poll_interval": 0.01}, daemon=True)
             thread.start()
             responses: list[tuple[int, dict[str, object]]] = []
             try:

@@ -29,7 +29,6 @@ export PATH=/opt/basaltwater-ci-python/bin:/usr/local/sbin:/usr/local/bin:/usr/s
 python3 --version
 python3 -m pip install --upgrade pip
 python3 -m pip install '.[dev,completion]'
-make check
 """
 
 
@@ -60,7 +59,7 @@ def run_debian_ci(python: str, tool_cache: str, *, coverage: bool = False) -> in
     if image is None:
         raise RuntimeError("All Debian image registries failed; checks were not started")
     name = f"basaltwater-ci-{os.getpid()}"
-    script = CONTAINER_SCRIPT + ("make coverage\n" if coverage else "")
+    script = CONTAINER_SCRIPT + ("make check-ci\n" if coverage else "make check\n")
     try:
         result = subprocess.run([
             "docker", "run", "--rm", "--name", name,

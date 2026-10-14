@@ -455,17 +455,19 @@ def _resolve_selector(loader: unittest.TestLoader, selector: str):
     """
     candidates: list[str] = []
     s = selector
-    if s.endswith(".py"):
+    if s.lower().endswith(".py"):
         s = s[:-3]
-    if "/" in s or os.sep in s:
-        s = s.replace("/", ".").replace(os.sep, ".")
+    s = s.replace("/", ".").replace("\\", ".")
 
     if s.startswith("tests."):
         candidates.append(s)
     else:
         # Try direct module under tests/ (file stem like "test_foo").
         test_dir = _REPO_ROOT / "tests"
-        matches = list(test_dir.rglob(f"{s}.py"))
+        matches = sorted(
+            (path for path in test_dir.rglob("test_*.py") if path.stem.casefold() == s.casefold()),
+            key=lambda path: (len(path.relative_to(test_dir).parts), path.as_posix()),
+        )
         for match in matches:
             rel = match.relative_to(test_dir).with_suffix("")
             candidates.append("tests." + str(rel).replace(os.sep, "."))
@@ -473,10 +475,22 @@ def _resolve_selector(loader: unittest.TestLoader, selector: str):
         candidates.append(f"tests.{s}")
         candidates.append(s)
 
-    last_error: Exception | None = None
+    last_error: Exception | str | None = None
     for name in candidates:
         try:
-            return loader.loadTestsFromName(name)
+            previous_errors = len(loader.errors)
+            suite = loader.loadTestsFromName(name)
+            if len(loader.errors) > previous_errors:
+                # unittest returns a failing placeholder instead of raising on
+                # many lookup errors. Try the next candidate without retaining
+                # those errors in the loader used for the final selection.
+                last_error = loader.errors[-1].strip()
+                del loader.errors[previous_errors:]
+                continue
+            if suite.countTestCases() == 0:
+                last_error = f"{name!r} contains no test cases"
+                continue
+            return suite
         except (ImportError, AttributeError) as exc:
             last_error = exc
             continue
@@ -548,6 +562,7 @@ def _print_durations(result: unittest.TestResult, count: int) -> None:
     if not durations:
         return
     print()
+    print(f"Total test time: {sum(elapsed for elapsed, _ in durations):.3f}s")
     print(f"Slowest {min(count, len(durations))} tests:")
     for elapsed, test_id in sorted(durations, reverse=True)[:count]:
         print(f"  {elapsed:8.3f}s  {test_id}")
@@ -581,6 +596,10 @@ def main(argv: list[str] | None = None) -> int:
         suite = _build_suite(loader, args.selectors, args.suite)
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if suite.countTestCases() == 0:
+        print("Error: No tests selected", file=sys.stderr)
         return 2
 
     if args.verbose:

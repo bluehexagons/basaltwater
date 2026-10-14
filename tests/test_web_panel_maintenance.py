@@ -46,7 +46,8 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
         handler = type("FixtureHandler", (panel.WebPanelHandler,), {"state": self.state})
         self.server = panel._ThreadingTCPHTTPServer(("127.0.0.1", 0), handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         self.addCleanup(self.close_server)
 

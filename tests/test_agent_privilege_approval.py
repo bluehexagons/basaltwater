@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import copy
 import http.client
-import json
 import re
 import tempfile
 import threading
@@ -36,7 +35,8 @@ class ApprovalTests(unittest.TestCase):
         self.origin = "https://vm.example:9444"
         self.server = ApprovalServer(("127.0.0.1", 0), copy.deepcopy(self.auth), self.origin,
                                      lambda message: self.broker.dispatch(message, 999, approval=True))
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
         self.addCleanup(self.close_server)
         self.path = "/requests/" + self.request["id"]

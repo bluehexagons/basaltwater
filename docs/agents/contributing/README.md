@@ -54,8 +54,16 @@ checks; it includes wheel building and coverage:
 python3 -m venv .venv
 .venv/bin/python -m pip install '.[dev,completion]'
 source .venv/bin/activate  # In fish: source .venv/bin/activate.fish
-make check
+make check-fast
 ```
+
+Use `make check-fast` for the edit/test loop: it runs syntax, documentation and
+package metadata checks plus the smoke suite. Select relevant tests with
+`make check-fast SUITE=web`, `make test SUITE="web network"`, or
+`make test TEST=tests.test_gogs_steps.TestGogsNginx`. `TEST_ARGS="--durations 20"`
+reports slow tests. Suite and explicit test selections combine without repeats.
+The fast target omits the generated brand export and wheel build/install checks;
+run `make check-ci` before committing changes exercised by CI.
 
 Use the project's environment rather than installing development dependencies
 into CachyOS's or Debian's system Python.
@@ -74,8 +82,12 @@ a private container venv; checks still run in Debian. Only image pulls fall back
 failed package installation, checks and coverage are never replayed. Cleanup
 removes only that invocation's named container. An all-registry failure means
 checks did not start. Inspect the failed step before changing application code.
-For changes exercised by CI, also run `make coverage` after `make check`; the
-branch workflow runs both, and coverage executes the suite with instrumentation.
+`make check-ci` runs all static, brand and wheel checks and executes the full
+suite once with branch coverage, matching branch CI. Do not also run
+`make check` and `make coverage` for the same unchanged source: that repeats
+the full suite. `make check` remains available for full verification without
+coverage, and `make coverage` produces a standalone full-suite report. Fast
+selections do not narrow `check-ci` or `coverage`.
 
 ```bash
 python3 -m py_compile file.py

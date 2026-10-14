@@ -182,6 +182,21 @@ Useful commands include `list`, `info`, `cmd`, `new`, `setup`, `deploy`, `rm`,
 
 ## Testing
 
+For source development, use the project venv and the
+[contributor check workflow](agents/contributing/README.md#standard-checks):
+
+```bash
+make check-fast
+make check-fast SUITE=web
+make test SUITE="web network" TEST_ARGS="--durations 20"
+make check-ci
+```
+
+The fast target defaults to smoke tests and omits wheel build/install and brand
+export checks. `check-ci` retains those checks and runs the full suite once with
+coverage; it ignores focused `TEST`/`SUITE` selections. Use `make check` for a
+full run without coverage. Live and external-network tests stay opt-in.
+
 ```bash
 python3 -m unittest discover -s tests
 ./run_tests.py
@@ -194,6 +209,11 @@ python3 -m unittest discover -s tests
 The default runner captures test stdout/stderr and reports only the unittest
 failure or error report. Use `--show-output` when diagnosing a noisy failing
 test; use `-v` when you deliberately want every test name and live task log.
+File stems and `.py` extensions are case-insensitive, while dotted class and
+method names retain Python's case rules. Both slash styles work for file paths.
+Invalid selectors and modules without tests exit with a usage error instead of
+reporting a successful empty run. `--durations` includes total test execution
+time and the slowest cases.
 Setup command echoes are also quiet by default because each setup step already
 reports progress. Set `BASALTWATER_VERBOSE=1` to echo every command, and use a
 setup dry run to validate the configuration and preview its handoff without

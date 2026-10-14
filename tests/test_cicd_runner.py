@@ -33,7 +33,9 @@ class DebianCITests(unittest.TestCase):
             argv = calls[2].args[0]
             self.assertIn(ci.IMAGES[1], argv)
             self.assertIn(f"type=bind,source={self.cache},target={self.cache},readonly", argv)
-            self.assertIn("make coverage", argv[-1])
+            self.assertEqual(argv[-1].splitlines()[-1], "make check-ci")
+            self.assertNotIn("make check\n", argv[-1])
+            self.assertNotIn("make coverage\n", argv[-1])
             self.assertNotIn("GITHUB_TOKEN", " ".join(argv))
             self.assertEqual(calls[2].kwargs["timeout"], 900)
             self.assertEqual(calls[3].args[0][:3], ["docker", "rm", "--force"])
@@ -51,7 +53,7 @@ class DebianCITests(unittest.TestCase):
                 Mock(returncode=0), Mock(returncode=7), Mock(returncode=0)]) as run:
             self.assertEqual(self.run_ci(), 7)
         self.assertEqual([call.args[0][1] for call in run.call_args_list], ["pull", "run", "rm"])
-        self.assertNotIn("make coverage", run.call_args_list[1].args[0][-1])
+        self.assertEqual(run.call_args_list[1].args[0][-1].splitlines()[-1], "make check")
 
     def test_timeout_or_interruption_cleans_up_only_the_owned_container(self):
         for error in (subprocess.TimeoutExpired("docker run", 900), KeyboardInterrupt()):
