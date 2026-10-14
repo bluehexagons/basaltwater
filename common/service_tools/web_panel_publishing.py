@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import html
 import os
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import render_document
 from lib.publishing import editor_link
 
 
@@ -45,6 +45,8 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
         snapshot = {key: [] for key in ("projects", "tools", "accounts", "artifacts", "runs", "jobs", "drafts", "releases")}
         error = "Publishing state is unavailable. Check the VM account's private state directory and permissions."
     secure = state.credential_transport_available() and os.geteuid() != 0
+    features = state.features()
+    steam = "steamcmd" in features.tools
     def form(action: str, fields: str, label: str) -> str:
         if not secure:
             return '<p class="count">' + _escape(label) + ': requires HTTPS and a non-root panel account.</p>'
@@ -57,15 +59,18 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
     content = '<aside class="status failed" role="alert">' + _escape(error) + '</aside>' if error else ""
     if not secure:
         content += '<p class="empty">Publishing changes and logins require the panel HTTPS address. Use the VM CLI over SSH for recovery.</p>'
-    content += '''<nav class="catalog-nav" aria-label="Publishing sections"><a href="#accounts">Accounts</a><a href="#projects">Projects</a><a href="#builds">Builds</a><a href="#jobs">Upload schedules</a><a href="#writing">Writing &amp; translations</a><a href="#releases">Releases</a></nav>
+    releases_link = '<a href="#releases">Releases</a>' if steam or snapshot["releases"] else ""
+    content += f'''<nav class="catalog-nav" aria-label="Publishing sections"><a href="#accounts">Accounts</a><a href="#projects">Projects</a><a href="#builds">Builds</a><a href="#jobs">Upload schedules</a><a href="#writing">Writing &amp; translations</a>{releases_link}</nav>
 <p>Steam default releases and rollbacks happen on Steamworks. Public writing, including each translation, requires your review. Steam announcements and itch.io posts currently use a reviewed export and human editor handoff.</p>
 <section id="accounts"><h2>Publishing accounts</h2><div class="grid">'''
     accounts = {item["id"]: item for item in snapshot["accounts"]}
     for tool in snapshot["tools"]:
+        if not tool["installed"] or tool["provider"] not in features.tools:
+            continue
         service = tool["provider"]
         account = accounts.get(service, {})
         label = "itch.io / Butler" if service == "butler" else "Steam / SteamCMD"
-        status = account.get("state", "not checked") if tool["installed"] else "tool not installed"
+        status = account.get("state", "not checked")
         content += '<article class="publishing-card"><h3>' + label + '</h3><p>' + _escape(status) + '</p>'
         content += '<p>Native session: ' + _escape(tool["local_session"]) + '. File presence does not prove provider acceptance.</p>'
         if account.get("observed_at"):
@@ -73,11 +78,8 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
         fields = _hidden("provider", service)
         if service == "steamcmd":
             fields += _input("username", "Steam account name", account.get("username", ""))
-        if tool["installed"]:
-            content += form("login", fields, "Sign in / verify session")
-            content += form("logout", _hidden("provider", service) + _input("confirmation", "Type remove to erase the local session"), "Remove local session")
-        else:
-            content += '<p>From the controller, add <code>--publishing-tool ' + service + '</code> to the saved VM setup.</p>'
+        content += form("login", fields, "Sign in / verify session")
+        content += form("logout", _hidden("provider", service) + _input("confirmation", "Type remove to erase the local session"), "Remove local session")
         link = "https://itch.io/docs/butler/login.html" if service == "butler" else "https://partner.steamgames.com/doc/sdk/uploading"
         content += '<p><a href="' + link + '">Authentication and upload guide</a></p></article>'
     for session in state.publishing_auth.views():
@@ -89,8 +91,9 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
                 content += form("login-input", _hidden("id", session["id"]) + _input("response", "Login response", kind="password"), "Submit response")
             content += form("login-cancel", _hidden("id", session["id"]), "Cancel sign-in")
         content += '</article>'
-    content += '<details class="publishing-card"><summary>Optional Steam beta promotion API access</summary><p>A separate Steam publisher API key enables observed beta branch promotion. It stays on the VM. Default/public releases always use Steamworks.</p>'
-    content += form("steam-api", _input("key", "Steam publisher API key", kind="password"), "Save VM-local API key") + '</details>'
+    if steam:
+        content += '<details class="publishing-card"><summary>Optional Steam beta promotion API access</summary><p>A separate Steam publisher API key enables observed beta branch promotion. It stays on the VM. Default/public releases always use Steamworks.</p>'
+        content += form("steam-api", _input("key", "Steam publisher API key", kind="password"), "Save VM-local API key") + '</details>'
     content += '</div><p class="count">Credentials stay in the VM account’s native store. Removing a local session does not revoke provider access; revoke compromised access on the provider website.</p></section>'
     content += '<section id="projects"><h2>Projects and destinations</h2>'
     for project in snapshot["projects"]:
@@ -107,10 +110,11 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
             content += form("schedule", _hidden("project", project["id"]) + _input("interval", "Upload polling interval (minutes)", "60", kind="number"), "Schedule unattended uploads")
         content += '</article>'
     content += '<details><summary>Configure a project</summary><p>Changing a project invalidates prepared builds and writing reviews. For Steam, choose one app and depot per destination; create additional destinations for other depots.</p>'
+    steam_fields = _input("depot", "Steam DepotID", required=False) + _input("username", "Steam account name", required=False) if steam else ""
     content += form("project", _input("id", "Project/destination ID") + _input("repository", "Project directory on this VM") +
-                    _select("provider", "Provider", [("butler", "itch.io / Butler"), ("steamcmd", "Steam / SteamCMD")]) +
-                    _input("target", "itch.io owner/game:channel or Steam AppID") + _input("depot", "Steam DepotID", required=False) +
-                    _input("username", "Steam account name", required=False) + _input("record", "Completed build record", ".basaltwater/publishing-complete.json"), "Save destination") + '</details></section>'
+                    _select("provider", "Provider", [(name, label) for name, label in [("butler", "itch.io / Butler"), ("steamcmd", "Steam / SteamCMD")] if name in features.tools]) +
+                    _input("target", "itch.io owner/game:channel or Steam AppID" if steam and "butler" in features.tools else "Steam AppID" if steam else "itch.io owner/game:channel") +
+                    steam_fields + _input("record", "Completed build record", ".basaltwater/publishing-complete.json"), "Save destination") + '</details></section>'
     content += '<section id="builds"><h2>Prepared builds and upload history</h2><p>Record completed exports with <code>basaltw publish complete</code> before preparation. itch.io channel uploads can become immediately available to players. Steam uploads never promote a branch.</p>'
     for artifact in snapshot["artifacts"][:20]:
         content += '<details class="publishing-card"><summary>' + _escape(artifact["project"] + " · " + artifact["build_id"] + " · " + artifact["id"][:8]) + '</summary><p>SHA-256 <code>' + _escape(artifact["digest"]) + '</code></p>'
@@ -148,8 +152,9 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
             content += form("job", _hidden("job", job["id"]) + _hidden("action", "remove"), "Remove schedule")
         content += '</article>'
     content += '</section><section id="writing"><h2>Writing and translations</h2><p>Draft or translate with an agent, then import the final text below. Review each language and destination separately. Exported plain text needs a final formatting check in the provider editor.</p>'
-    content += form("writing-task", _select("project", "Project", project_options) + _input("language", "Draft/translation language", "es") +
-                    _select("source", "Source revision for translation", source_options, optional=True) + _input("instructions", "Writing instructions / facts to use"), "Prepare agent writing task")
+    if features.prompts:
+        content += form("writing-task", _select("project", "Project", project_options) + _input("language", "Draft/translation language", "es") +
+                        _select("source", "Source revision for translation", source_options, optional=True) + _input("instructions", "Writing instructions / facts to use"), "Prepare agent writing task")
     content += '<details><summary>Import a draft or translation</summary>' + form("draft", _select("project", "Project", project_options) + _input("language", "Language", "en") +
                     _input("title", "Final title") + '<label>Final body<textarea name="body" rows="10" required></textarea></label>' +
                     _select("source", "Source revision (required for translations)", source_options, optional=True) +
@@ -180,19 +185,22 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
             content += form("post-confirm", _hidden("draft", draft["id"]) + _input("url", "Published post address", kind="url") +
                             _input("confirmation", "Type reviewed to confirm the provider's final text matches this revision"), "Record published post")
         content += '</article>'
-    content += '</section><section id="releases"><h2>Steam release handoffs</h2><p>Choose the exact BuildID on Steamworks. Confirm it here only after the site has released it. Dependent posts stay held until confirmation. This also applies to default branch rollbacks.</p>'
-    for release in snapshot["releases"]:
-        content += '<article class="publishing-card"><h3>' + _escape(release["project"] + " · BuildID " + release["build_id"]) + '</h3><p>' + _escape(release["branch"] + " · " + release["state"]) + '</p><p><a href="' + _escape(release["link"]) + '">Open Steamworks Builds</a></p>'
-        if release["state"] == "prepared-beta":
-            content += '<p>Observed previous BuildID: ' + _escape(release["previous_build"]) + ' · Audience: unknown · preparation valid for five minutes</p>'
-            content += form("beta-promote", _hidden("release", release["id"]), "Promote this BuildID to this beta branch")
-        if release["state"] in {"awaiting-steamworks", "unknown"}:
-            content += form("release-confirm", _hidden("release", release["id"]) + _input("build_id", "BuildID now live on this branch"), "Record human Steamworks release")
-        content += '</article>'
     content += '</section>'
+    releases = '<section id="releases"><h2>Steam release handoffs</h2><p>Choose the exact BuildID on Steamworks. Confirm it here only after the site has released it. Dependent posts stay held until confirmation. This also applies to default branch rollbacks.</p>'
+    for release in snapshot["releases"]:
+        releases += '<article class="publishing-card"><h3>' + _escape(release["project"] + " · BuildID " + release["build_id"]) + '</h3><p>' + _escape(release["branch"] + " · " + release["state"]) + '</p><p><a href="' + _escape(release["link"]) + '">Open Steamworks Builds</a></p>'
+        if release["state"] == "prepared-beta":
+            releases += '<p>Observed previous BuildID: ' + _escape(release["previous_build"]) + ' · Audience: unknown · preparation valid for five minutes</p>'
+            if steam:
+                releases += form("beta-promote", _hidden("release", release["id"]), "Promote this BuildID to this beta branch")
+        if release["state"] in {"awaiting-steamworks", "unknown"}:
+            releases += form("release-confirm", _hidden("release", release["id"]) + _input("build_id", "BuildID now live on this branch"), "Record human Steamworks release")
+        releases += '</article>'
+    if releases_link:
+        content += releases + '</section>'
     return render_document(title="Publishing", style=page_style + _STYLE,
                            header='<header><p class="eyebrow">Basaltwater web panel</p><h1>Game publishing</h1><p class="lede">Manage VM publishing accounts, builds and reviewed release writing.</p><a class="refresh-link" href="/publishing">Refresh saved status</a></header>',
-                           content=content, navigation=panel_navigation(current="publishing"),
+                           content=content, navigation=state.navigation("publishing"),
                            footer='<footer><span>Publishing sessions stay on this VM</span><span>Human-reviewed public writing</span></footer>')
 
 
@@ -290,7 +298,7 @@ _STYLE = '''
 form {margin:12px 0; display:flex; flex-wrap:wrap; align-items:end; gap:12px;}
 label {display:block; flex:1 1 200px; font-weight:650;}
 input,textarea {display:block; width:100%; min-height:44px; margin-top:6px; padding:8px; background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; font:inherit;}
-textarea {min-width:260px;}
+textarea {min-width:min(100%,260px);}
 .publishing-comparison {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:16px;}
 .publishing-comparison pre {max-height:32rem;}
 '''

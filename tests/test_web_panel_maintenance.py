@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from common.service_tools import web_panel_maintenance as view
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_features import PanelFeatures
+from common.service_tools.web_panel_templates import panel_navigation
 from lib import maintenance_agent as agent
 from lib.agent_inbox import AgentInbox
 from lib.atomic_io import write_json_atomic
@@ -40,6 +42,8 @@ class WebPanelMaintenanceTest(unittest.TestCase):
             item.start()
             self.addCleanup(item.stop)
         self.state = SimpleNamespace(csrf_token="csrf-fixture", agent_tasks=SimpleNamespace(home=self.home))
+        self.state.features = lambda: PanelFeatures(tools=frozenset({"codex"}), maintenance=True)
+        self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
         handler = type("FixtureHandler", (panel.WebPanelHandler,), {"state": self.state})
         self.server = panel._ThreadingTCPHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

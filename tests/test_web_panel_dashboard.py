@@ -11,12 +11,14 @@ from unittest.mock import Mock, patch
 from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
+from common.service_tools.web_panel_features import PanelFeatures
 
 
 class DashboardTest(unittest.TestCase):
     def setUp(self) -> None:
         self.enterContext(patch.object(panel, "collect_filesystems", return_value=[]))
         self.enterContext(patch.object(panel, "collect_pressure", return_value=[]))
+        self.enterContext(patch.object(panel.WebPanelState, "features", return_value=PanelFeatures()))
         # Agent activity has its own temporary-state integration tests. Other
         # dashboard checks must not read the developer account's private tasks.
         snapshot = patch.object(panel.AgentTasks, "snapshot", return_value={"tasks": [], "runs": []})
@@ -107,8 +109,8 @@ class DashboardTest(unittest.TestCase):
         ):
             pages = [
                 panel.render_page(state), panel.render_service_status(state, False),
-                jobs.render_jobs(False, panel._PAGE_STYLE, "example.test"),
-                diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(), panel._PAGE_STYLE, "example.test"),
+                jobs.render_jobs(False, panel._PAGE_STYLE, "example.test", navigation=state.navigation("jobs")),
+                diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(), panel._PAGE_STYLE, "example.test", navigation=state.navigation("logs")),
             ]
         service_health.assert_not_called()
         collect_jobs.assert_not_called()
@@ -183,7 +185,7 @@ class DashboardTest(unittest.TestCase):
             SimpleNamespace(returncode=1, stdout=output),
             OSError("No user bus"),
         ]) as run:
-            records = panel.collect_service_health()
+            records = panel.collect_service_health(user_services=True)
         self.assertEqual([r["value"] for r in records], ["active", "failed", "Unavailable"])
         self.assertEqual([r["label"] for r in records], ["Web gateway", "HomeBox", "User services"])
         self.assertEqual(run.call_count, 2)
@@ -195,8 +197,15 @@ class DashboardTest(unittest.TestCase):
             subprocess.TimeoutExpired("systemctl", 2),
             SimpleNamespace(returncode=1, stdout=""),
         ]):
-            records = panel.collect_service_health()
+            records = panel.collect_service_health(user_services=True)
         self.assertEqual([r["value"] for r in records], ["Unavailable", "Unavailable"])
+
+    def test_machine_without_t3_does_not_query_a_user_service_manager(self) -> None:
+        with patch.object(panel.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="")) as run:
+            records = panel.collect_service_health(user_services=False)
+        self.assertEqual([row["label"] for row in records], ["System services"])
+        run.assert_called_once()
+        self.assertNotIn("--user", run.call_args.args[0])
 
     def test_empty_service_result_is_cached_and_expires(self) -> None:
         state = panel.WebPanelState({"features": {}})
@@ -222,19 +231,19 @@ class DashboardTest(unittest.TestCase):
         ):
             page = panel.render_page(state)
         self.assertIn('aria-label="Panel sections"', page)
-        self.assertIn('href="/#services-heading"', page)
-        for anchor in ("notifications-heading", "maintenance-heading", "trust"):
-            self.assertIn(f'href="/#{anchor}"', page)
-            self.assertIn(f'id="{anchor}"', page)
-        self.assertIn("Remote notifications are not enabled", page)
-        self.assertIn("No managed gateway certificate information", page)
+        self.assertNotIn('href="/#', page)
+        self.assertIn('href="#maintenance-heading"', page)
+        self.assertIn('id="maintenance-heading"', page)
+        for anchor in ("notifications-heading", "trust", "agent-activity-heading", "services-heading", "access-heading"):
+            self.assertNotIn(f'id="{anchor}"', page)
+            self.assertNotIn(f'href="#{anchor}"', page)
         self.assertIn("Show 3 more events", page)
         self.assertIn("8 warning/error events", page)
         self.assertIn("Event &lt;7&gt;", page)
         self.assertNotIn("Event <7>", page)
         self.assertIn('href="/services"', page)
         self.assertNotIn("homebox.service · failed", page)
-        self.assertLess(page.index('id="overview-heading"'), page.index('id="services-heading"'))
+        self.assertLess(page.index('id="overview-heading"'), page.index('id="audit-heading"'))
 
     def test_dashboard_does_not_probe_local_services(self) -> None:
         state = panel.WebPanelState({

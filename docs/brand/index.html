@@ -45,16 +45,6 @@ select, .diagnostic-filters input { display: block; width: 100%; min-height: 44p
 select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
   box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
-.sidebar a[href*="#"]:active { background: var(--section-soft); }
-body:has(main :is(#services-heading, #audit-heading, #notifications-heading, #access-heading, #trust, #maintenance-heading):target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
-body:has(#services-heading:target) .sidebar a[href$="#services-heading"],
-body:has(#audit-heading:target) .sidebar a[href$="#audit-heading"],
-body:has(#notifications-heading:target) .sidebar a[href$="#notifications-heading"],
-body:has(#access-heading:target) .sidebar a[href$="#access-heading"],
-body:has(#trust:target) .sidebar a[href$="#trust"],
-body:has(#maintenance-heading:target) .sidebar a[href$="#maintenance-heading"] {
-  background: var(--section-soft); color: var(--section-ink); box-shadow: inset 3px 0 var(--section-ink); font-weight: 700;
-}
 .metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
 .job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
 .job-facts dt { color: var(--muted); font-size: .85rem; }
@@ -349,6 +339,9 @@ code { overflow-wrap: anywhere; }
   border-radius: 12px;
   color: var(--muted);
 }
+main > .empty { margin-bottom: 18px; }
+.inline-link { color: var(--accent); text-underline-offset: 4px; }
+main > .catalog-nav { margin-bottom: 18px; }
 .action {
   display: flex;
   align-items: center;

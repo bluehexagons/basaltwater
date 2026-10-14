@@ -9,6 +9,8 @@ from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_templates import panel_navigation
+from common.service_tools.web_panel_features import PanelFeatures
 from lib.systemd_timers import format_timer_next_trigger
 
 
@@ -127,7 +129,8 @@ class JobTest(unittest.TestCase):
     def test_route_uses_no_dashboard_discovery(self) -> None:
         handler = object.__new__(panel.WebPanelHandler)
         handler.path = "/jobs"
-        handler.state = SimpleNamespace(manifest={"host": "host"})
+        handler.state = SimpleNamespace(manifest={"host": "host"}, navigation=lambda current: panel_navigation(current=current),
+                                        features=lambda: PanelFeatures())
         handler._send = Mock()
         with patch.object(panel, "render_page") as dashboard, patch.object(jobs, "collect_jobs") as collect:
             handler.do_GET()

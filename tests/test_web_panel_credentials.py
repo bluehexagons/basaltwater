@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_credentials as view
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_git_settings as settings
 
 
@@ -214,6 +215,7 @@ class AccountAvailabilityTests(unittest.TestCase):
 class CredentialViewTests(unittest.TestCase):
     def setUp(self):
         self.state = panel.WebPanelState({"host": "vm.example.test", "username": "operator", "system_type": "server_dev", "features": {}, "services": [], "access": [], "panel_url": "https://vm.example.test/"}, agent_home="/home/operator")
+        self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"git", "gh", "codex"}))))
         self.snapshot = {"available": True, "name": "Fixture <Name>", "email": "fixture@example.test", "git_error": "", "github_error": "", "github_present": True}
         self.patch = patch.object(self.state.git_settings, "snapshot", return_value=self.snapshot)
         self.patch.start()

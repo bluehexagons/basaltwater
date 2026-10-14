@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from common.service_tools import web_panel_service as panel
 from common.service_tools import web_panel_publishing as view
+from common.service_tools.web_panel_features import PanelFeatures
 from tests import test_publishing as fixtures
 
 
@@ -23,6 +24,7 @@ class PublishingPanelTests(unittest.TestCase):
         self.state = panel.WebPanelState({"host": "vm.example.test", "username": "operator", "system_type": "agent_vm",
             "features": {}, "services": [], "access": [], "panel_url": "https://vm.example.test/"}, agent_home=str(self.home))
         self.assertEqual(self.state.publishing.home, self.home)
+        self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"butler", "steamcmd", "codex"}))))
         self.state.publishing_auth = SimpleNamespace(views=lambda: [], begin=Mock())
         nonroot = patch.object(panel.os, "geteuid", return_value=1000)
         nonroot.start()
@@ -162,6 +164,17 @@ class PublishingPanelTests(unittest.TestCase):
         page = view.render_publishing(self.state, panel._PAGE_STYLE)
         self.assertNotIn('type="password"', page)
         self.assertNotIn('method="post"', page)
+
+    def test_butler_only_page_omits_steam_and_agent_interfaces(self):
+        with patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"butler"}))):
+            page = view.render_publishing(self.state, panel._PAGE_STYLE)
+            for text in ('name="depot"', 'name="key"', 'id="releases"', 'href="#releases"',
+                         '/actions/publishing/writing-task', '<option value="steamcmd"', 'Steam / SteamCMD</h3>'):
+                self.assertNotIn(text, page)
+            for action in ("steam-api", "writing-task"):
+                handler = self.handler("/actions/publishing/" + action, {"csrf": self.state.csrf_token})
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.NOT_FOUND)
 
     def test_schedule_controls_edit_remove_and_reject_invalid_intervals(self):
         job = self.publisher.schedule("game", 60)

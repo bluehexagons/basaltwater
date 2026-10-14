@@ -13,9 +13,10 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
+from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
+from common.service_tools.web_panel_templates import NavigationItem, panel_navigation, render_document, render_heading
 from common.service_tools.web_panel_agent_tools import tool_link
 
 SYSTEM_UNITS = {
@@ -321,8 +322,17 @@ def render_diagnostics(
     query: DiagnosticQuery,
     style: str,
     host: str,
+    *,
+    navigation: Iterable[NavigationItem] | None = None,
+    agent_tools: bool = False,
+    sources: dict[str, str] | None = None,
 ) -> str:
     """Render a separate screen; opening the form never invokes a collector."""
+
+    sources = dict(SOURCES if sources is None else sources)
+    if query.service not in sources and (query.load or query.service != "nginx.service"):
+        # A saved link can still inspect historical logs after removal.
+        sources[query.service] = SOURCES[query.service] + " (not installed; historical logs)"
 
     content = '<p class="empty">Choose a service and select Load diagnostics. No log query has run yet.</p>'
     if query.load:
@@ -376,13 +386,13 @@ def render_diagnostics(
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Service diagnostics</h1>
 <p class="lede">Inspect runtime details and recent logs on <code>{html.escape(host)}</code>.</p></header>'''
     body = f'''<form class="diagnostic-filters" method="get" action="/logs">
-<div><label for="service-filter">Service</label><select id="service-filter" name="service">{_options(SOURCES, query.service)}</select></div>
+<div><label for="service-filter">Service</label><select id="service-filter" name="service">{_options(sources, query.service)}</select></div>
 <div><label for="window-filter">Time window</label><select id="window-filter" name="window">{_options(WINDOWS, query.window)}</select></div>
 <div><label for="priority-filter">Severity</label><select id="priority-filter" name="priority">{_options(PRIORITIES, query.priority)}</select></div>
 <div><label for="message-filter">Message contains</label><input id="message-filter" name="search" type="search" maxlength="120" value="{html.escape(query.search, quote=True)}" placeholder="Optional text"></div>
 <button name="load" value="1" type="submit">Load diagnostics</button></form>
 <p class="endpoint">Only logs readable by the panel account are included. System and user journals have separate permissions. Messages are supplied by services; review them before sharing.</p>
-{tool_link("logs", "Prepare agent log review", service=query.service, window=query.window, priority=query.priority)}
+{tool_link("logs", "Prepare agent log review", service=query.service, window=query.window, priority=query.priority) if agent_tools else ""}
 {content}<details><summary>Continue inspection over SSH</summary>
 <p>Run on this host for the same filters. System logs may require administrator access; user logs belong to the signed-in Linux user.</p>
 <pre><code>{html.escape(ssh_command)}</code></pre></details>'''
@@ -392,6 +402,6 @@ def render_diagnostics(
         style=style,
         header=header,
         content=body,
-        navigation=panel_navigation(current="logs"),
+        navigation=panel_navigation(current="logs") if navigation is None else navigation,
         footer=footer,
     )

@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 
 
@@ -636,11 +637,13 @@ class AgentScreenTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.state = panel.WebPanelState({"host": "example.test", "username": "agent", "system_type": "agent_vm",
                                          "features": {}, "services": [], "access": []}, agent_home=self.temporary.name)
+        self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
+        self.enterContext(patch.object(agents, "t3_installed", side_effect=lambda home: (Path(home) / ".t3/runtime").is_dir()))
         for target, attribute, value in ((tasks.AgentTasks, "available", True), (tasks, "_tool_path", "/test/codex")):
             mocked = patch.object(target, attribute, return_value=value)
             mocked.start()
             self.addCleanup(mocked.stop)
-        tools_mock = patch.object(agents, "_tool_path", side_effect=lambda name, home: "/test/codex" if name == "codex" else None)
+        tools_mock = patch.object(agents, "_tool_path", side_effect=lambda name, home: f"/test/{name}" if name in {"codex", "git"} else None)
         tools_mock.start()
         self.addCleanup(tools_mock.stop)
 
@@ -693,6 +696,16 @@ class AgentScreenTest(unittest.TestCase):
             if "requires" in template:
                 self.assertNotIn(f'href="/agents?template={key}"', page)
 
+    def test_codex_without_git_omits_repository_templates_and_worktrees(self) -> None:
+        with patch.object(agents, "_tool_path", side_effect=lambda name, home: "/test/codex" if name == "codex" else None), patch.object(
+            self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"})),
+        ):
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertNotIn("Repository work ·", page)
+        self.assertNotIn('<option value="worktree"', page)
+        self.assertIn("Host checks · 5 templates", page)
+        self.assertIn("New prompt task", page)
+
     def test_optional_templates_follow_specific_configuration_and_installed_commands(self) -> None:
         cases = (
             ("t3-readiness", {"features": {"t3_update": True}}, (), "T3 Code configured"),
@@ -722,8 +735,8 @@ class AgentScreenTest(unittest.TestCase):
         original = self.state.manifest.copy()
         for key, configuration, commands, reason in cases:
             with self.subTest(template=key, configuration=configuration, commands=commands), patch.object(
-                agents, "_tool_path", side_effect=lambda name, home: f"/test/{name}" if name in (*commands, "codex") else None,
-            ), patch.object(tasks.subprocess, "Popen") as spawn:
+                agents, "_tool_path", side_effect=lambda name, home: f"/test/{name}" if name in (*commands, "codex", "git") else None,
+            ), patch.object(agents, "t3_installed", return_value=key == "t3-readiness"), patch.object(tasks.subprocess, "Popen") as spawn:
                 self.state.manifest = {**original, **configuration}
                 templates = agents._available_templates(self.state.manifest, self.temporary.name)
                 self.assertEqual({key for key, template in templates.items() if "requires" in template}, {key})
@@ -766,6 +779,7 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(self.state.agent_tasks.snapshot(), before)
 
     def test_new_template_defaults_are_visible_and_save_with_matching_permissions(self) -> None:
+        (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
         self.state.manifest.update({"features": {"t3_update": True, "notification_ingest": True},
                                     "services": [{"label": label} for label in ("HomeBox", "Gogs", "Antistatic DB", "Privilege approvals")]})
         installed = patch.object(agents, "_tool_path", return_value="/test/tool")
@@ -910,20 +924,20 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(task["max_runs"], 3)
         self.assertEqual(task["completion_criteria"], values["completion_criteria"])
 
-    def test_one_time_draft_can_be_prepared_without_codex_and_does_not_skip_csrf(self) -> None:
+    def test_panel_hides_prompt_controls_and_rejects_posts_without_codex(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Prepare", "prompt": "Inspect later",
                   "directory": self.temporary.name, "mode": "inspect", "interval": "once", "submit": "draft"}
-        with patch.object(tasks, "_tool_path", return_value=None), patch.object(agents, "_tool_path", return_value=None):
+        with patch.object(tasks, "_tool_path", return_value=None), patch.object(agents, "_tool_path", return_value=None), patch.object(self.state, "features", return_value=PanelFeatures(t3=True)):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
-            self.assertIn('value="run" disabled', page)
-            self.assertIn('value="draft">Save draft', page)
+            self.assertNotIn('class="agent-form"', page)
+            self.assertIn("Runtime diagnostics", page)
             denied = self.handler("/actions/agent-task/save", {**values, "csrf": "wrong"})
             denied.do_POST()
-            self.assertEqual(denied._send.call_args.args[0].value, 403)
+            self.assertEqual(denied._send.call_args.args[0].value, 404)
             handler = self.handler("/actions/agent-task/save", values)
             handler.do_POST()
-            handler.send_response.assert_called_with(303)
-        self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 1)
+            self.assertEqual(handler._send.call_args.args[0].value, 404)
+        self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 0)
 
     def test_duplicate_and_reuse_links_prefill_reviewable_settings_without_mutation(self) -> None:
         settings = {"title": "Review <repo>", "prompt": "Original <prompt>", "directory": self.temporary.name,
@@ -1185,7 +1199,7 @@ class AgentScreenTest(unittest.TestCase):
         ):
             self.state.agent_diagnostics._collect()
             t3_check.assert_not_called()
-            self.state.agent_diagnostics.t3_configured = True
+            (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
             self.state.agent_diagnostics._collect()
         tools_check.assert_called_with(["codex", "claude", "opencode", "gh"], home=self.temporary.name)
         t3_check.assert_called_once_with(home=self.temporary.name, fix=False)

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
+import tempfile
+from pathlib import Path
 
 from common.service_tools import web_panel_service as panel
+from common.service_tools import web_panel_features as features
 from common.service_tools.web_panel_templates import (
     BRAND_PALETTES,
     panel_navigation,
@@ -40,20 +43,18 @@ class WebPanelTemplateTest(unittest.TestCase):
         )
 
         self.assertIn('href="/"', sidebar)
-        self.assertIn('href="/#services-heading"', sidebar)
-        self.assertIn('href="/#audit-heading"', sidebar)
-        self.assertIn('href="/#notifications-heading"', sidebar)
-        self.assertIn('href="/#access-heading"', sidebar)
-        self.assertIn('href="/#trust"', sidebar)
-        self.assertIn('href="/#maintenance-heading"', sidebar)
+        self.assertNotIn('href="/#', sidebar)
+        self.assertNotIn('href="/agents"', sidebar)
+        self.assertNotIn('href="/credentials"', sidebar)
         self.assertEqual(sidebar.count('aria-current="page"'), 1)
         self.assertIn('href="/jobs" aria-current="page"', sidebar)
 
     def test_every_view_has_identical_navigation_destinations(self) -> None:
-        expected = [(href, label) for href, label, _ in panel_navigation(current="dashboard")]
+        available = features.PanelFeatures(tools=frozenset({"git", "codex", "butler"}), admin=True, maintenance=True).pages
+        expected = [(href, label) for href, label, _ in panel_navigation(current="dashboard", available=available)]
         for current in ("agents", "agent-tools", "credentials", "admin", "services", "jobs", "logs"):
             with self.subTest(current=current):
-                self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current)], expected)
+                self.assertEqual([(href, label) for href, label, _ in panel_navigation(current=current, available=available)], expected)
 
     def test_document_has_one_shared_shell_and_escapes_title(self) -> None:
         document = render_document(
@@ -99,6 +100,115 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertNotIn("script-src", policy)
         self.assertEqual(headers["Content-Type"], "image/svg+xml; charset=utf-8")
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+
+
+class PanelFeatureTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.state = panel.WebPanelState({"host": "minimal.example.test", "username": "operator",
+            "system_type": "server_web", "services": [], "access": [], "features": {"t3_update": True}},
+            agent_home=self.home)
+        self.tool = self.enterContext(patch.object(features, "_tool_path", return_value=None))
+        self.units = self.enterContext(patch.object(features, "unit_installed", return_value=False))
+        self.enterContext(patch.object(features.os.path, "isfile", return_value=False))
+        self.enterContext(patch.object(features.os.path, "isdir", return_value=False))
+
+    def test_minimal_machine_ignores_stale_setup_flags_and_runs_no_checks(self) -> None:
+        with patch("subprocess.run") as run, patch("subprocess.Popen") as spawn:
+            available = self.state.features()
+            sidebar = render_sidebar(self.state.navigation("dashboard"))
+        self.assertEqual(available.pages, frozenset({"dashboard", "services", "jobs", "logs"}))
+        self.assertEqual(sidebar.count('aria-current="page"'), 1)
+        self.assertNotIn('href="/#', sidebar)
+        for path in ("agents", "credentials", "admin", "publishing", "maintenance-agent", "agent-tools", "agent-inbox"):
+            self.assertNotIn(f'href="/{path}"', sidebar)
+        run.assert_not_called()
+        spawn.assert_not_called()
+
+    def test_installation_changes_are_visible_on_next_request_without_sign_in(self) -> None:
+        self.assertNotIn("agents", self.state.features().pages)
+        self.tool.side_effect = lambda name, home: f"{home}/.local/bin/{name}" if name in {"codex", "git", "gh", "butler"} else None
+        detected = self.state.features()
+        self.assertTrue(detected.prompts)
+        self.assertTrue({"agents", "credentials", "publishing", "agent-tools", "agent-inbox"} <= detected.pages)
+        self.assertNotIn("admin", detected.pages)
+        self.tool.side_effect = None
+        self.assertNotIn("agents", self.state.features().pages)
+
+    def test_t3_and_other_agents_expose_diagnostics_without_prompt_tools(self) -> None:
+        self.units.side_effect = lambda unit, home, **kwargs: unit == "t3code.service"
+        self.assertTrue(self.state.features().agents)
+        self.assertFalse(self.state.features().prompts)
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn('href="/agents" aria-current="page"', page)
+        self.assertIn("Runtime diagnostics", page)
+        self.assertNotIn('class="agent-form"', page)
+        self.assertNotIn('href="/agent-tools"', page)
+        with patch.object(self.state, "t3_update_available", return_value=True):
+            self.assertIn("Update T3 Code</button>", panel.render_agents(self.state, panel._PAGE_STYLE, {}))
+        self.units.side_effect = None
+        self.tool.side_effect = lambda name, home: "/test/claude" if name == "claude" else None
+        self.assertTrue(self.state.features().agents)
+        self.assertFalse(self.state.features().prompts)
+
+    def test_absent_optional_get_and_post_routes_never_read_or_mutate_state(self) -> None:
+        paths = ("agents", "agent-tools", "agent-inbox", "maintenance-agent", "credentials", "publishing", "admin")
+        actions = ("agent-task/save", "agent-task", "agent-tool/prepare", "agent-diagnostics",
+                   "agent-inbox", "maintenance-agent", "credentials/identity", "credentials/github",
+                   "credentials/github-remove", "publishing/project", "publishing/writing-task", "admin", "admin/cancel")
+        with patch.object(self.state.agent_tasks, "snapshot") as tasks, patch.object(self.state.publishing, "status") as publishing:
+            for method, routes in (("do_GET", ["/" + path for path in paths]), ("do_POST", ["/actions/" + action for action in actions])):
+                for path in routes:
+                    with self.subTest(method=method, path=path):
+                        handler = object.__new__(panel.WebPanelHandler)
+                        handler.state, handler.path, handler._send = self.state, path, Mock()
+                        getattr(handler, method)()
+                        self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.NOT_FOUND)
+        tasks.assert_not_called()
+        publishing.assert_not_called()
+
+    def test_inspection_pages_have_no_agent_shortcuts_without_codex(self) -> None:
+        from common.service_tools import web_panel_jobs as jobs
+        from common.service_tools import web_panel_diagnostics as diagnostics
+
+        pages = [panel.render_service_status(self.state, False),
+                 jobs.render_jobs(False, panel._PAGE_STYLE, "minimal"),
+                 diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(), panel._PAGE_STYLE, "minimal",
+                                                sources={"nginx.service": "Web gateway"})]
+        for page in pages:
+            self.assertNotIn('href="/agent-tools', page)
+            self.assertNotIn('href="/agents', page)
+        self.assertNotIn('<option value="t3code.service"', pages[-1])
+        self.assertNotIn('<option value="gogs.service"', pages[-1])
+
+    def test_git_only_page_omits_github_and_agent_controls(self) -> None:
+        self.tool.side_effect = lambda name, home: "/test/git" if name == "git" else None
+        with patch.object(self.state.git_settings, "snapshot", return_value={"available": True,
+            "name": "Operator", "email": "operator@example.test", "git_error": "", "github_error": "", "github_present": False}):
+            page = panel.render_credentials(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("Save commit identity", page)
+        self.assertNotIn('id="github-token"', page)
+        self.assertNotIn('id="provider-sign-in"', page)
+        self.assertNotIn('href="/agents"', page)
+        handler = object.__new__(panel.WebPanelHandler)
+        handler.state, handler.path, handler._send = self.state, "/actions/credentials/github", Mock()
+        handler.do_POST()
+        self.assertEqual(handler._send.call_args.args[0], panel.HTTPStatus.NOT_FOUND)
+
+
+class PanelUnitTest(unittest.TestCase):
+    def test_user_unit_discovery_includes_masked_and_disabled_installations(self) -> None:
+        with tempfile.TemporaryDirectory() as home, patch("subprocess.run") as run:
+            directory = Path(home) / ".config/systemd/user"
+            directory.mkdir(parents=True)
+            unit = directory / "panel-fixture-uninstalled.service"
+            self.assertFalse(features.unit_installed(unit.name, home, user=True))
+            unit.write_text("[Service]\nExecStart=/fixture/tool\n")
+            self.assertTrue(features.unit_installed(unit.name, home, user=True))
+            unit.unlink()
+            unit.symlink_to("/dev/null")
+            self.assertTrue(features.unit_installed(unit.name, home, user=True))
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

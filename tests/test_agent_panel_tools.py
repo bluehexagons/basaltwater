@@ -17,7 +17,7 @@ from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
-from common.service_tools.web_panel_templates import panel_navigation
+from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks
 
 
@@ -76,6 +76,7 @@ class AgentPanelToolsTest(unittest.TestCase):
         self.state = panel.WebPanelState({"host": "host.example", "username": "operator",
             "system_type": "agent_vm", "features": {}, "services": [], "access": []}, agent_home=self.home)
         self.addCleanup(self.state.agent_tasks.close)
+        self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
         for patcher in (patch.object(agent_tasks.AgentTasks, "available", return_value=True),
                         patch.object(agent_tasks, "_tool_path", return_value="/test/codex"),
                         patch.object(agents, "_tool_path", return_value="/test/codex")):
@@ -246,7 +247,7 @@ class AgentPanelToolsTest(unittest.TestCase):
 
     def test_views_offer_context_links_without_embedding_logs_or_message_search(self) -> None:
         diagnostic = diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(
-            service="homebox.service", window="boot", priority="3", search="private-search-token"), panel._PAGE_STYLE, "host.example")
+            service="homebox.service", window="boot", priority="3", search="private-search-token"), panel._PAGE_STYLE, "host.example", agent_tools=True)
         url = tools.tool_url("logs", service="homebox.service", window="boot", priority="3")
         self.assertIn(html.escape(url, quote=True), diagnostic)
         self.assertNotIn("private-search-token", url)
@@ -254,9 +255,9 @@ class AgentPanelToolsTest(unittest.TestCase):
             "service": "auto-update-apt.service", "label": "APT", "tone": "error", "status": "Last run failed",
             **{key: "unknown" for key in ("timer", "enabled", "next", "triggered", "started", "finished", "result", "exit", "persistent")},
         }], [])), patch.object(jobs, "render_storage", return_value=""):
-            job_page = jobs.render_jobs(True, panel._PAGE_STYLE, "host.example")
+            job_page = jobs.render_jobs(True, panel._PAGE_STYLE, "host.example", agent_tools=True)
         self.assertIn("tool=job&amp;service=auto-update-apt.service", job_page)
-        self.assertIn(("/agent-tools", "Agent tools", "agent-tools"), panel_navigation(current="agent-tools"))
+        self.assertIn(("/agent-tools", "Agent tools", "agent-tools"), self.state.navigation("agent-tools"))
 
 
 if __name__ == "__main__":

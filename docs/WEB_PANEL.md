@@ -28,12 +28,32 @@ host and service snapshots for up to 30 seconds. See the [web panel
 reference](WEB_PANEL_REFERENCE.md) for data limits, diagnostic behavior, and
 the notification API contract.
 
-Every page uses the same grouped sidebar: workspace activity, administration,
-and on-demand inspection. Dashboard links open the corresponding section;
-optional areas explain when they are not configured. On smaller screens the
-navigation becomes a horizontal scrollable row. Light and dark themes follow
+Every page uses the same grouped sidebar, containing only destinations with
+their own pages. The dashboard's **On this page** links navigate its visible
+sections. On smaller screens the navigation becomes a horizontal scrollable row.
+Light and dark themes follow
 the device preference. Memory and disk meters retain numeric values, and
 service states have text labels as well as color.
+
+Optional pages and controls follow the tools installed for the panel account:
+
+| Area | Appears when |
+| --- | --- |
+| Agents and Agent inbox | Codex, Claude Code, OpenCode, or a T3 Code runtime/user unit is present |
+| Prompt forms, Agent tools, agent-review shortcuts, and dashboard Agent activity | Codex is installed |
+| Git & credentials | Git is installed; GitHub token controls additionally require `gh` |
+| Publishing | Butler or SteamCMD is installed; account controls show installed providers |
+| Maintenance agent | Its managed service and policy file are installed |
+| Admin controls | A valid privilege approval service is configured |
+
+Discovery checks local executable paths and unit files without running tools,
+contacting providers, or testing sign-in. An installed feature remains visible
+when authentication or service health needs attention. Reload after installing
+or removing tools. Unavailable optional pages and their actions return HTTP 404.
+Machines with other agent runtimes but no Codex show runtime diagnostics without
+prompt forms. Repository templates and the Git worktree option require Git.
+Dashboard notifications appear only with ingest enabled; certificate help appears
+when gateway metadata is available. Empty service and access sections are omitted.
 
 Agent tools and Admin controls use grouped lists with aligned actions rather
 than large option cards. Category links jump directly to system or data tools,
@@ -178,9 +198,9 @@ agent and user workflow.
 
 Open **Admin controls** for host updates and power actions. Host actions require
 the optional [privilege approval service](PRIVILEGE_APPROVALS.md), currently
-supported on non-root agent VMs. Other panels still show the available inspection
-tools and account-level T3 Code updater. The panel does not gain root privileges
-or access to the approval password.
+supported on non-root agent VMs. Inspection pages remain available on other panels,
+and the installed account-level T3 Code updater is available in Agents. The panel
+does not gain root privileges or access to the approval password.
 
 | Action | Behavior |
 | --- | --- |
@@ -347,8 +367,9 @@ without a home and show diagnostics with prompt execution unavailable.
    **Run now** queues an immediate run
    and enables repetition when selected. **Create schedule** starts after one
    interval. **Save draft** stores an inactive task, including a one-time
-   prompt, without running it or enabling repetition. Drafts can be prepared
-   before Codex is installed.
+   prompt, without running it or enabling repetition. Before Codex is installed,
+   drafts can be prepared through the task CLI; panel prompt forms appear once
+   Codex is installed.
 7. Set **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
    The default is 3. Failed, blocked, or interrupted runs count toward this
    limit; cancellation preserves the count, and progress or completion resets it.
@@ -405,7 +426,7 @@ templates still require you to select a suitable checkout.
 
 | Conditional template | Appears when | Default repeat / cap | Scope |
 | --- | --- | --- | --- |
-| Check T3 Code readiness | T3 Code is configured or `~/.t3/runtime` exists | Daily / 15 minutes | Inspect only |
+| Check T3 Code readiness | T3 Code runtime or user service unit is installed | Daily / 15 minutes | Inspect only |
 | Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Inspect only |
 | Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Inspect only |
 | Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Inspect only |
@@ -489,8 +510,8 @@ Removing the panel leaves independent tasks running; pause them explicitly.
 
 **Check agent readiness** collects versions and local credential metadata for
 Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and
-the timestamp of any saved readiness record. T3 Code is checked when configured
-or installed; its update action appears for a configured installation.
+the timestamp of any saved readiness record. T3 Code is checked when installed;
+its update action appears for a configured installation.
 Credential file presence is not proof of provider authentication. Checks run
 in the background and do not launch prompts or automatically repair the host.
 

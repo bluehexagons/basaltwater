@@ -36,12 +36,13 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_features import PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
 )
 from common.service_tools.web_panel_agents import AgentDiagnostics, parse_agent_query, render_agent_activity, render_agents
 from common.service_tools.web_panel_templates import (
-    BRAND_NETWORK, panel_navigation, render_document, render_favicon, render_heading, render_icon,
+    BRAND_NETWORK, NavigationItem, panel_navigation, render_document, render_favicon, render_heading, render_icon,
 )
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
@@ -521,11 +522,13 @@ def collect_system_overview() -> list[dict[str, str]]:
     ]
 
 
-def collect_service_health() -> list[dict[str, str]]:
+def collect_service_health(*, user_services: bool) -> list[dict[str, str]]:
     """Read only fixed service properties; never expose commands or journals."""
 
     records: list[dict[str, str]] = []
-    scopes = (([], SYSTEM_UNITS), (["--user"], {"t3code.service": "T3 Code"}))
+    scopes = [([], SYSTEM_UNITS)]
+    if user_services:
+        scopes.append((["--user"], {"t3code.service": "T3 Code"}))
     for scope, units in scopes:
         unavailable = {
             "label": "User services" if scope else "System services",
@@ -742,12 +745,22 @@ class WebPanelState:
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
-        self.agent_diagnostics = AgentDiagnostics(
-            self.agent_tasks.home, manifest["features"].get("t3_update") is True,
-        )
+        self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home)
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
+
+    def features(self) -> PanelFeatures:
+        return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url))
+
+    def navigation(self, current: str) -> tuple[NavigationItem, ...]:
+        return panel_navigation(current=current, available=self.features().pages)
+
+    def diagnostic_sources(self) -> dict[str, str]:
+        from common.service_tools.web_panel_diagnostics import SOURCES
+
+        return {unit: label for unit, label in SOURCES.items()
+                if unit_installed(unit, self.agent_tasks.home, user=unit == "t3code.service")}
 
     def publishing_tick(self) -> None:
         self.publishing.tick()
@@ -817,7 +830,7 @@ class WebPanelState:
         with self._service_health_lock:
             now = time.monotonic()
             if now - self._service_health_at >= _SYSTEM_OVERVIEW_CACHE_SECONDS:
-                self._service_health = collect_service_health()
+                self._service_health = collect_service_health(user_services=self.features().t3)
                 self._service_health_at = now
             return list(self._service_health)
 
@@ -1022,16 +1035,6 @@ select, .diagnostic-filters input { display: block; width: 100%; min-height: 44p
 select:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .sidebar a[aria-current="page"] { background: var(--accent-soft); color: var(--accent);
   box-shadow: inset 3px 0 var(--accent); font-weight: 700; }
-.sidebar a[href*="#"]:active { background: var(--section-soft); }
-body:has(main :is(#services-heading, #audit-heading, #notifications-heading, #access-heading, #trust, #maintenance-heading):target) .sidebar a[aria-current="page"] { background: transparent; box-shadow: none; color: var(--muted); }
-body:has(#services-heading:target) .sidebar a[href$="#services-heading"],
-body:has(#audit-heading:target) .sidebar a[href$="#audit-heading"],
-body:has(#notifications-heading:target) .sidebar a[href$="#notifications-heading"],
-body:has(#access-heading:target) .sidebar a[href$="#access-heading"],
-body:has(#trust:target) .sidebar a[href$="#trust"],
-body:has(#maintenance-heading:target) .sidebar a[href$="#maintenance-heading"] {
-  background: var(--section-soft); color: var(--section-ink); box-shadow: inset 3px 0 var(--section-ink); font-weight: 700;
-}
 .metric a { display: inline-block; min-height: 44px; padding-top: 10px; color: var(--accent); font-size: .85rem; }
 .job-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; }
 .job-facts dt { color: var(--muted); font-size: .85rem; }
@@ -1326,6 +1329,9 @@ code { overflow-wrap: anywhere; }
   border-radius: 12px;
   color: var(--muted);
 }
+main > .empty { margin-bottom: 18px; }
+.inline-link { color: var(--accent); text-underline-offset: 4px; }
+main > .catalog-nav { margin-bottom: 18px; }
 .action {
   display: flex;
   align-items: center;
@@ -1493,12 +1499,8 @@ def _platform_script(label: str, script: str) -> str:
 
 
 def _render_certificate_trust(
-    trust: dict[str, str | bool] | None,
+    trust: dict[str, str | bool],
 ) -> str:
-    if not trust:
-        return f'''<section aria-labelledby="trust-heading"><div class="section-heading"><div>
-{render_heading("Certificate trust", "certificate", heading_id="trust-heading")}</div></div>
-<p class="empty">No managed gateway certificate information is available on this machine.</p></section>'''
     if trust.get("publicly_trusted") is True:
         return f'''<section aria-labelledby="trust-heading">
 <div class="section-heading"><div>
@@ -1633,6 +1635,8 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
     """Render service state separately so the dashboard remains fast to open."""
 
     host = html.escape(state.manifest["host"])
+    features = state.features()
+    prompts = features.prompts
     content = (
         f'<div class="empty-art">{BRAND_NETWORK}<p>Select Load local service status to inspect fixed '
         'system and current-user services.</p></div>'
@@ -1648,7 +1652,7 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
                 html.escape(record["description"]),
                 '<a href="/logs?service={}">Inspect service</a>'.format(
                     urllib.parse.quote(record["unit"], safe=""),
-                ) + tool_link("logs", "Prepare agent review", service=record["unit"])
+                ) + (tool_link("logs", "Prepare agent review", service=record["unit"]) if prompts else "")
                 if record.get("unit") else "",
             )
             for record in health
@@ -1664,16 +1668,17 @@ def render_service_status(state: WebPanelState, load: bool) -> str:
         )
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Local service status</h1>
 <p class="lede">Process state for supported services on <code>{host}</code>.</p></header>'''
+    scope = "fixed system services and the panel user's T3 Code service" if features.t3 else "fixed system services"
     body = f'''<form class="job-load" method="get" action="/services"><button name="load" value="1">Load local service status</button></form>
-<p class="endpoint">This checks fixed system services and the panel user's T3 Code service. It does not prove public DNS, TLS, or application readiness.</p>
-{tool_link("checkup", "Prepare a system checkup")}{content}'''
+<p class="endpoint">This checks {scope}. It does not prove public DNS, TLS, or application readiness.</p>
+{tool_link("checkup", "Prepare a system checkup") if prompts else ""}{content}'''
     footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Local service status · {state.manifest['host']}",
         style=_PAGE_STYLE,
         header=header,
         content=body,
-        navigation=panel_navigation(current="services"),
+        navigation=state.navigation("services"),
         footer=footer,
     )
 
@@ -1770,10 +1775,7 @@ def _render_audit_section(state: WebPanelState) -> str:
 
 def _render_notification_section(state: WebPanelState) -> str:
     if not state.notification_ingest_enabled():
-        return f'''<section aria-labelledby="notifications-heading"><div class="section-heading"><div>
-{render_heading("Notifications", "notifications", heading_id="notifications-heading")}</div>
-<span class="count">Not configured</span></div>
-<p class="empty">Remote notifications are not enabled. Configure the HTTPS receiver with <code>--web-panel-notification-ingest</code> during setup to receive events from your managed machines.</p></section>'''
+        return ""
     events = state.notification_events()
     alerts = unresolved_notification_alerts(events)
     alert_rows = []
@@ -1881,6 +1883,7 @@ def render_page(state: WebPanelState) -> str:
     """Render a small no-JavaScript dashboard from current capability state."""
 
     manifest = state.manifest
+    features = state.features()
     services = _deduplicate_services(
         manifest["services"], discover_basaltwater_web_services()
     )
@@ -1933,9 +1936,6 @@ def render_page(state: WebPanelState) -> str:
             f'<span class="card-description">{html.escape(description)}</span>' if description else "",
             html.escape(record["url"]),
         )
-    service_cards = service_cards or (
-        f'<div class="empty-art">{BRAND_NETWORK}<p>No hosted web services are available on this machine.</p></div>'
-    )
 
     access_rows = "".join(
         "<li><strong>{}</strong><code>{}</code><span>{}</span></li>".format(
@@ -1946,11 +1946,7 @@ def render_page(state: WebPanelState) -> str:
         for record in manifest["access"]
         if isinstance(record, dict) and record.get("value")
     )
-    access_content = (
-        f'<ul class="access-list">{access_rows}</ul>'
-        if access_rows
-        else '<p class="empty">No additional access methods are configured.</p>'
-    )
+    access_content = f'<ul class="access-list">{access_rows}</ul>' if access_rows else ""
 
     overview = state.system_overview()
     overview_cards = ""
@@ -2001,7 +1997,8 @@ def render_page(state: WebPanelState) -> str:
         if pressure_cards else ""
     )
     filesystem_section = render_filesystems(overview, _format_bytes)
-    trust_section = _render_certificate_trust(discover_certificate_trust())
+    trust = discover_certificate_trust()
+    trust_section = _render_certificate_trust(trust) if trust else ""
     audit_section = _render_audit_section(state)
     notification_section = _render_notification_section(state)
 
@@ -2080,19 +2077,39 @@ def render_page(state: WebPanelState) -> str:
 <div><dt>System</dt><dd>{system_type}</dd></div>
 <div><dt>User</dt><dd>{username}</dd></div></dl></div>
 <a class="refresh-link" href="/">Refresh dashboard</a></header>'''
-    body = f'''{status}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
+    dashboard_sections = [("overview-heading", "System overview")]
+    if filesystem_section:
+        dashboard_sections.append(("filesystems-heading", "Mounted storage"))
+    if features.prompts:
+        dashboard_sections.append(("agent-activity-heading", "Agent activity"))
+    if services:
+        dashboard_sections.append(("services-heading", "Web services"))
+    dashboard_sections.append(("audit-heading", "Security activity"))
+    if notification_section:
+        dashboard_sections.append(("notifications-heading", "Notifications"))
+    if access_rows:
+        dashboard_sections.append(("access-heading", "Access"))
+    if trust_section:
+        dashboard_sections.append(("trust", "Certificate trust"))
+    dashboard_sections.append(("maintenance-heading", "Maintenance"))
+    section_nav = '<nav class="catalog-nav" aria-label="Dashboard sections"><span>On this page</span>' + "".join(
+        f'<a href="#{anchor}">{label}</a>' for anchor, label in dashboard_sections
+    ) + '</nav>'
+    services_section = f'''<section aria-labelledby="services-heading"><div class="section-heading"><div>
+{render_heading("Web services", "web-services", heading_id="services-heading")}</div>
+<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>''' if services else ""
+    access_section = f'''<section aria-labelledby="access-heading"><div class="section-heading"><div>
+{render_heading("Access", "access", heading_id="access-heading")}</div>
+<span class="count">{access_label}</span></div>{access_content}</section>''' if access_rows else ""
+    body = f'''{status}{section_nav}<section aria-labelledby="overview-heading"><div class="section-heading"><div>
 {render_heading("System overview", "dashboard", heading_id="overview-heading")}</div>
 <span class="count">Snapshot on page load · cached up to 30 seconds</span></div>
 <dl class="overview-grid host-overview">{overview_cards}</dl>{pressure_section}</section>
 {filesystem_section}
-{render_agent_activity(state)}
-<section aria-labelledby="services-heading"><div class="section-heading"><div>
-{render_heading("Web services", "web-services", heading_id="services-heading")}</div>
-<span class="count">{service_count}</span></div><div class="grid service-grid">{service_cards}</div></section>
+{render_agent_activity(state) if features.prompts else ""}
+{services_section}
 {audit_section}{notification_section}
-<section aria-labelledby="access-heading"><div class="section-heading"><div>
-{render_heading("Access", "access", heading_id="access-heading")}</div>
-<span class="count">{access_label}</span></div>{access_content}</section><div id="trust">{trust_section}</div>{action}
+{access_section}{'<div id="trust">' + trust_section + '</div>' if trust_section else ""}{action}
 '''
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
@@ -2100,7 +2117,7 @@ def render_page(state: WebPanelState) -> str:
         style=_PAGE_STYLE + FILESYSTEM_STYLE,
         header=header,
         content=body,
-        navigation=panel_navigation(current="dashboard"),
+        navigation=state.navigation("dashboard"),
         footer=footer,
         refresh=refresh,
     )
@@ -2110,6 +2127,31 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     server_version = "basaltwater-web-panel/1"
     sys_version = ""
     state: WebPanelState
+
+    def _feature_available(self, path: str) -> bool:
+        pages = {
+            "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
+            "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
+            "/publishing": "publishing", "/admin": "admin",
+            "/actions/agent-task": "agent-tools", "/actions/agent-task/save": "agent-tools",
+            "/actions/agent-tool/prepare": "agent-tools", "/actions/agent-diagnostics": "agents",
+            "/actions/agent-inbox": "agent-inbox", "/actions/maintenance-agent": "maintenance-agent",
+            "/actions/admin": "admin", "/actions/admin/cancel": "admin",
+            "/actions/credentials/identity": "credentials",
+            "/actions/credentials/github": "credentials", "/actions/credentials/github-remove": "credentials",
+            **{"/actions/publishing/" + action: "publishing" for action in PUBLISHING_FIELDS},
+        }
+        page = pages.get(path)
+        if page is None:
+            return True
+        features = self.state.features()
+        if path in {"/actions/credentials/github", "/actions/credentials/github-remove"} and "gh" not in features.tools:
+            return False
+        if path == "/actions/publishing/writing-task" and not features.prompts:
+            return False
+        if path in {"/actions/publishing/steam-api", "/actions/publishing/beta-prepare", "/actions/publishing/beta-promote"} and "steamcmd" not in features.tools:
+            return False
+        return page in features.pages
 
     def _send(
         self,
@@ -2148,6 +2190,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if path == "/healthz":
             self._send(HTTPStatus.OK, "ok\n", "text/plain")
+            return
+        if not self._feature_available(path):
+            self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
             return
         if path == "/maintenance-agent":
             if parsed.query:
@@ -2216,6 +2261,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     query,
                     _PAGE_STYLE,
                     self.state.manifest["host"],
+                    navigation=self.state.navigation("logs"),
+                    agent_tools=self.state.features().prompts,
+                    sources=self.state.diagnostic_sources(),
                 ),
                 "text/html",
             )
@@ -2232,6 +2280,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     load,
                     _PAGE_STYLE,
                     self.state.manifest["host"],
+                    navigation=self.state.navigation("jobs"),
+                    agent_tools=self.state.features().prompts,
                 ),
                 "text/html",
             )
@@ -2265,6 +2315,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             return
         if parsed.query:
             self._send(HTTPStatus.BAD_REQUEST, "Invalid action query\n", "text/plain")
+            return
+        if not self._feature_available(path):
+            self._send(HTTPStatus.NOT_FOUND, "Feature is not installed on this machine\n", "text/plain")
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))

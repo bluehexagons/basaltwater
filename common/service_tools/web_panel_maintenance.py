@@ -6,7 +6,7 @@ import html
 from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
+from common.service_tools.web_panel_templates import render_document, render_heading
 from lib.agent_inbox import AgentInbox, MAX_MESSAGE_BYTES, mailbox_name
 from lib.maintenance_agent import configure_policy, load_policy, load_reports, request_check
 from lib.maintenance_agent_config import DEFAULTS, EFFORTS, LIMITS
@@ -20,6 +20,7 @@ STYLE = """
 .maintenance-form textarea { min-height:140px; }
 .maintenance-form input[type=checkbox] { margin-right:10px; }
 .maintenance-form p { margin:0; color:var(--muted); }
+.maintenance-form + .maintenance-form { margin-top: 18px; }
 """
 LABELS = {"enabled": "Enable maintenance agent", "routines": "Run managed housekeeping daily",
           "security": "Audit SSH and sensitive file permissions", "interval": "Check interval (minutes)",
@@ -96,7 +97,7 @@ def render_maintenance(state: Any, style: str, *, error: str = "") -> str:
         content += '<section>' + render_heading("Maintenance records", "maintenance") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No checks recorded yet. Enable the agent and request a check.</p>') + '</section>'
     header = '<header><p class="eyebrow">Basaltwater web panel</p><h1>Maintenance agent</h1><p class="lede">Checks, housekeeping and bounded AI reviews tailored to this setup.</p></header>'
     return render_document(title="Maintenance agent", style=style + STYLE, header=header, content=content,
-                           navigation=panel_navigation(current="maintenance-agent"), footer='<footer><a href="/">Back to dashboard</a></footer>')
+                           navigation=state.navigation("maintenance-agent"), footer='<footer><a href="/">Back to dashboard</a></footer>')
 
 
 def inbox_action(state: Any, values: dict[str, str]) -> None:
@@ -130,4 +131,4 @@ def render_inbox(state: Any, style: str, recipient: str = "operator", *, error: 
         content += '<section>' + render_heading("Unread messages", "notifications") + ('<ol class="event-list">' + ''.join(rows) + '</ol>' if rows else '<p class="empty">No unread messages.</p>') + '</section>'
     header = '<header><p class="eyebrow">Basaltwater web panel</p><h1>Agent inbox</h1><p class="lede">Durable messages for sessions and cooperating terminal workers.</p></header>'
     return render_document(title="Agent inbox", style=style + STYLE, header=header, content=content,
-                           navigation=panel_navigation(current="agent-inbox"), footer='<footer><a href="/agents">Back to Agents</a></footer>')
+                           navigation=state.navigation("agent-inbox"), footer='<footer><a href="/agents">Back to Agents</a></footer>')

@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 from common.service_tools import web_panel_diagnostics as diagnostics
 from common.service_tools import web_panel_service as panel
+from common.service_tools.web_panel_templates import panel_navigation
+from common.service_tools.web_panel_features import PanelFeatures
 
 
 class DiagnosticQueryTest(unittest.TestCase):
@@ -183,7 +185,8 @@ class DiagnosticQueryTest(unittest.TestCase):
     def test_handler_serves_form_without_dashboard_discovery(self) -> None:
         handler = object.__new__(panel.WebPanelHandler)
         handler.path = "/logs"
-        handler.state = SimpleNamespace(manifest={"host": "host"})
+        handler.state = SimpleNamespace(manifest={"host": "host"}, navigation=lambda current: panel_navigation(current=current),
+                                        features=lambda: PanelFeatures(), diagnostic_sources=lambda: {"nginx.service": "Web gateway"})
         handler._send = Mock()
         with (
             patch.object(panel, "render_page") as dashboard,

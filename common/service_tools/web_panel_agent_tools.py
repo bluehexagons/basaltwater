@@ -9,7 +9,7 @@ import shlex
 from typing import Any
 from urllib.parse import parse_qs, urlencode
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading, render_icon
+from common.service_tools.web_panel_templates import render_document, render_heading, render_icon
 from lib.agent_tasks import MAX_PROMPT_BYTES, validate_task
 from lib.validation import validate_filesystem_path
 
@@ -286,8 +286,9 @@ def render_tools(state: Any, style: str, query: dict[str, str], *, error: str = 
         heading = render_heading(group, "maintenance" if group == "System" else "data", heading_id=identifier)
         catalog += f'<section aria-labelledby="{identifier}"><div class="section-heading">{heading}<span class="count">{len(rows)} tools</span></div><ul class="action-list">{"".join(rows)}</ul></section>'
     body += f'<details><summary>Choose another agent tool</summary>{catalog}</details>' if tool in TOOLS else catalog
-    body += '<p class="endpoint">Host repairs remain separately approved in <a href="/admin">Admin controls</a>. These tools prepare account-level work with the existing Codex runner. T3 Code is optional. Filesystem and data-handling constraints in the prompt guide the agent; review its results and keep an independent backup for valuable data.</p>'
+    repairs = 'separately approved in <a href="/admin">Admin controls</a>' if state.features().admin else 'administrator actions through SSH or the console'
+    body += f'<p class="endpoint">Host repairs remain {repairs}. These tools prepare account-level work with the existing Codex runner. T3 Code is optional. Filesystem and data-handling constraints in the prompt guide the agent; review its results and keep an independent backup for valuable data.</p>'
     header = f'<header class="dashboard-header"><div><p class="eyebrow">System and data tasks</p><h1>Agent tools</h1><p class="lede">Prepare agent work on <code>{escape(state.manifest["host"])}</code>.</p></div><a class="refresh-link" href="/agents">View tasks and results</a></header>'
     return render_document(title=f'Agent tools · {state.manifest["host"]}', style=style + _STYLE,
-                           header=header, content=body, navigation=panel_navigation(current="agent-tools"),
+                           header=header, content=body, navigation=state.navigation("agent-tools"),
                            footer='<footer><a href="/">Back to dashboard</a><span>Review before running or scheduling</span></footer>')

@@ -7,7 +7,7 @@ import shlex
 import urllib.parse
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
+from common.service_tools.web_panel_templates import render_document, render_heading
 
 
 _STYLE = """
@@ -47,6 +47,8 @@ def parse_credentials_query(raw: str) -> dict[str, str]:
 
 
 def render_credentials(state, page_style: str, query: dict[str, str], *, error: str = "") -> str:
+    features = state.features()
+    agent_tools = features.tools & {"codex", "claude", "opencode"}
     snapshot = state.git_settings.snapshot()
     escape = html.escape
     csrf = f'<input type="hidden" name="csrf" value="{escape(state.csrf_token, quote=True)}">'
@@ -74,7 +76,13 @@ def render_credentials(state, page_style: str, query: dict[str, str], *, error: 
             '<p id="github-transport-help">Token changes require this panel over HTTPS. Add <code>--ssl</code> through setup, or use <code>basaltw agent auth set HOST USER --tool gh --file PATH</code> over SSH.</p>'
             if disabled else '<p id="github-transport-help">Tokens are written privately on this VM and are never displayed after submission.</p>'
         )
-        content += f'''<nav class="catalog-nav" aria-label="Account settings"><a href="#git-identity">Commit identity</a><a href="#github-token">GitHub token</a><a href="#provider-sign-in">Agent sign-in</a></nav>
+        content += '<nav class="catalog-nav" aria-label="Account settings"><a href="#git-identity">Commit identity</a>'
+        if "gh" in features.tools:
+            content += '<a href="#github-token">GitHub token</a>'
+        if agent_tools:
+            content += '<a href="#provider-sign-in">Agent sign-in</a>'
+        content += '</nav>'
+        content += f'''
 <section class="account-section" id="git-identity" aria-labelledby="git-identity-heading">
 {render_heading("Commit identity", "agents", heading_id="git-identity-heading")}
 <p><strong>{identity_status}</strong> · public author fields in your global Git configuration.</p>{git_error}
@@ -85,8 +93,10 @@ def render_credentials(state, page_style: str, query: dict[str, str], *, error: 
 <details><summary>Controller defaults and per-VM overrides</summary>
 <p>Setup fills missing name and email from the controller even without a GitHub credential transfer. Existing VM values are retained.</p>
 <pre><code>basaltw patch HOST USER --git-name 'Author Name' --git-email author@example.net</code></pre>
-<p>Explicit controller overrides are saved per VM and reapplied on setup reruns. Panel edits affect this VM immediately; update an explicit controller override too if you want the edit retained on future reruns.</p></details></section>
-<section class="account-section" id="github-token" aria-labelledby="github-token-heading">
+<p>Explicit controller overrides are saved per VM and reapplied on setup reruns. Panel edits affect this VM immediately; update an explicit controller override too if you want the edit retained on future reruns.</p></details></section>'''
+        if "gh" in features.tools:
+            readiness = '<a href="/agents">Agent readiness</a> provides additional diagnostics.' if features.agents else ""
+            content += f'''<section class="account-section" id="github-token" aria-labelledby="github-token-heading">
 {render_heading("GitHub access", "access", heading_id="github-token-heading")}
 <p><strong>{github_status}</strong> · github.com · provider acceptance and repository permissions have not been checked.</p>{github_error}
 <p>Use a fine-grained token limited to the repositories this VM needs. Contents read permits cloning; Contents write permits pushing. Other GitHub operations may need more permissions.</p>
@@ -98,14 +108,15 @@ def render_credentials(state, page_style: str, query: dict[str, str], *, error: 
 <form method="post" action="/actions/credentials/github-remove">{csrf}
 <label><input name="confirmation" type="checkbox" value="remove" required> Remove the stored github.com entry</label>
 <div class="account-actions"><button class="account-secondary" type="submit"{disabled}>Remove stored entry</button></div></form></details>
-<p>Inspect authenticated access from the VM with <code>gh auth status --hostname github.com</code>, then test the intended repository. <a href="/agents">Agent readiness</a> provides additional diagnostics.</p></section>'''
+<p>Inspect authenticated access from the VM with <code>gh auth status --hostname github.com</code>, then test the intended repository. {readiness}</p></section>'''
     login = shlex.join(["basaltw", "agent", "auth", "login", state.manifest["host"], state.manifest["username"]])
-    content += f'''<section class="account-section" id="provider-sign-in" aria-labelledby="provider-sign-in-heading">
+    if agent_tools:
+        codex_login = f'<p>Codex subscription sessions belong to each VM. From the controller, start a device login and authorize its code in your browser:</p><pre><code>{escape(login)}</code></pre>' if "codex" in agent_tools else ""
+        other_login = '<p>Claude Code and OpenCode use their own sign-in flows or explicit credential file imports through <code>basaltw agent auth set</code>.</p>' if agent_tools & {"claude", "opencode"} else ""
+        content += f'''<section class="account-section" id="provider-sign-in" aria-labelledby="provider-sign-in-heading">
 {render_heading("Agent sign-in", "agent-tools", heading_id="provider-sign-in-heading")}
-<p>Codex subscription sessions belong to each VM. From the controller, start a device login and authorize its code in your browser:</p>
-<pre><code>{escape(login)}</code></pre>
-<p>Claude Code and OpenCode use their own sign-in flows or explicit credential file imports through <code>basaltw agent auth set</code>.</p>
+{codex_login}{other_login}
 <a class="refresh-link" href="/agents">View tool credentials and readiness</a></section>'''
     footer = '<footer><a href="/">Back to dashboard</a><span>Settings apply to this VM account</span></footer>'
     return render_document(title="Git & credentials", style=page_style + _STYLE, header=header, content=content,
-                           navigation=panel_navigation(current="credentials"), footer=footer)
+                           navigation=state.navigation("credentials"), footer=footer)

@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import html
 import json
-import os
 import threading
 import time
 import urllib.parse
@@ -13,7 +12,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
+from common.service_tools.web_panel_features import t3_installed
+from common.service_tools.web_panel_templates import render_document, render_heading
 from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
@@ -199,6 +199,8 @@ _STYLE = """
 .agent-check { display: flex !important; gap: 9px; align-items: start; font-weight: 400 !important; }
 .agent-check input { margin-top: 4px; width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
 .agent-help { color: var(--muted); font-size: .78rem; margin: 0; }
+.agent-panel > .agent-help + .agent-help { margin-top: 10px; }
+.agent-panel > .agent-help { margin-bottom: 12px; }
 .agent-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .agent-buttons form { margin: 0; }
 .agent-buttons button { min-height: 44px; font-size: .8rem; }
@@ -225,7 +227,7 @@ _STYLE = """
 .agent-run summary { width: 100%; }
 .agent-run .event-head { align-items: center; }
 .agent-run p { margin: 4px 0; }
-.agent-summary { margin: 0 0 18px; }
+.agent-summary { margin: 18px 0; }
 .agent-columns { margin-top: 18px; }
 .agent-history { display: grid; gap: 10px; }
 .agent-history .agent-run { margin: 0; }
@@ -337,8 +339,8 @@ def render_agent_activity(state: Any) -> str:
 class AgentDiagnostics:
     """Run bounded existing checks on request, without blocking form submission."""
 
-    def __init__(self, home: str, t3_configured: bool) -> None:
-        self.home, self.t3_configured = home, t3_configured
+    def __init__(self, home: str) -> None:
+        self.home = home
         self._lock = threading.Lock()
         self._snapshot: dict[str, Any] = {"status": "not_loaded"}
 
@@ -357,7 +359,7 @@ class AgentDiagnostics:
     def _collect(self) -> None:
         try:
             tools = inspect_agent_tools(["codex", "claude", "opencode", "gh"], home=self.home)
-            t3_present = self.t3_configured or os.path.isdir(os.path.join(self.home, ".t3/runtime"))
+            t3_present = t3_installed(self.home)
             t3 = inspect_t3code(home=self.home, fix=False) if t3_present else None
             record_error = ""
             try:
@@ -409,8 +411,8 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
     services, access = labels("services"), labels("access")
     features = manifest.get("features", {})
     capabilities = {
-        "t3": "T3 Code configured" if features.get("t3_update") is True else
-              "T3 Code runtime detected" if os.path.isdir(os.path.join(home, ".t3/runtime")) else "",
+        "t3": ("T3 Code configured" if features.get("t3_update") is True else
+               "T3 Code runtime detected") if t3_installed(home) else "",
         "containers": "Container CLI detected" if installed("docker", "podman") else "",
         "web_hosting": "Web server configured" if "Web server" in services else
                        "Web hosting command detected" if installed("basaltwater-web", "nginx") else "",
@@ -430,7 +432,8 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
     }
     return {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
             for key, template in PROMPT_TEMPLATES.items()
-            if "requires" not in template or capabilities[template["requires"]]}
+            if ("requires" not in template or capabilities[template["requires"]])
+            and (template["scope"] != "repository" or installed("git"))}
 
 
 def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
@@ -455,13 +458,22 @@ def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> st
             settings = " · ".join([mode, interval, f"{runtime} min cap", *permissions])
             availability = f'<small>{_escape(template["availability"])}</small>' if template.get("availability") else ""
             links.append(f'<a class="agent-template" href="/agents?template={_escape(key)}"{current}><strong>{_escape(template["title"])}</strong><span>{_escape(template["description"])}</span>{availability}<small>{_escape(settings)}</small></a>')
-        groups.append(f'<details class="agent-template-group"{" open" if scope == active_scope else ""}><summary>{label} · {len(links)} templates</summary>{"".join(links)}</details>')
+        if links:
+            groups.append(f'<details class="agent-template-group"{" open" if scope == active_scope else ""}><summary>{label} · {len(links)} templates</summary>{"".join(links)}</details>')
     return "".join(groups)
 
 
 def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
+    if not state.features().prompts:
+        return render_document(
+            title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
+            header=f'<header><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Installed agent runtimes on <code>{_escape(state.manifest["host"])}</code>.</p></header>',
+            content='<section>' + render_heading("Runtime diagnostics", "diagnostics") + _render_diagnostics(state.agent_diagnostics.snapshot(), state.csrf_token) + _render_t3_update(state) + '</section>',
+            navigation=state.navigation("agents"),
+            footer='<footer><a href="/">Back to dashboard</a></footer>',
+        )
     manager: AgentTasks = state.agent_tasks
     snapshot = {"tasks": [], "runs": []}
     storage_error = False
@@ -545,7 +557,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         ("fresh", "Fresh conversation each run"), ("checkpoint", "Carry forward a checkpoint"), ("conversation", "Resume the same conversation")))
     workspace_options = "".join(f'<option value="{key}"{" selected" if key == defaults["workspace"] else ""}>{label}</option>' for key, label in (
         ("existing", "Use the selected directory"), ("directory", "Persistent task directory"),
-        ("worktree", "Persistent Git worktree"), ("run-directory", "Empty directory for each run")))
+        ("worktree", "Persistent Git worktree"), ("run-directory", "Empty directory for each run"))
+        if key != "worktree" or "git" in state.features().tools)
     deadline = defaults["deadline_at"]
     if isinstance(deadline, (int, float)):
         deadline = datetime.fromtimestamp(deadline, timezone.utc).isoformat().replace("+00:00", "Z") if deadline else ""
@@ -592,7 +605,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <a href="/agents">Clear form</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected. Save draft stores the task without running or scheduling it.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
-    helper = f'''<aside class="agent-panel">{render_heading("Start from a template", "agent-tools")}<p class="agent-help">Use <a class="refresh-link" href="/agent-tools">Agent tools</a> to prepare system reviews, workspace cleanup, or data imports and exports with explicit source and output paths.</p><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
+    helper = f'''<aside class="agent-panel">{render_heading("Start from a template", "agent-tools")}<p class="agent-help">Use <a class="inline-link" href="/agent-tools">Agent tools</a> to prepare system reviews, workspace cleanup, or data imports and exports with explicit source and output paths.</p><p class="agent-help">Review the prompt, choose a working directory, and adjust repetition before submitting. Additional templates appear for configured features or detected commands; detection does not verify service health or authentication.</p>{template_links}
 <details><summary>Execution limits</summary><p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. The independent task worker runs without this panel or T3 Code. Older installations use the panel until setup installs the worker. Missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></aside>'''
     rows = []
     for task in tasks:
@@ -637,9 +650,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <a class="refresh-link" href="/agents?reuse={run['id']}">Reuse run settings</a>
 <details><summary>Prompt used for this run</summary><pre>{_escape(run['task']['prompt'])}</pre></details><pre>{_escape(_redact_log_message(run['output'])) if run['output'] else 'Output will appear when the run finishes.' if run['status'] == 'running' else 'No output recorded.'}</pre></details>''')
     diagnostics_html = _render_diagnostics(diagnostics, state.csrf_token)
-    t3_html = ""
-    if state.t3_update_available():
-        t3_html = f'''<div class="action"><div><strong>T3 Code maintenance</strong><p>{_escape(state.action_message or 'Update the installed T3 Code service and verify readiness.')}</p></div><form method="post" action="/actions/t3-update"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="return" value="agents"><button{' disabled' if state.action_status == 'running' else ''}>Update T3 Code</button></form></div>'''
+    t3_html = _render_t3_update(state)
     workbench = f'<div class="agent-columns">{composer}{helper}</div>'
     if tasks and (not query or "run" in query) and not submitted:
         workbench = f'<details><summary>Create a prompt task</summary>{workbench}</details>'
@@ -664,7 +675,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <section aria-labelledby="agent-diagnostics-heading"><div class="section-heading">{render_heading("Runtime diagnostics", "diagnostics", heading_id="agent-diagnostics-heading")}<span class="count">Loaded on request</span></div>{diagnostics_html}{t3_html}</section>
 <section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">Latest {len(runs)} runs</span></div><div class="agent-history">{''.join(history) or '<p class="empty">No prompt runs have been recorded.</p>'}</div></section>'''
     return render_document(title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
-                           header=header, content=content, navigation=panel_navigation(current="agents"),
+                           header=header, content=content, navigation=state.navigation("agents"),
                            footer='<footer><a href="/">Back to dashboard</a><span>Refresh status to see completed runs</span></footer>')
 
 
@@ -710,6 +721,8 @@ def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:
     cards = []
     for tool in snapshot["tools"]:
         installed = tool["installed"]
+        if not installed:
+            continue
         credential = "Needs attention" if tool.get("credential_healthy") is False else "File present; authentication not verified" if tool.get("credential") else "No credential file"
         if tool["tool"] == "codex" and tool.get("credential_healthy") is True:
             credential = "Local credential check passed"
@@ -718,10 +731,14 @@ def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:
     if t3:
         checks = "".join(f'<div><dt>{_escape(name.replace("_", " "))}</dt><dd>{"Passed" if result is True else "Needs attention"}</dd></div>' for name, result in t3["checks"].items())
         cards.append(f'<div class="agent-panel"><strong>T3 Code</strong><p class="agent-help">{_escape(t3.get("version") or "Version unavailable")} · {_escape(t3["status"])}</p><details><summary>Readiness details</summary><dl class="agent-runtime">{checks}</dl></details></div>')
-    else:
-        cards.append('<div class="agent-panel"><strong>T3 Code</strong><p class="agent-help">Not installed. Prompt tasks use the Codex CLI directly.</p></div>')
     hold = snapshot["maintenance"]
     record = snapshot["record"]
     record_note = f'Last saved readiness {_escape(record.get("recorded_at", "Unknown time"))} · boot {"current" if record.get("current_boot") is True else "previous or unknown"}' if record else _escape(snapshot["record_error"] or "No saved readiness record")
     cards.append(f'<div class="agent-panel"><strong>Maintenance hold</strong><p class="agent-help">{_escape(hold["status"])}{ " · until " + _escape(hold.get("expires_at")) if hold["active"] else ""}</p><p class="agent-help">{record_note}</p><a class="refresh-link" href="/jobs">Inspect scheduled jobs</a></div>')
     return form + f'<p class="count">Checked {_time(snapshot["checked_at"])} · credential checks inspect local metadata, not provider authentication</p><div class="grid">' + "".join(cards) + '</div>'
+
+
+def _render_t3_update(state: Any) -> str:
+    if not state.t3_update_available():
+        return ""
+    return f'''<div class="action"><div><strong>T3 Code maintenance</strong><p>{_escape(state.action_message or 'Update the installed T3 Code service and verify readiness.')}</p></div><form method="post" action="/actions/t3-update"><input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="return" value="agents"><button{' disabled' if state.action_status == 'running' else ''}>Update T3 Code</button></form></div>'''

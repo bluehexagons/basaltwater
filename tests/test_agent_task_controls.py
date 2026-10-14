@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from common.service_tools import web_panel_agents as panel
 from common.service_tools.web_panel_service import WebPanelState, _PAGE_STYLE
+from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks as tasks
 from lib.agent_task_api import TaskAPI
 from lib.agent_tasks_cli import add_tasks_parser, run_tasks_command
@@ -153,6 +154,7 @@ class TaskControlsTests(unittest.TestCase):
         self.manager.action(identifier, "delete")
         state = WebPanelState({"host": "example.test", "username": "agent", "features": {}, "services": [], "access": []},
                               agent_home=self.home)
+        self.enterContext(patch.object(state, "features", return_value=PanelFeatures(tools=frozenset({"codex"}))))
         query = panel.parse_agent_query("receipt=" + identifier + "." + run_id)
         with patch.object(tasks, "execute_prompt") as execute:
             document = panel.render_agents(state, _PAGE_STYLE, query)

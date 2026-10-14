@@ -91,9 +91,16 @@ class StorageSnapshotTests(unittest.TestCase):
         self.assertIn("Unresolved findings", page)
 
     def test_jobs_page_load_is_explicit(self):
-        with patch.object(jobs, "render_storage", return_value="STORAGE SNAPSHOT") as render, patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot([], [])):
+        with patch.object(jobs, "render_storage", return_value="STORAGE SNAPSHOT") as render, patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot([], [])) as collect:
             self.assertNotIn("STORAGE SNAPSHOT", jobs.render_jobs(False, "", "nas"))
             render.assert_not_called()
+            collect.assert_not_called()
+            self.assertNotIn("STORAGE SNAPSHOT", jobs.render_jobs(True, "", "nas"))
+            render.assert_not_called()
+            collect.return_value = jobs.JobSnapshot([{
+                "service": "storage-ops.service", "label": "Storage operations", "tone": "info", "status": "No run recorded",
+                **{key: "unknown" for key in ("timer", "enabled", "next", "triggered", "started", "finished", "result", "exit", "persistent")},
+            }], [])
             self.assertIn("STORAGE SNAPSHOT", jobs.render_jobs(True, "", "nas"))
             render.assert_called_once()
 

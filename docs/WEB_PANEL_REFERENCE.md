@@ -4,6 +4,31 @@ This page records the API, collection limits, and security boundaries for the
 [minimal web panel](WEB_PANEL.md). Use the main guide for installation and
 day-to-day operation.
 
+## Feature discovery and navigation
+
+All panel views use one page-only navigation list filtered by installation
+evidence for the panel account. Discovery checks the existing managed tool
+search paths, the account's T3 runtime and user unit, and fixed system unit
+locations. It runs no subprocesses, credential checks, or network requests.
+Service health, enabled state, and successful authentication are separate from
+installation; a failed or masked installation remains inspectable. Saved T3
+setup flags alone do not expose a missing runtime.
+
+Codex exposes prompt forms, tools, and contextual review links. Other installed
+agent runtimes expose diagnostics and inboxes. Git exposes account settings;
+GitHub token controls require GitHub CLI too. Butler/SteamCMD expose publishing,
+the installed maintenance service and policy expose supervision, and a valid
+configured approval URL exposes administration. GET and POST routes for absent
+optional features return HTTP 404 before reading or changing their state.
+Discovery is repeated on requests, so tool changes need only a page reload.
+
+Dashboard section links stay inside the dashboard and reference only rendered
+sections. Unconfigured notifications, unavailable gateway certificate help,
+and empty web-service/access lists are omitted. Diagnostic service selectors
+list installed fixed units; an explicit saved service link can still inspect
+historical logs after removal. The fixed unit allowlist remains the validation
+boundary for such links.
+
 ## Host snapshot
 
 The overview caches local host readings for up to 30 seconds. It shows uptime,
@@ -221,9 +246,9 @@ metadata before running the CLI; it never executes a selected user checkout.
 The source's managed state directory is excluded from this code check because
 the refresh command validates its saved setup separately. The approved check
 reports validation success or failure without exposing privileged plan output.
-Root-managed panels and hosts without the supported optional broker have
-inspection links and their existing account actions, with host controls
-unavailable.
+Root-managed panels and hosts without the supported optional broker retain
+inspection pages and installed account features; the administration page is
+omitted.
 
 ## Agent tool preparation
 
@@ -295,6 +320,9 @@ access. Conditional template links are validated against the fixed catalog;
 unavailable selections show an explanatory notice without prefilling the task.
 Saved tasks remain independent of catalog availability. See the [template
 table](WEB_PANEL.md#agent-prompt-tasks) for conditions and suggested settings.
+Repository templates require an installed Git executable. Without Codex, the
+Agents page exposes only installed runtime diagnostics; the CLI can still save
+inactive task drafts before installation.
 
 The runner invokes the installed Codex executable directly with `codex exec`
 or `codex exec resume SESSION_ID`,
@@ -407,7 +435,7 @@ if they should stop. See [persistent tasks](AGENT_TASKS.md) for storage, API,
 limits and upcoming T3 adapter qualification.
 
 Runtime diagnostics use the existing local tool and credential inspectors.
-T3 Code is checked only when configured or its runtime directory is present,
+T3 Code is checked only when its runtime directory or user service unit is present,
 and checks never use `--fix`. The screen does not expose credential contents or
 the T3 pairing password. Missing tools remain optional; only Codex is required
 for prompt execution. A root-owned setup's locked panel service account cannot

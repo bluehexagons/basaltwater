@@ -33,6 +33,7 @@ from common.web_panel_steps import (
     render_web_panel_nginx,
 )
 from common.service_tools.web_panel_audit_export import _audit_tool, collect_audit_snapshot
+from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_service import (
     WebPanelState,
     WebPanelHandler,
@@ -1000,6 +1001,7 @@ class WebPanelLifecycleTest(unittest.TestCase):
 
 class WebPanelRenderingTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(WebPanelState, "features", return_value=PanelFeatures()))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_filesystems", return_value=[]))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_pressure", return_value=[]))
 
@@ -1168,6 +1170,7 @@ class WebPanelRenderingTest(unittest.TestCase):
 
 class WebPanelEventTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.enterContext(patch.object(WebPanelState, "features", return_value=PanelFeatures()))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_filesystems", return_value=[]))
         self.enterContext(patch("common.service_tools.web_panel_service.collect_pressure", return_value=[]))
 
@@ -1660,7 +1663,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("2m 05s elapsed", rendered)
         self.assertIn("refreshes every 3 seconds", rendered)
 
-    def test_empty_sections_explain_why_they_have_no_entries(self) -> None:
+    def test_unconfigured_dashboard_sections_are_omitted(self) -> None:
         state = WebPanelState(
             {
                 **self._t3_manifest(),
@@ -1677,8 +1680,8 @@ class WebPanelEventTest(unittest.TestCase):
         ):
             rendered = render_page(state)
 
-        self.assertIn("No hosted web services are available", rendered)
-        self.assertIn("No additional access methods are configured", rendered)
+        for heading in ("services-heading", "access-heading", "notifications-heading", "agent-activity-heading"):
+            self.assertNotIn(f'id="{heading}"', rendered)
         self.assertIn("Maintenance</h2>", rendered)
         self.assertIn("View scheduled jobs", rendered)
         self.assertNotIn("Update to latest", rendered)

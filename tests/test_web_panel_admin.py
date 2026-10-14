@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_service import WebPanelHandler, _PAGE_STYLE
 from common.service_tools.web_panel_templates import panel_navigation
+from common.service_tools.web_panel_features import PanelFeatures
 
 
 def manifest():
@@ -29,6 +30,8 @@ class AdminScreenTests(unittest.TestCase):
         self.state = SimpleNamespace(manifest=manifest(), admin=self.manager, csrf_token="csrf",
                                      agent_tasks=Mock(), t3_update_available=Mock(return_value=False))
         self.state.agent_tasks.snapshot.return_value = {"tasks": [], "runs": []}
+        self.state.features = Mock(return_value=PanelFeatures(tools=frozenset({"codex"}), admin=True))
+        self.state.navigation = lambda current: panel_navigation(current=current, available=self.state.features().pages)
 
     def render(self, query=None):
         with patch("common.service_tools.web_panel_admin.exchange", return_value=status()):

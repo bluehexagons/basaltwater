@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import html
 import json
 from pathlib import Path
@@ -27,6 +28,7 @@ from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_storage as storage
 from common.service_tools import web_panel_host as host
 from common.service_tools import web_panel_maintenance as maintenance
+from common.service_tools.web_panel_features import PanelFeatures
 from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
 
 GUIDE_STYLE = """
@@ -238,7 +240,7 @@ def export_assets(assets: Path) -> None:
             "finished": "2026-01-01 09:02:14 UTC", "exit": "1" if tone == "error" else "0",
             "persistent": "Yes",
         })
-    with (
+    patchers = (
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
         patch.object(state, "system_overview", return_value=[
@@ -268,6 +270,7 @@ def export_assets(assets: Path) -> None:
             )),
         ]),
         patch.object(state, "audit_snapshot", return_value={"events": [], "status": "ok"}),
+        patch.object(state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git", "gh"}), t3=True, maintenance=True, admin=True)),
         patch.object(state.agent_tasks, "snapshot", return_value={"tasks": [], "runs": []}),
         patch.object(state.agent_tasks, "available", return_value=False),
         patch.object(state.agent_diagnostics, "snapshot", return_value={"status": "not_loaded"}),
@@ -307,7 +310,10 @@ def export_assets(assets: Path) -> None:
                 {"timestamp": "2026-01-01T09:00:00+00:00", "priority": "6", "message": "Configuration test succeeded. Gateway ready for incoming connections."},
             ],
         }),
-    ):
+    )
+    with ExitStack() as mocks:
+        for patcher in patchers:
+            mocks.enter_context(patcher)
         pages = {
             "panel.html": panel.render_page(state),
             "tools.html": panel.render_tools(state, panel._PAGE_STYLE, {}),
@@ -317,8 +323,8 @@ def export_assets(assets: Path) -> None:
             "maintenance-agent.html": maintenance.render_maintenance(state, panel._PAGE_STYLE),
             "agent-inbox.html": maintenance.render_inbox(state, panel._PAGE_STYLE),
             "credentials.html": panel.render_credentials(state, panel._PAGE_STYLE, {}),
-            "jobs.html": jobs.render_jobs(True, panel._PAGE_STYLE, state.manifest["host"]),
-            "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"]),
+            "jobs.html": jobs.render_jobs(True, panel._PAGE_STYLE, state.manifest["host"], navigation=state.navigation("jobs"), agent_tools=True),
+            "logs.html": diagnostics.render_diagnostics(diagnostics.DiagnosticQuery(load=True, priority="7"), panel._PAGE_STYLE, state.manifest["host"], navigation=state.navigation("logs"), agent_tools=True),
         }
         for name, document in pages.items():
             document = document.replace('href="/favicon.svg"', 'href="favicon.svg"')

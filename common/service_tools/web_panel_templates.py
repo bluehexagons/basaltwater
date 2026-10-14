@@ -246,6 +246,7 @@ def brand_styles() -> str:
 def panel_navigation(
     *,
     current: str | None = None,
+    available: frozenset[str] = frozenset({"dashboard", "services", "jobs", "logs"}),
 ) -> tuple[NavigationItem, ...]:
     """Keep destinations and ordering identical across every panel view."""
 
@@ -257,13 +258,7 @@ def panel_navigation(
         ("/agent-tools", "Agent tools", "agent-tools"),
         ("/credentials", "Git & credentials", "credentials"),
         ("/publishing", "Publishing", "publishing"),
-        ("/#services-heading", "Web services", None),
-        ("/#audit-heading", "Security activity", None),
-        ("/#notifications-heading", "Notifications", None),
         ("/admin", "Admin controls", "admin"),
-        ("/#access-heading", "Access", None),
-        ("/#trust", "Certificate trust", None),
-        ("/#maintenance-heading", "Maintenance", None),
     ]
     items.extend(
         (
@@ -275,6 +270,7 @@ def panel_navigation(
     return tuple(
         (href, label, key if key == current else None)
         for href, label, key in items
+        if key in available
     )
 
 

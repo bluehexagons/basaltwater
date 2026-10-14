@@ -5,11 +5,12 @@ from __future__ import annotations
 import html
 import threading
 import urllib.parse
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from lib.systemd_timers import format_timer_next_trigger
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading
+from common.service_tools.web_panel_templates import NavigationItem, panel_navigation, render_document, render_heading
 from common.service_tools.web_panel_diagnostics import JOB_SERVICES, _bounded_command
 from common.service_tools.web_panel_storage import render_storage
 from common.service_tools.web_panel_agent_tools import tool_link
@@ -110,6 +111,9 @@ def render_jobs(
     load: bool,
     style: str,
     host: str,
+    *,
+    navigation: Iterable[NavigationItem] | None = None,
+    agent_tools: bool = False,
 ) -> str:
     content = '<p class="empty">Select Load scheduled jobs to inspect maintenance timers and their last runs.</p>'
     if load:
@@ -138,21 +142,22 @@ def render_jobs(
             content += f'''<section class="event job-card" aria-label="{html.escape(job['label'], quote=True)}">
 <div class="event-head">{render_heading(job['label'], "jobs")}<div>{timer_badge}<span class="badge {result_tone}">{html.escape(job['status'])}</span></div></div>
 <dl class="job-facts">{primary_facts}</dl><details><summary>Run and timer details</summary><dl class="job-facts">{"".join(facts.values())}</dl></details><a class="refresh-link" href="{html.escape(url, quote=True)}">Inspect job logs</a>
-{tool_link("job", "Prepare agent job review", service=job["service"], window="24h", priority="4")}</section>'''
+{tool_link("job", "Prepare agent job review", service=job["service"], window="24h", priority="4") if agent_tools else ""}</section>'''
         if not snapshot.jobs and not snapshot.issues:
             content += '<p class="empty">No supported maintenance timers are installed.</p>'
-        content += render_storage()
+        if any(job["service"] == "storage-ops.service" for job in snapshot.jobs):
+            content += render_storage()
     header = f'''<header><p class="eyebrow">Basaltwater web panel</p><h1>Scheduled jobs</h1>
 <p class="lede">Update, security, and housekeeping jobs on <code>{html.escape(host)}</code>.</p></header>'''
     body = f'''<form class="job-load" method="get" action="/jobs"><button name="load" value="1">Load scheduled jobs</button></form>
 <p class="endpoint">A snapshot of managed system timers. Times use the host timezone; interval deadlines are approximate. Inactive job services are normal between runs. Results may reset after a reboot or service-manager reload.</p>
-{tool_link("maintenance", "Prepare an agent maintenance plan")}{content}'''
+{tool_link("maintenance", "Prepare an agent maintenance plan") if agent_tools else ""}{content}'''
     footer = '<footer><a href="/">Back to dashboard</a><span>Loaded on request · no automatic refresh</span></footer>'
     return render_document(
         title=f"Scheduled jobs · {host}",
         style=style,
         header=header,
         content=body,
-        navigation=panel_navigation(current="jobs"),
+        navigation=panel_navigation(current="jobs") if navigation is None else navigation,
         footer=footer,
     )

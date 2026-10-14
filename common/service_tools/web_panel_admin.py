@@ -10,7 +10,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 from typing import Any
 
-from common.service_tools.web_panel_templates import panel_navigation, render_document, render_heading, render_icon
+from common.service_tools.web_panel_templates import render_document, render_heading, render_icon
 from common.service_tools.web_panel_agent_tools import tool_link
 from lib.admin_actions import ADMIN_ACTIONS, action_spec
 from lib.admin_status import FAILURE_LABELS, STAGE_LABELS, job_diagnostics
@@ -167,6 +167,7 @@ def _request_history(snapshot: dict, csrf: str) -> str:
 
 
 def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = "") -> str:
+    prompts = state.features().prompts
     manager = state.admin
     snapshot = manager.snapshot()
     escape = html.escape
@@ -182,13 +183,14 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         body += '<p class="endpoint">Review an action here, then approve it with your separate password on the privilege approval page. Every host action needs approval. An approved request is executed once.</p>'
         unit_label = {"active": "Running", "activating": "Starting", "deactivating": "Stopping", "inactive": "Ready", "failed": "Stopped after a failure"}.get(snapshot.get("unit_state"), "Unavailable")
         body += f'<p class="endpoint"><strong>Maintenance service: {unit_label}</strong></p>'
-    try:
-        tasks = state.agent_tasks.snapshot()
-        active = sum(run.get("status") == "running" for run in tasks.get("runs", []))
-        queued = sum(bool(task.get("queued")) for task in tasks.get("tasks", []))
-        body += f'<p class="endpoint">Panel prompt work: {active} running · {queued} queued. Other sessions and externally managed work are not counted. <a href="/agents">Review agent work</a>.</p>'
-    except (OSError, ValueError, RuntimeError):
-        body += '<p class="endpoint">Panel prompt state could not be read. Check active work before interrupting this host.</p>'
+    if prompts:
+        try:
+            tasks = state.agent_tasks.snapshot()
+            active = sum(run.get("status") == "running" for run in tasks.get("runs", []))
+            queued = sum(bool(task.get("queued")) for task in tasks.get("tasks", []))
+            body += f'<p class="endpoint">Panel prompt work: {active} running · {queued} queued. Other sessions and externally managed work are not counted. <a href="/agents">Review agent work</a>.</p>'
+        except (OSError, ValueError, RuntimeError):
+            body += '<p class="endpoint">Panel prompt state could not be read. Check active work before interrupting this host.</p>'
     latest = snapshot.get("latest", {})
     if latest:
         title = ADMIN_ACTIONS.get(latest.get("action"), {}).get("title", "Maintenance job")
@@ -209,7 +211,8 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         for label, value in details:
             body += f'<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>'
         body += '</dl><details><summary>What these results mean</summary><p>The result covers the latest maintenance job only. Dispatch means the service started; it does not confirm completion. Power actions report scheduling, not the subsequent reboot or shutdown. Failed or interrupted work is never retried automatically.</p></details></aside>'
-    body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
+    if prompts:
+        body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
     # Keep existing requests near the top for approvals; empty history can follow
     # the controls so it does not displace the actions the user came to find.
     history = _request_history(snapshot, csrf)
@@ -254,5 +257,5 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
 <form method="post" action="/actions/t3-update">{csrf}<input type="hidden" name="return" value="admin"><button{disabled}>Update T3 Code</button></form></section>'''
     body += '<section aria-label="Inspection tools">' + render_heading("Inspection tools", "diagnostics") + '<div class="admin-tools"><a class="refresh-link" href="/services">Local services</a><a class="refresh-link" href="/jobs">Scheduled jobs</a><a class="refresh-link" href="/logs">Service diagnostics</a><a class="refresh-link" href="/#audit-heading">Security activity</a></div><p class="endpoint">Long jobs run outside the panel, with a six-hour limit. Refresh status to check results without automatic page reloads. For detailed failures, use the administrator SSH or console path.</p></section>'
     return render_document(title=f"Admin controls · {state.manifest['host']}", style=style + _STYLE,
-                           header=header, content=body, navigation=panel_navigation(current="admin"),
+                           header=header, content=body, navigation=state.navigation("admin"),
                            footer='<footer><a href="/">Back to dashboard</a><span>Separate approval for host actions</span></footer>')
