@@ -31,6 +31,8 @@ basaltw agent memory put verify-rollout --kind todo --file todo.txt --project . 
 
 `put` creates only by default. Read the current revision before updating and
 supply `--if-revision N`; never overwrite a competing agent's changes by guessing.
+Revisions advance across the project, may skip numbers for one record, and are
+not reused when a name is deleted and recreated. Use the observed value.
 Text is limited to 16 KiB. Index lists contain metadata, not bodies. Nothing
 automatically evicts older records; remove obsolete entries deliberately with
 their observed revision. On uncertain results, inspect before retrying.

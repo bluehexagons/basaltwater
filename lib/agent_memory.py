@@ -131,7 +131,7 @@ class AgentMemory:
                         raise MemoryBusyError("Project memory is busy; retry after the current writer finishes")
                     time.sleep(0.05)
             state = self._load()
-            yield state["entries"]
+            yield state
             if len(state["entries"]) > MAX_ENTRIES or len((json.dumps(state, indent=2) + "\n").encode("utf-8")) > MAX_STORAGE_BYTES:
                 raise ValueError("Project memory is full; remove obsolete records explicitly")
             write_json_atomic(str(self.path), state)
@@ -139,7 +139,7 @@ class AgentMemory:
             os.close(descriptor)
 
     def _load(self) -> dict[str, Any]:
-        empty = {"version": 1, "scope": self.identity, "entries": {}}
+        empty = {"version": 2, "scope": self.identity, "entries": {}, "next_revision": 1}
         if not self._directory(create=False):
             return empty
         try:
@@ -154,13 +154,24 @@ class AgentMemory:
             if len(content) > MAX_STORAGE_BYTES:
                 raise ValueError("Memory state exceeds its storage bound")
             state = parse_json(content)
-            if (not isinstance(state, dict) or set(state) != {"version", "scope", "entries"}
-                    or type(state["version"]) is not int or state["version"] != 1
+            if (not isinstance(state, dict) or type(state.get("version")) is not int
+                    or state["version"] not in (1, 2)):
+                raise ValueError("Unsupported memory schema")
+            expected = {"version", "scope", "entries"}
+            if state["version"] == 2:
+                expected.add("next_revision")
+            if (set(state) != expected
                     or state["scope"] != self.identity or not isinstance(state["entries"], dict)
                     or len(state["entries"]) > MAX_ENTRIES):
                 raise ValueError("Invalid memory schema or scope")
             for key, record in state["entries"].items():
                 self._validate_record(key, record)
+            highest_revision = max((record["revision"] for record in state["entries"].values()), default=0)
+            if state["version"] == 1:
+                # Preserve old observations; persist migration only with a successful write.
+                state.update(version=2, next_revision=highest_revision + 1)
+            elif type(state["next_revision"]) is not int or state["next_revision"] <= highest_revision:
+                raise ValueError("Invalid project revision counter")
             return state
         except (ValueError, TypeError, KeyError) as exc:
             raise RuntimeError("Invalid project memory; preserve its state for inspection") from exc
@@ -239,19 +250,27 @@ class AgentMemory:
             raise MemoryConflictError("Memory revision changed; inspect the record before retrying")
 
     @staticmethod
+    def _next_revision(state: dict[str, Any]) -> int:
+        """Allocate under the project lock; deletion must never reuse a revision."""
+        revision = state["next_revision"]
+        state["next_revision"] += 1
+        return revision
+
+    @staticmethod
     def _live_claim(record: dict[str, Any]) -> bool:
         return record.get("claim") is not None and record["claim"]["expires_at"] > int(time.time())
 
     def put(self, kind: str, name: str, value: str, *, revision: int = 0) -> dict[str, Any]:
         kind, name = _kind(kind), mailbox_name(name)
         value = self._secret_file(value) if kind == "secret" else _text(value)
-        with self._transaction() as entries:
+        with self._transaction() as state:
+            entries = state["entries"]
             key = kind + ":" + name
             previous = entries.get(key)
             self._revision(previous, revision)
             if previous and kind == "todo" and self._live_claim(previous):
                 raise MemoryConflictError("Todo has a live claim; finish or release it before editing")
-            record = {"kind": kind, "name": name, "revision": revision + 1, "updated_at": int(time.time()),
+            record = {"kind": kind, "name": name, "revision": self._next_revision(state), "updated_at": int(time.time()),
                       "file" if kind == "secret" else "text": value}
             if kind == "todo":
                 record.update(status=previous["status"] if previous else "open", claim=previous["claim"] if previous else None)
@@ -285,7 +304,8 @@ class AgentMemory:
                 "entries": [self._metadata(record) for record in records[:limit]]}
 
     def remove(self, kind: str, name: str, *, revision: int) -> dict[str, Any]:
-        with self._transaction() as entries:
+        with self._transaction() as state:
+            entries = state["entries"]
             record = self._record(entries, kind, name)
             self._revision(record, revision)
             if kind == "todo" and self._live_claim(record):
@@ -301,13 +321,13 @@ class AgentMemory:
     def claim(self, name: str, owner: str, *, seconds: int = 900) -> dict[str, Any]:
         mailbox_name(owner)
         self._lease(seconds)
-        with self._transaction() as entries:
-            record = self._record(entries, "todo", name)
+        with self._transaction() as state:
+            record = self._record(state["entries"], "todo", name)
             if record["status"] not in ("open", "claimed") or self._live_claim(record):
                 raise MemoryConflictError("Todo is unavailable; inspect its status and claim")
             record.update(status="claimed", claim={"owner": owner, "token": uuid.uuid4().hex,
                                                    "expires_at": int(time.time()) + seconds})
-            record.update(revision=record["revision"] + 1, updated_at=int(time.time()))
+            record.update(revision=self._next_revision(state), updated_at=int(time.time()))
         return {**self._metadata(record), "claim_token": record["claim"]["token"]}
 
     def complete_claim(self, name: str, token: str, *, status: str | None = None, seconds: int = 900) -> dict[str, Any]:
@@ -316,22 +336,22 @@ class AgentMemory:
         if status is not None and status not in ("open", "done", "blocked"):
             raise ValueError("Finish status must be open, done or blocked")
         self._lease(seconds)
-        with self._transaction() as entries:
-            record = self._record(entries, "todo", name)
+        with self._transaction() as state:
+            record = self._record(state["entries"], "todo", name)
             if not self._live_claim(record) or record["claim"]["token"] != token:
                 raise MemoryConflictError("Todo claim expired or changed; inspect it before retrying")
             if status is None:
                 record["claim"]["expires_at"] = int(time.time()) + seconds
             else:
                 record.update(status=status, claim=None)
-            record.update(revision=record["revision"] + 1, updated_at=int(time.time()))
+            record.update(revision=self._next_revision(state), updated_at=int(time.time()))
         return self._metadata(record)
 
     def reopen(self, name: str, *, revision: int) -> dict[str, Any]:
-        with self._transaction() as entries:
-            record = self._record(entries, "todo", name)
+        with self._transaction() as state:
+            record = self._record(state["entries"], "todo", name)
             self._revision(record, revision)
             if record["status"] not in ("done", "blocked"):
                 raise MemoryConflictError("Only done or blocked todos can be reopened")
-            record.update(status="open", claim=None, revision=revision + 1, updated_at=int(time.time()))
+            record.update(status="open", claim=None, revision=self._next_revision(state), updated_at=int(time.time()))
         return self._metadata(record)

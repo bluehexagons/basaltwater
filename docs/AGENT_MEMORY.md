@@ -13,6 +13,8 @@ scope derived from their common Git directory. Non-Git projects use the resolved
 directory. Separate clones or moved repositories have separate scopes. Use
 `--project PATH` from any working directory to access a particular project.
 This is same-account cooperation, not isolation between agents on that account.
+The CLI also works in the configured Linux account on CachyOS and Ubuntu WSL;
+native Windows agents have a separate account and cannot use that Linux store.
 
 ## Read only the relevant context
 
@@ -65,6 +67,10 @@ These numbers are examples; use the observed revision. A stale revision returns
 hold a short, bounded project lock and atomically replace the index. A busy lock
 returns `issue: busy`. If a result is uncertain, inspect the entry before
 retrying. Revisions detect conflicts; they are not retained edit history.
+Revisions are allocated across the project and never reused, even after deleting
+every entry. They may skip numbers for an individual record; always read the
+current revision instead of calculating it. Recreating a name cannot make an
+old observation valid for its replacement.
 
 ## Claim a todo before shared work
 
@@ -125,3 +131,7 @@ The CLI is included in updated Basaltwater source without a setup feature flag.
 Older installed CLIs need the normal Basaltwater source refresh. From a checkout,
 development checks can use `python3 basaltwater.py agent memory ...` under the
 same account and execution permissions. Setup refreshes preserve this user state.
+Version-1 indexes remain readable and migrate to version 2 on the next successful
+write, preserving existing record revisions. Reading, a conflict, or a failed
+write does not rewrite legacy state. After migration, use an updated CLI;
+older versions reject the new format rather than reset it.

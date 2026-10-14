@@ -57,6 +57,83 @@ class TestProjectMemory(MemoryFixture):
         self.assertEqual(self.memory.directory.stat().st_mode & 0o777, 0o700)
         self.assertEqual(self.memory.root.stat().st_mode & 0o777, 0o700)
 
+    def test_recreated_records_reject_revisions_from_their_deleted_predecessors(self) -> None:
+        for kind in ("note", "todo", "secret"):
+            with self.subTest(kind=kind):
+                original_value = str(self.secret()) if kind == "secret" else "Old assignment"
+                original = self.memory.put(kind, "handoff", original_value)
+                self.memory.remove(kind, "handoff", revision=original["revision"])
+                value = original_value if kind == "secret" else "Replacement assignment"
+                replacement = self.memory.put(kind, "handoff", value)
+                with self.assertRaises(MemoryConflictError):
+                    self.memory.put(kind, "handoff", original_value, revision=original["revision"])
+                with self.assertRaises(MemoryConflictError):
+                    self.memory.remove(kind, "handoff", revision=original["revision"])
+                self.assertEqual(self.memory.get(kind, "handoff")["revision"], replacement["revision"])
+                self.assertGreater(replacement["revision"], original["revision"])
+
+    def test_reopen_cannot_use_the_revision_of_a_deleted_todo(self) -> None:
+        self.memory.put("todo", "verify", "Old assignment")
+        claim = self.memory.claim("verify", "worker-1")
+        original = self.memory.complete_claim("verify", claim["claim_token"], status="done")
+        self.memory.remove("todo", "verify", revision=original["revision"])
+        self.memory.put("todo", "verify", "Replacement assignment")
+        claim = self.memory.claim("verify", "worker-2")
+        replacement = self.memory.complete_claim("verify", claim["claim_token"], status="blocked")
+        with self.assertRaises(MemoryConflictError):
+            self.memory.reopen("verify", revision=original["revision"])
+        self.assertEqual(self.memory.get("todo", "verify")["status"], "blocked")
+        self.assertGreater(replacement["revision"], original["revision"])
+
+    def test_revisions_survive_empty_storage_and_are_allocated_across_records(self) -> None:
+        original = self.memory.put("note", "handoff", "Old findings")
+        self.memory.remove("note", "handoff", revision=original["revision"])
+        memory = AgentMemory(str(self.project), home=str(self.home))
+        replacement = memory.put("note", "handoff", "New findings")
+        other = memory.put("note", "other", "Separate findings")
+        updated = memory.put("note", "handoff", "Reviewed findings", revision=replacement["revision"])
+        self.assertGreater(replacement["revision"], original["revision"])
+        self.assertGreater(other["revision"], replacement["revision"])
+        self.assertGreater(updated["revision"], other["revision"])
+
+    def test_legacy_state_preserves_revisions_and_migrates_only_after_a_successful_write(self) -> None:
+        self.memory.put("note", "handoff", "Old findings")
+        state = json.loads(self.memory.path.read_text())
+        state["version"] = 1
+        state.pop("next_revision", None)
+        state["entries"]["note:handoff"]["revision"] = 8
+        state["entries"]["note:older"] = {
+            "kind": "note", "name": "older", "revision": 5, "updated_at": 1000, "text": "Earlier findings",
+        }
+        self.memory.path.write_text(json.dumps(state))
+        before = self.memory.path.read_bytes()
+        self.assertEqual(self.memory.get("note", "handoff")["revision"], 8)
+        with self.assertRaises(MemoryConflictError):
+            self.memory.put("note", "handoff", "Stale findings", revision=1)
+        with patch.object(agent_memory, "write_json_atomic", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.memory.put("note", "handoff", "Updated findings", revision=8)
+        self.assertEqual(self.memory.path.read_bytes(), before)
+        updated = self.memory.put("note", "handoff", "Updated findings", revision=8)
+        self.assertEqual(updated["revision"], 9)
+        self.assertEqual(self.memory.get("note", "older")["revision"], 5)
+        saved = json.loads(self.memory.path.read_text())
+        self.assertEqual(saved["version"], 2)
+        self.assertEqual(saved["next_revision"], 10)
+
+    def test_invalid_revision_counters_are_preserved_without_resetting_state(self) -> None:
+        self.memory.put("note", "handoff", "Keep this")
+        state = json.loads(self.memory.path.read_text())
+        state["version"] = 2
+        for counter in (None, True, 0, 1, "2"):
+            with self.subTest(counter=counter):
+                state["next_revision"] = counter
+                self.memory.path.write_text(json.dumps(state))
+                before = self.memory.path.read_bytes()
+                with self.assertRaises(RuntimeError):
+                    self.memory.put("note", "handoff", "Must not write", revision=1)
+                self.assertEqual(self.memory.path.read_bytes(), before)
+
     def test_index_is_bounded_and_search_does_not_dump_text_or_secret_paths(self) -> None:
         for index in range(3):
             self.memory.put("note", f"topic-{index}", "Detailed migration findings")
@@ -199,7 +276,7 @@ class TestProjectMemory(MemoryFixture):
         with patch.object(agent_memory, "MAX_ENTRIES", 1):
             with self.assertRaises(ValueError):
                 self.memory.put("note", "second", "Too many")
-        with patch.object(agent_memory, "MAX_STORAGE_BYTES", 250):
+        with patch.object(agent_memory, "MAX_STORAGE_BYTES", len(before) + 100):
             with self.assertRaises(ValueError):
                 self.memory.put("note", "first", "x" * 1000, revision=1)
         self.assertEqual(self.memory.path.read_bytes(), before)
@@ -219,7 +296,7 @@ class TestProjectMemory(MemoryFixture):
     def test_unsafe_index_files_are_never_followed_or_replaced(self) -> None:
         for kind in ("symlink", "hardlink", "fifo", "permissions"):
             with self.subTest(kind=kind):
-                self.memory.put("note", "first", "Keep this")
+                original = self.memory.put("note", "first", "Keep this")
                 saved = self.home / "saved"
                 self.memory.path.rename(saved)
                 if kind == "symlink":
@@ -237,7 +314,7 @@ class TestProjectMemory(MemoryFixture):
                 self.assertEqual(saved.read_bytes(), before)
                 self.memory.path.unlink()
                 saved.rename(self.memory.path)
-                self.memory.remove("note", "first", revision=1)
+                self.memory.remove("note", "first", revision=original["revision"])
 
     def test_symlinked_state_parent_and_corrupt_schema_are_preserved(self) -> None:
         outside = self.home / "outside"
@@ -291,6 +368,15 @@ class TestMemoryCLI(MemoryFixture):
     def test_cli_rejects_oversized_input_without_creating_a_record(self) -> None:
         self.assertEqual(self.invoke("put", "large", "--file", "-", stdin="x" * (agent_memory.MAX_TEXT_BYTES + 1))[0], 1)
         self.assertFalse(self.memory.path.exists())
+
+    def test_cli_rejects_stale_revisions_after_a_name_is_reused(self) -> None:
+        original = self.invoke("put", "handoff", "--file", "-", stdin="Old findings")[1]
+        self.invoke("remove", "handoff", "--if-revision", str(original["revision"]))
+        replacement = self.invoke("put", "handoff", "--file", "-", stdin="New findings")[1]
+        status, result = self.invoke("put", "handoff", "--file", "-", "--if-revision", str(original["revision"]), stdin="Stale findings")
+        self.assertEqual(status, 1)
+        self.assertEqual(result["issue"], "conflict")
+        self.assertEqual(self.invoke("get", "handoff")[1]["revision"], replacement["revision"])
 
 
 class TestMemoryScope(unittest.TestCase):
