@@ -198,9 +198,13 @@ def _unit_exec_quote(value: str) -> str:
     return _unit_quote(value.replace("$", "$$"))
 
 
-def _unit_path(value: str) -> str:
+def _unit_working_directory(value: str) -> str:
+    """WorkingDirectory preserves literal paths; only percent specifiers expand."""
     validate_filesystem_path(value)
-    return value.replace("\\", "\\x5c").replace("%", "%%").replace(" ", "\\x20")
+    if not os.path.isabs(value):
+        raise ValueError("T3 working directory must be absolute")
+    # Preserve trailing spaces and prevent a final backslash continuing the line.
+    return value.replace("%", "%%").rstrip("/") + "/"
 
 
 def _unit_exec_arg(value: str) -> str:
@@ -517,7 +521,7 @@ def _install_locked(config: SetupConfig, home: Path, prefix: Path, unit: Path) -
         content = (
             f"{_MARKER}\n[Unit]\nDescription=Local CachyOS T3 Code\n"
             "\n[Service]\nType=simple\nUMask=0077\n"
-            f"WorkingDirectory={_unit_path(workspace)}\n"
+            f"WorkingDirectory={_unit_working_directory(workspace)}\n"
             f"Environment={_unit_quote('PATH=' + _tool_path(home))}\n"
             "UnsetEnvironment=T3CODE_STATE_DIR T3CODE_BASE_DIR T3CODE_HOME\n"
             f"{_filtered_exec_start(str(candidate / 'bin/t3'), service_arguments)}\n"

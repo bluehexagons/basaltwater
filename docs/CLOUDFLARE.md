@@ -128,6 +128,9 @@ creates or reuses a tunnel, discovers hostnames from enabled Nginx sites, writes
 systemd service. After verifying the service is active, the helper applies the
 saved direct-access policy. Tunnel credentials and state are stored under
 `/etc/cloudflared` with restrictive permissions.
+Discovery reads actual `server_name` directives, including quoted names, and
+ignores comments, log-format strings, wildcard/default names, and local IP or
+`localhost` server names. These local names do not become public tunnel routes.
 
 Generated tunnel and Nginx configurations are validated before activation. A
 non-interactive refresh compares complete hostname/origin entries, repairs a

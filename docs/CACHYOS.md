@@ -350,6 +350,9 @@ credential filter before systemd records it in the journal, so headless startup
 tokens, pairing URLs, and QR rows are not persisted. HTTP 200 alone is not
 backend health: an unknown route such as `/api/health` can return the frontend HTML.
 If port 3773 is busy, rerun with another port from 1024 through 65535.
+Workspace paths retain literal spaces, quotes, backslashes, and percent signs.
+Older units that escaped spaces as `\x20` need the updated web setup to regenerate
+their working directory; unit syntax validation alone does not prove that path exists.
 
 ### T3 Connect
 

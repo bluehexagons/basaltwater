@@ -13,7 +13,9 @@ import sys
 import json
 import subprocess
 import glob
+import ipaddress
 import re
+import shlex
 import shutil
 import tempfile
 from typing import Optional, Any
@@ -200,6 +202,23 @@ def create_tunnel(tunnel_name: str) -> dict[str, Any]:
     }
 
 
+def _nginx_hostnames(content: str) -> list[str]:
+    """Read server_name directives while respecting Nginx comments and quotes."""
+    lexer = shlex.shlex(content, posix=True, punctuation_chars=";{}")
+    lexer.whitespace_split = True
+    directive: list[str] = []
+    hostnames: list[str] = []
+    for token in lexer:
+        if all(char in ";{}" for char in token):
+            for separator in token:
+                if separator == ";" and directive[:1] == ["server_name"]:
+                    hostnames.extend(directive[1:])
+                directive.clear()
+        else:
+            directive.append(token)
+    return hostnames
+
+
 def discover_nginx_sites() -> list[StrDict]:
     """Discover sites from nginx configuration."""
     sites: list[StrDict] = []
@@ -224,24 +243,28 @@ def discover_nginx_sites() -> list[StrDict]:
             with open(target, 'r') as f:
                 content = f.read()
             
-            server_name_matches = re.findall(r'server_name\s+([^;]+);', content)
-            
-            for match in server_name_matches:
-                domains = match.strip().split()
-                for domain in domains:
-                    if not domain or domain == '_' or domain.startswith('*'):
-                        continue
-                    if not validate_host(domain):
-                        print(f"  ⚠ Skipping invalid Nginx hostname: {domain}")
-                        continue
-                    site = {
-                        'hostname': domain,
-                        'service': 'http://localhost:80'
-                    }
-                    site_key = (domain.lower(), site['service'])
-                    if site_key not in seen:
-                        sites.append(site)
-                        seen.add(site_key)
+            for domain in _nginx_hostnames(content):
+                if not domain or domain == '_' or domain.startswith('*'):
+                    continue
+                if not validate_host(domain):
+                    print(f"  ⚠ Skipping invalid Nginx hostname: {domain}")
+                    continue
+                if domain.lower() == "localhost":
+                    continue
+                try:
+                    ipaddress.ip_address(domain)
+                except ValueError:
+                    pass
+                else:
+                    continue
+                site = {
+                    'hostname': domain,
+                    'service': 'http://localhost:80'
+                }
+                site_key = (domain.lower(), site['service'])
+                if site_key not in seen:
+                    sites.append(site)
+                    seen.add(site_key)
         except Exception as e:
             print(f"  ⚠ Error reading {target}: {e}")
     

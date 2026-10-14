@@ -127,12 +127,32 @@ function Ensure-WingetPackage([string]$packageId, [string]$label) {
     throw "$label failed (exit code $exitCode)"
 }
 
+function Ensure-UbuntuPython {
+    $pythonCheck = @('/usr/bin/python3', '-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 2)')
+    & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return }
+    if ($LASTEXITCODE -eq 2) {
+        throw "Ubuntu system Python 3.10 or newer is required; select a supported Ubuntu distro. Setup does not upgrade the Ubuntu release."
+    }
+    Invoke-Checked "Ubuntu Python prerequisite package index" {
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/apt-get update -qq
+    }
+    Invoke-Checked "Ubuntu Python prerequisite" {
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/env `
+            DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get install -y -qq python3
+    }
+    Invoke-Checked "Ubuntu Python 3.10+ prerequisite verification" {
+        & wsl.exe --distribution $state.Distro --user root --exec @pythonCheck
+    }
+}
+
 function Select-Distro {
     if ($state.Distro) { return }
     $available = & wsl.exe --list --online
     if ($LASTEXITCODE -ne 0) { throw "Could not list official WSL distributions" }
-    $names = @([regex]::Matches(($available -join " "), 'Ubuntu-(\d{2})\.(\d{2})') |
-        ForEach-Object { $_.Value } | Sort-Object -Unique -Descending)
+    $catalog = ($available -join "`n") -replace [char]0, ''
+    $names = @([regex]::Matches($catalog, '(?m)^\s*(Ubuntu-\d{2}\.\d{2})(?=\s|$)') |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique -Descending)
     if (-not $names) { throw "No versioned stable Ubuntu distribution is available from WSL" }
     $state.Distro = $names[0]
     Save-State $state
@@ -253,20 +273,21 @@ try {
     Invoke-Checked "WSL update" { & wsl.exe --update }
     Select-Distro
     Ensure-Distro
-    $osRelease = & wsl.exe --distribution $state.Distro --exec cat /etc/os-release
+    $osRelease = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/cat /etc/os-release
     if ($LASTEXITCODE -ne 0 -or -not @($osRelease | Where-Object { $_ -match '^ID="?ubuntu"?\s*$' })) {
         throw "Selected WSL distribution is not Ubuntu"
     }
     Invoke-Checked "WSL 2 selection" { & wsl.exe --set-version $state.Distro 2 }
+    Ensure-UbuntuPython
     $prepare = Wsl-Path (Join-Path $state.Source "windows\wsl_prepare.py")
     $sourcePath = Wsl-Path $state.Source
-    $changed = & wsl.exe --distribution $state.Distro --user root --exec python3 $prepare configure --user $state.LinuxUser
+    $changed = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare configure --user $state.LinuxUser
     if ($LASTEXITCODE -ne 0) { throw "Ubuntu user/systemd preparation failed" }
     if (($changed | Select-Object -Last 1) -eq "CHANGED") {
         Invoke-Checked "WSL distribution restart" { & wsl.exe --terminate $state.Distro }
     }
     Invoke-Checked "source staging" {
-        & wsl.exe --distribution $state.Distro --user root --exec python3 $prepare stage --source $sourcePath --revision $state.Revision
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare stage --source $sourcePath --revision $state.Revision
     }
     $linuxSource = "/opt/basaltwater/releases/" + $state.Revision
     $setupArgs = @("--system-type", "server_wsl", "--username", $state.LinuxUser, "--machine", "wsl")
@@ -275,7 +296,7 @@ try {
     if ($state.Go) { $setupArgs += "--go" }
     foreach ($tool in $state.AgentTool) { $setupArgs += @("--agent-tool", $tool) }
     Invoke-Checked "Ubuntu WSL setup" {
-        & wsl.exe --distribution $state.Distro --user root --exec python3 ($linuxSource + "/remote_setup.py") @setupArgs
+        & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 ($linuxSource + "/remote_setup.py") @setupArgs
     }
     if ($state.BuildServer) {
         Ensure-WingetPackage 'Git.Git' 'Git for Windows installation'

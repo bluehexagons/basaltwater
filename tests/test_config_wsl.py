@@ -75,6 +75,14 @@ class WslStepTests(unittest.TestCase):
 
 
 class WslPrepareTests(unittest.TestCase):
+    def test_ini_insertion_separates_an_unterminated_existing_setting(self):
+        for section, key, value in (("boot", "systemd", "true"), ("user", "default", "agent")):
+            with self.subTest(section=section):
+                lines = [f"[{section}]\n", "unrelated=preserved"]
+                self.assertTrue(wsl_prepare._set_ini_value(lines, section, key, value))
+                self.assertEqual("".join(lines), f"[{section}]\nunrelated=preserved\n{key}={value}\n")
+                self.assertFalse(wsl_prepare._set_ini_value(lines, section, key, value))
+
     def test_ini_changes_preserve_unrelated_settings_and_are_idempotent(self):
         lines = ["[interop]\n", "appendWindowsPath=false\n"]
         self.assertTrue(wsl_prepare._set_ini_value(lines, "boot", "systemd", "true"))

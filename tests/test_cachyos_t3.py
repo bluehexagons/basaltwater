@@ -318,9 +318,16 @@ class T3InstallTests(unittest.TestCase):
         self.config.agent_workspace = str(self.home / "é work%")
         t3.install(self.config)
         self.assertIn("--host 192.168.1.50", self.unit.read_text())
-        self.assertIn("é\\x20work%%", self.unit.read_text())
+        self.assertIn("WorkingDirectory=" + str(self.home / "é work%%") + "/\n", self.unit.read_text())
         self.ui.assert_called_once_with("http://192.168.1.50:3773/")
         self.assertEqual(t3._unit_quote("PATH=/home/é/%"), '"PATH=/home/é/%%"')
+
+    def test_workspace_unit_keeps_literal_quotes_backslashes_and_trailing_spaces(self):
+        self.config.agent_workspace = str(self.home / 'workspace "quoted" %n\\ ')
+        t3.install(self.config)
+        self.assertIn('WorkingDirectory=' + str(self.home) + '/workspace "quoted" %%n\\ /\n', self.unit.read_text())
+        self.assertTrue(Path(self.config.agent_workspace).is_dir())
+        self.ui.assert_called_once()
 
     def test_setup_lock_refuses_concurrent_install(self):
         self.prefix.mkdir(parents=True)

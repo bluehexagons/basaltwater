@@ -31,6 +31,13 @@ Ubuntu WSL distribution, and absolute Windows drive directory for a new
 distro. Without a distro name, setup selects the newest versioned stable Ubuntu
 listed by WSL. Only an explicitly selected existing distro is reused; setup
 preserves other distros.
+Catalog selection handles WSL's null-padded output and excludes preview names.
+Before running Linux preparation scripts, setup checks Ubuntu's system Python
+and installs `python3` if missing. Python 3.10 or newer is required; an older
+system Python stops preparation with remediation rather than upgrading Ubuntu.
+Bootstrap probes run explicitly as root;
+coding tools and builds still belong to the configured non-root Linux account.
+Existing `wsl.conf` settings are retained, including files without a final newline.
 `-Channel main|dev` or `-Version REF` pins the source revision. `-Go`, `-Node`,
 `-Python`, and `-AgentTool gh,codex,claude,opencode` select Ubuntu tools.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create

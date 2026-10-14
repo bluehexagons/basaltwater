@@ -52,6 +52,69 @@ try {
     $env:LOCALAPPDATA = Join-Path $temporary 'profile'
     New-Item -ItemType Directory -Path $env:LOCALAPPDATA -Force | Out-Null
 
+    # Exercise bootstrap helpers without enabling WSL or changing a real distro.
+    $tokens = $null
+    $errors = $null
+    $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $repo 'install.ps1'), [ref]$tokens, [ref]$errors)
+    foreach ($name in @('Invoke-Checked', 'Select-Distro', 'Ensure-UbuntuPython')) {
+        $definition = $installerAst.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        Assert-True ($null -ne $definition) "Missing installer helper: $name"
+        Invoke-Expression $definition.Extent.Text
+    }
+    function Save-State($value) { $script:CapturedDistro = $value.Distro }
+    function global:wsl.exe {
+        param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+        $global:LASTEXITCODE = 0
+        $global:BootstrapCalls += ,$Arguments
+        if (($Arguments -join ' ') -eq '--list --online') {
+            $catalog = "NAME FRIENDLY NAME`nUbuntu-24.04 Ubuntu 24.04 LTS`nUbuntu-26.04 Ubuntu 26.04 LTS`nUbuntu-26.10-Preview Ubuntu preview`n"
+            return ($catalog.ToCharArray() -join ([string][char]0))
+        }
+        Assert-True (($Arguments -join ' ') -match '--user root --exec /usr/bin/') 'Bootstrap must use Ubuntu root/system executables'
+        if ($Arguments -contains '/usr/bin/python3') {
+            $global:LASTEXITCODE = if (-not $global:BootstrapPythonInstalled) { 127 } elseif ($global:BootstrapOldPython) { 2 } else { 0 }
+            return
+        }
+        if ($Arguments -contains 'install') { $global:BootstrapPythonInstalled = $true }
+        if ($global:BootstrapPackageFailure) { $global:LASTEXITCODE = 17 }
+    }
+    try {
+        $state = [pscustomobject]@{ Distro = '' }
+        $global:BootstrapCalls = @()
+        $global:BootstrapPythonInstalled = $false
+        $global:BootstrapOldPython = $false
+        $global:BootstrapPackageFailure = $false
+        Select-Distro
+        Assert-True ($state.Distro -eq 'Ubuntu-26.04') 'Stable selection failed with null-padded catalog/preview name'
+        Assert-True ($CapturedDistro -eq $state.Distro) 'Selected distro was not saved'
+        $global:BootstrapCalls = @()
+        Ensure-UbuntuPython
+        Assert-True ($global:BootstrapPythonInstalled) 'Fresh bootstrap did not install missing Python'
+        Assert-True ($global:BootstrapCalls.Count -eq 4) 'Missing Python should trigger probe, apt update/install, and verification'
+        $global:BootstrapCalls = @()
+        Ensure-UbuntuPython
+        Assert-True ($global:BootstrapCalls.Count -eq 1) 'Existing Python should skip apt bootstrap'
+        $global:BootstrapCalls = @()
+        $global:BootstrapOldPython = $true
+        Assert-Throws { Ensure-UbuntuPython } 'Python 3.10 or newer'
+        Assert-True ($global:BootstrapCalls.Count -eq 1) 'Unsupported Python must stop before apt or source preparation'
+        $global:BootstrapOldPython = $false
+        $global:BootstrapPythonInstalled = $false
+        $global:BootstrapPackageFailure = $true
+        Assert-Throws { Ensure-UbuntuPython } 'package index failed'
+    } finally {
+        Remove-Item Function:\wsl.exe
+        Remove-Item Function:\Save-State
+        Remove-Item Function:\Select-Distro
+        Remove-Item Function:\Ensure-UbuntuPython
+        Remove-Item Function:\Invoke-Checked
+        Remove-Variable BootstrapCalls, BootstrapPythonInstalled, BootstrapOldPython, BootstrapPackageFailure -Scope Global -ErrorAction SilentlyContinue
+    }
+
     function global:Get-CimInstance {
         param([string]$ClassName)
         if ($ClassName -ne 'Win32_OperatingSystem') { throw 'Unexpected CIM query' }

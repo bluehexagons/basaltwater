@@ -143,6 +143,27 @@ class TestCloudflareTunnelState(unittest.TestCase):
             [{"hostname": "example.com", "service": "http://localhost:80"}],
         )
 
+    def test_discovery_reads_quoted_names_without_publishing_comments_or_log_strings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "site.conf"), "w", encoding="utf-8") as config:
+                config.write(
+                    '# server_name retired.example.com;\n'
+                    'log_format sample "server_name log.example.com;";\n'
+                    'server { listen 80; server_name "app.example.com" # old.example.com;\n'
+                    "  'api.example.com'; }\n"
+                )
+            with patch.object(tunnel_setup, "NGINX_SITES_DIR", tmp):
+                sites = tunnel_setup.discover_nginx_sites()
+        self.assertEqual([site["hostname"] for site in sites], ["app.example.com", "api.example.com"])
+
+    def test_discovery_does_not_create_public_ingress_for_local_ip_server_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "site.conf"), "w", encoding="utf-8") as config:
+                config.write("server_name localhost 127.0.0.1 192.168.0.52 ::1 app.example.com;\n")
+            with patch.object(tunnel_setup, "NGINX_SITES_DIR", tmp):
+                sites = tunnel_setup.discover_nginx_sites()
+        self.assertEqual([site["hostname"] for site in sites], ["app.example.com"])
+
     def test_generate_config_rejects_unsupported_origin(self):
         with self.assertRaisesRegex(ValueError, "Unsupported tunnel origin"):
             tunnel_setup.generate_config_yml(

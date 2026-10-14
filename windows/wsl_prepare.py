@@ -49,6 +49,8 @@ def _set_ini_value(lines: list[str], section: str, key: str, value: str) -> bool
             return False
         lines[keys[0]] = replacement
     else:
+        if end > 0 and not lines[end - 1].endswith("\n"):
+            lines[end - 1] += "\n"
         lines.insert(end, f"{key}={value}\n")
     return True
 
