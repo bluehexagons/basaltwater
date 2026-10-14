@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
+from itertools import chain, repeat
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -26,10 +28,24 @@ class TaskUsageTests(unittest.TestCase):
                        "mode": "inspect", "interval": "hourly", "persistence": "conversation", "token_budget": 100}
         self.identifier = self.manager.create(self.values, run_now=True, now=0)
 
-    def assert_blocked_without_provider(self, *, now: float) -> None:
+    @contextmanager
+    def non_root_provider(self):
+        execute_prompt = tasks.execute_prompt
         provider_os = SimpleNamespace(**vars(os))
-        with (patch.object(tasks, "os", provider_os), patch.object(provider_os, "geteuid", return_value=1000),
-              patch.object(tasks.subprocess, "Popen") as spawn):
+        # A different first UID exercises the provider guard on any host.
+        # Cancellation callbacks re-enter the controller, whose subsequent
+        # ownership checks must use the actual temporary-file owner.
+        provider_os.geteuid = MagicMock(side_effect=chain((9001,), repeat(os.geteuid())))
+
+        def execute(task: dict, home: str, cancellation: object) -> dict:
+            with patch.object(tasks, "os", provider_os):
+                return execute_prompt(task, home, cancellation)
+
+        with patch.object(tasks, "execute_prompt", side_effect=execute):
+            yield provider_os
+
+    def assert_blocked_without_provider(self, *, now: float) -> None:
+        with self.non_root_provider(), patch.object(tasks.subprocess, "Popen") as spawn:
             self.assertTrue(self.manager.tick(now=now))
         spawn.assert_not_called()
         self.assertIn("baseline unavailable", self.manager.snapshot()["runs"][-1]["message"])
@@ -48,8 +64,7 @@ class TaskUsageTests(unittest.TestCase):
         key = SimpleNamespace(fd=99, fileobj=process.stdout)
         selector.get_map.side_effect = [{99: key}, {}]
         selector.select.return_value = [(key, 1)]
-        provider_os = SimpleNamespace(**vars(os))
-        with (patch.object(tasks, "os", provider_os), patch.object(provider_os, "geteuid", return_value=1000),
+        with (self.non_root_provider() as provider_os,
               patch.object(tasks.subprocess, "Popen", return_value=process),
               patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
               patch.object(provider_os, "read", return_value=payload), patch.object(provider_os, "killpg")):
