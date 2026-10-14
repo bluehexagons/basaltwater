@@ -17,7 +17,11 @@ blocked check; do not bypass it through another tool or an unrestricted process.
 
 ## Unattended panel tasks
 
-The web panel's **Agents** screen runs saved Codex prompts independently of T3.
+The web panel's **Agents** screen and `basaltw agent tasks` share saved Codex
+prompts, goals, checkpoints and managed workspaces independently of T3.
+Use `basaltw agent tasks capabilities --json` to inspect executor and worker
+availability. CLI controls and optional stdio MCP are available to standalone
+Codex and agents inside T3; native T3 thread binding awaits stable qualification.
 Read [the unattended task guidance](references/unattended-tasks.md) when preparing
 or running recurring prompts. It covers execution permissions, isolated working
 directories, blocked checks, and review between editing runs. Inspection tasks

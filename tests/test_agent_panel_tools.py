@@ -28,7 +28,7 @@ class TaskForm(HTMLParser):
         super().__init__()
         self.values: dict[str, str] = {}
         self.active = False
-        self.textarea = False
+        self.textarea = ""
         self.select = ""
         self.feed(document)
 
@@ -43,8 +43,8 @@ class TaskForm(HTMLParser):
             if attributes.get("type") != "checkbox" or "checked" in attributes:
                 self.values[name] = attributes.get("value", "") or ""
         if tag == "textarea":
-            self.textarea = True
-            self.values["prompt"] = ""
+            self.textarea = name
+            self.values[name] = ""
         if tag == "select":
             self.select = name
         if tag == "option" and self.select and "selected" in attributes:
@@ -52,13 +52,13 @@ class TaskForm(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self.active and self.textarea:
-            self.values["prompt"] += data
+            self.values[self.textarea] += data
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "form":
             self.active = False
         elif tag == "textarea":
-            self.textarea = False
+            self.textarea = ""
         elif tag == "select":
             self.select = ""
 

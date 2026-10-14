@@ -92,6 +92,7 @@ automation, T3 Code, skills, and hardening.
 | [Privilege broker reference](PRIVILEGE_BROKER_REFERENCE.md) | Allowlist policy, audit records, and approval-service security boundaries |
 | [Agent browser automation](BROWSER_AUTOMATION.md) | Playwright provisioning, Codex/OpenCode registration, and browser security boundaries |
 | [T3 Code server](T3_CODE.md) | Headless service, deliberate updates, pairing, remote clients, and security boundaries |
+| [Persistent agent tasks and goals](AGENT_TASKS.md) | Shared panel/CLI/MCP controls, context and workspaces, bounded continuation, independent workers and future T3 integration |
 | [Managed agent workflow skills](AGENT_SKILLS.md) | Codex/OpenCode/Claude skills, complete bundles, capability routing, and reconciliation |
 | [Godot Engine](GODOT.md) | Verified graphical/headless installation, web/publishing bundles, agent access, and updates |
 | [VM game publishing](GAME_PUBLISHING.md) | Butler/SteamCMD accounts, unattended uploads, promotion, reviewed translations and provider-editor handoffs |

@@ -15,7 +15,7 @@ under the panel account; no T3 Code installation is required.
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
 | Exchange messages across sessions | Agent inbox | Account-local mailboxes with durable unread messages and explicit acknowledgement |
-| Run agent work | Agents | Codex prompts, recurring schedules, run history, and optional T3 Code diagnostics |
+| Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
 | Configure commit identity and GitHub access | Git & credentials | Account Git name/email, private GitHub token replacement/removal, and agent sign-in guidance |
 | Upload games and review release writing | Publishing | VM-local Butler/SteamCMD sessions, completed build uploads, schedules, translations, promotion and tracked editor handoffs |
 | Prepare system and data tasks | Agent tools | Contextual checkups, maintenance plans, log and job reviews, cleanup, and local data work |
@@ -189,7 +189,7 @@ or access to the approval password.
 | Refresh Basaltwater | Upgrade the installed managed source channel and replay the last successful local setup with `basaltw refresh`. This can reconcile configuration and restart services. |
 | Check web configuration | Run `nginx -t` without reloading. |
 | Reload web gateway | Run `nginx -t`, then reload Nginx only if validation passes. |
-| Restart web panel | Restart the panel and prompt scheduler; active panel prompts will be interrupted. |
+| Restart web panel | Restart the UI; independent task work continues. Older installations with panel-owned scheduling interrupt active prompts. |
 | Restart / shut down host | Schedule reboot or power-off two minutes after approval; interrupt all running sessions. |
 | Cancel scheduled power action | Cancel a still-pending scheduled reboot or power-off. |
 
@@ -350,8 +350,19 @@ without a home and show diagnostics with prompt execution unavailable.
    prompt, without running it or enabling repetition. Drafts can be prepared
    before Codex is installed.
 7. Set **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
-   The default is 3. Failed or interrupted runs count toward this limit;
-   cancellation preserves the count, and a completed run resets it.
+   The default is 3. Failed, blocked, or interrupted runs count toward this
+   limit; cancellation preserves the count, and progress or completion resets it.
+
+Choose **Context persistence** independently of **Workspace**. A checkpoint
+carries findings and next steps into a new conversation; conversation mode
+resumes the exact saved Codex session. Managed directories begin empty; a
+persistent worktree starts from the source repository's committed HEAD and
+retains unfinished task changes. Managed workspaces require workspace mode.
+Open **Goal and usage limits** to define completion criteria, continuation,
+attempts, a deadline, reported-token budget, daily limits and evidence retention.
+A goal needs at least one total limit. **Context and evidence** reads its saved
+checkpoint and receipts; **Reset context** preserves workspace files and history.
+See [persistent tasks](AGENT_TASKS.md) for CLI/MCP controls and detailed limits.
 
 The starting templates cover these tasks. Their prompts and settings remain
 editable before submission; selecting a template does not run or schedule it.
@@ -371,11 +382,12 @@ editable before submission; selecting a template does not run or schedule it.
 | Triage a service incident | Once | 20 minutes | Inspect only |
 | Check certificate expiry | Daily | 10 minutes | Inspect only |
 
-Repository editing templates ask for a clean Git checkout, including untracked
-files, and leave changes for review. Their prompts tell later runs to report a
-dirty checkout and stop before editing; review and integrate the previous result
-before continuing the schedule. The templates prohibit stashing, resetting,
-cleaning, or committing existing work to clear the checkout.
+Repository editing templates ask for a clean existing/shared checkout,
+including untracked files, and leave changes for review. A managed persistent
+task worktree may continue its own unfinished changes after inspecting them
+against the checkpoint; unrelated changes still require review. Existing saved
+prompts retain their original instructions. The templates prohibit stashing,
+resetting, cleaning, or committing existing work to clear the checkout.
 Dependency updates follow the project's package manager, lockfiles, and upgrade
 policy, with larger migrations reported for follow-up.
 Host templates inspect existing evidence and recommend follow-up:
@@ -422,8 +434,9 @@ template link explains why it is unavailable and leaves the custom form usable.
 
 Additional options control Codex's web search independently of command network
 access: disabled, cached results, or live search. Runs use ephemeral Codex
-sessions by default; enable **Keep Codex session history** to retain them in
-Codex too. Panel run history is retained with either choice.
+sessions by default; enable **Keep fresh Codex session history** to retain them
+in Codex too. This does not resume them. Conversation persistence always retains
+its session. Run evidence is retained with every choice.
 
 Saved tasks show their next run, last outcome, and working directory. Use
 **Pause**, **Resume**, **Edit**, **Run now**, or **Remove** to manage them.
@@ -440,7 +453,10 @@ count. Inspect the last run, edit the task if needed, then use **Resume** to
 reset the count and schedule its next interval. A successful manual recovery
 run clears the count but leaves the schedule paused until resumed. Timeouts
 and CLI startup errors count as failed runs. A completed CLI process does not
-prove the requested task succeeded; review its output and validation evidence.
+prove the requested task succeeded. Structured reports distinguish progress,
+completion, waiting, blocked and failed work; blocked reports count toward
+failure pausing even with a successful process exit. Review evidence before
+resuming work.
 
 Once tasks are saved, the screen leads with their status; expand **Create a
 prompt task** to add another, or select a saved task's **Edit** link. Selecting
@@ -456,8 +472,10 @@ totals, not lifetime usage or spending estimates. Active runs show elapsed time
 and remaining runtime at page load. Use **Refresh status** to update results
 and timing without automatic reloads that would discard a prompt draft.
 
-The scheduler belongs to the panel service, so it runs without T3 Code while
-the panel is running. Tasks persist across panel and host restarts. After
+New non-root Debian setups with Codex or the panel install an independent task
+worker. It runs without the panel or T3 Code, and the screen reports its live
+lease separately from installed unit presence. Older installations retain panel
+scheduling until setup installs the worker. Tasks persist across panel and host restarts. After
 downtime, each overdue schedule runs at most once, then advances to its next
 interval. Deadlines crossed while a task is running are skipped, preserving its
 cadence without immediately starting another run of that task. An explicit
@@ -465,8 +483,9 @@ Run now request remains available. Changing the elapsed interval resets the next
 deadline to a full interval from saving; editing other settings keeps the existing
 deadline. Paused tasks and drafts remain inactive after edits. These are elapsed
 intervals rather than calendar times. Runs interrupted by a restart are labelled
-for review. The runner executes serially and does not create isolated Git
-worktrees: choose a dedicated checkout when work could overlap another agent session.
+for review. The runner executes serially across its shared CLI/panel controls;
+select a managed task worktree when editing could overlap another agent session.
+Removing the panel leaves independent tasks running; pause them explicitly.
 
 **Check agent readiness** collects versions and local credential metadata for
 Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and

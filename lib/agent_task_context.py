@@ -1,0 +1,279 @@
+"""Private task checkpoints, managed workspaces and bounded Codex event receipts."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+from pathlib import Path
+from typing import Any
+
+from lib.atomic_io import read_json_file, write_json_atomic
+from lib.validation import validate_filesystem_path
+
+
+PERSISTENCE_MODES = ("fresh", "checkpoint", "conversation")
+WORKSPACE_MODES = ("existing", "directory", "worktree", "run-directory")
+OUTCOMES = ("progress", "complete", "waiting", "blocked", "failed")
+MAX_CHECKPOINT_BYTES = 16000
+MAX_CONTEXT_BYTES = 64 * 1024
+MAX_EVENT_BYTES = 1024 * 1024
+_ID = re.compile(r"[a-f0-9]{32}\Z")
+_SESSION = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\Z")
+
+REPORT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "outcome": {"type": "string", "enum": list(OUTCOMES)},
+        "summary": {"type": "string"},
+        "checkpoint": {"type": "string"},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "retry_after_minutes": {"type": ["integer", "null"], "minimum": 1, "maximum": 43200},
+    },
+    "required": ["outcome", "summary", "checkpoint", "evidence", "retry_after_minutes"],
+}
+
+
+def private_directory(home: str, directory: Path, *, create: bool = False) -> Path:
+    """Check every managed directory component without following symlinks."""
+    home_path = Path(os.path.abspath(home))
+    validate_filesystem_path(str(directory))
+    try:
+        parts = directory.relative_to(home_path).parts
+    except ValueError as exc:
+        raise ValueError("Task storage must remain below the account's home") from exc
+    if not parts:
+        raise ValueError("Task storage cannot be the account's home")
+    current = home_path
+    home_info = current.lstat()
+    if not stat.S_ISDIR(home_info.st_mode) or home_info.st_uid != os.geteuid() or home_info.st_mode & 0o022:
+        raise RuntimeError("Task home must be owned by the account without shared write access")
+    for part in parts:
+        current /= part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            if not create:
+                return directory
+            current.mkdir(mode=0o700, exist_ok=True)
+            info = current.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
+            raise RuntimeError(f"Unsafe task directory: {current}")
+    if directory.stat().st_mode & 0o077:
+        raise RuntimeError(f"Task directory must be private: {directory}")
+    return directory
+
+
+def private_json(path: Path, *, max_bytes: int = MAX_CONTEXT_BYTES) -> dict[str, Any]:
+    """Read account-owned private JSON, preserving invalid state for inspection."""
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+        raise RuntimeError(f"Unsafe task record: {path}")
+    value = read_json_file(str(path), max_bytes=max_bytes)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Invalid task record: {path}")
+    return value
+
+
+def validate_report(value: object) -> dict[str, Any]:
+    """Check semantic output separately from a successful provider exit."""
+    if not isinstance(value, dict) or set(value) != set(REPORT_SCHEMA["required"]):
+        raise ValueError("Codex did not return a complete task report")
+    if value["outcome"] not in OUTCOMES:
+        raise ValueError("Invalid task report outcome")
+    for name, limit in (("summary", 4000), ("checkpoint", MAX_CHECKPOINT_BYTES)):
+        text = value[name]
+        if not isinstance(text, str) or len(text.encode("utf-8")) > limit or "\x00" in text:
+            raise ValueError(f"Invalid task report {name}")
+    evidence = value["evidence"]
+    if not isinstance(evidence, list) or len(evidence) > 40 or any(
+        not isinstance(item, str) or len(item.encode("utf-8")) > 2000 or "\x00" in item for item in evidence
+    ):
+        raise ValueError("Invalid task report evidence")
+    retry = value["retry_after_minutes"]
+    if retry is not None and (type(retry) is not int or not 1 <= retry <= 43200):
+        raise ValueError("Invalid task retry interval")
+    if value["outcome"] == "complete" and not any(item.strip() for item in evidence):
+        raise ValueError("Completion requires recorded verification evidence")
+    return value
+
+
+class CodexEvents:
+    """Parse bounded JSONL incrementally; provider output never becomes a command."""
+
+    def __init__(self) -> None:
+        self.pending = bytearray()
+        self.session_id: str | None = None
+        self.report: dict[str, Any] | None = None
+        self.usage: dict[str, int] | None = None
+        self.error = ""
+
+    def feed(self, content: bytes, *, final: bool = False) -> None:
+        self.pending.extend(content)
+        while b"\n" in self.pending:
+            line, _, remainder = self.pending.partition(b"\n")
+            self.pending = bytearray(remainder)
+            self._line(line)
+        if len(self.pending) > MAX_EVENT_BYTES:
+            self.pending.clear()
+            self.error = "Codex event exceeded the record limit"
+        if final and self.pending:
+            self._line(bytes(self.pending))
+            self.pending.clear()
+
+    def _line(self, line: bytes) -> None:
+        if len(line) > MAX_EVENT_BYTES:
+            self.error = "Codex event exceeded the record limit"
+            return
+        try:
+            event = json.loads(line)
+        except (ValueError, UnicodeError, RecursionError):
+            return  # CLI diagnostics on stderr are retained in the private log.
+        if not isinstance(event, dict):
+            return
+        if event.get("type") == "thread.started":
+            session = event.get("thread_id")
+            if isinstance(session, str) and _SESSION.fullmatch(session):
+                self.session_id = session
+        elif event.get("type") == "turn.completed":
+            usage = event.get("usage")
+            if isinstance(usage, dict) and all(type(usage.get(name)) is int and 0 <= usage[name] <= 10**12
+                                                for name in ("input_tokens", "output_tokens")):
+                self.usage = {name: (self.usage or {}).get(name, 0) + usage[name]
+                              for name in ("input_tokens", "output_tokens")}
+        elif event.get("type") == "item.completed":
+            item = event.get("item")
+            if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                try:
+                    self.report = validate_report(json.loads(item["text"]))
+                    self.error = ""
+                except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
+                    self.report = None
+                    self.error = str(exc)
+
+
+class TaskContextStore:
+    """Keep resumable state and evidence outside a task's editable workspace."""
+
+    def __init__(self, home: str) -> None:
+        self.home = os.path.realpath(home)
+        self.root = Path(self.home) / ".local/state/basaltwater/task-contexts"
+
+    def directory(self, identifier: str, *, create: bool = False) -> Path:
+        if not isinstance(identifier, str) or not _ID.fullmatch(identifier):
+            raise ValueError("Invalid task context ID")
+        private_directory(self.home, self.root, create=create)
+        return private_directory(self.home, self.root / identifier, create=create)
+
+    def load(self, identifier: str) -> dict[str, Any]:
+        directory = self.directory(identifier)
+        try:
+            value = private_json(directory / "context.json")
+        except FileNotFoundError:
+            return {"version": 1, "checkpoint": "", "session_id": None, "workspace": None}
+        if (value.get("version") != 1 or not isinstance(value.get("checkpoint"), str)
+                or len(value["checkpoint"].encode("utf-8")) > MAX_CHECKPOINT_BYTES
+                or value.get("session_id") is not None and (
+                    not isinstance(value["session_id"], str) or not _SESSION.fullmatch(value["session_id"]))
+                or value.get("workspace") is not None and not isinstance(value["workspace"], dict)):
+            raise RuntimeError(f"Invalid task context: {directory}")
+        return value
+
+    def save(self, identifier: str, value: dict[str, Any]) -> None:
+        directory = self.directory(identifier, create=True)
+        if len(json.dumps(value).encode()) > MAX_CONTEXT_BYTES:
+            raise ValueError("Task context exceeds the storage limit")
+        write_json_atomic(str(directory / "context.json"), value)
+
+    def prepare(self, task: dict[str, Any], run_id: str) -> dict[str, Any]:
+        if not _ID.fullmatch(run_id):
+            raise ValueError("Invalid task run ID")
+        identifier = task["id"]
+        directory = self.directory(identifier, create=True)
+        context = self.load(identifier)
+        source = task["directory"]
+        workspace_mode = task["workspace"]
+        if workspace_mode == "existing":
+            execution_directory = source
+        elif workspace_mode in {"directory", "run-directory"}:
+            workspace = Path(self.home) / ".local/share/basaltwater/task-workspaces" / identifier
+            context["workspace"] = {"mode": workspace_mode, "path": str(workspace), "source_directory": source}
+            self.save(identifier, context)
+            if workspace_mode == "run-directory":
+                workspace /= run_id
+            execution_directory = str(private_directory(self.home, workspace, create=True))
+        else:
+            from lib.agent_workspace import create_agent_worktree, inspect_agent_worktree
+
+            saved = context.get("workspace")
+            label = "prompt-" + identifier
+            if saved is None:
+                saved = create_agent_worktree(source, label, home=self.home)
+                context["workspace"] = saved
+                self.save(identifier, context)  # Persist ownership before an agent can edit it.
+            validate_filesystem_path(saved["path"], must_exist=True)
+            if os.path.commonpath((os.path.realpath(saved["path"]), self.home)) != self.home:
+                raise RuntimeError("Task worktree must remain below the account's home")
+            inspected = inspect_agent_worktree(saved["path"])
+            if (not inspected.get("managed") or inspected.get("task") != label
+                    or inspected.get("repository") != saved["repository"]
+                    or inspected.get("branch") != saved["branch"]):
+                raise RuntimeError("Task worktree no longer matches its managed ownership")
+            execution_directory = saved["path"]
+        runs = private_directory(self.home, directory / "runs", create=True)
+        schema = directory / "report-schema.json"
+        write_json_atomic(str(schema), REPORT_SCHEMA)
+        return {
+            "context_directory": str(directory), "directory": execution_directory,
+            "source_directory": source, "schema_path": str(schema),
+            "log_path": str(runs / (run_id + ".jsonl")),
+            "checkpoint": context["checkpoint"] if task["persistence"] != "fresh" else "",
+            "session_id": context["session_id"] if task["persistence"] == "conversation" else None,
+        }
+
+    def record(self, task: dict[str, Any], run: dict[str, Any]) -> None:
+        identifier = task["id"]
+        directory = self.directory(identifier, create=True)
+        context = self.load(identifier)
+        if task["persistence"] != "fresh":
+            if isinstance(run.get("checkpoint"), str):
+                context["checkpoint"] = run["checkpoint"]
+            if task["persistence"] == "conversation" and run.get("session_id"):
+                context["session_id"] = run["session_id"]
+            context["last_run_id"] = run["id"]
+            self.save(identifier, context)
+        runs = private_directory(self.home, directory / "runs", create=True)
+        receipt = {key: value for key, value in run.items() if key != "task"}
+        receipt["task"] = {key: value for key, value in run["task"].items() if not key.startswith("_")}
+        write_json_atomic(str(runs / (run["id"] + ".json")), receipt)
+        receipts = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
+                          key=lambda path: path.stat().st_mtime_ns)
+        for old in receipts[:-task["history_limit"]]:
+            for path in (old, old.with_suffix(".jsonl")):
+                try:
+                    info = path.lstat()
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+                    raise RuntimeError(f"Unsafe task evidence: {path}")
+                path.unlink()
+
+    def reset(self, identifier: str) -> None:
+        context = self.load(identifier)
+        context.update(checkpoint="", session_id=None)
+        context.pop("last_run_id", None)
+        self.save(identifier, context)
+
+    def history(self, identifier: str, *, limit: int = 40) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("History limit must be 1–100")
+        runs = private_directory(self.home, self.directory(identifier) / "runs")
+        if not runs.exists():
+            return []
+        paths = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
+                       key=lambda path: path.lstat().st_mtime_ns, reverse=True)[:limit]
+        fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "message",
+                  "output", "usage", "execution_directory", "context_directory", "log_path", "session_id"}
+        return [{key: value for key, value in private_json(path, max_bytes=1024 * 1024).items() if key in fields}
+                for path in paths]

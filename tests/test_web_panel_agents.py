@@ -535,11 +535,15 @@ class AgentTaskTest(unittest.TestCase):
                 selector.get_map.return_value = {1: object()}
                 process.pid, process.wait.return_value = 1234, -9
                 cancel = threading.Event()
-                if cancelled:
-                    cancel.set()
+
+                def launch(*_args: object, **_kwargs: object) -> object:
+                    if cancelled:
+                        cancel.set()
+                    return process
+
                 with (
                     patch.object(tasks.os, "geteuid", return_value=1000),
-                    patch.object(tasks.subprocess, "Popen", return_value=process),
+                    patch.object(tasks.subprocess, "Popen", side_effect=launch),
                     patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
                     patch.object(tasks.time, "monotonic", side_effect=[0, 9999, 9999]),
                     patch.object(tasks.os, "killpg") as kill,
@@ -883,6 +887,28 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(handler._send.call_args.args[0].value, 422)
         self.assertIn("&lt;script&gt;", handler._send.call_args.args[1])
         self.assertEqual(len(self.state.agent_tasks.snapshot()["tasks"]), 1)
+
+    def test_persistent_goal_form_accepts_full_unicode_prompt_and_criteria(self) -> None:
+        values = {"csrf": self.state.csrf_token, "id": "", "title": "Bounded goal", "prompt": "é" * 2000,
+                  "directory": self.temporary.name, "mode": "workspace", "interval": "once", "submit": "draft",
+                  "model": "", "custom_model": "", "effort": "", "timeout_minutes": "30",
+                  "web_search": "disabled", "failure_limit": "3", "repeat_minutes": "60",
+                  "persistence": "checkpoint", "workspace": "directory", "continue_until_done": "1",
+                  "completion_criteria": "é" * 2000, "continuation_minutes": "5", "max_runs": "3",
+                  "deadline_at": "", "token_budget": "0", "daily_limit": "0", "backoff_minutes": "10",
+                  "history_limit": "100"}
+        self.assertGreater(len(urllib.parse.urlencode(values).encode()), 16 * 1024)
+        self.assertGreater(len(values), 18)
+        handler = self.handler("/actions/agent-task/save", values)
+        with patch.object(tasks, "execute_prompt") as execute:
+            handler.do_POST()
+        execute.assert_not_called()
+        handler.send_response.assert_called_with(303)
+        task = self.state.agent_tasks.snapshot()["tasks"][0]
+        self.assertTrue(task["draft"])
+        self.assertTrue(task["continue_until_done"])
+        self.assertEqual(task["max_runs"], 3)
+        self.assertEqual(task["completion_criteria"], values["completion_criteria"])
 
     def test_one_time_draft_can_be_prepared_without_codex_and_does_not_skip_csrf(self) -> None:
         values = {"csrf": self.state.csrf_token, "title": "Prepare", "prompt": "Inspect later",

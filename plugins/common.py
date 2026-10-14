@@ -34,6 +34,7 @@ PLUGIN = PluginDefinition(
         "update_managed_agent_tools",
         "install_agent_cli_launcher",
         "install_agent_workflow_skills",
+        "configure_agent_task_worker",
         "install_t3code_web",
         "configure_web_panel",
         "configure_privilege_broker",
@@ -370,6 +371,10 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
 
     if config.agent_repos:
         steps.append(("Cloning agent repositories on target", clone_agent_repositories))
+    if config.install_codex or config.web_panel_port is not None:
+        from common.agent_task_steps import configure_agent_task_worker
+
+        steps.append(("Configuring independent agent task worker", configure_agent_task_worker))
 
 
 def extend_web_panel_steps(
@@ -449,6 +454,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
     )
     from common.t3code_steps import install_t3code_web
     from common.web_panel_steps import configure_web_panel
+    from common.agent_task_steps import configure_agent_task_worker
     from common.git_credential_steps import configure_git_https_credentials
     from common.privilege_broker_steps import configure_privilege_broker
     from common.browser_automation_steps import install_browser_automation
@@ -476,6 +482,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "update_managed_agent_tools": update_managed_agent_tools,
         "install_agent_cli_launcher": install_agent_cli_launcher,
         "install_agent_workflow_skills": install_agent_workflow_skills,
+        "configure_agent_task_worker": configure_agent_task_worker,
         "install_t3code_web": install_t3code_web,
         "configure_web_panel": configure_web_panel,
         "configure_privilege_broker": configure_privilege_broker,

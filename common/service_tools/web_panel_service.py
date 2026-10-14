@@ -46,6 +46,7 @@ from common.service_tools.web_panel_templates import (
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
 from lib.agent_tasks import AgentTasks
+from lib.agent_task_api import worker_status
 from lib.agent_git_settings import AgentGitSettings
 from common.service_tools.web_panel_credentials import parse_credentials_query, render_credentials
 from common.service_tools.web_panel_publishing import FIELDS as PUBLISHING_FIELDS, publishing_action, render_publishing
@@ -2271,7 +2272,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             length = -1
         # Percent encoding can triple a valid 64 KiB UTF-8 draft before
         # transport. Leave bounded room for its title and revision metadata.
-        request_limit = 256 * 1024 if path in publishing_paths else _MAX_REQUEST_BYTES
+        request_limit = 256 * 1024 if path in publishing_paths else 32 * 1024 if path == "/actions/agent-task/save" else _MAX_REQUEST_BYTES
         if not 0 <= length <= request_limit:
             self._send(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Invalid request\n", "text/plain")
             return
@@ -2279,7 +2280,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             values = urllib.parse.parse_qs(
                 self.rfile.read(length).decode("utf-8", errors="strict"),
                 keep_blank_values=True,
-                max_num_fields=18,
+                max_num_fields=40 if path == "/actions/agent-task/save" else 18,
             )
         except (UnicodeDecodeError, ValueError):
             self._send(HTTPStatus.BAD_REQUEST, "Invalid request\n", "text/plain")
@@ -2421,6 +2422,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "custom_model", "network", "submit", "effort", "timeout_minutes",
                 "web_search", "session_history", "temporary_files",
                 "failure_limit", "repeat_minutes",
+                "persistence", "workspace", "continue_until_done", "completion_criteria",
+                "continuation_minutes", "max_runs", "deadline_at", "token_budget", "daily_limit",
+                "backoff_minutes", "history_limit",
             },
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):
@@ -2450,11 +2454,12 @@ class WebPanelHandler(BaseHTTPRequestHandler):
             submitted["network"] = values.get("network") == ["1"]
             submitted["session_history"] = values.get("session_history") == ["1"]
             submitted["temporary_files"] = values.get("temporary_files") == ["1"]
+            submitted["continue_until_done"] = values.get("continue_until_done") == ["1"]
             try:
                 if path == "/actions/agent-task":
                     manager.action(values.get("id", [""])[0], values.get("action", [""])[0])
                 else:
-                    for option in ("network", "session_history", "temporary_files"):
+                    for option in ("network", "session_history", "temporary_files", "continue_until_done"):
                         if option in values and values[option] != ["1"]:
                             raise ValueError("Invalid checkbox option")
                     if submitted.get("custom_model"):
@@ -2603,7 +2608,8 @@ def main() -> int:
             raise ValueError("--port must be between 1 and 65535")
         server = _ThreadingTCPHTTPServer((args.listen, args.port), WebPanelHandler)
     try:
-        state.agent_tasks.start()
+        task_worker = worker_status(state.agent_tasks)
+        state.agent_tasks.start(scheduler=not (task_worker["installed"] or task_worker["running"]))
         server.serve_forever(poll_interval=0.5)
     finally:
         state.agent_tasks.close()

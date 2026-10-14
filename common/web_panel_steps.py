@@ -335,7 +335,7 @@ server {{
         if=$basaltwater_web_panel_auth_failure;
     auth_basic "basaltwater web panel";
     auth_basic_user_file {WEB_PANEL_AUTH_FILE};
-    client_max_body_size 16k;
+    client_max_body_size 32k;
 {ingest_location}
 {desktop_location}
 

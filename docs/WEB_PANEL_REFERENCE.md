@@ -275,7 +275,11 @@ choices, web-search mode, Codex session retention, a preset or custom interval,
 and a 0–10 consecutive-failure limit (default 3). No executable or arbitrary CLI
 arguments can be supplied through a form.
 
-The form parser accepts at most 18 fields. A custom schedule uses
+Task saving accepts at most 40 fields and a 32 KiB encoded body; other ordinary
+forms retain the 18-field/16 KiB limits. Tasks also accept context/workspace
+persistence, completion criteria, bounded continuation, lifetime attempts,
+timezone-qualified deadlines, reported-token and daily limits, failure backoff
+and retained evidence limits. A custom schedule uses
 `interval=custom` and `repeat_minutes` from 1 to 43,200 whole minutes; preset
 intervals normalize the custom value to zero. Older saved presets receive that
 default without changing their deadlines. The runtime cap is independent of
@@ -292,7 +296,8 @@ unavailable selections show an explanatory notice without prefilling the task.
 Saved tasks remain independent of catalog availability. See the [template
 table](WEB_PANEL.md#agent-prompt-tasks) for conditions and suggested settings.
 
-The runner invokes the installed Codex executable directly with `codex exec`,
+The runner invokes the installed Codex executable directly with `codex exec`
+or `codex exec resume SESSION_ID`,
 passes the prompt through stdin, and explicitly uses the read-only or
 workspace-write sandbox and the `never` approval policy. Workspace mode
 explicitly configures command network access and temporary-directory writes,
@@ -310,8 +315,9 @@ agent to keep inspection read-only across tools, report blocked checks without
 escalation or interactive login, and keep waits within the remaining runtime.
 Skill examples and tool presence do not grant authority beyond the task prompt.
 These instructions guide agent behavior; they do not add an OS sandbox around
-external integrations. Repository editing templates require a clean checkout
-and stop for review when an earlier run left tracked or untracked changes. This
+external integrations. Repository editing templates require a clean existing
+checkout, while a managed task worktree may continue its own changes against
+the checkpoint. They stop for review when changes are unrelated. This
 is prompt guidance, not a Git lock or a runner-enforced preflight. Existing saved
 prompts retain their text; select the refreshed template to adopt its guidance.
 
@@ -323,13 +329,15 @@ explicit model choices when saving; availability is ultimately checked by
 Codex when it runs. Effort overrides use `model_reasoning_effort`. Web-search
 overrides use `web_search`; command-network restrictions do not restrict
 provider requests or independently configured MCP integrations. Runs use
-`--ephemeral` unless Codex session retention is enabled. These settings follow
+`--ephemeral` unless fresh session retention or conversation persistence is enabled. These settings follow
 the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
 State lives in `~/.local/state/basaltwater/prompt-tasks/tasks.json` (0600) below
-a private directory (0700). A lifetime process lock prevents a second panel
-scheduler from executing the same tasks. The scheduler runs with the panel
-service, checks due work every 15 seconds, persists a claim before execution,
+a private directory (0700). Mutations reload state under a process lock so CLI,
+MCP and panel controllers cannot overwrite each other's updates; readers use
+atomic snapshots. A separate lifetime lease prevents a second worker from
+executing the same tasks. New setups install an independent non-root service;
+older setups use the panel. The scheduler checks due work every 15 seconds, persists a claim before execution,
 and executes serially. Next-run deadlines use elapsed hourly/daily/weekly or
 custom minute intervals rather than local calendar times; timestamps display
 in UTC. An overdue task runs once, then advances beyond the current time. A
@@ -343,7 +351,7 @@ are not automatically retried as the same run.
 
 Changing the elapsed interval while editing resets the next deadline to a full
 interval from saving. Other edits preserve it. Editing never enables a paused
-task or draft, and switching to Once disables repetition.
+task or draft, and switching to Once disables repetition unless goal continuation is selected.
 
 Draft creation persists settings with repetition and queueing disabled; it
 does not require Codex to be installed. One-time drafts can be queued later;
@@ -355,10 +363,11 @@ while its history is retained. All submissions still use CSRF protection and
 normal task validation.
 
 The consecutive-failure count is persisted on each saved task independently
-of bounded run history. Failed and restart-interrupted runs increment it;
-completed runs reset it; cancelled runs leave it unchanged. At the configured
+of bounded run history. Failed, blocked and restart-interrupted runs increment
+it; progress/completion/waiting reset it; cancelled runs leave it unchanged. At the configured
 nonzero limit, enabled schedules are disabled and labelled automatically paused.
-There are no automatic retries. Resume resets the count and schedules a full
+Subsequent scheduled invocations remain subject to the saved cadence and limits;
+the same interrupted run is not replayed. Resume resets the count and schedules a full
 interval; a successful manual run leaves a paused schedule disabled. Older
 state receives the default limit and a zero count, without recounting historical
 failures. Recovery counts each interrupted run once. Policy state and run
@@ -373,19 +382,29 @@ retained finished runs only; CLI completion is not proof of task success, and
 duration is not a provider-usage or cost metric.
 
 Limits are 32 saved tasks, 40 retained runs, a 4,000-byte prompt, and a 1 MiB
-state file. Each task has a 1–10,080 minute wall-clock limit, defaulting to 30
+state file. Private per-task receipts retain up to `history_limit` runs
+(default 100), including checkpoints, verification evidence and provider logs.
+The recent panel list remains bounded at 40. `GET /agents?context=TASK_ID`
+reads context and retained receipt paths without starting work. Each task has a 1–10,080 minute wall-clock limit, defaulting to 30
 minutes. Sleeping and waiting count against this limit; cancellation or expiry
 stops the process group, including child commands. A runtime limit does not
 enforce a monetary or token budget or stop work owned by another service, such
 as an external MCP server or an approved privilege-broker request. Stopping a
-local run does not withdraw such a request or undo its effects. The runner
-retains the last 8 KiB of output and stops a run after 1 MiB of output. Common
+local run does not withdraw such a request or undo its effects. Optional token
+budgets use actual reported usage after an invocation and can be exceeded
+within that invocation. Missing usage pauses a budgeted task. Attempt budgets
+are reserved before execution, including failures; deadlines bound provider
+execution. The runner uses structured JSONL output and a schema-validated final
+report, retaining a bounded display summary and stopping after 1 MiB of output.
+Completion requires recorded evidence, although that remains the agent's claim
+for review. Common
 credential patterns are redacted for display;
 raw output and exact prompt settings remain in private state. Users must avoid
 putting credentials in prompts, and output can contain application data.
-Removing a task retains its existing run history. Removing the web panel stops
-the scheduler but retains account-owned prompt state for explicit cleanup or
-later reinstallation.
+Removing a task retains its existing run history, context and workspace files.
+Removing the web panel retains the independent worker; pause its tasks first
+if they should stop. See [persistent tasks](AGENT_TASKS.md) for storage, API,
+limits and upcoming T3 adapter qualification.
 
 Runtime diagnostics use the existing local tool and credential inspectors.
 T3 Code is checked only when configured or its runtime directory is present,

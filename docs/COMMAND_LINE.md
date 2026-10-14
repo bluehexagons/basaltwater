@@ -24,6 +24,7 @@ Related pages:
 - [`AGENT_SKILLS.md`](./AGENT_SKILLS.md) for managed Codex/OpenCode/Claude workflow
   skills and capability routing
 - [`AGENT_SUBAGENTS.md`](./AGENT_SUBAGENTS.md) for subagent integration and project model learning
+- [`AGENT_TASKS.md`](./AGENT_TASKS.md) for persistent tasks, goals, schedules and shared agent controls
 - [`AGENT_SECURITY.md`](./AGENT_SECURITY.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
 - [`AGENTIC_VMS.md`](./AGENTIC_VMS.md) for headless, full-capability,
@@ -91,6 +92,7 @@ basaltw agent privilege <request|status|wait|password-hash> ...
 basaltw agent web pair HOST USER [-k PATH]
 basaltw agent workspace <create|adopt|group|list|status|remove> ...
 basaltw agent models <init|recommend|record|report> ...
+basaltw agent tasks <capabilities|list|show|history|create|update|run|pause|resume|cancel|delete|reset-context|notify|worker|mcp> ...
 basaltw agent maintenance <hold|status|release> [HOST USER] [options]
 basaltw agent support-bundle [--output PATH] [--browser-smoke] [--container-storage]
 basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
@@ -1142,6 +1144,19 @@ fails safe and should be released and recreated. The optional `HOST USER` form
 runs the same operation as the target account through managed SSH. A hold does
 not override `--auto-restart-force-days`; once that deadline is reached, the
 restart proceeds even if a session, hold, or recognized workload remains.
+
+`agent tasks` operates on the current non-root account's shared task state.
+`create TASK_JSON` defaults to an inactive draft; choose `--run-now` or
+`--schedule` to activate it. `--request-key` deduplicates retried creation.
+`update TASK_ID TASK_JSON` changes only supplied settings. `show` reports its
+checkpoint and conversation/workspace bindings; `history --limit N` reads
+retained receipts beyond the panel's latest 40 records. `notify TASK_ID MESSAGE
+--key KEY` wakes enabled work with deduplicated event evidence. `worker` runs
+the independent foreground scheduler; `--once` handles currently due work.
+`mcp` exposes read-only stdio tools, with explicit `--allow-write` for task
+controls. All inspection and lifecycle commands emit JSON and accept `--json`.
+See [persistent tasks](AGENT_TASKS.md) for settings, budgets, managed workspaces,
+recovery and stable-version T3 integration limits.
 
 `agent support-bundle` composes a stable local JSON snapshot from the agent,
 T3 Code, browser, host, and maintenance diagnostics. It includes aggregate T3
