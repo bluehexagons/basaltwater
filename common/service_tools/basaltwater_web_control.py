@@ -31,6 +31,7 @@ ALLOWED_MUTATIONS = {
     ("forward", "remove"),
     ("forward", "prune"),
     ("preview", "start"),
+    ("preview", "restart"),
     ("preview", "stop"),
     ("preview", "prune"),
 }

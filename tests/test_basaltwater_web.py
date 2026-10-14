@@ -346,6 +346,20 @@ class TestInfraWebPreviews(unittest.TestCase):
             basaltwater_web._PREVIEW_INSTALL_TIMEOUT_SECONDS,
         )
 
+    def test_preview_unit_preserves_literal_paths_and_systemd_specifiers(self) -> None:
+        account = SimpleNamespace(pw_dir="/home/agent%home", pw_gid=os.getgid(), pw_name="agent")
+        with patch.object(basaltwater_web.grp, "getgrgid", return_value=SimpleNamespace(gr_name="agent")):
+            content = basaltwater_web.render_preview_unit(
+                "demo", account, '/home/agent/project with "quotes" and %n\\',
+                "/var/lib/basaltwater/agent-%n.sh",
+            )
+        self.assertIn('WorkingDirectory=/home/agent/project with "quotes" and %%n\\/\n', content)
+        self.assertIn('Environment="HOME=/home/agent%%home"\n', content)
+        self.assertIn('ExecStart="/var/lib/basaltwater/agent-%%n.sh"\n', content)
+        for project in ("relative/project", "/home/agent/project\nUser=root"):
+            with self.subTest(project=project), self.assertRaises(ValueError):
+                basaltwater_web._systemd_working_directory(project)
+
     def test_preview_dependency_install_timeout_is_reported(self) -> None:
         account = SimpleNamespace(pw_dir="/home/agent", pw_name="agent")
         timeout = basaltwater_web.CommandTimeoutError(
@@ -404,6 +418,8 @@ class TestInfraWebPreviews(unittest.TestCase):
                         "demo",
                         "--project",
                         project,
+                        "--max-body-size",
+                        "129M",
                         "--json",
                         "--",
                         "/usr/bin/true",
@@ -416,9 +432,32 @@ class TestInfraWebPreviews(unittest.TestCase):
         routes = apply_forwards.call_args.args[0]
         self.assertEqual(routes[0]["target_port"], 4173)
         self.assertEqual(routes[0]["listen"], 8444)
+        self.assertEqual(routes[0]["max_body_size"], "129m")
+        self.assertIn("client_max_body_size 129m;", basaltwater_web.render_forward_nginx(routes, _policy()))
         state = write_state.call_args.args[0]
         self.assertEqual(state[0]["unit"], "basaltwater-web-preview-agent-demo.service")
         self.assertNotIn("command", state[0])
+
+    def test_invalid_preview_body_limit_cannot_replace_existing_service(self) -> None:
+        with tempfile.TemporaryDirectory() as project:
+            account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
+            with (
+                patch.object(basaltwater_web, "_load_policy", return_value=_policy()),
+                patch.object(basaltwater_web, "_requesting_username", return_value="agent"),
+                patch.object(basaltwater_web.pwd, "getpwnam", return_value=account),
+                patch.object(basaltwater_web, "_stop_preview_record") as stop,
+                patch.object(basaltwater_web, "_write_preview_service") as start,
+                patch.object(basaltwater_web, "_load_previews", return_value=[{"name": "demo", "owner": "agent"}]),
+                patch("builtins.print"),
+            ):
+                for limit in ("0", "2g", "129m; include /tmp/unsafe"):
+                    with self.subTest(limit=limit):
+                        self.assertEqual(basaltwater_web.main([
+                            "preview", "start", "demo", "--project", project,
+                            "--replace", "--max-body-size", limit, "--json",
+                        ]), 2)
+                stop.assert_not_called()
+                start.assert_not_called()
 
     def test_preview_stop_removes_route_service_and_state(self) -> None:
         record = {
@@ -457,6 +496,106 @@ class TestInfraWebPreviews(unittest.TestCase):
         apply_forwards.assert_called_once_with([], _policy())
         remove_service.assert_called_once_with(record)
         write_state.assert_called_once_with([])
+
+
+class TestPreviewRestart(unittest.TestCase):
+    def setUp(self) -> None:
+        project = self.enterContext(tempfile.TemporaryDirectory())
+        self.record = {
+            "created_at": "2026-01-01T00:00:00Z", "health": "/ready",
+            "listen": 8444, "name": "demo", "owner": "agent", "profile": "general",
+            "project": project, "target_host": "127.0.0.1", "target_port": 4173,
+            "unit": "basaltwater-web-preview-agent-demo.service",
+        }
+        self.route = {key: self.record[key] for key in (
+            "listen", "name", "owner", "profile", "target_host", "target_port",
+        )}
+        self.route["max_body_size"] = "129m"
+        self.enterContext(patch.object(basaltwater_web, "_gateway_lock", side_effect=nullcontext))
+        self.enterContext(patch.object(basaltwater_web.os, "geteuid", return_value=0))
+        self.enterContext(patch.object(basaltwater_web, "_load_policy", return_value=_policy()))
+        self.enterContext(patch.object(basaltwater_web, "_requesting_username", return_value="agent"))
+        self.account = SimpleNamespace(pw_uid=os.getuid(), pw_name="agent")
+        self.enterContext(patch.object(basaltwater_web.pwd, "getpwnam", return_value=self.account))
+        self.previews = self.enterContext(patch.object(basaltwater_web, "_load_previews", return_value=[self.record]))
+        self.routes = self.enterContext(patch.object(basaltwater_web, "_load_forwards", return_value=[self.route]))
+        self.run = self.enterContext(patch.object(basaltwater_web, "_run_checked"))
+        self.wait = self.enterContext(patch.object(basaltwater_web, "_wait_for_upstream"))
+        self.active = self.enterContext(patch.object(basaltwater_web, "_preview_active", return_value=True))
+        self.apply = self.enterContext(patch.object(basaltwater_web, "_apply_forwards"))
+        self.write = self.enterContext(patch.object(basaltwater_web, "_write_preview_state"))
+        self.remove = self.enterContext(patch.object(basaltwater_web, "_remove_preview_service"))
+
+    def restart(self, *extra: str) -> tuple[int, dict[str, object]]:
+        output = StringIO()
+        with redirect_stdout(output):
+            result = basaltwater_web.main(["preview", "restart", "demo", "--json", *extra])
+        self.apply.assert_not_called()
+        self.write.assert_not_called()
+        self.remove.assert_not_called()
+        return result, json.loads(output.getvalue())
+
+    def test_restart_reuses_command_ports_health_and_upload_policy(self) -> None:
+        previous_record, previous_route = dict(self.record), dict(self.route)
+        status, result = self.restart("--wait", "45")
+        self.assertEqual(status, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["url"], "https://games.example:8444/")
+        self.run.assert_called_once_with(
+            ["systemctl", "restart", self.record["unit"]], "Restarting live preview",
+        )
+        self.wait.assert_called_once_with("127.0.0.1", 4173, "/ready", 45)
+        self.active.assert_called_once_with(self.record["unit"])
+        self.assertEqual(self.record, previous_record)
+        self.assertEqual(self.route, previous_route)
+
+    def test_restart_refuses_another_owners_service(self) -> None:
+        self.previews.return_value = [{**self.record, "owner": "other"}]
+        status, result = self.restart()
+        self.assertEqual(status, 1)
+        self.assertIn("does not exist", result["error"])
+        self.run.assert_not_called()
+
+    def test_missing_or_changed_route_prevents_service_restart(self) -> None:
+        for change in (None, {"owner": "other"}, {"listen": 8445}, {"target_port": 4174}, {"profile": "godot"}):
+            with self.subTest(change=change):
+                self.routes.return_value = [] if change is None else [{**self.route, **change}]
+                self.assertEqual(self.restart()[0], 1)
+                self.run.assert_not_called()
+
+    def test_project_must_still_exist_and_belong_to_requesting_user(self) -> None:
+        self.account.pw_uid += 1
+        self.assertEqual(self.restart()[0], 2)
+        self.account.pw_uid -= 1
+        self.record["project"] = os.path.join(str(self.record["project"]), "missing")
+        self.assertEqual(self.restart()[0], 2)
+        self.run.assert_not_called()
+
+    def test_restart_failure_keeps_route_and_reports_failure(self) -> None:
+        self.run.side_effect = RuntimeError("restart timed out")
+        status, result = self.restart()
+        self.assertEqual(status, 1)
+        self.assertIn("restart timed out", result["error"])
+        self.wait.assert_not_called()
+
+    def test_readiness_failure_keeps_route_and_reports_failure(self) -> None:
+        self.wait.side_effect = RuntimeError("HTTP readiness timed out")
+        status, result = self.restart()
+        self.assertEqual(status, 1)
+        self.assertIn("HTTP readiness", result["error"])
+        self.active.assert_not_called()
+
+    def test_http_response_is_insufficient_when_service_has_exited(self) -> None:
+        self.active.return_value = False
+        status, result = self.restart()
+        self.assertEqual(status, 1)
+        self.assertIn("preview logs demo", result["error"])
+
+    def test_invalid_wait_never_restarts_service(self) -> None:
+        for wait in ("0", "301", "nan", "inf"):
+            with self.subTest(wait=wait):
+                self.assertEqual(self.restart("--wait", wait)[0], 2)
+        self.run.assert_not_called()
 
 
 class TestPreviewResolution(unittest.TestCase):
@@ -654,6 +793,15 @@ class TestInfraWebControl(unittest.TestCase):
             self.assertEqual(basaltwater_web.main(argv), 0)
         request.assert_called_once_with(argv)
 
+    def test_unprivileged_preview_restart_delegates_without_sudo(self) -> None:
+        argv = ["preview", "restart", "demo", "--wait", "45", "--json"]
+        with (
+            patch.object(basaltwater_web.os, "geteuid", return_value=1000),
+            patch.object(basaltwater_web_control, "request", return_value=0) as request,
+        ):
+            self.assertEqual(basaltwater_web.main(argv), 0)
+        request.assert_called_once_with(argv)
+
     def test_control_rejects_commands_outside_owner_scoped_mutations(self) -> None:
         for argv in (["forward", "reconcile"], ["publish", "site"], ["preview", "logs"]):
             with self.subTest(argv=argv), self.assertRaises(ValueError):
@@ -715,6 +863,7 @@ class TestInfraWebMutationLock(unittest.TestCase):
             ["forward", "remove", "demo"], ["forward", "prune", "--yes"],
             ["forward", "reconcile"], ["preview", "start", "demo"],
             ["preview", "stop", "demo"], ["preview", "prune", "--yes"],
+            ["preview", "restart", "demo"],
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "mutation.lock")

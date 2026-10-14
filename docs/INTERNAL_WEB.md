@@ -204,6 +204,18 @@ basaltwater-web preview start my-game --project . --profile godot -- \
   ./preview-server --listen '{host}:{port}'
 ```
 
+Preview routes support the same bounded request-body limit as low-level
+forwards. Specify it before the command separator when an application accepts
+larger uploads, such as a 128 MiB backup with multipart overhead:
+
+```bash
+basaltwater-web preview start upload-api --project . --max-body-size 129m -- \
+  ./serve-preview --host '{host}' --port '{port}'
+```
+
+The limit accepts a positive integer with an optional `k`, `m`, or `g` suffix,
+is capped at 1 GiB, and defaults to Nginx's 1 MiB limit when omitted.
+
 The command is stored in an owner-only launcher beneath a root-managed
 directory and is executed with `User=` and `Group=` set to the requesting
 account. It is not executed by the privileged gateway process. `--profile
@@ -215,6 +227,7 @@ Useful lifecycle commands are:
 basaltwater-web preview list
 basaltwater-web preview url my-project
 basaltwater-web preview logs my-project
+basaltwater-web preview restart my-project --wait 60 --json
 basaltwater-web doctor my-project
 basaltwater-web preview stop my-project
 basaltwater-web preview prune --yes
@@ -224,6 +237,23 @@ Use `--replace` to deliberately replace an existing same-named preview. A
 startup, readiness, route, or state-write failure rolls back both the service
 and route. `preview prune` removes stopped services and their routes; it does
 not touch another user's previews.
+
+`preview restart` reruns the existing service's saved command and waits for its
+recorded HTTP health path. It preserves the loopback port, HTTPS URL, profile,
+upload limit, and route; it does not install dependencies, change the command,
+or rebuild a precompiled executable. Build that executable first when needed.
+The default readiness deadline is 30 seconds; `--wait` accepts more than zero
+and at most 300 seconds. A failed restart or readiness check returns a nonzero
+status, retains the route, and can be investigated with `preview logs`.
+
+During agent development, keeping an already configured local site current is
+part of editing that project. The managed gateway skill instructs agents to
+perform needed restarts and verify the changed resource themselves. Vite hot
+reload usually needs no restart; servers using compiled or embedded assets do.
+For an existing user service behind a low-level forward, retain its environment
+and data paths and restart the owning unit, then run `basaltwater-web doctor`
+and check the changed page. Static publications require another publication
+after the final build. These refreshes do not authorize production deployment.
 
 ## Forward an existing loopback service
 

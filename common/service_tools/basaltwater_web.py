@@ -273,9 +273,16 @@ def _parser() -> argparse.ArgumentParser:
     preview_start.add_argument("--profile", choices=_PROFILES, default="general")
     preview_start.add_argument("--wait", type=float, default=30)
     preview_start.add_argument("--health", default="/")
+    preview_start.add_argument("--max-body-size", help="Per-route request-body limit (at most 1g)")
     preview_start.add_argument("--replace", action="store_true")
     preview_start.add_argument("--open", action="store_true")
     preview_start.add_argument("--json", action="store_true")
+    preview_restart = preview_commands.add_parser(
+        "restart", help="Restart an owned preview and wait for HTTP readiness",
+    )
+    preview_restart.add_argument("name")
+    preview_restart.add_argument("--wait", type=float, default=30)
+    preview_restart.add_argument("--json", action="store_true")
     preview_stop = preview_commands.add_parser("stop", help="Stop and remove a preview")
     preview_stop.add_argument("name")
     preview_stop.add_argument("--json", action="store_true")
@@ -1680,7 +1687,16 @@ def _resolve_preview_executable(
 def _systemd_quote(value: str) -> str:
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
         raise ValueError("Systemd value contains control characters")
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return '"' + value.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _systemd_working_directory(project: str) -> str:
+    """WorkingDirectory takes a literal path, not a quoted argv item."""
+    validate_filesystem_path(project)
+    if not os.path.isabs(project):
+        raise ValueError("Preview working directory must be absolute")
+    # A final slash preserves trailing spaces and prevents line continuation.
+    return project.replace("%", "%%").rstrip("/") + "/"
 
 
 def render_preview_unit(
@@ -1701,7 +1717,7 @@ After=network.target
 Type=simple
 User={account.pw_name}
 Group={group_name}
-WorkingDirectory={_systemd_quote(project)}
+WorkingDirectory={_systemd_working_directory(project)}
 Environment={_systemd_quote('HOME=' + account.pw_dir)}
 ExecStart={_systemd_quote(launcher)}
 Restart=on-failure
@@ -1874,6 +1890,7 @@ def _preview_start(args: argparse.Namespace) -> int:
     if not 0 < args.wait <= 300:
         raise ValueError("--wait must be greater than 0 and at most 300 seconds")
     health = _validate_health_path(args.health)
+    body_size = _validate_body_size(args.max_body_size, "--max-body-size")
     routes = _load_forwards(policy)
     previews = _load_previews(policy)
     existing = next(
@@ -1915,6 +1932,8 @@ def _preview_start(args: argparse.Namespace) -> int:
             "target_host": "127.0.0.1",
             "target_port": port,
         }
+        if body_size is not None:
+            route["max_body_size"] = body_size
         _apply_forwards([*routes, route], policy)
         route_applied = True
         record = {
@@ -1968,6 +1987,38 @@ def _preview_start(args: argparse.Namespace) -> int:
         print(f"{name}: {url} (unit {unit}, loopback {port})")
     if args.open:
         _open_url(url, owner)
+    return 0
+
+
+@_serialized_mutation
+def _preview_restart(args: argparse.Namespace) -> int:
+    if os.geteuid() != 0:
+        raise RuntimeError("Live-preview mutations require the control service")
+    if not 0 < args.wait <= 300:
+        raise ValueError("--wait must be greater than 0 and at most 300 seconds")
+    policy = _load_policy()
+    owner = _requesting_username(policy)
+    record = _preview_for_user(args.name, _load_previews(policy), owner)
+    _preview_project(str(record["project"]), pwd.getpwnam(owner))
+    route = next((item for item in _load_forwards(policy) if item["name"] == args.name), None)
+    if route is None or any(
+        route[key] != record[key]
+        for key in ("owner", "target_host", "target_port", "listen", "profile")
+    ):
+        raise RuntimeError("Live-preview route no longer matches its managed service")
+    unit = str(record["unit"])
+    _run_checked(["systemctl", "restart", unit], "Restarting live preview")
+    _wait_for_upstream(
+        str(record["target_host"]), int(record["target_port"]),
+        str(record["health"]), args.wait,
+    )
+    if not _preview_active(unit):
+        raise RuntimeError(f"Live-preview service is not active; inspect preview logs {args.name}")
+    url = _forward_url(str(policy["base_url"]), int(record["listen"]))
+    if args.json:
+        print(json.dumps({"name": args.name, "ok": True, "unit": unit, "url": url}, sort_keys=True))
+    else:
+        print(f"Restarted {args.name}: {url}")
     return 0
 
 
@@ -2292,6 +2343,8 @@ def main(argv: list[str] | None = None) -> int:
                 return _preview_resolve(args)
             if args.preview_command == "start":
                 return _preview_start(args)
+            if args.preview_command == "restart":
+                return _preview_restart(args)
             if args.preview_command == "stop":
                 return _preview_stop(args.name, args.json)
             if args.preview_command in ("list", "ls"):
