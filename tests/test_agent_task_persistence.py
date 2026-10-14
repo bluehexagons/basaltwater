@@ -402,7 +402,12 @@ class CodexTaskProtocolTests(unittest.TestCase):
                 prompt_file.seek(0)
                 return process
 
-            with (patch.object(tasks, "_tool_path", return_value="/test/codex"),
+            # Mock the provider's identity without changing the owner used by
+            # the private context store; Debian CI itself runs as root.
+            provider_os = SimpleNamespace(**vars(os))
+            with (patch.object(tasks, "os", provider_os),
+                  patch.object(provider_os, "geteuid", return_value=1000),
+                  patch.object(tasks, "_tool_path", return_value="/test/codex"),
                   patch.object(tasks.subprocess, "Popen", side_effect=launch),
                   patch.object(tasks.selectors, "DefaultSelector", return_value=selector),
                   patch.object(tasks.os, "read", return_value=payload), patch.object(tasks.os, "killpg")):

@@ -16,7 +16,18 @@ from lib.config import SetupConfig
 class TaskWorkerSetupTests(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
-        self.account = SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid(), pw_name="agent", pw_dir=self.home)
+        self.account = SimpleNamespace(pw_uid=1000, pw_gid=1000, pw_name="agent", pw_dir=self.home)
+        real_stat = os.stat
+
+        def account_stat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+            info = real_stat(path, *args, **kwargs)
+            if isinstance(path, (str, os.PathLike)) and os.fspath(path) == self.home:
+                fields = list(info)
+                fields[4] = self.account.pw_uid
+                return os.stat_result(fields)
+            return info
+
+        self.enterContext(patch.object(steps.os, "stat", side_effect=account_stat))
         self.config = SetupConfig(system_type="agent_vm", host="example.test", username="agent", machine_type="vm")
         self.enterContext(patch.object(steps, "can_manage_system_services", return_value=True))
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
