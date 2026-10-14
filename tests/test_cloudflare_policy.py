@@ -87,6 +87,104 @@ class TestCloudflareWebPolicy(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'Could not inspect'):
                     reconcile_tunnel_firewall(allow_direct=True, sources=[], command_runner=Mock(return_value=result))
 
+    def test_failed_broad_rule_removal_cannot_report_tunnel_only_success(self):
+        firewall = FirewallModel()
+        firewall.rules.append(('80/tcp', 'Anywhere', 'operator web rule'))
+
+        def run(command, **kwargs):
+            if command[1:3] == ['delete', 'allow']:
+                return SimpleNamespace(returncode=1, stdout='Could not delete rule')
+            return firewall.run(command, **kwargs)
+
+        with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
+            reconcile_tunnel_firewall(allow_direct=False, sources=[], command_runner=run)
+
+    def test_unmanaged_web_rules_outside_lan_policy_are_reported(self):
+        for port, source in (
+            ('443/tcp (v6)', 'Anywhere (v6)'),
+            ('79:81/tcp', 'Anywhere'),
+            ('80,443/tcp', 'Anywhere'),
+            ('Anywhere', 'Anywhere'),
+            ('80/tcp on eth0', 'Anywhere'),
+            ('443/tcp', '192.168.0.0/16'),
+        ):
+            with self.subTest(port=port, source=source):
+                firewall = FirewallModel()
+                firewall.rules.append((port, source, 'operator rule'))
+                with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
+                    reconcile_tunnel_firewall(
+                        allow_direct=False, sources=['192.168.0.0/24'], command_runner=firewall.run,
+                    )
+
+    def test_scoped_ssh_policy_rejects_broad_application_profile(self):
+        firewall = FirewallModel()
+        firewall.rules.append(('OpenSSH', 'Anywhere', 'operator ssh rule'))
+
+        def run(command, **kwargs):
+            if command[1:3] == ['app', 'info']:
+                return SimpleNamespace(returncode=0, stdout='Profile: OpenSSH\nPort:\n  22/tcp\n')
+            return firewall.run(command, **kwargs)
+
+        with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
+            reconcile_tunnel_firewall(allow_direct=True, sources=['192.168.0.0/24'], command_runner=run)
+
+    def test_web_profile_is_resolved_and_allowed_only_within_requested_sources(self):
+        for source, accepted in (('192.168.0.52', True), ('Anywhere', False)):
+            with self.subTest(source=source):
+                firewall = FirewallModel()
+                firewall.rules.append(('Nginx Full', source, 'operator profile'))
+
+                def run(command, **kwargs):
+                    if command[1:3] == ['app', 'info']:
+                        return SimpleNamespace(returncode=0, stdout='Profile: Nginx Full\nPorts:\n  80,443/tcp\n')
+                    return firewall.run(command, **kwargs)
+
+                if accepted:
+                    reconcile_tunnel_firewall(allow_direct=False, sources=['192.168.0.0/24'], command_runner=run)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
+                        reconcile_tunnel_firewall(allow_direct=False, sources=['192.168.0.0/24'], command_runner=run)
+
+    def test_udp_and_source_specific_management_rules_are_preserved(self):
+        firewall = FirewallModel()
+        firewall.rules.extend([
+            ('80,443/udp', 'Anywhere', 'operator UDP'),
+            ('22/tcp', '10.0.0.5', 'operator VPN management'),
+        ])
+        reconcile_tunnel_firewall(allow_direct=False, sources=['192.168.0.0/24'], command_runner=firewall.run)
+        self.assertIn(('80,443/udp', 'Anywhere', 'operator UDP'), firewall.rules)
+        self.assertIn(('22/tcp', '10.0.0.5', 'operator VPN management'), firewall.rules)
+
+    def test_uninspectable_profile_is_fatal(self):
+        for result in (
+            SimpleNamespace(returncode=1, stdout=''),
+            SimpleNamespace(returncode=0, stdout='Profile: Nginx Full\n'),
+            SimpleNamespace(returncode=0, stdout='Ports:\n  unexpected\n'),
+        ):
+            with self.subTest(result=result):
+                firewall = FirewallModel()
+                firewall.rules.append(('Nginx Full', 'Anywhere', 'operator profile'))
+
+                def run(command, **kwargs):
+                    if command[1:3] == ['app', 'info']:
+                        return result
+                    return firewall.run(command, **kwargs)
+
+                with self.assertRaisesRegex(RuntimeError, 'Could not inspect UFW application'):
+                    reconcile_tunnel_firewall(allow_direct=False, sources=[], command_runner=run)
+
+    def test_successful_delete_without_effect_is_detected_after_cleanup(self):
+        firewall = FirewallModel()
+        firewall.rules.append(('443/tcp (v6)', 'Anywhere (v6)', f'{RULE_PREFIX}443'))
+
+        def run(command, **kwargs):
+            if command[1:3] == ['--force', 'delete']:
+                return SimpleNamespace(returncode=0, stdout='Rule deleted')
+            return firewall.run(command, **kwargs)
+
+        with self.assertRaisesRegex(RuntimeError, 'outside the requested'):
+            reconcile_tunnel_firewall(allow_direct=False, sources=[], command_runner=run)
+
 
 class TestCloudflareDirectCli(unittest.TestCase):
     def _parse_config(self, argv):

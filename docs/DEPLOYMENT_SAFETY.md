@@ -65,6 +65,34 @@ know.
 - Applies a seven-day freshness delay to dependency resolution and GitHub release
   selection unless the operator opts into a newer release.
 
+## Before production rollout
+
+Deployment success verifies local service activation and declared health
+endpoints. It does not establish public routing, a backup schedule, or complete
+application workflows. Verify these for each production host:
+
+- Check every deployed hostname from outside the LAN over HTTPS, including
+  the expected certificate and application response. Cloudflare Tunnel requires
+  public hostname routes in the Cloudflare account; hosts-file overrides only
+  test the origin. Test LAN access separately and confirm an untrusted client
+  cannot reach restricted direct ports. See [Cloudflare tunnels](CLOUDFLARE.md).
+- Exercise signup, login, and a persistent write for stateful applications,
+  then verify the data after a service restart and a replacement deployment.
+  Secure login cookies require HTTPS even when LAN HTTP access is enabled.
+  Verify a failed release restores the previous service on a disposable host.
+- Schedule consistent database backups between deployments, retain independent
+  off-host copies, and perform a restore test. Manifest `sqlite_backup` runs
+  before replacement only; its retention counts archives, not days. Generic
+  rsync backups do not provide consistent live SQLite snapshots. See
+  [backup consistency limits](BACKUPS.md#consistency-and-recovery-limits).
+- Verify game clients against the intended protocol version and test UDP/STUN
+  independently. Cloudflare Tunnel carries HTTP traffic; a healthy lobby HTTP
+  endpoint does not verify a separately hosted UDP responder.
+- Monitor public application health and backup freshness after setup. A running
+  systemd process alone does not prove public routing remains available. Rebuild
+  deployed binaries after toolchain security updates; updating Go on the host
+  does not update the runtime embedded in existing executables.
+
 ## Recovery Path
 
 Replace the angle-bracket placeholders in these command templates with values for the target application and host.

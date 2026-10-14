@@ -31,10 +31,12 @@ inferred access sources retain source-restricted direct web access. A missing
 tunnel, failed refresh, or inactive service cannot trigger the port closure.
 
 Because the Cloudflare edge provides public HTTPS, Nginx serves the tunnel
-origin over local HTTP without forcing an HTTP-to-HTTPS redirect. Proxied
-applications still receive `X-Forwarded-Proto: https` so they generate secure
-external URLs correctly. Keep SSH reachable through your management network
-before enabling the firewall changes.
+origin over local HTTP without forcing an HTTP-to-HTTPS redirect. Nginx honors
+`X-Forwarded-Proto: https` from cloudflared's loopback connection and uses its
+own connection scheme for direct clients. LAN HTTP requests remain HTTP even
+if a client sends a forged HTTPS header; backend TLS checks remain effective.
+Keep SSH reachable through your management network before enabling the
+firewall changes.
 Static subpath and directory redirects remain relative so the local HTTP
 origin cannot send visitors to a public HTTP URL or an internal port.
 
@@ -102,6 +104,12 @@ sudo setup-cloudflare-tunnel --non-interactive --no-allow-direct --clear-access-
 An unchanged ingress does not restart the tunnel for a firewall-only change.
 Owned stale direct-access rules are removed when narrowing sources or returning
 to tunnel-only mode. Antistatic and manifest UDP allowances remain independent.
+Setup inspects the remaining active UFW rules before reporting success. An
+unmanaged web allowance outside the requested sources, or a broad SSH allowance
+when management sources are configured, stops setup with the conflicting rule.
+This includes IPv6 rules, port ranges, and application profiles such as
+`Nginx Full`. Review `sudo ufw status numbered` and narrow or remove the rule;
+setup preserves unrelated operator rules rather than deleting them silently.
 
 ## Create or update a tunnel
 

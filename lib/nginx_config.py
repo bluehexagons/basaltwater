@@ -396,6 +396,22 @@ def _make_proxy_location(path: str, port: int, comment: str, enable_websocket: b
 {exact_location}"""
 
 
+def _make_tunnel_proto_map(domain_slug: str) -> tuple[str, str]:
+    """Honor the edge scheme only on cloudflared's loopback connection."""
+    token = hashlib.sha256(domain_slug.encode("utf-8")).hexdigest()[:16]
+    variable = f"$origin_proto_{token}"
+    # realip_remote_addr keeps the TCP peer even when CF-Connecting-IP
+    # restores remote_addr to the visitor. Direct clients cannot assert TLS.
+    mapping = f'''
+map "$realip_remote_addr:$http_x_forwarded_proto" {variable} {{
+    default $scheme;
+    "127.0.0.1:https" https;
+    "::1:https" https;
+}}
+'''
+    return mapping, variable
+
+
 def _make_static_location(path: str, serve_path: str, index_file: str, try_files: str, comment: str,
                          expires_var: Optional[str] = None, cc_var: Optional[str] = None) -> str:
     """Generate a static file serving location block."""
@@ -484,13 +500,15 @@ def generate_merged_nginx_config(
     server_name_directive = f"server_name {domain};" if domain else "server_name _;"
     default_server = " default_server" if is_default else ""
     symlink_policy = '\n    disable_symlinks on;' if disable_symlinks else ''
-    # The tunnel reaches this listener over HTTP, but visitors use HTTPS.
-    # Relative redirects preserve the public scheme, hostname and port.
+    # Relative redirects preserve the visitor's scheme, hostname and port.
     redirect_policy = '\n    absolute_redirect off;' if not enable_https_redirect else ''
     
     domain_slug = _config_name_for_domain(domain)
     cache_maps, expires_var, cc_var = _make_cache_maps(domain_slug)
-    forwarded_proto = "https" if not enable_https_redirect else "$scheme"
+    forwarded_proto = "$scheme"
+    if not enable_https_redirect:
+        proto_map, forwarded_proto = _make_tunnel_proto_map(domain_slug)
+        cache_maps += proto_map
     enable_path_redirect = enable_https_redirect
     
     sorted_deployments = sorted(deployments, key=lambda d: len(d['path']), reverse=True)

@@ -368,6 +368,18 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
         self.assertIn('alias /var/www/guide/html/;', http_block)
         self.assertIn('root /var/www/site/;', http_block)
 
+    def test_cloudflare_proxy_preserves_direct_http_and_trusts_only_tunnel_peer(self):
+        config = generate_merged_nginx_config('mm0-beta.example.com', [
+            {'path': '/', 'needs_proxy': True, 'backend_port': 3007},
+        ], enable_https_redirect=False)
+        self.assertNotIn('proxy_set_header X-Forwarded-Proto https;', config)
+        match = re.search(r'map "\$realip_remote_addr:\$http_x_forwarded_proto" (\$\w+) \{([^}]+)}', config)
+        self.assertIsNotNone(match)
+        self.assertIn('default $scheme;', match[2])
+        self.assertIn('"127.0.0.1:https" https;', match[2])
+        self.assertIn('"::1:https" https;', match[2])
+        self.assertIn(f'proxy_set_header X-Forwarded-Proto {match[1]};', config)
+
     def test_hsts_header_present(self):
         deployments = [{
             'path': '/',
