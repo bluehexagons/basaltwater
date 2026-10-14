@@ -92,7 +92,7 @@ basaltw agent privilege <request|status|wait|password-hash> ...
 basaltw agent web pair HOST USER [-k PATH]
 basaltw agent workspace <create|adopt|group|list|status|remove> ...
 basaltw agent models <init|recommend|record|report> ...
-basaltw agent tasks <capabilities|list|show|history|create|update|run|pause|resume|cancel|delete|reset-context|notify|worker|mcp> ...
+basaltw agent tasks <capabilities|list|show|history|receipt|create|update|run|pause|resume|cancel|delete|reset-context|notify|worker|mcp> ...
 basaltw agent maintenance <hold|status|release> [HOST USER] [options]
 basaltw agent support-bundle [--output PATH] [--browser-smoke] [--container-storage]
 basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
@@ -1148,9 +1148,13 @@ restart proceeds even if a session, hold, or recognized workload remains.
 `agent tasks` operates on the current non-root account's shared task state.
 `create TASK_JSON` defaults to an inactive draft; choose `--run-now` or
 `--schedule` to activate it. `--request-key` deduplicates retried creation.
+`start_at` in the settings schedules an explicit first run, including Once.
 `update TASK_ID TASK_JSON` changes only supplied settings. `show` reports its
 checkpoint and conversation/workspace bindings; `history --limit N` reads
-retained receipts beyond the panel's latest 40 records. `notify TASK_ID MESSAGE
+retained history beyond the panel's latest 40 records. `receipt TASK_ID RUN_ID`
+reads exact evidence, including for a removed task. `list --summary
+--history-limit N` omits prompts/output and includes 0–40 recent run summaries.
+`notify TASK_ID MESSAGE
 --key KEY` wakes enabled work with deduplicated event evidence. `worker` runs
 the independent foreground scheduler; `--once` handles currently due work.
 `mcp` exposes read-only stdio tools, with explicit `--allow-write` for task

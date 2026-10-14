@@ -75,13 +75,16 @@ basaltw agent tasks show TASK_ID --json
 basaltw agent tasks run TASK_ID --json
 basaltw agent tasks resume TASK_ID --json
 basaltw agent tasks list --json
+basaltw agent tasks list --summary --history-limit 5 --json
 basaltw agent tasks history TASK_ID --limit 40 --json
+basaltw agent tasks receipt TASK_ID RUN_ID --json
 basaltw agent tasks pause TASK_ID --json
 basaltw agent tasks cancel TASK_ID --json
 ```
 
 Creation defaults to a draft. `--run-now` queues an immediate invocation and
-activates repetition; `--schedule` activates it after one interval. Manually
+activates repetition; `--schedule` activates it after one interval, or at
+`start_at` when supplied. Manually
 running a draft does not activate its schedule. `update TASK_ID JSON_FILE`
 changes only supplied settings, preserving activation and durable usage.
 Persistence changes reset the binding when the next invocation prepares its
@@ -89,6 +92,20 @@ context. A failed settings write leaves the previous checkpoint intact;
 inspection reports a pending reset after a successful mode change.
 An idempotent creation key returns the same saved task for matching settings;
 different settings using that key are rejected.
+
+`start_at` accepts a UTC epoch number or an ISO date with timezone. For example,
+`"interval": "once", "start_at": "2026-11-01T09:00:00-06:00"` schedules one
+invocation for that instant. An overdue first run catches up once. A manual
+Run now consumes a one-time schedule. Repeating tasks use the first-run time
+to anchor their elapsed cadence; a Once goal then continues at its configured
+goal interval. Rescheduling a finished one-time task requires a future
+`start_at` and explicit Resume. Event tasks leave `start_at` unset.
+
+Compact listing omits prompts, wake payloads and run output while preserving
+controls, counters and stop reasons. `--history-limit 0` omits recent runs.
+`receipt` reads full retained settings, checkpoint and verification evidence.
+History and receipts remain accessible after removing their task, using its
+saved ID; an absent receipt fails without creating storage or starting work.
 
 `reset-context TASK_ID` clears the checkpoint and session binding while the
 task is idle. It retains workspaces and receipts. `delete TASK_ID` removes
@@ -117,6 +134,7 @@ Existing historical records are not retroactively classified.
 | `timeout_minutes` | 30; 1–10080 minutes for the provider invocation, including waits |
 | `max_runs` | 0 for ordinary tasks; 20 for CLI goals; lifetime attempt limit, including failed/interrupted work |
 | `deadline_at` | 0; UTC epoch or ISO date with timezone; prevents late launches and bounds the invocation |
+| `start_at` | 0; explicit first-run instant, including a scheduled one-time invocation; must precede a nonzero deadline |
 | `token_budget` | 0; sum of reported input/output tokens across runs, checked after each run |
 | `daily_limit` | 0; maximum reserved attempts per UTC day; preserves queued work, including one-time invocations, until the next day |
 | `failure_limit` | 3; pause after 1–10 consecutive failures/blocked/interrupted runs; 0 disables pausing |
@@ -171,7 +189,9 @@ remains available for cooperating terminal workers.
 
 `basaltw agent tasks mcp` serves initialization-based MCP revisions through
 2025-11-25 on stdio, with read-only tools by default. It exposes capabilities,
-task listing, task/context inspection and retained history. Explicit
+compact task listing, task/context inspection, retained history and exact run
+receipts. MCP listing defaults to `summary: true`; set `summary: false` for
+full prompts and output, and `history_limit` from 0 to 40 to bound recent runs. Explicit
 `--allow-write` adds creation, partial update, lifecycle actions and notify.
 Mutations queue work; the MCP process does not execute providers or start a
 scheduler. A scheduler must be running for queued work to proceed.

@@ -71,7 +71,7 @@ def task_capabilities(manager: AgentTasks) -> dict[str, Any]:
     return {"version": 1, "available": manager.available(), "executors": ["codex"],
             "persistence": ["fresh", "checkpoint", "conversation"],
             "workspaces": ["existing", "directory", "worktree", "run-directory"],
-            "triggers": ["interval", "manual", "event"], "worker": worker_status(manager),
+            "triggers": ["interval", "manual", "event", "scheduled-once"], "worker": worker_status(manager),
             "t3": {"installed": runtime.is_dir(), "active_version": version,
                    "native_task_execution": False, "native_thread_binding": False,
                    "reason": "Native T3 scheduling and thread APIs await stable-release qualification"}}
@@ -87,7 +87,8 @@ class TaskAPI:
         if not isinstance(arguments, dict):
             raise ValueError("Task arguments must be an object")
         allowed = {
-            "capabilities": set(), "list": set(), "show": {"id"}, "history": {"id", "limit"},
+            "capabilities": set(), "list": {"summary", "history_limit"}, "show": {"id"}, "history": {"id", "limit"},
+            "receipt": {"id", "run_id"},
             "create": {"task", "run_now", "draft", "request_key"}, "update": {"id", "task"},
             "action": {"id", "action"}, "notify": {"id", "message", "key"},
         }
@@ -96,7 +97,20 @@ class TaskAPI:
         if operation == "capabilities":
             return task_capabilities(self.manager)
         if operation == "list":
-            return {**self.manager.snapshot(), "worker": worker_status(self.manager)}
+            summary, limit = arguments.get("summary", False), arguments.get("history_limit", 40)
+            if type(summary) is not bool or type(limit) is not int or not 0 <= limit <= 40:
+                raise ValueError("List summary must be a boolean and history limit must be 0–40")
+            state = self.manager.snapshot()
+            state["runs"] = state["runs"][-limit:] if limit else []
+            if summary:
+                fields = {"id", "title", "directory", "interval", "persistence", "workspace", "executor", "start_at",
+                          "enabled", "queued", "draft", "auto_paused", "next_run", "not_before", "attempts",
+                          "tokens_used", "consecutive_failures", "stop_reason", "max_runs", "deadline_at", "token_budget"}
+                state["tasks"] = [{key: value for key, value in task.items() if key in fields} for task in state["tasks"]]
+                run_fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "usage"}
+                state["runs"] = [{**{key: value for key, value in run.items() if key in run_fields},
+                                  "task": {key: run["task"][key] for key in ("id", "title")}} for run in state["runs"]]
+            return {**state, "worker": worker_status(self.manager)}
         if operation == "create":
             task = arguments.get("task")
             if not isinstance(task, dict):
@@ -115,6 +129,10 @@ class TaskAPI:
         identifier = arguments.get("id")
         if not isinstance(identifier, str):
             raise ValueError("Task ID is required")
+        if operation == "receipt":
+            return {"run": self.manager.contexts.receipt(identifier, arguments.get("run_id"))}
+        if operation == "history" and self.manager.contexts.directory(identifier).is_dir():
+            return {"runs": self.manager.contexts.history(identifier, limit=arguments.get("limit", 40))}
         state = self.manager.snapshot()
         task = next((item for item in state["tasks"] if item["id"] == identifier), None)
         if task is None:

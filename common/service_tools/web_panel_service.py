@@ -2424,7 +2424,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 "failure_limit", "repeat_minutes",
                 "persistence", "workspace", "continue_until_done", "completion_criteria",
                 "continuation_minutes", "max_runs", "deadline_at", "token_budget", "daily_limit",
-                "backoff_minutes", "history_limit",
+                "backoff_minutes", "history_limit", "start_at",
             },
         }[path]
         if set(values) - allowed or any(len(entries) != 1 for entries in values.values()):

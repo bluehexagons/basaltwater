@@ -59,19 +59,19 @@ def _integer(value: object, label: str, minimum: int, maximum: int) -> int:
     return value
 
 
-def _deadline(value: object) -> float:
+def _deadline(value: object, *, label: str = "Deadline") -> float:
     if isinstance(value, str) and value not in {"", "0"}:
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
-                raise ValueError("Deadline must include a UTC offset")
+                raise ValueError(f"{label} must include a UTC offset")
             value = parsed.timestamp()
         except (ValueError, OverflowError) as exc:
-            raise ValueError("Deadline must be an ISO date with a timezone") from exc
+            raise ValueError(f"{label} must be an ISO date with a timezone") from exc
     elif value in ("", "0"):
         value = 0
     if type(value) not in {int, float} or not math.isfinite(value) or not 0 <= value <= 253402300799:
-        raise ValueError("Invalid task deadline")
+        raise ValueError(f"Invalid task {label.lower()}")
     return float(value)
 
 
@@ -211,6 +211,11 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
         raise ValueError("Continuing a goal requires completion criteria")
     max_runs = _integer(values.get("max_runs", 20 if continue_until_done else 0), "Maximum runs", 0, 1000000)
     deadline = _deadline(values.get("deadline_at", 0))
+    start = _deadline(values.get("start_at", 0), label="Start time")
+    if start and interval == "event":
+        raise ValueError("Event tasks wait for notifications and cannot have an automatic start time")
+    if start and deadline and start >= deadline:
+        raise ValueError("The first run must start before its deadline")
     token_budget = _integer(values.get("token_budget", 0), "Token budget", 0, 10**12)
     if continue_until_done and not max_runs and not deadline and not token_budget:
         raise ValueError("A goal needs a run limit, deadline, or token budget")
@@ -221,7 +226,7 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
             "persistence": persistence, "workspace": workspace, "executor": executor,
             "continue_until_done": continue_until_done, "completion_criteria": criteria.strip(),
             "continuation_minutes": _integer(values.get("continuation_minutes", 5), "Continuation interval", 1, MAX_REPEAT_MINUTES),
-            "max_runs": max_runs, "deadline_at": deadline, "token_budget": token_budget,
+            "max_runs": max_runs, "deadline_at": deadline, "start_at": start, "token_budget": token_budget,
             "daily_limit": _integer(values.get("daily_limit", 0), "Daily run limit", 0, 1000),
             "backoff_minutes": _integer(values.get("backoff_minutes", 0), "Failure backoff", 0, MAX_REPEAT_MINUTES),
             "history_limit": _integer(values.get("history_limit", 100), "Evidence history", 1, 1000)}
@@ -611,7 +616,7 @@ class AgentTasks:
                         or task["draft"] and (task["enabled"] or task["queued"])
                         or task["auto_paused"] and task["enabled"]):
                     raise ValueError("Invalid task failure or draft state")
-                if task["enabled"] and not repeat_seconds(task) and task["interval"] != "event":
+                if task["enabled"] and not repeat_seconds(task) and task["interval"] != "event" and not task["start_at"]:
                     raise ValueError("One-time task cannot repeat")
                 due = task["next_run"]
                 if due is not None and (type(due) not in {float, int} or not math.isfinite(due)):
@@ -677,8 +682,8 @@ class AgentTasks:
             raise ValueError("Creation request key must be text")
         if request_key:
             request_key = _text(request_key, "Creation request key", 120)
-        if not interval and not run_now and not draft and task["interval"] != "event":
-            raise ValueError("A one-time prompt must be run now")
+        if not interval and not run_now and not draft and task["interval"] != "event" and not task["start_at"]:
+            raise ValueError("A one-time prompt needs Run now or an explicit first-run time")
         with self._transaction():
             state = self._load()
             if request_key:
@@ -690,13 +695,15 @@ class AgentTasks:
             if len(state["tasks"]) >= MAX_TASKS:
                 raise ValueError(f"At most {MAX_TASKS} saved tasks are allowed; remove an unused task")
             identifier = uuid.uuid4().hex
-            state["tasks"].append({**task, "id": identifier, "enabled": (bool(interval) or task["interval"] == "event") and not draft,
+            scheduled = bool(interval) or task["interval"] == "event" or bool(task["start_at"])
+            state["tasks"].append({**task, "id": identifier, "enabled": scheduled and not draft,
                                    "request_key": request_key,
                                    "queued": run_now, "draft": draft, "auto_paused": False, "consecutive_failures": 0,
                                    "cancel_requested": False, "attempts": 0, "tokens_used": 0,
                                    "usage_day": "", "daily_attempts": 0, "stop_reason": "", "events": [], "event_keys": [],
                                    "not_before": 0,
-                                   "next_run": (now if now is not None else time.time()) + interval if interval and not draft else None})
+                                   "next_run": (task["start_at"] or (now if now is not None else time.time()) + interval)
+                                   if scheduled and not draft and task["interval"] != "event" else None})
             self._save()
         self._wake.set()
         return identifier
@@ -716,6 +723,7 @@ class AgentTasks:
                 raise ValueError("Wait for or cancel the active run before editing its task")
             interval = repeat_seconds(task_values)
             changed_interval = repeat_seconds(task) != interval
+            changed_start = task["start_at"] != task_values["start_at"]
             if any(task[name] != task_values[name] for name in ("directory", "workspace")):
                 context = self.contexts.load(identifier)
                 if context.get("workspace") or context.get("session_id") or context.get("source_directory"):
@@ -725,9 +733,15 @@ class AgentTasks:
             if task_values["interval"] == "event":
                 task["next_run"] = None
             elif not interval:
-                task["enabled"], task["next_run"] = False, None
+                if task_values["start_at"] and task["enabled"]:
+                    task["next_run"] = task_values["start_at"]
+                else:
+                    task["enabled"], task["next_run"] = False, None
             elif changed_interval:
-                task["next_run"] = (time.time() if now is None else now) + interval
+                current = time.time() if now is None else now
+                task["next_run"] = task_values["start_at"] if task_values["start_at"] > current else current + interval
+            if changed_start and task["enabled"] and task_values["interval"] != "event":
+                task["next_run"] = task_values["start_at"] or (time.time() if now is None else now) + interval
             self._save()
         self._wake.set()
 
@@ -767,11 +781,16 @@ class AgentTasks:
             else:
                 interval = repeat_seconds(task)
                 if not interval and task["interval"] != "event":
-                    raise ValueError("A one-time task cannot be resumed as a schedule")
+                    current = time.time() if now is None else now
+                    if not task["start_at"] or task["start_at"] <= current:
+                        raise ValueError("A one-time task needs a future first-run time before scheduling again")
                 task["enabled"], task["draft"], task["auto_paused"] = True, False, False
                 task["consecutive_failures"] = 0
                 task["stop_reason"] = ""
-                task["next_run"] = (time.time() if now is None else now) + interval if interval else None
+                current = time.time() if now is None else now
+                task["next_run"] = (task["start_at"] if task["start_at"] > current else current + interval)
+                if task["interval"] == "event":
+                    task["next_run"] = None
                 task["queued"] = bool(task["events"])
             self._save()
         self._wake.set()
@@ -905,6 +924,8 @@ class AgentTasks:
             _advance_schedule(task, current)
             if task["interval"] == "event":
                 task["next_run"] = None
+            elif task["interval"] == "once" and not repeat_seconds(task):
+                task["enabled"], task["next_run"] = False, None
             run = {"id": uuid.uuid4().hex, "task": copy.deepcopy(task), "status": "running",
                    "started_at": current, "finished_at": None, "output": "", "message": "Codex is running"}
             task["events"] = []

@@ -316,6 +316,16 @@ class TaskContextStore:
         context.pop("last_run_id", None)
         self.save(identifier, context)
 
+    def receipt(self, identifier: str, run_id: str) -> dict[str, Any]:
+        """Read exact retained evidence, including for a deleted task."""
+        if not isinstance(run_id, str) or not _ID.fullmatch(run_id):
+            raise ValueError("Invalid task run ID")
+        runs = private_directory(self.home, self.directory(identifier) / "runs")
+        value = private_json(runs / (run_id + ".json"), max_bytes=1024 * 1024)
+        if value.get("id") != run_id or not isinstance(value.get("task"), dict) or value["task"].get("id") != identifier:
+            raise RuntimeError("Task receipt does not match the requested task and run")
+        return value
+
     def history(self, identifier: str, *, limit: int = 40) -> list[dict[str, Any]]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("History limit must be 1–100")
@@ -326,5 +336,11 @@ class TaskContextStore:
                        key=lambda path: path.lstat().st_mtime_ns, reverse=True)[:limit]
         fields = {"id", "status", "outcome", "started_at", "finished_at", "duration_seconds", "message",
                   "output", "usage", "execution_directory", "context_directory", "log_path", "session_id"}
-        return [{key: value for key, value in private_json(path, max_bytes=1024 * 1024).items() if key in fields}
-                for path in paths]
+        history = []
+        for path in paths:
+            try:
+                receipt = self.receipt(identifier, path.stem)
+            except FileNotFoundError:
+                continue  # Concurrent retention can remove an older record.
+            history.append({key: value for key, value in receipt.items() if key in fields})
+        return history

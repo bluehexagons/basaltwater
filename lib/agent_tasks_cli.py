@@ -17,6 +17,9 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     for action in ("capabilities", "list"):
         command = actions.add_parser(action, help="Inspect task capabilities" if action == "capabilities" else "List saved tasks and recent runs")
         command.add_argument("--json", action="store_true")
+        if action == "list":
+            command.add_argument("--summary", action="store_true", help="Omit prompts, events and run output")
+            command.add_argument("--history-limit", type=int, default=40, help="Include 0–40 recent runs")
     for action in ("show", "history"):
         command = actions.add_parser(action, help="Show task context" if action == "show" else "Read retained run receipts")
         command.add_argument("identifier", metavar="TASK_ID")
@@ -35,6 +38,10 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
     update.add_argument("identifier", metavar="TASK_ID")
     update.add_argument("file", metavar="TASK_JSON")
     update.add_argument("--json", action="store_true")
+    receipt = actions.add_parser("receipt", help="Read full retained evidence, including for a deleted task")
+    receipt.add_argument("identifier", metavar="TASK_ID")
+    receipt.add_argument("run_id", metavar="RUN_ID")
+    receipt.add_argument("--json", action="store_true")
     for action in ("run", "pause", "resume", "cancel", "delete", "reset-context"):
         command = actions.add_parser(action, help={
             "run": "Queue one run", "pause": "Pause future runs", "resume": "Resume a paused schedule",
@@ -78,6 +85,10 @@ def run_tasks_command(args: argparse.Namespace) -> int:
             arguments["id"] = args.identifier
         if operation == "history":
             arguments["limit"] = args.limit
+        if operation == "list":
+            arguments.update(summary=args.summary, history_limit=args.history_limit)
+        if operation == "receipt":
+            arguments["run_id"] = args.run_id
         if operation == "notify":
             arguments.update(message=args.message, key=args.key)
         if operation in {"run", "pause", "resume", "cancel", "delete", "reset-context"}:

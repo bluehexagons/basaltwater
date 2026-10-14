@@ -506,6 +506,8 @@ footer {
 <p class="agent-help">Model choices use Codex's local cache; availability and effort support depend on your account and model. Use Additional options for a custom model ID.</p>
 <div class="agent-fields"><label>Maximum runtime (minutes)<input type="number" name="timeout_minutes" min="1" max="10080" step="1" value="30" required></label><label>Repeat<select name="interval"><option value="once" selected>Once</option><option value="event">On external event</option><option value="hourly">Every hour</option><option value="daily">Every 24 hours</option><option value="weekly">Every 7 days</option><option value="custom">Custom interval</option></select></label></div>
 <p class="agent-help">1 minute to 7 days, including time spent waiting. A duration cap is not an exact spending limit.</p>
+<label>First run with timezone<input name="start_at" value="" placeholder="2026-11-01T09:00:00-06:00"></label>
+<p class="agent-help">Optional start time for Create schedule. Once runs once at this time; repeating tasks use it to start their cadence. An overdue start produces one catch-up run. Run now starts immediately and consumes a one-time schedule. Event tasks wait for notifications and leave this blank.</p>
 <label>Custom repeat interval (minutes)<input type="number" name="repeat_minutes" min="1" max="43200" step="1" value="60" required></label>
 <p class="agent-help">Applies when Repeat is Custom interval. 1 minute to 30 days; for example, 360 for every 6 hours or 20160 for every 2 weeks. Intervals missed during a run are skipped.</p>
 <label>Pause schedule after failures<input type="number" name="failure_limit" min="0" max="10" step="1" value="3" required></label>

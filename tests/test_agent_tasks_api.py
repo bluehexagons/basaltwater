@@ -103,7 +103,7 @@ class TaskMCPTests(unittest.TestCase):
 
     def test_read_only_catalog_omits_mutations_and_direct_calls_are_denied(self) -> None:
         catalog = self.server.request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-        self.assertEqual(len(catalog["result"]["tools"]), 4)
+        self.assertEqual(len(catalog["result"]["tools"]), 5)
         result = self.server.request({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "basaltwater_tasks_action", "arguments": {"id": "a" * 32, "action": "run"},
         }})
