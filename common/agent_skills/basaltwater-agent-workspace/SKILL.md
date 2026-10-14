@@ -1,6 +1,6 @@
 ---
 name: basaltwater-agent-workspace
-description: Create, inspect, integrate, and clean up owned Git worktrees for concurrent agent work on a Basaltwater VM.
+description: Manage owned Git worktrees and shared project notes or todos for long-running agent work on a Basaltwater VM.
 metadata:
   managed-by: basaltwater
 ---
@@ -14,6 +14,10 @@ Delegate only within the session's authority and when independent scopes justify
 Read [workspace commands and lifecycle](references/workspaces.md) before creation,
 adoption, integration, or removal. Use the installed subagent skill for bounded
 assignments and model selection only when delegation is part of the task.
+
+For durable project notes, shared todos, and private secret-file references,
+read [project memory](references/project-memory.md) when that context is needed.
+Load a bounded index and selected records, not the entire store on every task.
 
 The parent owns file assignments, review, combined validation, integration, and
 cleanup. Workers use the returned absolute worktree path and report commits,

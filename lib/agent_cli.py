@@ -178,6 +178,9 @@ def add_agent_subparser(subparsers: argparse._SubParsersAction) -> None:
     from lib.agent_tasks_cli import add_tasks_parser
 
     add_tasks_parser(commands)
+    from lib.agent_memory_cli import add_memory_parser
+
+    add_memory_parser(commands)
     from lib.agent_containers import add_containers_parser
     from lib.agent_graphics import add_graphics_parser
 
@@ -2599,6 +2602,10 @@ def _selected_tools_readiness_healthy(
 
 def run_agent_command(args: argparse.Namespace) -> int:
     """Run a local or remote agent-tool command."""
+    if args.agent_command == "memory":
+        from lib.agent_memory_cli import run_memory_command
+
+        return run_memory_command(args)
     if args.agent_command == "tasks":
         from lib.agent_tasks_cli import run_tasks_command
 
@@ -2861,7 +2868,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if args.agent_command != "doctor":
         print(
             "Error: agent command required "
-            "(manifest, browser, containers, graphics, resources, visuals, blender, models, inbox, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
+            "(manifest, browser, containers, graphics, resources, visuals, blender, models, inbox, memory, maintenance-agent, tasks, doctor, update, auth, web, workspace, maintenance, privilege, or support-bundle)"
         )
         return 1
 

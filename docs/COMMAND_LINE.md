@@ -25,6 +25,7 @@ Related pages:
   skills and capability routing
 - [`AGENT_SUBAGENTS.md`](./AGENT_SUBAGENTS.md) for subagent integration and project model learning
 - [`AGENT_TASKS.md`](./AGENT_TASKS.md) for persistent tasks, goals, schedules and shared agent controls
+- [`AGENT_MEMORY.md`](./AGENT_MEMORY.md) for private project notes, todo claims and secret-file references
 - [`AGENT_SECURITY.md`](./AGENT_SECURITY.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
 - [`AGENTIC_VMS.md`](./AGENTIC_VMS.md) for headless, full-capability,
@@ -93,6 +94,7 @@ basaltw agent web pair HOST USER [-k PATH]
 basaltw agent workspace <create|adopt|group|list|status|remove> ...
 basaltw agent models <init|recommend|record|report> ...
 basaltw agent tasks <capabilities|list|show|history|receipt|create|update|run|pause|resume|cancel|delete|reset-context|notify|worker|mcp> ...
+basaltw agent memory <scope|list|get|put|remove|claim|renew|finish|reopen> ...
 basaltw agent maintenance <hold|status|release> [HOST USER] [options]
 basaltw agent support-bundle [--output PATH] [--browser-smoke] [--container-storage]
 basaltw gogs health HOST [--json] [--min-free-bytes N] [--min-free-inodes N]
@@ -1161,6 +1163,20 @@ the independent foreground scheduler; `--once` handles currently due work.
 controls. All inspection and lifecycle commands emit JSON and accept `--json`.
 See [persistent tasks](AGENT_TASKS.md) for settings, budgets, managed workspaces,
 recovery and stable-version T3 integration limits.
+
+`agent memory` stores account-local project notes, todos, and references to
+existing private secret files outside Git. Every action accepts `--project`
+(default `.`); Git worktrees share their common Git directory's scope.
+`list --limit N --query TEXT` returns bounded metadata without bodies or secret
+paths. `get NAME --kind note|todo|secret` reads one selected record; secret mode
+returns a checked path without reading its contents. `put NAME --file PATH|-`
+creates only by default; `--if-revision N` is required to update existing entries.
+Secret mode registers an existing private file and rejects stdin values.
+`remove` and `reopen` require observed revisions. Todo `claim --owner LABEL`
+returns a token; `renew` and `finish` require its live `--claim-token`.
+All commands emit JSON and accept `--json`. These records do not schedule work
+or grant permissions. See [local project memory](AGENT_MEMORY.md) for privacy,
+lease expiry, atomic writes, limits, and recovery.
 
 `agent support-bundle` composes a stable local JSON snapshot from the agent,
 T3 Code, browser, host, and maintenance diagnostics. It includes aggregate T3

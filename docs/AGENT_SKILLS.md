@@ -21,6 +21,11 @@ canvas timing, recordings, credential rotation, and other specialized procedures
 are loaded on demand. Development-site refresh responsibility also stays visible
 without loading all publication and service commands.
 
+The workspace skill also routes long-running/shared projects to
+[local project memory](AGENT_MEMORY.md). Read a bounded index and selected
+records when relevant; memory is not automatically injected into prompts.
+Secret entries register private file locations without reading their values.
+
 | Launch context | Catalog used |
 | --- | --- |
 | Codex CLI, including `codex exec` | The provider account's `~/.agents/skills`, plus repository and other Codex-supported scopes |
@@ -94,7 +99,7 @@ receives these base skills:
 | --- | --- |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
 | `basaltwater-agent-tasks` | Scheduling authorized follow-ups, recurring/event checks, bounded goals, and portable context handoffs from T3 or terminal agents |
-| `basaltwater-agent-workspace` | Managed VM worktrees, isolated editors, merge-based integration, and cleanup |
+| `basaltwater-agent-workspace` | Managed VM worktrees, integration/cleanup, and selected durable project notes or todos |
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-deploy-smoke` | Preflight and layered smoke checks for test deployments |
 | `basaltwater-shared-assets` | SMB/SSHFS asset boundaries and Git LFS workflows |
