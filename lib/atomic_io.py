@@ -32,6 +32,17 @@ def _finite_json_float(value: str) -> float:
     return number
 
 
+def parse_json(content: str | bytes) -> JSON:
+    """Parse strict UTF-8 JSON without ambiguous keys or non-finite numbers."""
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    try:
+        return json.loads(content, object_pairs_hook=_json_object,
+                          parse_constant=_reject_json_constant, parse_float=_finite_json_float)
+    except RecursionError as exc:
+        raise ValueError("JSON nesting is too deep") from exc
+
+
 def read_json_file(path: str, *, max_bytes: int = 1024 * 1024) -> JSON:
     """Read bounded JSON from a regular file without following the final symlink."""
     validate_filesystem_path(path)
@@ -46,13 +57,7 @@ def read_json_file(path: str, *, max_bytes: int = 1024 * 1024) -> JSON:
             content = stream.read(max_bytes + 1)
         if len(content) > max_bytes:
             raise ValueError(f'JSON file exceeds {max_bytes} bytes: {path}')
-        try:
-            return json.loads(
-                content.decode('utf-8'), object_pairs_hook=_json_object,
-                parse_constant=_reject_json_constant, parse_float=_finite_json_float,
-            )
-        except RecursionError as exc:
-            raise ValueError(f'JSON nesting is too deep: {path}') from exc
+        return parse_json(content)
     finally:
         if descriptor >= 0:
             os.close(descriptor)

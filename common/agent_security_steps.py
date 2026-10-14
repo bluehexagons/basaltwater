@@ -86,6 +86,8 @@ _USER_DENIED_GROUPS = _AGENT_DENIED_GROUPS | {
 
 
 def _codex_config_content(*, hardened: bool) -> str:
+    from .agent_steps import AGENT_CLI_SOURCE
+
     approval_policy = "never" if hardened else "on-request"
     reviewer = "user" if hardened else "auto_review"
     hardening = "allow_login_shell = false\n" if hardened else ""
@@ -98,6 +100,11 @@ def _codex_config_content(*, hardened: bool) -> str:
         if hardened
         else ""
     )
+    task_mcp = "" if hardened else (
+        "\n[mcp_servers.basaltwater-tasks]\n"
+        'command = "/usr/bin/python3"\n'
+        f'args = {json.dumps([AGENT_CLI_SOURCE, "agent", "tasks", "mcp", "--allow-write"])}\n'
+    )
     return (
         f"{_MANAGED_MARKER}\n"
         f"# Policy: {'hardened' if hardened else 'standard'}\n"
@@ -109,6 +116,7 @@ def _codex_config_content(*, hardened: bool) -> str:
         "\n[sandbox_workspace_write]\n"
         "network_access = false\n"
         f"{environment_hardening}"
+        f"{task_mcp}"
     )
 
 

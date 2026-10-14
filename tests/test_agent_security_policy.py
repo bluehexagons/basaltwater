@@ -15,6 +15,7 @@ from common.agent_security_steps import (
     configure_agent_user_security,
     configure_codex_security_policy,
 )
+from common.agent_steps import AGENT_CLI_SOURCE
 from lib.config import SetupConfig
 from plugins.common import (
     extend_agent_steps,
@@ -63,6 +64,10 @@ class TestCodexSecurityPolicy(unittest.TestCase):
         self.assertEqual(config["approvals_reviewer"], "auto_review")
         self.assertEqual(config["default_permissions"], ":workspace")
         self.assertFalse(config["sandbox_workspace_write"]["network_access"])
+        self.assertEqual(config["mcp_servers"]["basaltwater-tasks"], {
+            "command": "/usr/bin/python3",
+            "args": [AGENT_CLI_SOURCE, "agent", "tasks", "mcp", "--allow-write"],
+        })
 
     def test_nopasswd_keeps_capable_standard_codex_policy(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -132,6 +137,7 @@ class TestCodexSecurityPolicy(unittest.TestCase):
         self.assertFalse(requirements["features"]["plugins"])
         self.assertFalse(requirements["features"]["browser_use"])
         self.assertEqual(requirements["mcp_servers"], {})
+        self.assertNotIn("mcp_servers", config)
 
     def test_rerun_can_switch_an_basaltwater_owned_policy(self):
         with tempfile.TemporaryDirectory() as temporary:

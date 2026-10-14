@@ -214,6 +214,8 @@ class TaskContextStore:
                 raise RuntimeError("Invalid task context source directory")
         if "persistence" in value and value["persistence"] not in PERSISTENCE_MODES:
             raise RuntimeError("Invalid task context persistence")
+        if "initial_checkpoint_applied" in value and type(value["initial_checkpoint_applied"]) is not bool:
+            raise RuntimeError("Invalid task initial checkpoint marker")
         usage = value.get("session_usage")
         if usage is not None and (not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens"}
                                   or any(type(count) is not int or not 0 <= count <= 10**15 for count in usage.values())):
@@ -239,6 +241,14 @@ class TaskContextStore:
             context.pop("session_usage", None)
             context.pop("last_run_id", None)
         context["persistence"] = task["persistence"]
+        initial_checkpoint = ""
+        if not context.get("initial_checkpoint_applied"):
+            # Seed only a new context. Older contexts without this marker may
+            # already have a session or checkpoint and must retain their work.
+            if not context["checkpoint"] and not context["session_id"] and not context.get("last_run_id"):
+                initial_checkpoint = task.get("initial_checkpoint", "")
+                context["checkpoint"] = initial_checkpoint
+            context["initial_checkpoint_applied"] = True
         source = task["directory"]
         validate_filesystem_path(source, must_exist=True)
         if not os.path.isdir(source) or os.path.realpath(source) != source:
@@ -293,7 +303,7 @@ class TaskContextStore:
             "context_directory": str(directory), "directory": execution_directory,
             "source_directory": source, "schema_path": str(schema),
             "log_path": str(runs / (run_id + ".jsonl")),
-            "checkpoint": context["checkpoint"] if task["persistence"] != "fresh" else "",
+            "checkpoint": context["checkpoint"] if task["persistence"] != "fresh" else initial_checkpoint,
             "session_id": context["session_id"] if task["persistence"] == "conversation" else None,
             "usage_baseline": baseline,
         }
@@ -333,7 +343,7 @@ class TaskContextStore:
 
     def reset(self, identifier: str) -> None:
         context = self.load(identifier)
-        context.update(checkpoint="", session_id=None)
+        context.update(checkpoint="", session_id=None, initial_checkpoint_applied=True)
         context.pop("session_usage", None)
         context.pop("last_run_id", None)
         self.save(identifier, context)

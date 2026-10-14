@@ -69,6 +69,17 @@ shells, web search, apps, plugins, MCP servers, or browser features. Shell
 network access still begins outside the workspace boundary and can be requested
 through the normal approval flow instead of being silently enabled.
 
+Standard defaults also expose the account-local `basaltwater-tasks` MCP server
+with task creation, scheduling, and goal controls. This lets terminal and T3
+Codex agents schedule authorized work without requiring project sandbox writes
+to task storage. It runs as the provider account, has no privileged operation,
+and does not itself launch a provider or scheduler. User configuration can
+disable the server or restrict its tools; administrator-owned defaults remain
+untouched. MCP permissions are separate from shell sandbox permissions. A
+saved task must stay within its authorized scope, and additional schedules or
+goal-limit extensions require explicit authority in an unattended prompt.
+See [Agent tasks and goals](AGENT_TASKS.md) for details and opt-out settings.
+
 `--harden-agent` also writes `/etc/codex/requirements.toml` and selects `never`
 within an basaltwater-defined workspace profile. That profile explicitly
 disables command networking, so a user cannot re-enable it through the legacy

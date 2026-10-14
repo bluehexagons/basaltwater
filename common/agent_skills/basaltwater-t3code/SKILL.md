@@ -125,6 +125,14 @@ alone do not supply.
 
 ## Long-running work
 
+Use the `basaltwater-agent-tasks` skill for scheduled follow-ups, event-driven
+checks, and bounded goals. Standard managed Codex sessions expose the account's
+`basaltwater-tasks` MCP controls; the CLI is also available within the session's
+permissions. Hand off findings with `initial_checkpoint` and choose an isolated
+workspace for concurrent edits. Current stable scheduled runs use independent
+Codex context and do not inherit this T3 thread's tools or browser. Native T3
+thread execution remains unavailable until stable-release qualification.
+
 Use the `basaltwater-agent-operations` skill for bounded maintenance holds and
 redacted readiness records. Holds are shared across this account's tasks;
 release one you created after protected work only when no other task depends

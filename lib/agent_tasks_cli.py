@@ -7,7 +7,7 @@ import json
 import sys
 
 from lib.agent_task_api import TaskAPI
-from lib.atomic_io import read_json_file
+from lib.atomic_io import parse_json, read_json_file
 from lib.validation import validate_filesystem_path
 
 
@@ -26,17 +26,17 @@ def add_tasks_parser(commands: argparse._SubParsersAction) -> None:
         if action == "history":
             command.add_argument("--limit", type=int, default=40)
         command.add_argument("--json", action="store_true")
-    create = actions.add_parser("create", help="Save task settings from a bounded JSON file")
-    create.add_argument("file", metavar="TASK_JSON")
+    create = actions.add_parser("create", help="Save task settings from JSON (file or - for stdin)")
+    create.add_argument("file", metavar="TASK_JSON", help="JSON file or - for stdin; maximum 64 KiB")
     disposition = create.add_mutually_exclusive_group()
     disposition.add_argument("--run-now", action="store_true", help="Queue work now and activate its repeat schedule")
     disposition.add_argument("--schedule", action="store_true", help="Activate work at start_at or after its first interval")
     disposition.add_argument("--draft", action="store_true", help="Save inactive settings (the default)")
     create.add_argument("--request-key", default="", help="Idempotent creation key for retried requests")
     create.add_argument("--json", action="store_true")
-    update = actions.add_parser("update", help="Apply settings from a bounded JSON file")
+    update = actions.add_parser("update", help="Apply settings from JSON (file or - for stdin)")
     update.add_argument("identifier", metavar="TASK_ID")
-    update.add_argument("file", metavar="TASK_JSON")
+    update.add_argument("file", metavar="TASK_JSON", help="JSON file or - for stdin; maximum 64 KiB")
     update.add_argument("--json", action="store_true")
     receipt = actions.add_parser("receipt", help="Read full retained evidence, including for a deleted task")
     receipt.add_argument("identifier", metavar="TASK_ID")
@@ -74,8 +74,16 @@ def run_tasks_command(args: argparse.Namespace) -> int:
     try:
         arguments = {}
         if operation in {"create", "update"}:
-            validate_filesystem_path(args.file, must_exist=True)
-            settings = read_json_file(args.file, max_bytes=64 * 1024)
+            if args.file == "-":
+                source = getattr(sys.stdin, "buffer", sys.stdin)
+                content = source.read(64 * 1024 + 1)
+                size = len(content.encode("utf-8")) if isinstance(content, str) else len(content)
+                if size > 64 * 1024:
+                    raise ValueError("Task JSON exceeds 65536 bytes")
+                settings = parse_json(content)
+            else:
+                validate_filesystem_path(args.file, must_exist=True)
+                settings = read_json_file(args.file, max_bytes=64 * 1024)
             if not isinstance(settings, dict):
                 raise ValueError("Task JSON must contain an object")
             arguments["task"] = settings

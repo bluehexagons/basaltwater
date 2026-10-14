@@ -80,6 +80,7 @@ receives these base skills:
 | Skill | Use it for |
 | --- | --- |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
+| `basaltwater-agent-tasks` | Scheduling authorized follow-ups, recurring/event checks, bounded goals, and portable context handoffs from T3 or terminal agents |
 | `basaltwater-agent-workspace` | Managed VM worktrees, isolated editors, merge-based integration, and cleanup |
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-deploy-smoke` | Preflight and layered smoke checks for test deployments |
@@ -128,6 +129,12 @@ still accompany a successful CLI exit. Maintenance holds are shared account
 state; a runtime cap does not create one, and one task must not shorten or
 release a hold needed by another. Stopping a local task does not cancel an
 external broker request or reverse its effects.
+
+The task skill ships scheduling recipes and describes the shared CLI/MCP
+controls, worker readiness, initial handoffs, goal limits, and current T3
+boundaries. Standard managed Codex defaults expose writable task MCP controls;
+user overrides and hardened restrictions still apply. See
+[Agent tasks and goals](AGENT_TASKS.md) for activation and persistence details.
 
 Other provisioned capabilities add focused skills:
 

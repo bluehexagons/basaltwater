@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from lib.agent_cli import _tool_path
 from lib.atomic_io import write_text_atomic
 from lib.agent_task_context import (
-    CodexEvents, PERSISTENCE_MODES, WORKSPACE_MODES, TaskContextStore, private_directory, private_json,
+    CodexEvents, MAX_CHECKPOINT_BYTES, PERSISTENCE_MODES, WORKSPACE_MODES, TaskContextStore, private_directory, private_json,
 )
 from lib.validation import validate_filesystem_path
 
@@ -193,6 +193,11 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
     workspace = values.get("workspace", "existing")
     if not isinstance(persistence, str) or persistence not in PERSISTENCE_MODES:
         raise ValueError("Select fresh, checkpoint, or conversation persistence")
+    initial_checkpoint = values.get("initial_checkpoint", "")
+    if (not isinstance(initial_checkpoint, str) or len(initial_checkpoint.encode("utf-8")) > MAX_CHECKPOINT_BYTES
+            or "\x00" in initial_checkpoint):
+        raise ValueError(f"Initial checkpoint must be text of at most {MAX_CHECKPOINT_BYTES} UTF-8 bytes")
+    initial_checkpoint = initial_checkpoint.strip()
     if not isinstance(workspace, str) or workspace not in WORKSPACE_MODES:
         raise ValueError("Select an existing directory or managed task workspace")
     if persistence == "conversation" and workspace == "run-directory":
@@ -225,6 +230,7 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
             "web_search": web_search, "session_history": session_history, "temporary_files": temporary_files,
             "interval": interval, "repeat_minutes": repeat_minutes, "network": network,
             "persistence": persistence, "workspace": workspace, "executor": executor,
+            "initial_checkpoint": initial_checkpoint,
             "continue_until_done": continue_until_done, "completion_criteria": criteria.strip(),
             "continuation_minutes": _integer(values.get("continuation_minutes", 5), "Continuation interval", 1, MAX_REPEAT_MINUTES),
             "max_runs": max_runs, "deadline_at": deadline, "start_at": start, "token_budget": token_budget,
@@ -357,6 +363,8 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
         "do not start logins or wait for human input. For package or test caches, use a documented "
         "per-command location within allowed writable directories; do not change global configuration. "
         "Keep waits bounded by the remaining runtime and do not detach work to outlive this run. "
+        "Do not create additional scheduled tasks or extend goal limits unless the saved task prompt "
+        "explicitly authorizes that work. Task tools do not expand this invocation's authority. "
         "Report what you checked, changed, and validated, including unresolved findings. Do not "
         "commit, publish, push, deploy, or send external messages (such as email or chat) unless "
         "the task prompt explicitly requests it. "
@@ -751,10 +759,17 @@ class AgentTasks:
             task = next((task for task in state["tasks"] if task["id"] == identifier), None)
             if task is None:
                 raise ValueError("Prompt task was not found")
-            task_values = validate_task({**task, **values} if partial else values, self.home)
+            # Forms that predate portable handoffs omit this create-only field.
+            # Preserve its provenance rather than implicitly replacing it.
+            merged = {**task, **values} if partial else {"initial_checkpoint": task["initial_checkpoint"], **values}
+            task_values = validate_task(merged, self.home)
             _validate_model_effort(task_values, self.home)
             if task["queued"] or any(run["task"]["id"] == identifier and run["status"] == "running" for run in state["runs"]):
                 raise ValueError("Wait for or cancel the active run before editing its task")
+            if task["initial_checkpoint"] != task_values["initial_checkpoint"]:
+                context = self.contexts.load(identifier)
+                if task["attempts"] or context.get("initial_checkpoint_applied"):
+                    raise ValueError("Cannot change the initial checkpoint after an attempt or context reset; create a new task")
             interval = repeat_seconds(task_values)
             changed_interval = repeat_seconds(task) != interval
             changed_start = task["start_at"] != task_values["start_at"]
@@ -841,7 +856,10 @@ class AgentTasks:
             usage_valid = not pending and (context["session_id"] is None
                           or context.get("session_usage") is not None and task["last_run_id"] == context.get("last_run_id"))
             return {"directory": str(self.contexts.directory(identifier)), **context, "reset_pending": pending,
-                    "usage_baseline_valid": usage_valid}
+                    "usage_baseline_valid": usage_valid,
+                    "initial_checkpoint_pending": bool(task["initial_checkpoint"]
+                        and not context.get("initial_checkpoint_applied") and not context["checkpoint"]
+                        and not context["session_id"] and not context.get("last_run_id"))}
 
     def notify(self, identifier: str, message: str, *, key: str = "") -> bool:
         """Coalesce an authorized wake; payloads are evidence, not instructions."""

@@ -43,9 +43,10 @@ REMOTE_AGENT_PAYLOAD_DIR = "/opt/basaltwater/agent_payload"
 AGENT_CLI_SOURCE = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "basaltwater.py")
 )
-AGENT_SKILLS_ROOT = os.path.join(os.path.dirname(__file__), "agent_skills")
+AGENT_SKILLS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "agent_skills"))
 BASE_AGENT_SKILL_NAMES = (
     "basaltwater-agent-operations",
+    "basaltwater-agent-tasks",
     "basaltwater-agent-workspace",
     "basaltwater-subagents",
     "basaltwater-deploy-smoke",

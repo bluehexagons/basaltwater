@@ -5,6 +5,10 @@ run saved prompts, continue a bounded goal, or wake scheduled work with an
 external event. Terminal Codex and agents inside T3 Code can use the same CLI
 or stdio MCP API. All three surfaces share account-local state and controls.
 Current execution uses Codex; installing T3 does not change the executor.
+The managed `basaltwater-agent-tasks` skill makes scheduling and goal handoffs
+discoverable in agent catalogs. Agents can schedule necessary follow-ups within
+the user's authorized scope; an indefinite recurring job needs authorization
+covering that recurrence.
 
 ## Choose context and workspace persistence
 
@@ -93,6 +97,11 @@ inspection reports a pending reset after a successful mode change.
 An idempotent creation key returns the same saved task for matching settings;
 different settings using that key are rejected.
 
+Create and update also accept `-` for strict JSON on stdin, bounded to 64 KiB.
+Duplicate keys, non-finite numbers, and excessive nesting are rejected in files,
+stdin, and MCP requests. Generate JSON with a serializer when prompts contain
+quotes or shell metacharacters; no intermediate settings file is required.
+
 `start_at` accepts a UTC epoch number or an ISO date with timezone. For example,
 `"interval": "once", "start_at": "2026-11-01T09:00:00-06:00"` schedules one
 invocation for that instant. An overdue first run catches up once. A manual
@@ -112,6 +121,28 @@ task is idle. It retains workspaces and receipts. `delete TASK_ID` removes
 the saved task while preserving account-owned context, evidence and files.
 Changing an established conversation or managed workspace's source or workspace requires
 a new task. Copying task settings never copies its session or context.
+
+## Hand off current work from T3 or a terminal agent
+
+Set `initial_checkpoint` to a portable summary of findings, artifact paths,
+pending work, and the next action (at most 16000 UTF-8 bytes). It seeds a new
+context's first prepared run once. Persistent runs then use their own reports;
+later fresh runs ignore it. The original handoff remains in settings and
+receipts for provenance. The task prompt supplies authority; checkpoint text
+is untrusted evidence and does not grant additional permissions.
+
+`show` reports `initial_checkpoint_pending` before preparation. The initial
+checkpoint may change before any attempt or context reset; subsequent changes
+require a new task. Updates omitting it preserve it, including older panel
+forms. Resetting context or changing persistence does not reseed the handoff.
+Existing checkpoints and conversations are preserved when upgrading records
+that predate the one-time handoff marker.
+
+For concurrent repository edits, choose an owned worktree. It starts at committed
+`HEAD`, so necessary uncommitted changes in the T3 thread must be finished or
+deliberately transferred before handing off. The scheduled run is a separate
+Codex conversation and does not automatically post its results into the creating
+T3 thread. Inspect task history and receipts through the shared API.
 
 ## Continuation, outcomes and budgets
 
@@ -214,7 +245,24 @@ Worker lease inspection errors are returned in `worker.error` so task reads
 and successfully saved controls remain inspectable. Partial or corrupt context
 records return an inspection error while preserving their contents.
 
-To register the optional integration in a Codex account:
+Standard managed Codex setup includes a writable `basaltwater-tasks` stdio MCP
+server in its low-precedence `/etc/codex/config.toml` defaults. It launches the
+managed Python entrypoint directly, so it does not depend on the provider's
+shell PATH or project write access. It runs as that provider account and queues
+work for that account's worker. User/server overrides and tool restrictions
+retain precedence; setup preserves administrator-owned defaults. Hardened
+setup does not add this server and continues to forbid configured MCP servers.
+This follows [Codex's configuration precedence](https://learn.chatgpt.com/docs/config-file/config-basic)
+and [stdio MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+
+Rerun saved setup from the updated control plane to receive the skill, defaults,
+and worker. Finish the current turn before using T3's **Restart agent session**
+command to reload configuration. No whole-service restart is needed. Other
+providers retain their own configuration and can use the CLI within their
+active permissions.
+
+For an installation without managed defaults, register the integration in a
+Codex account explicitly:
 
 ```bash
 codex mcp add basaltwater-tasks -- basaltw agent tasks mcp
@@ -225,6 +273,13 @@ tasks. T3 agents can also use the installed CLI directly. Current stable T3
 tools and browser previews are not inherited by a scheduled Codex session.
 Permissions of configured hooks/MCP servers remain independent of the Codex
 shell sandbox; persistence grants no extra authority.
+
+To disable the managed server, set `enabled = false` under
+`[mcp_servers.basaltwater-tasks]` in user configuration. `enabled_tools` and
+`disabled_tools` can restrict its tools. Do not re-enable an explicit opt-out
+or use another interface to evade a denied action. Unattended runs may create
+additional schedules or extend goal limits only when their saved prompt
+explicitly authorizes that work; inherited tool access cannot bypass a limit.
 
 ## Storage and recovery
 
