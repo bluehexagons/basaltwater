@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
-import json
 import os
 import pwd
 import stat
@@ -12,21 +11,30 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from lib.agent_task_api import WORKER_MARKER, worker_unit
+from lib.atomic_io import parse_json
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, run
 from lib.unit_transaction import replace_units, snapshot_unit_file
-from lib.validation import validate_filesystem_path
+from lib.validation import validate_filesystem_path, validate_no_control_characters
 from lib.validators import validate_username
 
 
 UNIT_DIR = "/etc/systemd/system"
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
+PANEL_UNIT = "basaltwater-web-panel.service"
+PANEL_MARKER = "# Managed by basaltwater web panel"
+
+
+class _LegacyWorkerHeld(RuntimeError):
+    """A schema-1 scheduler must stop before setup can block new claims."""
+
+    def __init__(self) -> None:
+        super().__init__("Stop the legacy panel/task worker before migrating its scheduler; it cannot block new claims")
 
 
 def _quote(value: str) -> str:
-    if any(ord(character) < 32 or ord(character) == 127 for character in value):
-        raise ValueError("Invalid systemd value")
+    validate_no_control_characters(value, "Task worker systemd value")
     return '"' + value.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
@@ -34,6 +42,11 @@ def render_task_worker(account: pwd.struct_passwd, *, revision: str) -> str:
     if account.pw_uid == 0 or not validate_username(account.pw_name):
         raise ValueError("Task workers require a valid non-root account")
     validate_filesystem_path(account.pw_dir, must_exist=False)
+    if not os.path.isabs(account.pw_dir):
+        raise ValueError("Task worker home must be absolute")
+    # WorkingDirectory is a literal path; quoting it makes it non-absolute.
+    # A final slash preserves trailing spaces and prevents line continuation.
+    working_directory = account.pw_dir.replace("%", "%%").rstrip("/") + "/"
     return f"""{WORKER_MARKER}
 # Runtime revision: {revision}
 [Unit]
@@ -45,7 +58,7 @@ Wants=network-online.target
 Type=simple
 User={account.pw_name}
 Group={account.pw_gid}
-WorkingDirectory={_quote(account.pw_dir)}
+WorkingDirectory={working_directory}
 Environment={_quote('HOME=' + account.pw_dir)}
 Environment={_quote('CODEX_HOME=' + account.pw_dir + '/.codex')}
 Environment=XDG_RUNTIME_DIR=/run/user/{account.pw_uid}
@@ -148,13 +161,13 @@ def _worker_busy(account: pwd.struct_passwd, parent: int) -> bool:
             if len(payload) > 1024 * 1024:
                 raise RuntimeError("Task state exceeds its storage limit")
             try:
-                value = json.loads(payload)
+                value = parse_json(payload)
             except (ValueError, UnicodeError, RecursionError) as exc:
                 raise RuntimeError("Invalid task state; inspect it before setup") from exc
             if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] not in (1, 2):
                 raise RuntimeError("Unsupported task state; inspect it before setup")
             if value["version"] == 1:
-                raise RuntimeError("Stop the legacy panel/task worker before migrating its scheduler; it cannot block new claims")
+                raise _LegacyWorkerHeld()
             if (not isinstance(value.get("runs"), list) or len(value["runs"]) > 40
                     or any(not isinstance(run, dict) or not isinstance(run.get("status"), str) or run["status"] not in
                            {"running", "completed", "failed", "cancelled", "interrupted"} for run in value["runs"])):
@@ -164,8 +177,36 @@ def _worker_busy(account: pwd.struct_passwd, parent: int) -> bool:
         os.close(descriptor)
 
 
+@contextmanager
+def _panel_handoff(account: pwd.struct_passwd, *, legacy: bool = False):
+    """Stop only this account's managed panel and restore it after handoff."""
+    previous = snapshot_unit_file(os.path.join(UNIT_DIR, PANEL_UNIT))
+    panel_active = (previous is not None
+                    and previous["content"].startswith(PANEL_MARKER + "\n")
+                    and _active(PANEL_UNIT))
+    if panel_active:
+        owner = run(["systemctl", "show", PANEL_UNIT, "--property=User", "--value"],
+                    check=False, capture_output=True)
+        panel_active = owner.returncode == 0 and owner.stdout.strip() in {account.pw_name, str(account.pw_uid)}
+    if not panel_active:
+        if legacy:
+            raise RuntimeError("Legacy worker is not this account's managed panel; stop its scheduler before retrying setup")
+        yield
+        return
+    if legacy:
+        print("  ⚠ Stopping the legacy panel/task worker for migration; active work may be interrupted")
+    # A legacy scheduler ignores state.lock. Stop the service before rechecking
+    # its lease, rather than treating a momentarily idle snapshot as safe.
+    # A failed stop may still have acted, so restoration covers that call too.
+    try:
+        run(["systemctl", "stop", PANEL_UNIT], timeout=120)
+        yield
+    finally:
+        run(["systemctl", "start", PANEL_UNIT], timeout=120)
+
+
 def configure_agent_task_worker(config: SetupConfig) -> None:
-    """Install an idle worker without creating tasks or borrowing credentials."""
+    """Install a worker, stopping a managed legacy scheduler when necessary."""
     if not can_manage_system_services(config.machine_type):
         print("  ✓ Skipping task worker (persistent services unavailable)")
         return
@@ -193,19 +234,17 @@ def configure_agent_task_worker(config: SetupConfig) -> None:
     if previous is not None and previous["content"] == content and _active(unit):
         print(f"  ✓ Independent task worker ready: {unit}")
         return
-    with _refresh_guard(account) as parent:
-        if _worker_busy(account, parent):
-            raise RuntimeError("Finish or cancel the active prompt task before refreshing its worker")
-        panel = "basaltwater-web-panel.service"
-        panel_active = _active(panel)
-        if panel_active:
-            owner = run(["systemctl", "show", panel, "--property=User", "--value"], check=False, capture_output=True)
-            panel_active = owner.returncode == 0 and owner.stdout.strip() == account.pw_name
-        if panel_active:
-            run(["systemctl", "stop", panel])
+    with _refresh_guard(account) as parent, ExitStack() as handoff:
+        migrated = False
         try:
-            replace_units({unit: content}, activate=(unit,), unit_dir=UNIT_DIR)
-        finally:
-            if panel_active:
-                run(["systemctl", "start", panel])
+            busy = _worker_busy(account, parent)
+        except _LegacyWorkerHeld:
+            handoff.enter_context(_panel_handoff(account, legacy=True))
+            migrated = True
+            busy = _worker_busy(account, parent)
+        if busy:
+            raise RuntimeError("Finish or cancel the active prompt task before refreshing its worker")
+        if not migrated:
+            handoff.enter_context(_panel_handoff(account))
+        replace_units({unit: content}, activate=(unit,), unit_dir=UNIT_DIR)
     print(f"  ✓ Independent task worker: {unit}")

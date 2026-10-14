@@ -209,8 +209,15 @@ reservation cannot be cleared by the next invocation; a cancelled claim is
 recorded before the worker exits.
 Refreshing a busy worker is refused until its active invocation ends. Setup
 holds the task-state lock through the idle check and service replacement so a
-new claim cannot race that check. Stop a live legacy schema-1 panel worker
-before migrating it: that older worker cannot honor the shared state lock.
+new claim cannot race that check. For a live legacy schema-1 worker, setup
+automatically stops the managed panel belonging to the task account before
+rechecking its worker lease: that older scheduler cannot honor the shared
+state lock. This may terminate active panel jobs or prompt invocations.
+Saved tasks, queued work, credentials and workspace edits are retained; the
+replacement worker records unfinished runs as interrupted through normal
+recovery. Inspect those edits before another invocation. Setup restores the
+panel after activation or a failed handoff. A foreground or unmanaged legacy
+scheduler must be stopped by its owner; setup does not terminate it.
 The panel hands scheduling to that worker while continuing its separate publishing poll.
 Older installations retain panel scheduling until setup installs the worker.
 OCI cannot install a persistent service; root-account tasks are unsupported.

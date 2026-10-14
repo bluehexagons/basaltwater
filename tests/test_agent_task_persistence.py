@@ -241,17 +241,29 @@ class PersistentTaskTests(unittest.TestCase):
             self.run_task({**report("waiting"), "retry_after_minutes": 1})
         self.assertEqual(self.manager.snapshot()["tasks"][0]["next_run"], 61)
 
-    def test_recovery_archives_interrupted_claim_without_reexecuting_it(self) -> None:
+    def _assert_interrupted_recovery(self, *, version: int) -> None:
         identifier = self.manager.create(self.values, run_now=True, now=0)
         with patch.object(tasks, "execute_prompt", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 self.manager.tick(now=1)
-        self.manager.start(once=True)
+        state = self.manager.snapshot()
+        state["version"] = version
+        self.manager.path.write_text(json.dumps(state))
+        with patch.object(tasks, "execute_prompt") as execute:
+            self.manager.start(once=True)
+        execute.assert_not_called()
         self.assertEqual(self.manager.error, "")
         recovered = self.manager.snapshot()["runs"][0]
         self.assertEqual(recovered["status"], "interrupted")
         self.assertEqual(TaskContextStore(self.home).history(identifier)[0]["status"], "interrupted")
         self.assertEqual(self.manager.snapshot()["tasks"][0]["attempts"], 1)
+        self.assertEqual(json.loads(self.manager.path.read_text())["version"], 2)
+
+    def test_recovery_archives_interrupted_claim_without_reexecuting_it(self) -> None:
+        self._assert_interrupted_recovery(version=2)
+
+    def test_legacy_migration_recovers_interrupted_claim_without_reexecuting_it(self) -> None:
+        self._assert_interrupted_recovery(version=1)
 
     def test_recovery_reconciles_final_receipt_after_hot_state_write_failed(self) -> None:
         identifier = self.manager.create({**self.values, "continue_until_done": True,

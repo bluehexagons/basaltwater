@@ -7,7 +7,7 @@ import fcntl
 import json
 import tempfile
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,6 +58,23 @@ class TaskRefreshGuardTests(unittest.TestCase):
             state.write_text(json.dumps({"version": 2, "tasks": [], "runs": []}))
             self.assertFalse(steps._worker_busy(self.account, parent))
 
+    def test_invalid_live_state_is_preserved(self) -> None:
+        with steps._refresh_guard(self.account) as parent:
+            descriptor = os.open("worker.lock", os.O_CREAT | os.O_RDWR, 0o600, dir_fd=parent)
+            self.addCleanup(os.close, descriptor)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path = Path(self.home) / ".local/state/basaltwater/prompt-tasks/tasks.json"
+            for payload in ('{"version":2,"version":1,"runs":[]}',
+                            '{"version":2,"runs":[],"extra":NaN}',
+                            '{"version":true,"runs":[]}',
+                            '{"version":2,"runs":[{"status":"unknown"}]}'):
+                with self.subTest(payload=payload):
+                    path.write_text(payload)
+                    path.chmod(0o600)
+                    with self.assertRaises(RuntimeError):
+                        steps._worker_busy(self.account, parent)
+                    self.assertEqual(path.read_text(), payload)
+
 
 class TaskWorkerSetupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -80,6 +97,8 @@ class TaskWorkerSetupTests(unittest.TestCase):
         self.enterContext(patch.object(steps.pwd, "getpwnam", return_value=self.account))
         self.enterContext(patch.object(steps, "UNIT_DIR", self.home))
         self.enterContext(patch.object(steps, "_refresh_guard", side_effect=lambda _account: nullcontext()))
+        self.panel_path = Path(self.home) / steps.PANEL_UNIT
+        self.panel_path.write_text(steps.PANEL_MARKER + "\n[Service]\nUser=agent\n")
 
     def test_render_keeps_provider_and_workspace_identity_non_root(self) -> None:
         content = steps.render_task_worker(self.account, revision="reviewed")
@@ -90,6 +109,16 @@ class TaskWorkerSetupTests(unittest.TestCase):
         self.assertNotIn("User=root", content)
         self.assertIn("%", steps._quote("value%"))
         self.assertEqual(steps._quote("value%"), '"value%%"')
+
+    def test_working_directory_preserves_literal_systemd_paths(self) -> None:
+        self.account.pw_dir = '/home/agent/work "quoted" %n\\ '
+        content = steps.render_task_worker(self.account, revision="reviewed")
+        directory = next(line for line in content.splitlines() if line.startswith("WorkingDirectory="))
+        self.assertEqual(directory, 'WorkingDirectory=/home/agent/work "quoted" %%n\\ /')
+        for path in ("relative/home", "/home/agent\nUser=root", "/home/agent\t"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                self.account.pw_dir = path
+                steps.render_task_worker(self.account, revision="reviewed")
 
     def test_install_uses_transactional_unit_activation_without_starting_prompts(self) -> None:
         with patch.object(steps, "_worker_busy", return_value=False), patch.object(steps, "_active", return_value=False), patch.object(
@@ -134,13 +163,152 @@ class TaskWorkerSetupTests(unittest.TestCase):
             steps, "run", return_value=completed,
         ) as run, patch.object(steps, "replace_units", side_effect=RuntimeError("activation failed")), self.assertRaises(RuntimeError):
             steps.configure_agent_task_worker(self.config)
-        run.assert_any_call(["systemctl", "stop", "basaltwater-web-panel.service"])
-        run.assert_any_call(["systemctl", "start", "basaltwater-web-panel.service"])
+        run.assert_any_call(["systemctl", "stop", steps.PANEL_UNIT], timeout=120)
+        run.assert_any_call(["systemctl", "start", steps.PANEL_UNIT], timeout=120)
         with patch.object(steps, "_worker_busy", return_value=False), patch.object(steps, "_active", return_value=True), patch.object(
             steps, "run", return_value=SimpleNamespace(returncode=0, stdout="another-account\n"),
         ) as run, patch.object(steps, "replace_units"):
             steps.configure_agent_task_worker(self.config)
         self.assertEqual(run.call_count, 1)
+
+    def test_failed_panel_stop_still_attempts_restoration_without_activation(self) -> None:
+        events = []
+
+        def command(args: list[str], **kwargs: object) -> SimpleNamespace:
+            events.append(args[1])
+            if args[1] == "stop":
+                raise RuntimeError("stop timed out")
+            return SimpleNamespace(returncode=0, stdout="agent\n")
+
+        with patch.object(steps, "_worker_busy", return_value=False), patch.object(steps, "_active", return_value=True), patch.object(
+            steps, "run", side_effect=command,
+        ), patch.object(steps, "replace_units") as replace, self.assertRaisesRegex(RuntimeError, "stop timed out"):
+            steps.configure_agent_task_worker(self.config)
+        self.assertEqual(events, ["show", "stop", "start"])
+        replace.assert_not_called()
+
+    def test_unchanged_active_worker_does_not_interrupt_work(self) -> None:
+        content = steps.WORKER_MARKER + "\nunchanged"
+        (Path(self.home) / f"basaltwater-agent-tasks-{self.account.pw_uid}.service").write_text(content)
+        with patch.object(steps, "render_task_worker", return_value=content), patch.object(steps, "_active", return_value=True), patch.object(
+            steps, "_worker_busy",
+        ) as busy, patch.object(steps, "replace_units") as replace, patch.object(steps, "run") as run:
+            steps.configure_agent_task_worker(self.config)
+        busy.assert_not_called()
+        replace.assert_not_called()
+        run.assert_not_called()
+
+    def _legacy_fixture(self, *, running: bool = False) -> tuple[Path, int]:
+        """Use real lifetime and state locks, with all service actions mocked."""
+        directory = Path(self.home) / "state"
+        directory.mkdir(mode=0o700)
+        descriptor = os.open(directory / "worker.lock", os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        path = directory / "tasks.json"
+        path.write_text(json.dumps({"version": 1, "tasks": [], "runs": [{"status": "running"}] if running else []}))
+        path.chmod(0o600)
+        probe_account = SimpleNamespace(pw_uid=os.geteuid())
+        real_busy = steps._worker_busy
+        self.enterContext(patch.object(steps, "_worker_busy", side_effect=lambda _account, parent: real_busy(probe_account, parent)))
+
+        @contextmanager
+        def guard(_account: object):
+            parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            state = os.open(directory / "state.lock", os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(state, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                yield parent
+            finally:
+                os.close(state)
+                os.close(parent)
+
+        self.enterContext(patch.object(steps, "_refresh_guard", side_effect=guard))
+        return path, descriptor
+
+    def _assert_legacy_migration(self, *, running: bool) -> None:
+        path, lease = self._legacy_fixture(running=running)
+        before = path.read_bytes()
+        events = []
+
+        def blocked_claim() -> None:
+            descriptor = os.open(path.parent / "state.lock", os.O_RDWR)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+
+        def command(args: list[str], **kwargs: object) -> SimpleNamespace:
+            events.append(args[1])
+            if args[1] in {"stop", "start"}:
+                blocked_claim()
+            if args[1] == "stop":
+                fcntl.flock(lease, fcntl.LOCK_UN)
+            return SimpleNamespace(returncode=0, stdout="agent\n")
+
+        def replace(*args: object, **kwargs: object) -> None:
+            blocked_claim()
+            events.append("activate")
+            self.assertEqual(path.read_bytes(), before)
+
+        with patch.object(steps, "_active", return_value=True), patch.object(steps, "run", side_effect=command), patch.object(
+            steps, "replace_units", side_effect=replace,
+        ):
+            steps.configure_agent_task_worker(self.config)
+        self.assertEqual(events, ["show", "stop", "activate", "start"])
+        self.assertEqual(path.read_bytes(), before)
+        descriptor = os.open(path.parent / "state.lock", os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(descriptor)
+
+    def test_idle_legacy_migration_stops_before_rechecking_lease_and_keeps_state(self) -> None:
+        self._assert_legacy_migration(running=False)
+
+    def test_active_legacy_migration_interrupts_worker_and_keeps_state(self) -> None:
+        self._assert_legacy_migration(running=True)
+
+    def test_legacy_migration_restores_panel_on_failure_or_interruption(self) -> None:
+        for failure in (RuntimeError("activation failed"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__), patch.object(
+                steps, "_worker_busy", side_effect=[steps._LegacyWorkerHeld(), False],
+            ), patch.object(steps, "_active", return_value=True), patch.object(
+                steps, "run", return_value=SimpleNamespace(returncode=0, stdout="agent\n"),
+            ) as run, patch.object(steps, "replace_units", side_effect=failure), self.assertRaises(type(failure)):
+                steps.configure_agent_task_worker(self.config)
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ["show", "stop", "start"])
+
+    def test_legacy_handoff_refuses_an_unreleased_worker_lease(self) -> None:
+        path, _lease = self._legacy_fixture()
+        before = path.read_bytes()
+        with patch.object(steps, "_active", return_value=True), patch.object(
+            steps, "run", return_value=SimpleNamespace(returncode=0, stdout="agent\n"),
+        ) as run, patch.object(steps, "replace_units") as replace, self.assertRaises(steps._LegacyWorkerHeld):
+            steps.configure_agent_task_worker(self.config)
+        self.assertEqual([call.args[0][1] for call in run.call_args_list], ["show", "stop", "start"])
+        replace.assert_not_called()
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_legacy_handoff_preserves_unmanaged_foreign_or_inactive_panels(self) -> None:
+        scenarios = (("missing", True, "agent", 0), ("unmanaged", True, "agent", 0),
+                     ("managed", False, "agent", 0), ("managed", True, "another-account", 0),
+                     ("managed", True, "", 1))
+        for kind, active, owner, code in scenarios:
+            with self.subTest(kind=kind, active=active, owner=owner, code=code):
+                if kind == "missing":
+                    self.panel_path.unlink(missing_ok=True)
+                else:
+                    self.panel_path.write_text((steps.PANEL_MARKER if kind == "managed" else "# Custom panel") + "\n")
+                with patch.object(steps, "_worker_busy", side_effect=steps._LegacyWorkerHeld()), patch.object(
+                    steps, "_active", return_value=active,
+                ), patch.object(steps, "run", return_value=SimpleNamespace(returncode=code, stdout=owner)) as run, patch.object(
+                    steps, "replace_units",
+                ) as replace, self.assertRaisesRegex(RuntimeError, "not this account's managed panel"):
+                    steps.configure_agent_task_worker(self.config)
+                self.assertTrue(all(call.args[0][1] == "show" for call in run.call_args_list))
+                replace.assert_not_called()
 
 
 if __name__ == "__main__":
