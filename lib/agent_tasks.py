@@ -37,6 +37,7 @@ MAX_RUNS = 40
 MAX_PROMPT_BYTES = 4000
 MAX_OUTPUT_BYTES = 8192
 MAX_STATE_BYTES = 1024 * 1024
+FINISH_RESERVE_BYTES = 128 * 1024
 MAX_STREAM_BYTES = 1024 * 1024
 DEFAULT_TIMEOUT_MINUTES = 30
 MAX_TIMEOUT_MINUTES = 7 * 24 * 60
@@ -369,6 +370,11 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     status = "completed"
     reason = ""
     started = time.monotonic()
+
+    def timed_out() -> bool:
+        return (time.monotonic() - started >= timeout_seconds
+                or bool(task["deadline_at"]) and time.time() >= task["deadline_at"])
+
     command = codex_command(task, executable)
     events = CodexEvents() if runtime else None
     if isolated:
@@ -402,7 +408,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 while selector.get_map():
-                    if cancel.is_set() or time.monotonic() - started >= timeout_seconds:
+                    if cancel.is_set() or timed_out():
                         status = "cancelled" if cancel.is_set() else "failed"
                         reason = "Cancelled by operator" if cancel.is_set() else timeout_message
                         _kill_group(process)
@@ -437,7 +443,7 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
                         break
             # Kill remaining descendants even if Codex closed stdout before exiting.
             while True:
-                if cancel.is_set() or time.monotonic() - started >= timeout_seconds:
+                if cancel.is_set() or timed_out():
                     status = "cancelled" if cancel.is_set() else "failed"
                     reason = "Cancelled by operator" if cancel.is_set() else timeout_message
                     _kill_group(process)
@@ -673,9 +679,20 @@ class AgentTasks:
         try:
             self._check_parent(create=True)
             assert self._state is not None
-            content = json.dumps(self._state, ensure_ascii=False) + "\n"
-            if len(content.encode("utf-8")) > MAX_STATE_BYTES:
-                raise RuntimeError("Prompt task storage limit reached")
+            limit = MAX_STATE_BYTES
+            if any(run["status"] == "running" for run in self._state["runs"]):
+                limit -= FINISH_RESERVE_BYTES
+            while True:
+                content = json.dumps(self._state, ensure_ascii=False, allow_nan=False) + "\n"
+                if len(content.encode("utf-8")) <= limit:
+                    break
+                # Full receipts remain in per-task storage. Shed only older
+                # finished summaries, retaining the newest record and every
+                # active claim, with room for the active run's final metadata.
+                old = next((run for run in self._state["runs"][:-1] if run["status"] != "running"), None)
+                if old is None:
+                    raise RuntimeError("Prompt task storage limit reached; reduce saved tasks or pending event payloads")
+                self._state["runs"].remove(old)
             write_text_atomic(str(self.path), content, mode=0o600)
         except Exception:
             self._state = None
@@ -878,7 +895,7 @@ class AgentTasks:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Token budget reached"
         elif task["max_runs"] and task["attempts"] >= task["max_runs"]:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Maximum run attempts reached"
-        elif (task["enabled"] and task["continue_until_done"] and run["status"] == "completed"
+        elif (task["enabled"] and task["continue_until_done"] and task["interval"] != "event" and run["status"] == "completed"
               and outcome == "waiting" and run.get("retry_after_minutes")):
             task["next_run"] = run["finished_at"] + run["retry_after_minutes"] * 60
 
@@ -896,7 +913,7 @@ class AgentTasks:
 
         class Cancellation:
             def is_set(self) -> bool:
-                if manager._cancel.is_set():
+                if manager._stop.is_set() or manager._cancel.is_set():
                     return True
                 state = manager.snapshot()
                 task = next((item for item in state["tasks"] if item["id"] == identifier), None)
@@ -907,10 +924,12 @@ class AgentTasks:
     def tick(self, *, now: float | None = None) -> bool:
         """Claim one due task, advance its deadline, then execute outside the lock."""
 
+        if self._stop.is_set():
+            return False
         current = time.time() if now is None else now
         with self._transaction():
             state = self._load()
-            if any(run["status"] == "running" for run in state["runs"]):
+            if self._stop.is_set() or any(run["status"] == "running" for run in state["runs"]):
                 return False
             expired = False
             for saved_task in state["tasks"]:
@@ -955,12 +974,16 @@ class AgentTasks:
             self._save()
         started = time.monotonic()
         try:
-            runtime = self.contexts.prepare(run["task"], run["id"])
-            execution_task = {**run["task"], "_runtime": runtime}
-            result = execute_prompt(execution_task, self.home, self._cancel_for_task(task["id"]))
-            result["execution_directory"] = runtime["directory"]
-            result["context_directory"] = runtime["context_directory"]
-            result["log_path"] = runtime["log_path"]
+            cancellation = self._cancel_for_task(task["id"])
+            if cancellation.is_set():
+                result = {"status": "cancelled", "output": "", "message": "Cancelled before workspace preparation", "exit_code": None}
+            else:
+                runtime = self.contexts.prepare(run["task"], run["id"])
+                execution_task = {**run["task"], "_runtime": runtime}
+                result = execute_prompt(execution_task, self.home, cancellation)
+                result["execution_directory"] = runtime["directory"]
+                result["context_directory"] = runtime["context_directory"]
+                result["log_path"] = runtime["log_path"]
         except Exception as exc:
             result = {"status": "failed", "output": "", "message": f"Prompt could not complete: {type(exc).__name__}: {exc}"[:500]}
         with self._transaction():

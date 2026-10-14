@@ -162,8 +162,9 @@ the runner never treats a partial total as the complete budget charge.
 Workspace preparation has its own bounded managed Git operations before the
 provider invocation starts.
 
-Waiting reports for goals may request a bounded retry delay; ordinary tasks
-keep their configured cadence. Cancellation stops local
+Waiting reports for timed goals may request a bounded retry delay; ordinary
+tasks keep their configured cadence. Event-only goals wait for the next
+notification even when an agent reports a retry delay. Cancellation stops local
 processes without undoing edits or cancelling work owned by another service.
 Maintenance holds remain separate and are never created automatically.
 
@@ -172,6 +173,9 @@ Maintenance holds remain separate and are never created automatically.
 Non-root Debian setup with Codex or the panel installs
 `basaltwater-agent-tasks-UID.service`. It runs as the task account, uses its
 own credentials, starts at boot, and is independent of the panel and T3.
+Shutdown stops new claims and cancels active work. A shutdown during claim
+reservation cannot be cleared by the next invocation; a cancelled claim is
+recorded before the worker exits.
 Refreshing a busy worker is refused until its active invocation ends. Setup
 holds the task-state lock through the idle check and service replacement so a
 new claim cannot race that check. Stop a live legacy schema-1 panel worker
@@ -206,6 +210,9 @@ full prompts and output, and `history_limit` from 0 to 40 to bound recent runs. 
 `--allow-write` adds creation, partial update, lifecycle actions and notify.
 Mutations queue work; the MCP process does not execute providers or start a
 scheduler. A scheduler must be running for queued work to proceed.
+Worker lease inspection errors are returned in `worker.error` so task reads
+and successfully saved controls remain inspectable. Partial or corrupt context
+records return an inspection error while preserving their contents.
 
 To register the optional integration in a Codex account:
 
@@ -229,6 +236,8 @@ active run becomes interrupted; inspect its edits before another invocation.
 If its final receipt was saved before an interrupted hot-state write, recovery
 reconciles that result and usage without relaunching the provider.
 Deadlines also stop idle event tasks and work deferred by a daily limit.
+Active invocations recheck their absolute deadline as well as their monotonic
+runtime cap; moving the wall clock forward does not leave a late invocation running.
 Receipt writing precedes checkpoint updates. An evidence/checkpoint storage
 failure pauses the task even when failure pausing is disabled; inspect its
 retained receipt and repair storage before explicitly continuing.
@@ -240,6 +249,13 @@ retained receipt and repair storage before explicitly continuing.
 | `~/.local/state/basaltwater/task-contexts/TASK_ID/runs/` | Per-run JSON receipts and bounded raw JSONL/diagnostic logs |
 | `~/.local/share/basaltwater/task-workspaces/TASK_ID/` | Persistent or per-run empty task directories |
 | `~/.local/share/basaltwater/worktrees/` | Managed Git worktrees with separate ownership records |
+
+Recent history keeps up to 40 records within the 1 MiB shared-state limit.
+Older finished summaries are evicted when needed; the newest record and active
+claims are retained. Active claims reserve 128 KiB for completion metadata so
+incoming events cannot consume that space. Requests that cannot fit after
+history eviction fail without changing saved state; reduce task settings or
+pending wake payloads before retrying. This limit does not remove full receipts.
 
 Receipts survive eviction from the panel's recent-history list. Evidence
 retention removes only generated receipt/log pairs, preserving workspace files

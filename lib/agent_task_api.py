@@ -39,6 +39,7 @@ def worker_status(manager: AgentTasks) -> dict[str, Any]:
     installed = worker_installed(manager.home)
     path = manager.parent / "worker.lock"
     running = False
+    error = manager.error or None
     try:
         manager._check_parent()
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -55,8 +56,10 @@ def worker_status(manager: AgentTasks) -> dict[str, Any]:
             os.close(descriptor)
     except FileNotFoundError:
         pass
+    except (OSError, RuntimeError, ValueError) as exc:
+        error = f"Task worker status unavailable: {exc}"[:500]
     return {"installed": installed, "running": running, "unit": worker_unit(manager.home),
-            "error": manager.error or None}
+            "error": error}
 
 
 def task_capabilities(manager: AgentTasks) -> dict[str, Any]:

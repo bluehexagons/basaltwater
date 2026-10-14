@@ -198,8 +198,10 @@ class TaskContextStore:
             value = private_json(directory / "context.json")
         except FileNotFoundError:
             return {"version": 1, "checkpoint": "", "session_id": None, "workspace": None}
-        if (type(value.get("version")) is not int or value["version"] != 1 or not isinstance(value.get("checkpoint"), str)
+        if (not {"version", "checkpoint", "session_id", "workspace"} <= set(value)
+                or type(value.get("version")) is not int or value["version"] != 1 or not isinstance(value.get("checkpoint"), str)
                 or len(value["checkpoint"].encode("utf-8")) > MAX_CHECKPOINT_BYTES
+                or "\x00" in value["checkpoint"]
                 or value.get("session_id") is not None and (
                     not isinstance(value["session_id"], str) or not _SESSION.fullmatch(value["session_id"]))
                 or value.get("workspace") is not None and not isinstance(value["workspace"], dict)):

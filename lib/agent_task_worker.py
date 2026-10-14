@@ -19,6 +19,7 @@ def run_worker(*, once: bool = False, manager: AgentTasks | None = None) -> int:
 
     def stop(_number: int, _frame: object) -> None:
         stopped.set()
+        manager._stop.set()
         manager._cancel.set()
 
     try:
