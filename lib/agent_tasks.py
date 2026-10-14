@@ -141,7 +141,7 @@ def validate_task(values: dict[str, Any], home: str, *, check_directory: bool = 
     if not os.path.isabs(directory):
         raise ValueError("Working directory must be an absolute path or start with ~/")
     validate_filesystem_path(directory, must_exist=check_directory)
-    directory = os.path.realpath(directory)
+    directory = os.path.realpath(directory) if check_directory else os.path.abspath(directory)
     if check_directory and not os.path.isdir(directory):
         raise ValueError("Working directory must be a directory")
     mode = values.get("mode")
@@ -453,14 +453,16 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
               "exit_code": returncode}
     if events is not None:
         events.feed(b"", final=True)
-        result.update(session_id=events.session_id, usage=events.usage)
-        if events.report is not None:
+        result.update(session_id=events.session_id, usage=events.usage if events.final_turn_completed else None)
+        if events.protocol_error or (task["persistence"] == "conversation" and not events.session_id):
+            result.update(status="failed", message=events.error or "Codex did not identify its task conversation")
+        elif events.report is not None and events.final_turn_completed:
             result.update(events.report)
             result["output"] = events.report["summary"]
             if events.report["outcome"] == "failed" and status == "completed":
                 result["status"] = "failed"
         elif status == "completed":
-            result.update(status="failed", message=events.error or "Codex completed without a structured task report")
+            result.update(status="failed", message=events.error or "Codex completed without a finished turn and structured task report")
     return result
 
 
@@ -554,7 +556,7 @@ class AgentTasks:
         with os.fdopen(descriptor, "rb") as source:
             metadata = os.fstat(source.fileno())
             if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid()
-                    or metadata.st_mode & 0o077 or metadata.st_size > MAX_STATE_BYTES):
+                    or metadata.st_mode & 0o077 or metadata.st_nlink != 1 or metadata.st_size > MAX_STATE_BYTES):
                 raise RuntimeError("Prompt task state permissions or size are invalid")
             try:
                 payload = source.read(MAX_STATE_BYTES + 1)
@@ -666,7 +668,7 @@ class AgentTasks:
                draft: bool = False, request_key: str = "") -> str:
         task = validate_task(values, self.home)
         _validate_model_effort(task, self.home)
-        if type(draft) is not bool or draft and run_now:
+        if type(run_now) is not bool or type(draft) is not bool or draft and run_now:
             raise ValueError("A draft cannot run immediately")
         if not draft and not _tool_path("codex", self.home):
             raise ValueError("Install Codex for the panel account before creating prompt tasks")
@@ -716,10 +718,8 @@ class AgentTasks:
             changed_interval = repeat_seconds(task) != interval
             if any(task[name] != task_values[name] for name in ("directory", "workspace")):
                 context = self.contexts.load(identifier)
-                if context.get("workspace") or context.get("session_id"):
+                if context.get("workspace") or context.get("session_id") or context.get("source_directory"):
                     raise ValueError("Create a new task to change the workspace of an established context")
-            if task["persistence"] != task_values["persistence"]:
-                self.contexts.reset(identifier)
             task.update(task_values)
             task["stop_reason"] = ""
             if task_values["interval"] == "event":
@@ -778,13 +778,20 @@ class AgentTasks:
 
     def context_snapshot(self, identifier: str) -> dict[str, Any]:
         with self._transaction(create=False):
-            if not any(task["id"] == identifier for task in self._load()["tasks"]):
+            task = next((task for task in self._load()["tasks"] if task["id"] == identifier), None)
+            if task is None:
                 raise ValueError("Prompt task was not found")
-            return {"directory": str(self.contexts.directory(identifier)), **self.contexts.load(identifier)}
+            context = self.contexts.load(identifier)
+            pending = context.get("persistence", task["persistence"]) != task["persistence"]
+            if pending:
+                context.update(checkpoint="", session_id=None)
+            return {"directory": str(self.contexts.directory(identifier)), **context, "reset_pending": pending}
 
     def notify(self, identifier: str, message: str, *, key: str = "") -> bool:
         """Coalesce an authorized wake; payloads are evidence, not instructions."""
         message = _text(message, "Task event", MAX_PROMPT_BYTES, multiline=True)
+        if not isinstance(key, str):
+            raise ValueError("Event key must be text")
         if key:
             key = _text(key, "Event key", 120)
         with self._transaction():
@@ -831,7 +838,8 @@ class AgentTasks:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Token budget reached"
         elif task["max_runs"] and task["attempts"] >= task["max_runs"]:
             task["enabled"], task["queued"], task["stop_reason"] = False, False, "Maximum run attempts reached"
-        elif task["enabled"] and task["continue_until_done"] and outcome == "waiting" and run.get("retry_after_minutes"):
+        elif (task["enabled"] and task["continue_until_done"] and run["status"] == "completed"
+              and outcome == "waiting" and run.get("retry_after_minutes")):
             task["next_run"] = run["finished_at"] + run["retry_after_minutes"] * 60
 
     def _limit_reason(self, task: dict[str, Any], current: float) -> str:
@@ -864,6 +872,15 @@ class AgentTasks:
             state = self._load()
             if any(run["status"] == "running" for run in state["runs"]):
                 return False
+            expired = False
+            for saved_task in state["tasks"]:
+                limit = self._limit_reason(saved_task, current)
+                if limit and (saved_task["enabled"] or saved_task["queued"]):
+                    saved_task["enabled"], saved_task["queued"], saved_task["stop_reason"] = False, False, limit
+                    expired = True
+            if expired:
+                self._save()
+                return True
             # Explicit run-now requests take priority over recurring work.
             task = next((task for task in state["tasks"] if task["queued"] and task["not_before"] <= current), None)
             if task is None:
@@ -871,19 +888,14 @@ class AgentTasks:
                              and task["next_run"] <= current and task["not_before"] <= current), None)
             if task is None:
                 return False
-            limit = self._limit_reason(task, current)
-            if limit:
-                task["enabled"], task["queued"], task["stop_reason"] = False, False, limit
-                self._save()
-                return True
             day = datetime.fromtimestamp(current, timezone.utc).strftime("%Y-%m-%d")
             if task["usage_day"] != day:
                 task["usage_day"], task["daily_attempts"] = day, 0
             if task["daily_limit"] and task["daily_attempts"] >= task["daily_limit"]:
-                task["queued"] = False
+                task["queued"] = True
+                task["not_before"] = (int(current) // 86400 + 1) * 86400
                 if task["enabled"]:
-                    task["next_run"] = (int(current) // 86400 + 1) * 86400
-                    task["not_before"] = task["next_run"]
+                    task["next_run"] = task["not_before"]
                 self._save()
                 return True
             task["queued"] = False
@@ -919,6 +931,7 @@ class AgentTasks:
                 self.contexts.record(run["task"], stored_run)
             except (OSError, ValueError, RuntimeError) as exc:
                 stored_run.update(status="failed", message=f"Run evidence could not be saved: {exc}"[:500])
+                stored_run["storage_error"] = True
             self._record_outcome(state, stored_run)
             # Detailed evidence and checkpoints live in private per-task receipts.
             for name in ("checkpoint", "evidence"):
@@ -927,6 +940,9 @@ class AgentTasks:
             # for another run. Preserve the cadence and explicit queued requests.
             saved_task = next((record for record in state["tasks"] if record["id"] == run["task"]["id"]), None)
             if saved_task is not None:
+                if stored_run.get("storage_error"):
+                    saved_task["enabled"], saved_task["queued"] = False, False
+                    saved_task["stop_reason"] = "Task evidence storage failed; inspect and repair it before continuing"
                 _advance_schedule(saved_task, finished if now is None else current + duration)
             self._save()
         return True

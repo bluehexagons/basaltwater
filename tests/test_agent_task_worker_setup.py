@@ -3,14 +3,60 @@
 from __future__ import annotations
 
 import os
+import fcntl
+import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from common import agent_task_steps as steps
 from lib.config import SetupConfig
+
+
+class TaskRefreshGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.account = SimpleNamespace(pw_uid=os.geteuid(), pw_gid=os.getegid(), pw_dir=self.home)
+
+    def test_guard_blocks_new_controller_claims_until_setup_finishes(self) -> None:
+        with steps._refresh_guard(self.account) as parent:
+            descriptor = os.open("state.lock", os.O_RDWR, dir_fd=parent)
+            self.addCleanup(os.close, descriptor)
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertFalse(steps._worker_busy(self.account, parent))
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_guard_refuses_busy_transactions_and_symlinked_state(self) -> None:
+        with steps._refresh_guard(self.account), self.assertRaisesRegex(RuntimeError, "state is busy"):
+            with steps._refresh_guard(self.account):
+                self.fail("An active transaction must not be interrupted")
+        (Path(self.home) / ".local/state/basaltwater/prompt-tasks/state.lock").unlink()
+        outside = Path(self.home) / "outside"
+        outside.write_text("preserve")
+        (Path(self.home) / ".local/state/basaltwater/prompt-tasks/state.lock").symlink_to(outside)
+        with self.assertRaises(OSError), steps._refresh_guard(self.account):
+            self.fail("A symlinked lock must not be followed")
+        self.assertEqual(outside.read_text(), "preserve")
+
+    def test_live_legacy_workers_cannot_be_migrated_with_an_idle_check(self) -> None:
+        parent_path = Path(self.home) / ".local/state/basaltwater/prompt-tasks"
+        with steps._refresh_guard(self.account) as parent:
+            descriptor = os.open("worker.lock", os.O_CREAT | os.O_RDWR, 0o600, dir_fd=parent)
+            self.addCleanup(os.close, descriptor)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            state = parent_path / "tasks.json"
+            state.write_text(json.dumps({"version": 1, "tasks": [], "runs": []}))
+            state.chmod(0o600)
+            with self.assertRaisesRegex(RuntimeError, "Stop the legacy"):
+                steps._worker_busy(self.account, parent)
+            state.write_text(json.dumps({"version": 2, "tasks": [], "runs": [{"status": "running"}]}))
+            self.assertTrue(steps._worker_busy(self.account, parent))
+            state.write_text(json.dumps({"version": 2, "tasks": [], "runs": []}))
+            self.assertFalse(steps._worker_busy(self.account, parent))
 
 
 class TaskWorkerSetupTests(unittest.TestCase):
@@ -33,6 +79,7 @@ class TaskWorkerSetupTests(unittest.TestCase):
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
         self.enterContext(patch.object(steps.pwd, "getpwnam", return_value=self.account))
         self.enterContext(patch.object(steps, "UNIT_DIR", self.home))
+        self.enterContext(patch.object(steps, "_refresh_guard", side_effect=lambda _account: nullcontext()))
 
     def test_render_keeps_provider_and_workspace_identity_non_root(self) -> None:
         content = steps.render_task_worker(self.account, revision="reviewed")

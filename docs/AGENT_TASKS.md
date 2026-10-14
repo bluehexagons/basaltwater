@@ -33,6 +33,9 @@ not copy source files; the prompt receives both source and execution paths.
 Conversation persistence requires a stable workspace and rejects
 `run-directory`. Worktrees do not fetch refs, change the primary checkout, or
 copy its uncommitted changes. Ownership is rechecked before each invocation.
+Established context stays bound to its source. Replacing that source with a
+symlink or removing a managed directory stops the invocation for review;
+the runner does not silently redirect work or recreate an empty workspace.
 Managed Git cleanup remains the separate
 [`agent workspace` workflow](AGENT_SUBAGENTS.md).
 
@@ -81,6 +84,9 @@ Creation defaults to a draft. `--run-now` queues an immediate invocation and
 activates repetition; `--schedule` activates it after one interval. Manually
 running a draft does not activate its schedule. `update TASK_ID JSON_FILE`
 changes only supplied settings, preserving activation and durable usage.
+Persistence changes reset the binding when the next invocation prepares its
+context. A failed settings write leaves the previous checkpoint intact;
+inspection reports a pending reset after a successful mode change.
 An idempotent creation key returns the same saved task for matching settings;
 different settings using that key are rejected.
 
@@ -102,8 +108,9 @@ The Codex report separates `progress`, `complete`, `waiting`, `blocked`, and
 the report remains the agent's claim and should be reviewed against its logs
 and artifacts. A goal stops when its report claims verified completion. Blocked
 reports count toward failure pausing even when Codex exits successfully.
-An invalid/missing structured report fails the invocation. Existing historical
-records are not retroactively classified.
+An invalid/missing structured report or an unfinished final provider turn fails
+the invocation. An earlier turn's completion cannot finish a later turn.
+Existing historical records are not retroactively classified.
 
 | Setting | Default and meaning |
 | --- | --- |
@@ -111,7 +118,7 @@ records are not retroactively classified.
 | `max_runs` | 0 for ordinary tasks; 20 for CLI goals; lifetime attempt limit, including failed/interrupted work |
 | `deadline_at` | 0; UTC epoch or ISO date with timezone; prevents late launches and bounds the invocation |
 | `token_budget` | 0; sum of reported input/output tokens across runs, checked after each run |
-| `daily_limit` | 0; maximum reserved attempts per UTC day; defers recurring work until the next day |
+| `daily_limit` | 0; maximum reserved attempts per UTC day; preserves queued work, including one-time invocations, until the next day |
 | `failure_limit` | 3; pause after 1–10 consecutive failures/blocked/interrupted runs; 0 disables pausing |
 | `backoff_minutes` | 0; minimum delay after unsuccessful work, in addition to the saved cadence |
 | `history_limit` | 100; retain 1–1000 generated receipt/log pairs per task |
@@ -121,6 +128,8 @@ an invocation; they are not dollar budgets or provider-side hard caps. Missing
 usage with a token budget pauses work for inspection. Cached input is already
 included in input usage and is not counted twice. Raising a limit preserves
 past consumption. Resume resets the failure streak, not usage counters.
+Missing usage from any provider turn makes the invocation's total unavailable;
+the runner never treats a partial total as the complete budget charge.
 Workspace preparation has its own bounded managed Git operations before the
 provider invocation starts.
 
@@ -134,8 +143,11 @@ Maintenance holds remain separate and are never created automatically.
 Non-root Debian setup with Codex or the panel installs
 `basaltwater-agent-tasks-UID.service`. It runs as the task account, uses its
 own credentials, starts at boot, and is independent of the panel and T3.
-Refreshing a busy worker is refused until its active invocation ends. The panel
-hands scheduling to that worker while continuing its separate publishing poll.
+Refreshing a busy worker is refused until its active invocation ends. Setup
+holds the task-state lock through the idle check and service replacement so a
+new claim cannot race that check. Stop a live legacy schema-1 panel worker
+before migrating it: that older worker cannot honor the shared state lock.
+The panel hands scheduling to that worker while continuing its separate publishing poll.
 Older installations retain panel scheduling until setup installs the worker.
 OCI cannot install a persistent service; root-account tasks are unsupported.
 Other platforms can run the foreground worker explicitly:
@@ -185,6 +197,10 @@ reservations and wake consumption are persisted before execution. A restarted
 active run becomes interrupted; inspect its edits before another invocation.
 If its final receipt was saved before an interrupted hot-state write, recovery
 reconciles that result and usage without relaunching the provider.
+Deadlines also stop idle event tasks and work deferred by a daily limit.
+Receipt writing precedes checkpoint updates. An evidence/checkpoint storage
+failure pauses the task even when failure pausing is disabled; inspect its
+retained receipt and repair storage before explicitly continuing.
 
 | Location | Contents |
 | --- | --- |

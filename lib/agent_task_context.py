@@ -107,6 +107,9 @@ class CodexEvents:
         self.session_id: str | None = None
         self.report: dict[str, Any] | None = None
         self.usage: dict[str, int] | None = None
+        self.final_turn_completed = False
+        self.usage_incomplete = False
+        self.protocol_error = False
         self.error = ""
 
     def feed(self, content: bytes, *, final: bool = False) -> None:
@@ -135,19 +138,39 @@ class CodexEvents:
         if event.get("type") == "thread.started":
             session = event.get("thread_id")
             if isinstance(session, str) and _SESSION.fullmatch(session):
-                self.session_id = session
+                if self.session_id is not None and self.session_id != session:
+                    self.protocol_error = True
+                    self.error = "Codex changed conversation IDs during one invocation"
+                else:
+                    self.session_id = session
+        elif event.get("type") == "turn.started":
+            self.report = None
+            self.final_turn_completed = False
+        elif event.get("type") in {"turn.failed", "error"}:
+            self.report = None
+            self.final_turn_completed = False
+            self.usage_incomplete = True
+            self.usage = None
+            self.error = "Codex reported an unsuccessful turn"
         elif event.get("type") == "turn.completed":
+            self.final_turn_completed = True
             usage = event.get("usage")
             if isinstance(usage, dict) and all(type(usage.get(name)) is int and 0 <= usage[name] <= 10**12
                                                 for name in ("input_tokens", "output_tokens")):
-                self.usage = {name: (self.usage or {}).get(name, 0) + usage[name]
-                              for name in ("input_tokens", "output_tokens")}
+                if not self.usage_incomplete:
+                    self.usage = {name: (self.usage or {}).get(name, 0) + usage[name]
+                                  for name in ("input_tokens", "output_tokens")}
+            else:
+                self.usage_incomplete = True
+                self.usage = None
         elif event.get("type") == "item.completed":
             item = event.get("item")
             if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+                self.final_turn_completed = False
                 try:
                     self.report = validate_report(json.loads(item["text"]))
-                    self.error = ""
+                    if not self.protocol_error:
+                        self.error = ""
                 except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
                     self.report = None
                     self.error = str(exc)
@@ -172,17 +195,25 @@ class TaskContextStore:
             value = private_json(directory / "context.json")
         except FileNotFoundError:
             return {"version": 1, "checkpoint": "", "session_id": None, "workspace": None}
-        if (value.get("version") != 1 or not isinstance(value.get("checkpoint"), str)
+        if (type(value.get("version")) is not int or value["version"] != 1 or not isinstance(value.get("checkpoint"), str)
                 or len(value["checkpoint"].encode("utf-8")) > MAX_CHECKPOINT_BYTES
                 or value.get("session_id") is not None and (
                     not isinstance(value["session_id"], str) or not _SESSION.fullmatch(value["session_id"]))
                 or value.get("workspace") is not None and not isinstance(value["workspace"], dict)):
             raise RuntimeError(f"Invalid task context: {directory}")
+        if "source_directory" in value:
+            if not isinstance(value["source_directory"], str):
+                raise RuntimeError("Invalid task context source directory")
+            validate_filesystem_path(value["source_directory"])
+            if not os.path.isabs(value["source_directory"]):
+                raise RuntimeError("Invalid task context source directory")
+        if "persistence" in value and value["persistence"] not in PERSISTENCE_MODES:
+            raise RuntimeError("Invalid task context persistence")
         return value
 
     def save(self, identifier: str, value: dict[str, Any]) -> None:
         directory = self.directory(identifier, create=True)
-        if len(json.dumps(value).encode()) > MAX_CONTEXT_BYTES:
+        if len((json.dumps(value, indent=2, allow_nan=False) + "\n").encode()) > MAX_CONTEXT_BYTES:
             raise ValueError("Task context exceeds the storage limit")
         write_json_atomic(str(directory / "context.json"), value)
 
@@ -192,14 +223,30 @@ class TaskContextStore:
         identifier = task["id"]
         directory = self.directory(identifier, create=True)
         context = self.load(identifier)
+        if context.get("persistence", task["persistence"]) != task["persistence"]:
+            context.update(checkpoint="", session_id=None)
+            context.pop("last_run_id", None)
+        context["persistence"] = task["persistence"]
         source = task["directory"]
+        validate_filesystem_path(source, must_exist=True)
+        if not os.path.isdir(source) or os.path.realpath(source) != source:
+            raise RuntimeError("Task source directory moved or changed; review it before continuing")
+        if context.get("source_directory", source) != source:
+            raise RuntimeError("Task source no longer matches its established context")
         workspace_mode = task["workspace"]
         if workspace_mode == "existing":
             execution_directory = source
         elif workspace_mode in {"directory", "run-directory"}:
             workspace = Path(self.home) / ".local/share/basaltwater/task-workspaces" / identifier
+            saved = context.get("workspace")
+            if saved is not None:
+                if saved.get("mode") != workspace_mode or saved.get("path") != str(workspace):
+                    raise RuntimeError("Task directory no longer matches its managed ownership")
+                private_directory(self.home, workspace)
+                if not workspace.is_dir():
+                    raise RuntimeError("Managed task workspace is missing; restore it before continuing")
+            private_directory(self.home, workspace, create=True)
             context["workspace"] = {"mode": workspace_mode, "path": str(workspace), "source_directory": source}
-            self.save(identifier, context)
             if workspace_mode == "run-directory":
                 workspace /= run_id
             execution_directory = str(private_directory(self.home, workspace, create=True))
@@ -221,6 +268,9 @@ class TaskContextStore:
                     or inspected.get("branch") != saved["branch"]):
                 raise RuntimeError("Task worktree no longer matches its managed ownership")
             execution_directory = saved["path"]
+        if task["persistence"] != "fresh" or workspace_mode != "existing":
+            context["source_directory"] = source
+        self.save(identifier, context)
         runs = private_directory(self.home, directory / "runs", create=True)
         schema = directory / "report-schema.json"
         write_json_atomic(str(schema), REPORT_SCHEMA)
@@ -235,6 +285,11 @@ class TaskContextStore:
     def record(self, task: dict[str, Any], run: dict[str, Any]) -> None:
         identifier = task["id"]
         directory = self.directory(identifier, create=True)
+        runs = private_directory(self.home, directory / "runs", create=True)
+        receipt = {key: value for key, value in run.items() if key != "task"}
+        receipt["task"] = {key: value for key, value in run["task"].items() if not key.startswith("_")}
+        # Keep provider evidence even if updating the checkpoint later fails.
+        write_json_atomic(str(runs / (run["id"] + ".json")), receipt)
         context = self.load(identifier)
         if task["persistence"] != "fresh":
             if isinstance(run.get("checkpoint"), str):
@@ -243,10 +298,6 @@ class TaskContextStore:
                 context["session_id"] = run["session_id"]
             context["last_run_id"] = run["id"]
             self.save(identifier, context)
-        runs = private_directory(self.home, directory / "runs", create=True)
-        receipt = {key: value for key, value in run.items() if key != "task"}
-        receipt["task"] = {key: value for key, value in run["task"].items() if not key.startswith("_")}
-        write_json_atomic(str(runs / (run["id"] + ".json")), receipt)
         receipts = sorted((path for path in runs.glob("*.json") if _ID.fullmatch(path.stem)),
                           key=lambda path: path.stat().st_mtime_ns)
         for old in receipts[:-task["history_limit"]]:

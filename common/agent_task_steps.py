@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import pwd
 import stat
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from lib.agent_task_api import WORKER_MARKER, worker_unit
-from lib.atomic_io import read_json_file
 from lib.config import SetupConfig
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import is_dry_run, run
@@ -75,22 +76,88 @@ def _active(unit: str) -> bool:
     return run(["systemctl", "is-active", "--quiet", unit], check=False, capture_output=True).returncode == 0
 
 
-def _worker_busy(account: pwd.struct_passwd) -> bool:
-    parent = Path(account.pw_dir) / ".local/state/basaltwater/prompt-tasks"
+@contextmanager
+def _refresh_guard(account: pwd.struct_passwd):
+    """Block account task claims while setup checks and refreshes an idle worker."""
+    validate_filesystem_path(account.pw_dir, must_exist=True)
+    with ExitStack() as resources:
+        parent = os.open(account.pw_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        resources.callback(os.close, parent)
+        home_info = os.fstat(parent)
+        if home_info.st_uid != account.pw_uid or home_info.st_mode & 0o022:
+            raise RuntimeError("Unsafe task account home; inspect it before setup")
+        for name in (".local", "state", "basaltwater", "prompt-tasks"):
+            created = False
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent)
+                created = True
+            except FileExistsError:
+                pass
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            resources.callback(os.close, child)
+            info = os.fstat(child)
+            if created and info.st_uid != account.pw_uid:
+                os.fchown(child, account.pw_uid, account.pw_gid)
+                info = os.fstat(child)
+            forbidden = 0o077 if name == "prompt-tasks" else 0o022
+            if info.st_uid != account.pw_uid or info.st_mode & forbidden:
+                raise RuntimeError("Unsafe task state directory; inspect it before setup")
+            parent = child
+        created = False
+        try:
+            descriptor = os.open("state.lock", os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+            created = True
+        except FileExistsError:
+            descriptor = os.open("state.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        resources.callback(os.close, descriptor)
+        info = os.fstat(descriptor)
+        if created and info.st_uid != account.pw_uid:
+            os.fchown(descriptor, account.pw_uid, account.pw_gid)
+            info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid
+                or info.st_mode & 0o077 or info.st_nlink != 1):
+            raise RuntimeError("Unsafe task state lock; inspect it before setup")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("Task state is busy; retry setup after its current transaction") from exc
+        yield parent
+
+
+def _worker_busy(account: pwd.struct_passwd, parent: int) -> bool:
     try:
-        descriptor = os.open(parent / "worker.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        descriptor = os.open("worker.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     except FileNotFoundError:
         return False
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != account.pw_uid or metadata.st_mode & 0o077:
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != account.pw_uid
+                or metadata.st_mode & 0o077 or metadata.st_nlink != 1):
             raise RuntimeError("Unsafe task worker lease; inspect it before setup")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return False
         except BlockingIOError:
-            value = read_json_file(str(parent / "tasks.json"))
-            if not isinstance(value, dict) or not isinstance(value.get("runs"), list):
+            state = os.open("tasks.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            with os.fdopen(state, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != account.pw_uid
+                        or info.st_mode & 0o077 or info.st_nlink != 1 or info.st_size > 1024 * 1024):
+                    raise RuntimeError("Unsafe task state; inspect it before setup")
+                payload = stream.read(1024 * 1024 + 1)
+            if len(payload) > 1024 * 1024:
+                raise RuntimeError("Task state exceeds its storage limit")
+            try:
+                value = json.loads(payload)
+            except (ValueError, UnicodeError, RecursionError) as exc:
+                raise RuntimeError("Invalid task state; inspect it before setup") from exc
+            if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] not in (1, 2):
+                raise RuntimeError("Unsupported task state; inspect it before setup")
+            if value["version"] == 1:
+                raise RuntimeError("Stop the legacy panel/task worker before migrating its scheduler; it cannot block new claims")
+            if (not isinstance(value.get("runs"), list) or len(value["runs"]) > 40
+                    or any(not isinstance(run, dict) or not isinstance(run.get("status"), str) or run["status"] not in
+                           {"running", "completed", "failed", "cancelled", "interrupted"} for run in value["runs"])):
                 raise RuntimeError("Invalid task state; inspect it before setup")
             return any(isinstance(run, dict) and run.get("status") == "running" for run in value["runs"])
     finally:
@@ -126,18 +193,19 @@ def configure_agent_task_worker(config: SetupConfig) -> None:
     if previous is not None and previous["content"] == content and _active(unit):
         print(f"  ✓ Independent task worker ready: {unit}")
         return
-    if _worker_busy(account):
-        raise RuntimeError("Finish or cancel the active prompt task before refreshing its worker")
-    panel = "basaltwater-web-panel.service"
-    panel_active = _active(panel)
-    if panel_active:
-        owner = run(["systemctl", "show", panel, "--property=User", "--value"], check=False, capture_output=True)
-        panel_active = owner.returncode == 0 and owner.stdout.strip() == account.pw_name
-    if panel_active:
-        run(["systemctl", "stop", panel])
-    try:
-        replace_units({unit: content}, activate=(unit,), unit_dir=UNIT_DIR)
-    finally:
+    with _refresh_guard(account) as parent:
+        if _worker_busy(account, parent):
+            raise RuntimeError("Finish or cancel the active prompt task before refreshing its worker")
+        panel = "basaltwater-web-panel.service"
+        panel_active = _active(panel)
         if panel_active:
-            run(["systemctl", "start", panel])
+            owner = run(["systemctl", "show", panel, "--property=User", "--value"], check=False, capture_output=True)
+            panel_active = owner.returncode == 0 and owner.stdout.strip() == account.pw_name
+        if panel_active:
+            run(["systemctl", "stop", panel])
+        try:
+            replace_units({unit: content}, activate=(unit,), unit_dir=UNIT_DIR)
+        finally:
+            if panel_active:
+                run(["systemctl", "start", panel])
     print(f"  ✓ Independent task worker: {unit}")
