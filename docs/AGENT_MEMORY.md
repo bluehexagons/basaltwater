@@ -21,6 +21,7 @@ native Windows agents have a separate account and cannot use that Linux store.
 ```bash
 basaltw agent memory scope --project ~/repos/app --json
 basaltw agent memory list --project ~/repos/app --limit 20 --json
+basaltw agent memory list --project ~/repos/app --limit 20 --offset 20 --json
 basaltw agent memory list --project ~/repos/app --query deployment --json
 basaltw agent memory get deployment-notes --project ~/repos/app --json
 ```
@@ -29,9 +30,13 @@ basaltw agent memory get deployment-notes --project ~/repos/app --json
 never note bodies, claim tokens, or secret file paths. The default lists notes
 and todos; `--kind secret` explicitly lists secret-reference metadata. `--query`
 matches names and non-secret text while still returning only metadata.
-The default list limit is 20 and the maximum is 100; `total` and `truncated`
-describe omitted matches. Read individual named entries as needed instead of
-injecting all local memory into every prompt.
+The default list limit is 20 and the maximum is 100. `total` counts all matches;
+`truncated` indicates that more matches follow this page. Use the returned
+`next_offset` as `--offset` with the same kind, query, and limit to discover later
+records; `null` ends pagination. Offsets range from 0 to 256. Pages reflect current
+state and can shift while other agents write, so recheck selected records before
+acting. Read individual named entries as needed instead of injecting all local
+memory into every prompt.
 
 Keep notes short: decisions, observed source revisions, verified endpoints,
 evidence paths, unfinished work, and the next useful check. Treat them as

@@ -286,11 +286,13 @@ class AgentMemory:
             result["text"] = record["text"]
         return result
 
-    def list(self, *, kind: str | None = None, limit: int = 20, query: str = "") -> dict[str, Any]:
+    def list(self, *, kind: str | None = None, limit: int = 20, offset: int = 0, query: str = "") -> dict[str, Any]:
         if kind is not None:
             _kind(kind)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("List limit must be 1–100")
+        if type(offset) is not int or not 0 <= offset <= MAX_ENTRIES:
+            raise ValueError(f"List offset must be 0–{MAX_ENTRIES}")
         if not isinstance(query, str):
             raise ValueError("Memory query must be text")
         validate_no_control_characters(query, "Memory query")
@@ -300,8 +302,11 @@ class AgentMemory:
                    if (record["kind"] == kind if kind else record["kind"] != "secret")
                    and query.casefold() in (record["name"] + " " + record.get("text", "")).casefold()]
         records.sort(key=lambda record: (-record["updated_at"], record["kind"], record["name"]))
-        return {"scope": self.scope, "total": len(records), "truncated": len(records) > limit,
-                "entries": [self._metadata(record) for record in records[:limit]]}
+        end = offset + limit
+        more = end < len(records)
+        return {"scope": self.scope, "total": len(records), "offset": offset, "truncated": more,
+                "next_offset": end if more else None,
+                "entries": [self._metadata(record) for record in records[offset:end]]}
 
     def remove(self, kind: str, name: str, *, revision: int) -> dict[str, Any]:
         with self._transaction() as state:

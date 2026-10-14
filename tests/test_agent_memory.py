@@ -147,6 +147,30 @@ class TestProjectMemory(MemoryFixture):
         self.assertEqual(self.memory.list(kind="secret")["total"], 1)
         self.assertNotIn("file", self.memory.list(kind="secret")["entries"][0])
 
+    def test_pagination_discovers_records_beyond_the_maximum_page_without_dumping_text(self) -> None:
+        for index in range(105):
+            self.memory.put("note", f"topic-{index:03}", "Private detailed findings")
+        first = self.memory.list(limit=100)
+        self.assertEqual(len(first["entries"]), 100)
+        self.assertEqual(first["next_offset"], 100)
+        last = self.memory.list(limit=100, offset=first["next_offset"])
+        self.assertEqual(last["total"], 105)
+        self.assertEqual(len(last["entries"]), 5)
+        self.assertFalse(last["truncated"])
+        self.assertIsNone(last["next_offset"])
+        names = [entry["name"] for page in (first, last) for entry in page["entries"]]
+        self.assertEqual(len(set(names)), 105)
+        self.assertNotIn("Private detailed findings", json.dumps([first, last]))
+        empty = self.memory.list(offset=105)
+        self.assertEqual(empty["entries"], [])
+        self.assertIsNone(empty["next_offset"])
+
+    def test_page_offsets_are_bounded_before_loading_or_creating_storage(self) -> None:
+        for offset in (-1, agent_memory.MAX_ENTRIES + 1, True, 0.5):
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                self.memory.list(offset=offset)
+        self.assertFalse((self.home / ".local").exists())
+
     def test_secret_references_never_read_or_copy_values_and_forgetting_preserves_file(self) -> None:
         secret = self.secret()
         self.memory.put("secret", "api", str(secret))
@@ -377,6 +401,24 @@ class TestMemoryCLI(MemoryFixture):
         self.assertEqual(status, 1)
         self.assertEqual(result["issue"], "conflict")
         self.assertEqual(self.invoke("get", "handoff")[1]["revision"], replacement["revision"])
+
+    def test_cli_pages_filtered_metadata_and_rejects_invalid_offsets(self) -> None:
+        self.memory.put("todo", "earlier", "Deployment validation")
+        self.memory.put("note", "first", "Deployment findings")
+        self.memory.put("note", "second", "Deployment findings")
+        self.memory.put("note", "unrelated", "Browser findings")
+        status, first = self.invoke("list", "--kind", "note", "--query", "deployment", "--limit", "1")
+        self.assertEqual(status, 0)
+        self.assertEqual(first["total"], 2)
+        status, last = self.invoke("list", "--kind", "note", "--query", "deployment", "--limit", "1", "--offset", str(first["next_offset"]))
+        self.assertEqual(status, 0)
+        self.assertEqual(last["total"], 2)
+        self.assertEqual(last["entries"][0]["name"], "second")
+        self.assertIsNone(last["next_offset"])
+        self.assertNotIn("text", json.dumps([first, last]))
+        status, invalid = self.invoke("list", "--offset", "-1")
+        self.assertEqual(status, 1)
+        self.assertEqual(invalid["issue"], "memory_error")
 
 
 class TestMemoryScope(unittest.TestCase):

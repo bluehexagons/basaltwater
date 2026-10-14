@@ -12,6 +12,10 @@ basaltw agent memory list --project . --limit 20 --json
 basaltw agent memory get deployment-notes --project . --json
 ```
 
+If more matches are needed, pass the returned `next_offset` as `--offset` with
+the same query, kind, and limit; `null` means the last page. Concurrent writes
+can shift pages. Read only selected records and recheck them before acting.
+
 Git worktrees share the common Git directory's scope. Use `--project` to select
 another checkout's scope explicitly. Memory stays outside Git in private user
 state. Separate clones/moved repositories and different Unix accounts have

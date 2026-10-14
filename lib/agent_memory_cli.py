@@ -25,6 +25,7 @@ def add_memory_parser(commands: argparse._SubParsersAction) -> None:
             command.add_argument("--kind", choices=("note", "todo", "secret"), default=None if action == "list" else "note")
         if action == "list":
             command.add_argument("--limit", type=int, default=20)
+            command.add_argument("--offset", type=int, default=0, help="Page offset from the previous result's next_offset")
             command.add_argument("--query", default="", help="Match names or non-secret text without printing bodies")
         elif action == "put":
             command.add_argument("--file", required=True, help="UTF-8 file or - for stdin; secret kind registers a private file without reading it")
@@ -72,7 +73,7 @@ def run_memory_command(args: argparse.Namespace) -> int:
         if action == "scope":
             result = {"scope": memory.scope, "identity": memory.identity, "state_file": str(memory.path)}
         elif action == "list":
-            result = memory.list(kind=args.kind, limit=args.limit, query=args.query)
+            result = memory.list(kind=args.kind, limit=args.limit, offset=args.offset, query=args.query)
         elif action == "get":
             result = memory.get(args.kind, args.name)
         elif action == "put":
