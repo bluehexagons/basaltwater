@@ -1,219 +1,31 @@
 ---
 name: basaltwater-web-gateway
-description: Publish static sites, expose loopback web services, or keep an existing local development site current after source edits through a Basaltwater-managed HTTPS gateway.
+description: Publish or refresh local development sites through the managed HTTPS gateway.
 metadata:
   managed-by: basaltwater
 ---
 
 # Managed HTTPS gateway
 
-Use this workflow only when `command -v basaltwater-web` succeeds. If it is absent,
-report that the managed gateway was not provisioned; do not replace it with
-ad hoc Nginx or firewall changes. Never bind a development service to
-`0.0.0.0` or disable TLS verification.
+Use only when `command -v basaltwater-web` succeeds. Keep upstreams on loopback
+and TLS verification enabled; do not replace missing provisioning with ad hoc
+Nginx/firewall changes. Run as the configured owner without sudo.
 
-Publication and live forwarding change client-visible access. A local build,
-export validation, or unattended browser smoke check does not authorize them.
-For those tasks, use a documented loopback preview or local output and report
-missing capabilities rather than exposing a service.
+| Task | Read |
+| --- | --- |
+| Publish or verify a built snapshot | [Static sites](references/static-sites.md) |
+| Start or restart a supervised live project | [Managed previews](references/previews.md) |
+| Expose an existing service or resolve its T3 URL | [Live forwards](references/forwards.md) |
+| Keep an already configured development site current after edits | [Refresh](references/refresh.md) |
+| Godot exports | Installed Godot web skill |
 
-## Choose the hosting mode
+When editing a project with an already authorized local site, handle its needed
+build, publication, or restart yourself; do not leave the user a manual restart.
+Preserve URL, ports, body limit, environment, database, and runtime data.
+Verify a changed resource or behavior: health alone does not prove freshness.
+Leave a working development site running.
 
-- For a built static site, use `basaltwater-web publish site`. It builds common
-  JavaScript projects, atomically publishes their output on the shared HTTPS
-  origin, and does not require a long-running process or dedicated port.
-- For a Godot web export, use `basaltwater-web publish godot` and the
-  `basaltwater-godot-web` skill. Nginx serves all static games on the shared
-  HTTPS port 8443; static games do not need dedicated ports.
-- For an explicitly requested live project preview, use `basaltwater-web
-  preview start NAME --project PATH`. It supervises the process as the
-  requesting user, allocates its loopback and HTTPS ports, waits for readiness,
-  and rolls back on failure.
-- For a live HTTP or WebSocket service already owned by another service
-  manager, bind it to `127.0.0.1` or `::1` on an unprivileged port, then
-  register a low-level managed forward.
-
-## Keep an existing development site current
-
-When editing a project whose local development site is already set up and
-authorized, refresh that site as part of the work. Do the required build,
-publication, or restart yourself instead of asking the user to run it. A
-read-only review does not authorize a refresh, and this does not authorize
-production deployment or exposing another project.
-
-Inspect `preview list --json` and `forward list --json` to identify the site's
-owner, project, and route. Preserve its URL, ports, upload limit, environment,
-database, and other runtime data. Follow the project's development instructions:
-
-- With working hot reload, verify the changed page or resource through the
-  existing HTTPS route; source edits alone do not prove it refreshed.
-- For a managed preview that needs rebuilding or reloading, run
-  `basaltwater-web preview restart NAME --wait 60 --json`. This reruns its
-  saved launch command and checks HTTP readiness without replacing the route.
-  If the command executes a compiled binary, build it first.
-- For a forward whose process belongs to an existing user service, inspect
-  `systemctl --user show UNIT -p WorkingDirectory -p ExecStart -p Environment`
-  locally to confirm it runs this project, then restart that service yourself.
-  For example, GoClick's `go run ./cmd/server` service needs
-  `systemctl --user restart goclick-dev` after Go or embedded frontend edits.
-  Keep environment output private. Do not restart the gateway, T3 Code, or
-  another project's service to refresh this application.
-- For a copied static publication, rebuild and publish the same site after
-  the final source edits, then use `site verify` as described below.
-
-After a restart, check service activity, run `basaltwater-web doctor NAME`, and
-verify a changed public resource or behavior through HTTPS. Health alone does
-not prove freshness. Inspect the scoped service logs on failure and repair the
-cause within the development task. Report any unresolved failure instead of
-claiming the updated site is ready. Leave a working development site running.
-
-## Static sites
-
-Publication copies the detected output tree into a separate managed site
-directory and atomically replaces the previous snapshot. The published site is
-not a symlink to the checkout or its `dist` directory: editing, committing, or
-running a build does not refresh an existing publication. When the requested
-outcome includes the hosted site, publish again after the final source change
-and build. A healthy pre-existing route can still be serving an older snapshot.
-
-From a Vite or similar project with a build script:
-
-```bash
-basaltwater-web publish site
-basaltwater-web site doctor NAME
-basaltwater-web site verify NAME --project . --json
-basaltwater-web site url NAME
-```
-
-Use `--project`, `--output`, or `--no-build` when auto-detection is not enough.
-Published sites are available beneath `/sites/USERNAME/NAME/` on shared HTTPS
-port 8443. Static applications must therefore use relative assets or a build
-base that includes that prefix; root-relative `/assets/...` URLs point outside
-the site.
-
-When `node_modules` is absent, publication installs dependencies before the
-build. An npm project without a lockfile uses `npm install`, which can create a
-`package-lock.json`; inspect Git status before and after publishing and do not
-silently commit or discard that file. Use `--no-install` only when dependencies
-are already usable.
-
-`site doctor` checks directory and root HTTP readiness. For freshness, use
-`site verify NAME --project PATH --output dist --json`: it compares the private
-receipt with the publication, local build inventory, and served HTTPS bytes.
-Publication stages the receipt with the snapshot, recording the observed source
-commit, dirty state, build mode, and artifact hashes. The mode-`0600` receipt is
-not public site metadata. `--local-only` omits HTTPS coverage.
-
-Verification changes no source, build, or publication. A missing legacy receipt
-requires an authorized publication to create one; do not republish automatically
-for a read-only check. Dirty or unavailable Git state leaves source provenance
-unverified even when artifact bytes match. `--no-build` does not establish that
-the output was built from the recorded source. Verification does not execute
-JavaScript, follow client-side routes, or inspect service-worker caches.
-
-For an older gateway without the verifier, compare a changed public artifact:
-
-```bash
-set -o pipefail
-published_url="$(basaltwater-web site url NAME)"
-curl --fail --silent --show-error "${published_url}PATH" | sha256sum
-sha256sum OUTPUT/PATH
-```
-
-Require the download pipeline to succeed before comparing hashes; `pipefail`
-keeps a failed HTTP request from being hidden by a successful `sha256sum`.
-Replace `PATH` with a non-sensitive changed file and `OUTPUT` with the detected
-build directory. Never add `-k`. A URL fragment such as `#/README.md` is used
-only by the browser and is not sent to Nginx; verify the underlying file URL or
-the site root separately, then use the capability-specific browser skill
-installed on the VM for rendered behavior. Client certificate enrollment is
-optional. Follow the active session's browser policy: use managed Playwright only
-when the installed browser skill permits fallback, or report the collaborative
-coverage gap when the connected T3 client does not trust the VM CA.
-
-Remove a publication only when explicitly requested, using `basaltwater-web site
-remove NAME --yes`.
-
-## Managed live previews
-
-For Vite, project and command detection is automatic:
-
-```bash
-basaltwater-web preview start NAME --project .
-```
-
-For another server, pass an argv command after `--`; `{host}` and `{port}` are
-replaced without shell evaluation:
-
-```bash
-basaltwater-web preview start NAME --project . -- \
-  ./server --host '{host}' --port '{port}'
-```
-
-For documented uploads above Nginx's 1 MiB default, add `--max-body-size SIZE`
-before `--`, for example `--max-body-size 129m` for a 128 MiB backup plus
-multipart overhead. The positive limit is capped at 1 GiB. Keep the existing
-limit when refreshing the service.
-
-Use `basaltwater-web preview list`, `basaltwater-web preview logs NAME`, and `basaltwater-web
-doctor NAME` for inspection. Stop a preview only when explicitly requested:
-
-```bash
-basaltwater-web preview stop NAME
-```
-
-## Live forwards
-
-For a collaborative preview of an already-running loopback server, resolve its
-port before guessing an `environment-port` or client-loopback URL:
-
-```bash
-basaltwater-web preview resolve --port PORT --json
-```
-
-The read-only resolver returns an existing owned route as `navigation.url`, or
-`forward_missing` with an exact creation `command`. Run that command when the
-requested preview includes client-visible access, then resolve again. Failures
-identify the upstream or gateway in `component`, distinguish transport, timeout,
-HTTP and certificate issues, and include `remediation`. Use `--host ::1` for
-IPv6 and `--profile godot` when isolation headers are required. VM-side success
-does not establish client routing, source-policy access, trust, or rendering.
-
-Create a forward after its loopback service is ready:
-
-```bash
-basaltwater-web forward add NAME --listen auto --to 127.0.0.1:PORT
-```
-
-Add `--profile godot` for a Godot preview that needs secure-context and
-cross-origin isolation headers. If the upstream has a documented request-body
-limit above Nginx's 1 MiB default, add a bounded limit such as
-`--max-body-size 50m`. The command chooses a permitted HTTPS port, applies the
-VM's existing access-source policy, validates Nginx, reconciles UFW, and prints
-the URL.
-
-Treat the two ports as distinct: `--to` is the private loopback HTTP upstream;
-`--listen` is the externally reachable Nginx HTTPS port. Only the Nginx
-listener receives a managed UFW rule. Use the URL printed by `basaltwater-web`
-instead of substituting the upstream port or scheme.
-
-Use `basaltwater-web forward list`, `basaltwater-web doctor NAME`, and `basaltwater-web ca` for
-inspection. Remove a route when the associated service is no longer intended
-to be reachable:
-
-```bash
-basaltwater-web forward remove NAME
-```
-
-Do not proxy databases, SSH, metadata endpoints, or another user's service.
-Treat adding or removing a forward as an external exposure change and keep it
-within the user's requested scope.
-
-The configured owner runs these commands without `sudo`. The local control
-service checks the caller's Unix socket UID against the saved gateway policy;
-it cannot accept another user's claimed identity. If a live mutation reports
-that the control service is unavailable, check
-`systemctl status basaltwater-web-control.service` and ask the operator to rerun
-saved VM setup. Do not work around this with a broad sudo grant. The
-administrator-only `forward reconcile` command is not available through the
-owner-scoped control socket.
+Publication and new forwarding require that scope. A read-only review, local
+build, or browser check does not authorize exposure or refresh; maintaining a
+local site does not authorize production deployment. Stop/remove only when
+requested. Use the installed browser skill and session policy for rendered checks.

@@ -8,6 +8,19 @@ the project alone.
 
 ## Access from different sessions
 
+Keep discovery separate from procedural context. The catalog advertises skill
+names and descriptions; an installed base skill does not require reading its
+whole body on every request. Basaltwater entrypoints contain task routing and
+essential boundaries. Read only the linked workflow needed for the current
+operation, then load more detail when a specific step requires it. Do not
+preload every reference or run an operations checklist for ordinary code edits.
+
+Operations, tasks, workspaces, triage, browser, desktop, and gateway skills use
+this layout. Browser selection and automatic fallback stay in the entrypoint;
+canvas timing, recordings, credential rotation, and other specialized procedures
+are loaded on demand. Development-site refresh responsibility also stays visible
+without loading all publication and service commands.
+
 | Launch context | Catalog used |
 | --- | --- |
 | Codex CLI, including `codex exec` | The provider account's `~/.agents/skills`, plus repository and other Codex-supported scopes |

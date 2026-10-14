@@ -1,125 +1,27 @@
 ---
 name: basaltwater-playwright-testing
-description: Browser-test web applications with managed VM-local Playwright or a configured desktop alternative, including unattended work without a connected T3 client.
+description: Test web applications with managed Playwright or a configured VM-local alternative.
 metadata:
   managed-by: basaltwater
 ---
 
-# VM-local Playwright testing
+# VM-local browser testing
 
-This VM has managed Playwright and no provisioned T3 Code preview workflow.
-Use Playwright directly for browser work; do not wait for or attempt to install
-a collaborative preview.
-
-## Readiness and origin
-
-Use `basaltw agent manifest REPOSITORY --capability browser --json` for concise
-engine/context discovery. The managed capability doctor qualifies Chromium
-and MCP; it does not verify project Playwright Firefox or desktop Firefox.
-For explicitly requested Firefox coverage, run `basaltw agent browser doctor
---engine firefox --context project --project REPOSITORY --json`. An authorized
-`browser install` with the same arguments downloads the engine for the existing
-project package without changing package versions or lockfiles. Managed context
-uses `--context managed` without `--project` and leaves MCP on Chromium.
-These diagnostics do not expose browser tools to a session or replace its
-browser policy. See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#engine-and-context-coverage).
-
+Managed Playwright is provisioned; this skill does not imply a T3 preview.
 Choose the ready configured option that fits the task under its session policy.
-Managed Playwright is useful for repeatable DOM/console/network checks, file
-fixtures, loopback access, and canvas/WebGL. A desktop browser is useful for
-native dialogs, desktop integration, visual interaction, or when automation
-tools are unavailable. Neither VM-local option requires an open T3 application.
 
-Before the first browser action, run:
+Read [readiness and origin](references/playwright.md) before using managed
+Playwright. Its doctor must be healthy and MCP tools must actually be exposed.
+Read [interaction and evidence](references/interaction.md) for canvas, held
+input, timing, screenshots, or asynchronous review.
 
-```bash
-basaltw agent doctor --capability browser --json
-```
+If tools are missing or unusable, continue automatically with existing project
+Playwright tests or a ready configured desktop browser when policy permits.
+Read its installed desktop skill and check status/doctor before launch/input.
+Do not wait for T3 to reopen, restart services, or install another browser stack
+to fill the gap. Honor human pause and preserve unrelated applications.
 
-Proceed only when `healthy` is true. Use the stable `issues` list and primary
-`remediation` code when it is not. A missing capability or unhealthy launcher
-is a coverage gap, not permission to install another browser stack, bypass the
-managed MCP wrapper, or expose a service.
-For `stale_processes`, restart the affected agent session so it loads the
-current launcher; repeatedly probing the old process does not repair it.
-
-A healthy doctor result verifies the installation, not exposure of its MCP tools
-to this session. This also applies to unattended panel prompts. If those tools
-are absent or unusable, inspect configured project Playwright tests and the
-installed desktop workflow before declaring browser coverage blocked. Project
-tests use their existing dependencies and documented command; do not bypass the
-managed launcher or load its private packages directly.
-
-Continue automatically with a ready alternative within the authorized browser
-test, instead of asking the user to reopen T3 or restart services. For a desktop
-browser, discover applications with `basaltw agent manifest REPOSITORY --json`,
-read the installed desktop skill, and check its status/doctor before managed
-launch, scoped capture, and input. Honor human pause and preserve unrelated
-applications. If no usable browser remains, continue non-browser checks and
-report the exact missing coverage; do not install an unconfigured browser stack.
-
-Keep using the selected option for the task. Inspect application state before
-repeating input whose acknowledgment failed, and use normal authorized login
-flows rather than copying cookies between profiles. Report browser and network
-origin alongside the evidence. A desktop visual check does not establish
-Playwright DOM/network coverage or the connected client's routing and trust.
-
-Playwright and its Chromium traffic originate on the VM. Keep development
-servers on loopback and use their reported URL. This is usually the best path
-for repeatable DOM interaction, console/network inspection, browser-engine
-verification, canvas testing, and local Vite or game previews.
-
-## Interaction and evidence
-
-Confirm rendered content rather than relying on navigation success alone. For
-WebAssembly or WebGL, allow one bounded startup interval after document load.
-Canvas accessibility snapshots may contain only fallback text despite correct
-rendering. Map canvas controls from a screenshot and use the managed bounded
-coordinate input tool; use semantic locators for surrounding HTML controls.
-Coordinates are viewport-relative CSS pixels; prefer a viewport screenshot at
-`scale: "css"`, account for cropping/scaling, and recapture after resizing or
-scrolling. Click the canvas to focus keyboard input, then verify the resulting
-game state.
-
-The launcher's one-second settle interval applies to actions that wait for
-completion; individual key taps do not all take that path. Tool round trips
-also consume game time.
-Identify the actual pause control before starting a real-time game. Pause
-immediately after a short interaction, verify that gameplay and timers stop,
-then capture and inspect; resume only for the next bounded interaction. Prefer
-a gameplay pause that leaves the scene visible. If no effective pause exists,
-use a project test harness when in scope and report the timing limitation;
-do not change game balance or launcher defaults to make a check pass. Paused
-images prove appearance, not motion or timing.
-
-`browser_press_key` is a tap; frame-polled movement may miss it. When held input
-is needed and `browser_run_code_unsafe` is available, use a short agent-authored
-Playwright sequence from a verified paused/focused game: resume, key down, wait
-a bounded interval, then release and pause in `finally` before returning. Keep
-the code limited to browser input, without page-supplied code or game-state
-injection. Verify pause and released input afterward; inspect state before
-retrying a failed pause toggle. Use a physics-tick harness for exact timing.
-
-If a WebGL screenshot is still empty, wait another second and retry once.
-Repeated captures can stall GPU readback. Group identical capture-time
-`ReadPixels` warnings in the report with a representative message and count;
-preserve page errors, context loss, and rendering failures separately. Use the
-console tool to distinguish application failures from browser diagnostics.
-
-Generated evidence defaults to the private, bounded
-`~/.local/state/basaltwater/playwright-mcp` directory. Omit `filename` for
-routine evidence; name an artifact only when the user requested it as a
-workspace deliverable. Avoid passwords, tokens, private response bodies, and
-unrelated user data.
-Share selected screenshots and a short interaction record for asynchronous
-review; a collaborative browser is not required to make the evidence useful.
-
-## HTTPS and client access
-
-The VM-local browser uses the VM trust store. Never disable certificate
-verification. If managed HTTPS fails trust in Playwright, report the unhealthy
-runtime or trust layer and rerun saved setup only when repair is in scope.
-
-Use the `basaltwater-web-gateway` skill only when a task requires another
-client to reach a static build or loopback service. Publishing changes external
-reachability and is not needed merely to let VM-local Playwright test an app.
+Inspect state before repeating an uncertain submission. Profiles and logins are
+separate. Verify actual behavior and report browser, origin, and coverage;
+VM checks cannot prove connected-client routing or trust. Preserve TLS,
+loopback binding, private evidence, and the managed launcher.
