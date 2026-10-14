@@ -263,6 +263,35 @@ class TestPluginRegistry(unittest.TestCase):
             step_names.index("Installing T3 Code web interface"),
         )
 
+    def test_task_worker_requires_codex_across_server_and_workstation_profiles(self):
+        for profile in ("server_lite", "server_web", "server_dev", "agent_vm", "agent_workstation", "agent_code_vm"):
+            for tools in ([], ["claude"], ["codex"]):
+                for panel_port in (None, 443):
+                    with self.subTest(profile=profile, tools=tools, panel_port=panel_port):
+                        config = SetupConfig(
+                            host="example.test", username="user", system_type=profile,
+                            agent_tools=tools, web_panel_port=panel_port,
+                        )
+                        names = [name for name, _ in get_steps_for_system_type(config)]
+                        self.assertEqual("Configuring independent agent task worker" in names, "codex" in tools)
+                        self.assertEqual("Configuring Basaltwater web panel" in names, panel_port is not None)
+
+    def test_multi_service_monitoring_panel_does_not_select_agent_setup(self):
+        config = SetupConfig(
+            host="192.168.0.51", username="gitadmin", system_type="server_lite", machine_type="vm",
+            agent_tools=[], enable_ssl=True, web_panel_port=443,
+            gogs=[":3000", "/srv/gogs"], enable_syncthing=True, syncthing_root="/srv/syncthing",
+            enable_samba=True, samba_shares=[["write", "cluster", "/srv/cluster", "share-admin,cluster"]],
+        )
+        names = [name for name, _ in get_steps_for_system_type(config)]
+        self.assertFalse(config.has_agent_features())
+        self.assertIn("Configuring Basaltwater web panel", names)
+        self.assertIn("Setting up Gogs service", names)
+        self.assertTrue(any("Syncthing" in name for name in names))
+        for name in ("Installing Git for agent repositories", "Installing Codex CLI",
+                     "Installing agent VM management command", "Configuring independent agent task worker"):
+            self.assertNotIn(name, names)
+
     def test_t3_web_with_git_access_installs_git_without_cli_bundle(self):
         config = SetupConfig(
             host="host",

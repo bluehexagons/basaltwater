@@ -371,7 +371,9 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
 
     if config.agent_repos:
         steps.append(("Cloning agent repositories on target", clone_agent_repositories))
-    if config.install_codex or config.web_panel_port is not None:
+    # Prompt execution currently requires Codex. A monitoring-only panel must
+    # not install an agent scheduler or prepare its private account storage.
+    if config.install_codex:
         from common.agent_task_steps import configure_agent_task_worker
 
         steps.append(("Configuring independent agent task worker", configure_agent_task_worker))

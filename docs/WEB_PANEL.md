@@ -50,6 +50,10 @@ Discovery checks local executable paths and unit files without running tools,
 contacting providers, or testing sign-in. An installed feature remains visible
 when authentication or service health needs attention. Reload after installing
 or removing tools. Unavailable optional pages and their actions return HTTP 404.
+Selecting `--web-panel` alone does not install agent tools or a task-worker
+service. On a server without Codex or publishing tools, the panel starts no
+prompt scheduler or publishing poll. Codex enables prompt scheduling;
+Butler/SteamCMD can enable publishing polling independently of Codex.
 Machines with other agent runtimes but no Codex show runtime diagnostics without
 prompt forms. Repository templates and the Git worktree option require Git.
 Dashboard notifications appear only with ingest enabled; certificate help appears
@@ -493,7 +497,7 @@ totals, not lifetime usage or spending estimates. Active runs show elapsed time
 and remaining runtime at page load. Use **Refresh status** to update results
 and timing without automatic reloads that would discard a prompt draft.
 
-New non-root Debian setups with Codex or the panel install an independent task
+New non-root Debian setups with Codex selected install an independent task
 worker. It runs without the panel or T3 Code, and the screen reports its live
 lease separately from installed unit presence. Older installations retain panel
 scheduling until setup installs the worker. Tasks persist across panel and host restarts. After

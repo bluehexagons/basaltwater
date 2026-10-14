@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -24,6 +26,43 @@ class DashboardTest(unittest.TestCase):
         snapshot = patch.object(panel.AgentTasks, "snapshot", return_value={"tasks": [], "runs": []})
         snapshot.start()
         self.addCleanup(snapshot.stop)
+
+    def test_non_codex_panel_startup_leaves_task_storage_uninspected_and_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            state = panel.WebPanelState({"features": {}}, agent_home=home)
+            for features in (PanelFeatures(), PanelFeatures(tools=frozenset({"git"})),
+                             PanelFeatures(tools=frozenset({"claude", "opencode"}), t3=True)):
+                with self.subTest(features=features), patch.object(state, "features", return_value=features), patch.object(
+                    panel, "worker_status",
+                ) as worker, patch.object(state.agent_tasks, "start") as start:
+                    state.start_background_workers()
+                worker.assert_not_called()
+                start.assert_not_called()
+                self.assertEqual(list(Path(home).iterdir()), [])
+
+    def test_codex_panel_falls_back_only_without_an_independent_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            state = panel.WebPanelState({"features": {}}, agent_home=home)
+            for installed, running in ((False, False), (True, False), (False, True), (True, True)):
+                with self.subTest(installed=installed, running=running), patch.object(
+                    state, "features", return_value=PanelFeatures(tools=frozenset({"codex"})),
+                ), patch.object(panel, "worker_status", return_value={"installed": installed, "running": running}) as worker, patch.object(
+                    state.agent_tasks, "start",
+                ) as start:
+                    state.start_background_workers()
+                worker.assert_called_once_with(state.agent_tasks)
+                start.assert_called_once_with(scheduler=not (installed or running))
+
+    def test_publishing_poll_does_not_require_codex_or_inspect_its_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            state = panel.WebPanelState({"features": {}}, agent_home=home)
+            for provider in ("butler", "steamcmd"):
+                with self.subTest(provider=provider), patch.object(
+                    state, "features", return_value=PanelFeatures(tools=frozenset({provider})),
+                ), patch.object(panel, "worker_status") as worker, patch.object(state.agent_tasks, "start") as start:
+                    state.start_background_workers()
+                worker.assert_not_called()
+                start.assert_called_once_with(scheduler=False)
 
     def test_host_snapshot_reports_load_swap_inodes_and_kernel(self) -> None:
         def proc_file(path: str, **_kwargs: object) -> StringIO:

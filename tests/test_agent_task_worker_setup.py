@@ -75,6 +75,26 @@ class TaskRefreshGuardTests(unittest.TestCase):
                         steps._worker_busy(self.account, parent)
                     self.assertEqual(path.read_text(), payload)
 
+    def test_unsafe_directory_reports_the_component_and_preserves_permissions(self) -> None:
+        directory = Path(self.home) / ".local/state/basaltwater/prompt-tasks"
+        directory.mkdir(parents=True, mode=0o700)
+        for path in (directory.parent, directory.parent.parent, directory.parent.parent.parent):
+            path.chmod(0o700)
+        for path, mode in ((directory.parent.parent, 0o775), (directory, 0o755)):
+            with self.subTest(path=path, mode=mode):
+                previous_mode = path.stat().st_mode & 0o777
+                path.chmod(mode)
+                try:
+                    with self.assertRaises(RuntimeError) as rejected, steps._refresh_guard(self.account):
+                        self.fail("Unsafe permissions must not be repaired implicitly")
+                    message = str(rejected.exception)
+                    self.assertIn(str(path), message)
+                    self.assertIn(f"owner UID {os.geteuid()}", message)
+                    self.assertIn(f"mode {mode:04o}", message)
+                    self.assertEqual(path.stat().st_mode & 0o777, mode)
+                finally:
+                    path.chmod(previous_mode)
+
 
 class TaskWorkerSetupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -91,7 +111,7 @@ class TaskWorkerSetupTests(unittest.TestCase):
             return info
 
         self.enterContext(patch.object(steps.os, "stat", side_effect=account_stat))
-        self.config = SetupConfig(system_type="agent_vm", host="example.test", username="agent", machine_type="vm")
+        self.config = SetupConfig(system_type="agent_vm", host="example.test", username="agent", machine_type="vm", agent_tools=["codex"])
         self.enterContext(patch.object(steps, "can_manage_system_services", return_value=True))
         self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
         self.enterContext(patch.object(steps.pwd, "getpwnam", return_value=self.account))
@@ -135,11 +155,23 @@ class TaskWorkerSetupTests(unittest.TestCase):
         with patch.object(steps, "replace_units") as replace, patch.object(steps, "run") as run:
             with patch.object(steps, "can_manage_system_services", return_value=False):
                 steps.configure_agent_task_worker(self.config)
-            steps.configure_agent_task_worker(SetupConfig(system_type="server_web", host="example.test", username="root"))
+            steps.configure_agent_task_worker(SetupConfig(system_type="server_web", host="example.test", username="root", agent_tools=["codex"]))
             with patch.object(steps, "is_dry_run", return_value=True):
                 steps.configure_agent_task_worker(self.config)
         replace.assert_not_called()
         run.assert_not_called()
+
+    def test_monitoring_only_panel_never_inspects_or_creates_task_storage(self) -> None:
+        config = SetupConfig(system_type="server_lite", host="example.test", username="gitadmin", web_panel_port=443)
+        with patch.object(steps, "_refresh_guard") as guard, patch.object(steps.pwd, "getpwnam") as account, patch.object(
+            steps, "run",
+        ) as run, patch.object(steps, "replace_units") as replace:
+            steps.configure_agent_task_worker(config)
+        guard.assert_not_called()
+        account.assert_not_called()
+        run.assert_not_called()
+        replace.assert_not_called()
+        self.assertFalse((Path(self.home) / ".local").exists())
 
     def test_busy_worker_refuses_refresh_before_any_service_is_stopped(self) -> None:
         with patch.object(steps, "_worker_busy", return_value=True), patch.object(steps, "run") as run, patch.object(

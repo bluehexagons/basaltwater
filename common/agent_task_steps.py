@@ -99,7 +99,9 @@ def _refresh_guard(account: pwd.struct_passwd):
         home_info = os.fstat(parent)
         if home_info.st_uid != account.pw_uid or home_info.st_mode & 0o022:
             raise RuntimeError("Unsafe task account home; inspect it before setup")
+        current_path = Path(account.pw_dir)
         for name in (".local", "state", "basaltwater", "prompt-tasks"):
+            current_path /= name
             created = False
             try:
                 os.mkdir(name, mode=0o700, dir_fd=parent)
@@ -114,7 +116,13 @@ def _refresh_guard(account: pwd.struct_passwd):
                 info = os.fstat(child)
             forbidden = 0o077 if name == "prompt-tasks" else 0o022
             if info.st_uid != account.pw_uid or info.st_mode & forbidden:
-                raise RuntimeError("Unsafe task state directory; inspect it before setup")
+                raise RuntimeError(
+                    f"Unsafe task state directory: {current_path} "
+                    f"(owner UID {info.st_uid}, mode {stat.S_IMODE(info.st_mode):04o}; "
+                    f"expected UID {account.pw_uid} with "
+                    + ("mode 0700" if name == "prompt-tasks" else "no group/world write access")
+                    + "); inspect it before setup"
+                )
             parent = child
         created = False
         try:
@@ -209,6 +217,9 @@ def configure_agent_task_worker(config: SetupConfig) -> None:
     """Install a worker, stopping a managed legacy scheduler when necessary."""
     if not can_manage_system_services(config.machine_type):
         print("  ✓ Skipping task worker (persistent services unavailable)")
+        return
+    if not config.install_codex:
+        print("  ✓ Skipping task worker (Codex is not selected)")
         return
     if config.username == "root":
         print("  ✓ Skipping task worker (a non-root task account is required)")

@@ -201,9 +201,11 @@ Maintenance holds remain separate and are never created automatically.
 
 ## Independent worker and events
 
-Non-root Debian setup with Codex or the panel installs
+Non-root Debian setup with Codex selected installs
 `basaltwater-agent-tasks-UID.service`. It runs as the task account, uses its
 own credentials, starts at boot, and is independent of the panel and T3.
+Selecting only `--web-panel` does not install the task worker. A panel starts
+its legacy fallback scheduler only when Codex is installed for its account.
 Shutdown stops new claims and cancels active work. A shutdown during claim
 reservation cannot be cleared by the next invocation; a cancelled claim is
 recorded before the worker exits.
@@ -326,6 +328,9 @@ possible secret from raw evidence. Avoid credentials in prompts and logs.
 Corrupt, unsafe or unsupported state is preserved and reported rather than
 reset. Removing the panel leaves the independent worker and tasks in place;
 pause tasks explicitly when removing their UI.
+Setup errors for unsafe task directories identify the exact component, owner
+UID and permissions. Inspect that path before changing ownership or modes;
+setup does not recursively take over shared or unrelated account directories.
 
 ## T3 integration after the next stable release
 

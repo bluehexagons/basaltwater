@@ -753,6 +753,17 @@ class WebPanelState:
     def features(self) -> PanelFeatures:
         return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url))
 
+    def start_background_workers(self) -> None:
+        """Start only the prompt or publishing workers available to this panel."""
+        features = self.features()
+        if not features.prompts and not features.tools & {"butler", "steamcmd"}:
+            return
+        scheduler = False
+        if features.prompts:
+            task_worker = worker_status(self.agent_tasks)
+            scheduler = not (task_worker["installed"] or task_worker["running"])
+        self.agent_tasks.start(scheduler=scheduler)
+
     def navigation(self, current: str) -> tuple[NavigationItem, ...]:
         return panel_navigation(current=current, available=self.features().pages)
 
@@ -2661,8 +2672,7 @@ def main() -> int:
             raise ValueError("--port must be between 1 and 65535")
         server = _ThreadingTCPHTTPServer((args.listen, args.port), WebPanelHandler)
     try:
-        task_worker = worker_status(state.agent_tasks)
-        state.agent_tasks.start(scheduler=not (task_worker["installed"] or task_worker["running"]))
+        state.start_background_workers()
         server.serve_forever(poll_interval=0.5)
     finally:
         state.agent_tasks.close()
