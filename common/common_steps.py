@@ -20,6 +20,7 @@ from lib.config import SetupConfig
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.machine_state import can_manage_time_sync, can_modify_kernel
 from lib.remote_utils import (
+    USER_SHELL_ENV_OPTIONS,
     file_contains,
     install_package,
     is_dry_run,
@@ -797,6 +798,11 @@ def _run_as_login_user(
     capture_output: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run a shell command in the target user's home and systemd session."""
+    if not validate_username(username):
+        raise ValueError("Invalid user command username")
+    validate_filesystem_path(user_home)
+    if not os.path.isabs(user_home):
+        raise ValueError("User command home must be absolute")
     safe_username = shlex.quote(username)
     safe_home = shlex.quote(user_home)
     safe_path = shlex.quote(
@@ -814,7 +820,7 @@ def _run_as_login_user(
         f"cd {safe_home} && {command}"
     )
     return run(
-        f"runuser -u {safe_username} -- env "
+        f"runuser -u {safe_username} -- env {shlex.join(USER_SHELL_ENV_OPTIONS)} "
         f"HOME={safe_home} USER={safe_username} LOGNAME={safe_username} "
         f"PATH={safe_path} "
         f"bash -lc {shlex.quote(shell_script)}",

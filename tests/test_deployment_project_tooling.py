@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -121,6 +122,51 @@ class BuildUserHomeTests(unittest.TestCase):
 
 
 class DeploymentProjectToolingTests(unittest.TestCase):
+    def test_build_and_toolchain_shells_discard_the_callers_environment(self):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as caller_home:
+            root = Path(directory)
+            frontend = root / 'frontend'
+            frontend.mkdir()
+            (frontend / 'package.json').write_text('{}', encoding='utf-8')
+            (frontend / '.nvmrc').write_text('22', encoding='utf-8')
+            home = root / 'build home'
+            (home / '.nvm').mkdir(parents=True)
+            (home / '.nvm/nvm.sh').write_text(
+                'nvm() { [ "$NVM_DIR" = "$HOME/.nvm" ] && '
+                '[ -z "${NVM_BIN-}${NVM_INC-}${BASH_ENV-}${ENV-}" ] && '
+                "printf 'own build environment\\n'; }\n", encoding='utf-8',
+            )
+            hook = Path(caller_home) / 'shell-env.sh'
+            hook.write_text("printf 'foreign shell hook was loaded\\n' >&2\n", encoding='utf-8')
+            hook.chmod(0o000)
+            environment = {
+                'HOME': caller_home, 'PATH': '/usr/bin:/bin', 'BASH_ENV': str(hook),
+                'ENV': str(hook), 'NVM_DIR': caller_home + '/.nvm',
+                'NVM_BIN': caller_home + '/.nvm/bin', 'NVM_INC': caller_home + '/.nvm/include',
+            }
+
+            def execute_payload(command, **_kwargs):
+                arguments = shlex.split(command)
+                self.assertEqual(arguments[:4], ['runuser', '-u', 'build-example', '--'])
+                result = subprocess.run(
+                    arguments[4:], env=environment, cwd=home, capture_output=True,
+                    text=True, check=False, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, '')
+                self.assertEqual(result.stdout, 'own build environment\n')
+                return result
+
+            component = Component('site', 'static', 'example.com', build=['nvm'], output='dist')
+            orchestrator = DeploymentOrchestrator()
+            with patch.object(orchestrator, '_build_home', return_value=str(home)), patch(
+                'lib.deployment.run', side_effect=execute_payload,
+            ) as run:
+                orchestrator._run_component_build(component, directory, 'build-example')
+                orchestrator._prepare_build_toolchain(directory, 'build-example')
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(hook.stat().st_mode & 0o777, 0o000)
+
     def test_publishing_metadata_survives_port_resolution_and_cannot_deploy_alone(self):
         with tempfile.TemporaryDirectory() as directory:
             metadata = {"languages": {"source": "en", "supported": ["en", "es"]}}

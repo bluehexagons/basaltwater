@@ -22,6 +22,13 @@ _dry_run = False
 
 VERBOSE_ENV_VAR = "BASALTWATER_VERBOSE"
 
+# Account switches must not inherit another user's shell hooks or NVM paths.
+# The target login profile can still configure its own environment afterward.
+USER_SHELL_ENV_OPTIONS = tuple(
+    option for name in ("BASH_ENV", "ENV", "NVM_DIR", "NVM_BIN", "NVM_INC")
+    for option in ("-u", name)
+)
+
 
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 60 * 60
 _TIMEOUT_TERMINATION_GRACE_SECONDS = 5.0

@@ -339,6 +339,16 @@ class TestDevelopmentToolPackages(unittest.TestCase):
 
 class TestUserCommandEnvironment(unittest.TestCase):
     @patch("common.common_steps.run")
+    def test_invalid_account_or_home_is_rejected_before_running_commands(self, mock_run):
+        for username, home in (
+            ("invalid user", "/home/agent"), ("agent", "home/agent"),
+            ("agent", "/home/agent\nother"), ("agent", ""),
+        ):
+            with self.subTest(username=username, home=home), self.assertRaises(ValueError):
+                _run_as_login_user(username, home, "true")
+        mock_run.assert_not_called()
+
+    @patch("common.common_steps.run")
     def test_login_user_commands_use_target_home_and_system_path(self, mock_run):
         _run_as_login_user("agent", "/home/agent", "command -v codex")
 

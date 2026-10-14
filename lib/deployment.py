@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, IO, Iterable, Optional
 
-from lib.remote_utils import run
+from lib.remote_utils import USER_SHELL_ENV_OPTIONS, run
 from lib.local_http import open_loopback
 from lib.operation_state import OperationRecord, OperationStateError, OperationStateStore
 from lib.atomic_io import ensure_directory_durable, fsync_tree, remove_file_durable, rename_path_durable, write_json_atomic, write_text_atomic
@@ -1219,7 +1219,8 @@ class DeploymentOrchestrator:
             build_shell = " && ".join(shell_parts)
             result = run(
                 f"runuser -u {shlex.quote(build_user or self.deploy_user)} -- "
-                f"env HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(build_shell)}",
+                f"env {shlex.join(USER_SHELL_ENV_OPTIONS)} "
+                f"HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(build_shell)}",
                 check=False,
                 capture_output=True,
             )
@@ -1259,7 +1260,8 @@ class DeploymentOrchestrator:
                 ))
                 result = run(
                     f"runuser -u {shlex.quote(build_user)} -- "
-                    f"env HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(script)}",
+                    f"env {shlex.join(USER_SHELL_ENV_OPTIONS)} "
+                    f"HOME={shlex.quote(build_home)} /bin/bash -lc {shlex.quote(script)}",
                     check=False,
                     capture_output=True,
                 )

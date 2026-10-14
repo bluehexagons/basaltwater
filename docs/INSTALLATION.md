@@ -189,6 +189,13 @@ Node versions. Go continues to use `/etc/profile.d/go.sh`, while uv and other
 user-scoped executables use `~/.local/bin`. Start a new agent session after a
 setup or patch run changes this environment.
 
+When setup switches from root to a login or deployment build account, it removes
+the caller's `BASH_ENV`, `ENV` and NVM paths before starting that account's Bash.
+The target account's own login profile still loads its managed environment.
+This also works on the first run, before that profile or environment file exists.
+It prevents new users from trying to read `/root/.local/share/basaltwater/shell-env.sh`;
+root's directory permissions stay private.
+
 Every setup also exposes the system `python3` interpreter as the conventional
 `python` command when that alias is missing. The separate `--python` option
 still controls the additional uv-based Python tooling bundle.
