@@ -4,7 +4,7 @@ Basaltwater can provision a browser that Codex and OpenCode use directly from
 their agent sessions. This is separate from the workstation browser selected
 with `--browser`: agent automation uses a pinned Playwright MCP package and its
 matching Chromium build, while `--browser` installs an interactive desktop or
-terminal browser for a person.
+terminal browser with a separate profile and interaction workflow.
 
 ## Provisioning
 
@@ -128,32 +128,65 @@ configuration. Isolated mode discards any cookies created during the session.
 
 ## Choosing Playwright or collaborative preview
 
-T3 sessions that expose `preview_*` tools use collaborative preview first.
-Call `preview_status`, then `preview_open` when no automation-capable tab is
-attached. Switch browsers only when preview tools are absent, the user
-explicitly requests another browser, or open returns an explicit unsupported
-or unavailable error. A failed navigation, timeout, closed pane, or TLS error
-alone does not permit fallback; inspect actionable failures and retry with
-corrected arguments. This session policy takes precedence over the general
-surface-selection guidance below.
+Agents choose a ready, configured browser that covers the task, subject to the
+active session's browser policy. Installed guidance does not imply that every
+option below is available to that agent session.
 
-Outside those sessions, prefer Playwright for repeatable
-headless interactions, DOM/console/network inspection, canvas input, VM
-loopback access, and browser-engine checks that do not need live collaboration.
-It remains available when the connected T3 application is closed.
+| Option | Useful for | Origin and limits |
+| --- | --- | --- |
+| T3 collaborative preview | Live participation, shared evidence, connected-client routing and trust | Connected client; depends on its automation host |
+| Managed Playwright | Repeatable DOM, console, network, fixture, canvas/WebGL, and VM loopback checks | VM; isolated profile and session-exposed MCP tools |
+| Existing project Playwright tests | Project-specific browser assertions with its documented test command | Selected project runtime; existing dependencies and engine payload required |
+| Configured desktop browser | Native dialogs, desktop integration, visual interaction, or available fallback | VM desktop; separate profile, scoped input, and active control permission |
 
-Prefer T3 Code's preview when the user should watch or participate, evidence
-must appear in the collaborative UI, or the task specifically tests the
-connected client's network or certificate trust. When either surface is
-equally suitable, an already attached preview is useful; otherwise VM-local
-Playwright is the dependable default. Agents should state which network origin
-produced evidence when that affects the conclusion.
+T3 sessions may require collaborative preview first: call `preview_status`, then
+`preview_open` when no automation-capable tab is attached. Under that policy,
+switch when preview tools are absent, the user explicitly requests another
+browser, or open returns an explicit unsupported/unavailable host error,
+including a disconnected or missing client. A failed navigation, timeout,
+closed pane, or TLS error alone does not establish host unavailability; inspect
+actionable errors and retry with corrected arguments. A status without a tab
+can be repaired by opening once and must not be treated as a disconnect.
 
-If the T3 client is known to be closed, start with healthy Playwright directly.
-No preview probe or service restart is needed. For asynchronous review, provide
-selected screenshot artifacts and a short record of inputs and observed states.
-Live visibility is a reason to choose T3; it is not a prerequisite for complete
-VM-origin rendering, input, console, and network checks.
+### Automatic continuation after client disconnection
+
+Once fallback is permitted, continue automatically with a ready alternative
+within the authorized browser test. Do not wait for the user to reopen T3,
+restart its service to restore automation, or request approval merely to select
+another configured browser. If session policy does not require T3 probes and
+the client is known to be closed, select the appropriate alternative directly.
+Playwright and VM desktop browsers do not depend on an open T3 application.
+
+Discover browser contexts with `basaltw agent manifest REPOSITORY --capability
+browser --json`; use the full manifest to discover desktop applications.
+For managed Playwright, run `basaltw agent doctor --capability browser --json`
+and verify its tools are exposed to the session. Missing MCP tools do not make
+other configured contexts unavailable: inspect existing project tests and
+desktop readiness before declaring browser coverage blocked. Project tests
+use their own dependencies and documented commands; do not load managed
+packages directly or bypass the managed MCP launcher.
+
+For a configured XRDP desktop browser, read the installed desktop skill, check
+`basaltw desktop status` and `basaltw desktop doctor`, and use the managed
+`desktop start`/`exec` commands within the test task. Use scoped window/PID
+inspection and fresh captures for input, honor human pause, and preserve
+unrelated applications. Native KDE uses its separate skill and portal grant.
+No fallback implicitly authorizes installing a browser stack, changing access
+policy, restarting an agent session, or copying cookies between profiles.
+
+If T3 disconnects during interaction, make one bounded status/open availability
+check when policy requires it, then select a ready alternative. Inspect
+application state before retrying a toggle or submission with uncertain
+acknowledgment; profiles and login state are separate. Keep testing in the
+selected browser rather than polling T3 before every action. Recheck T3 when
+the client returns or the remaining task requires client-origin evidence.
+
+For asynchronous review, share selected screenshot artifacts and observed
+inputs/results. State the browser, engine where known, network origin, and
+checks actually exercised. A VM-origin pass does not verify a disconnected
+client's routing, trust, or presentation; pixel-only desktop evidence does not
+establish DOM/network assertions. If no ready alternative covers the remaining
+work, report that specific gap and continue build, unit, and HTTP checks.
 
 ## File import, download, and reopen
 
@@ -428,15 +461,19 @@ snapshot and network error. Use the observed failure to choose the next step:
 
 | Observation | Next step |
 | --- | --- |
-| No automation host or unavailable capture | Inspect status/open; use Playwright only when session policy permits fallback, otherwise report the browser gap. |
+| No selected automation tab | Call open once and retain its tab ID; status alone does not prove host unavailability. |
+| Open explicitly reports a disconnected/unavailable host, or preview tools are absent | Automatically select a ready configured alternative within session policy; report only the missing client-origin coverage. |
+| Unavailable capture with an attached tab | Follow bounded capture diagnostics; use an alternative when session policy permits it. |
 | Explicit `ERR_CERT_AUTHORITY_INVALID` | Offer `basaltwater-web ca` and [Client CA trust](CLIENT_CA_TRUST.md) only when the user wants client access restored. Otherwise skip that client-origin check. |
 | Timeout, refused connection, or unreachable address | Check client routing and the gateway's source policy; CA enrollment will not repair connectivity. |
 | Background DOM works but no visible surface or snapshot | Follow the bounded stale-preview recovery above. |
 
 Before using provisioned Playwright as the fallback, run
 `basaltw agent doctor --capability browser --json`. If the capability is
-absent or unhealthy, continue non-browser checks and report the missing
-coverage. Do not install another browser stack merely to fill that gap.
+absent or unhealthy, inspect configured project tests or desktop readiness
+before declaring browser coverage blocked. If no usable alternative remains,
+continue non-browser checks and report the missing coverage. Do not install
+another browser stack merely to fill that gap.
 
 Report which network origin passed and which failed. A client-only failure
 does not establish that the hosted site is down. Preserve TLS verification,

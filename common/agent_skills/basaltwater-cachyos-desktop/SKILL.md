@@ -117,8 +117,15 @@ If a physical key stops working or appears stuck, stop native control and read
 Other virtual keyboards can retain input state even after a streaming client
 disconnects; a successful portal press does not prove physical input works.
 
-For web consumers use the session's collaborative browser tools and browser
-policy. A desktop editor preview does not prove browser/game rendering fidelity.
+For web consumers, follow the session's browser policy and choose a ready option
+that covers the task: collaborative T3, configured Playwright/project tests, or
+the native desktop browser for visual interaction and integration. If T3 is
+confirmed unavailable and policy permits fallback, continue in an available
+alternative instead of waiting for the client to reopen. Native browser input
+still requires the existing KDE portal grant and must honor human pause; do not
+create XRDP or restart KDE/T3 to recover browser testing. Profiles are separate.
+Report the browser, network origin, and observed checks. A desktop editor preview
+does not prove browser/game rendering fidelity or DOM/network assertions.
 Keep output paths, versions, export settings and useful evidence with the task;
 avoid including unrelated desktop content in captures.
 

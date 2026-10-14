@@ -109,17 +109,24 @@ in the base catalog:
 In T3 sessions with collaborative preview tools, browser skills follow T3's
 preview-first policy: status, then open when no capable tab is attached.
 Fallback requires absent tools, an explicit request for another browser, or an
-explicit unsupported/unavailable response from open. Outside T3 sessions, the
-combined skill can select Playwright for repeatable VM-origin work. Both T3
+explicit unsupported/unavailable response from open, including a disconnected
+or missing client. Once policy permits fallback, agents automatically select
+a ready configured alternative without waiting for the user to reopen T3.
+Outside a preview-first policy, choose the option that covers the task. Both T3
 variants resolve loopback ports through `basaltwater-web preview resolve`,
 verify uncertain input acknowledgments, scope diagnostics by navigation and
 component, and inspect service-worker freshness when updates appear missing.
-Browser coverage gaps do not block unrelated non-browser work.
+Browser guidance also covers existing project Playwright tests and configured
+desktop browsers. It checks their readiness before declaring browser coverage
+blocked, preserves profiles and human pause, and reports browser/network origin
+and the checks actually performed. Browser coverage gaps do not block unrelated
+non-browser work. See [Browser automation](BROWSER_AUTOMATION.md#automatic-continuation-after-client-disconnection).
 
 Deployment, Godot, and gateway skills defer browser selection to this same
 session policy. Unattended panel prompts cannot borrow a connected T3 thread's
 tools; a healthy managed browser installation still needs its MCP tools exposed
-to the task session. Local build, export validation, and browser smoke checks do
+to the task session. Missing tools do not preclude ready project tests or a
+configured desktop browser. Local build, export validation, and browser smoke checks do
 not imply publication or live forwarding.
 
 The operations skill ships `references/unattended-tasks.md` for the panel's Codex
@@ -146,10 +153,11 @@ Other provisioned capabilities add focused skills:
 | `basaltwater-desktop` | Shared desktop capability, including an explicit `--desktop` or `--rdp` on an agent VM |
 
 Desktop guidance describes the one shared XRDP session, native application
-launch, screenshot/input commands, and human takeover. Browser tests almost
-always use T3 Code or Playwright when available; a running desktop is not a
-reason to switch to pixel automation. Desktop-specific integration and a
-justified fallback remain available. See [XRDP](XRDP.md).
+launch, screenshot/input commands, and human takeover. Agents choose a browser
+that fits the task under the session policy: T3 for collaboration, Playwright
+for repeatable DOM/network checks, or the desktop browser for native integration,
+visual interaction, and fallback. A running desktop alone does not establish
+browser readiness or DOM/network coverage. See [XRDP](XRDP.md).
 
 A skill does not install the capability it describes. A setup with neither T3
 Code nor managed Playwright receives no browser skill, avoiding instructions

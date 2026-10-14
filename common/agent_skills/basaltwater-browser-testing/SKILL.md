@@ -1,46 +1,52 @@
 ---
 name: basaltwater-browser-testing
-description: Browser-test web applications on a Basaltwater agent VM that has both T3 Code collaborative previews and managed VM-local Playwright.
+description: Browser-test web applications with T3 Code, managed Playwright, or a configured desktop browser, and continue testing when the collaborative client disconnects.
 metadata:
   managed-by: basaltwater
 ---
 
-# T3 preview and Playwright
+# Browser testing and client disconnection
 
-This VM has two browser surfaces with different strengths and network origins.
+This VM has T3 preview and managed Playwright; a desktop browser may also be installed.
 Follow the active session's browser policy when choosing between them.
 
 ## Choose the browser
 
-Prefer these browser tools over desktop pixel automation for almost all browser
-testing, including canvas/WebGL. If a shared desktop is also installed, use it
-only for desktop-specific browser integration or a justified fallback when these
-tools cannot cover the task; state the resulting coverage limits.
+Choose a ready option that covers the task, subject to any session policy:
 
-In T3 Code sessions exposing `preview_*` tools, use collaborative preview first:
-call `preview_status`, then `preview_open` if no automation-capable tab is attached.
-Use another browser only when preview tools are absent, the user explicitly
-requests it, or `preview_open` reports an explicit unsupported/unavailable error.
-A closed pane, failed navigation, timeout, or TLS error alone does not authorize
-fallback. Inspect actionable errors and retry with corrected arguments.
+| Browser | Good fit | Origin |
+| --- | --- | --- |
+| T3 collaborative preview | Live participation, shared evidence, connected-client routing or trust | Connected client |
+| Managed Playwright | Repeatable DOM/console/network checks, loopback access, file fixtures, canvas/WebGL | VM |
+| Configured desktop browser | Native dialogs, desktop integration, visual interaction, or an available alternative when automation tools are missing | VM, separate browser profile |
 
-Outside those sessions, prefer VM-local Playwright for repeatable headless interactions,
-DOM/console/network inspection, loopback access, canvas input, or browser-engine
-verification that does not need to be shared live with the user. It remains
-available when the T3 application is closed.
-Outside a T3 session exposing preview tools, a known closed client needs no
-preview probes or service restarts. Within a T3 session, still use status/open
-and the fallback conditions above. Share selected screenshots and a short
-interaction record when the user needs to review the result asynchronously.
+For a session requiring T3 first, call `preview_status`, then `preview_open`
+when no automation-capable tab is attached. Use an alternative when preview
+tools are absent, the user requests it, or open explicitly reports an
+unsupported/unavailable host, including a disconnected or missing client.
+A closed pane, navigation error, timeout, or TLS error alone does not establish
+host unavailability; inspect actionable errors and retry with corrected arguments.
+Outside such a policy, choose the available browser best suited to the task.
 
-Prefer the T3 collaborative preview when the user should watch or participate,
-the requested evidence must appear in the shared UI, or the task specifically
-tests the connected client's routes or certificate trust. That browser runs in
-the connected client's context, not the VM's.
+Once disconnection or unavailable tools permit fallback, continue automatically
+with a ready configured alternative. Do not wait for the user to reopen T3,
+restart T3 to restore automation, or ask permission merely to switch browser
+within the already authorized test. Playwright and the VM desktop do not depend
+on an open T3 application. See the readiness checks below and the installed
+desktop skill for its control lifecycle. If one alternative is missing or
+unhealthy, inspect the others before declaring browser coverage blocked.
 
-When either surface is equally suitable, an already attached preview is useful
-for collaboration. Otherwise Playwright is the dependable default. State which
-surface and network origin produced the result when that distinction matters.
+If a connection is lost after an input, inspect application state before
+repeating it; a failed acknowledgment may follow a successful submission.
+Profiles and logins are separate: use the application's normal login flow with
+authorized test credentials instead of copying cookies. Keep using the selected
+alternative for the task instead of polling T3 before every action. Recheck T3
+when the client returns or client-origin coverage is needed.
+
+Share selected screenshots and observed interactions for asynchronous review.
+State the browser and network origin; VM-origin success cannot verify the
+disconnected client's routing, trust, or shared presentation. Report that
+specific gap while completing the behavior the alternative can exercise.
 
 ## Use managed Playwright
 
@@ -70,9 +76,13 @@ agent session.
 
 A healthy installation does not establish that its MCP tools are exposed in this
 agent session. Unattended panel prompts cannot use a connected T3 thread's tools.
-Use only tools actually available to the run; if none are exposed, report browser
-coverage as blocked and continue non-browser checks. Do not bypass the managed
-launcher or restart services to make tools appear.
+Use only tools actually available to the run. If MCP tools are missing, inspect
+configured project Playwright tests or the installed desktop workflow before
+declaring browser coverage blocked. Project tests use their own existing
+dependencies and documented command; do not bypass the managed launcher, load
+its private packages directly, install another stack, or restart services to
+make tools appear. If no usable alternative remains, continue non-browser checks
+and report the exact missing coverage.
 
 Keep development servers on loopback. Playwright originates on the VM, so it
 can reach VM loopback and uses the VM's DNS, routes, source IP, and trust store.
@@ -128,9 +138,11 @@ the collaborative browser as unavailable from that status alone. Preserve the
 returned `tabId` for later actions instead of relying on an implicit current
 tab after an agent-session boundary.
 
-When the session policy permits fallback, continue with healthy Playwright for
-VM-origin testing. Otherwise continue non-browser checks and report the coverage
-gap. Do not treat preview absence as an application failure.
+If a later preview action reports a disconnected/unavailable host, repeat this
+bounded status/open check once, then automatically choose a ready alternative
+when the session permits it. Do not treat preview absence as an application failure.
+If the task needs client-origin evidence, retain that coverage gap alongside
+the completed VM-origin checks.
 
 An `environment-port` target rewrites the port onto the environment connection
 host; it is not a tunnel to VM loopback. For a local environment on the same
@@ -217,7 +229,7 @@ failure indicates stale T3 preview-presentation state, not an application,
 route, certificate, or Playwright failure.
 
 Restarting the desktop client may leave that state in the VM-side T3 service.
-Use healthy Playwright when the session permits fallback. If client-visible
+Use a ready VM-local browser when the session permits fallback. If client-visible
 coverage is required and the user explicitly accepts interruption of every
 active T3 session, restart the managed server as the target user:
 
@@ -233,7 +245,7 @@ closed; a full VM reboot is not the first recovery step.
 
 Only treat an explicit `net::ERR_CERT_AUTHORITY_INVALID` preview network entry
 as a client trust error. Do not require the user to enroll the VM CA to finish
-an otherwise testable task. Use healthy VM-local Playwright when fallback is permitted,
+an otherwise testable task. Use a ready VM-local browser when fallback is permitted,
 continue server and HTTP checks, and report that collaborative client-origin
 coverage was skipped. Never use `curl -k`, ignore HTTPS errors, or weaken TLS.
 
@@ -259,6 +271,24 @@ guide is unavailable, retain the coverage gap and continue the other checks.
 For a certificate error on any other HTTPS origin, use that origin's documented
 trust process or leave the client-origin check skipped; `basaltwater-web ca` does not
 repair unrelated certificates.
+
+## Use a configured desktop browser
+
+Discover installed applications with `basaltw agent manifest REPOSITORY --json`
+and read the installed desktop skill before launch, capture, or input. On an
+XRDP VM, check `basaltw desktop status` and `basaltw desktop doctor`; use
+`desktop start` and `desktop exec -- BROWSER URL` within the browser-testing
+task. These commands reuse the managed session and supply its environment.
+Use PID/window-scoped inspection and captures, verify the resulting page, and
+honor human pause. Never guess a display, copy authority cookies, or take over
+an unrelated browser window. Native KDE uses its separate installed desktop
+skill and existing portal grant instead of XRDP commands.
+
+Use accessible controls when available and fresh screenshots for visual input.
+Pixel-only checks do not establish DOM/network assertions; report the checks
+actually performed. Preserve existing desktop applications and leave the
+session running. Do not change browser installation or access policy merely
+because a collaborative client disconnected.
 
 ## Evidence and safety
 

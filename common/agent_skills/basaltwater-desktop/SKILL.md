@@ -1,6 +1,6 @@
 ---
 name: basaltwater-desktop
-description: Use native graphical applications for autonomous Blender model edits and image, vector, audio or video asset touch-ups in the VM's shared XRDP desktop. Prefer available T3 Code or Playwright tools for browser testing.
+description: Use native graphical applications for Blender and media edits, or a configured desktop browser for task-suitable testing and fallback when collaborative or Playwright tools are unavailable, in the VM's shared XRDP desktop.
 metadata:
   managed-by: basaltwater
 ---
@@ -55,12 +55,20 @@ for application guidance and the distinction between discovery and readiness.
 
 Use it for native editors, office applications, graphical tools, and behavior
 that specifically depends on the desktop environment. Use shell commands for
-files, builds, and service operations. For almost all browser testing, prefer
-the available T3 Code collaborative browser or managed Playwright tools and
-their installed browser-testing skill. Canvas/WebGL testing alone does not
-require a desktop. Use desktop browser input only when the task requires its
-particular profile/native integration, or browser tools are unavailable or
-unsuitable and the reduced coverage is acceptable. Explain that choice.
+files, builds, and service operations. For browser work, follow the active
+session's browser policy and installed browser-testing skill. Choose the
+available option that covers the task: T3 for live collaboration, Playwright
+for repeatable DOM/network checks, or the desktop browser for native integration
+and visual interaction. Canvas/WebGL alone does not require a desktop.
+
+After confirmed T3 disconnection or unavailable automation tools permit fallback,
+continue the authorized browser test here without asking the user to reopen T3.
+Check desktop status/doctor and installed applications, then use the managed
+launch and scoped inspection/input commands below. A stopped desktop can be
+started within the test task; do not restart a running session or resume human
+pause automatically. Select the project page without taking over unrelated
+browser windows, verify the resulting interaction, and report which assertions
+were exercised. Pixel-only evidence does not prove DOM or network behavior.
 
 The desktop browser runs on the VM. It has a separate profile from Playwright
 and the client-side T3 browser. Do not copy cookies or assume shared logins.

@@ -1,6 +1,6 @@
 ---
 name: basaltwater-t3-preview-testing
-description: Browser-test web applications with T3 Code's collaborative preview on a Basaltwater agent VM where managed Playwright is not provisioned.
+description: Browser-test web applications with T3 Code's collaborative preview and use configured alternatives after client disconnection on a VM without managed Playwright.
 metadata:
   managed-by: basaltwater
 ---
@@ -13,19 +13,21 @@ client's routes and certificate trust.
 
 This workflow requires preview tools exposed to the active agent session.
 Unattended panel prompts run outside the connected T3 thread and cannot borrow
-its tools. If preview tools are absent, report browser coverage as blocked and
-continue non-browser checks; an installed T3 service does not establish access.
+its tools. If preview tools are absent, inspect configured alternatives below;
+an installed T3 service does not establish browser access.
 
 ## Preview availability
 
-Prefer this browser workflow over an installed shared desktop for ordinary web
-testing, including canvas/WebGL. Desktop browser input is a fallback only when
-preview is unavailable or the task requires desktop-specific integration; explain
-its reduced coverage. Use the desktop skill if that capability is installed.
-In a T3 session with `preview_*` tools, fallback requires absent preview tools,
-an explicit user request for another browser, or an explicit unsupported/unavailable
-error from `preview_open`. Navigation, capture, timeout, and certificate failures
-alone do not permit switching browsers; inspect and correct actionable errors.
+Choose a browser that covers the task under the active session's policy. T3 is
+useful for live collaboration and connected-client routing or trust; a configured
+desktop browser covers native integration and visual interaction, and existing
+project Playwright tests cover repeatable automation. This skill does not imply
+that either alternative is installed.
+Under a preview-first policy, fallback requires absent preview tools, an explicit
+user request for another browser, or an explicit unsupported/unavailable host
+error from `preview_open`, including a disconnected or missing client.
+Navigation, capture, timeout, and certificate failures alone do not establish
+host unavailability; inspect and correct actionable errors.
 
 Call `preview_status` first. If no automation-capable tab is attached, call
 `preview_open` once. Do not repeatedly reopen or poll. A closed or minimized T3
@@ -36,14 +38,27 @@ application is unhealthy.
 this agent session has no current tab. Open once and retain the returned tab ID;
 do not classify that status as preview unavailability.
 
-When the preview is unavailable, continue with build, unit, service, loopback
-HTTP, and managed gateway checks. Report which collaborative browser behavior
-was not exercised. Do not install Playwright ad hoc, bind a service to
-`0.0.0.0`, or widen firewall policy to manufacture browser coverage.
+When fallback is permitted, continue automatically with a ready configured
+alternative; do not wait for the user to reopen T3 or restart its service.
+Discover applications with `basaltw agent manifest REPOSITORY --json`. If a
+desktop skill is installed, read it and check desktop status/doctor before using
+its managed launch, scoped inspection, and input commands. Honor human pause and
+existing browser profiles. Alternatively use a project's existing Playwright
+dependencies and documented test command. Do not install Playwright ad hoc,
+bind a service to `0.0.0.0`, or widen firewall policy.
+
+If the client disconnects during a test, make one bounded status/open check,
+then choose an available alternative when policy permits. Inspect application
+state before retrying uncertain submissions. Do not copy cookies between
+profiles or poll T3 before every subsequent action. Record browser, origin, and
+observed behavior; VM desktop checks do not verify the disconnected client's
+trust or routes. If no usable browser remains, complete build, unit, service,
+loopback HTTP, and gateway checks and report only the missing browser coverage.
 
 A hidden tab may still navigate while raster capture is unavailable. Attempt
 one snapshot after navigation. If it fails while the tab remains hidden, stop
-retrying and continue with non-browser checks. Opening a tab or seeing a URL in
+retrying and choose an alternative when policy permits, or continue non-browser
+checks. Opening a tab or seeing a URL in
 status does not prove the page rendered; confirm visible content or a snapshot.
 
 Snapshot before interaction and prefer its semantic role/name locators. A
@@ -116,8 +131,9 @@ systemctl --user restart t3code.service
 ```
 
 Reconnect the client and try status/open once. Never restart the service
-silently or for ordinary preview absence. Without approval, leave the browser
-operation skipped; a full VM reboot is not the first recovery step.
+silently or for ordinary preview absence. Without approval, leave the affected
+collaborative operation skipped and continue in a configured alternative when
+policy permits; a full VM reboot is not the first recovery step.
 
 ## Network origin
 
