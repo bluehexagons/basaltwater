@@ -590,6 +590,11 @@ class TestDeployManifest(unittest.TestCase):
         self.base_dir = tempfile.mkdtemp(prefix="manifest_base_")
         self.source = tempfile.mkdtemp(prefix="manifest_src_")
         self.orch = DeploymentOrchestrator(base_dir=self.base_dir)
+        unit_dir = os.path.join(self.base_dir, 'units')
+        os.makedirs(unit_dir)
+        units = patch('lib.deployment.SYSTEMD_UNIT_DIR', unit_dir)
+        units.start()
+        self.addCleanup(units.stop)
 
         # A repo with a static site and a service, plus the artifacts a build
         # would have produced (so the binary-exists check passes).
@@ -1166,13 +1171,17 @@ class TestDeployManifest(unittest.TestCase):
                           'UnitFileState': 'disabled'}
         with tempfile.TemporaryDirectory() as unit_dir:
             unit_path = os.path.join(unit_dir, 'app-example_com-api.service')
+            old_content = generate_managed_service(
+                'app-example_com-api', '/bin/true', active,
+                description='basaltwater.json service: api',
+            )
             with open(unit_path, 'w') as handle:
-                handle.write('old unit')
+                handle.write(old_content)
             os.chmod(unit_path, 0o640)
 
             def fail_activation(*args, **kwargs):
                 with open(unit_path, 'w') as handle:
-                    handle.write('new unit')
+                    handle.write(old_content.replace('ExecStart=/bin/true', 'ExecStart=/bin/false'))
                 os.chmod(unit_path, 0o644)
                 raise RuntimeError('activation failed')
 
@@ -1183,7 +1192,7 @@ class TestDeployManifest(unittest.TestCase):
                     self.orch.deploy_manifest(self.manifest, self.source, 'example.com',
                                               '/', 'url', 'hash', keep_source=True)
             with open(unit_path) as handle:
-                self.assertEqual(handle.read(), 'old unit')
+                self.assertEqual(handle.read(), old_content)
             self.assertEqual(os.stat(unit_path).st_mode & 0o777, 0o640)
         commands = [call.args[0] for call in mock_run.call_args_list]
         self.assertFalse(any('systemctl enable' in cmd or 'systemctl restart' in cmd

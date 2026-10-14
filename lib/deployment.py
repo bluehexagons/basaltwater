@@ -14,6 +14,7 @@ import sys
 import tempfile
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any, IO, Iterable, Optional
 
 from lib.remote_utils import run
@@ -572,11 +573,55 @@ class DeploymentOrchestrator:
         prefix = f"app-{app_fragment}-"
         if not os.path.isdir(SYSTEMD_UNIT_DIR):
             return set()
-        return {
-            filename.removesuffix(".service")
-            for filename in os.listdir(SYSTEMD_UNIT_DIR)
-            if filename.startswith(prefix) and filename.endswith(".service")
-        }
+        owned = set()
+        for filename in os.listdir(SYSTEMD_UNIT_DIR):
+            if not filename.startswith(prefix) or not filename.endswith('.service'):
+                continue
+            try:
+                previous = snapshot_unit_file(os.path.join(SYSTEMD_UNIT_DIR, filename))
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise RuntimeError(f"Could not snapshot managed service unit {filename}: {exc}") from exc
+            if previous is not None and self._owns_service_unit(dest_path, previous['content']):
+                owned.add(filename.removesuffix('.service'))
+        return owned
+
+    def _owns_service_unit(self, dest_path: str, content: str) -> bool:
+        """Prove ownership from a managed unit's release or persistent paths."""
+        settings = [line.strip() for line in content.splitlines()]
+        if not any(line.startswith('Description=basaltwater.json service: ') for line in settings):
+            return False
+        release = os.path.abspath(dest_path)
+        shared = os.path.abspath(self._get_persistent_root(os.path.basename(dest_path)))
+        writable = [line.split('=', 1)[1] for line in settings if line.startswith('ReadWritePaths=')]
+        if not writable:
+            # Older generated services did not declare writable paths.
+            writable = [line.split('=', 1)[1] for line in settings if line.startswith('WorkingDirectory=')]
+        if not writable:
+            return False
+        try:
+            paths = [path for value in writable for path in shlex.split(value)]
+            return bool(paths) and all(
+                os.path.isabs(path) and any(
+                    os.path.commonpath((root, os.path.abspath(path))) == root
+                    for root in (release, shared)
+                )
+                for path in paths
+            )
+        except ValueError:
+            return False
+
+    def _assert_manifest_unit_ownership(self, manifest: Manifest, dest_path: str) -> None:
+        """Reject unit-name collisions before building or stopping services."""
+        for component in manifest.components:
+            if not component.is_service:
+                continue
+            unit_name = self._service_identity(dest_path, component)[0] + '.service'
+            previous = snapshot_unit_file(os.path.join(SYSTEMD_UNIT_DIR, unit_name))
+            if previous is not None and not self._owns_service_unit(dest_path, previous['content']):
+                raise RuntimeError(
+                    f"Service unit {unit_name} is not owned by this deployment; "
+                    "choose another component name or deployment path"
+                )
 
     def _app_unit_snapshots(self, dest_path: str) -> dict[str, dict[str, Any]]:
         snapshots: dict[str, dict[str, Any]] = {}
@@ -586,6 +631,8 @@ class DeploymentOrchestrator:
                 previous = snapshot_unit_file(os.path.join(SYSTEMD_UNIT_DIR, filename))
                 if previous is None:
                     raise RuntimeError("Unit disappeared during snapshot")
+                if not self._owns_service_unit(dest_path, previous['content']):
+                    raise RuntimeError("Unit ownership changed during snapshot")
                 snapshots[service_name] = {"file": previous, "state": inspect_unit_state(filename)}
             except (OSError, ValueError, RuntimeError) as exc:
                 raise RuntimeError(
@@ -773,7 +820,7 @@ class DeploymentOrchestrator:
             )
             temporary_created = True
             os.close(temporary_fd)
-            source = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+            source = sqlite3.connect(f"{Path(database_path).as_uri()}?mode=ro", uri=True)
             try:
                 target = sqlite3.connect(temporary_path)
                 try:
@@ -865,6 +912,7 @@ class DeploymentOrchestrator:
                 "preparing",
                 context={"commit": commit_hash or "unknown"},
             )
+            self._assert_manifest_unit_ownership(manifest, dest_path)
             manifest = self._resolve_manifest_ports(manifest, dest_path)
             previous_ports = read_state_object(self._port_state_path(dest_path), versioned=False)
             self._validate_manifest_routes(manifest, domain)

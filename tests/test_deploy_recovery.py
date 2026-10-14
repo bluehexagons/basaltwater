@@ -16,6 +16,132 @@ from lib.unit_transaction import UnitRecoveryError
 from lib.operation_state import OperationStateError, OperationStateStore
 from lib.project_manifest import parse_manifest
 from lib.remote_utils import CommandTimeoutError
+from lib.systemd_service import generate_managed_service
+
+
+class TestDeploymentUnitOwnership(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.base = self.root / 'www'
+        self.source = self.root / 'source'
+        self.source.mkdir()
+        (self.source / 'index.html').write_text('new')
+        self.units = self.root / 'units'
+        self.units.mkdir()
+        self.orchestrator = DeploymentOrchestrator(base_dir=str(self.base))
+        self.dest = self.base / 'foo'
+        self.dest.mkdir(parents=True)
+        (self.dest / 'index.html').write_text('old')
+        self.runner = patch('lib.deployment.run', side_effect=lambda command, **kwargs:
+                            CompletedProcess(command, 0, '', ''))
+        self.run = self.runner.start()
+        self.addCleanup(self.runner.stop)
+        mocked = patch('lib.deployment.SYSTEMD_UNIT_DIR', str(self.units))
+        mocked.start()
+        self.addCleanup(mocked.stop)
+        build = patch.object(self.orchestrator, '_ensure_build_user')
+        self.build_user = build.start()
+        self.addCleanup(build.stop)
+        state = patch('lib.deployment.inspect_unit_state', return_value={
+            'LoadState': 'loaded', 'ActiveState': 'active', 'UnitFileState': 'enabled',
+        })
+        state.start()
+        self.addCleanup(state.stop)
+        self.foreign_name = self.write_unit('foo-bar', 'api')
+        self.foreign_path = self.units / (self.foreign_name + '.service')
+        self.foreign_content = self.foreign_path.read_bytes()
+
+    def write_unit(self, app, component):
+        manifest = parse_manifest({'version': 1, 'components': [{
+            'name': component, 'type': 'service', 'domain': 'example.test',
+            'exec': '/bin/true', 'port': 8123,
+        }]})
+        release = str(self.base / app)
+        name, user = self.orchestrator._service_identity(release, manifest.components[0])
+        content = generate_managed_service(
+            name, '/bin/true', release, user, user,
+            description=f'basaltwater.json service: {component}',
+            writable_paths=[self.orchestrator._component_data_dir(release, manifest.components[0])],
+        )
+        (self.units / (name + '.service')).write_text(content)
+        return name
+
+    def test_stale_cleanup_only_retires_services_owned_by_this_release(self):
+        own_name = self.write_unit('foo', 'api')
+        manifest = parse_manifest({'version': 1, 'components': [{
+            'name': 'site', 'type': 'static', 'domain': 'example.test', 'output': '.',
+        }]})
+
+        def cleanup(name):
+            (self.units / (name + '.service')).unlink()
+
+        with patch.object(self.orchestrator, '_stop_app_unit', return_value=True) as stop, patch(
+            'lib.deployment.cleanup_service', side_effect=cleanup,
+        ) as remove:
+            self.orchestrator.deploy_manifest(manifest, str(self.source), None, '/foo',
+                                              'https://example.test/foo.git', 'new', keep_source=True)
+        stop.assert_called_once_with(own_name)
+        remove.assert_called_once_with(own_name)
+        self.assertEqual(self.foreign_path.read_bytes(), self.foreign_content)
+        self.assertEqual((self.dest / 'index.html').read_text(), 'new')
+
+    def test_static_deployment_does_not_mistake_shared_prefix_for_ownership(self):
+        self.orchestrator.deploy_from_archive(str(self.source), None, '/foo', 'https://example.test/foo.git', 'new')
+        self.assertEqual(self.foreign_path.read_bytes(), self.foreign_content)
+        self.assertEqual((self.dest / 'index.html').read_text(), 'new')
+
+    def test_colliding_service_name_is_rejected_before_build_or_service_changes(self):
+        manifest = parse_manifest({'version': 1, 'components': [{
+            'name': 'bar-api', 'type': 'service', 'domain': 'example.test',
+            'exec': '/bin/true', 'port': 8123,
+        }]})
+        incoming_name, _user = self.orchestrator._service_identity(str(self.dest), manifest.components[0])
+        self.assertEqual(incoming_name, self.foreign_name)
+        with patch.object(self.orchestrator, '_install_service_component') as install, patch.object(
+            self.orchestrator, '_stop_app_unit', return_value=True,
+        ) as stop:
+            with self.assertRaisesRegex(RuntimeError, 'owned by this deployment'):
+                self.orchestrator.deploy_manifest(manifest, str(self.source), None, '/foo',
+                                                  'https://example.test/foo.git', 'new', keep_source=True)
+        self.build_user.assert_not_called()
+        install.assert_not_called()
+        stop.assert_not_called()
+        self.run.assert_not_called()
+        self.assertEqual(self.foreign_path.read_bytes(), self.foreign_content)
+        self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+
+    def test_failed_release_rollback_preserves_other_applications_units(self):
+        manifest = parse_manifest({'version': 1, 'components': [{
+            'name': 'site', 'type': 'static', 'domain': 'example.test', 'output': '.',
+        }]})
+        with patch('lib.deployment.save_deployment_metadata', side_effect=OSError('metadata failed')), patch(
+            'lib.deployment.cleanup_service',
+        ) as cleanup:
+            with self.assertRaisesRegex(OSError, 'metadata failed'):
+                self.orchestrator.deploy_manifest(manifest, str(self.source), None, '/foo',
+                                                  'https://example.test/foo.git', 'new', keep_source=True)
+        cleanup.assert_not_called()
+        self.assertEqual(self.foreign_path.read_bytes(), self.foreign_content)
+        self.assertEqual((self.dest / 'index.html').read_text(), 'old')
+
+    def test_persistent_paths_prove_ownership_with_external_working_directory(self):
+        own_name = self.write_unit('foo', 'worker')
+        unit = self.units / (own_name + '.service')
+        unit.write_text(unit.read_text().replace(f'WorkingDirectory={self.dest}', 'WorkingDirectory=/opt/runtime'))
+        self.assertEqual(self.orchestrator._app_unit_names(str(self.dest)), {own_name})
+
+    def test_unmanaged_name_collision_is_rejected_even_with_matching_working_directory(self):
+        own_name = self.write_unit('foo', 'api')
+        unit = self.units / (own_name + '.service')
+        unit.write_text(unit.read_text().replace('Description=basaltwater.json service: api', 'Description=operator service'))
+        manifest = parse_manifest({'version': 1, 'components': [{
+            'name': 'api', 'type': 'service', 'domain': 'example.test', 'exec': '/bin/true', 'port': 8123,
+        }]})
+        self.assertEqual(self.orchestrator._app_unit_names(str(self.dest)), set())
+        with self.assertRaisesRegex(RuntimeError, 'owned by this deployment'):
+            self.orchestrator._assert_manifest_unit_ownership(manifest, str(self.dest))
 
 
 class TestReleaseRecovery(unittest.TestCase):
@@ -32,6 +158,11 @@ class TestReleaseRecovery(unittest.TestCase):
         (self.dest / "index.html").write_text("old")
         self.orchestrator = DeploymentOrchestrator(base_dir=str(self.base))
         self.state = self.base / ".basaltwater_shared" / "example_com"
+        unit_dir = self.root / 'systemd'
+        unit_dir.mkdir()
+        units = patch('lib.deployment.SYSTEMD_UNIT_DIR', str(unit_dir))
+        units.start()
+        self.addCleanup(units.stop)
         self.manifest = parse_manifest({"version": 1, "components": [{
             "name": "site", "type": "static", "domain": "example.com", "output": ".",
         }]})
@@ -450,6 +581,23 @@ class TestSQLiteBackupDurability(unittest.TestCase):
 
     def backup(self):
         self.orchestrator._backup_component_sqlite(self.component, self.dest, None)
+
+    def test_database_filename_characters_are_not_interpreted_as_sqlite_uri_syntax(self):
+        data = Path(self.orchestrator._component_data_dir(self.dest, self.component))
+        original = data / 'app.sqlite3'
+        for filename in ('app?query.sqlite3', 'app#fragment.sqlite3', 'app%20.sqlite3'):
+            with self.subTest(filename=filename):
+                database_path = data / filename
+                original.rename(database_path)
+                self.component.sqlite_backup = '{{data_dir}}/' + filename
+                try:
+                    self.backup()
+                    latest = list(self.backups.glob('*.sqlite3'))
+                    self.assertEqual(len(latest), 1)
+                    with sqlite3.connect(latest[0]) as database:
+                        self.assertEqual(database.execute('SELECT value FROM demo').fetchone(), (7,))
+                finally:
+                    database_path.rename(original)
 
     def test_flush_and_durable_publish_precede_pruning_and_keep_newest_data(self):
         from lib.atomic_io import remove_file_durable, rename_path_durable

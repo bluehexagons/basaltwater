@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from lib.systemd_service import cleanup_service, cleanup_systemd_unit
+from lib.systemd_service import cleanup_service, cleanup_systemd_unit, generate_managed_service
 
 
 class TestCleanupFunctions(unittest.TestCase):
@@ -29,6 +29,16 @@ class TestCleanupFunctions(unittest.TestCase):
         with self.assertRaises(ValueError):
             cleanup_systemd_unit("demo", "socket")
         remove.assert_not_called()
+
+
+class TestLiteralEnvironment(unittest.TestCase):
+    def test_runtime_values_escape_systemd_specifiers(self):
+        unit = generate_managed_service('demo', '/bin/true', '/srv', runtime_env={
+            'CALLBACK_URL': 'https://example.test/a%20b',
+            'APP_VALUE': 'literal%Q%n%',
+        })
+        self.assertIn('Environment="CALLBACK_URL=https://example.test/a%%20b"', unit)
+        self.assertIn('Environment="APP_VALUE=literal%%Q%%n%%"', unit)
 
 
 if __name__ == '__main__':

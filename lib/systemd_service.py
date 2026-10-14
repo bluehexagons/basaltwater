@@ -64,7 +64,7 @@ def _systemd_environment_line(key: str, value: str) -> str:
     """Render a validated environment value for a systemd unit line."""
     validate_environment_variable_name(key)
     validate_no_control_characters(value, f"systemd environment value for {key}")
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace('%', '%%')
     return f'Environment="{key}={escaped}"'
 
 

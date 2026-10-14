@@ -33,6 +33,16 @@ know.
   writable paths.
 - Manifest builds use per-application build users, stable automatic ports, and
   a deployment lock. Existing services continue running during the build.
+  Service inventory verifies the generated unit's release or persistent paths
+  rather than treating a shared name prefix as proof of ownership. Cleanup and
+  rollback preserve other applications' units. A service-name collision with
+  another deployment or an unmanaged unit aborts before building or stopping
+  services; choose another component name or deployment path to resolve it.
+- Manifest runtime environment values preserve literal percent signs, including
+  percent-encoded URLs, instead of expanding systemd unit specifiers.
+- Proxy routes preserve application `Cache-Control` and `Expires` headers.
+  Static-file caching rules do not overwrite backend `no-store` or private
+  policies merely because a proxied URL ends in `.json`, `.css`, or `.js`.
 - A manifest release is rolled back when service activation or a declared 2xx
   health check fails. Previous systemd units are restored with their permissions,
   ownership, enablement, and running state; previously stopped services stay stopped.
@@ -55,6 +65,9 @@ know.
   privileged backup is written.
   Backup contents and publication are synced before pruning older archives;
   retention preserves the new recovery point even if the clock moved backwards.
+  Database paths are encoded before the read-only SQLite URI is opened, so
+  filename characters such as `?`, `#`, and `%` cannot change the selected file
+  or connection parameters.
 - Installs a weekly cleanup timer and caps journal growth on server-style
   setups.
 - Uses conservative package-update policy for Node and uv by default.

@@ -334,7 +334,6 @@ map $uri {cc_var} {{
 
 
 def _make_proxy_location(path: str, port: int, comment: str, enable_websocket: bool = False,
-                        expires_var: Optional[str] = None, cc_var: Optional[str] = None,
                         forwarded_proto: str = "$scheme", enable_path_redirect: bool = True,
                         preserve_path: bool = False) -> str:
     """Generate a proxy_pass location block."""
@@ -368,11 +367,6 @@ def _make_proxy_location(path: str, port: int, comment: str, enable_websocket: b
             "        proxy_set_header Connection \"\";"
         ])
 
-    if expires_var:
-        content.append(f"        expires {expires_var};")
-    if cc_var:
-        content.append(f"        add_header Cache-Control {cc_var};")
-        
     body = "\n".join(content)
     
     if path == "/":
@@ -529,7 +523,6 @@ def generate_merged_nginx_config(
             proxy_port = dep.get('proxy_port') or backend_port or 3000
             locations.append(_make_proxy_location(
                 location_path, proxy_port, f"# Proxy for {path}",
-                expires_var=expires_var, cc_var=cc_var,
                 forwarded_proto=forwarded_proto, enable_path_redirect=enable_path_redirect,
                 preserve_path=dep.get('preserve_path', False)
             ))

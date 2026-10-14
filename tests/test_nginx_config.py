@@ -232,7 +232,7 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
                 for variable in definitions:
                     self.assertRegex(variable, r'^\$[A-Za-z_][A-Za-z0-9_]*$')
                 references = re.findall(r'(?:expires|add_header Cache-Control) (\$\S+);', config)
-                self.assertGreaterEqual(len(references), 6)
+                self.assertGreaterEqual(len(references), 4)
                 self.assertEqual(set(references), set(definitions))
                 self.assertIn(f'server_name {domain};', config)
 
@@ -379,6 +379,25 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
         self.assertIn('"127.0.0.1:https" https;', match[2])
         self.assertIn('"::1:https" https;', match[2])
         self.assertIn(f'proxy_set_header X-Forwarded-Proto {match[1]};', config)
+
+    def test_proxy_locations_preserve_backend_cache_policy(self):
+        for redirects in (True, False):
+            with self.subTest(redirects=redirects):
+                config = generate_merged_nginx_config('example.test', [
+                    {'path': '/admin', 'needs_proxy': True, 'backend_port': 3007},
+                    {'path': '/', 'needs_proxy': False, 'serve_path': '/var/www/site'},
+                ], enable_https_redirect=redirects)
+                locations = re.findall(r'location[^{}]+\{([^{}]+)}', config)
+                proxy_locations = [location for location in locations if 'proxy_pass ' in location]
+                static_locations = [location for location in locations if 'try_files ' in location]
+                self.assertTrue(proxy_locations)
+                self.assertTrue(static_locations)
+                for location in proxy_locations:
+                    self.assertNotIn('expires ', location)
+                    self.assertNotIn('add_header Cache-Control ', location)
+                for location in static_locations:
+                    self.assertIn('expires ', location)
+                    self.assertIn('add_header Cache-Control ', location)
 
     def test_hsts_header_present(self):
         deployments = [{
