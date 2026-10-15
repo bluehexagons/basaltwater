@@ -30,7 +30,7 @@ For an existing Admin-screen refresh, use `basaltw agent privilege admin-status
 source activation do not establish setup completion. Missing old-broker fields
 and unrelated setup markers are unknown; never use them to infer a failing step
 or replay uncertain work. Keep recovery snapshots until disposable lifecycle
-qualification passes; the [qualification plan](https://github.com/bluehexagons/basaltwater/blob/main/docs/plans/privilege-execution-qualification.md)
+qualification passes; [PRV-01 in the release matrix](https://github.com/bluehexagons/basaltwater/blob/main/docs/release-qualification.md#stable-qualification-matrix)
 owns that gate.
 
 If the action becomes unnecessary, use

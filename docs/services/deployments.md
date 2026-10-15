@@ -73,11 +73,6 @@ deploys, or provides Ruby-specific application updates. Current Basaltwater
 machines have no Rails services. Ruby applications are outside
 Basaltwater's deployment workflows.
 
-The planned versioned convention for zero-config root Go services, inactive
-nested-module discovery, standard health/state behavior, and compact monorepo
-composition is documented in
-[`plans/go-site-convention.md`](../plans/go-site-convention.md).
-
 ## Manifest shape
 
 Service components may declare explicitly public UDP listeners:

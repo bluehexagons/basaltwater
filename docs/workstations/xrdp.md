@@ -337,10 +337,9 @@ Rollback restores configuration, not unsaved applications. Keep SSH available.
 
 ## Live qualification
 
-The shared session has passed local peer-authenticated startup, native editor
-launch, text input/save, desktop and application screenshots, pause/handoff,
-and normal logout followed by a new session. Human clipboard worked in both
-directions, and disconnect/reconnect retained the same desktop.
+The current tested configuration supports local peer-authenticated startup,
+native application launch/input/capture, pause and handoff, clipboard in both
+directions, normal logout, and reconnect to the retained session.
 
 Dynamic resizing remains usable with interruption, not qualified as seamless.
 With Remmina 1.4.43 and FreeRDP 3.31.1, resize causes a brief black screen and
@@ -354,19 +353,11 @@ Screen lock/unlock and automatic locking are outside the default contract.
 Audio redirection, keyring unlock, multi-monitor behavior, and other desktop
 environments remain unqualified. Agent pause is not a screen lock.
 
-Remaining disposable Debian qualification:
-
-1. Test fresh setup with an agent-started session and with human login first;
-   race concurrent starts and verify one desktop and preserved applications.
-2. Repeat resize, clipboard, keyboard layout, screenshot coordinates,
-   pause/resume, and competing-agent checks with supported clients.
-3. Restart the XRDP frontend, interrupt the network, crash the desktop, and
-   reboot; verify the documented persistence and explicit-start behavior.
-4. Test canceled and completed logout, setup rerun, interrupted setup, legacy
-   active-session blocking, and administrator rollback.
-5. Repeat the supported lifecycle for each desktop environment or client
-   named as supported. Keep versioned results in private qualification
-   records and record only the current pass/fail state in maintained docs.
+Fresh setup, concurrent starts, supported client and keyboard combinations,
+failure recovery, interrupted setup, and administrator rollback remain open in
+[DSK-01 of the release matrix](../release-qualification.md#stable-qualification-matrix).
+Keep detailed result records private and maintain only current qualification
+status here.
 
 Mocked lifecycle tests do not establish live transport, lock, audio, keyring,
 or multi-monitor compatibility.

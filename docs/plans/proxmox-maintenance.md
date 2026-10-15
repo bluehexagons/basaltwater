@@ -20,19 +20,20 @@ remain outside the current automation contract.
   Kernel cleanup is limited to a guarded kernel-only package purge; broad APT
   autoremove remains operator-managed.
 
-## Remaining boundaries
+## Current boundaries
 
-| Priority | Area | Current gap |
-| --- | --- | --- |
-| P1 | Cluster updates | There is no automated HA/Ceph maintenance mode or guest evacuation. Expand rolling updates only with a verified cluster-health, task, quorum, storage, and recovery contract. |
-| P1 | Host health | The audit does not inspect ZFS scrub/pool health, LVM-thin pressure, SMART/NVMe status, detailed backup storage, certificate expiry, or timer delivery health. |
-| P2 | Backup recovery | Immediate guest backups do not establish schedules, retention, off-host copies, freshness, integrity verification, or successful isolated restore. Consider native backup jobs and Proxmox Backup Server verification as one recovery contract. |
-| P2 | Proxmox hardening | Generic AppArmor, auditd, and PAM policies are not applied unchanged to hypervisors. Any profile must account for API/UI access, realms/MFA, API-token scopes, SSH, native firewall, and cluster access. |
-| P3 | Resource policy | Journald limits and maintenance windows use fixed safe defaults. Expose saved policy only when capacity and workload timing requirements are defined. |
+| Area | Current support boundary |
+| --- | --- |
+| Cluster updates | Automated HA/Ceph maintenance mode and guest evacuation are not available. Rolling updates stop on unhealthy nodes and require operator-managed evacuation. |
+| Host health | The audit does not inspect ZFS scrub/pool health, LVM-thin pressure, SMART/NVMe status, detailed backup storage, certificate expiry, or timer delivery health. |
+| Backup recovery | Immediate guest backups do not establish schedules, retention, off-host copies, freshness, integrity verification, or successful isolated restore. |
+| Proxmox hardening | Generic AppArmor, auditd, and PAM policies are not applied unchanged to hypervisors; their access, realm, token, SSH, firewall, and cluster requirements need a platform-specific contract. |
+| Resource policy | Journald limits and maintenance windows use fixed safe defaults; there is no saved resource or maintenance-window policy. |
 
-## Qualification
+## Qualification status
 
-Qualify standalone and clustered nodes separately, including storage-specific
-health, interrupted updates, guest evacuation, unavailable backup targets, and
-restore to an isolated guest. The [release matrix](../release-qualification.md)
-remains the release gate; mocked checks do not qualify a live Proxmox host.
+PVE-01 in the [release matrix](../release-qualification.md) covers multi-node
+installation, lock exclusion, and guest operations. It does not qualify
+standalone maintenance, storage-specific health, interrupted updates, guest
+evacuation, unavailable backup targets, or restore to an isolated guest.
+Mocked checks do not qualify a live Proxmox host.

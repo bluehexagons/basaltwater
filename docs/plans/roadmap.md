@@ -4,8 +4,8 @@ Status: active planning guidance for the v2.0.0 preview and stable release.
 
 Basaltwater should complete the safety and recovery loops around its existing
 operations before expanding platform, desktop, or service-specific support.
-The [planning index](README.md) owns the portfolio and backlog; the
-[open issue map](issue-triage.md) owns current issue scope and acceptance.
+The [planning index](README.md) owns the portfolio and compact issue
+dispositions; GitHub issues own discussion and detailed acceptance.
 
 ## Current state
 

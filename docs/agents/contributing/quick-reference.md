@@ -83,5 +83,5 @@ latter and raise an actionable path-specific error. Use
 replacement and grouped removal. Pass timers/paths before their service when
 removing a group; both operations share a lock and recovery marker.
 Snapshots protect files and activation state, not arbitrary application data.
-See the [transaction plan](../../plans/transactional-execution.md) and
+See the [transaction safety reference](transaction-safety.md) and
 [operator recovery guide](../../operations/transaction-recovery.md).

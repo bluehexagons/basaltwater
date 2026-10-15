@@ -273,11 +273,13 @@ basaltw agent doctor --capability t3code --fix
 ```
 
 The current live baseline covers stable v0.0.45 on a managed host: service and
-host readiness, the private HTTPS route, administrative pairing, collaborative
-preview interaction, and recording transfer. Fresh installation, full browser
-enrollment, and cloud-account sign-in remain unverified. The
-[release qualification matrix](../release-qualification.md) remains the gate
-for the Basaltwater release.
+host readiness, the private HTTPS route, administrative pairing,
+collaborative preview interaction, and recording transfer. Fresh provider-matrix
+installation and skill discovery, direct/private-port and relay client behavior,
+full browser enrollment, and cloud-account sign-in remain unverified. Readiness
+is checked after deliberate updates and reboot; there is no automatic post-boot
+audit. Complete T3-01 in the [release qualification matrix](../release-qualification.md)
+before claiming release qualification.
 
 T3's service-state protocol identifies the launcher and runtime contract, and
 upstream has changed that contract as its executable layout evolved. Basaltwater
