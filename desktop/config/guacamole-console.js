@@ -113,7 +113,14 @@
             const sendMouse = event => {
                 if (!connected || client !== current) return;
                 if (byId("keyboard-panel").hidden) screen.focus({preventScroll: true});
-                current.sendMouseState(event.state, true);
+                // Edge and drag-release events can fall outside the terminal.
+                // Preserve releases while keeping the scaled coordinates in
+                // bounds; the gateway rejects negative or excessive input.
+                const state = {...event.state}, factor = display.getScale();
+                if (!display.getWidth() || !display.getHeight() || factor <= 0) return;
+                state.x = Math.max(0, Math.min(state.x, (display.getWidth() - 1) * factor));
+                state.y = Math.max(0, Math.min(state.y, (display.getHeight() - 1) * factor));
+                current.sendMouseState(state, true);
             };
             const mouse = new Guacamole.Mouse(display.getElement());
             const touch = new Guacamole.Mouse.Touchpad(display.getElement());

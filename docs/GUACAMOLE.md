@@ -83,6 +83,10 @@ The console resizes with the window, rotation and fullscreen view, including
 when opening or closing its mobile keyboard controls. Choose
 **Text size** before connecting. **Keyboard** exposes phone text input and
 Ctrl, Alt, Tab, Esc and arrow keys; two-finger swipes scroll the terminal.
+Moving the pointer outside the terminal or switching focus keeps the shell
+open. Leaving the focused controls releases held keys. Pointer events are
+clamped to the terminal bounds, including mouse-button releases and scaled
+touch input.
 Sessions end after one hour or ten minutes without keyboard/pointer input.
 Polling, resizing and terminal output do not renew inactivity. Disconnecting,
 closing the tab or expiring the session closes its shell. Use `tmux` or `screen`

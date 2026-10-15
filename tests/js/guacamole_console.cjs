@@ -45,14 +45,16 @@ function fixture() {
     document.getElementById = id => elements[id];
     document.querySelectorAll = () => [modifier];
     const window = new Target(); window.innerHeight = 800; window.visualViewport = new Target();
-    const clients = [], pendingStatus = [], timers = new Map();
+    const clients = [], mice = [], pendingStatus = [], timers = new Map();
     let timerId = 0, ticket = 0;
     const response = value => ({ok: true, json: async () => value});
     class Client {
         constructor(tunnel) {
-            this.tunnel = tunnel; this.sizes = []; this.keys = [];
+            this.tunnel = tunnel; this.sizes = []; this.keys = []; this.mouse = [];
             const element = new Element();
-            this.display = {getElement: () => element, getWidth: () => 800, scale() {}};
+            let scale = 1;
+            this.display = {getElement: () => element, getWidth: () => 800, getHeight: () => 440,
+                getScale: () => scale, scale(value) { scale = value; }};
             clients.push(this);
         }
         getDisplay() { return this.display; }
@@ -60,11 +62,19 @@ function fixture() {
         disconnect() { this.onstatechange(5); }
         sendSize(...size) { this.sizes.push(size); }
         sendKeyEvent(...key) { this.keys.push(key); }
+        sendMouseState(state, scaled) {
+            const factor = scaled ? this.display.getScale() : 1;
+            this.mouse.push({...state, x: Math.floor(state.x / factor), y: Math.floor(state.y / factor)});
+        }
+    }
+    class Mouse extends Target {
+        constructor() { super(); mice.push(this); }
+        onEach(events, callback) { for (const name of events) this.addEventListener(name, callback); }
     }
     const context = vm.createContext({document, window, Guacamole: {
         Client,
         Keyboard: class { reset() {} },
-        Mouse: Object.assign(class { onEach() {} }, {Touchpad: class { onEach() {} }}),
+        Mouse: Object.assign(Mouse, {Touchpad: class extends Mouse {}}),
         WebSocketTunnel: class {}, Tunnel: {State: {CLOSED: 2}},
     }, fetch: async (url, options) => {
         const body = JSON.parse(options.body);
@@ -75,7 +85,7 @@ function fixture() {
     }, setTimeout: (callback, delay) => { const id = ++timerId; timers.set(id, {callback, delay}); return id; },
     clearTimeout: id => timers.delete(id)});
     vm.runInContext(source, context, {filename: "guacamole-console.js"});
-    return {elements, window, document, clients, pendingStatus, timers, modifier,
+    return {elements, window, document, clients, mice, pendingStatus, timers, modifier,
         async connect() {
             elements.password.value = "fixture-password";
             await elements["connect-form"].emit("submit", {preventDefault() {}});
@@ -140,4 +150,40 @@ test("unsupported fullscreen reports a useful message", async () => {
     const ui = fixture(); await ui.connect();
     await ui.elements.fullscreen.emit("click");
     assert.match(ui.elements.status.textContent, /Fullscreen unavailable/);
+});
+
+test("mouse edge movement and drag releases stay within a scaled terminal", async () => {
+    const ui = fixture(); await ui.connect();
+    const client = ui.clients[0];
+    client.display.scale(.5);
+    for (const helper of ui.mice) {
+        const state = {x: -.5, y: -12, left: true};
+        await helper.emit("mousemove", {state});
+        await helper.emit("mouseup", {state: {x: 9999, y: 9999, left: false}});
+        assert.equal(state.x, -.5); // Do not change Guacamole's tracked state.
+    }
+    assert.deepEqual(client.mouse, [
+        {x: 0, y: 0, left: true}, {x: 799, y: 439, left: false},
+        {x: 0, y: 0, left: true}, {x: 799, y: 439, left: false},
+    ]);
+    await ui.elements.screen.emit("blur");
+    await ui.elements["desktop-view"].emit("focusout", {relatedTarget: null});
+    await ui.window.emit("blur");
+    ui.document.hidden = true;
+    await ui.document.emit("visibilitychange");
+    ui.elements["console-keyboard"].value = "pwd\n";
+    await ui.elements["console-keyboard"].emit("input", {isComposing: false});
+    assert.equal(ui.elements.connect.disabled, true);
+    assert.equal(ui.elements.fullscreen.disabled, false);
+    assert.deepEqual(client.keys.at(-1), [0, 0xFF0D]);
+    assert.match(ui.elements.status.textContent, /^Connected/);
+});
+
+test("a detached terminal cannot send mouse input into a replacement connection", async () => {
+    const ui = fixture(); await ui.connect();
+    const oldMouse = ui.mice[0], oldClient = ui.clients[0];
+    await ui.elements.disconnect.emit("click"); await ui.connect();
+    await oldMouse.emit("mousemove", {state: {x: 10, y: 10}});
+    assert.equal(oldClient.mouse.length, 0);
+    assert.equal(ui.clients[1].mouse.length, 0);
 });
