@@ -523,6 +523,13 @@ update or unresolved freshness check instead of treating it as a failed build.
 
 ## Verification
 
+For the panel, pairing, approval, and disposable Guacamole application checks,
+use the developer-machine `make browser-test` workflow in
+[browser qualification](BROWSER_TESTING.md). It records each engine separately
+and keeps intensive tests out of ordinary CI. Native Debian Firefox ESR has a
+separate release checklist there; neither runtime doctor establishes that
+coverage. Projects retain their own [browser policy](PROJECT_TOOLING.md#project-browser-tests).
+
 ### Engine and context coverage
 
 Use small, read-only discovery before selecting engine coverage:

@@ -29,3 +29,9 @@ Check state before repeating uncertain submissions. Profiles/logins are separate
 Report browser, origin, and observed behavior; desktop pixels do not establish
 DOM/network checks or disconnected-client trust. Keep TLS, loopback binding,
 task scope, and human pause intact.
+
+Keep an unknown preview engine `unknown`; a viewport preset does not establish
+Firefox coverage. For projects created with Basaltwater, document target engines
+and local browser-test commands in agent/contributor guidance. Prefer intensive
+browser suites on developer machines with the project's locked dependencies and
+fast CI checks, unless the project explicitly chooses another policy.

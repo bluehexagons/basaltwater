@@ -1,9 +1,10 @@
 # Makefile for Basaltwater development tasks
-.PHONY: check check-fast check-ci test test-verbose coverage help clean compile docs-check brand-check package-check artifact-check
+.PHONY: check check-fast check-ci test test-verbose browser-test coverage help clean compile docs-check brand-check package-check artifact-check
 
 SUITE ?=
 TEST ?=
 TEST_ARGS ?=
+BROWSER_ARGS ?=
 TEST_SELECTION = $(foreach suite,$(SUITE),--suite $(suite)) $(TEST)
 FULL_CHECKS = compile docs-check brand-check package-check artifact-check
 
@@ -23,6 +24,7 @@ help:
 	@echo "  make brand-check       Check generated identity assets are current"
 	@echo "  make package-check     Check package launcher metadata"
 	@echo "  make artifact-check    Build, install, and smoke-test the wheel"
+	@echo "  make browser-test      Local intensive Chromium/Firefox checks (never run by CI)"
 	@echo "  make clean             Remove Python cache files"
 	@echo "  make help              Show this help message"
 	@echo ""
@@ -61,6 +63,11 @@ artifact-check:
 # Run all tests, or combine explicit modules and domain suites.
 test:
 	@python3 run_tests.py $(TEST_SELECTION) $(TEST_ARGS)
+
+# Explicit developer-machine qualification. No payload downloads or package
+# installation, and deliberately not a dependency of check/check-ci/coverage.
+browser-test:
+	@python3 scripts/run_browser_tests.py $(BROWSER_ARGS)
 
 # Run the default suite with reproducible branch coverage reporting. The
 # optional dev dependency is intentionally separate from the normal check.

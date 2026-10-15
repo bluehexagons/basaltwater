@@ -24,6 +24,7 @@ if __name__ == "__main__" and not __package__:
 from lib.privilege_auth import authenticate, validate_auth
 from lib.privilege_client import exchange
 from lib.privilege_policy import APPROVAL_SOCKET, ID_PATTERN, canonical, load_policy
+from common.service_tools.web_panel_templates import render_favicon
 
 STYLE = """
 body{font:17px system-ui,sans-serif;color:#172a3a;background:#eef2f5;margin:0}
@@ -39,6 +40,7 @@ li{margin:1rem 0}.muted{color:#4d6070}footer{margin-top:2rem;font-size:.85rem}
 def page(content: str) -> str:
     return ('<!doctype html><html lang="en"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<link rel="icon" href="/favicon.svg" type="image/svg+xml">'
             '<title>Privilege approvals · basaltwater</title><style>' + STYLE + '</style>'
             '<main><h1>Privilege approvals</h1>' + content +
             '<footer>Approve from your own device. Keep this password out of the agent VM’s browser and chat.</footer></main></html>')
@@ -87,10 +89,11 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         self.request.settimeout(5)
         super().setup()
 
-    def respond(self, status: int, content: str, *, challenge: bool = False, location: str | None = None):
+    def respond(self, status: int, content: str, *, challenge: bool = False, location: str | None = None,
+                content_type: str = "text/html; charset=utf-8"):
         payload = content.encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         # no-referrer makes Chromium send Origin: null on form POSTs.
@@ -98,7 +101,7 @@ class ApprovalHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "same-origin")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.send_header("Connection", "close")
         if challenge:
             self.send_header("WWW-Authenticate", 'Basic realm="basaltwater privilege approvals", charset="UTF-8"')
@@ -135,6 +138,9 @@ class ApprovalHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self.authorized():
+            return
+        if self.path == "/favicon.svg":
+            self.respond(200, render_favicon(), content_type="image/svg+xml")
             return
         try:
             if self.path == "/":

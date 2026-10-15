@@ -83,6 +83,37 @@ The generated Go environment is a suggestion: verify that the server honors
 those variables. API and frontend hostnames/base URLs also need review. Commit
 the reviewed manifest so developers and CI use the same decisions.
 
+## Project browser tests
+
+Projects made with Basaltwater own their UI compatibility. Declare the supported
+engines, locked Playwright version, local browser command, and fast CI command
+in the project's README and agent/contributor instructions. Use pinned Chromium
+as a useful primary baseline and add Playwright Firefox explicitly when Firefox
+support is intended. Native Firefox ESR and an unknown connected preview are
+separate targets; a discovered browser or successful runtime doctor does not
+prove application compatibility.
+
+Prefer intensive cross-browser suites on developer machines and keep CI on fast
+unit/service/render checks. Projects can document a different policy when their
+cost or release requirements justify it. For example, a project with the
+corresponding package scripts might document:
+
+```bash
+npm ci
+npm run check             # Fast CI gate, no browser payload download
+npm run test:browser      # Local Chromium + Firefox application checks
+```
+
+These are project-owned script names, not commands Basaltwater generates.
+Install payloads explicitly with that project's locked Playwright CLI; preserve
+its package manager and lockfile, and do not borrow an unrelated managed browser
+runtime. Bound workers using the developer machine's available memory and CPU,
+retain failure evidence privately, use synthetic credentials and disposable
+services, and keep certificate verification enabled. Record each engine's
+version and outcomes separately. [Basaltwater's own local suite](BROWSER_TESTING.md)
+illustrates this split without introducing a global browser-support manifest
+field. Hosted upstream apps retain their own support policy.
+
 ## Repository-owned CI workflows
 
 The optional `ci` object defines `install`, `build`, and `test` as ordered

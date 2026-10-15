@@ -38,3 +38,10 @@ Report browser, network origin, and observed checks. VM success does not verify
 the disconnected client's routes or trust; pixel-only evidence is not a
 DOM/network assertion. Keep TLS, loopback binding, private evidence, and human
 desktop pause intact. Browser checks alone do not authorize publication.
+
+For projects created with Basaltwater, document supported engines and the local
+browser-test command in project agent/contributor guidance. Recommend intensive
+Chromium/Firefox tests on developer machines and fast unit/service/render CI
+checks unless the project explicitly chooses another policy. Use its locked
+dependencies. Distinguish Playwright Firefox, native ESR, and preview engine
+`unknown`; discovery or a launch smoke is not an application result.

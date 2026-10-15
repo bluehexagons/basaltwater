@@ -8,12 +8,14 @@ import html
 import ipaddress
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import signal
 import socketserver
 import stat
 import subprocess
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -21,6 +23,11 @@ from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from common.service_tools.web_panel_templates import render_favicon
 
 
 MAX_REQUEST_BYTES = 4096
@@ -74,7 +81,7 @@ p { line-height: 1.55; }
   border-radius: .9rem; background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.05); }
 .card-heading { margin-bottom: 1rem; }
 .card-heading p { margin: .45rem 0 0; }
-.action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .8rem; }
+.action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .8rem; }
 .action-card { display: flex; flex-direction: column; gap: .55rem; padding: 1rem;
   border: 1px solid #d9e1ec; border-radius: .7rem; background: #fbfcfe; }
 .action-card p { margin: 0; font-size: .9rem; }
@@ -95,7 +102,7 @@ button:focus-visible, a.button:focus-visible, a.text-link:focus-visible, input:f
 .notice.info { border-color: #b8d4fe; background: #eff6ff; }
 .notice.success { border-color: #abefc6; background: #ecfdf3; }
 .notice.error { border-color: #fecdca; background: #fff5f4; color: #912018; }
-.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
   gap: .65rem; margin: 1rem 0; }
 .status-item { margin: 0; padding: .75rem; border: 1px solid #e4e7ec; border-radius: .6rem; background: #fcfcfd; }
 .status-label { display: block; color: #667085; font-size: .78rem; }
@@ -717,6 +724,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>{html.escape(title)}</title>
 <style>{_PAGE_STYLE}</style>
 </head><body><main><header class="page-header">
@@ -733,7 +741,7 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'"
             + (f" {form_redirect_origin}" if form_redirect_origin else "")
             + "; base-uri 'none'"
             + (f"; script-src 'nonce-{script_nonce}'" if script_nonce else ""),
@@ -966,6 +974,16 @@ class PairingRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path
+        if path == "/favicon.svg":
+            payload = render_favicon().encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == "/" and "t3code" in self.state.providers:
             self._open_browser("t3code", self.state.providers["t3code"])
             return

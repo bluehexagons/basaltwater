@@ -13,6 +13,16 @@ Neither command changes MCP's Chromium selection or the session browser policy.
 See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#engine-and-context-coverage)
 for dependency and coverage limits.
 
+Firefox automation can be explicitly registered as the separate
+`basaltwater-playwright-firefox` MCP server with `basaltw agent browser register
+--engine firefox --agent-tool codex --json` (or `opencode`), after its payload
+doctor succeeds and the saved setup has refreshed the managed launcher. This
+does not replace Chromium or expose tools to an already running session.
+Before using that server, require a healthy managed Firefox engine doctor and
+verify that its own tools are exposed. Registration, runtime launch and
+application coverage are separate states. Native ESR and Flatpak Firefox remain
+desktop contexts with their own profiles and trust.
+
 Before the first VM-local browser action, run:
 
 ```bash

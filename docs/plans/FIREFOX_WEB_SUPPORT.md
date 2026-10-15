@@ -1,6 +1,7 @@
 # Chromium and Firefox support: implementation brief
 
-Status: implementation in progress, explicitly prioritized 2026-10-15. Scope:
+Status: implementation delivered and locally qualified 2026-10-15; native ESR
+and disposable managed-deployment release qualification remain open. Scope:
 Basaltwater-owned web surfaces, agent browser tooling, and browser-testing
 guidance for projects made with Basaltwater.
 
@@ -20,7 +21,7 @@ target. Keep these environments distinct:
 - **Project browser:** projects use their own locked dependencies and declare
   their support target in their repository.
 
-## Current state
+## Starting state (before implementation)
 
 - Workstation profiles install Firefox ESR; desktop discovery may miss Flatpak.
 - Managed Playwright MCP uses a pinned Playwright package and matching
@@ -45,10 +46,27 @@ Relevant code: [panel templates](../../common/service_tools/web_panel_templates.
 
 ## Implementation
 
-Delivered first slice: engine/context inventory with separate discovery,
+Delivered: engine/context inventory with separate discovery,
 launch, MCP registration and application coverage states; native and Flatpak
 Firefox discovery; opt-in per-user Firefox MCP registration using the pinned
-runtime and isolated launcher. Application fixtures and qualification follow.
+runtime and isolated launcher; a local application suite and project/agent
+guidance. Use [browser qualification](../BROWSER_TESTING.md) for maintained
+commands, evidence boundaries, and the native ESR release checklist.
+
+Local qualification on Debian 13.7 amd64 used Node 20.19.2 and pinned Playwright
+`1.63.0-alpha-2026-08-05`: Chromium `152.0.7977.8` and Firefox `153.0`.
+The shared suite passed all 14 cases across both engines, including the
+disposable Guacamole boundary using the reviewed Guacamole 1.6.0 client.
+Browser profiles and fixture CA trust were temporary; certificate verification
+remained enabled. Native ESR and real guacd/XRDP/deployment checks are not
+implied by those results.
+
+Reproduced fixes: Firefox's implicit favicon loading generated CSP console
+errors on pairing/approval pages, so those pages now declare and serve the
+first-party SVG with same-origin image permission. Enlarged text at a 390px
+viewport overflowed pairing grids in both engines; grid minima now shrink to
+their container. Both cases have regression coverage. No unconfirmed vendor
+CSS or user-agent-specific branches were added.
 
 1. **Add honest browser inventory and health reporting.** Report engine,
    version, context, origin, and separate discovered / launchable /

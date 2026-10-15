@@ -25,3 +25,10 @@ Inspect state before repeating an uncertain submission. Profiles and logins are
 separate. Verify actual behavior and report browser, origin, and coverage;
 VM checks cannot prove connected-client routing or trust. Preserve TLS,
 loopback binding, private evidence, and the managed launcher.
+
+For projects created with Basaltwater, document supported engines and the local
+browser-test command in project agent/contributor guidance. Recommend intensive
+Chromium/Firefox tests on developer machines and fast unit/service/render CI
+checks unless the project explicitly chooses another policy. Use its locked
+dependencies. Distinguish Playwright Firefox, native ESR, and preview engine
+`unknown`; discovery or a launch smoke is not an application result.

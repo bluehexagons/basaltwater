@@ -11,6 +11,14 @@ uses `--context managed` without `--project` and leaves MCP on Chromium.
 These diagnostics do not expose browser tools to a session or replace its
 browser policy. See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#engine-and-context-coverage).
 
+Explicit opt-in `basaltw agent browser register --engine firefox --agent-tool
+codex --json` (or `opencode`) adds `basaltwater-playwright-firefox` after a
+successful managed Firefox doctor and launcher reconciliation through saved
+setup. It preserves Chromium's default registration. Require a healthy Firefox
+engine doctor and its own exposed MCP tools before selecting it. New tool
+registration needs a new session; native ESR and Flatpak Firefox remain separate
+desktop contexts. Launch, registration and application-test results are distinct.
+
 Choose the ready configured option that fits the task under its session policy.
 Managed Playwright is useful for repeatable DOM/console/network checks, file
 fixtures, loopback access, and canvas/WebGL. A desktop browser is useful for
