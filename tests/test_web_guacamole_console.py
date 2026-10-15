@@ -203,6 +203,11 @@ class ConsoleInstallationTests(unittest.TestCase):
         units = setup.render_units("agent", 1000, 1000)
         login = units[f"{SSH_SERVICE}@.service"]
         self.assertIn("PartOf=" + SSH_SERVICE + ".socket", login)
+        self.assertIn("CollectMode=inactive-or-failed\n[Service]", login)
+        for name, unit in units.items():
+            if name != f"{SSH_SERVICE}@.service":
+                self.assertNotIn("CollectMode=", unit)
+        self.assertNotIn("SuccessExitStatus=", login)
         self.assertIn("RuntimeMaxSec=3600", login)
         self.assertIn("RuntimeDirectory=sshd", login)
         self.assertIn("RuntimeDirectoryPreserve=yes", login)

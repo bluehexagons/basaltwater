@@ -183,6 +183,7 @@ WantedBy=sockets.target
 [Unit]
 Description=Private Guacamole Unix shell login
 PartOf={SSH_SERVICE}.socket
+CollectMode=inactive-or-failed
 [Service]
 ExecStart=/usr/sbin/sshd -i -e -f {SSH_CONFIG}
 StandardInput=socket

@@ -258,6 +258,12 @@ privilege restrictions. It permits only the configured non-root account,
 requires a nonempty Unix password, and disables SSH forwarding and user RCs.
 Its one-hour service limit also bounds a shell if the gateway fails.
 
+Completed login instances are unloaded even when OpenSSH exits unsuccessfully,
+as it does when a client abandons login. This prevents per-connection failures
+from accumulating in `systemctl --failed`. Their exit results remain in the
+system journal; the persistent socket and gateway retain normal failed-state
+reporting.
+
 The endpoint uses `/etc/basaltwater/guacamole-sshd.conf`, independent of
 `/etc/ssh/sshd_config`; public key-only SSH policy is unchanged. Setup creates
 a dedicated root-private Ed25519 host key under
