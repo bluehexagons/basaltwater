@@ -1104,6 +1104,10 @@ def _browser_process_has_managed_defaults(
 ) -> bool:
     """Return whether one active MCP process has the current safe arguments."""
     capabilities = (_browser_argument_value(arguments, "--caps") or "").split(",")
+    engine = _browser_argument_value(arguments, "--browser") or "chromium"
+    output = os.path.join(home, ".local", "state", "basaltwater", "playwright-mcp")
+    if engine == "firefox":
+        output = os.path.join(output, "firefox")
     executable_path = _browser_argument_value(arguments, "--executable-path")
     browser_cache = os.path.realpath(
         os.path.join(home, ".cache", "ms-playwright")
@@ -1124,8 +1128,9 @@ def _browser_process_has_managed_defaults(
         and "--isolated" in arguments
         and managed_executable
         and "vision" in capabilities
+        and engine in {"chromium", "firefox"}
         and _browser_argument_value(arguments, "--output-dir")
-        == os.path.join(home, ".local", "state", "basaltwater", "playwright-mcp")
+        == output
         and _browser_argument_value(arguments, "--timeout-settle") == "1000"
         and _browser_argument_value(arguments, "--output-max-size")
         == str(_BROWSER_OUTPUT_MAX_BYTES)
@@ -1335,6 +1340,10 @@ def inspect_browser_automation(
         "engine": "chromium",
         "context": "managed",
         "network_origin": "host",
+        "discovered": launchers_installed,
+        "launchable": smoke_test,
+        "mcp_registered": registrations_ready,
+        "application_tested": False,
         "installed": launchers_installed,
         "path": _BROWSER_MCP_WRAPPER if launchers_installed else None,
         "launchers_secure": launchers_secure,

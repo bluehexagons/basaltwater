@@ -29,6 +29,7 @@ class TestAgentBrowser(unittest.TestCase):
         self.node.chmod(0o755)
         self.which = self.enterContext(patch.object(agent_browser.shutil, "which", side_effect=lambda name: str(self.node) if name == "node" else None))
         self.execute = self.enterContext(patch.object(agent_browser, "run_command"))
+        self.enterContext(patch.object(agent_browser, "browser_registrations", return_value={"codex": False, "opencode": False}))
 
     def package(self, root: Path, version: str, name: str = "playwright") -> Path:
         module = root / "node_modules" / name
@@ -44,13 +45,39 @@ class TestAgentBrowser(unittest.TestCase):
         self.package(self.managed, "1.60.0")
         self.package(self.project, "1.57.2")
         self.which.side_effect = lambda name: "/usr/bin/firefox-esr" if name == "firefox-esr" else None
+        self.execute.return_value = subprocess.CompletedProcess([], 0, "Mozilla Firefox 140.0esr", "")
         result = agent_browser.browser_context_inventory(str(self.project))
         contexts = {(item["context"], item["engine"]): item for item in result}
         self.assertEqual(contexts[("managed", "chromium")]["playwright_version"], "1.60.0")
         self.assertEqual(contexts[("project", "firefox")]["playwright_version"], "1.57.2")
         self.assertEqual(contexts[("interactive-desktop", "firefox")]["readiness"], "unverified")
-        self.assertEqual(contexts[("collaborative-preview", None)]["network_origin"], "connected-client")
-        self.execute.assert_not_called()
+        self.assertEqual(contexts[("collaborative-preview", "unknown")]["network_origin"], "connected-client")
+        self.assertEqual(contexts[("interactive-desktop", "firefox")]["browser_version"], "Mozilla Firefox 140.0esr")
+        self.assertIsNone(contexts[("managed", "firefox")]["launchable"])
+        self.assertFalse(contexts[("managed", "firefox")]["mcp_registered"])
+        self.assertFalse(contexts[("managed", "firefox")]["application_tested"])
+        self.assertEqual(self.execute.call_args.args[0], ["/usr/bin/firefox-esr", "--version"])
+
+    def test_flatpak_only_firefox_discovery_does_not_claim_launch_or_esr(self) -> None:
+        self.which.side_effect = lambda name: "/usr/bin/flatpak" if name == "flatpak" else None
+        self.execute.return_value = subprocess.CompletedProcess([], 0, "144.0", "")
+        result = agent_browser.desktop_firefox_inventory()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["installation"], "flatpak")
+        self.assertEqual(result[0]["browser_version"], "144.0")
+        self.assertEqual(result[0]["channel"], "unknown")
+        self.assertTrue(result[0]["discovered"])
+        self.assertIsNone(result[0]["launchable"])
+        self.assertFalse(result[0]["application_tested"])
+        self.assertEqual(self.execute.call_args.args[0], ["/usr/bin/flatpak", "info", "--show-version", "org.mozilla.firefox"])
+
+    def test_failed_flatpak_probe_never_claims_firefox_discovery(self) -> None:
+        self.which.side_effect = lambda name: "/usr/bin/flatpak" if name == "flatpak" else None
+        for failure in (subprocess.CompletedProcess([], 1, "", "not installed"), OSError("failed"), agent_browser.CommandTimeoutError("flatpak", 5)):
+            with self.subTest(failure=failure):
+                self.execute.side_effect = failure if isinstance(failure, Exception) else None
+                self.execute.return_value = failure
+                self.assertFalse(agent_browser.desktop_firefox_inventory()[0]["discovered"])
 
     def test_legacy_cache_directory_does_not_establish_runtime_readiness(self) -> None:
         (self.project / ".cache/ms-playwright/firefox-1234").mkdir(parents=True)

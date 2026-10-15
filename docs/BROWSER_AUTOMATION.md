@@ -536,6 +536,13 @@ optional Firefox, project-installed Playwright Firefox, interactive desktop
 Firefox/Firefox ESR, and the connected client's collaborative preview.
 Discovery reports runtime presence and leaves launch/rendering readiness
 unverified; browser-cache directories do not prove that an engine works.
+Inventory separates `discovered` (the runtime or desktop installation),
+`launchable` (unknown until a launch check), `mcp_registered` (configuration,
+not session tool exposure), and `application_tested`. Desktop discovery probes
+native Firefox/Firefox ESR and `flatpak info org.mozilla.firefox`, including
+Flatpak-only installs, and reports versions when available. A connected preview
+has engine `unknown` until the session establishes it. Never infer Firefox
+coverage from a viewport preset or an unknown preview.
 The ordinary browser capability doctor below qualifies managed Chromium and
 its MCP integration only. Its result now includes the engine, context, and
 network origin explicitly, also retained in redacted readiness and support
@@ -568,7 +575,7 @@ normal lockfile installation first.
 
 On a Debian VM with managed Playwright, `--context managed` uses the pinned
 managed package and its fixed user cache instead. Optional Firefox provisioning
-does not change the Chromium MCP launcher. Project context also works on
+leaves the default MCP registration on Chromium. Project context also works on
 CachyOS and Ubuntu WSL without assuming a Debian managed browser stack.
 The platform must already provide the selected engine's OS dependencies;
 a failed download or smoke test returns a nonzero status with `issue` and
@@ -582,6 +589,33 @@ record Playwright and browser versions and verify local rendering; application
 behavior, desktop integration, and connected-client coverage still need their
 own tests. Session browser policy continues to govern application automation;
 these commands do not expose additional browser tools to an agent session.
+
+### Opt-in managed Firefox tools
+
+After updating the managed launchers through the saved setup, run as the setup
+user (without sudo):
+
+```bash
+basaltw agent browser install --engine firefox --context managed --json
+basaltw agent browser register --engine firefox --agent-tool codex --json
+# Or select --agent-tool opencode; repeat to register both clients.
+basaltw agent browser doctor --engine firefox --context managed --json
+```
+
+Installation downloads only the pinned Firefox payload. It never installs OS
+dependencies; missing libraries require the host's explicit dependency setup.
+Registration first verifies startup and rendering and checks the managed
+launchers, then adds the separate `basaltwater-playwright-firefox` server. It
+preserves `basaltwater-playwright` as Chromium and unrelated settings. Start a
+new agent session to discover the Firefox tools; registration alone does not
+expose tools to a running session.
+
+Both servers use the same pinned Playwright package, headless isolated profiles,
+explicit matching executables, certificate verification, and bounded private
+evidence. Firefox evidence lives under `playwright-mcp/firefox`; its separate
+configuration omits Chromium launch flags. Engine doctors report runtime
+launch/render results and registrations separately and always leave
+`application_tested` false. Use application tests to establish that coverage.
 
 ### Managed Chromium integration
 

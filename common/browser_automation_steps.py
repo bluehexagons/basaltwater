@@ -80,6 +80,10 @@ _BROWSER_EXECUTABLE_SCRIPT = (
 _BROWSER_EXECUTABLE_COMMAND = (
     f"{SYSTEM_NODE} -e {shlex.quote(_BROWSER_EXECUTABLE_SCRIPT)}"
 )
+_FIREFOX_EXECUTABLE_COMMAND = (
+    f"{SYSTEM_NODE} -e "
+    + shlex.quote(f'const {{ firefox }} = require("{PLAYWRIGHT_MODULE}"); process.stdout.write(firefox.executablePath());')
+)
 
 
 _MCP_WRAPPER_CONTENT = (
@@ -87,16 +91,33 @@ _MCP_WRAPPER_CONTENT = (
     "set -eu\n"
     "umask 077\n"
     'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"\n'
+    'engine="chromium"\n'
+    'if [ "${1-}" = "--engine" ]; then\n'
+    '  engine="${2-}"\n'
+    '  [ "$#" -ge 2 ] || exit 2\n'
+    '  shift 2\n'
+    'fi\n'
+    'case "$engine" in\n'
+    'chromium)\n'
     f'browser_path="$({_BROWSER_EXECUTABLE_COMMAND})"\n'
+    f'config_path="{PLAYWRIGHT_MCP_CONFIG}"\n'
+    'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"\n'
+    ';;\n'
+    'firefox)\n'
+    f'browser_path="$({_FIREFOX_EXECUTABLE_COMMAND})"\n'
+    f'config_path="{PLAYWRIGHT_ROOT}/mcp-firefox-config.json"\n'
+    'output_dir="$HOME/.local/state/basaltwater/playwright-mcp/firefox"\n'
+    ';;\n'
+    '*) echo "Unsupported managed browser engine: $engine" >&2; exit 2;;\n'
+    'esac\n'
     'if [ ! -f "$browser_path" ] || [ ! -x "$browser_path" ]; then\n'
-    '  echo "Managed Playwright Chromium is not executable: $browser_path" >&2\n'
+    '  echo "Managed Playwright $engine is not executable: $browser_path" >&2\n'
     "  exit 1\n"
     "fi\n"
-    'output_dir="$HOME/.local/state/basaltwater/playwright-mcp"\n'
     'mkdir -p "$output_dir"\n'
     'chmod 0700 "$output_dir"\n'
     f"exec {SYSTEM_NODE} {PLAYWRIGHT_MCP_CLI} --headless --isolated \\\n"
-    f"  --config {PLAYWRIGHT_MCP_CONFIG} \\\n"
+    '  --browser "$engine" --config "$config_path" \\\n'
     '  --executable-path "$browser_path" \\\n'
     "  --caps vision \\\n"
     '  --output-dir "$output_dir" \\\n'
@@ -361,11 +382,13 @@ def _verify_runtime_package(package_path: str, lock_path: str) -> None:
 
 def _write_launchers() -> None:
     """Install fixed headless launchers and the local browser smoke test."""
+    firefox_config = os.path.join(os.path.dirname(PLAYWRIGHT_MCP_CONFIG), "mcp-firefox-config.json")
     for path in (
         PLAYWRIGHT_MCP_WRAPPER,
         PLAYWRIGHT_DOCTOR_WRAPPER,
         PLAYWRIGHT_SMOKE_SCRIPT,
         PLAYWRIGHT_MCP_CONFIG,
+        firefox_config,
     ):
         _ensure_safe_root_path(path)
 
@@ -373,6 +396,7 @@ def _write_launchers() -> None:
     write_json_atomic(PLAYWRIGHT_MCP_CONFIG, {
         "browser": {"launchOptions": {"args": ["--disable-features=NativeNotifications"]}},
     }, mode=0o644)
+    write_json_atomic(firefox_config, {"browser": {"browserName": "firefox"}}, mode=0o644)
     write_text_atomic(PLAYWRIGHT_MCP_WRAPPER, _MCP_WRAPPER_CONTENT, mode=0o755)
     write_text_atomic(PLAYWRIGHT_DOCTOR_WRAPPER, _DOCTOR_WRAPPER_CONTENT, mode=0o755)
     write_text_atomic(PLAYWRIGHT_SMOKE_SCRIPT, _SMOKE_SCRIPT_CONTENT, mode=0o644)

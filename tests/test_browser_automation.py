@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import stat
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -129,7 +130,8 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
             self.assertEqual(config["browser"]["launchOptions"]["args"], ["--disable-features=NativeNotifications"])
             self.assertEqual((root / "config.json").stat().st_mode & 0o777, 0o644)
             self.assertIn("--disable-features=NativeNotifications", (root / "smoke.js").read_text())
-            self.assertIn(f"--config {browser_automation_steps.PLAYWRIGHT_MCP_CONFIG}", (root / "mcp").read_text())
+            self.assertIn('--config "$config_path"', (root / "mcp").read_text())
+            self.assertEqual(json.loads((root / "mcp-firefox-config.json").read_text()), {"browser": {"browserName": "firefox"}})
 
     def test_existing_install_reconciles_launchers_without_full_reinstall(self) -> None:
         config = _config("codex", browser_automation=None)
@@ -505,6 +507,30 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
             browser_automation_steps._DOCTOR_WRAPPER_CONTENT,
         )
 
+    def test_wrapper_selects_engine_and_private_output_without_starting_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            browser = root / "browser"
+            browser.touch(mode=0o700)
+            node = root / "node"
+            node.write_text('#!/bin/sh\nif [ "$1" = "-e" ]; then\n'
+                            f'  echo "{browser}"\nelse\n  printf "%s\\n" "$@"\nfi\n')
+            node.chmod(0o700)
+            wrapper = root / "mcp"
+            wrapper.write_text(browser_automation_steps._MCP_WRAPPER_CONTENT.replace("/usr/bin/node", str(node)))
+            for engine, arguments, suffix in (("chromium", [], ""), ("firefox", ["--engine", "firefox"], "/firefox")):
+                result = subprocess.run(["sh", str(wrapper), *arguments], env={"HOME": directory},
+                                        text=True, capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                argv = result.stdout.splitlines()
+                self.assertEqual(argv[argv.index("--browser") + 1], engine)
+                evidence = root / (".local/state/basaltwater/playwright-mcp" + suffix)
+                self.assertEqual(argv[argv.index("--output-dir") + 1], str(evidence))
+                self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
+            for args in (["--engine"], ["--engine", "invalid"]):
+                result = subprocess.run(["sh", str(wrapper), *args], capture_output=True, timeout=5, check=False)
+                self.assertEqual(result.returncode, 2)
+
     def test_smoke_test_reports_resource_pressure_on_process_timeout(self) -> None:
         config = _config("opencode")
         timed_out = SimpleNamespace(returncode=124, stdout="", stderr="")
@@ -830,6 +856,11 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             (current / "cmdline").write_bytes(
                 b"\0".join(argument.encode() for argument in current_arguments) + b"\0"
             )
+            firefox = proc / "300"
+            firefox.mkdir()
+            firefox_arguments = [*current_arguments, "--browser", "firefox"]
+            firefox_arguments[firefox_arguments.index("--output-dir") + 1] = str(output_dir / "firefox")
+            (firefox / "cmdline").write_bytes(b"\0".join(argument.encode() for argument in firefox_arguments) + b"\0")
             (stale / "cmdline").write_bytes(
                 b"\0".join(
                     argument.encode()
@@ -847,7 +878,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            {"total": 2, "stale": 1, "inspected": True},
+            {"total": 3, "stale": 1, "inspected": True},
         )
 
     def test_doctor_rejects_stale_launcher_defaults(self) -> None:
