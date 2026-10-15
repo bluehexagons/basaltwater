@@ -199,6 +199,26 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                     str(lock_path),
                 )
 
+    def test_runtime_rejects_unsupported_node_before_installing_or_reusing_packages(self) -> None:
+        for version in ("v18.20.8", "v19.9.0", "invalid"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(browser_automation_steps, "PLAYWRIGHT_ROOT", directory), \
+                    patch.object(browser_automation_steps, "run", return_value=SimpleNamespace(stdout=version)) as run, \
+                    patch.object(browser_automation_steps, "_verify_runtime_package") as verify:
+                with self.assertRaisesRegex(RuntimeError, "Node.js version|Node.js 20"):
+                    browser_automation_steps._install_runtime_package()
+                verify.assert_not_called()
+                self.assertFalse(any("npm install" in call.args[0] for call in run.call_args_list))
+
+    def test_verified_runtime_can_be_reused_with_supported_node(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(browser_automation_steps, "PLAYWRIGHT_ROOT", directory), \
+                patch.object(browser_automation_steps, "run", return_value=SimpleNamespace(stdout="v20.19.2")) as run, \
+                patch.object(browser_automation_steps, "_verify_runtime_package") as verify:
+            self.assertFalse(browser_automation_steps._install_runtime_package())
+        verify.assert_called_once()
+        self.assertFalse(any("npm install" in call.args[0] for call in run.call_args_list))
+
     def test_install_registers_only_selected_compatible_agents(self) -> None:
         config = _config("codex")
         targets = (
@@ -451,7 +471,7 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
             codex_dir = home / ".codex"
             codex_dir.mkdir()
             (codex_dir / "config.toml").write_text(
-                f"[mcp_servers.{agent_cli._BROWSER_MCP_SERVER_NAME}]\n"
+                f"[mcp_servers.{browser_automation_steps.PLAYWRIGHT_MCP_SERVER_NAME}]\n"
                 "enabled = true\n"
                 "[mcp_servers.other]\n"
                 f'command = "{agent_cli._BROWSER_MCP_WRAPPER}"\n',
@@ -513,13 +533,17 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
             browser = root / "browser"
             browser.touch(mode=0o700)
             node = root / "node"
-            node.write_text('#!/bin/sh\nif [ "$1" = "-e" ]; then\n'
+            node.write_text('#!/bin/sh\n[ -z "${NODE_OPTIONS+x}${NODE_PATH+x}" ] || exit 99\n'
+                            '[ "$NODE_EXTRA_CA_CERTS" = "/fixture/ca.pem" ] || exit 98\n'
+                            'if [ "$1" = "-e" ]; then\n'
                             f'  echo "{browser}"\nelse\n  printf "%s\\n" "$@"\nfi\n')
             node.chmod(0o700)
             wrapper = root / "mcp"
             wrapper.write_text(browser_automation_steps._MCP_WRAPPER_CONTENT.replace("/usr/bin/node", str(node)))
             for engine, arguments, suffix in (("chromium", [], ""), ("firefox", ["--engine", "firefox"], "/firefox")):
-                result = subprocess.run(["sh", str(wrapper), *arguments], env={"HOME": directory},
+                result = subprocess.run(["sh", str(wrapper), *arguments], env={"HOME": directory,
+                                        "NODE_OPTIONS": "--require=/unrelated/preload", "NODE_PATH": "/unrelated/modules",
+                                        "NODE_EXTRA_CA_CERTS": "/fixture/ca.pem"},
                                         text=True, capture_output=True, timeout=5, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 argv = result.stdout.splitlines()
@@ -527,6 +551,12 @@ class BrowserAutomationProvisioningTests(unittest.TestCase):
                 evidence = root / (".local/state/basaltwater/playwright-mcp" + suffix)
                 self.assertEqual(argv[argv.index("--output-dir") + 1], str(evidence))
                 self.assertEqual(evidence.stat().st_mode & 0o777, 0o700)
+            doctor = root / "doctor"
+            doctor.write_text(browser_automation_steps._DOCTOR_WRAPPER_CONTENT.replace("/usr/bin/node", str(node)))
+            result = subprocess.run(["sh", str(doctor)], env={"HOME": directory, "NODE_OPTIONS": "--invalid",
+                                    "NODE_PATH": "/unrelated/modules", "NODE_EXTRA_CA_CERTS": "/fixture/ca.pem"},
+                                    text=True, capture_output=True, timeout=5, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
             for args in (["--engine"], ["--engine", "invalid"]):
                 result = subprocess.run(["sh", str(wrapper), *args], capture_output=True, timeout=5, check=False)
                 self.assertEqual(result.returncode, 2)
@@ -661,7 +691,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             codex_dir = home / ".codex"
             codex_dir.mkdir()
             (codex_dir / "config.toml").write_text(
-                f"[mcp_servers.{agent_cli._BROWSER_MCP_SERVER_NAME}]\n"
+                f"[mcp_servers.{browser_automation_steps.PLAYWRIGHT_MCP_SERVER_NAME}]\n"
                 f'command = "{mcp_wrapper}"\n',
                 encoding="utf-8",
             )
@@ -923,7 +953,7 @@ class BrowserAutomationDoctorTests(unittest.TestCase):
             config_dir = home / ".config" / "opencode"
             config_dir.mkdir(parents=True)
             (config_dir / "opencode.jsonc").write_text(
-                f'{{"mcp": {{"{agent_cli._BROWSER_MCP_SERVER_NAME}": {{'
+                f'{{"mcp": {{"{browser_automation_steps.PLAYWRIGHT_MCP_SERVER_NAME}": {{'
                 "\"type\": \"local\", "
                 f"\"command\": [\"{agent_cli._BROWSER_MCP_WRAPPER}\"], "
                 "\"enabled\": true, \"timeout\": 30000,"

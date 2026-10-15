@@ -10,9 +10,9 @@ import re
 import shutil
 import sys
 
-from common.browser_automation_steps import PLAYWRIGHT_ROOT
+from common.browser_automation_steps import PLAYWRIGHT_ROOT, PLAYWRIGHT_VERSION
 from lib.atomic_io import read_json_file
-from lib.browser_registration import browser_registrations, register_browser_agent
+from lib.browser_registration import browser_registrations, register_browser_agent, registration_status
 from lib.remote_utils import CommandTimeoutError, run as run_command
 from lib.validation import validate_filesystem_path
 
@@ -78,14 +78,17 @@ def browser_context_inventory(project: str) -> list[dict[str, object]]:
     for context, runtime, engines in (("managed", managed, ("chromium", "firefox")),
                                       ("project", local, ("chromium", "firefox"))):
         for engine in engines:
+            readiness = "unverified" if runtime else "runtime-missing"
+            if context == "managed" and runtime and runtime["version"] != PLAYWRIGHT_VERSION:
+                readiness = "runtime-version-mismatch"
             command = ["basaltw", "agent", "browser", "doctor", "--context", context, "--engine", engine]
             if context == "project":
                 command.extend(("--project", project))
             command.append("--json")
             contexts.append({"engine": engine, "context": context, "headless": True,
-                             "network_origin": "host", "readiness": "unverified" if runtime else "runtime-missing",
+                             "network_origin": "host", "readiness": readiness,
                              "discovered": runtime is not None, "launchable": None,
-                             "mcp_registered": any(value is True for value in browser_registrations(engine).values()) if context == "managed" else None,
+                             "mcp_registered": registration_status(browser_registrations(engine)) if context == "managed" else None,
                              "application_tested": False, "browser_version": None,
                              "playwright_version": runtime["version"] if runtime else None,
                              "verification_argv": command})
@@ -151,9 +154,12 @@ def check_browser(engine: str, context: str, project: str | None, *, install: bo
               "registrations": browser_registrations(engine) if context == "managed" else {},
               "application_tested": False,
               "rendering_verified": False, "application_verified": False}
-    result["mcp_registered"] = any(value is True for value in result["registrations"].values()) if context == "managed" else None
+    result["mcp_registered"] = registration_status(result["registrations"]) if context == "managed" else None
     if runtime is None:
         return {**result, "issue": "runtime_missing", "remediation": "rerun_setup_with_browser_automation" if context == "managed" else "install_project_dependencies_from_its_lockfile"}
+    if context == "managed" and runtime["version"] != PLAYWRIGHT_VERSION:
+        return {**result, "issue": "runtime_version_mismatch", "expected_playwright_version": PLAYWRIGHT_VERSION,
+                "remediation": "rerun_setup_with_browser_automation"}
     node = "/usr/bin/node" if context == "managed" else shutil.which("node")
     if not node or not os.path.isfile(node) or not os.access(node, os.X_OK):
         return {**result, "issue": "node_missing", "remediation": "select_installed_project_node_runtime" if context == "project" else "rerun_setup_with_browser_automation"}
@@ -204,6 +210,7 @@ def add_browser_parser(commands: argparse._SubParsersAction) -> None:
 
 
 def run_browser_command(args: argparse.Namespace) -> int:
+    result = None
     try:
         if args.browser_command == "register" and args.context != "managed":
             raise ValueError("MCP registration requires --context managed")
@@ -225,7 +232,11 @@ def run_browser_command(args: argparse.Namespace) -> int:
                 raise ValueError("Agent registration could not be verified in the user's configuration")
             result["registered_agent"] = args.agent_tool
     except (OSError, RuntimeError, ValueError, CommandTimeoutError) as exc:
-        result = {"ok": False, "healthy": False, "issue": "invalid_browser_request",
-                  "remediation": "check_context_and_project_path", "error": str(exc)}
+        if result is not None and args.browser_command == "register":
+            result = {**result, "ok": False, "issue": "browser_registration_failed",
+                      "remediation": "inspect_managed_launcher_and_agent_configuration", "error": str(exc)}
+        else:
+            result = {"engine": args.engine, "context": args.context, "ok": False, "healthy": False,
+                      "issue": "invalid_browser_request", "remediation": "check_context_and_project_path", "error": str(exc)}
     print(json.dumps(result, indent=2) if args.json else json.dumps(result))
     return 0 if result["ok"] else 1

@@ -26,9 +26,18 @@ def browser_registration(engine: str) -> tuple[str, list[str]]:
     return PLAYWRIGHT_MCP_SERVER_NAME + "-firefox", [PLAYWRIGHT_MCP_WRAPPER, "--engine", "firefox"]
 
 
-def browser_registrations(engine: str, home: str | None = None) -> dict[str, bool | None]:
+def registration_status(registrations: dict[str, bool | None]) -> bool | None:
+    """Keep an unavailable configuration parser distinct from a missing entry."""
+    if any(value is True for value in registrations.values()):
+        return True
+    return None if any(value is None for value in registrations.values()) else False
+
+
+def browser_registrations(engine: str, home: str | None = None, *, wrapper: str | None = None) -> dict[str, bool | None]:
     """Inspect configuration only; registration does not prove session exposure."""
     name, command = browser_registration(engine)
+    if wrapper is not None:
+        command[0] = wrapper
     home = home or os.path.expanduser("~")
     codex: bool | None = False
     try:

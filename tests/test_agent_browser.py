@@ -49,6 +49,7 @@ class TestAgentBrowser(unittest.TestCase):
         result = agent_browser.browser_context_inventory(str(self.project))
         contexts = {(item["context"], item["engine"]): item for item in result}
         self.assertEqual(contexts[("managed", "chromium")]["playwright_version"], "1.60.0")
+        self.assertEqual(contexts[("managed", "chromium")]["readiness"], "runtime-version-mismatch")
         self.assertEqual(contexts[("project", "firefox")]["playwright_version"], "1.57.2")
         self.assertEqual(contexts[("interactive-desktop", "firefox")]["readiness"], "unverified")
         self.assertEqual(contexts[("collaborative-preview", "unknown")]["network_origin"], "connected-client")
@@ -124,6 +125,26 @@ class TestAgentBrowser(unittest.TestCase):
             result = agent_browser._environment("managed")
             self.assertEqual(os.environ["PLAYWRIGHT_BROWSERS_PATH"], "/project/cache")
         self.assertEqual(result["PLAYWRIGHT_BROWSERS_PATH"], os.path.expanduser("~/.cache/ms-playwright"))
+
+    def test_managed_version_mismatch_never_installs_or_launches(self) -> None:
+        self.package(self.managed, "1.60.0")
+        for install in (False, True):
+            with self.subTest(install=install):
+                result = agent_browser.check_browser("firefox", "managed", None, install=install)
+                self.assertEqual(result["issue"], "runtime_version_mismatch")
+                self.assertEqual(result["expected_playwright_version"], agent_browser.PLAYWRIGHT_VERSION)
+                self.assertIsNone(result["launchable"])
+        self.execute.assert_not_called()
+
+    def test_unknown_registration_is_preserved_in_inventory_and_doctor(self) -> None:
+        self.package(self.managed, agent_browser.PLAYWRIGHT_VERSION)
+        self.execute.return_value = self.smoke()
+        with patch.object(agent_browser, "browser_registrations", return_value={"codex": None, "opencode": False}):
+            inventory = agent_browser.browser_context_inventory(str(self.project))
+            result = agent_browser.check_browser("firefox", "managed", None)
+        self.assertTrue(result["healthy"])
+        self.assertIsNone(result["mcp_registered"])
+        self.assertTrue(all(item["mcp_registered"] is None for item in inventory if item["context"] == "managed"))
 
     def test_failed_install_returns_failure_without_attempting_smoke(self) -> None:
         self.package(self.project, "1.57.2")

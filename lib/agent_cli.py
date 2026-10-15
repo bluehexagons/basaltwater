@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from lib.atomic_io import write_json_atomic
+from lib.browser_registration import browser_registrations
 from lib.agent_containers import inspect_container_storage
 from lib.agent_resources import inspect_service_memory, inspect_workload_limits, sanitize_t3_resources
 from lib.local_http import open_loopback
@@ -77,7 +78,6 @@ _BROWSER_MCP_CLI = (
     "/opt/basaltwater-playwright/node_modules/@playwright/mcp/cli.js"
 )
 _BROWSER_OUTPUT_MAX_BYTES = 256 * BYTES_PER_MB
-_BROWSER_MCP_SERVER_NAME = "basaltwater-playwright"
 _BROWSER_DOCTOR_TIMEOUT_SECONDS = 210
 _REMOTE_DOCTOR_TIMEOUT_SECONDS = _BROWSER_DOCTOR_TIMEOUT_SECONDS + 90
 _MAX_AGENT_SKILL_BYTES = 256 * 1024
@@ -995,53 +995,12 @@ def inspect_agent_tools(tools: StrList, home: Optional[str] = None) -> list[JSON
     return results
 
 
-def _codex_browser_registration(home: str) -> bool:
-    config_path = os.path.join(home, ".codex", "config.toml")
-    try:
-        with open(config_path, encoding="utf-8") as file_obj:
-            content = file_obj.read()
-    except OSError:
-        return False
-    escaped_name = re.escape(_BROWSER_MCP_SERVER_NAME)
-    section = re.search(
-        rf'^\[mcp_servers\.(?:{escaped_name}|"{escaped_name}")\]\s*$',
-        content,
-        re.MULTILINE,
-    )
-    if section is None:
-        return False
-
-    following_section = re.search(r'^\[', content[section.end():], re.MULTILINE)
-    section_content = content[section.end():]
-    if following_section is not None:
-        section_content = section_content[:following_section.start()]
-    command = re.search(
-        r'^\s*command\s*=\s*(?:"([^"]*)"|\'([^\']*)\')\s*(?:#.*)?$',
-        section_content,
-        re.MULTILINE,
-    )
-    return bool(command and (command.group(1) or command.group(2)) == _BROWSER_MCP_WRAPPER)
+def _codex_browser_registration(home: str) -> bool | None:
+    return browser_registrations("chromium", home, wrapper=_BROWSER_MCP_WRAPPER)["codex"]
 
 
 def _opencode_browser_registration(home: str) -> bool:
-    from common.browser_automation_steps import _load_opencode_config, _opencode_config_path
-
-    config_dir = os.path.join(home, ".config", "opencode")
-    config_path = _opencode_config_path(config_dir)
-    try:
-        value = _load_opencode_config(config_path)
-    except (OSError, ValueError):
-        return False
-    if not isinstance(value.get("mcp"), dict):
-        return False
-    registration = value["mcp"].get(_BROWSER_MCP_SERVER_NAME)
-    return bool(
-        isinstance(registration, dict)
-        and registration.get("type") == "local"
-        and registration.get("enabled") is True
-        and registration.get("command") == [_BROWSER_MCP_WRAPPER]
-        and registration.get("timeout") == 30000
-    )
+    return browser_registrations("chromium", home, wrapper=_BROWSER_MCP_WRAPPER)["opencode"] is True
 
 
 def _browser_launcher_features(path: Optional[str] = None) -> JSONDict:
@@ -1289,6 +1248,7 @@ def inspect_browser_automation(
     registrations_ready = bool(
         registrations and all(bool(value) for value in registrations.values())
     )
+    registration_unknown = any(value is None for value in registrations.values())
     configured = bool(
         launchers_installed
         and launchers_secure
@@ -1312,7 +1272,7 @@ def inspect_browser_automation(
         ):
             issues.append("managed_defaults_stale")
     if not registrations_ready:
-        issues.append("registration_missing")
+        issues.append("registration_unverified" if registration_unknown else "registration_missing")
     if not workflow_skill_ready:
         issues.append("workflow_skill_missing_or_stale")
     if run_smoke and launchers_installed and smoke_test is not True:
@@ -1325,6 +1285,8 @@ def inspect_browser_automation(
         remediation = "inspect_launcher_security_then_rerun_saved_setup"
     elif "launchers_missing" in issues or "registration_missing" in issues:
         remediation = "rerun_setup_with_browser_automation"
+    elif "registration_unverified" in issues:
+        remediation = "use_python_with_toml_support"
     elif (
         "mcp_browser_selection_missing" in issues
         or "managed_defaults_stale" in issues
@@ -1342,7 +1304,7 @@ def inspect_browser_automation(
         "network_origin": "host",
         "discovered": launchers_installed,
         "launchable": smoke_test,
-        "mcp_registered": registrations_ready,
+        "mcp_registered": None if registration_unknown else registrations_ready,
         "application_tested": False,
         "installed": launchers_installed,
         "path": _BROWSER_MCP_WRAPPER if launchers_installed else None,

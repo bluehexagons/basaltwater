@@ -53,6 +53,8 @@ Setup installs the exact Playwright MCP version declared by Basaltwater under
 integrity metadata, installs native browser dependencies, and downloads the
 matching Chromium build into the target user's Playwright cache. npm lifecycle
 scripts are disabled during the root-owned package install.
+The pinned Playwright runtime requires Node.js 20 or newer; setup checks the
+system Node version before installing or reusing its packages.
 The setup marker is written only after the resolved pinned Chromium executable is
 present and executable, so a stale marker cannot suppress a required browser
 download.
@@ -576,6 +578,8 @@ links, and the selected Node executable on PATH. Use the owning package director
 for a monorepo. They do not run npm/npx, add packages, change a lockfile, upgrade
 Playwright, or install OS dependencies. Project `PLAYWRIGHT_BROWSERS_PATH` and
 custom CA settings are retained; Node preload/module overrides are omitted.
+The managed MCP and smoke launchers omit those overrides too, while retaining
+custom CA settings, so their Node environment agrees with the engine doctor.
 Optional downloads disable browser garbage collection so other projects'
 payloads remain available. Missing project dependencies require the project's
 normal lockfile installation first.
@@ -584,6 +588,8 @@ On a Debian VM with managed Playwright, `--context managed` uses the pinned
 managed package and its fixed user cache instead. Optional Firefox provisioning
 leaves the default MCP registration on Chromium. Project context also works on
 CachyOS and Ubuntu WSL without assuming a Debian managed browser stack.
+An unexpected managed package version reports `runtime_version_mismatch`
+before installing or launching a payload; rerun setup to restore the pin.
 The platform must already provide the selected engine's OS dependencies;
 a failed download or smoke test returns a nonzero status with `issue` and
 `remediation`. Use the host's authorized dependency setup when needed.
@@ -623,6 +629,14 @@ evidence. Firefox evidence lives under `playwright-mcp/firefox`; its separate
 configuration omits Chromium launch flags. Engine doctors report runtime
 launch/render results and registrations separately and always leave
 `application_tested` false. Use application tests to establish that coverage.
+Both browser doctors require the configured server to be enabled and select
+the expected engine. An unavailable configuration parser leaves registration
+unknown. If registration fails after a successful runtime check, the command
+returns nonzero with `browser_registration_failed` and retains the engine,
+version, and rendering results for diagnosis.
+The general capability doctor reports `registration_unverified` with
+`use_python_with_toml_support` when its Python lacks `tomllib`; run it with
+Python 3.11 or newer to inspect Codex configuration.
 
 ### Managed Chromium integration
 

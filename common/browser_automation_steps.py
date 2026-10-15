@@ -90,6 +90,7 @@ _MCP_WRAPPER_CONTENT = (
     "#!/bin/sh\n"
     "set -eu\n"
     "umask 077\n"
+    "unset NODE_OPTIONS NODE_PATH\n"
     'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"\n'
     'engine="chromium"\n'
     'if [ "${1-}" = "--engine" ]; then\n'
@@ -128,6 +129,7 @@ _MCP_WRAPPER_CONTENT = (
 _DOCTOR_WRAPPER_CONTENT = (
     "#!/bin/sh\n"
     "set -eu\n"
+    "unset NODE_OPTIONS NODE_PATH\n"
     'export PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright"\n'
     f"exec {SYSTEM_TIMEOUT} --signal=TERM --kill-after=10s "
     f"{PLAYWRIGHT_SMOKE_PROCESS_TIMEOUT_SECONDS}s "
@@ -298,6 +300,15 @@ def _install_runtime_package(*, refresh: bool = False) -> bool:
     _ensure_safe_root_path(PLAYWRIGHT_ROOT)
     run("apt-get -o DPkg::Lock::Timeout=60 install -y -qq ca-certificates nodejs npm")
     run(f"install -d -m 0755 -o root -g root {shlex.quote(PLAYWRIGHT_ROOT)}")
+    node_result = run(f"{SYSTEM_NODE} --version", capture_output=True)
+    raw_node_version = node_result.stdout.strip().removeprefix("v")
+    try:
+        node_major = int(raw_node_version.split(".", 1)[0])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"Could not determine Node.js version: {raw_node_version}") from exc
+    if node_major < 20:
+        raise RuntimeError("Pinned Playwright requires Node.js 20 or newer")
+
     package_path = os.path.join(
         PLAYWRIGHT_ROOT,
         "node_modules",
@@ -324,15 +335,6 @@ def _install_runtime_package(*, refresh: bool = False) -> bool:
         f"--prefix {shlex.quote(PLAYWRIGHT_ROOT)} "
         f"@playwright/mcp@{PLAYWRIGHT_MCP_VERSION}"
     )
-
-    node_result = run(f"{SYSTEM_NODE} --version", capture_output=True)
-    raw_node_version = node_result.stdout.strip().removeprefix("v")
-    try:
-        node_major = int(raw_node_version.split(".", 1)[0])
-    except (ValueError, IndexError) as exc:
-        raise RuntimeError(f"Could not determine Node.js version: {raw_node_version}") from exc
-    if node_major < 18:
-        raise RuntimeError("Playwright MCP requires Node.js 18 or newer")
 
     _verify_runtime_package(package_path, lock_path)
 
