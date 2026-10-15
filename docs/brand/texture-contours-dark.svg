@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 256" width="192" height="256" role="img" aria-label="Contours texture" focusable="false" preserveAspectRatio="xMidYMid slice" class="brand-texture brand-texture-contours">
+  <defs>
+    <pattern id="brand-contours" width="96" height="64" patternUnits="userSpaceOnUse">
+      <path d="M0 16C16 0 32 0 48 16S80 32 96 16 M0 48C16 32 32 32 48 48S80 64 96 48" fill="none" stroke="#4dc5dd" stroke-width="1" opacity=".18" />
+    </pattern>
+  </defs>
+  <path fill="url(#brand-contours)" d="M0 0h192v256H0Z" />
+</svg>

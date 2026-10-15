@@ -61,6 +61,9 @@ GUIDE_STYLE = """
 .texture-swatch { min-height: 144px; background: var(--bg); }
 .texture-swatch.basalt { background-image: url(texture-basalt-light.svg); }
 .texture-swatch.water { background-image: url(texture-water-light.svg); }
+.texture-swatch.contours { background-image: url(texture-contours-light.svg); }
+.texture-swatch.facets { background-image: url(texture-facets-light.svg); }
+.texture-swatch.mineral { background-image: url(texture-mineral-light.svg); }
 .color-roles { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:12px; margin-top:16px; }
 .color-role { padding:16px; border-left:4px solid var(--section-ink); border-radius:8px; background:var(--section-soft); }
 .color-role strong { display:block; color:var(--section-ink); }
@@ -69,6 +72,9 @@ GUIDE_STYLE = """
 @media (prefers-color-scheme: dark) {
   .texture-swatch.basalt { background-image: url(texture-basalt-dark.svg); }
   .texture-swatch.water { background-image: url(texture-water-dark.svg); }
+  .texture-swatch.contours { background-image: url(texture-contours-dark.svg); }
+  .texture-swatch.facets { background-image: url(texture-facets-dark.svg); }
+  .texture-swatch.mineral { background-image: url(texture-mineral-dark.svg); }
 }
 @media (max-width: 560px) {
   .asset-grid { grid-template-columns: minmax(0, 1fr); }
@@ -132,6 +138,14 @@ def export_assets(assets: Path) -> None:
         f'<span>{html.escape(icon_labels.get(name, name.title()))}</span></a>'
         for name in BRAND_ICONS
     )
+    texture_labels = {"basalt": "Basalt joints", "water": "Stepped currents",
+                      "contours": "Flowing contours", "facets": "Stone facets", "mineral": "Mineral grain"}
+    texture_gallery = "".join(
+        f'<div class="asset-card"><div class="texture-swatch {name}"></div>'
+        f'<p>{texture_labels[name]} · <a href="texture-{name}-light.svg">Light SVG</a> · '
+        f'<a href="texture-{name}-dark.svg">Dark SVG</a></p></div>'
+        for name in BRAND_TEXTURES
+    )
     specimens = {
         "index.html": (
             "Identity guide", "Basaltwater identity",
@@ -174,14 +188,9 @@ def export_assets(assets: Path) -> None:
             '<section><h2>Icons from the same stone</h2><p class="lede">A 24-unit grid, '
             'consistent strokes, and angular cuts. Each tile opens its SVG.</p>'
             f'<div class="icon-grid">{icon_gallery}</div></section>'
-            '<section><h2>Quiet textures</h2><p class="lede">Hexagonal joints and water strata. '
+            '<section><h2>Quiet textures</h2><p class="lede">Basalt, water, contours, facets and mineral grain. '
             'Transparent, repeating vectors for headers and supporting surfaces.</p>'
-            '<div class="asset-grid"><div class="asset-card"><div class="texture-swatch basalt"></div>'
-            '<p>Basalt joints · <a href="texture-basalt-light.svg">Light SVG</a> · '
-            '<a href="texture-basalt-dark.svg">Dark SVG</a></p></div>'
-            '<div class="asset-card"><div class="texture-swatch water"></div>'
-            '<p>Water strata · <a href="texture-water-light.svg">Light SVG</a> · '
-            '<a href="texture-water-dark.svg">Dark SVG</a></p></div></div></section>'
+            f'<div class="asset-grid">{texture_gallery}</div></section>'
             '<section><h2>States always have labels</h2><p><span class="badge success">Healthy</span> '
             '<span class="badge warning">Needs attention</span> <span class="badge error">Unavailable</span></p>'
             '<p><a class="refresh-link" href="panel.html">Inspect the panel specimen</a></p></section>'

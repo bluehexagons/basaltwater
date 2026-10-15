@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 256" width="192" height="256" role="img" aria-label="Facets texture" focusable="false" preserveAspectRatio="xMidYMid slice" class="brand-texture brand-texture-facets">
+  <defs>
+    <pattern id="brand-facets" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M0 16l32 16 32-16 M0 48l32-16 32 16 M32 0v64" fill="none" stroke="#4dc5dd" stroke-width="1" opacity=".18" />
+    </pattern>
+  </defs>
+  <path fill="url(#brand-facets)" d="M0 0h192v256H0Z" />
+</svg>

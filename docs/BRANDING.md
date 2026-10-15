@@ -57,13 +57,28 @@ decoration alongside an explanation; it does not indicate service health.
 | --- | --- | --- |
 | Hexagonal basalt joints | [SVG](brand/texture-basalt-light.svg) | [SVG](brand/texture-basalt-dark.svg) |
 | Stepped water strata | [SVG](brand/texture-water-light.svg) | [SVG](brand/texture-water-dark.svg) |
+| Flowing contours | [SVG](brand/texture-contours-light.svg) | [SVG](brand/texture-contours-dark.svg) |
+| Stone facets | [SVG](brand/texture-facets-light.svg) | [SVG](brand/texture-facets-dark.svg) |
+| Mineral grain | [SVG](brand/texture-mineral-light.svg) | [SVG](brand/texture-mineral-dark.svg) |
 
 The transparent texture swatches repeat at 192 × 168 pixels for basalt and
 192 × 128 pixels for water. Basalt uses a 24 × 42-unit tile; water uses a
-96 × 32-unit tile. Use them sparingly on headers or supporting surfaces,
-with a plain surface behind dense information. The
-panel's header uses the basalt pattern inline at nine percent opacity and
-hides it in forced-color mode. Other sites can repeat the exports with CSS
+96 × 32-unit tile. Contours use a 96 × 64-unit tile; facets and mineral grain
+use 64 × 64-unit tiles. Their 192 × 256-pixel swatches also repeat seamlessly.
+Use them sparingly on headers or supporting surfaces, with a plain surface
+behind dense information.
+
+The dashboard keeps basalt joints. Agent pages use flowing contours;
+administration, maintenance and jobs use angular facets; access, inbox and
+diagnostics use mineral grain; services and desktop access use stepped water.
+Header textures fade toward the text and use ten percent opacity. A seven-percent
+mineral accent sits at the bottom of the desktop sidebar; an eight-percent
+current accents footers.
+The mobile navigation omits the sidebar texture. Forms, logs, tables and metric
+surfaces remain plain. All textures are decorative, ignore pointer input, and
+disappear in forced-color mode. There is no animation.
+
+Other sites can repeat the exports with CSS
 `background-image`; choose the matching light/dark variant. The exports already
 include their subdued opacity.
 
@@ -72,6 +87,9 @@ in the wordmark. There are no bitmap images, embedded payloads, scripts, filters
 external resource references, or editor metadata. The SVGs open directly in Inkscape.
 Edit their canonical geometry in the template module, then regenerate the
 exports so the panel and documentation keep the same identity.
+When repeating a texture inline in one document, supply a distinct `pattern_id`
+to `render_texture()` for each instance so its local SVG paint reference remains
+unambiguous. The shared frame uses separate header, sidebar and footer IDs.
 
 ## Palette and typography
 

@@ -95,6 +95,15 @@ PAGE_ICONS = {
 BRAND_TEXTURES = {
     "basalt": (24, 42, "M12 0l12 7v14l-12 7L0 21V7Z M12 28v14"),
     "water": (96, 32, "M0 8h12l12-6h24l12 6h36 M0 24h36l12 6h24l12-6h12"),
+    "contours": (96, 64, "M0 16C16 0 32 0 48 16S80 32 96 16 M0 48C16 32 32 32 48 48S80 64 96 48"),
+    "facets": (64, 64, "M0 16l32 16 32-16 M0 48l32-16 32 16 M32 0v64"),
+    "mineral": (64, 64, "M8 12l4-4 M40 44l4-4 M48 16h3 M16 48h3"),
+}
+PAGE_TEXTURES = {
+    "agents": "contours", "agent-tools": "contours", "publishing": "contours",
+    "admin": "facets", "maintenance-agent": "facets", "jobs": "facets",
+    "credentials": "mineral", "agent-inbox": "mineral", "logs": "mineral",
+    "services": "water", "desktop": "water",
 }
 BRAND_NETWORK = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" '
@@ -149,19 +158,21 @@ def render_icon(name: str, *, label: str | None = None) -> str:
     )
 
 
-def render_texture(name: str, *, color: str = "currentColor") -> str:
-    """Render a transparent vector swatch, with a unique local pattern ID."""
+def render_texture(name: str, *, color: str = "currentColor", pattern_id: str | None = None) -> str:
+    """Render a vector swatch; give repeated inline instances distinct IDs."""
     width, height, path = BRAND_TEXTURES[name]
     swatch_height = height * 4
+    identifier = html.escape(pattern_id or f"brand-{name}", quote=True)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 {swatch_height}" '
         f'width="192" height="{swatch_height}" aria-hidden="true" focusable="false" '
+        'preserveAspectRatio="xMidYMid slice" '
         f'class="brand-texture brand-texture-{name}">'
-        f'<defs><pattern id="brand-{name}" width="{width}" height="{height}" '
+        f'<defs><pattern id="{identifier}" width="{width}" height="{height}" '
         'patternUnits="userSpaceOnUse">'
         f'<path d="{path}" fill="none" stroke="{html.escape(color, quote=True)}" '
         'stroke-width="1"/></pattern></defs>'
-        f'<path fill="url(#brand-{name})" d="M0 0h192v{swatch_height}H0Z"/></svg>'
+        f'<path fill="url(#{identifier})" d="M0 0h192v{swatch_height}H0Z"/></svg>'
     )
 
 
@@ -189,13 +200,22 @@ def brand_styles() -> str:
         ".sidebar .nav-links a:hover{background:var(--section-soft);color:var(--section-ink)}"
         ".sidebar a[aria-current=page]{background:var(--section-soft);color:var(--section-ink);"
         "box-shadow:inset 3px 0 var(--section-ink)}"
+        ".brand-texture{pointer-events:none;user-select:none}"
+        ".sidebar{isolation:isolate}"
+        ".sidebar>.brand-texture{position:absolute;bottom:16px;left:12px;width:220px;"
+        "height:160px;color:var(--accent);opacity:.07;z-index:-1}"
         "header{position:relative;isolation:isolate;overflow:hidden}"
         "header{border-top-color:var(--section-ink);"
         "background:radial-gradient(ellipse at top right,var(--section-soft),transparent 70%),var(--panel)}"
         "header .eyebrow{display:flex;align-items:center;gap:8px;color:var(--section-ink)}"
         "header .eyebrow svg{width:20px;height:20px;flex:none}"
-        "header .brand-texture{position:absolute;inset:0 0 0 auto;width:192px;"
-        "height:100%;color:var(--section-ink);opacity:.09;z-index:-1;pointer-events:none}"
+        "header .brand-texture{position:absolute;inset:0 0 0 auto;width:38%;min-width:192px;max-width:360px;"
+        "height:100%;color:var(--section-ink);opacity:.1;z-index:-1;"
+        "mask-image:linear-gradient(90deg,transparent,#000 45%)}"
+        "footer{position:relative;isolation:isolate}"
+        "footer>.brand-texture{position:absolute;right:0;bottom:0;width:220px;"
+        "height:48px;color:var(--accent);opacity:.08;z-index:-1;"
+        "mask-image:linear-gradient(90deg,transparent,#000)}"
         "footer{background-image:linear-gradient(90deg,var(--accent) 32px,transparent 32px);"
         "background-size:100% 2px;background-repeat:no-repeat}"
         ".badge.warning{color:var(--warning)}"
@@ -237,11 +257,12 @@ def brand_styles() -> str:
         ".journal-error{border-left-color:var(--bad)}"
         ".journal-warning{border-left-color:var(--warning)}"
         ".admin-tools{margin-top:12px}"
-        "@media(max-width:900px){.sidebar a.brand{margin:0 8px 6px;min-height:36px}}"
+        "@media(max-width:900px){.sidebar a.brand{margin:0 8px 6px;min-height:36px}"
+        ".sidebar>.brand-texture{display:none}}"
         "@media(max-width:560px){.empty-art{gap:14px;padding:16px}"
         ".empty-art .brand-network{width:80px;height:40px}}"
         "@media(forced-colors:active){.brand svg{--brand-water:CanvasText}"
-        "header .brand-texture,.empty-art .brand-network{display:none}}"
+        ".brand-texture,.empty-art .brand-network{display:none}}"
     )
 
 
@@ -303,7 +324,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
         '<nav class="sidebar" aria-label="Panel sections">'
         f'<a class="brand" href="{html.escape(home, quote=True)}" aria-label="{home_label}">{BRAND_SYMBOL}<span>Basaltwater</span></a>'
         '<div class="nav-links">'
-        f'{"".join(links)}</div></nav>'
+        f'{"".join(links)}</div>{render_texture("mineral", pattern_id="brand-sidebar")}</nav>'
     )
 
 
@@ -325,7 +346,8 @@ def render_document(
     icon = PAGE_ICONS.get(current, "dashboard")
     tone = ICON_TONES.get(icon, "water")
     header = header.replace('<p class="eyebrow">', '<p class="eyebrow">' + render_icon(icon), 1)
-    header = header.replace("</header>", render_texture("basalt") + "</header>", 1)
+    header = header.replace("</header>", render_texture(PAGE_TEXTURES.get(current, "basalt"), pattern_id="brand-header") + "</header>", 1)
+    footer = footer.replace("</footer>", render_texture("water", pattern_id="brand-footer") + "</footer>", 1)
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

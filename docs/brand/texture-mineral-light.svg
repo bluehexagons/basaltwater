@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 256" width="192" height="256" role="img" aria-label="Mineral texture" focusable="false" preserveAspectRatio="xMidYMid slice" class="brand-texture brand-texture-mineral">
+  <defs>
+    <pattern id="brand-mineral" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M8 12l4-4 M40 44l4-4 M48 16h3 M16 48h3" fill="none" stroke="#17657d" stroke-width="1" opacity=".18" />
+    </pattern>
+  </defs>
+  <path fill="url(#brand-mineral)" d="M0 0h192v256H0Z" />
+</svg>

@@ -71,7 +71,7 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertIn('href="#main"', document)
         self.assertIn("<header>Header<svg", document)
         self.assertIn('class="brand-texture brand-texture-basalt"', document)
-        self.assertIn("<footer>Footer</footer>", document)
+        self.assertIn("<footer>Footer<svg", document)
         self.assertIn('rel="icon" href="/favicon.svg" type="image/svg+xml"', document)
 
     def test_favicon_route_serves_only_vector_artwork_without_host_state(self) -> None:
