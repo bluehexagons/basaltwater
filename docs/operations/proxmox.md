@@ -212,6 +212,12 @@ own its swap layout. It retains the host's permissive reverse-path filtering
 because strict filtering can drop valid routed, NATed, or bridged guest
 traffic.
 
+Generic AppArmor, auditd, and PAM policies are not applied unchanged to a
+hypervisor; they must account for Proxmox roles, realms, API tokens, SSH,
+firewall, and cluster requirements. Journald limits and maintenance schedules
+use fixed defaults; there is no saved per-node resource or maintenance-window
+policy.
+
 Setup verifies Proxmox VE 9.x on Debian 13 (`trixie`), enabled Debian base and
 security sources, and the stable Proxmox enterprise or no-subscription channel
 before the first profile change. Test channels and mixed official Debian or
@@ -903,6 +909,11 @@ swap is a failing audit condition, while no swap, swappiness above 10, high
 memory/swap use, and missing prior-boot evidence are warnings. The command is
 read-only and exits nonzero when a health check fails.
 
+The audit checks pool accessibility, not ZFS pool or scrub health, LVM-thin
+pressure, SMART/NVMe condition, detailed backup storage, certificate expiry, or
+timer delivery. It does not prove that a backup is fresh, intact, stored
+off-host, or restorable in isolation.
+
 Proxmox SSH inspection commands reuse a short-lived OpenSSH control connection.
 With an encrypted key, the first connection prompts for its passphrase and the
 remaining checks reuse that authenticated connection. All Proxmox operations
@@ -989,7 +1000,9 @@ The backup command defaults to the first backup-capable storage pool, snapshot
 mode, and zstd compression. `suspend` and `stop` modes trade availability for
 stronger consistency where the guest workload requires it. Always verify that
 the selected storage has enough capacity and a retention policy outside
-Basaltwater.
+Basaltwater. These commands create and list immediate backups; they do not
+schedule backups, manage retention or off-host copies, verify freshness or
+integrity, or prove an isolated restore.
 
 Backup listing reports failed or malformed storage inventories as errors,
 including a failure in one pool after another pool was read successfully.

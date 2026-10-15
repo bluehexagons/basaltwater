@@ -101,23 +101,10 @@ basaltw setup server_lite fileserver admin \
 The `USERS` value is a comma-separated list. Bare usernames resolve through
 the workspace credential store; every bare username must have a saved
 credential. Inline `username:password` values are supported for controlled
-automation, but the password is visible to local process inspectors:
-
-```bash
-basaltw setup server_lite fileserver admin \
-  --samba \
-  --share read public /srv/public guest:temporary-password
-```
-
-`--credential USERNAME PASSWORD` can save or update a workspace credential as
-part of a command. Use it only when the invoking environment is trusted:
-
-```bash
-basaltw setup server_lite fileserver admin \
-  --samba \
-  --credential alice 'correct horse battery staple' \
-  --share write documents /srv/documents alice
-```
+automation, but `username:password` values and `--credential USERNAME
+PASSWORD` expose passwords in shell history or process arguments. Prefer
+`basaltw credentials set USERNAME` to enter each secret interactively; never
+use a sample or placeholder password as a real credential.
 
 Passwords are omitted from saved setup state and reconstructed commands. Samba
 password changes are supplied to `smbpasswd` over standard input rather than

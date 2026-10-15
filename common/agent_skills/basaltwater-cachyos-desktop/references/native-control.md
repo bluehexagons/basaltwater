@@ -112,21 +112,15 @@ If physical input still fails while portal input works, inspect other input
 providers, especially Sunshine's `libvirtualhid Keyboard`. A disconnected client
 does not establish that its virtual keyboard has clean state. Read user-service
 status and recent logs, and check for an active stream before a targeted restart.
-On this workstation the service is `app-dev.lizardbyte.app.Sunshine.service`
-(alias `sunshine.service`); discover the local unit rather than assuming its name.
+Discover the local unit rather than assuming its name.
 When Sunshine is idle and a restart is within the authorized troubleshooting
 scope, use `systemctl --user restart UNIT`, wait for it to become active, and
 have the owner retest the physical key. Preserve configuration, pairings and
 enablement. Do not interrupt an active stream without the owner's authorization.
 
-On 2026-10-05, physical P failed across applications, including a focused test
-that received O but no P. Portal P worked; stopping Basaltwater and reconnecting
-the physical keyboard did not help. Restarting idle Sunshine recreated its
-virtual keyboard and the owner confirmed physical P worked. Stale virtual input
-state is the suspected cause; the exact state and trigger were not proved, and
-no Basaltwater defect was confirmed. If a targeted restart fails, continue
-diagnosis rather than repeating it or resetting unrelated input services.
-Close only disposable test windows and keep desktop captures/logs private.
+If a targeted restart fails, continue diagnosis rather than repeating it or
+resetting unrelated input services. Close only disposable test windows and keep
+desktop captures/logs private.
 
 ## Human control and shutdown
 

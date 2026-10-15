@@ -124,10 +124,14 @@ are not included. Missing task storage and scheduler errors remain explicit.
 
 HTTPS is recommended:
 
+Replace `REPLACE_WITH_A_UNIQUE_PASSWORD` with a unique secret before running
+either command; the placeholder is not a usable password. Command-line
+passwords can appear in shell history and to local process inspectors.
+
 ```bash
 basaltw setup agent_vm 192.168.1.50 agent \
   --web-panel \
-  --web-panel-password 'replace-this-value' \
+  --web-panel-password 'REPLACE_WITH_A_UNIQUE_PASSWORD' \
   --ssl
 ```
 
@@ -137,7 +141,7 @@ needed:
 ```bash
 basaltw patch 192.168.1.50 agent \
   --web-panel 9443 \
-  --web-panel-password 'replace-this-value' \
+  --web-panel-password 'REPLACE_WITH_A_UNIQUE_PASSWORD' \
   --ssl
 ```
 

@@ -1,7 +1,9 @@
 # Cost-aware subagents and project learning
 
-This workflow applies to Debian agent VMs and CachyOS workstations. The commands
-below work in bash and fish; use the actual project path on either platform.
+This workflow applies to Debian agent VMs, CachyOS workstations, and Ubuntu
+under Windows Subsystem for Linux (WSL). The commands below use Bash or fish
+syntax; run them in the corresponding Linux shell and use the actual project
+path for that environment.
 
 Use OpenAI models currently exposed by the session. Start with Luna for file
 classification, extraction, and bounded documentation edits; use Sol for coding,

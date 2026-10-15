@@ -667,8 +667,7 @@ placed on the system `PATH` as `godot` and `godot4`, including for agent users.
 The `web` bundle adds verified, version-matched web export templates for the
 configured account. The `publishing` bundle adds Butler and, on x86_64,
 user-owned SteamCMD; publishing credentials remain user-managed and are never
-copied by setup. Planned `dotnet`, `android`, `gdextension`, and `assets`
-bundles remain roadmap items and are not accepted yet.
+copied by setup.
 See [`godot.md`](../workstations/godot.md) for the artifact and headless-use contract, and
 [`maintenance.md`](../operations/maintenance.md) for schedules and update policy.
 

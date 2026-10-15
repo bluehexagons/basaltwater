@@ -16,6 +16,9 @@ priority session and user instructions as well.
 ## Start with the project
 
 - Identify the requested outcome, scope, constraints, and acceptance conditions.
+- Read the root `AGENTS.md` and applicable contributor guide before editing.
+  Inspect nested instruction files along the path to each target too; a nested
+  `AGENTS.md` or directory-specific guide can add rules for that area.
 - Inspect the current worktree and preserve changes that are not part of the task.
 - Read the relevant implementation, callers, configuration, tests, and docs far
   enough to understand the existing behavior and its boundaries.

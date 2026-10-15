@@ -331,37 +331,3 @@ pause tasks explicitly when removing their UI.
 Setup errors for unsafe task directories identify the exact component, owner
 UID and permissions. Inspect that path before changing ownership or modes;
 setup does not recursively take over shared or unrelated account directories.
-
-## T3 integration after the next stable release
-
-Current qualification targets T3 v0.0.45. `capabilities` deliberately reports
-native T3 task execution and thread binding as unavailable. Presence of a
-newer runtime does not silently change existing task ownership or execution.
-
-Upcoming upstream work supplies
-[scheduling and thread tools](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/mcp/toolkits/orchestrator/tools.ts),
-[outside-agent MCP access](https://github.com/pingdotgg/t3code/blob/main/docs/user/outside-agents.md)
-and [native Codex goals](https://github.com/pingdotgg/t3code/blob/main/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts).
-These are design inputs from upstream `main`, not released capabilities promised
-by this integration.
-
-The intended adapter will let a task select a T3-owned thread as its executor.
-Basaltwater will retain objective, policy, workspace, checkpoint and receipts;
-T3 will own its native conversation and provider history. Successive runs will
-message the recorded thread rather than importing transcripts or editing T3's
-database. Switching executors will carry a portable checkpoint into a new
-conversation unless supported session transfer is separately qualified.
-
-Each task must have one scheduling owner. Initially Basaltwater should retain
-the clock and send work to T3. Optional adoption of a native T3 schedule must
-disable the Basaltwater trigger before activating the replacement and record
-its schedule/thread/run identifiers, so two clocks cannot dispatch the task.
-
-Before enabling that adapter, qualify the published stable API and feature
-flags, account authorization, project/workspace ownership, current permission
-limits on resumed turns, turn completion versus goal completion, usage
-accounting, cancellation, UI disconnects, service restarts and uncertain
-dispatch reconciliation. Native webhooks should reuse T3's supported delivery,
-signature and deduplication controls after that qualification. Unsupported
-features should remain explicit rather than falling back to a fresh thread or
-a second scheduler.

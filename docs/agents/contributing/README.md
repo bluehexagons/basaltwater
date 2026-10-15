@@ -8,29 +8,11 @@ managed coding VM or workstation, use the sibling
 
 | Need | Guide |
 | --- | --- |
-| Essential repository rules and workflow | [Quick start](quick-start.md) |
-| Types, validators, capability helpers, and setup composition | [Quick reference](quick-reference.md) |
+| Repository-specific rules | [`AGENTS.md`](../../../AGENTS.md) |
+| General project workflow and delegation | [Basaltwater project development skill](../../../common/agent_skills/basaltwater-project-development/SKILL.md) |
+| Basaltwater subagent workflows | [Subagent guidance](../agent-subagents.md) |
+| Types, validators, capability helpers, setup composition, and command contracts | [Quick reference](quick-reference.md) |
 | Common failures and debugging | [Troubleshooting](troubleshooting.md) |
-
-## Required workflow
-
-1. Run `git status -sb` and preserve unrelated worktree changes.
-2. Read every file you will edit completely.
-3. Follow the existing patterns and use `apply_patch` for edits.
-4. Review `git diff --check` and the final diff before staging.
-5. Run focused tests, then the relevant wider checks.
-
-## Critical rules
-
-- Use `from __future__ import annotations` in Python modules.
-- Never commit secrets or credentials.
-- Use `lib.validation` for structured paths, packages, network values, and
-  setup configuration; use `lib.validators` for hosts, IPs, and usernames.
-- Update all callers and tests when changing a function signature.
-- Remove unused code rather than retaining it for compatibility.
-- Choose the machine capability helper that matches the operation; do not use
-  `can_modify_kernel()` as a general package or service check.
-- Mock system calls and use temporary directories in tests.
 
 ## Core architecture
 

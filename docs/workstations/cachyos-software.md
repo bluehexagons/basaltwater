@@ -123,7 +123,6 @@ it does not need an AUR build or an unmanaged AppImage download.
   current Arch/CachyOS provides them in core, so setup does not enable multilib
   merely by assumption.
 
-New installation behavior is covered by mocked tests. Live AUR build/review,
-desktop rendering, removable-media flashing, and authenticated publishing need
-their own explicit user tests; previous acceptance of the running workstation
-does not establish those new workflows.
+Setup readiness does not qualify live AUR builds, desktop rendering,
+removable-media flashing, or authenticated publishing. Verify those workflows
+explicitly before relying on them.

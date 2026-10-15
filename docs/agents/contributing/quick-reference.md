@@ -65,7 +65,15 @@ For edit workflow and tests, see the [contributor guide](README.md).
 Use the strict default of `lib.remote_utils.run()` for required mutations.
 `check=False` returns a result for probes, optional work or verified installers;
 inspect or verify it before treating the operation as successful. Timeouts raise
-in either mode. Inventory direct calls without running setup code:
+in either mode. Each command runs in a process group with a one-hour default
+timeout; pass a positive `timeout` to shorten it or `None` only for an
+intentionally unbounded command. Timeout cleanup terminates the group and bounds
+output collection, including when a detached child retains a pipe. Cleanup can
+add up to two five-second grace periods. Keyboard interruption also terminates
+the isolated group before cancellation propagates. A detached process that
+creates its own session needs caller-specific supervision.
+
+Inventory direct calls without running setup code:
 
 ```bash
 python3 scripts/audit_command_contracts.py --unchecked
