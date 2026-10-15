@@ -113,6 +113,15 @@ setup, transfers, and host-key enrollment. SSH remains key-only and protected
 by fail2ban. Rerunning setup migrates older source-specific `LIMIT` rules to
 the trusted-source `ALLOW` policy without opening global SSH access.
 
+Before changing UFW rules or defaults, setup checks the current connection's
+`SSH_CONNECTION` source against the requested generic access sources. If the
+controller would be excluded, setup stops with an explicit `--access-source`
+suggestion and leaves the firewall unchanged. IPv4 and IPv6 peers are checked;
+local setup without an SSH connection has no remote peer to verify.
+`--lan-access` describes the target's adjacent networks. A controller on a
+routed Wi-Fi, VPN or management network needs an additional `--access-source`
+for its observed address or trusted subnet.
+
 Proxmox guests are a special host-key enrollment case. After provisioning,
 Basaltwater scans the guest's ED25519 key from the authenticated Proxmox node,
 replaces any stale plain or hashed entry for that address in both the workspace
@@ -196,6 +205,27 @@ needed to distinguish a stopped daemon from a configuration, listener, or
 service-unit failure.
 
 ## Troubleshooting
+
+An older setup can change the firewall successfully and then fail in a later
+step. Established SSH sessions can survive those changes while new connections
+are blocked; a later setup failure does not roll back earlier firewall steps.
+If the next run cannot connect, inspect both the SSH listener and the permitted
+source networks rather than assuming the later failing service caused it.
+
+For a Proxmox VM with a working QEMU guest agent, use the hosting node's root
+Shell even when the guest has no root password and its coding user has no sudo.
+For example, for VM 114:
+
+```bash
+qm guest exec 114 -- /usr/sbin/ufw status numbered
+qm guest exec 114 -- /usr/bin/fail2ban-client status sshd
+```
+
+Replace `114` with the actual numeric VM ID. If UFW excludes the controller,
+add an SSH-only allow rule for that exact source through the same guest-agent
+interface, then rerun setup with an appropriate `--access-source` so the
+intended access is retained. The privilege broker deliberately removes the
+coding account's sudo access; see [privilege approvals](PRIVILEGE_APPROVALS.md).
 
 Check which agent is active and whether it has the expected identity:
 

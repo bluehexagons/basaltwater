@@ -23,6 +23,8 @@ from security.security_steps import (
     configure_cleanup_maintenance,
     configure_fail2ban,
     configure_firewall,
+    configure_firewall_ssh_only,
+    configure_firewall_web,
     configure_pam_lockout,
     configure_security_monitor,
     harden_kernel,
@@ -522,7 +524,99 @@ class TestConfigurePamLockout(unittest.TestCase):
                     configure_pam_lockout(config)
 
 
+class TestSSHFirewallPeerSafety(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
+        self.command = self.enterContext(patch("security.security_steps.run"))
+        self.command.return_value = SimpleNamespace(
+            returncode=0, stdout="Status: active\n", stderr=""
+        )
+        self.config = SetupConfig(
+            username="agent", host="192.168.0.44", system_type="agent_vm",
+            lan_access=True,
+        )
+
+    def test_routed_controller_is_rejected_before_any_firewall_changes(self):
+        for configure in (configure_firewall, configure_firewall_web, configure_firewall_ssh_only):
+            with self.subTest(configure=configure.__name__), patch.dict(
+                os.environ, {"SSH_CONNECTION": "192.168.68.56 50000 192.168.0.44 22"}
+            ):
+                self.command.reset_mock()
+                with self.assertRaisesRegex(
+                    RuntimeError, r"Add --access-source 192\.168\.68\.56/32"
+                ):
+                    configure(self.config)
+                self.command.assert_not_called()
+
+    def test_explicit_controller_source_allows_replacement_before_global_removal(self):
+        self.config.access_sources = ["192.168.68.0/22"]
+        with patch.dict(
+            os.environ, {"SSH_CONNECTION": "192.168.68.56 50000 192.168.0.44 22"}
+        ):
+            configure_firewall(self.config)
+        commands = [call.args[0] for call in self.command.call_args_list]
+        allowed = commands.index(
+            "ufw allow from 192.168.68.0/22 to any port 22 proto tcp "
+            "comment 'basaltwater SSH trusted source 192.168.68.0/22'"
+        )
+        self.assertLess(allowed, commands.index("ufw delete allow ssh"))
+        self.assertIn(
+            "ufw allow from 192.168.0.0/24 to any port 22 proto tcp "
+            "comment 'basaltwater SSH trusted source 192.168.0.0/24'",
+            commands,
+        )
+
+    def test_allowed_peers_support_ipv4_ipv6_hosts_and_mixed_source_families(self):
+        self.config.lan_access = False
+        for peer, sources in (
+            ("192.168.0.5", ["192.168.0.0/24"]),
+            ("192.168.68.56", ["192.168.68.56"]),
+            ("192.168.68.56", ["fd00::/64", "192.168.68.56/32"]),
+            ("fd00::5", ["192.168.0.0/24", "fd00::/64"]),
+            ("fd00::5", ["fd00::5/128"]),
+        ):
+            with self.subTest(peer=peer, sources=sources), patch.dict(
+                os.environ, {"SSH_CONNECTION": f"{peer} 50000 192.168.0.44 22"}
+            ):
+                self.command.reset_mock()
+                self.config.access_sources = sources
+                configure_firewall(self.config)
+                self.assertTrue(self.command.called)
+
+    def test_excluded_ipv6_peer_gets_a_host_source_suggestion(self):
+        with patch.dict(
+            os.environ, {"SSH_CONNECTION": "fd00::5 50000 fd00:1::4 22"}
+        ):
+            with self.assertRaisesRegex(RuntimeError, r"--access-source fd00::5/128"):
+                configure_firewall(self.config)
+        self.command.assert_not_called()
+
+    def test_malformed_ssh_connection_stops_before_changes(self):
+        for connection in (" ", "192.168.0.5 50000", "invalid 50000 192.168.0.44 22"):
+            with self.subTest(connection=connection), patch.dict(
+                os.environ, {"SSH_CONNECTION": connection}
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Cannot verify the current SSH peer"):
+                    configure_firewall(self.config)
+                self.command.assert_not_called()
+
+    def test_local_setup_without_ssh_connection_can_apply_sources(self):
+        configure_firewall(self.config)
+        self.assertTrue(self.command.called)
+
+    def test_unrestricted_policy_does_not_exclude_routed_peer(self):
+        self.config.lan_access = False
+        with patch.dict(
+            os.environ, {"SSH_CONNECTION": "192.168.68.56 50000 192.168.0.44 22"}
+        ):
+            configure_firewall(self.config)
+        self.assertIn("ufw limit ssh", [call.args[0] for call in self.command.call_args_list])
+
+
 class TestConfigureFirewall(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
+
     @patch("security.security_steps.is_container", return_value=False)
     @patch("security.security_steps.run")
     def test_rate_limits_ssh_and_rdp_when_rdp_enabled(self, mock_run, _ic):

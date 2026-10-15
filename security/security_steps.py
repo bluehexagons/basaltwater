@@ -25,7 +25,11 @@ from lib.machine_state import (
     is_vm,
 )
 from lib.remote_utils import is_dry_run, run
-from lib.validation import validate_filesystem_path, validate_network_ip_or_cidr
+from lib.validation import (
+    validate_filesystem_path,
+    validate_network_ip,
+    validate_network_ip_or_cidr,
+)
 from lib.validators import validate_ip_address, validate_username
 
 _LEGACY_UNATTENDED_ORIGINS_FILE = "/etc/apt/apt.conf.d/52basaltwater-unattended-upgrades"
@@ -223,6 +227,36 @@ def _configure_rdp_firewall(config: SetupConfig) -> None:
     )
 
 
+def _verify_ssh_firewall_peer(config: SetupConfig) -> None:
+    """Reject a source policy that would prevent the setup peer reconnecting."""
+    sources = [
+        validate_network_ip_or_cidr(source, "SSH source")
+        for source in config.effective_access_sources()
+    ]
+    connection = os.environ.get("SSH_CONNECTION", "")
+    if not sources or not connection:
+        return
+
+    fields = connection.split()
+    if len(fields) != 4:
+        raise RuntimeError("Cannot verify the current SSH peer before changing the firewall")
+    try:
+        peer = ipaddress.ip_address(validate_network_ip(fields[0], "SSH setup peer"))
+    except ValueError as exc:
+        raise RuntimeError(
+            "Cannot verify the current SSH peer before changing the firewall"
+        ) from exc
+    networks = [ipaddress.ip_network(source, strict=False) for source in sources]
+    if not any(peer in network for network in networks):
+        raise RuntimeError(
+            f"Refusing firewall changes: current SSH peer {peer} is outside "
+            f"the requested access sources ({', '.join(sources)}). "
+            f"Add --access-source {peer}/{peer.max_prefixlen} to the setup command. "
+            "--lan-access infers the target's LAN; a routed controller needs "
+            "an explicit access source."
+        )
+
+
 def _configure_ssh_firewall(config: SetupConfig) -> None:
     """Allow trusted SSH sources or rate-limit unrestricted SSH access."""
 
@@ -361,6 +395,7 @@ def _verify_source_restricted_firewall(
 
 
 def configure_firewall(config: SetupConfig) -> None:
+    _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
 
@@ -1152,6 +1187,7 @@ def configure_auto_updates(config: SetupConfig) -> None:
 
 
 def configure_firewall_web(config: SetupConfig) -> None:
+    _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
     if not firewall_active:
@@ -1195,6 +1231,7 @@ def configure_firewall_web(config: SetupConfig) -> None:
 
 def configure_firewall_ssh_only(config: SetupConfig) -> None:
     """Configure firewall to allow only SSH (for servers without web/RDP)."""
+    _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
 
