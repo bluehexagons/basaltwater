@@ -175,9 +175,6 @@ Node.js and uv use a conservative default policy:
   the publishing bundle updates verified Butler releases and invokes the
   user-owned SteamCMD self-updater.
 
-Upgrading a host retires the old `auto-update-ruby` service and timer. It does
-not uninstall the Ruby packages or stop an existing legacy Rails application.
-
 GitHub CLI is installed from its APT repository and therefore follows the APT
 job. Explicitly selected Codex CLI, Claude Code, and OpenCode installations
 are reconciled by each setup run as the target user; their rebuildable caches

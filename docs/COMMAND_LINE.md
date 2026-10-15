@@ -1503,10 +1503,10 @@ for setup, patch, helper, and local hostname examples.
 
 Repos can also ship `basaltwater.json` manifests for multi-component deploys; see
 [Deployments and manifests](./DEPLOYMENTS.md) for the schema and examples.
-Ruby/Rails repositories are rejected before remote setup begins. Use a pinned
-legacy basaltwater release to maintain an existing Rails deployment; current
-setup does not remove its old systemd unit or same-domain generated Nginx site
-when that whole domain is omitted from the current deployment set.
+Ruby/Rails deployment support has been discontinued. Their repositories are
+rejected before remote setup begins. Current Basaltwater machines have no
+Rails services, and Ruby applications are outside Basaltwater's
+deployment workflows.
 
 ## CI/CD and Build / App Servers
 

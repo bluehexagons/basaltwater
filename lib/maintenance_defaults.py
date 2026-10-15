@@ -63,9 +63,6 @@ BASALTWATER_TMP_PATTERNS = (
     r"basaltwater_deploy_[A-Za-z0-9_-]+",
     r"basaltwater_pubkey\.[A-Za-z0-9]+",
     r"antistatic-(?:server|db)-linux-(?:amd64|arm64)\.v[A-Za-z0-9._-]+",
-    # Clean up temp directories left by interrupted deployments from releases
-    # that still managed Bundler. This does not install or update Ruby.
-    r"bundler\d{8}-\d+-[A-Za-z0-9_-]+",
 )
 # Build tools use /var/tmp to avoid filling small tmpfs-backed /tmp partitions.
 BASALTWATER_TMP_DIRS = ("/tmp", "/var/tmp")

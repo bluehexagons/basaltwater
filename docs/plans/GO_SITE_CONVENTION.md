@@ -1,7 +1,8 @@
 # Go Site Deployment Convention
 
-Status: proposed P1 implementation plan. This convention should land before
-the next fresh production web VM is provisioned.
+Status: proposed P1 implementation plan for `go-site/v1`; Ruby/Rails deployment
+retirement was completed in Basaltwater v2.0.0. The convention should land
+before the next fresh production web VM is provisioned.
 
 This project defines a versioned `go-site/v1` contract for building and
 running small Go web services with Basaltwater. Its purpose is to make the safe
@@ -409,28 +410,20 @@ rails_test application. The cutover sequence is:
 
 ## Ruby and Rails retirement from Basaltwater
 
-Removal happens after the goclick migration is accepted and its rollback window
-closes. It is a deliberate breaking cleanup, not part of the import operation.
+Completed in Basaltwater v2.0.0. Ruby/Rails setup, builds, deployments,
+generated application services, and Ruby-specific update automation have been
+removed.
 
-Remove:
+Ruby-specific behavior is limited to fail-closed handling of retired inputs:
 
-- `--ruby`, `install_ruby`, Ruby update timers, and saved setup fields;
-- Rails project detection and project-root heuristics;
-- Rails build, asset, migration, seed, persistent-state, and service branches;
-- Rails-specific systemd generation and service naming;
-- interactive/setup defaults that select Ruby;
-- CI/CD assumptions that only Rails needs a reverse proxy;
-- Rails and Ruby tests, service scripts, and user documentation; and
-- rails_test examples from workspace/deployment fixtures.
+- Deployment preflight recognizes common Ruby/Rails markers only to refuse an
+  unsupported deployment before target changes.
+- The retired `install_ruby` setup field is rejected when loading saved
+  configuration rather than silently reinterpreted.
 
-Before deleting compatibility parsing, scan saved configurations. A saved
-`--ruby` or rails_test deployment must produce an actionable unsupported-config
-error or an explicit one-time migration, never be silently ignored. The fresh
-production VM should generate new saved state without either field.
-
-Legacy service cleanup may remain as a narrowly named migration utility for one
-release if existing machines still need it. It must not retain the ability to
-build or deploy Rails applications.
+Current Basaltwater machines have no Rails services. The separate
+goclick database import remains a one-time migration tool and is never a
+deployment hook.
 
 ## Delivery sequence
 
@@ -463,11 +456,10 @@ build or deploy Rails applications.
 - Keep bluehexagons static-only, then test its backend as an inactive candidate
   and an explicitly selected composed component.
 
-### Phase 5: Fresh VM cutover and retirement
+### Phase 5: Fresh production VM cutover
 
 - Provision the fresh production VM and complete the rehearsed Rails import.
 - Close the rollback window with documented verification evidence.
-- Remove Ruby/Rails deployment support and its saved-config surface.
 
 ## Acceptance criteria
 
@@ -488,7 +480,8 @@ build or deploy Rails applications.
   and convention version.
 - Unknown or ambiguous layouts fail with actionable diagnostics.
 - The fresh VM contains no Ruby/Rails runtime or rails_test deployment.
-- Ruby/Rails removal does not silently reinterpret existing saved configs.
+- `install_ruby` in an old saved config produces an actionable retired-field
+  error; Ruby/Rails repositories fail deployment preflight before target setup.
 
 ## Remaining design dependencies
 

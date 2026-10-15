@@ -227,8 +227,8 @@ class DeploymentOrchestrator:
             os.path.isdir(dest_path) and is_ruby_project(dest_path)
         ):
             raise RuntimeError(
-                "Refusing to modify a Ruby/Rails deployment with this basaltwater "
-                "version; use its pinned legacy release"
+                "Refusing to modify this Ruby/Rails deployment; Ruby/Rails "
+                "deployments are no longer supported by Basaltwater."
             )
 
         if detect_project_type(source_path) == "node":

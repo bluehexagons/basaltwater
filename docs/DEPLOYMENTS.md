@@ -66,12 +66,12 @@ Separate runtime flags are therefore unnecessary for ordinary deployments.
 Explicit flags remain useful when a repository generates those files later or
 uses a non-standard layout.
 
-Ruby and Rails deployments are not supported. `v2.0.0` detects common
-Ruby project markers and stops locally before uploading setup files or changing
-the target. Keep a pinned older basaltwater release for a legacy Rails site;
-current setup runs leave its existing `rails-*.service` unit and same-domain
-generated Nginx site in place when that whole domain is omitted from the new
-deployment set.
+Ruby/Rails deployment support has been discontinued. `v2.0.0` detects common
+project markers and refuses deployment during controller preflight, before
+setup files are uploaded or the target is changed. Basaltwater no longer builds,
+deploys, or provides Ruby-specific application updates. Current Basaltwater
+machines have no Rails services. Ruby applications are outside
+Basaltwater's deployment workflows.
 
 The planned versioned convention for zero-config root Go services, inactive
 nested-module discovery, standard health/state behavior, and compact monorepo

@@ -9,8 +9,9 @@ know.
   remote setup. A failed fetch aborts the complete run, preventing a partial
   desired set from removing an existing Nginx route.
 - Refuses repositories or existing release trees with common Ruby/Rails markers.
-  Ruby support belongs to pinned legacy basaltwater releases; current setup
-  leaves existing legacy Rails units and their generated Nginx routes alone.
+  These checks prevent an unsupported source tree from being treated as static.
+  Current Basaltwater machines have no Rails services, and Ruby
+  applications are outside Basaltwater's deployment workflows.
 - Automatic Node builds are discontinued; repositories with `package.json`
   require a manifest and are rejected before target setup when it is missing.
   Ready-to-serve static deployments stage beside the active release and switch

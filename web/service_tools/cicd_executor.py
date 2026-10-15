@@ -478,12 +478,12 @@ def perform_remote_deployment(
     if is_ruby_project(workspace):
         log_event(
             logger,
-            "Ruby/Rails remote deployment is unsupported",
+            "Ruby/Rails deployment is no longer supported by Basaltwater",
             level=40,
             deploy_target=deploy_target,
         )
         with open(log_file, 'a') as log:
-            log.write("\n✗ Ruby/Rails deployment requires a pinned legacy basaltwater release\n")
+            log.write("\n✗ Ruby/Rails deployments are no longer supported by Basaltwater.\n")
         return False
 
     project_type = detect_project_type(workspace)

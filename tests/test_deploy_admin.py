@@ -38,9 +38,9 @@ class TestDeployAdminValidation(unittest.TestCase):
         self.assertEqual(validate_service_name("node-shop"), "node-shop.service")
         for invalid in (
             "nginx.service",
-            "rails-../../ssh.service",
-            "rails-shop.service",
-            "rails-shop.service.service",
+            "node-../../ssh.service",
+            "python-shop.service",
+            "python-shop.service.service",
             "node-.service",
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):

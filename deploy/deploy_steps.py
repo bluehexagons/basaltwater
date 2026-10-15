@@ -50,8 +50,7 @@ def deploy_repository(source_path: str, deploy_spec: str, git_url: str,
 
     if is_ruby_project(source_path):
         raise RuntimeError(
-            "Ruby/Rails deployments are no longer supported by this basaltwater "
-            "version; use a pinned older release for this repository"
+            "Ruby/Rails deployments are no longer supported by Basaltwater."
         )
 
     manifest = load_manifest(source_path)

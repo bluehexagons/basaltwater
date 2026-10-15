@@ -413,27 +413,9 @@ class TestGenerateMergedNginxConfig(unittest.TestCase):
 
 class TestReconcileDeploymentSites(unittest.TestCase):
     def setUp(self):
-        for target, value in (("is_dry_run", False), ("_is_legacy_rails_site", False)):
-            mocked = patch.object(nginx, target, return_value=value)
-            mocked.start()
-            self.addCleanup(mocked.stop)
-
-    def test_preserves_legacy_rails_site_owned_by_existing_unit(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            available = os.path.join(temp_dir, 'sites-available')
-            enabled = os.path.join(temp_dir, 'sites-enabled')
-            os.makedirs(available)
-            os.makedirs(enabled)
-            legacy_site = os.path.join(available, 'legacy_example_com')
-            with open(legacy_site, 'w', encoding='utf-8') as handle:
-                handle.write(f"{GENERATED_CONFIG_MARKER}\n")
-
-            with patch('lib.nginx_config.NGINX_SITES_AVAILABLE_DIR', available), \
-                 patch('lib.nginx_config.NGINX_SITES_ENABLED_DIR', enabled), \
-                 patch('lib.nginx_config._is_legacy_rails_site', return_value=True):
-                _reconcile_deployment_sites(set())
-
-            self.assertTrue(os.path.exists(legacy_site))
+        mocked = patch.object(nginx, "is_dry_run", return_value=False)
+        mocked.start()
+        self.addCleanup(mocked.stop)
 
     def test_removes_stale_deployment_sites_only(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -593,7 +575,6 @@ class TestNginxTransaction(unittest.TestCase):
             ("NGINX_SITES_AVAILABLE_DIR", {"new": str(self.available)}),
             ("NGINX_SITES_ENABLED_DIR", {"new": str(self.enabled)}),
             ("is_dry_run", {"return_value": False}),
-            ("_is_legacy_rails_site", {"return_value": False}),
             ("_self_signed_cert_path", {"side_effect": self.cert_paths}),
             ("get_ssl_cert_path", {"side_effect": lambda domain: self.cert_paths(domain or "default")}),
             ("generate_self_signed_cert", {"side_effect": self.generate_cert}),

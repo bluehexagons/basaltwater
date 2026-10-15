@@ -283,9 +283,10 @@ Add `--key ~/.ssh/YOUR_KEY` if your root login uses a non-default private key.
 A normal sudo password on the target is not a substitute for root SSH access;
 Basaltwater does not collect or forward sudo passwords.
 
-Ruby/Rails setup and deployment support has been removed. Keep a pinned older
-basaltwater installation for a legacy Rails host; `v2.0.0` refuses Ruby
-repositories rather than attempting an in-place migration.
+Ruby/Rails setup and deployment support has been discontinued. `v2.0.0`
+refuses Ruby repositories before changing the target. Current Basaltwater
+machines have no Rails services, and Basaltwater does not install or
+maintain Ruby applications.
 
 For agentic coding targets, use the [headless terminal example](WORKSTATIONS.md#headless-agentic-coding-host)
 when no desktop or RDP is wanted, or the [desktop/RDP example](WORKSTATIONS.md#desktop-agentic-coding-workstation-with-rdp)

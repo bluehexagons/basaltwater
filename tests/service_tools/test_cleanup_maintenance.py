@@ -62,7 +62,6 @@ class TestCleanupMaintenance(unittest.TestCase):
         mock_package_audit.assert_called_once()
         mock_trim.assert_called_once()
         self.assertEqual(mock_optional.call_count, 3)
-        self.assertFalse(any(call.args[2] == "gem cleanup" for call in mock_optional.call_args_list))
         # Stale Basaltwater tmp cleanup runs once per known temp directory (/tmp, /var/tmp).
         self.assertEqual(mock_tmp_cleanup.call_count, len(cleanup_maintenance.BASALTWATER_TMP_DIRS))
         self.assertEqual(
@@ -449,21 +448,16 @@ class TestCleanupHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             old_dir = os.path.join(tmp_dir, "basaltwater_setup_build_abcd")
             old_file = os.path.join(tmp_dir, "antistatic-server-linux-amd64.v1")
-            old_bundler_dir = os.path.join(tmp_dir, "bundler20240101-12345-abc123")
             fresh_file = os.path.join(tmp_dir, "basaltwater_deploy_fresh")
             unrelated_file = os.path.join(tmp_dir, "unrelated")
-            misleading_file = os.path.join(tmp_dir, "bundler_project")
             os.mkdir(old_dir)
-            os.mkdir(old_bundler_dir)
-            for path in (old_file, fresh_file, unrelated_file, misleading_file):
+            for path in (old_file, fresh_file, unrelated_file):
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write("x")
 
             old_time = time.time() - (8 * 24 * 60 * 60)
             os.utime(old_dir, (old_time, old_time))
-            os.utime(old_bundler_dir, (old_time, old_time))
             os.utime(old_file, (old_time, old_time))
-            os.utime(misleading_file, (old_time, old_time))
 
             failures = cleanup_maintenance.cleanup_stale_basaltwater_tmp_artifacts(
                 tmp_dir=tmp_dir,
@@ -472,11 +466,9 @@ class TestCleanupHelpers(unittest.TestCase):
 
             self.assertEqual(failures, [])
             self.assertFalse(os.path.exists(old_dir))
-            self.assertFalse(os.path.exists(old_bundler_dir))
             self.assertFalse(os.path.exists(old_file))
             self.assertTrue(os.path.exists(fresh_file))
             self.assertTrue(os.path.exists(unrelated_file))
-            self.assertTrue(os.path.exists(misleading_file))
 
     def test_cleanup_stale_basaltwater_tmp_artifacts_reports_remove_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

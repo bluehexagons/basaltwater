@@ -63,7 +63,7 @@ class TestDeploymentPreflight(unittest.TestCase):
                 handle.write("source 'https://rubygems.org'\n")
             mock_clone.return_value = (repo_dir, "abc123")
 
-            with self.assertRaisesRegex(RuntimeError, "pinned legacy release"):
+            with self.assertRaisesRegex(RuntimeError, "no longer supported"):
                 prepare_deployments(config, target_dir)
 
             self.assertFalse(os.path.exists(os.path.join(target_dir, "legacy.commit")))
@@ -89,7 +89,7 @@ class TestDeploymentPreflight(unittest.TestCase):
 
             self.assertFalse(result)
             with open(log_file, encoding="utf-8") as handle:
-                self.assertIn("pinned legacy basaltwater release", handle.read())
+                self.assertIn("no longer supported by Basaltwater", handle.read())
 
 
 class TestSshKeyUpgrade(unittest.TestCase):

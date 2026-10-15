@@ -71,21 +71,6 @@ def _is_basaltwater_deployment_site(path: str) -> bool:
     ))
 
 
-def _is_legacy_rails_site(config_name: str) -> bool:
-    """Preserve an unsupported legacy Rails route owned by its old unit."""
-    systemd_dir = "/etc/systemd/system"
-    direct_unit = f"rails-{config_name}.service"
-    subpath_prefix = f"rails-{config_name}__"
-    try:
-        return any(
-            filename == direct_unit
-            or (filename.startswith(subpath_prefix) and filename.endswith(".service"))
-            for filename in os.listdir(systemd_dir)
-        )
-    except OSError:
-        return False
-
-
 def _assert_managed_config_names(current_config_names: set[str]) -> None:
     """Refuse to replace a same-named Nginx site not owned by basaltwater."""
     for directory in (NGINX_SITES_AVAILABLE_DIR, NGINX_SITES_ENABLED_DIR):
@@ -112,7 +97,6 @@ def _reconcile_deployment_sites(current_config_names: set[str]) -> None:
             if (
                 name in current_config_names
                 or name.startswith(PRESERVED_SITE_PREFIXES)
-                or _is_legacy_rails_site(name)
             ):
                 continue
 

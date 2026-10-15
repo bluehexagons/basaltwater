@@ -551,8 +551,8 @@ def prepare_deployments(config: SetupConfig, target_dir: str) -> None:
         validate_repository_source_tree(clone_path)
         if is_ruby_project(clone_path):
             raise RuntimeError(
-                f"Ruby/Rails repository {git_url} is unsupported by this "
-                "basaltwater version; use its pinned legacy release"
+                f"Ruby/Rails repository {git_url} cannot be deployed: "
+                "Ruby/Rails deployments are no longer supported by Basaltwater."
             )
         manifest = load_manifest(clone_path)
         manifests[git_url] = manifest
