@@ -56,7 +56,7 @@ release support after cutover. The repository is hosted at
 - The fresh wheel is built, installed and exercised outside the source tree.
   Packaging rejects retired entry modules and skill IDs.
 - `make check` validates CLI docs, metadata, generated brand assets and tests.
-  Visual identity and contrast checks remain described in [BRANDING.md](BRANDING.md).
+  Visual identity and contrast checks remain described in [BRANDING.md](brand/README.md).
 
 ## Qualification protocol
 

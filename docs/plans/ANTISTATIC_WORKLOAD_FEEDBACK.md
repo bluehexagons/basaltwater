@@ -34,7 +34,7 @@ and native tool version inventory (`b0b962a`). Preserve these contracts.
 
 ### 1. Expose project-selected runtime in discovery
 
-Owner: [project tooling](../PROJECT_TOOLING.md).
+Owner: [project tooling](../agents/PROJECT_TOOLING.md).
 
 Delivered through `agent manifest --project-runtime`: optional selection context
 reuses the Node doctor and keeps PATH inventory distinct from project-selected

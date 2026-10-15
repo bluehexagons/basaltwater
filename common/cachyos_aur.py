@@ -105,7 +105,7 @@ def install_package(command: list[str], home: Path) -> None:
         details = (
             "\nShelly may omit Git's underlying clone/pull error. Check cache "
             "ownership and the configured source with `shelly config get AurUrl`; "
-            "see docs/CACHYOS.md (AUR download failures) for a Git-only probe. "
+            "see docs/workstations/CACHYOS.md (AUR download failures) for a Git-only probe. "
             "Shelly logs: /var/log/shelly.log or "
             "${XDG_STATE_HOME:-$HOME/.local/state}/shelly/shelly.log."
         ) if shelly else ""

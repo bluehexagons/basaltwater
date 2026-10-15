@@ -84,4 +84,4 @@ replacement and grouped removal. Pass timers/paths before their service when
 removing a group; both operations share a lock and recovery marker.
 Snapshots protect files and activation state, not arbitrary application data.
 See the [transaction plan](../../plans/TRANSACTIONAL_EXECUTION.md) and
-[operator recovery guide](../../TRANSACTION_RECOVERY.md).
+[operator recovery guide](../../operations/TRANSACTION_RECOVERY.md).

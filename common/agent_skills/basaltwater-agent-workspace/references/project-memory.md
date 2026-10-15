@@ -71,4 +71,4 @@ or Git. Forgetting a reference does not remove the file or rotate credentials.
 
 Scheduled execution and messages remain with their existing task/inbox commands;
 memory never runs a stored todo. Detailed limits and recovery are in the
-[project memory guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_MEMORY.md).
+[project memory guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/AGENT_MEMORY.md).

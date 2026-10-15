@@ -12,7 +12,7 @@ Only the Basaltwater namespace is supported. The completed infra-tools
 migration is retired; remaining old installations must use the documented
 [intermediate version](docs/BASALTWATER_MIGRATION.md) first.
 
-The [identity guide](docs/BRANDING.md) includes editable assets and visual specimens.
+The [identity guide](docs/brand/README.md) includes editable assets and visual specimens.
 
 Automated setup and operations for Debian control planes, servers, workstations,
 and Proxmox guests. Basaltwater applies repeatable, machine-aware configuration
@@ -28,7 +28,7 @@ latest final release until `v2.0.0` passes qualification and is published.
 ## Start here
 
 New to Linux or Basaltwater? Follow [Try Basaltwater on a Debian
-VM](docs/GETTING_STARTED.md) for a guided first setup, small feature experiments,
+VM](docs/getting-started/GETTING_STARTED.md) for a guided first setup, small feature experiments,
 and checks that show whether each step worked.
 
 Install the launcher on the machine that will manage your hosts:
@@ -45,13 +45,13 @@ sh -c '
 
 Copy the whole block; it works in fish, Bash, and Zsh. The explicit `sh`
 invocation handles the temporary download and removes it on exit.
-If `curl` is missing, use the [download prerequisites](docs/INSTALLATION.md#prerequisites).
+If `curl` is missing, use the [download prerequisites](docs/getting-started/INSTALLATION.md#prerequisites).
 Installing the launcher does not configure a target. Use `basaltw setup ...` for
 remote hosts and `basaltw upgrade` to update the selected channel. The
-[`basaltw refresh` command](docs/COMMAND_LINE.md#refresh-this-machine) upgrades
+[`basaltw refresh` command](docs/reference/COMMAND_LINE.md#refresh-this-machine) upgrades
 Basaltwater and repeats this machine's last successful setup: use sudo on
 Debian and the desktop account without sudo on CachyOS. The
-[installation guide](docs/INSTALLATION.md) covers prerequisites, verification,
+[installation guide](docs/getting-started/INSTALLATION.md) covers prerequisites, verification,
 alternate download commands, local control-plane and desktop/RDP profiles,
 channels, credentials, and recovery. The [documentation index](docs/README.md)
 organizes detailed feature and operations guides.
@@ -72,19 +72,19 @@ The installer and setup preflight also recognize Ubuntu and Linux Mint as
 best-effort Debian-compatible environments. Debian remains the only officially
 supported distribution.
 
-An experimental, limited [CachyOS + KDE coding profile](docs/CACHYOS.md) adds
+An experimental, limited [CachyOS + KDE coding profile](docs/workstations/CACHYOS.md) adds
 agent tooling to an existing bare-metal workstation through local self-setup.
 It preserves the human account and desktop, leaves OS updates to CachyOS/the
 user, and does not support CachyOS VM/container provisioning or server setup.
 
 For your first Codex setup with the native T3 Code desktop app, use the
-[complete CachyOS installer example](docs/CACHYOS.md#install-with-t3-code-desktop).
+[complete CachyOS installer example](docs/workstations/CACHYOS.md#install-with-t3-code-desktop).
 The guide uses fish, CachyOS's default shell, and walks through selecting tools,
 installing the launcher, provider login, and checking the first coding task.
 
 The normal direct setup path uses `--machine auto`. Hosted Proxmox setup
 defaults to a VM; select `--machine unprivileged` for the supported LXC path.
-See [Machine types](docs/MACHINE_TYPES.md) for capability and compatibility
+See [Machine types](docs/reference/MACHINE_TYPES.md) for capability and compatibility
 details.
 
 ## Hardware sizing
@@ -130,26 +130,26 @@ required by every guest and storage workload to the host's own requirements;
 the table describes individual guests, not an entire virtualization host.
 
 Start with 64 GB for a desktop when unsure; choose 128 GB for the performance
-tier or substantial local work. The [beginner walkthrough](docs/GETTING_STARTED.md)
-and [cleanup guide](docs/MAINTENANCE.md#cleanup-and-state-safety) explain how to
+tier or substantial local work. The [beginner walkthrough](docs/getting-started/GETTING_STARTED.md)
+and [cleanup guide](docs/operations/MAINTENANCE.md#cleanup-and-state-safety) explain how to
 try features and keep a small VM usable.
 
 ## Capabilities
 
 | Area | Summary | Detailed guide |
 | --- | --- | --- |
-| Setup and CLI | Unified `setup`, `patch`, `shares`, saved-host operations, and utility commands | [Command-line reference](docs/COMMAND_LINE.md) |
-| Installation | User/system bootstrap, orchestration host prerequisites, and completion | [Installation](docs/INSTALLATION.md) |
-| Firmware | Local fwupd inventory, dependency installation, and deliberate guarded updates | [Firmware](docs/FIRMWARE.md) |
-| Control planes | Local VM/container administration tools, SSH/rsync, diagnostics, and optional coding agents | [Installation](docs/INSTALLATION.md), [Agent systems](docs/agents/README.md), [Quick reference](docs/QUICK_REFERENCE.md) |
-| Servers | Security hardening, Nginx/SSL, Cloudflare tunnels, language runtimes, deployments, Gogs, and Antistatic | [CLI reference](docs/COMMAND_LINE.md), [Gogs](docs/GOGS.md), [Cloudflare tunnels](docs/CLOUDFLARE.md), [Antistatic](docs/ANTISTATIC.md) |
-| Workstations | XFCE, i3, LXQt, RDP, browsers, and desktop tooling | [Workstations](docs/WORKSTATIONS.md), [XRDP](docs/XRDP.md), [CLI reference](docs/COMMAND_LINE.md) |
-| CachyOS coding | Codex on an existing KDE workstation; T3 desktop or a local/LAN web service, plus setup-time cache cleanup | [CachyOS](docs/CACHYOS.md) |
-| Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/SAMBA_SHARES.md), [Managed Syncthing](docs/SYNCTHING.md), [Storage operations](docs/STORAGE_OPERATIONS.md) |
-| Deployments | Single-service deployments and `basaltwater.json` multi-component manifests | [Deployments](docs/DEPLOYMENTS.md), [Deployment safety](docs/DEPLOYMENT_SAFETY.md), [CI/CD](docs/CICD.md) |
-| Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/PROXMOX.md) |
-| Networking | Static addressing, internal HTTPS site/preview hosting, inventory, and read-only Proxmox firewall planning | [Internal web](docs/INTERNAL_WEB.md), [Networking](docs/NETWORKING.md) |
-| Sysadmin | SSH, transfers, health, services, logs, upgrades, and reachability | [Sysadmin shortcuts](docs/SYSADMIN.md) |
+| Setup and CLI | Unified `setup`, `patch`, `shares`, saved-host operations, and utility commands | [Command-line reference](docs/reference/COMMAND_LINE.md) |
+| Installation | User/system bootstrap, orchestration host prerequisites, and completion | [Installation](docs/getting-started/INSTALLATION.md) |
+| Firmware | Local fwupd inventory, dependency installation, and deliberate guarded updates | [Firmware](docs/operations/FIRMWARE.md) |
+| Control planes | Local VM/container administration tools, SSH/rsync, diagnostics, and optional coding agents | [Installation](docs/getting-started/INSTALLATION.md), [Agent systems](docs/agents/README.md), [Quick reference](docs/reference/QUICK_REFERENCE.md) |
+| Servers | Security hardening, Nginx/SSL, Cloudflare tunnels, language runtimes, deployments, Gogs, and Antistatic | [CLI reference](docs/reference/COMMAND_LINE.md), [Gogs](docs/services/GOGS.md), [Cloudflare tunnels](docs/services/CLOUDFLARE.md), [Antistatic](docs/services/ANTISTATIC.md) |
+| Workstations | XFCE, i3, LXQt, RDP, browsers, and desktop tooling | [Workstations](docs/workstations/WORKSTATIONS.md), [XRDP](docs/workstations/XRDP.md), [CLI reference](docs/reference/COMMAND_LINE.md) |
+| CachyOS coding | Codex on an existing KDE workstation; T3 desktop or a local/LAN web service, plus setup-time cache cleanup | [CachyOS](docs/workstations/CACHYOS.md) |
+| Storage | Authenticated Samba shares, private Syncthing exchange, SMB mounts, rsync sync, par2 verification, and recurring operations | [Samba shares](docs/storage/SAMBA_SHARES.md), [Managed Syncthing](docs/storage/SYNCTHING.md), [Storage operations](docs/storage/STORAGE_OPERATIONS.md) |
+| Deployments | Single-service deployments and `basaltwater.json` multi-component manifests | [Deployments](docs/services/DEPLOYMENTS.md), [Deployment safety](docs/services/DEPLOYMENT_SAFETY.md), [CI/CD](docs/services/CICD.md) |
+| Proxmox | Host discovery, VM/LXC provisioning, lifecycle, resource stats, boot ordering, snapshots, and rolling updates | [Proxmox workflows](docs/operations/PROXMOX.md) |
+| Networking | Static addressing, internal HTTPS site/preview hosting, inventory, and read-only Proxmox firewall planning | [Internal web](docs/services/INTERNAL_WEB.md), [Networking](docs/operations/NETWORKING.md) |
+| Sysadmin | SSH, transfers, health, services, logs, upgrades, and reachability | [Sysadmin shortcuts](docs/operations/SYSADMIN.md) |
 
 ## Operating policies
 
@@ -158,21 +158,21 @@ try features and keep a small VM usable.
 Setup arguments are saved without passwords, reconstructed commands redact
 secrets, and workspace credential files use restrictive permissions. Deployments
 keep persistent application state outside release directories and create
-verified backups where required. Read [Deployment safety](docs/DEPLOYMENT_SAFETY.md)
+verified backups where required. Read [Deployment safety](docs/services/DEPLOYMENT_SAFETY.md)
 for rollback and recovery behavior.
 
 ### Machine awareness
 
 Steps detect the target machine type and skip capabilities that cannot safely
 run in containers. Kernel, firewall, and desktop behavior is therefore
-capability-aware rather than assumed. See [Machine types](docs/MACHINE_TYPES.md).
+capability-aware rather than assumed. See [Machine types](docs/reference/MACHINE_TYPES.md).
 
 ### Security defaults
 
 The security profile hardens SSH, the firewall, package updates, journald,
 fail2ban, and service boundaries. Samba uses authenticated SMB3+, signing and
 encryption, TCP 445 only, and validated configuration reloads. See the
-[Samba guide](docs/SAMBA_SHARES.md) and [maintenance guide](docs/MAINTENANCE.md).
+[Samba guide](docs/storage/SAMBA_SHARES.md) and [maintenance guide](docs/operations/MAINTENANCE.md).
 
 ### Conservative maintenance
 
@@ -184,8 +184,8 @@ APT marks unused, including superseded kernels. It expires recognized crash
 reports and returns unused filesystem blocks to supported physical, virtual,
 and Proxmox storage, then checks block and inode pressure across local mounts.
 See the
-[recurring maintenance guide](docs/MAINTENANCE.md).
-CachyOS uses [bounded cleanup during setup](docs/CACHYOS.md#cleanup-during-setup)
+[recurring maintenance guide](docs/operations/MAINTENANCE.md).
+CachyOS uses [bounded cleanup during setup](docs/workstations/CACHYOS.md#cleanup-during-setup)
 and keeps system updates under the desktop user's control.
 
 ### Targeted updates
@@ -193,7 +193,7 @@ and keeps system updates under the desktop user's control.
 Use `patch` for general saved-configuration changes. Use a feature-specific
 fast path when available—for example, `basaltw shares HOST` updates Samba
 users, access, paths, and share declarations without running unrelated setup
-work. See [Saved configuration operations](docs/OPERATIONS.md).
+work. See [Saved configuration operations](docs/operations/OPERATIONS.md).
 
 ## Common commands
 
@@ -206,8 +206,8 @@ basaltw setup server_dev localhost "$USER" --node --dry-run
 basaltw list
 ```
 
-Use the [beginner walkthrough](docs/GETTING_STARTED.md) to apply your first
-setup, the [quick reference](docs/QUICK_REFERENCE.md) for saved-host commands,
+Use the [beginner walkthrough](docs/getting-started/GETTING_STARTED.md) to apply your first
+setup, the [quick reference](docs/reference/QUICK_REFERENCE.md) for saved-host commands,
 and the [documentation index](docs/README.md) for the feature map.
 
 ## Development checks
@@ -227,8 +227,8 @@ run the suite on the minimum supported Python version (3.10) and the latest
 Python 3 version in the release policy (3.14). Expensive live tests remain
 opt-in.
 
-See [Saved configuration operations](docs/OPERATIONS.md) for test selectors and
-[Proxmox workflows](docs/PROXMOX.md) for live-host notes.
+See [Saved configuration operations](docs/operations/OPERATIONS.md) for test selectors and
+[Proxmox workflows](docs/operations/PROXMOX.md) for live-host notes.
 
 ## License
 

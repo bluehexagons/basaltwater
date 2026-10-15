@@ -16,7 +16,7 @@ Debian setup selects Blender with `--blender` on workstation or standard server
 profiles. It uses the configured Debian release's APT package even with
 `--flatpak`; keep updates under normal host package maintenance. Check
 `blender --version` before using version-specific APIs or add-ons. See the
-[desktop software support table](https://github.com/bluehexagons/basaltwater/blob/main/docs/WORKSTATIONS.md#desktop-software-support-and-flags)
+[desktop software support table](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/WORKSTATIONS.md#desktop-software-support-and-flags)
 for supported applications and setup flags.
 
 Agentic Blender desktop editing is a primary workflow: model touch-ups,
@@ -43,7 +43,7 @@ Desktop editing readiness requires its own edit/save/reopen check.
 Record scene, camera, frame, resolution, engine
 and device alongside PNG captures. Compare results with `basaltw agent visuals
 compare`; use a project harness with `visuals capture` for isolated revisions.
-Read the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md)
+Read the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/DESKTOP_DEVELOPMENT.md)
 for application guidance and the distinction between discovery and readiness.
 
 Use it for native editors, office applications, graphical tools, and behavior

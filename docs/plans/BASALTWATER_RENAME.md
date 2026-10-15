@@ -2,7 +2,7 @@
 
 Status: v2.0.0 core namespace delivered and preview metadata configured as
 `2.0.0rc1`. Candidate publication and stable live qualification remain open.
-The package/CLI, active guides, bundled skills and [visual identity](../BRANDING.md)
+The package/CLI, active guides, bundled skills and [visual identity](../brand/README.md)
 are delivered. New storage uses Basaltwater identities; existing disk serials
 and LVM names are intentionally retained. See
 [cutover contracts](BASALTWATER_CONTRACTS.md) and
@@ -58,7 +58,7 @@ reserved commands or promised features.
 Build around charcoal and steel blue/cyan, with water-inspired highlights.
 The desired character is capable, approachable, and a little playful.
 The following colors preserve the original design proposal. The implemented,
-contrast-tested light/dark values and assets are in the [identity guide](../BRANDING.md);
+contrast-tested light/dark values and assets are in the [identity guide](../brand/README.md);
 use its generated semantic tokens for new interfaces instead of these anchors:
 
 | Token | Starting color | Intended role |

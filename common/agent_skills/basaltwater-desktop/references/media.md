@@ -12,7 +12,7 @@ release packages. `--av-tools` adds FFmpeg/ffprobe, ImageMagick and ExifTool.
 These selections are opt-in and do not enable a desktop on headless profiles.
 Debian `--audio-tools` adds SoX, ALSA audio/MIDI utilities and PulseAudio clients
 through saved APT package selections; it does not change audio routing or device
-permissions. See [music and input testing](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md).
+permissions. See [music and input testing](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/MUSIC_DEVELOPMENT.md).
 Debian `--pdf-tools` adds Poppler's `pdfinfo`, `pdftoppm` and `pdftotext`
 through saved APT selections for inspecting score/document exports.
 An executable's presence is discovery, not a completed edit/export check.
@@ -147,7 +147,7 @@ the splash; add `--exclude-title Startup --stable-seconds 1`, then inspect
 launch status and the actual document before input.
 Cancelling the first-run wizard may exit the application. Qt score controls
 may expose only an AT-SPI application root even when the GTK file dialog offers
-usable filename/button references. See the [observed music-tool caveats](https://github.com/bluehexagons/basaltwater/blob/main/docs/MUSIC_DEVELOPMENT.md#observed-debian-desktop-caveats).
+usable filename/button references. See the [observed music-tool caveats](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/MUSIC_DEVELOPMENT.md#observed-debian-desktop-caveats).
 
 Save editable MSCZ and inspection exports separately from immutable input MIDI.
 Import quantization, voices, meter, tempo, rests and ties can differ from the

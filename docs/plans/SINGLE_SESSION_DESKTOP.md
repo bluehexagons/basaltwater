@@ -2,7 +2,7 @@
 
 Status: runtime, CLI, setup wiring, migration guards, managed skills and bounded
 AT-SPI inspection/actions are implemented. XRDP is retained per user decision;
-disposable-VM qualification remains open. See [the operator guide](../XRDP.md)
+disposable-VM qualification remains open. See [the operator guide](../workstations/XRDP.md)
 for the implemented behavior and live smoke procedure. The acceptance criteria
 below remain qualification targets, not a claim that live testing has passed.
 
@@ -41,7 +41,7 @@ prevent an administrator from manually launching an unrelated X server.
 | Configuration, CLI, serialization, display output, and tests expose session counts and disconnect cleanup. | Replace these settings with the fixed lifecycle and migrate stored configurations. |
 | Existing agent browser tools operate their own browser automation context. | Add explicit shared-desktop tools; do not assume browser tooling already controls native applications. |
 
-See [XRDP](../XRDP.md), [workstations](../WORKSTATIONS.md), and the
+See [XRDP](../workstations/XRDP.md), [workstations](../workstations/WORKSTATIONS.md), and the
 [desktop maintenance audit](DESKTOP_AGENT_MAINTENANCE_AUDIT_2026-08-09.md)
 for the current operator contract and prior reliability work. This plan owns
 the new architecture; relevant outstanding desktop audit validation feeds
@@ -348,7 +348,7 @@ suitable shell/API tools and T3/Playwright browser testing remains unchanged.
 | Refinement | Delivered scope and follow-on work |
 | --- | --- |
 | Window management | Focus/move/resize/maximize/minimize/restore and normal close, requiring generation and current window identity. Desktop/panel windows are excluded. Title/PID/class/X-ID fingerprints reduce stale targeting but cannot guarantee against ID reuse. |
-| Semantic accessibility | Delivered: bounded PID-scoped AT-SPI trees, dialog/subtree references, action/text/focus operations and waits, with password omission, stale-reference rejection and pause/generation checks. The [Geany smoke workflow](../DESKTOP_AUTOMATION.md#small-geany-check) verifies disposable edit/save/scoped-dialog behavior; wider GTK/Qt/office qualification remains open. |
+| Semantic accessibility | Delivered: bounded PID-scoped AT-SPI trees, dialog/subtree references, action/text/focus operations and waits, with password omission, stale-reference rejection and pause/generation checks. The [Geany smoke workflow](../workstations/DESKTOP_AUTOMATION.md#small-geany-check) verifies disposable edit/save/scoped-dialog behavior; wider GTK/Qt/office qualification remains open. |
 | Readiness waits | Present/visible/active/absent polling outside the supervisor and lease. Incomplete inventories cannot establish absence. Document/export readiness needs application adapters. |
 | Launch results | Session-local launch token, PID, running/exited state, optional title wait and pre-existing window detection. Retain latest 128 records. Title matches do not prove process ownership or document readiness. |
 | Visible human handoff | Application-menu control window with status and pause/resume; closing preserves pause. Permanent tray indicator and optional task labels deferred pending desktop-specific qualification. |

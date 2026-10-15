@@ -110,4 +110,4 @@ creating another task. For operational tasks, read the enabled
 `basaltwater-agent-operations` skill's unattended-task reference.
 
 Full settings, recovery, worker setup, and future T3 adapter design are in the
-[task guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_TASKS.md).
+[task guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/AGENT_TASKS.md).

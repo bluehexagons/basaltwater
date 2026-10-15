@@ -7,7 +7,7 @@ still require larger design work. The narrow `agent_vm` and
 `agent_workstation` profile shorthands have also landed.
 
 This document retains audit-time observations and former command names. Use
-the current [maintenance contract](../MAINTENANCE.md) and `basaltw` references
+the current [maintenance contract](../operations/MAINTENANCE.md) and `basaltw` references
 for operations. The 2026-10-12 Antistatic slice delivers ballooning-aware memory
 interpretation, readable OOM counters without cgroup paths, bounded cache/cleanup and
 maintenance-review captures, and identity-checked private disposal through the
@@ -19,7 +19,7 @@ The optional installation-context manifest now compares invoked and managed
 source with activation/snapshot receipts, retaining missing revisions as unknown.
 CachyOS adds successful setup source and managed-web service identity without
 inferring loaded code or replacing developer launchers. Use the
-[source-context contract](../PROJECT_TOOLING.md#installed-cli-and-source-context)
+[source-context contract](../agents/PROJECT_TOOLING.md#installed-cli-and-source-context)
 for custom managed roots and comparison limits. Local fixtures/workstation checks
 do not qualify Debian service revision or interrupted activation/recovery.
 

@@ -6,7 +6,7 @@ are tested and accepted by its owner as of 2026-09-27. The
 that live evidence from pending fresh-install and interruption/recovery cases.
 Task-scoped native portal capture/input and Inkscape AT-SPI edits were
 implemented and live-tested on this workstation on 2026-10-04. See the
-[native desktop guide](../CACHYOS_DESKTOP.md) for the released scope. Broader
+[native desktop guide](../workstations/CACHYOS_DESKTOP.md) for the released scope. Broader
 browser, Qt, hardware and lifecycle gates remain open.
 Reusable portal grants, bounded renewal, and interruptible held input were
 implemented and live-tested on 2026-10-05, including actual Fast21 gameplay.
@@ -76,7 +76,7 @@ authority for CachyOS desktop qualification and feature delivery.
 
 ## Remote development priorities — 2026-10-08
 
-Use [remote development](../CACHYOS_DEVELOPMENT.md) as the operator entry point.
+Use [remote development](../workstations/CACHYOS_DEVELOPMENT.md) as the operator entry point.
 The order below supersedes the older browser-first delivery sequence. Existing
 portal consent, pause, and lease boundaries continue to govern capture/input;
 an explicit application launch need not acquire capture or input permission.
@@ -185,7 +185,7 @@ The browser capability should provide:
 Use the existing VM Playwright design as the reference for isolation and
 artifacts, while documenting the CachyOS-specific user-session and package
 policy. The [Playwright browser lifecycle](https://playwright.dev/docs/browsers)
-and [browser automation guide](../BROWSER_AUTOMATION.md) describe the version
+and [browser automation guide](../agents/BROWSER_AUTOMATION.md) describe the version
 matching and artifact constraints that this work must preserve.
 
 **Acceptance:** a local test page can be opened, interacted with, and captured

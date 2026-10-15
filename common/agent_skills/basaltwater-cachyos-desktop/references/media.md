@@ -111,6 +111,6 @@ Do not reconfigure audio devices or install GPU drivers solely for an export.
 
 Material Maker/Godot exports and publishing tools have their own setup and
 runtime requirements in the
-[CachyOS software guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_SOFTWARE.md).
+[CachyOS software guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_SOFTWARE.md).
 Package availability does not authorize recording, publishing, flashing media
 or connecting to a new host beyond the user's task.

@@ -37,8 +37,8 @@ avoid abstraction whose only purpose is a hypothetical provider or service.
 The August baseline and lane descriptions below retain earlier design decisions;
 they are not the current CLI or T3 installation contract. The managed desktop
 AppImage path has been retired. T3 now uses its native user-service lifecycle,
-and managed HTTPS exposure is implemented. Use [T3 Code](../T3_CODE.md)
-and the [CLI reference](../COMMAND_LINE.md) for supported commands. Storage and
+and managed HTTPS exposure is implemented. Use [T3 Code](../agents/T3_CODE.md)
+and the [CLI reference](../reference/COMMAND_LINE.md) for supported commands. Storage and
 recovery qualification remains open; the [release checklist](../BASALTWATER_RELEASE.md)
 records the rename-specific remaining work. Product names and command prefixes
 below use Basaltwater even where the described design has been superseded.
@@ -1664,7 +1664,7 @@ sensitivity, and verification contracts that mechanism must consume.
 - `common/storage_steps.py`
 - `plugins/common.py`
 - `lib/nginx_config.py`
-- `docs/GOGS.md`
+- `docs/services/GOGS.md`
 - [Agent VM workspaces and credentials](AGENT_VM_WORKSPACES.md)
 - [Proxmox setup and maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md)
 - [Transactional execution and reconciliation](TRANSACTIONAL_EXECUTION.md)
@@ -1681,7 +1681,7 @@ sensitivity, and verification contracts that mechanism must consume.
 - [Git LFS command and storage model](https://github.com/git-lfs/git-lfs/blob/main/docs/man/git-lfs.adoc)
 - [Git LFS API and authentication](https://github.com/git-lfs/git-lfs/blob/main/docs/api/README.md)
 - [Gogs Git LFS documentation](https://gogs.io/advancing/git-lfs)
-- [Samba shares and client mounts](../SAMBA_SHARES.md)
+- [Samba shares and client mounts](../storage/SAMBA_SHARES.md)
 - [Proxmox storage model](https://pve.proxmox.com/pve-docs/pvesm.1.html)
 - [Proxmox VE Administration Guide](https://pve.proxmox.com/pve-docs/pve-admin-guide.pdf)
 - [Cloud-init disk, filesystem, and mount modules](https://docs.cloud-init.io/en/latest/reference/modules.html)

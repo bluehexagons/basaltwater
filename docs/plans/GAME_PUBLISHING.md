@@ -6,16 +6,16 @@ existing web panel, VM-local authentication, and manual or unattended uploads.
 The companion [release and communications plan](GAME_RELEASE_COMMUNICATIONS.md)
 extends it with build promotion, posts, translations, human review, and
 publication. Steam default-branch release remains manual on Steamworks.
-Existing installation support remains documented in [Godot](../GODOT.md) and
-[CachyOS software](../CACHYOS_SOFTWARE.md). Priority: unscheduled; this work
+Existing installation support remains documented in [Godot](../workstations/GODOT.md) and
+[CachyOS software](../workstations/CACHYOS_SOFTWARE.md). Priority: unscheduled; this work
 does not displace the roadmap's reliability priorities. Implementation is now
 authorized; live account login, uploads, and provider qualification require
-operator-selected test destinations. See [the operator guide](../GAME_PUBLISHING.md)
+operator-selected test destinations. See [the operator guide](../workstations/GAME_PUBLISHING.md)
 for the delivered capabilities and remaining qualification boundaries.
 
 ## Delivered scope and remaining work
 
-The [operator guide](../GAME_PUBLISHING.md) is the current executable contract.
+The [operator guide](../workstations/GAME_PUBLISHING.md) is the current executable contract.
 The design below preserves the broader feature direction; it does not claim
 that every acceptance item has been qualified.
 

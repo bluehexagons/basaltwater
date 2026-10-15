@@ -183,7 +183,7 @@ class DeploymentOrchestrator:
                     raise OperationStateError(
                         f"Unfinished {record.operation_type} operation {record.operation_id} "
                         f"is recorded in {marker} at phase {record.phase}; "
-                        "reconcile the release and services using docs/TRANSACTION_RECOVERY.md before retrying"
+                        "reconcile the release and services using docs/operations/TRANSACTION_RECOVERY.md before retrying"
                     )
             return handle
         except BaseException:

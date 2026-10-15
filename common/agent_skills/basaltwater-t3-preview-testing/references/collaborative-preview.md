@@ -83,8 +83,8 @@ served artifact with the build, use the app's update flow or one reload, and
 recheck. Worker metadata alone does not establish freshness. Do not unregister
 workers, delete caches, or force activation merely to diagnose a stale preview.
 See the read-only expression in the
-[browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#offline-cache-freshness)
-or `docs/BROWSER_AUTOMATION.md` in a Basaltwater checkout.
+[browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/BROWSER_AUTOMATION.md#offline-cache-freshness)
+or `docs/agents/BROWSER_AUTOMATION.md` in a Basaltwater checkout.
 
 Canvas snapshots may expose only fallback text; inspect the screenshot and
 use supported coordinate input for canvas controls, keeping semantic locators
@@ -184,8 +184,8 @@ certificate over an existing trusted path and verify its fingerprint before
 installation. Never transfer the CA private key.
 
 For enrollment, read only the matching platform section of the
-[client CA trust guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CLIENT_CA_TRUST.md)
-(or `docs/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
+[client CA trust guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/services/CLIENT_CA_TRUST.md)
+(or `docs/services/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
 this client security change. After enrollment, restart the client, recheck
 preview status, and retry the existing tab. If enrollment is declined or the
 guide is unavailable, retain the coverage gap and continue the other checks.

@@ -7,7 +7,7 @@ qualification remains a release validation task under the
 [lightweight service project](LIGHTWEIGHT_SERVICE_CANDIDATES.md) and the
 [v2.0 release checklist](../BASALTWATER_RELEASE.md#stable-qualification-matrix).
 
-The live operator contract is [HomeBox inventory](../HOMEBOX.md). This plan
+The live operator contract is [HomeBox inventory](../services/HOMEBOX.md). This plan
 records the delivered boundary, validation evidence, and the work still needed
 before calling the integration release-qualified.
 
@@ -42,7 +42,7 @@ before calling the integration release-qualified.
 | Target lifecycle | `web/homebox_steps.py` | Release verification, account/storage setup, bootstrap, systemd/Nginx, health, locking, upgrade, backup, restore, disable, and rollback |
 | Controller operations | `lib/homebox_cli.py` | Remote health, backup, and restore commands with saved SSH settings and confirmation for destructive restore |
 | Recurring maintenance | `common/service_tools/auto_update_homebox.py`, `common/common_steps.py` | Stable release check, shared upgrade transaction, result state, and configured notifications |
-| Documentation and tests | `docs/HOMEBOX.md`, `docs/COMMAND_LINE.md`, `docs/MAINTENANCE.md`, `tests/test_homebox.py`, `tests/service_tools/test_auto_update_homebox.py` | Operator procedures, maintenance policy, focused lifecycle coverage, and non-secret health reporting |
+| Documentation and tests | `docs/services/HOMEBOX.md`, `docs/reference/COMMAND_LINE.md`, `docs/operations/MAINTENANCE.md`, `tests/test_homebox.py`, `tests/service_tools/test_auto_update_homebox.py` | Operator procedures, maintenance policy, focused lifecycle coverage, and non-secret health reporting |
 
 ## Validation evidence
 

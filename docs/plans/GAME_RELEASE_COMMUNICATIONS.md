@@ -7,7 +7,7 @@ jobs, and delivery ordering. This document owns build promotion, release
 coordination, writing, translation, human review, and post publication inside
 the same web panel.
 
-The [operator guide](../GAME_PUBLISHING.md) records the delivered scope: exact
+The [operator guide](../workstations/GAME_PUBLISHING.md) records the delivered scope: exact
 retained itch.io channel uploads, optional Steam beta preparation/promotion,
 manual Steamworks default-release gates, immutable plain-text drafts, agent
 writing-task preparation, source/translation comparisons, human review,

@@ -1,6 +1,6 @@
 # Ubuntu WSL support
 
-The implementation is in [the operator guide](../WINDOWS_WSL.md). Live Windows
+The implementation is in [the operator guide](../workstations/WINDOWS_WSL.md). Live Windows
 qualification is still required before calling the release production ready.
 
 ## Release scope
@@ -35,7 +35,7 @@ receiver-confirmed SHA-256. Ubuntu builds use Ubuntu-native workspaces.
    Windows, WSL, Ubuntu, WinGet, and T3 versions with the results.
 
 Automated Debian-side tests cover the profile, capability gates, preparation,
-and source staging. The [manual Windows CI workflow](../WINDOWS_WSL.md#run-manual-windows-ci)
+and source staging. The [manual Windows CI workflow](../workstations/WINDOWS_WSL.md#run-manual-windows-ci)
 adds hosted native job tests and optional read-only WSL checks on an isolated
 Windows 11 self-hosted runner. Fresh bootstrap, UAC, Store registration, a real
 artifact receiver, and T3 desktop integration still require hands-on checks.

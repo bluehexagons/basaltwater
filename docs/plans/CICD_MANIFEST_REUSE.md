@@ -20,8 +20,8 @@ Why it is separate:
 
 If this work resumes, start from:
 
-- `docs/DEPLOYMENTS.md`
-- `docs/CICD.md`
+- `docs/services/DEPLOYMENTS.md`
+- `docs/services/CICD.md`
 - `lib/project_manifest.py`
 - `web/service_tools/cicd_executor.py`
 - `lib/deployment.py`

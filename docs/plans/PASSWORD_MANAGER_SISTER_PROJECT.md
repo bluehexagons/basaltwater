@@ -324,8 +324,8 @@ distribution, membership, revocation, and recovery design and needs a new plan.
 - [Chrome activeTab permission](https://developer.chrome.com/docs/extensions/develop/concepts/activeTab)
 - [Chrome worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)
 - [Native messaging, for a later desktop client](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging)
-- [Basaltwater deployment contracts](../DEPLOYMENTS.md)
-- [Basaltwater deployment recovery](../DEPLOYMENT_SAFETY.md)
+- [Basaltwater deployment contracts](../services/DEPLOYMENTS.md)
+- [Basaltwater deployment recovery](../services/DEPLOYMENT_SAFETY.md)
 
 These specifications inform the design; they do not certify the implementation.
 Recheck browser and deployment contracts when implementation starts.

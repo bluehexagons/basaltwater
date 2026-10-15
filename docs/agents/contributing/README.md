@@ -111,7 +111,7 @@ container installs it so this coverage is exercised there.
 
 First-party Chromium/Firefox application checks are a separate developer-machine
 command: `make browser-test`. They are never dependencies of `check-ci` and do
-not install browser payloads. Follow [browser qualification](../../BROWSER_TESTING.md)
+not install browser payloads. Follow [browser qualification](../BROWSER_TESTING.md)
 for prerequisites, private evidence, the disposable Guacamole boundary, and the
 separate native Firefox ESR release check. Keep fast unit/service/render checks
 in CI. When creating project instructions, document browser targets and the

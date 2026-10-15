@@ -61,7 +61,7 @@ and timestamped anonymous/file/swap, pressure/limits and cumulative OOM evidence
 for the current workload and T3 service. Unknown peak-time capacity, missing
 counters and service/cgroup changes remain explicit; one OOM count does not
 attribute a job or establish a leak. The
-[resource contract](../PROJECT_TOOLING.md#effective-workload-limits) owns the
+[resource contract](../agents/PROJECT_TOOLING.md#effective-workload-limits) owns the
 operator guidance. Quiet, cache-heavy, malformed and constrained cgroup cases
 have fixture coverage; disposable service-lifetime qualification remains with
 the [refresh matrix](PRIVILEGE_EXECUTION_QUALIFICATION.md).
@@ -93,7 +93,7 @@ maintenance captures bound output and runtime using existing streaming/group
 supervision. CachyOS user-cache reconciliation uses these same protections and
 its package inventories now have byte limits. No new collector, project-evidence
 retention, image pruning or live cleanup was introduced by this follow-up;
-operator contracts are in [maintenance](../MAINTENANCE.md#cleanup-and-state-safety).
+operator contracts are in [maintenance](../operations/MAINTENANCE.md#cleanup-and-state-safety).
 
 ### Phase 3: task isolation and operator evidence
 

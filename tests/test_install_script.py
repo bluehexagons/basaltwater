@@ -837,7 +837,7 @@ class TestInstallScript(unittest.TestCase):
             self.assertEqual(os.listdir(home), [])
 
     def _documented_installer_examples(self):
-        for filename in ("README.md", "docs/INSTALLATION.md", "docs/CACHYOS.md"):
+        for filename in ("README.md", "docs/getting-started/INSTALLATION.md", "docs/workstations/CACHYOS.md"):
             document = Path(PROJECT_ROOT, filename).read_text()
             for index, example in enumerate(re.findall(r"```(?:sh|bash|fish)\n(.*?)```", document, re.S)):
                 if "installer=$(mktemp)" not in example:
@@ -857,7 +857,7 @@ class TestInstallScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
     def test_cachyos_docs_and_skills_have_valid_fish_syntax(self):
         root = Path(PROJECT_ROOT)
-        documents = sorted((root / "docs").glob("CACHYOS*.md"))
+        documents = sorted((root / "docs/workstations").glob("CACHYOS*.md"))
         documents.extend(sorted((root / "common/agent_skills").glob("basaltwater-cachyos-*/**/*.md")))
         for document in documents:
             for language, example in re.findall(r"```(sh|bash|fish)\n(.*?)```", document.read_text(), re.S):
@@ -877,7 +877,7 @@ class TestInstallScript(unittest.TestCase):
     @unittest.skipUnless(shutil.which("fish"), "fish required for CachyOS shell checks")
     def test_cachyos_quick_starts_install_and_select_fish_without_elevation(self):
         examples = [(label, example) for label, example in self._documented_installer_examples()
-                    if label.startswith("docs/CACHYOS.md")]
+                    if label.startswith("docs/workstations/CACHYOS.md")]
         self.assertEqual(len(examples), 2)
         for label, example in examples:
             with self.subTest(example=label), tempfile.TemporaryDirectory() as directory:
@@ -950,7 +950,7 @@ class TestInstallScript(unittest.TestCase):
                     self.assertEqual(list(temporary.iterdir()), [])
                     ran = temporary_status == download_status == 0
                     self.assertEqual((root / "ran").exists(), ran)
-                    if ran and label.startswith("docs/CACHYOS.md"):
+                    if ran and label.startswith("docs/workstations/CACHYOS.md"):
                         expected = ["--local-setup", "agent_cachyos"]
                         if "--t3code-desktop" in example:
                             expected.append("--t3code-desktop")

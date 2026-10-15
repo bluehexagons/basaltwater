@@ -210,7 +210,7 @@ usage is billed separately from the ChatGPT subscription.
 
 Credential sources are transient inputs, omitted from persisted setup commands.
 Non-secret per-provider selection and Git policy remain separate from secrets.
-See [Agent authentication](../AGENT_AUTHENTICATION.md) for the current contract.
+See [Agent authentication](../agents/AGENT_AUTHENTICATION.md) for the current contract.
 
 ### Non-secret agent configuration
 
@@ -459,5 +459,5 @@ they must not change the host-neutral public repository contract.
 - `common/agent_steps.py`
 - `lib/agent_cli.py`
 - `lib/credentials.py`
-- `docs/COMMAND_LINE.md`
+- `docs/reference/COMMAND_LINE.md`
 - `docs/plans/AGENT_CLI_MAINTENANCE_AUDIT_2026-08-09.md`

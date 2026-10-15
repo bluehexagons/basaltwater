@@ -49,7 +49,7 @@ and retain private bounded logs; `develop list`, `develop status TASK_ID`, and
 `develop stop TASK_ID` manage only their records/process group. Save changes
 before stopping an editor. Launches honor saved/live human pause; they do not
 grant capture/input permission. See the
-[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CACHYOS_DEVELOPMENT.md).
+[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_DEVELOPMENT.md).
 
 Queue project-declared Godot/Electron/native checks with `develop check RECIPE
 --project PATH --settings SETTINGS.json --timeout SECONDS`. Use the existing
@@ -131,5 +131,5 @@ avoid including unrelated desktop content in captures.
 
 Native packages and their dependencies stay under normal CachyOS maintenance.
 Use `basaltwater-cachyos-workstation` for installation and diagnostics, and the
-[desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/DESKTOP_DEVELOPMENT.md)
+[desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/DESKTOP_DEVELOPMENT.md)
 for shared application recipes and the distinction between artifact and UI checks.

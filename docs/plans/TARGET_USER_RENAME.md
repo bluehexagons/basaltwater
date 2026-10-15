@@ -100,7 +100,7 @@ target user's SSH session is terminated.
   staged systemd unit and is not exposed as a normal local workflow.
 - Extend cache/state helpers only where needed to preserve metadata while
   changing the current username and path-valued fields.
-- Document the command in `docs/SYSADMIN.md` and `docs/COMMAND_LINE.md`.
+- Document the command in `docs/operations/SYSADMIN.md` and `docs/reference/COMMAND_LINE.md`.
 
 ## Verification
 

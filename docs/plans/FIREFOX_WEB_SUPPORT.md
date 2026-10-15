@@ -50,7 +50,7 @@ Delivered: engine/context inventory with separate discovery,
 launch, MCP registration and application coverage states; native and Flatpak
 Firefox discovery; opt-in per-user Firefox MCP registration using the pinned
 runtime and isolated launcher; a local application suite and project/agent
-guidance. Use [browser qualification](../BROWSER_TESTING.md) for maintained
+guidance. Use [browser qualification](../agents/BROWSER_TESTING.md) for maintained
 commands, evidence boundaries, and the native ESR release checklist.
 
 Local qualification on Debian 13.7 amd64 used Node 20.19.2 and pinned Playwright
@@ -165,12 +165,12 @@ architecture.
 
 ## References
 
-- [Agent browser automation](../BROWSER_AUTOMATION.md) and
-  [workstation browser choices](../WORKSTATIONS.md)
-- [Web panel](../WEB_PANEL.md), [internal HTTPS](../INTERNAL_WEB.md), and
-  [client CA trust](../CLIENT_CA_TRUST.md)
-- [Device pairing](../DEVICE_PAIRING.md),
-  [privilege approvals](../PRIVILEGE_APPROVALS.md), and
-  [Guacamole](../GUACAMOLE.md)
+- [Agent browser automation](../agents/BROWSER_AUTOMATION.md) and
+  [workstation browser choices](../workstations/WORKSTATIONS.md)
+- [Web panel](../services/WEB_PANEL.md), [internal HTTPS](../services/INTERNAL_WEB.md), and
+  [client CA trust](../services/CLIENT_CA_TRUST.md)
+- [Device pairing](../services/DEVICE_PAIRING.md),
+  [privilege approvals](../agents/PRIVILEGE_APPROVALS.md), and
+  [Guacamole](../workstations/GUACAMOLE.md)
 - [Playwright browser support](https://playwright.dev/docs/browsers#firefox)
 - [Playwright MCP configuration](https://github.com/microsoft/playwright-mcp#configuration)

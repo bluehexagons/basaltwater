@@ -16,7 +16,7 @@ portal displays the exact arguments and allows one approved attempt. Do not
 put a shell, `sudo`, environment assignments, or secrets in `--command`.
 Managed `basaltwater-web` publication and owner-scoped live gateway actions
 already work without this approval flow. See
-[Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/PRIVILEGE_APPROVALS.md)
+[Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PRIVILEGE_APPROVALS.md)
 for the supported actions and portal setup.
 
 Waiting can time out while the original request remains pending or executing.

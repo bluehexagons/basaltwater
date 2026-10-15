@@ -73,8 +73,8 @@ whether an update is waiting. Avoid `ready`, which can wait indefinitely.
 Compare the hosted artifact with the build, then use the app's normal update
 flow or one reload and recheck. Worker metadata alone does not prove freshness;
 do not clear caches, unregister workers, or force activation as a diagnostic.
-The [browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/BROWSER_AUTOMATION.md#offline-cache-freshness)
-(`docs/BROWSER_AUTOMATION.md` in a Basaltwater checkout) has a read-only expression.
+The [browser guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/BROWSER_AUTOMATION.md#offline-cache-freshness)
+(`docs/agents/BROWSER_AUTOMATION.md` in a Basaltwater checkout) has a read-only expression.
 
 Viewport presets exercise CSS layout breakpoints without changing the desktop
 browser user agent. Snapshot again after resize or scroll because coordinates
@@ -136,8 +136,8 @@ certificate over an existing trusted path and verify its fingerprint before
 installation. Never transfer the CA private key.
 
 For enrollment, read only the matching platform section of the
-[client CA trust guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/CLIENT_CA_TRUST.md)
-(or `docs/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
+[client CA trust guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/services/CLIENT_CA_TRUST.md)
+(or `docs/services/CLIENT_CA_TRUST.md` in a Basaltwater checkout). The user performs
 this client security change. After enrollment, restart the client, recheck
 preview status, and retry the existing tab. If enrollment is declined or the
 guide is unavailable, retain the coverage gap and continue the other checks.

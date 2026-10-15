@@ -49,6 +49,6 @@ sudo journalctl -u webhook-receiver.service -n 100 --no-pager
 ~~~
 
 Configure GitHub's webhook path and secret using the
-[CI/CD guide](../../docs/CICD.md). A GitHub ping checks connectivity but does
+[CI/CD guide](../../docs/services/CICD.md). A GitHub ping checks connectivity but does
 not build a repository. Keep ports 8080 and 8765 bound to loopback; do not
 expose either listener directly.

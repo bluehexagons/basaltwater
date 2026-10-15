@@ -33,9 +33,9 @@ adding host PHP-FPM, Composer, or a general native PHP installer.
 
 ## Current overlap and proposed disposition
 
-The current contracts are [deployments](../DEPLOYMENTS.md),
-[deployment safety](../DEPLOYMENT_SAFETY.md), [CI/CD](../CICD.md),
-[backups](../BACKUPS.md), and the [web panel](../WEB_PANEL.md).
+The current contracts are [deployments](../services/DEPLOYMENTS.md),
+[deployment safety](../services/DEPLOYMENT_SAFETY.md), [CI/CD](../services/CICD.md),
+[backups](../storage/BACKUPS.md), and the [web panel](../services/WEB_PANEL.md).
 
 | Existing responsibility | Proposed owner for migrated applications | Work retained or changed |
 | --- | --- | --- |

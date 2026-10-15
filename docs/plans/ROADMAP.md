@@ -87,7 +87,7 @@ Required outcomes:
 This work is the foundation for every later apply or rollback feature.
 The [implementation plan](TRANSACTIONAL_EXECUTION.md) records the completed
 boundaries, validation and explicit limits. Use
-[transaction recovery](../TRANSACTION_RECOVERY.md) when a marker blocks retry.
+[transaction recovery](../operations/TRANSACTION_RECOVERY.md) when a marker blocks retry.
 
 ## P1: One manifest-driven deployment platform
 
@@ -163,7 +163,7 @@ is scoped in the
 Storage integrity proposals for verify-before-sync snapshots, locking,
 interrupted-manifest reconciliation, resumable scans, incident notifications,
 and recovery retention remain unscheduled; their scope is in the
-[storage integrity review](../STORAGE_REVIEW.md).
+[storage integrity review](../storage/STORAGE_REVIEW.md).
 
 ## P2: Safe network apply and rollback
 
@@ -210,7 +210,7 @@ inside the existing web panel, plus unattended and scheduled uploads using
 VM-local sessions. The initial implementation now includes independent tool
 selection, shared maintenance leases, native panel login, durable uploads and
 panel-owned polling. Live provider qualification remains open; this work does
-not reorder P0/P1 priorities. The [operator guide](../GAME_PUBLISHING.md) records
+not reorder P0/P1 priorities. The [operator guide](../workstations/GAME_PUBLISHING.md) records
 the current contract and limits.
 The [release and communications extension](GAME_RELEASE_COMMUNICATIONS.md)
 adds build promotion and human-reviewed writing, translation, and publication.

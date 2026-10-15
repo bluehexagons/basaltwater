@@ -11,8 +11,8 @@ The original broker executed arbitrary approved argv inside its own
 `ProtectSystem=strict` / `PrivateDevices` / `ProtectHome` sandbox. Approval of
 `install -d /srv/...` therefore succeeded while execution failed. The original
 five-minute default expiry also regularly elapsed before an operator could review
-the request. [Privilege approvals](../PRIVILEGE_APPROVALS.md) and the
-[administrator reference](../PRIVILEGE_BROKER_REFERENCE.md) own durable behavior.
+the request. [Privilege approvals](../agents/PRIVILEGE_APPROVALS.md) and the
+[administrator reference](../agents/PRIVILEGE_BROKER_REFERENCE.md) own durable behavior.
 
 ## Implementation and acceptance
 

@@ -135,7 +135,7 @@ A retained marker takes precedence over a last-result file written before
 marker removal. Marker errors require verified recovery and preserve private
 field contents instead of suggesting an immediate bypass.
 
-Use [transaction recovery](../TRANSACTION_RECOVERY.md) for marker locations,
+Use [transaction recovery](../operations/TRANSACTION_RECOVERY.md) for marker locations,
 phase-specific repair, previous port/unit restoration, first-deployment
 recovery and verified marker resolution.
 
