@@ -7,6 +7,9 @@ metadata:
 
 # Local coding workspaces
 
+For general repository workflow and local project instructions, read the
+installed `basaltwater-project-development` skill.
+
 Use the existing human account. Repositories default to `~/repos`, or the path
 selected with `--agent-workspace`; discover the actual project before editing.
 Setup clones only missing repositories and never pulls or resets an existing one.

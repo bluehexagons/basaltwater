@@ -9,9 +9,11 @@ metadata:
 
 Use this workflow with the platform's workspace skill. It is installed on
 Debian agent VMs, CachyOS workstations, and Ubuntu WSL; its references are local.
-Delegate independent tasks when context transfer, review, integration, retries,
-and model cost leave a useful saving. Keep small, tightly coupled changes with
-one owner. Delegation remains subject to the session's authorization and tools.
+For general repository workflow and local instruction discovery, also read the
+installed `basaltwater-project-development` skill. Delegate independent tasks
+when context transfer, review, integration, retries, and model cost leave a
+useful saving. Keep small, tightly coupled changes with one owner. Delegation
+remains subject to the session's authorization and tools.
 
 Start discovery with `basaltw agent manifest . --capability workspace
 --capability skills --json`; add the relevant capability when needed, or use

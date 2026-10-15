@@ -7,6 +7,9 @@ metadata:
 
 # Ubuntu WSL coding work
 
+For general repository workflow and local project instructions, read the
+installed `basaltwater-project-development` skill.
+
 Run Linux tools as the configured non-root Ubuntu user in the selected WSL
 distribution. Keep repositories, worktrees, dependencies, and Linux build output
 on its native filesystem, usually under `~/repos`, rather than `/mnt/c`.

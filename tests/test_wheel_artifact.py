@@ -34,6 +34,7 @@ class WheelArtifactTest(unittest.TestCase):
 
     def test_rejects_missing_workflow_resources(self) -> None:
         resources = (
+            "common/agent_skills/basaltwater-project-development/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/SKILL.md",
             "common/agent_skills/basaltwater-cachyos-desktop/references/native-control.md",
             "lib/agent_models.py",

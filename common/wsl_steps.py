@@ -14,7 +14,11 @@ from lib.remote_utils import is_dry_run, run
 from lib.validators import validate_username
 
 
-WSL_SKILL_NAMES = ("basaltwater-wsl-workspace", "basaltwater-subagents")
+WSL_SKILL_NAMES = (
+    "basaltwater-wsl-workspace",
+    "basaltwater-project-development",
+    "basaltwater-subagents",
+)
 
 
 def install_wsl_agent_skills(config: SetupConfig) -> None:

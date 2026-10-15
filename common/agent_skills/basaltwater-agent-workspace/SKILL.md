@@ -7,6 +7,9 @@ metadata:
 
 # Agent workspaces
 
+For general repository workflow and local project instructions, read the
+installed `basaltwater-project-development` skill.
+
 Use managed worktrees when concurrent editors could touch the same checkout.
 Read-only review can use the primary checkout; checks generating files are edits.
 Delegate only within the session's authority and when independent scopes justify it.

@@ -1,10 +1,11 @@
 # Managed agent workflow skills
 
-Basaltwater installs concise operational skills for Codex and OpenCode under
-the shared `~/.agents/skills` directory and for Claude Code under its personal
-`~/.claude/skills` directory. The skills describe profile-specific
-commands and boundaries that a general coding agent cannot infer reliably from
-the project alone.
+Basaltwater installs concise project workflow and operational skills for Codex
+and OpenCode under the shared `~/.agents/skills` directory and for Claude Code
+under its personal `~/.claude/skills` directory. The project workflow skill
+applies across repositories; operational skills describe profile-specific
+commands and boundaries that a general coding agent cannot infer from a project
+alone.
 
 ## Access from different sessions
 
@@ -61,12 +62,13 @@ depend on the active session. The shared subagent skill ships
 [`references/session-context.md`](../../common/agent_skills/basaltwater-subagents/references/session-context.md)
 with a worker assignment example and guidance for each context.
 
-Windows `server_wsl` now installs `basaltw`, `basaltwater-wsl-workspace`, and
-`basaltwater-subagents` when a supported coding agent is selected. These are
-Linux-user skills; native Windows providers have separate homes and are not
-provisioned by this profile. Native PowerShell artifact jobs execute committed
-scripts rather than Codex prompts. WSL does not receive VM maintenance, panel,
-XRDP, or managed browser skills. See [Windows/WSL](../workstations/windows-wsl.md).
+Windows `server_wsl` now installs `basaltw`, `basaltwater-wsl-workspace`,
+`basaltwater-project-development`, and `basaltwater-subagents` when a supported
+coding agent is selected. These are Linux-user skills; native Windows providers
+have separate homes and are not provisioned by this profile. Native PowerShell
+artifact jobs execute committed scripts rather than Codex prompts. WSL does not
+receive VM maintenance, panel, XRDP, or managed browser skills. See
+[Windows/WSL](../workstations/windows-wsl.md).
 
 ## Installed skills
 
@@ -83,6 +85,7 @@ scope and reruns.
 | --- | --- |
 | `basaltwater-cachyos-workstation` | Native package bundles, diagnostics, and desktop/session boundaries |
 | `basaltwater-cachyos-workspace` | User-owned repository workspaces and safe reruns |
+| `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
 | `basaltwater-subagents` | Bounded delegation, complete local worktree lifecycle, and cost-aware project model learning on either platform |
 | `basaltwater-cachyos-desktop` | Task-scoped KDE portal/AT-SPI control, native Blender and media workflows, reusable grants, and physical-key recovery |
 | `basaltwater-cachyos-t3code` | T3 desktop or managed web mode, switching, pairing, and T3 Connect |
@@ -97,6 +100,7 @@ receives these base skills:
 
 | Skill | Use it for |
 | --- | --- |
+| `basaltwater-project-development` | Repo-agnostic workflow, local instructions, scoped changes, and useful independent review or delegation |
 | `basaltwater-agent-operations` | Readiness checks, deliberate terminal-agent updates, maintenance holds, controller-side credential rotation, and unattended panel task guidance |
 | `basaltwater-agent-tasks` | Scheduling authorized follow-ups, recurring/event checks, bounded goals, and portable context handoffs from T3 or terminal agents |
 | `basaltwater-agent-workspace` | Managed VM worktrees, integration/cleanup, and selected durable project notes or todos |
@@ -249,8 +253,10 @@ conventions and declared deployment mappings. See [Agent environment manifest](a
 
 Skill sources live in `common/agent_skills`. Keep each entrypoint short and
 self-contained, with a precise discovery description and non-obvious platform
-behavior. Add a base skill to `BASE_AGENT_SKILL_NAMES` in
-`common/agent_steps.py`. Browser variants belong in
+behavior. The project-development skill is a cross-project workflow: keep it
+repository-agnostic and defer platform details and delegation mechanics to the
+relevant workspace and subagent skills. Add a base skill to
+`BASE_AGENT_SKILL_NAMES` in `common/agent_steps.py`. Browser variants belong in
 `BROWSER_AGENT_SKILL_NAMES` and the capability selector; other capability skill
 tuples should extend the base constant so standalone capability setup remains
 complete. Platform-neutral skills such as `basaltwater-subagents` also belong
