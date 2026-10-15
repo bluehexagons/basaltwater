@@ -529,7 +529,9 @@ class TestSSHFirewallPeerSafety(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {"SSH_CONNECTION": ""}))
         self.command = self.enterContext(patch("security.security_steps.run"))
         self.command.return_value = SimpleNamespace(
-            returncode=0, stdout="Status: active\n", stderr=""
+            returncode=0,
+            stdout="Status: active\nDefault: deny (incoming), allow (outgoing), disabled (routed)\n",
+            stderr="",
         )
         self.config = SetupConfig(
             username="agent", host="192.168.0.44", system_type="agent_vm",
@@ -643,6 +645,8 @@ class TestConfigureFirewall(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status verbose":
+                return SimpleNamespace(returncode=0, stdout="Status: active\nDefault: deny (incoming)\n")
             if command == "ufw status numbered":
                 return SimpleNamespace(returncode=0, stdout="Status: active\n")
             return SimpleNamespace(returncode=0, stdout="")
@@ -684,6 +688,8 @@ class TestConfigureFirewall(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status verbose":
+                return SimpleNamespace(returncode=0, stdout="Status: active\nDefault: deny (incoming)\n")
             if command == "ufw status numbered":
                 return SimpleNamespace(returncode=0, stdout=status_output)
             return SimpleNamespace(returncode=0, stdout="")
@@ -710,6 +716,8 @@ class TestConfigureFirewall(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
+            if command == "ufw status verbose":
+                return SimpleNamespace(returncode=0, stdout="Status: active\nDefault: deny (incoming)\n")
             if command.startswith("ufw limit from"):
                 return SimpleNamespace(returncode=1, stdout="")
             return SimpleNamespace(returncode=0, stdout="")
@@ -749,9 +757,11 @@ class TestConfigureFirewall(unittest.TestCase):
                     if command.startswith("ufw status 2>"):
                         return SimpleNamespace(returncode=0, stdout="")
                     if command == "ufw status numbered":
+                        return SimpleNamespace(returncode=0, stdout="Status: active\n")
+                    if command == "ufw status verbose":
                         return SimpleNamespace(
                             returncode=0,
-                            stdout=f"Status: active\n[ 1] {destination} ALLOW IN Anywhere\n",
+                            stdout=f"Status: active\nDefault: deny (incoming)\n{destination} ALLOW IN Anywhere\n",
                         )
                     return SimpleNamespace(returncode=0, stdout="")
 
@@ -765,7 +775,7 @@ class TestConfigureFirewall(unittest.TestCase):
         def run_side_effect(command, **_kwargs):
             if command.startswith("ufw status 2>"):
                 return SimpleNamespace(returncode=0, stdout="")
-            if command == "ufw status numbered":
+            if command in {"ufw status numbered", "ufw status verbose"}:
                 return SimpleNamespace(returncode=1, stdout="", stderr="query failed")
             return SimpleNamespace(returncode=0, stdout="")
 

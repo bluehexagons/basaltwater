@@ -58,7 +58,7 @@ _MDNS_RULE_COMMENT_PREFIX = "basaltwater mDNS UDP"
 _PROXMOX_MANAGEMENT_COMMENT_PREFIX = "basaltwater access source"
 _UFW_NUMBERED_RULE_RE = re.compile(r"^\[\s*(\d+)\]")
 _UFW_BROAD_INBOUND_RE = re.compile(
-    r"^\[\s*\d+\]\s+(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+Anywhere\b"
+    r"^(?:\[\s*\d+\]\s+)?(.+?)\s+(?:ALLOW|LIMIT)\s+IN\s+Anywhere\b"
 )
 _PAM_ACTIVE_LINES = (
     re.compile(r"^\s*auth\s+\[default=die\]\s+pam_faillock\.so\s+authfail\b"),
@@ -174,7 +174,7 @@ def _remove_stale_managed_rules(
     result = run("ufw status numbered", check=False, capture_output=True)
     stdout = getattr(result, "stdout", None)
     if result.returncode != 0 or not isinstance(stdout, str):
-        return
+        raise _ufw_failure("Could not inspect obsolete managed firewall rules", result)
 
     stale_rule_numbers: list[int] = []
     for line in stdout.splitlines():
@@ -190,7 +190,11 @@ def _remove_stale_managed_rules(
             stale_rule_numbers.append(int(match.group(1)))
 
     for rule_number in sorted(stale_rule_numbers, reverse=True):
-        _run_ufw(f"ufw --force delete {rule_number}")
+        deleted = _run_ufw(f"ufw --force delete {rule_number}")
+        if deleted.returncode != 0:
+            raise _ufw_failure(
+                f"Could not remove obsolete managed firewall rule {rule_number}", deleted
+            )
 
 
 def _configure_rdp_firewall(config: SetupConfig) -> None:
@@ -362,36 +366,108 @@ def _configure_mdns_firewall(config: SetupConfig) -> None:
     _remove_stale_managed_rules(_MDNS_RULE_COMMENT_PREFIX, {comment})
 
 
+def _source_restricted_firewall_status(config: SetupConfig, *, include_rdp: bool) -> str:
+    """Require a filtering default before relying on source-specific allows."""
+    if not (config.effective_access_sources() or (include_rdp and config.effective_rdp_sources())):
+        return ""
+    result = run("ufw status verbose", check=False, capture_output=True, env={**os.environ, "LC_ALL": "C"})
+    stdout = getattr(result, "stdout", None)
+    if result.returncode != 0 or not isinstance(stdout, str) or "Status: active" not in stdout:
+        raise _ufw_failure("Could not verify source-restricted firewall policy", result)
+    if not re.search(r"^Default:\s+(?:deny|reject)\s+\(incoming\)", stdout, re.MULTILINE):
+        raise RuntimeError(
+            "Source-restricted firewall policy requires a deny or reject incoming default. "
+            "Review ufw status verbose and the server's required services before rerunning setup."
+        )
+    return stdout
+
+
+def _ufw_destination_allows_tcp(destination: str, port: int) -> bool:
+    """Match numeric verbose UFW destinations, including ranges and profiles."""
+    destination, _, interface = destination.partition(" on ")
+    if interface == "lo":
+        return False
+    destination = destination.split(" (", 1)[0].strip()
+    protocol = re.search(r"/([a-z][a-z0-9]*)$", destination)
+    if protocol:
+        if protocol[1] != "tcp":
+            return False
+        destination = destination[:protocol.start()]
+    if destination == "Anywhere":
+        return True
+    try:
+        network = ipaddress.ip_network(destination, strict=False)
+    except ValueError:
+        pass
+    else:
+        return not network.is_loopback
+    address, separator, ports = destination.rpartition(" ")
+    if separator:
+        try:
+            network = ipaddress.ip_network(address, strict=False)
+        except ValueError as exc:
+            raise RuntimeError(f"Could not verify UFW destination: {destination}") from exc
+        if network.is_loopback:
+            return False
+    else:
+        ports = destination
+    for item in ports.split(","):
+        if not re.fullmatch(r"[0-9]+(?::[0-9]+)?", item):
+            raise RuntimeError(f"Could not verify UFW destination: {destination}")
+        first, _, last = item.partition(":")
+        if int(first) <= port <= int(last or first):
+            return True
+    return False
+
+
+def _prune_enabled_firewall_rules(
+    config: SetupConfig, *, web_ports: list[int] | None, include_rdp: bool
+) -> None:
+    """Prune saved rules that UFW could not enumerate while it was inactive."""
+    sources = config.effective_access_sources()
+    desired = {
+        _SSH_RULE_COMMENT_PREFIX: {
+            f"{_SSH_RULE_COMMENT_PREFIX} trusted source {source}" for source in sources
+        },
+    }
+    if web_ports is not None:
+        desired[_WEB_RULE_COMMENT_PREFIX] = {
+            f"{_WEB_RULE_COMMENT_PREFIX} {port}" + (f" source {source}" if source else "")
+            for port in web_ports for source in (sources or [""])
+        }
+    if include_rdp:
+        desired[_RDP_RULE_COMMENT_PREFIX] = {comment for comment, _command in _rdp_firewall_rules(config)}
+    if config.clear_mdns or (config.enable_mdns and can_manage_mdns()):
+        desired[_MDNS_RULE_COMMENT_PREFIX] = {_MDNS_RULE_COMMENT_PREFIX} if config.enable_mdns else set()
+    for prefix, comments in desired.items():
+        _remove_stale_managed_rules(prefix, comments)
+
+
 def _verify_source_restricted_firewall(
     config: SetupConfig, *, web_ports: list[int], include_rdp: bool
 ) -> None:
     """Fail setup if an active UFW rule still opens a restricted port globally."""
-    restricted_ports: dict[str, str] = {}
+    restricted_ports: dict[int, str] = {}
     if config.effective_access_sources():
-        restricted_ports.update({"22": "SSH", "OpenSSH": "SSH"})
-        restricted_ports.update({str(port): f"web TCP {port}" for port in web_ports})
+        restricted_ports[22] = "SSH"
+        restricted_ports.update({port: f"web TCP {port}" for port in web_ports})
     if include_rdp and config.effective_rdp_sources():
-        restricted_ports["3389"] = "RDP"
+        restricted_ports[3389] = "RDP"
     if not restricted_ports:
         return
 
-    result = run("ufw status numbered", check=False, capture_output=True)
-    stdout = getattr(result, "stdout", None)
-    if result.returncode != 0 or not isinstance(stdout, str) or "Status: active" not in stdout:
-        raise _ufw_failure("Could not verify source-restricted firewall policy", result)
-
+    # Verbose output expands application profiles into their numeric ports.
+    stdout = _source_restricted_firewall_status(config, include_rdp=include_rdp)
     for line in stdout.splitlines():
         match = _UFW_BROAD_INBOUND_RE.match(line.strip())
         if not match:
             continue
-        destination = re.sub(r"\s+\(v6\)$", "", match.group(1))
-        destination = destination.removesuffix("/tcp")
-        service = restricted_ports.get(destination)
-        if service:
-            raise RuntimeError(
-                f"Source-restricted {service} firewall policy still has a broad UFW rule: "
-                f"{line.strip()}"
-            )
+        for port, service in restricted_ports.items():
+            if _ufw_destination_allows_tcp(match.group(1), port):
+                raise RuntimeError(
+                    f"Source-restricted {service} firewall policy still has a broad UFW rule: "
+                    f"{line.strip()}"
+                )
 
 
 def configure_firewall(config: SetupConfig) -> None:
@@ -399,6 +475,8 @@ def configure_firewall(config: SetupConfig) -> None:
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
 
+    if firewall_active:
+        _source_restricted_firewall_status(config, include_rdp=config.enable_rdp)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run("apt-get install -y -qq ufw")
@@ -433,6 +511,7 @@ def configure_firewall(config: SetupConfig) -> None:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
+    _prune_enabled_firewall_rules(config, web_ports=web_ports, include_rdp=config.enable_rdp)
     _verify_source_restricted_firewall(
         config, web_ports=web_ports, include_rdp=config.enable_rdp
     )
@@ -1190,6 +1269,8 @@ def configure_firewall_web(config: SetupConfig) -> None:
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
+    if firewall_active:
+        _source_restricted_firewall_status(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run("apt-get install -y -qq ufw")
@@ -1218,6 +1299,7 @@ def configure_firewall_web(config: SetupConfig) -> None:
         else:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
+    _prune_enabled_firewall_rules(config, web_ports=web_ports, include_rdp=False)
     _verify_source_restricted_firewall(
         config, web_ports=web_ports, include_rdp=False
     )
@@ -1235,6 +1317,8 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0
 
+    if firewall_active:
+        _source_restricted_firewall_status(config, include_rdp=False)
     if not firewall_active:
         os.environ["DEBIAN_FRONTEND"] = "noninteractive"
         run("apt-get install -y -qq ufw")
@@ -1258,6 +1342,7 @@ def configure_firewall_ssh_only(config: SetupConfig) -> None:
             raise RuntimeError("Firewall could not be enabled (check command output)")
         return
 
+    _prune_enabled_firewall_rules(config, web_ports=None, include_rdp=False)
     _verify_source_restricted_firewall(config, web_ports=[], include_rdp=False)
     ssh_policy = (
         "SSH source-restricted"

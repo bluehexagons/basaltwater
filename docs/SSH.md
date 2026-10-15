@@ -122,6 +122,24 @@ local setup without an SSH connection has no remote peer to verify.
 routed Wi-Fi, VPN or management network needs an additional `--access-source`
 for its observed address or trusted subnet.
 
+On a server with active UFW, source-restricted setup also requires a `deny` or
+`reject` incoming default. Setup checks that policy before changing rules and
+stops for operator review if the default is permissive or cannot be verified.
+It does not change an existing server's default policy automatically. Review
+`ufw status verbose` and the ports needed by existing services before changing
+that default.
+
+After reconciliation, setup checks numeric verbose rules, including expanded
+application profiles, port lists, ranges and interface-specific rules, for
+global access to restricted SSH, RDP and managed web ports. Conflicting operator
+rules need explicit review; setup does not delete them automatically. Failure
+to inspect or delete obsolete managed rules also fails setup instead of
+reporting successful reconciliation. A previously inactive firewall is pruned
+again after activation, when its saved rules become visible to UFW status.
+These checks cover UFW's reported policy;
+custom before/after rules, other firewall managers and upstream network policy
+still require deployment-specific review and an external connection test.
+
 Proxmox guests are a special host-key enrollment case. After provisioning,
 Basaltwater scans the guest's ED25519 key from the authenticated Proxmox node,
 replaces any stale plain or hashed entry for that address in both the workspace
