@@ -105,6 +105,9 @@ and remove files from the developer's host.
 Register new test modules in the appropriate `TEST_SUITE_PATTERNS` entry in
 `run_tests.py`; the default suite checks that every discovered module belongs
 to a domain suite.
+Generated OpenCode context hooks also have offline behavioral tests using
+Node.js. Keep Node.js available when running those tests locally; the Debian CI
+container installs it so this coverage is exercised there.
 
 ## Repository maps
 

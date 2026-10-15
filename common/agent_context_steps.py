@@ -1,56 +1,73 @@
-"""Overridable context budgets for managed coding tools.
-
-Pricing and native controls were checked on 2026-10-15; see
-docs/AGENT_CONTEXT.md before changing these budgets or adding models.
-"""
+"""Refresh overridable context budgets without freezing native model capacities."""
 
 from __future__ import annotations
 
 import copy
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
 import pwd
+import re
+import shutil
 import stat
 import tomllib
 
+from lib.agent_context_state import (
+    context_digest, context_lock, context_paths, context_projection,
+    read_context_state, remove_context_paths, save_context_state,
+)
 from lib.atomic_io import parse_json, write_text_atomic
 from lib.config import SetupConfig
-from lib.remote_utils import is_dry_run
+from lib.remote_utils import is_dry_run, run
 from lib.types import JSONDict
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
+# Review the linked prices in docs/AGENT_CONTEXT.md before advancing this date.
+POLICY_VERIFIED_ON = date(2026, 10, 15)
+POLICY_REVIEW_DAYS = 7
 CODEX_CONTEXT_DEFAULTS = {
     "model_auto_compact_token_limit": 240_000,
     "model_auto_compact_token_limit_scope": "total",
 }
+# Unknown/renamed Claude models get the conservative window too. Only reviewed
+# flat-price models receive the larger ordinary default.
 CLAUDE_CONTEXT_DEFAULTS = {
-    "autoCompactWindow": 200_000,
-    "modelSettings": {"claude-haiku-5-5": {"autoCompactWindow": 100_000}},
+    "autoCompactWindow": 100_000,
+    "modelSettings": {
+        model: {"autoCompactWindow": 200_000}
+        for model in ("claude-sonnet-5-5", "claude-opus-5-5")
+    },
     "env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"},
 }
-OPENCODE_CONTEXT_DEFAULTS = {
-    "compaction": {"auto": True},
-    "provider": {
-        "openai": {"models": {
-            model: {"limit": {"context": 1_050_000, "input": 240_000, "output": 128_000}}
-            for model in ("gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna")
-        }},
-        "anthropic": {"models": {
-            "claude-haiku-5-5": {
-                "limit": {"context": 1_000_000, "input": 80_000, "output": 128_000},
-            },
-        }},
-    },
+_REVIEWED_OPENAI = {
+    "gpt-6.1-sol": (2.0, 10.0),
+    "gpt-6-astra": (10.0, 50.0),
+    "gpt-6-luna": (0.1, 0.5),
 }
+_FALLBACK_INPUT = 80_000
 _MAX_BYTES = 1024 * 1024
+_CODEX_BEGIN = "# Begin Basaltwater context defaults\n"
+_CODEX_END = "# End Basaltwater context defaults\n"
+
+
+def _policy_fresh() -> bool:
+    age = (datetime.now(timezone.utc).date() - POLICY_VERIFIED_ON).days
+    return 0 <= age <= POLICY_REVIEW_DAYS
+
+
+def _codex_defaults() -> JSONDict:
+    value = dict(CODEX_CONTEXT_DEFAULTS)
+    if not _policy_fresh():
+        value["model_auto_compact_token_limit"] = _FALLBACK_INPUT
+    return value
 
 
 def codex_context_defaults_toml() -> str:
     """Render top-level defaults without declaring a model's native capacity."""
-    return "".join(f"{key} = {json.dumps(value)}\n" for key, value in CODEX_CONTEXT_DEFAULTS.items())
+    return "".join(f"{key} = {json.dumps(value)}\n" for key, value in _codex_defaults().items())
 
 
 def _read(path: Path, uid: int) -> str | None:
@@ -83,106 +100,173 @@ def _prepare_path(path: Path, home: Path, uid: int, gid: int) -> None:
                 raise ValueError(f"Agent configuration directory belongs to another user: {parent}")
 
 
-def _fill_missing(value: JSONDict, defaults: JSONDict) -> bool:
-    changed = False
-    for key, default in defaults.items():
-        if key not in value:
-            value[key] = copy.deepcopy(default)
-            changed = True
-        elif isinstance(default, dict) and key != "limit":
-            if not isinstance(value[key], dict):
-                raise ValueError(f"Agent configuration '{key}' must contain an object")
-            changed = _fill_missing(value[key], default) or changed
-        # A configured limit is a single explicit user choice. Never complete
-        # it with defaults that could increase a smaller model's capacity.
-    return changed
+def _defaults(tool: str) -> JSONDict:
+    if tool == "codex":
+        return _codex_defaults()
+    defaults = copy.deepcopy(CLAUDE_CONTEXT_DEFAULTS)
+    if not _policy_fresh():
+        defaults.pop("modelSettings", None)
+    return defaults
 
 
-def _claude_context_configured(value: JSONDict) -> bool:
-    """An existing global or per-model budget is already a user's policy."""
-    for key in ("env", "modelSettings"):
-        if key in value and not isinstance(value[key], dict):
-            raise ValueError(f"Claude configuration '{key}' must contain an object")
-    models = value.get("modelSettings", {})
-    if any(not isinstance(model, dict) for model in models.values()):
-        raise ValueError("Claude per-model settings must contain objects")
-    return (
-        "autoCompactWindow" in value
-        or any("autoCompactWindow" in model for model in models.values())
-        or bool({
-            "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
-            "DISABLE_COMPACT", "DISABLE_AUTO_COMPACT",
-        }.intersection(value.get("env", {})))
-    )
+def _merge(value: JSONDict, defaults: JSONDict) -> None:
+    for key, item in defaults.items():
+        if isinstance(item, dict) and key in value:
+            _merge(value[key], item)
+        else:
+            value[key] = copy.deepcopy(item)
 
 
-def _seed(path: Path, tool: str, account: pwd.struct_passwd) -> None:
-    defaults = {
-        "codex": CODEX_CONTEXT_DEFAULTS,
-        "claude": CLAUDE_CONTEXT_DEFAULTS,
-        "opencode": OPENCODE_CONTEXT_DEFAULTS,
-    }[tool]
-    _prepare_path(path, Path(account.pw_dir), account.pw_uid, account.pw_gid)
+def _codex_block(value: JSONDict) -> str:
+    return _CODEX_BEGIN + "".join(f"{key} = {json.dumps(value[key])}\n" for key in sorted(value)) + _CODEX_END
+
+
+def _seed_locked(path: Path, tool: str, account: pwd.struct_passwd, state_path: Path) -> None:
     previous = _read(path, account.pw_uid)
+    state = read_context_state(_read(state_path, account.pw_uid), tool)
     if tool == "codex":
         value = tomllib.loads(previous or "")
-        missing = {key: default for key, default in defaults.items() if key not in value}
-        if not missing:
-            print(f"  ✓ Preserved existing context settings: {path}")
-            return
-        # Prepending keeps these keys at the root even if the file ends inside
-        # a table, and preserves user comments and profile/MCP configuration.
-        content = (
-            "# Basaltwater context defaults; user and launch overrides are supported.\n"
-            + "".join(f"{key} = {json.dumps(default)}\n" for key, default in missing.items())
-            + (previous or "")
-        )
-        tomllib.loads(content)
     else:
-        from common.browser_automation_steps import _strip_jsonc_comments, _strip_jsonc_trailing_commas
-
-        normalized = previous or ""
-        if path.suffix == ".jsonc":
-            normalized = _strip_jsonc_trailing_commas(_strip_jsonc_comments(normalized))
-        value = parse_json(normalized) if previous is not None else {}
+        value = parse_json(previous) if previous is not None else {}
         if not isinstance(value, dict):
             raise ValueError(f"Agent configuration must contain a JSON object: {path}")
-        # A new per-model window could override an explicit global window, and
-        # a new percentage could shorten an explicit per-model window. Keep an
-        # existing Claude context policy as a whole, including its formatting.
-        if tool == "claude" and _claude_context_configured(value):
-            print(f"  ✓ Preserved existing context policy: {path}")
-            return
-        if not _fill_missing(value, defaults):
-            print(f"  ✓ Preserved existing context settings: {path}")
-            return
+    projection = context_projection(value, tool)
+    digest = context_digest(projection)
+    state = state or {"version": 1, "tool": tool, "overridden": False, "active": None, "pending": None}
+    active = state.get("active")
+    if state.get("pending") and state["pending"]["digest"] == digest:
+        active = state["pending"]
+    elif active is not None and active["digest"] != digest:
+        state["overridden"] = True
+    if state["overridden"] or active is None and projection:
+        state.update(overridden=True, active=None, pending=None)
+        save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+        print(f"  ✓ Preserved user context policy: {path}; managed refresh is disabled for this file")
+        return
+
+    if active is not None and sorted(active["paths"]) != sorted(context_paths(projection)):
+        raise ValueError(f"Managed context paths do not match recorded configuration: {state_path}")
+
+    old_block = _codex_block(projection) if active is not None and tool == "codex" else ""
+    if old_block and not (previous or "").startswith(old_block):
+        state.update(overridden=True, active=None, pending=None)
+        save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+        print(f"  ✓ Preserved edited Codex context block: {path}")
+        return
+    if active is not None:
+        remove_context_paths(value, active["paths"])
+    _merge(value, _defaults(tool))
+    projection = context_projection(value, tool)
+    record = {"digest": context_digest(projection), "paths": context_paths(projection)}
+    if record["digest"] == digest:
+        state.update(active=record, pending=None)
+        save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+        print(f"  ✓ Managed context defaults are current: {path}")
+        return
+    if tool == "codex":
+        content = _codex_block(projection) + (previous or "")[len(old_block):]
+        tomllib.loads(content)
+    else:
         content = json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     if len(content.encode("utf-8")) > _MAX_BYTES:
         raise ValueError(f"Updated agent configuration exceeds {_MAX_BYTES} bytes: {path}")
+    # Journal before replacing configuration. Either the old or new digest can
+    # be recovered after interruption; any third value is treated as user work.
+    state["pending"] = record
+    save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+    if _read(path, account.pw_uid) != previous:
+        raise RuntimeError(f"Agent configuration changed during setup; retry: {path}")
     write_text_atomic(str(path), content, mode=0o600, uid=account.pw_uid, gid=account.pw_gid)
-    print(f"  ✓ Filled missing context defaults: {path} (existing values retained)")
+    state.update(active=record, pending=None)
+    save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+    print(f"  ✓ Refreshed managed context defaults: {path}")
+
+
+def _seed(path: Path, tool: str, account: pwd.struct_passwd) -> None:
+    _prepare_path(path, Path(account.pw_dir), account.pw_uid, account.pw_gid)
+    state_path = path.with_name(f".{path.name}.basaltwater-context.json")
+    with context_lock(path.with_name(f".{path.name}.basaltwater-context.lock"), account.pw_uid, account.pw_gid):
+        _seed_locked(path, tool, account, state_path)
+
+
+def _check_opencode_context_support(config: SetupConfig, account: pwd.struct_passwd) -> None:
+    """Qualify the provider hook without starting a model or reading auth files."""
+    search_path = os.pathsep.join((os.path.join(account.pw_dir, ".local/bin"),
+                                  os.path.join(account.pw_dir, ".opencode/bin"),
+                                  os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")))
+    if os.geteuid() == account.pw_uid:
+        executable = shutil.which("opencode", path=search_path)
+    else:
+        from common.agent_steps import _tool_path
+
+        executable = _tool_path(config, "opencode")
+    if not executable:
+        raise RuntimeError("OpenCode context setup requires an installed OpenCode CLI")
+    validate_filesystem_path(executable)
+    command = ["env", "-i", f"HOME={account.pw_dir}", f"USER={config.username}",
+               f"LOGNAME={config.username}", f"PATH={search_path}", "NO_COLOR=1", executable, "--version"]
+    if os.geteuid() != account.pw_uid:
+        command = ["runuser", "-u", config.username, "--", *command]
+    result = run(command, capture_output=True, check=False, timeout=20)
+    match = re.fullmatch(r"1\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9.-]+)?", (result.stdout or "").strip())
+    if result.returncode or match is None or (int(match[1]), int(match[2])) < (19, 0):
+        raise RuntimeError("Context budgets require qualified OpenCode 1.x >= 1.19.0; run 'basaltw agent update --tool opencode' as the provider user (or use its owning package manager), then rerun setup. Review a new major version's provider-hook API first.")
+
+
+def _install_opencode_context(config: SetupConfig, account: pwd.struct_passwd) -> None:
+    from lib.opencode_context import plugin_content
+
+    path = Path(account.pw_dir) / ".config/opencode/plugins/basaltwater-context.js"
+    _prepare_path(path, Path(account.pw_dir), account.pw_uid, account.pw_gid)
+    state_path = path.with_name(".basaltwater-context-state.json")
+    with context_lock(path.with_name(".basaltwater-context.lock"), account.pw_uid, account.pw_gid):
+        previous = _read(path, account.pw_uid)
+        recorded = _read(state_path, account.pw_uid)
+        state = {"version": 1, "disabled": False, "active": None, "pending": None}
+        if recorded is not None:
+            state = parse_json(recorded)
+            if (not isinstance(state, dict) or type(state.get("version")) is not int or state["version"] != 1
+                    or type(state.get("disabled")) is not bool or "active" not in state or "pending" not in state
+                    or any(state[key] is not None and (not isinstance(state[key], str)
+                           or re.fullmatch(r"[0-9a-f]{64}", state[key]) is None) for key in ("active", "pending"))):
+                raise ValueError(f"Invalid OpenCode context plugin ownership: {state_path}")
+        digest = context_digest({"plugin": previous}) if previous is not None else None
+        if (state["disabled"] or previous is None and state["active"] is not None
+                or previous is not None and digest not in (state["active"], state["pending"])):
+            state.update(disabled=True, pending=None)
+            save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+            print(f"  ! Preserved personal or removed OpenCode context plugin: {path}; managed refresh is disabled")
+            return
+        _check_opencode_context_support(config, account)
+        content = plugin_content(POLICY_VERIFIED_ON.isoformat(), POLICY_REVIEW_DAYS, _REVIEWED_OPENAI)
+        updated = context_digest({"plugin": content})
+        if previous != content:
+            state["pending"] = updated
+            save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+            if _read(path, account.pw_uid) != previous:
+                raise RuntimeError(f"OpenCode context plugin changed during setup; retry: {path}")
+            write_text_atomic(str(path), content, mode=0o600, uid=account.pw_uid, gid=account.pw_gid)
+        state.update(active=updated, pending=None)
+        save_context_state(state_path, state, account.pw_uid, account.pw_gid)
+    print(f"  ✓ OpenCode context hook configured: {path}; explicit model limits and disabled compaction are preserved")
 
 
 def configure_agent_context_defaults(config: SetupConfig) -> None:
-    """Seed selected tools after payload copying, before starting any client."""
+    """Refresh selected providers after payload copying, before any client starts."""
     if config.dry_run or is_dry_run():
-        print("  [DRY-RUN] Would fill missing agent context budgets; retain explicit overrides")
+        print("  [DRY-RUN] Would refresh owned agent context defaults; preserve user overrides")
         return
     if not validate_username(config.username):
         raise ValueError("Invalid agent username")
     if not any((config.install_codex, config.install_claude, config.install_opencode)):
         return
+    if not _policy_fresh():
+        print(f"  ! Context pricing review is stale (verified {POLICY_VERIFIED_ON}); using conservative managed defaults. Review docs/AGENT_CONTEXT.md.")
     account = pwd.getpwnam(config.username)
     home = Path(account.pw_dir)
-    # Debian VM setup puts Codex defaults in /etc/codex/config.toml so personal
-    # configuration remains higher precedence. Local profiles do not own /etc.
     if config.install_codex and config.system_type in {"agent_cachyos", "server_wsl"}:
         _seed(home / ".codex/config.toml", "codex", account)
     if config.install_claude:
         _seed(home / ".claude/settings.json", "claude", account)
     if config.install_opencode:
-        directory = home / ".config/opencode"
-        path = directory / "opencode.json"
-        if not os.path.lexists(path) and os.path.lexists(directory / "opencode.jsonc"):
-            path = directory / "opencode.jsonc"
-        _seed(path, "opencode", account)
+        _install_opencode_context(config, account)

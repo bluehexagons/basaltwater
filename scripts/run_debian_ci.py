@@ -22,7 +22,7 @@ IMAGES = (
 CONTAINER_SCRIPT = """
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\
-  ca-certificates fish git make python3-venv libsqlite3-0 libffi8
+  ca-certificates fish git make nodejs python3-venv libsqlite3-0 libffi8
 git config --global --add safe.directory /workspace
 "$BASALTWATER_CI_PYTHON" -m venv /opt/basaltwater-ci-python
 export PATH=/opt/basaltwater-ci-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

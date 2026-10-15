@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, timezone
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -11,6 +13,7 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
+from common import agent_context_steps as context
 from common.agent_context_steps import configure_agent_context_defaults
 from common.agent_security_steps import _codex_config_content, _codex_requirements_content
 from lib.config import SetupConfig
@@ -27,6 +30,13 @@ class AgentContextDefaultsTests(unittest.TestCase):
         lookup = patch("common.agent_context_steps.pwd.getpwnam", return_value=account)
         lookup.start()
         self.addCleanup(lookup.stop)
+        self.real_policy_fresh = context._policy_fresh
+        fresh = patch.object(context, "_policy_fresh", return_value=True)
+        fresh.start()
+        self.addCleanup(fresh.stop)
+        support = patch.object(context, "_check_opencode_context_support")
+        self.support = support.start()
+        self.addCleanup(support.stop)
 
     def config(self, **kwargs):
         values = dict(host="testhost", username="agent", system_type="agent_vm")
@@ -78,8 +88,9 @@ class AgentContextDefaultsTests(unittest.TestCase):
         config = self.config(install_claude=True)
         configure_agent_context_defaults(config)
         value = json.loads(path.read_text())
-        self.assertEqual(value["autoCompactWindow"], 200_000)
-        self.assertEqual(value["modelSettings"]["claude-haiku-5-5"]["autoCompactWindow"], 100_000)
+        self.assertEqual(value["autoCompactWindow"], 100_000)
+        self.assertNotIn("claude-haiku-5-5", value["modelSettings"])
+        self.assertEqual(value["modelSettings"]["claude-sonnet-5-5"]["autoCompactWindow"], 200_000)
         self.assertEqual(value["env"]["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], "80")
         self.assertEqual(value["env"]["EXISTING"], "yes")
         self.assertEqual(value["model"], "sonnet")
@@ -111,20 +122,7 @@ class AgentContextDefaultsTests(unittest.TestCase):
                 configure_agent_context_defaults(self.config(install_claude=True))
                 self.assertEqual(path.read_bytes(), previous)
 
-    def test_opencode_input_budgets_leave_native_capacity_and_flat_price_models_alone(self):
-        configure_agent_context_defaults(self.config(install_opencode=True))
-        value = json.loads((self.home / ".config/opencode/opencode.json").read_text())
-        self.assertTrue(value["compaction"]["auto"])
-        models = value["provider"]["openai"]["models"]
-        self.assertEqual(set(models), {"gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"})
-        for model in models.values():
-            self.assertEqual(model["limit"], {"context": 1_050_000, "input": 240_000, "output": 128_000})
-        self.assertEqual(value["provider"]["anthropic"]["models"], {
-            "claude-haiku-5-5": {"limit": {"context": 1_000_000, "input": 80_000, "output": 128_000}},
-        })
-        self.assertNotIn("model", value)
-
-    def test_opencode_jsonc_merges_without_changing_existing_limits_or_mcp(self):
+    def test_opencode_jsonc_remains_unchanged_with_native_plugin(self):
         path = self.write(".config/opencode/opencode.jsonc", '''{
           // Existing settings may contain JSONC comments and trailing commas.
           "compaction": {"auto": false},
@@ -135,8 +133,12 @@ class AgentContextDefaultsTests(unittest.TestCase):
           "mcp": {"personal": {"type": "local", "command": ["my-server"]}},
         }''')
         config = self.config(install_opencode=True)
+        previous = path.read_bytes()
         configure_agent_context_defaults(config)
-        value = json.loads(path.read_text())
+        self.assertEqual(path.read_bytes(), previous)
+        from common.browser_automation_steps import _load_opencode_config
+
+        value = _load_opencode_config(str(path))
         self.assertFalse(value["compaction"]["auto"])
         model = value["provider"]["openai"]["models"]["gpt-6.1-sol"]
         self.assertEqual(model["limit"], {"context": 32000, "output": 4000})
@@ -145,6 +147,212 @@ class AgentContextDefaultsTests(unittest.TestCase):
         self.assertFalse(path.with_suffix(".json").exists())
         previous = path.read_bytes()
         configure_agent_context_defaults(config)
+        self.assertEqual(path.read_bytes(), previous)
+
+    def state_path(self, relative):
+        path = self.home / relative
+        return path.with_name(f".{path.name}.basaltwater-context.json")
+
+    def test_opencode_plugin_refreshes_without_creating_model_definitions(self):
+        config = self.config(install_opencode=True)
+        configure_agent_context_defaults(config)
+        path = self.home / ".config/opencode/plugins/basaltwater-context.js"
+        previous = path.read_bytes()
+        self.assertFalse((self.home / ".config/opencode/opencode.json").exists())
+        configure_agent_context_defaults(config)
+        self.assertEqual(path.read_bytes(), previous)
+        with patch.object(context, "POLICY_VERIFIED_ON", date(2026, 10, 16)):
+            configure_agent_context_defaults(config)
+        self.assertIn('"verifiedOn": "2026-10-16"', path.read_text())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_edited_removed_or_untracked_opencode_plugin_is_preserved(self):
+        for choice in ("edit", "remove", "untracked"):
+            with self.subTest(choice=choice), tempfile.TemporaryDirectory() as temporary:
+                account = SimpleNamespace(pw_dir=temporary, pw_uid=os.getuid(), pw_gid=os.getgid())
+                path = Path(temporary) / ".config/opencode/plugins/basaltwater-context.js"
+                config = self.config(install_opencode=True)
+                with patch.object(context.pwd, "getpwnam", return_value=account):
+                    if choice != "untracked":
+                        configure_agent_context_defaults(config)
+                    else:
+                        path.parent.mkdir(parents=True)
+                    if choice == "remove":
+                        path.unlink()
+                    else:
+                        path.write_text("// personal plugin\n")
+                    configure_agent_context_defaults(config)
+                    self.assertEqual(path.read_text() if path.exists() else None,
+                                     None if choice == "remove" else "// personal plugin\n")
+                    state = json.loads(path.with_name(".basaltwater-context-state.json").read_text())
+                    self.assertTrue(state["disabled"])
+
+    def test_opencode_interrupted_plugin_install_recovers(self):
+        for after in (False, True):
+            with self.subTest(after=after), tempfile.TemporaryDirectory() as temporary:
+                account = SimpleNamespace(pw_dir=temporary, pw_uid=os.getuid(), pw_gid=os.getgid())
+                real_write = context.write_text_atomic
+                def interrupted(*args, **kwargs):
+                    if after:
+                        real_write(*args, **kwargs)
+                    raise OSError("interrupted plugin")
+                with patch.object(context.pwd, "getpwnam", return_value=account):
+                    config = self.config(install_opencode=True)
+                    with patch.object(context, "write_text_atomic", side_effect=interrupted):
+                        with self.assertRaisesRegex(OSError, "interrupted plugin"):
+                            configure_agent_context_defaults(config)
+                    configure_agent_context_defaults(config)
+                    path = Path(temporary) / ".config/opencode/plugins/basaltwater-context.js"
+                    self.assertIn("BasaltwaterOpenAIContext", path.read_text())
+                    state = json.loads(path.with_name(".basaltwater-context-state.json").read_text())
+                    self.assertFalse(state["disabled"])
+                    self.assertIsNone(state["pending"])
+
+    def test_unqualified_opencode_and_corrupt_state_preserve_plugin(self):
+        config = self.config(install_opencode=True)
+        configure_agent_context_defaults(config)
+        path = self.home / ".config/opencode/plugins/basaltwater-context.js"
+        previous = path.read_bytes()
+        self.support.side_effect = RuntimeError("unqualified")
+        with self.assertRaisesRegex(RuntimeError, "unqualified"):
+            configure_agent_context_defaults(config)
+        self.assertEqual(path.read_bytes(), previous)
+        self.support.side_effect = None
+        path.with_name(".basaltwater-context-state.json").write_text('{"version": true}')
+        with self.assertRaisesRegex(ValueError, "ownership"):
+            configure_agent_context_defaults(config)
+        self.assertEqual(path.read_bytes(), previous)
+
+    def test_managed_claude_refresh_retires_old_models_and_preserves_unrelated_edits(self):
+        config = self.config(install_claude=True)
+        configure_agent_context_defaults(config)
+        path = self.home / ".claude/settings.json"
+        value = json.loads(path.read_text())
+        value["env"]["MY_SECRET_TOKEN"] = "private-value"
+        value["modelSettings"]["claude-sonnet-5-5"]["effortLevel"] = "high"
+        path.write_text(json.dumps(value))
+        updated = {"autoCompactWindow": 100_000, "modelSettings": {"claude-sonnet-6": {"autoCompactWindow": 200_000}},
+                   "env": {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "70"}}
+        with patch.object(context, "CLAUDE_CONTEXT_DEFAULTS", updated):
+            configure_agent_context_defaults(config)
+        value = json.loads(path.read_text())
+        self.assertEqual(value["modelSettings"]["claude-sonnet-5-5"], {"effortLevel": "high"})
+        self.assertEqual(value["modelSettings"]["claude-sonnet-6"]["autoCompactWindow"], 200_000)
+        self.assertEqual(value["env"]["MY_SECRET_TOKEN"], "private-value")
+        self.assertEqual(value["env"]["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"], "70")
+        self.assertNotIn("private-value", self.state_path(".claude/settings.json").read_text())
+
+    def test_user_edit_or_removal_stops_managed_refresh_even_if_value_later_matches(self):
+        for remove in (False, True):
+            with self.subTest(remove=remove), tempfile.TemporaryDirectory() as temporary:
+                account = SimpleNamespace(pw_dir=temporary, pw_uid=os.getuid(), pw_gid=os.getgid())
+                path = Path(temporary) / ".claude/settings.json"
+                with patch.object(context.pwd, "getpwnam", return_value=account):
+                    config = self.config(install_claude=True)
+                    configure_agent_context_defaults(config)
+                    value = json.loads(path.read_text())
+                    if remove:
+                        del value["autoCompactWindow"]
+                    else:
+                        value["autoCompactWindow"] = 800_000
+                    path.write_text(json.dumps(value))
+                    previous = path.read_bytes()
+                    configure_agent_context_defaults(config)
+                    self.assertEqual(path.read_bytes(), previous)
+                    # Restoring an old value is still a user choice after detachment.
+                    value["autoCompactWindow"] = 100_000
+                    path.write_text(json.dumps(value))
+                    previous = path.read_bytes()
+                    with patch.object(context, "CLAUDE_CONTEXT_DEFAULTS", {"autoCompactWindow": 200_000}):
+                        configure_agent_context_defaults(config)
+                    self.assertEqual(path.read_bytes(), previous)
+
+    def test_local_codex_managed_block_refresh_keeps_personal_tables(self):
+        path = self.write(".codex/config.toml", '# personal\n[mcp_servers.personal]\ncommand = "mine"\n')
+        config = self.config(system_type="server_wsl", machine_type="wsl", install_codex=True)
+        configure_agent_context_defaults(config)
+        with patch.object(context, "CODEX_CONTEXT_DEFAULTS", {
+            "model_auto_compact_token_limit": 200_000, "model_auto_compact_token_limit_scope": "total",
+        }):
+            configure_agent_context_defaults(config)
+        value = tomllib.loads(path.read_text())
+        self.assertEqual(value["model_auto_compact_token_limit"], 200_000)
+        self.assertEqual(value["mcp_servers"]["personal"]["command"], "mine")
+        self.assertIn("# personal", path.read_text())
+
+    def test_stale_review_reduces_managed_preferences_and_warns(self):
+        config = self.config(install_claude=True)
+        configure_agent_context_defaults(config)
+        with patch.object(context, "_policy_fresh", return_value=False), patch("sys.stdout", new_callable=io.StringIO) as output:
+            configure_agent_context_defaults(config)
+            codex = tomllib.loads(context.codex_context_defaults_toml())
+        value = json.loads((self.home / ".claude/settings.json").read_text())
+        self.assertNotIn("modelSettings", value)
+        self.assertEqual(value["autoCompactWindow"], 100_000)
+        self.assertEqual(codex["model_auto_compact_token_limit"], 80_000)
+        self.assertIn("review is stale", output.getvalue())
+
+    def test_interrupted_writes_recover_before_and_after_configuration_replacement(self):
+        for after in (False, True):
+            with self.subTest(after=after), tempfile.TemporaryDirectory() as temporary:
+                account = SimpleNamespace(pw_dir=temporary, pw_uid=os.getuid(), pw_gid=os.getgid())
+                path = Path(temporary) / ".claude/settings.json"
+                real_write = context.write_text_atomic
+                def interrupted(*args, **kwargs):
+                    if after:
+                        real_write(*args, **kwargs)
+                    raise OSError("simulated interruption")
+                with patch.object(context.pwd, "getpwnam", return_value=account):
+                    config = self.config(install_claude=True)
+                    with patch.object(context, "write_text_atomic", side_effect=interrupted):
+                        with self.assertRaisesRegex(OSError, "simulated interruption"):
+                            configure_agent_context_defaults(config)
+                    configure_agent_context_defaults(config)
+                    self.assertEqual(json.loads(path.read_text())["autoCompactWindow"], 100_000)
+                    state = json.loads(path.with_name(f".{path.name}.basaltwater-context.json").read_text())
+                    self.assertFalse(state["overridden"])
+                    self.assertIsNone(state["pending"])
+
+    def test_corrupt_or_hostile_state_preserves_provider_configuration(self):
+        config = self.config(install_claude=True)
+        configure_agent_context_defaults(config)
+        path = self.home / ".claude/settings.json"
+        previous = path.read_bytes()
+        state_path = self.state_path(".claude/settings.json")
+        state = json.loads(state_path.read_text())
+        state["active"]["paths"] = [["env", "API_KEY"]]
+        for content in ("broken", json.dumps(state)):
+            with self.subTest(content=content):
+                state_path.write_text(content)
+                with self.assertRaises(ValueError):
+                    configure_agent_context_defaults(config)
+                self.assertEqual(path.read_bytes(), previous)
+
+    def test_legacy_untracked_defaults_are_not_adopted_by_value(self):
+        path = self.write(".claude/settings.json", json.dumps(context.CLAUDE_CONTEXT_DEFAULTS))
+        previous = path.read_bytes()
+        configure_agent_context_defaults(self.config(install_claude=True))
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertTrue(json.loads(self.state_path(".claude/settings.json").read_text())["overridden"])
+
+    def test_review_age_includes_seven_days_and_rejects_future_dates(self):
+        for verified, expected in ((date(2026, 10, 15), True), (date(2026, 10, 8), True),
+                                   (date(2026, 10, 7), False), (date(2026, 10, 16), False)):
+            with self.subTest(verified=verified), patch.object(context, "POLICY_VERIFIED_ON", verified), \
+                    patch.object(context, "datetime") as clock:
+                clock.now.return_value = datetime(2026, 10, 15, tzinfo=timezone.utc)
+                self.assertEqual(self.real_policy_fresh(), expected)
+
+    def test_simultaneous_setup_is_rejected_before_replacing_configuration(self):
+        from lib.agent_context_state import context_lock
+
+        config = self.config(install_claude=True)
+        configure_agent_context_defaults(config)
+        path = self.home / ".claude/settings.json"
+        previous = path.read_bytes()
+        with context_lock(path.with_name(f".{path.name}.basaltwater-context.lock"), os.getuid(), os.getgid()):
+            with self.assertRaisesRegex(RuntimeError, "Another context setup"):
+                configure_agent_context_defaults(config)
         self.assertEqual(path.read_bytes(), previous)
 
     def test_malformed_configs_are_preserved(self):

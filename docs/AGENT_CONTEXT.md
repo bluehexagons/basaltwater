@@ -9,26 +9,44 @@ overrides for a task phase or the rest of a session.
 
 Agent VM and workstation profiles normally select GitHub CLI and Codex. Claude
 Code and OpenCode are opt-in agent tools. Vendor installers and the managed
-updater supply the CLIs; provider configuration is seeded before a selected T3
+updater supply the CLIs; provider configuration is reconciled before a selected T3
 Code interface starts. Model selection, reasoning effort, authentication, and
 permissions retain their existing configuration.
 
 | Setup | Context configuration |
 | --- | --- |
-| Debian agent profiles and other profiles selecting these tools | Codex defaults in `/etc/codex/config.toml`; missing Claude/OpenCode settings filled after payload seeding |
-| Local `agent_cachyos` | Missing defaults filled in the desktop user's provider files, before starting T3; no system-wide policy |
-| Ubuntu `server_wsl` | Missing defaults filled in the selected Linux user's provider files; Windows-native providers have separate configuration |
+| Debian agent profiles and other profiles selecting these tools | Codex defaults in `/etc/codex/config.toml`; owned Claude/OpenCode defaults refreshed after payload seeding |
+| Local `agent_cachyos` | Owned defaults refreshed in the desktop user's provider files, before starting T3; no system-wide policy |
+| Ubuntu `server_wsl` | Owned defaults refreshed in the selected Linux user's provider files; Windows-native providers have separate configuration |
 
-Existing user values take precedence and are preserved on setup reruns,
-including intentionally larger budgets or disabled auto-compaction. OpenCode's
-existing `limit` object is preserved as a whole, so setup cannot enlarge a
-custom smaller window by filling its missing fields. Invalid or unsafe files
-fail instead of being replaced. JSONC values are preserved; when adding missing
-settings, setup rewrites JSONC as formatted JSON in the same `.jsonc` file.
-An existing Claude global/per-model window or compaction environment setting
-keeps that entire context policy: adding another setting could otherwise
-override the user's intended effective window.
-Rerunning setup/refresh applies these defaults; updating only a CLI does not.
+Existing user context policies are preserved, including larger budgets,
+disabled auto-compaction, and smaller custom model limits. For a local Codex or
+Claude file without such a policy, setup installs defaults and records ownership
+beside it in
+`.CONFIG_FILENAME.basaltwater-context.json`. This private record contains only
+context-field paths and hashes, never credentials or copies of configuration.
+Later setup/refresh runs update unchanged owned preferences, retire obsolete
+owned model entries, and retain unrelated provider settings. Edits or deletions
+to context preferences detach the entire file's policy from managed refresh;
+restoring the old numeric value does not silently reclaim ownership.
+
+Invalid configuration or ownership records fail without replacing provider
+configuration. A lock prevents concurrent setup writers, and a pending digest
+allows recovery when setup stops before or after a configuration replacement.
+Claude JSON is reformatted only when its defaults change. OpenCode JSON/JSONC
+files are left byte-for-byte unchanged. Codex uses a marked root-level TOML block
+and retains the remaining file, including comments and MCP/profile tables.
+
+Earlier installations have no ownership record. Matching a previous default
+is insufficient evidence of ownership: setup preserves that untracked policy
+and reports that managed refresh is disabled. To opt back in, review and remove
+only the provider's context settings and its adjacent ownership record, then
+rerun setup. For legacy OpenCode settings, explicit model `limit` objects also
+take precedence over the new provider hook: review and remove only those old
+limits to opt into its budgets. Keep credentials, model selection, MCP servers,
+and other settings.
+This is an explicit operator choice; agents must not erase user preferences to
+make a refresh succeed.
 
 These paths describe the default provider homes: `~/.codex`, `~/.claude`, and
 `~/.config/opencode`. Custom homes, gateways, organization policies, project
@@ -68,8 +86,8 @@ particular client exposes the same window or bills at API rates.
 | Tool | Defaults | Purpose |
 | --- | --- | --- |
 | Codex | `model_auto_compact_token_limit = 240000`, `model_auto_compact_token_limit_scope = "total"` | Count the entire active context and compact with 32K headroom before the known 272K price boundary |
-| Claude Code | `autoCompactWindow: 200000`; `modelSettings["claude-haiku-5-5"].autoCompactWindow: 100000`; `env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"` | A conservative general budget, with earlier Haiku compaction around 80K rather than its native 1M window |
-| OpenCode | `compaction.auto: true`; OpenAI model `limit.input: 240000`; Haiku 5.5 `limit.input: 80000` | Lower the input budget used for compaction while retaining the native total context/output limits |
+| Claude Code | Global `autoCompactWindow: 100000`, with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80"`; reviewed Sonnet 5.5/Opus 5.5 get 200K windows | Around 80K for unknown/renamed models and Haiku; around 160K for reviewed flat-price models |
+| OpenCode | Native provider hook; input budget at most 240K for reviewed OpenAI prices, otherwise 80K | Retain native availability/capacities and lower the budget further when metadata reports an earlier price boundary |
 
 Codex's native model capacity is left unset. A smaller model's own compaction
 limit can still apply. The `total` scope matters: counting only growth after an
@@ -85,20 +103,75 @@ managed clients also keep their original updater. Older clients, custom model
 IDs, or provider-specific aliases must be checked with
 `/autocompact` and `/context` before relying on the Haiku budget.
 
-OpenCode settings live in `~/.config/opencode/opencode.json` or its existing
-`.jsonc` alternative. The seeded models are `openai/gpt-6.1-sol`,
-`openai/gpt-6-astra`, `openai/gpt-6-luna`, and
-`anthropic/claude-haiku-5-5`. Other model/provider IDs retain their upstream
-limits. Extend this list only after checking the actual provider's pricing and
-capacity. Current OpenCode also leaves its own compaction buffer below the
-input limit, so it can compact earlier than these budgets.
+OpenCode loads `~/.config/opencode/plugins/basaltwater-context.js` through its
+native local-plugin discovery. The hook targets OpenAI/Anthropic text models
+already present after built-in authentication hooks. It never adds model IDs or
+enables a provider, so it preserves subscription model filters. It does not copy
+model definitions into configuration, fetch a second catalog, or make model/API
+calls. New model IDs and changed capacities follow OpenCode's native metadata
+when the backend initializes; restart/resume that backend to reload it.
+
+Setup qualifies OpenCode 1.x >= 1.19.0 with an owner-scoped `--version` probe.
+Older clients must be updated before context setup, including when the normal
+setup updater would otherwise run later. Use `basaltw agent update --tool opencode`
+as the provider user, or the executable's owning package manager. A new major
+version requires reviewing its provider-hook API before enabling this integration.
+Custom config homes and disabled plugin loading require separate verification.
+
+Each native text model receives an input budget bounded by its reported native
+input/context capacity. Total context, output and capabilities remain native.
+Unknown or renamed models get an 80K fallback. A reviewed OpenAI model gets up to
+240K only while its base input/output prices still match the reviewed prices.
+Context-price tiers in metadata lower the input budget to at most 80% of the
+earliest reported price increase. The older `context_over_200k` metadata field
+is mapped by OpenCode to `experimentalOver200K` and treated conservatively,
+even if newer official pricing allows more context.
+OpenCode's own compaction buffer can trigger earlier still.
+
+Explicit per-model `limit` objects and `compaction.auto: false` in any effective
+configuration, including process-local approval overrides, take precedence.
+The hook enables automatic compaction in memory when that preference is unset.
+Setup refreshes the unchanged owned plugin using a private hash journal beside
+it (`.basaltwater-context-state.json`); editing or removing the plugin opts out
+of managed refresh. Invalid ownership records or unrecognized runtime metadata
+fail explicitly. Other providers and custom routing/pricing need separate
+verification.
+
+## Keeping pricing guidance current
+
+Aim to review pricing during the near-daily Basaltwater update cycle. Updating
+Basaltwater or a CLI executable alone does **not** reconcile provider files:
+rerun the applicable setup/refresh flow to apply reviewed defaults. A newer
+binary or a freshly fetched catalog does not prove that official pricing was
+reviewed.
+
+The single `POLICY_VERIFIED_ON` date and seven-day review interval live in
+`common/agent_context_steps.py`. After seven days, or if the date is in the
+future, setup reports a stale review. Owned Codex defaults then use an 80K
+compact threshold; Claude drops its reviewed larger per-model windows;
+OpenCode checks the embedded review date at backend initialization and uses its
+conservative fallback instead of the larger reviewed budget, even without a
+setup rerun.
+Explicit user preferences remain untouched. Reinstalling the same release does
+not advance the review date.
+
+Before advancing that date, check the official sources above for every reviewed
+model and the current native configuration controls. Update prices, thresholds,
+model IDs and documentation together, and run `tests.test_agent_context` and
+`tests.test_agent_context_plugin` (with Node.js available) plus
+the normal CI checks. Review changed native catalog schemas too: metadata is
+useful for reducing budgets, but is not permission to increase them beyond the
+reviewed/fallback caps. A future price boundary below the fallback, missing
+pricing metadata, a custom Codex provider, or a mid-session model change can
+still require a new review; no fixed default predicts every future price tier.
 
 Control references: [Codex configuration](https://learn.chatgpt.com/docs/config-file/config-reference),
 [Claude model/context configuration](https://code.claude.com/docs/en/model-config),
 [Claude percentage override](https://code.claude.com/docs/en/env-vars),
 [OpenCode configuration](https://opencode.ai/docs/config/),
-[OpenCode schema](https://opencode.ai/config.json), and
-[OpenCode compaction implementation](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session/compaction.ts).
+[OpenCode schema](https://opencode.ai/config.json),
+[OpenCode plugins](https://opencode.ai/docs/plugins/), and the qualified
+[OpenCode 1.19.0 provider hook](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/opencode/src/provider/provider.ts).
 
 Automatic compaction is a target, not a hard billing cap. A large user message,
 attachment, tool result, or compaction request can overshoot it. Bound tool
@@ -134,8 +207,9 @@ codex resume SESSION_ID -c model_context_window=800000 -c model_auto_compact_tok
 These commands are examples for an approved larger window, not setup defaults.
 For a temporary phase, use `/compact`, exit that provider process, and resume
 the same session with the previous settings (the managed compact threshold is
-240000). Remove the context-window override to return to the model's native
-default. Raising a configured window never grants access to a larger model.
+240000 while pricing guidance is fresh, otherwise 80000). Remove the
+context-window override to return to the model's native default. Raising a
+configured window never grants access to a larger model.
 
 ### Claude Code terminal
 

@@ -70,7 +70,8 @@ network access still begins outside the workspace boundary and can be requested
 through the normal approval flow instead of being silently enabled.
 
 System defaults also compact the full active Codex context at 240,000 tokens
-to leave room before known long-context price tiers. This is an overridable
+while the pricing review is fresh, falling back to 80,000 when setup detects a
+stale review. This leaves room before known long-context price tiers and is an overridable
 cost preference in both security postures. See [Agent context budgets](AGENT_CONTEXT.md)
 for provider-specific thresholds and temporary or session-scoped user approval.
 
