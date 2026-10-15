@@ -151,6 +151,12 @@ class PanelFeatureTest(unittest.TestCase):
         self.assertTrue(self.state.features().agents)
         self.assertFalse(self.state.features().prompts)
 
+    def test_installed_desktop_has_its_own_navigation_destination(self) -> None:
+        self.assertNotIn('href="/desktop/"', render_sidebar(self.state.navigation("dashboard")))
+        self.units.side_effect = lambda unit, home, **kwargs: unit == "basaltwater-guacamole.service"
+        self.assertIn('href="/desktop/"', render_sidebar(self.state.navigation("dashboard")))
+        self.assertFalse(self.state.features().agents)
+
     def test_absent_optional_get_and_post_routes_never_read_or_mutate_state(self) -> None:
         paths = ("agents", "agent-tools", "agent-inbox", "maintenance-agent", "credentials", "publishing", "admin")
         actions = ("agent-task/save", "agent-task", "agent-tool/prepare", "agent-diagnostics",

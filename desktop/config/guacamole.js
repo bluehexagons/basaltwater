@@ -6,6 +6,11 @@
     const status = byId("status");
     const lifetime = byId("lifetime");
     const csrf = byId("csrf").value;
+    const view = byId("desktop-view");
+    const textInput = byId("desktop-keyboard");
+    const modifierButtons = [...document.querySelectorAll("[data-modifier]")];
+    const inputButtons = [...document.querySelectorAll("[data-key], [data-modifier]")];
+    const modifiers = new Set();
     let client = null;
     let attachment = null;
     let controlled = false;
@@ -29,6 +34,9 @@
         byId("disconnect").disabled = busy;
         byId("connect").disabled = connected || busy || client !== null;
         byId("password").disabled = connected || busy || client !== null;
+        byId("keyboard-toggle").disabled = !connected || !controlled || busy;
+        textInput.disabled = !connected || !controlled || busy;
+        for (const button of inputButtons) button.disabled = !connected || !controlled || busy;
     }
 
     async function post(path, data = {}) {
@@ -43,6 +51,10 @@
 
     function releaseKeys() {
         if (keyboard) keyboard.reset();
+        if (client) for (const key of modifiers) client.sendKeyEvent(0, key);
+        modifiers.clear();
+        for (const button of modifierButtons) button.setAttribute("aria-pressed", "false");
+        textInput.value = "";
     }
 
     function observe() {
@@ -57,6 +69,8 @@
         connected = false;
         attachment = null;
         displayElement = null;
+        byId("keyboard-panel").hidden = true;
+        byId("keyboard-toggle").setAttribute("aria-expanded", "false");
         byId("logout-confirmation").hidden = true;
         revision++;
         clearTimeout(pollTimer);
@@ -103,20 +117,30 @@
     function scale() {
         if (!client) return;
         const display = client.getDisplay();
-        if (display.getWidth()) display.scale(Math.min(1, screen.clientWidth / display.getWidth()));
+        if (!display.getWidth()) return;
+        const size = byId("zoom").value;
+        let factor = Number(size);
+        if (size === "fit") {
+            factor = Math.min(1, screen.clientWidth / display.getWidth());
+            if (document.fullscreenElement === view)
+                factor = Math.min(factor, screen.clientHeight / display.getHeight());
+        }
+        display.scale(factor);
     }
 
-    function sendMouse(event) {
-        if (!client || !controlled) return;
-        screen.focus({preventScroll: true});
+    function sendMouse(event, relativeToDisplay = false) {
+        if (!client || !controlled || byId("touch-mode").value === "pan") return;
+        if (byId("keyboard-panel").hidden) screen.focus({preventScroll: true});
         const display = client.getDisplay();
         const screenBounds = screen.getBoundingClientRect();
         const displayBounds = displayElement.getBoundingClientRect();
-        // Fullscreen centers the display within the input container. Translate
-        // its mouse coordinates to the display origin, including scrolling.
-        const state = {...event.state,
-            x: event.state.x - (displayBounds.left - screenBounds.left + screen.scrollLeft),
-            y: event.state.y - (displayBounds.top - screenBounds.top + screen.scrollTop)};
+        // Translate container mouse coordinates to the display origin,
+        // including scrolling. Touch helpers already use display coordinates.
+        const state = {...event.state};
+        if (!relativeToDisplay) {
+            state.x -= displayBounds.left - screenBounds.left + screen.scrollLeft;
+            state.y -= displayBounds.top - screenBounds.top + screen.scrollTop;
+        }
         // Drag release events may lie outside the scaled display. Clamp their
         // position while preserving button releases, so buttons cannot stick.
         state.x = Math.max(0, Math.min(state.x, (display.getWidth() - 1) * display.getScale()));
@@ -157,6 +181,12 @@
             };
             displayElement = display.getElement();
             screen.appendChild(displayElement);
+            const directTouch = new Guacamole.Mouse.Touchscreen(displayElement);
+            const trackpad = new Guacamole.Mouse.Touchpad(displayElement);
+            for (const [helper, mode] of [[directTouch, "direct"], [trackpad, "trackpad"]])
+                helper.onEach(["mousedown", "mouseup", "mousemove"], event => {
+                    if (byId("touch-mode").value === mode) sendMouse(event, true);
+                });
             client.getDisplay().onresize = scale;
             client.onerror = tunnel.onerror = () => {
                 if (client !== current) return;
@@ -185,8 +215,6 @@
             if (!mouse) {
                 mouse = new Guacamole.Mouse(screen);
                 mouse.onEach(["mousedown", "mouseup", "mousemove"], sendMouse);
-                const touch = new Guacamole.Mouse.Touchscreen(screen);
-                touch.onEach(["mousedown", "mouseup", "mousemove"], sendMouse);
                 keyboard = new Guacamole.Keyboard(screen);
                 keyboard.onkeydown = keysym => {
                     if (client && controlled) { client.sendKeyEvent(1, keysym); return false; }
@@ -268,11 +296,100 @@
         } finally { busy = false; controls(connected); }
     });
     byId("fullscreen").addEventListener("click", () => {
-        screen.requestFullscreen().catch(() => { status.textContent = "Fullscreen is unavailable in this browser."; });
+        if (document.fullscreenElement === view) document.exitFullscreen().catch(() => {});
+        else if (view.requestFullscreen)
+            view.requestFullscreen().catch(() => { status.textContent = "Fullscreen is unavailable in this browser. Rotate your device for a wider view."; });
+        else status.textContent = "Fullscreen is unavailable in this browser. Rotate your device for a wider view.";
+    });
+    byId("zoom").addEventListener("change", scale);
+    byId("display-options").addEventListener("toggle", scale);
+    byId("touch-mode").addEventListener("change", () => {
+        if (client && controlled) client.sendMouseState({x: 0, y: 0, left: false, middle: false, right: false, up: false, down: false});
+        screen.classList.toggle("pan-display", byId("touch-mode").value === "pan");
+    });
+    function tapKey(key) {
+        if (!client || !controlled || busy) return;
+        client.sendKeyEvent(1, key);
+        client.sendKeyEvent(0, key);
+    }
+    function sendText() {
+        const value = textInput.value;
+        textInput.value = "";
+        for (const character of value) {
+            const code = character.codePointAt(0);
+            tapKey(code === 10 ? 0xFF0D : code <= 0xFF ? code : 0x01000000 | code);
+        }
+    }
+    byId("keyboard-toggle").addEventListener("click", () => {
+        const panel = byId("keyboard-panel");
+        panel.hidden = !panel.hidden;
+        byId("keyboard-toggle").setAttribute("aria-expanded", String(!panel.hidden));
+        if (!panel.hidden) textInput.focus();
+        else { releaseKeys(); screen.focus({preventScroll: true}); }
+        scale();
+    });
+    textInput.addEventListener("input", event => { if (!event.isComposing) sendText(); });
+    textInput.addEventListener("compositionend", sendText);
+    textInput.addEventListener("beforeinput", event => {
+        if (event.inputType === "deleteContentBackward" && !event.isComposing) {
+            event.preventDefault();
+            tapKey(0xFF08);
+        }
+    });
+    textInput.addEventListener("keydown", event => {
+        const key = {Enter: 0xFF0D, Tab: 0xFF09, Escape: 0xFF1B,
+            ArrowLeft: 0xFF51, ArrowUp: 0xFF52, ArrowRight: 0xFF53, ArrowDown: 0xFF54}[event.key];
+        if (key && !event.isComposing) { event.preventDefault(); tapKey(key); }
+    });
+    for (const button of inputButtons) {
+        // Keep the phone keyboard open when using the extra keys.
+        button.addEventListener("pointerdown", event => event.preventDefault());
+        button.addEventListener("click", () => {
+            if (!client || !controlled || busy) return;
+            if (button.dataset.modifier) {
+                const key = Number(button.dataset.modifier);
+                const held = !modifiers.has(key);
+                if (held) modifiers.add(key); else modifiers.delete(key);
+                client.sendKeyEvent(held ? 1 : 0, key);
+                button.setAttribute("aria-pressed", String(held));
+            } else tapKey(Number(button.dataset.key));
+        });
+    }
+    byId("inspect").addEventListener("click", async () => {
+        byId("inspect").disabled = true;
+        try {
+            const result = await post("inspect");
+            byId("desktop-status").textContent = `Desktop: ${result.state}${result.geometry ? ` · ${result.geometry.join(" × ")}` : ""}${result.state === "running" ? result.paused ? " · agent paused" : " · agent enabled" : ""}.`;
+        } catch (error) { byId("desktop-status").textContent = error.message; }
+        finally { byId("inspect").disabled = false; }
+    });
+    byId("copy-ssh").addEventListener("click", async () => {
+        const command = byId("ssh-command");
+        try {
+            await navigator.clipboard.writeText(command.value);
+            byId("ssh-status").textContent = "SSH command copied. Paste it into your terminal.";
+        } catch (_) {
+            command.focus(); command.select();
+            byId("ssh-status").textContent = "Select and copy the SSH command from the field above.";
+        }
     });
     screen.addEventListener("blur", releaseKeys);
+    screen.addEventListener("wheel", event => {
+        // Guacamole consumes wheel events even when input is disabled. Let
+        // the browser scroll the zoomed display in pan/observation mode.
+        if (!controlled || byId("touch-mode").value === "pan") event.stopImmediatePropagation();
+    }, {capture: true});
+    view.addEventListener("focusout", event => {
+        if (!view.contains(event.relatedTarget)) releaseKeys();
+    });
+    window.addEventListener("blur", releaseKeys);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) releaseKeys(); });
     window.addEventListener("resize", scale);
-    document.addEventListener("fullscreenchange", scale);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", scale);
+    document.addEventListener("fullscreenchange", () => {
+        byId("fullscreen").textContent = document.fullscreenElement === view ? "Exit fullscreen" : "Fullscreen";
+        scale();
+    });
     window.addEventListener("pagehide", () => {
         pageActive = false;
         const ticket = attachment;

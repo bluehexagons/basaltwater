@@ -41,6 +41,7 @@ class BrandAssetTest(unittest.TestCase):
             patch.object(AgentGitSettings, "_read", side_effect=AssertionError("Private account settings read")),
             patch.object(agents.AgentDiagnostics, "snapshot", side_effect=AssertionError("Host diagnostic state read")),
             patch.object(agents, "inspect_agent_tools", side_effect=AssertionError("Agent credential inspection")),
+            patch("lib.agent_maintenance.agent_maintenance_path", side_effect=AssertionError("Private restart hold read")),
         ):
             export_assets(Path(directory))
 

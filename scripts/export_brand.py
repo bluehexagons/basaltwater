@@ -288,6 +288,7 @@ def export_assets(assets: Path) -> None:
         patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows, [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
         patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": True}),
+        patch.object(maintenance, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),
         patch.object(maintenance, "load_reports", return_value={
             "version": 1, "username": "operator", "context": {"system_type": "server_dev"}, "reports": [{
                 "checked_at": "2026-01-01T09:00:00+00:00", "check_status": "completed", "security_audit": True,

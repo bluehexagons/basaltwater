@@ -10,7 +10,8 @@ under the panel account; no T3 Code installation is required.
 | Check host health | Overview | Uptime, load average, memory, swap, resource pressure, kernel, reboot state, and update timers |
 | Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
-| Observe or control an agent desktop | Desktop (Guacamole), under Services | Optional browser access to the existing shared XRDP desktop |
+| Observe or control an agent desktop | Desktop | Optional browser access, mobile input, zoom and read-only readiness checks for the shared XRDP desktop |
+| Open a shell without a desktop | Desktop → Command line access (SSH) | Copy an SSH command for your existing terminal client |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
@@ -44,6 +45,7 @@ Optional pages and controls follow the tools installed for the panel account:
 | Git & credentials | Git is installed; GitHub token controls additionally require `gh` |
 | Publishing | Butler or SteamCMD is installed; account controls show installed providers |
 | Maintenance agent | Its managed service and policy file are installed |
+| Desktop | Its Guacamole gateway service is installed |
 | Admin controls | A valid privilege approval service is configured |
 
 Discovery checks local executable paths and unit files without running tools,
@@ -328,6 +330,14 @@ a check. Panel setup prepares disabled supervision; `--maintenance-agent`
 enables it during setup. Checks continue independently of the panel and T3 Code.
 Healthy checks make no AI calls. Opt-in housekeeping requests fixed existing
 cleanup jobs; AI reviews provide recommendations.
+
+**Automatic restart hold** exposes the same account-local hold as
+`basaltw agent maintenance hold`. Choose 1–72 whole hours (default 8), extend
+the hold, inspect its UTC expiry, or release it early. Holds defer managed
+automatic restarts; checks, package updates, housekeeping and manual restarts
+continue under their existing policies. Opening the page never creates or
+extends a hold. The controls require a writable home owned by the panel
+account; locked service accounts cannot create holds for another user.
 
 Open **Agent inbox** to read a mailbox, send a message, or acknowledge one after
 handling it. Terminal workers can use `basaltw agent inbox wait` between tasks

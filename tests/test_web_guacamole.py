@@ -593,9 +593,41 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 200)
         self.assertIn("Take control", text)
         self.assertIn('script src="/desktop/assets/all.js"', text)
+        self.assertIn('id="desktop-keyboard"', text)
+        self.assertIn('value="trackpad"', text)
+        self.assertIn('value="pan"', text)
+        self.assertIn('value="ssh -- agent@desktop-vm"', text)
+        self.assertIn("Check desktop status", text)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
         self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+        self.desktop_call.assert_not_called()
+
+    async def test_inspect_is_read_only_and_does_not_reveal_attachment_or_pause_token(self):
+        self.snapshot["browser_pause"] = "private-token"
+        result = await self.post("inspect")
+        self.assertEqual(result.status, 200)
+        self.assertEqual(await result.json(), dict(state="running", geometry=[1600, 900], paused=False))
+        self.assertIsNone(self.gateway.session)
+        self.desktop_call.assert_awaited_once_with("status")
+        self.snapshot.update(state="stopped", geometry=None)
+        self.assertEqual((await (await self.post("inspect")).json())["state"], "stopped")
+
+    async def test_inspect_requires_identity_origin_csrf_and_exact_fields(self):
+        for changed in ({"Origin": "https://evil.test"}, {"X-Guacamole-User": "other"}, {"X-Forwarded-Proto": "http"}):
+            result = await self.client.post("/desktop/inspect", headers=self.headers | changed, json={"csrf": self.gateway.csrf})
+            self.assertEqual(result.status, 403)
+        for fields in ({"csrf": "wrong"}, {"csrf": self.gateway.csrf, "action": "start"}):
+            result = await self.client.post("/desktop/inspect", headers=self.headers, json=fields)
+            self.assertEqual(result.status, 403)
+        self.desktop_call.assert_not_called()
+
+    async def test_shell_hint_uses_validated_host_and_excludes_https_port(self):
+        self.gateway.config["origins"] = ["https://[2001:db8::1]:9443", "https://bad;host"]
+        response = await self.client.get("/desktop/", headers=self.headers | {"Host": "[2001:db8::1]:9443"})
+        self.assertIn('value="ssh -- agent@2001:db8::1"', await response.text())
+        response = await self.client.get("/desktop/", headers=self.headers | {"Host": "bad;host"})
+        self.assertEqual(response.status, 400)
         self.desktop_call.assert_not_called()
 
     async def test_identity_tls_and_origin_are_required(self):

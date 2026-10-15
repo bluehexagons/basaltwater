@@ -66,6 +66,7 @@ BRAND_ICONS = {
 }
 NAVIGATION_ICONS = {
     "Dashboard": "dashboard", "Agents": "agents", "Agent tools": "agent-tools",
+    "Desktop": "web-services",
     "Web services": "web-services", "Security activity": "security",
     "Notifications": "notifications", "Access": "access", "Admin controls": "admin",
     "Git & credentials": "access",
@@ -86,6 +87,7 @@ PAGE_ICONS = {
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
     "credentials": "access",
     "publishing": "export",
+    "desktop": "web-services",
     "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
 
@@ -252,6 +254,7 @@ def panel_navigation(
 
     items: list[NavigationItem] = [
         ("/", "Dashboard", "dashboard"),
+        ("/desktop/", "Desktop", "desktop"),
         ("/agents", "Agents", "agents"),
         ("/maintenance-agent", "Maintenance agent", "maintenance-agent"),
         ("/agent-inbox", "Agent inbox", "agent-inbox"),

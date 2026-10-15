@@ -24,6 +24,7 @@ import socket
 import stat
 import sys
 import time
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -34,8 +35,8 @@ from common.service_tools.web_panel_templates import panel_navigation, render_do
 from desktop import session_runtime as desktop
 from lib.atomic_io import read_json_file
 from lib.guacamole_config import HTTP_SOCKET, RDP_SOCKET, RELEASE
-from lib.validation import validate_filesystem_path
-from lib.validators import validate_username
+from lib.validation import validate_filesystem_path, validate_network_ip
+from lib.validators import validate_host, validate_username
 
 ASSETS = Path(__file__).resolve().parents[2] / "desktop/config"
 MAX_SESSION = 3600
@@ -164,26 +165,57 @@ class Gateway:
         self.authenticate(request)
         if request.query:
             raise web.HTTPBadRequest(text="Invalid desktop URL")
+        host = urlsplit("https://" + request.headers["Host"]).hostname or ""
+        try:
+            if ":" in host and "%" not in host:
+                host = validate_network_ip(host)
+            elif not validate_host(host):
+                raise ValueError("Invalid host")
+        except ValueError:
+            raise web.HTTPBadRequest(text="Invalid desktop host") from None
+        destination = html.escape(self.config['username'] + "@" + host, quote=True)
         content = f'''<section class="desktop-panel"><h2>Shared desktop</h2>
 <p>Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control.</p>
+<div class="desktop-inspection"><button id="inspect" type="button">Check desktop status</button>
+<span id="desktop-status" role="status">Check readiness without starting or connecting to the desktop.</span></div>
 <form id="connect-form"><input type="hidden" id="csrf" value="{self.csrf}">
 <label>Account <input value="{html.escape(self.config['username'], quote=True)}" readonly autocomplete="username"></label>
 <label>Unix account password <input id="password" type="password" required maxlength="1024" autocomplete="off"></label>
 <button id="connect">Connect to desktop</button></form>
+<div id="desktop-view">
 <div class="desktop-controls"><button id="take" class="primary-control" aria-pressed="false" disabled>Take control</button>
 <button id="observe" disabled>Observe only</button><button id="resume" disabled>Resume agent</button>
-<button id="disconnect" type="button">Disconnect browser session</button><button id="fullscreen" disabled>Fullscreen</button></div>
+<button id="disconnect" type="button" aria-label="Disconnect browser session">Disconnect</button><button id="fullscreen" disabled>Fullscreen</button>
+<button id="keyboard-toggle" type="button" aria-expanded="false" aria-controls="keyboard-panel" disabled>Keyboard</button></div>
+<details id="display-options"><summary>Display &amp; touch settings</summary><div class="desktop-controls">
+<label>Display size<select id="zoom"><option value="fit">Fit screen</option><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label>
+<label>Touch input<select id="touch-mode"><option value="trackpad">Trackpad</option><option value="direct">Direct touch</option><option value="pan">Pan display</option></select></label>
+</div></details>
 <div class="logout-controls"><button id="logout" type="button" disabled>Log out desktop</button>
 <span id="logout-confirmation" hidden>Log out and close desktop applications?
 <button id="confirm-logout" type="button">Log out desktop now</button><button id="cancel-logout" type="button">Cancel</button></span></div>
 <p id="status" role="status" aria-live="polite">Disconnected</p>
 <p id="lifetime">Connections last at most one hour and expire after ten minutes without input or a control action.</p>
 <div id="screen" tabindex="0" aria-label="Remote desktop"></div>
+<div id="keyboard-panel" hidden><label>Type to desktop<textarea id="desktop-keyboard" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" disabled></textarea></label>
+<div class="keyboard-keys" role="group" aria-label="Desktop keys">
+<button type="button" data-modifier="65507" aria-pressed="false" disabled>Ctrl</button><button type="button" data-modifier="65513" aria-pressed="false" disabled>Alt</button>
+<button type="button" data-key="65289" disabled>Tab</button><button type="button" data-key="65307" disabled>Esc</button>
+<button type="button" data-key="65288" disabled>Backspace</button><button type="button" data-key="65293" disabled>Enter</button>
+<button type="button" data-key="65361" aria-label="Left arrow" disabled>←</button><button type="button" data-key="65362" aria-label="Up arrow" disabled>↑</button>
+<button type="button" data-key="65364" aria-label="Down arrow" disabled>↓</button><button type="button" data-key="65363" aria-label="Right arrow" disabled>→</button></div></div>
+</div>
+<p>On touch screens, Trackpad moves the pointer relative to your finger; tap to click and use two fingers to scroll.
+Direct touch clicks where you tap. Choose a larger display size and Pan display to scroll without clicking the desktop.</p>
 <p>Clipboard, file transfer, audio and recording are disabled. Closing this connection keeps the desktop running.
 Keep administrator sign-ins and privilege approvals on your own device.</p>
-<noscript>JavaScript is required for the browser desktop.</noscript></section>'''
-        navigation = list(panel_navigation())
-        navigation.insert(2, ("/desktop/", "Desktop", "desktop"))
+<noscript>JavaScript is required for the browser desktop.</noscript></section>
+<section class="desktop-panel"><h2>Command line access (SSH)</h2>
+<p>Open a shell in your SSH client without starting the desktop. Use your existing SSH key; the panel and desktop passwords do not replace SSH authentication.</p>
+<label>SSH command<input id="ssh-command" value="ssh -- {destination}" readonly spellcheck="false"></label>
+<div class="desktop-inspection"><button id="copy-ssh" type="button">Copy SSH command</button><span id="ssh-status" role="status"></span></div>
+<p>This command uses the panel hostname and SSH port 22. Adjust the host or add <code>-p PORT</code> before <code>--</code> if your SSH endpoint differs.</p></section>'''
+        navigation = panel_navigation(current="desktop", available=frozenset({"dashboard", "desktop", "services", "jobs", "logs"}))
         page = render_document(title="Desktop", style=CSS,
                                header='<header><p class="eyebrow">Workspace</p><h1>Desktop</h1></header>',
                                content=content, navigation=navigation,
@@ -303,6 +335,16 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             if not session.ready:
                 raise web.HTTPConflict(text="Desktop display is not ready")
             return web.json_response(self.state(session, await desktop_call("status")))
+
+    async def inspect(self, request: web.Request) -> web.Response:
+        """Report readiness without creating a session or exposing its lease."""
+        await self.form(request, set())
+        snapshot = await desktop_call("status")
+        geometry = snapshot.get("geometry")
+        if not isinstance(geometry, list) or len(geometry) != 2 or any(type(n) is not int or not 1 <= n <= 16384 for n in geometry):
+            geometry = None
+        return web.json_response({"state": str(snapshot.get("state", "unknown"))[:40],
+                                  "paused": snapshot.get("paused") is True, "geometry": geometry})
 
     async def control(self, request: web.Request) -> web.Response:
         value = await self.form(request, {"session", "action"})
@@ -486,22 +528,36 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
 CSS = """
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}
 .sidebar{position:fixed;inset:0 auto 0 0;width:235px;padding:24px 12px;background:var(--panel);overflow:auto}
-.sidebar a{display:flex;gap:10px;padding:10px;text-decoration:none;color:var(--text);border-radius:8px}
+.sidebar a{display:flex;align-items:center;gap:10px;padding:10px;min-height:44px;text-decoration:none;color:var(--text);border-radius:8px}
 .nav-group{color:var(--muted);font-size:.8rem;margin:20px 10px 8px}main{margin-left:235px;padding:24px;max-width:1920px}
 header,.desktop-panel{padding:20px;border:1px solid var(--line);border-radius:12px;background:var(--panel);margin-bottom:20px}
 .eyebrow{color:var(--accent);font-size:.85rem}h1{margin:10px 0}p{line-height:1.6}label{display:flex;flex-direction:column;gap:6px}
 form,.desktop-controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:16px 0}
-button,input{font:inherit;padding:10px 14px;border:1px solid var(--line);border-radius:8px}
-input{color:var(--text);background:var(--bg)}button{color:var(--text);background:var(--bg);cursor:pointer}
+button,input,select,textarea{font:inherit;padding:10px 14px;min-height:44px;border:1px solid var(--line);border-radius:8px;max-width:100%}
+input,select,textarea{color:var(--text);background:var(--bg);min-width:0}button{color:var(--text);background:var(--bg);cursor:pointer}
+a{color:var(--accent)}label{min-width:0}#connect-form label{flex:1 1 220px}#ssh-command{width:100%;font-family:monospace}
+.desktop-inspection,.keyboard-keys{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}
+#desktop-view{min-width:0}.desktop-controls{align-items:center}.desktop-controls label{font-size:.9rem}
+#display-options summary{min-height:44px;padding:10px 0;cursor:pointer;color:var(--accent)}
+#keyboard-panel{padding:12px 0}#desktop-keyboard{width:100%;resize:vertical}
+.keyboard-keys button[aria-pressed=true]{background:var(--accent);color:var(--panel)}
 #connect,.primary-control{color:var(--panel);background:var(--accent);font-weight:700}
 .primary-control{font-size:1.15rem;padding:14px 22px;border:2px solid var(--accent)}
 .primary-control[aria-pressed="true"]{box-shadow:0 0 0 3px var(--line)}
 .logout-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0}
 #logout-confirmation:not([hidden]){display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
-button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:auto;width:100%;min-height:240px;background:#111}
-#screen:fullscreen{display:flex;align-items:center;justify-content:center}#status{font-weight:600}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:10px}
+button:disabled{opacity:.5;cursor:default}#screen{position:relative;overflow:auto;width:100%;min-height:180px;max-height:70dvh;background:#111;overscroll-behavior:contain}
+#screen>div{touch-action:none}#screen:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#screen.pan-display>div{pointer-events:none;touch-action:auto}
+#desktop-view:fullscreen{display:flex;flex-direction:column;background:var(--panel);padding:12px;overflow:auto}
+#desktop-view:fullscreen #screen{flex:1;min-height:80px;max-height:none}
+#desktop-view:fullscreen #lifetime,#desktop-view:fullscreen .logout-controls{display:none}
+#desktop-view:fullscreen .desktop-controls{margin:0 0 10px}#status{font-weight:600}.skip-link{position:absolute;left:-10000px}.skip-link:focus{left:10px}
+#desktop-view:fullscreen .desktop-controls button{font-size:.875rem;padding:8px 10px}
+#desktop-view:fullscreen #status{font-size:.85rem;margin:6px 0}
 footer{padding:20px;color:var(--muted)}@media(max-width:900px){.sidebar{position:static;width:auto}.nav-links{display:flex;overflow:auto}.nav-links a{flex:none}.nav-group{display:none}main{margin:0;padding:12px}}
+@media(max-width:560px){header,.desktop-panel{padding:14px}.desktop-controls{gap:8px}.primary-control{font-size:1rem;padding:10px 14px}#connect-form button{width:100%}#desktop-view:fullscreen{padding:8px}}
 """
 
 GATEWAY_KEY = web.AppKey("gateway", Gateway)
@@ -531,6 +587,7 @@ def create_app(config: dict) -> web.Application:
     app.router.add_post("/desktop/session", gateway.connect)
     app.router.add_post("/desktop/control", gateway.control)
     app.router.add_post("/desktop/status", gateway.status)
+    app.router.add_post("/desktop/inspect", gateway.inspect)
     app.router.add_post("/desktop/disconnect", gateway.disconnect)
     app.router.add_post("/desktop/logout", gateway.logout)
     app.router.add_get("/desktop/ws", gateway.websocket)

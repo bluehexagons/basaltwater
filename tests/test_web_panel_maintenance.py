@@ -17,6 +17,7 @@ from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_templates import panel_navigation
 from lib import maintenance_agent as agent
+from lib import agent_maintenance as holds
 from lib.agent_inbox import AgentInbox
 from lib.atomic_io import write_json_atomic
 from lib.maintenance_agent_config import DEFAULTS
@@ -38,6 +39,9 @@ class WebPanelMaintenanceTest(unittest.TestCase):
             patch.object(view, "load_reports", side_effect=lambda: agent.load_reports(self.reports)),
             patch.object(view, "configure_policy", side_effect=lambda values: agent.configure_policy(values, path=self.policy)),
             patch.object(view, "request_check", side_effect=lambda: agent.request_check(directory=str(self.control))),
+            patch.object(view, "inspect_agent_maintenance", side_effect=lambda: holds.inspect_agent_maintenance(self.home)),
+            patch.object(view, "hold_agent_maintenance", side_effect=lambda hours: holds.hold_agent_maintenance(hours, home=self.home)),
+            patch.object(view, "release_agent_maintenance", side_effect=lambda: holds.release_agent_maintenance(home=self.home)),
         ):
             item.start()
             self.addCleanup(item.stop)
@@ -88,6 +92,27 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         values.update(csrf=self.state.csrf_token, submit="save", enabled="1", model="bad\nvalue")
         self.assertEqual(self.request("/actions/maintenance-agent", values)[0], 422)
         self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
+
+    def test_restart_hold_round_trip_is_account_local_and_does_not_change_policy(self) -> None:
+        self.assertIn("No active automatic restart hold", self.request("/maintenance-agent")[1])
+        with patch("subprocess.run") as command, patch("subprocess.Popen") as spawn:
+            response = self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "hold", "hours": "2"})
+            self.assertEqual(response[0], 303)
+            self.assertTrue(holds.inspect_agent_maintenance(self.home)["active"])
+            self.assertIn("Automatic restarts held until", self.request("/maintenance-agent")[1])
+            self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
+            self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "release"})[0], 303)
+            self.assertFalse(holds.inspect_agent_maintenance(self.home)["active"])
+        command.assert_not_called()
+        spawn.assert_not_called()
+
+    def test_restart_hold_rejects_invalid_hours_csrf_and_extra_fields(self) -> None:
+        for hours in ("0", "73", "9999999999", "1.5", "-1", "١", ""):
+            with self.subTest(hours=hours):
+                self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "hold", "hours": hours})[0], 422)
+        self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": "wrong", "submit": "hold", "hours": "2"})[0], 403)
+        self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "release", "hours": "2"})[0], 422)
+        self.assertFalse(holds.inspect_agent_maintenance(self.home)["active"])
 
     def test_inbox_routes_deliver_and_acknowledge_messages_across_instances(self) -> None:
         values = {"csrf": self.state.csrf_token, "submit": "send", "recipient": "parent", "sender": "operator", "message": "Worker complete"}

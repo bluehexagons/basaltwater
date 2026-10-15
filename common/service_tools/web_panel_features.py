@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 
 from lib.agent_cli import _tool_path
+from lib.guacamole_config import SERVICE as DESKTOP_SERVICE
 from lib.maintenance_agent_config import POLICY_FILE, SERVICE_NAME
 
 
@@ -17,6 +18,7 @@ class PanelFeatures:
     t3: bool = False
     maintenance: bool = False
     admin: bool = False
+    desktop: bool = False
 
     @property
     def prompts(self) -> bool:
@@ -41,6 +43,8 @@ class PanelFeatures:
             pages.add("maintenance-agent")
         if self.admin:
             pages.add("admin")
+        if self.desktop:
+            pages.add("desktop")
         return frozenset(pages)
 
 
@@ -74,4 +78,5 @@ def discover_features(home: str, *, admin: bool) -> PanelFeatures:
         t3=t3_installed(home),
         maintenance=os.path.isfile(POLICY_FILE) and unit_installed(SERVICE_NAME + ".service", home),
         admin=admin,
+        desktop=unit_installed(DESKTOP_SERVICE + ".service", home),
     )

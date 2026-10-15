@@ -8,6 +8,10 @@ from typing import Any
 from common.service_tools.web_panel_diagnostics import _redact_log_message
 from common.service_tools.web_panel_templates import render_document, render_heading
 from lib.agent_inbox import AgentInbox, MAX_MESSAGE_BYTES, mailbox_name
+from lib.agent_maintenance import (
+    DEFAULT_HOLD_HOURS, MAX_HOLD_HOURS, hold_agent_maintenance,
+    inspect_agent_maintenance, release_agent_maintenance,
+)
 from lib.maintenance_agent import configure_policy, load_policy, load_reports, request_check
 from lib.maintenance_agent_config import DEFAULTS, EFFORTS, LIMITS
 
@@ -36,6 +40,14 @@ def _escape(value: object) -> str:
 
 def maintenance_action(values: dict[str, str]) -> None:
     action = values.get("submit")
+    if action == "hold" and set(values) == {"submit", "hours"}:
+        if not values["hours"].isascii() or not values["hours"].isdigit() or len(values["hours"]) > 2:
+            raise ValueError("Choose a whole number of hours from 1 to 72")
+        hold_agent_maintenance(int(values["hours"]))
+        return
+    if action == "release" and set(values) == {"submit"}:
+        release_agent_maintenance()
+        return
     if action == "run" and set(values) == {"submit"}:
         request_check()
         return
@@ -54,8 +66,33 @@ def maintenance_action(values: dict[str, str]) -> None:
     configure_policy(policy)
 
 
+def render_maintenance_hold(csrf: str) -> str:
+    """Use the same account-local restart hold as the maintenance CLI."""
+    hold = inspect_agent_maintenance()
+    if hold["active"]:
+        status = f"Automatic restarts held until {hold['expires_at']} (UTC)."
+    elif hold["status"] == "invalid":
+        status = "The saved hold is invalid. Inspect it before relying on restart protection."
+    else:
+        status = "No active automatic restart hold."
+    return f'''<section>{render_heading("Automatic restart hold", "maintenance")}
+<p role="status">{_escape(status)}</p>
+<p>Defer managed automatic restarts while working. This account's hold expires automatically;
+it does not pause checks, package updates, housekeeping, or manual restarts.</p>
+<form class="maintenance-form" method="post" action="/actions/maintenance-agent">
+<input type="hidden" name="csrf" value="{_escape(csrf)}">
+<label>Hold duration (hours)<input type="number" name="hours" min="1" max="{MAX_HOLD_HOURS}" value="{DEFAULT_HOLD_HOURS}" required></label>
+<button name="submit" value="hold">{'Extend restart hold' if hold['active'] else 'Hold automatic restarts'}</button></form>
+<form class="job-load" method="post" action="/actions/maintenance-agent">
+<input type="hidden" name="csrf" value="{_escape(csrf)}"><button name="submit" value="release">Release restart hold</button></form></section>'''
+
+
 def render_maintenance(state: Any, style: str, *, error: str = "") -> str:
     content = f'<p class="status failed" role="alert">{_escape(error)}</p>' if error else ""
+    try:
+        content += render_maintenance_hold(state.csrf_token)
+    except (OSError, RuntimeError, ValueError):
+        content += '<p class="empty">Restart hold controls are unavailable. Inspect the account\'s maintenance hold permissions.</p>'
     try:
         policy = load_policy()
         reports = load_reports()

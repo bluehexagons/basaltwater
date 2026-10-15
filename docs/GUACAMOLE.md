@@ -39,12 +39,44 @@ with `--desktop` follows the existing shared-desktop setup and logout policy.
 Adding desktop support can require an existing managed desktop to log out;
 save work before setup. See [XRDP](XRDP.md).
 
-Open **Desktop (Guacamole)** under the panel's **Services**. JavaScript is
-required on this page. Other panel pages retain their existing behavior.
+Open **Desktop** in the sidebar, or **Desktop (Guacamole)** under the panel's
+**Services**. JavaScript is required on this page. Other panel pages retain
+their existing behavior.
 Enter the Unix password and choose **Connect to desktop**. Connecting explicitly
 starts or reuses the managed desktop. Merely opening the page does not start it.
 The Unix password is used in memory for the RDP handshake and is not saved,
 returned in responses, or written to logs.
+
+**Check desktop status** reads the supervisor's state, geometry and agent pause
+state without starting a desktop or creating a browser session. Opening the
+page itself remains read-only.
+
+## Mobile display and shell access
+
+The desktop toolbar wraps on narrow screens and remains available in
+fullscreen. Expand **Display & touch settings** to choose **Fit screen** or
+100%, 150% or 200% local scaling. Fit uses the available width and, in
+fullscreen, the available height. Zoom changes only the browser view, not the
+shared desktop's resolution. **Pan display** lets you scroll a zoomed display
+without sending clicks or scroll-wheel input to the desktop.
+
+**Trackpad** is the default touch mode: move with one finger, tap to click,
+tap with two fingers for a right click, and swipe with two fingers to scroll.
+**Direct touch** clicks at the tapped location. After taking control, use
+**Keyboard** to focus a text field and open a phone's keyboard. The accompanying
+toolbar supplies Ctrl, Alt, Tab, Esc, Backspace, Enter and arrow keys. Ctrl and
+Alt toggle until released; leaving the desktop controls, switching away from
+the browser, observing or disconnecting releases held modifiers. The text field
+supports Unicode and input composition. Fullscreen support depends on the
+browser; rotation and zoom controls remain available when it is unsupported.
+
+**Command line access (SSH)** provides a copyable command for an existing SSH
+client. It needs no desktop connection and uses the panel hostname with SSH's
+default port 22; adjust the destination or add `-p PORT` before `--` when SSH
+uses another endpoint. SSH retains its existing authentication policy and
+requires your SSH credentials. This is a client handoff, not a terminal running
+inside the page. An embedded terminal would require a separate authenticated
+backend; the pinned RDP-only gateway does not provide one.
 
 ## Observation and human control
 
@@ -56,7 +88,7 @@ client modifies the JavaScript or sends keyboard/pointer instructions directly.
   changes to **You have control** while active. Click the display to focus keyboard input.
 - **Observe only** disables browser input and retains the agent's pause state.
 - **Resume agent** disables browser input and explicitly resumes agent actions.
-- **Disconnect browser session** revokes the current browser connection,
+- **Disconnect** revokes the current browser connection,
   scoped to this page's attachment. A disconnected page can revoke the active
   connection from another tab. A stale page cannot revoke a replacement
   connection with its old attachment. Disconnect releases this browser's control
@@ -126,7 +158,7 @@ renew inactivity or extend the one-hour limit, and an expired session cannot
 be revived with a late control action.
 
 Changing the panel password prevents new connections but does not revoke an
-already upgraded WebSocket. Use **Disconnect browser session**, or restart
+already upgraded WebSocket. Use **Disconnect**, or restart
 `basaltwater-guacamole.service`, to revoke it immediately. Removing Guacamole
 stops active tunnels. No passwords or screen contents are retained in audit
 logs. Screen contents are visible to anyone with the panel credential and a
@@ -290,3 +322,12 @@ cleanup, reconnection, and preservation of separate pauses. Updating this runtim
 requires the current desktop to log out; normal setup already requests that
 logout before installing it. Save work before rerunning setup, then reload the
 desktop page.
+
+The 2026-10-15 mobile follow-up passed synthetic browser checks at 1280 × 800,
+390 × 844 and 844 × 390: connection and takeover, Unicode and composed text,
+modifier release, direct touch and trackpad input, zoom, panning without remote
+input, and SSH command copying. Maintenance hold/release also passed through
+the narrow layout with isolated account state. These checks use the pinned
+JavaScript client and a synthetic stream, not a live XRDP desktop. Native phone
+keyboards and fullscreen transitions still need live-device qualification;
+the collaborative preview did not complete the fullscreen transition.
