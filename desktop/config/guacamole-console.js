@@ -9,6 +9,7 @@
     const modifiers = new Set();
     let client = null, attachment = null, connected = false, busy = false;
     let revision = 0, active = true, timer = null, failure = "";
+    let resizeTimer = null, lastSize = "";
     const dimensions = () => ({width: Math.max(240, Math.min(3840, Math.floor(screen.clientWidth))),
         height: Math.max(180, Math.min(2160, Math.floor(document.fullscreenElement === view
             ? screen.clientHeight : window.innerHeight * .55)))});
@@ -44,6 +45,7 @@
         client = null; attachment = null; connected = false;
         revision++;
         clearTimeout(timer); timer = null;
+        clearTimeout(resizeTimer); resizeTimer = null; lastSize = "";
         if (previous) previous.disconnect();
         screen.replaceChildren();
         byId("keyboard-panel").hidden = true;
@@ -51,12 +53,22 @@
         byId("lifetime").textContent = "Sessions end after one hour or ten minutes without input.";
         controls();
     }
+    function scale() {
+        if (!client || !connected) return;
+        const display = client.getDisplay();
+        if (display.getWidth()) display.scale(Math.min(1, screen.clientWidth / display.getWidth()));
+    }
     function resize() {
         if (!client || !connected) return;
         const size = dimensions();
-        client.sendSize(size.width, size.height);
-        const display = client.getDisplay();
-        if (display.getWidth()) display.scale(Math.min(1, screen.clientWidth / display.getWidth()));
+        const key = `${size.width}x${size.height}`;
+        if (key !== lastSize) { client.sendSize(size.width, size.height); lastSize = key; }
+        scale();
+    }
+    function scheduleResize() {
+        scale();
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { resizeTimer = null; resize(); }, 100);
     }
     async function poll() {
         const current = client, ticket = attachment;
@@ -67,7 +79,9 @@
             byId("lifetime").textContent = `Session ends in ${Math.ceil(result.expires_in / 60)} min; inactivity ends in ${Math.ceil(result.idle_expires_in / 60)} min.`;
         } catch (error) {
             if (client === current) { reset(); status.textContent = error.message; }
-        } finally { if (connected) timer = setTimeout(poll, 5000); }
+        } finally {
+            if (connected && client === current && attachment === ticket) timer = setTimeout(poll, 5000);
+        }
     }
     byId("connect-form").addEventListener("submit", async event => {
         event.preventDefault();
@@ -104,9 +118,7 @@
             const mouse = new Guacamole.Mouse(display.getElement());
             const touch = new Guacamole.Mouse.Touchpad(display.getElement());
             for (const helper of [mouse, touch]) helper.onEach(["mousedown", "mouseup", "mousemove"], sendMouse);
-            display.onresize = () => {
-                if (display.getWidth()) display.scale(Math.min(1, screen.clientWidth / display.getWidth()));
-            };
+            display.onresize = scale;
             current.onerror = tunnel.onerror = () => {
                 if (client === current) failure = "Console connection failed. Check the Unix password and service readiness, then reconnect.";
             };
@@ -166,6 +178,7 @@
         const panel = byId("keyboard-panel"); panel.hidden = !panel.hidden;
         byId("keyboard-toggle").setAttribute("aria-expanded", String(!panel.hidden));
         if (!panel.hidden) text.focus(); else { releaseKeys(); screen.focus({preventScroll: true}); }
+        scheduleResize();
     });
     byId("disconnect").addEventListener("click", async () => {
         if (busy) return;
@@ -179,17 +192,18 @@
     byId("fullscreen").addEventListener("click", () => {
         if (document.fullscreenElement === view) document.exitFullscreen().catch(() => {});
         else if (view.requestFullscreen) view.requestFullscreen().catch(() => { status.textContent = "Fullscreen unavailable. Rotate your device for a wider console."; });
+        else status.textContent = "Fullscreen unavailable. Rotate your device for a wider console.";
     });
     screen.addEventListener("click", () => { if (connected && byId("keyboard-panel").hidden) screen.focus({preventScroll: true}); });
     screen.addEventListener("blur", releaseKeys);
     window.addEventListener("blur", releaseKeys);
     view.addEventListener("focusout", event => { if (!view.contains(event.relatedTarget)) releaseKeys(); });
     document.addEventListener("visibilitychange", () => { if (document.hidden) releaseKeys(); });
-    window.addEventListener("resize", resize);
-    if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
+    window.addEventListener("resize", scheduleResize);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", scheduleResize);
     document.addEventListener("fullscreenchange", () => {
         byId("fullscreen").textContent = document.fullscreenElement === view ? "Exit fullscreen" : "Fullscreen";
-        resize();
+        scheduleResize();
     });
     window.addEventListener("pagehide", () => {
         active = false;

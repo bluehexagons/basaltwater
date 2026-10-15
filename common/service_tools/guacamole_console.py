@@ -14,7 +14,7 @@ from common.service_tools.guacamole_protocol import handshake
 from common.service_tools.guacamole_service import (
     ASSETS, ATTACH_TIMEOUT, CSS, Gateway, IDLE_TIMEOUT, MAX_SESSION, Session,
 )
-from common.service_tools.web_panel_templates import panel_navigation, render_document
+from common.service_tools.web_panel_templates import render_document
 from lib.guacamole_config import RELEASE
 
 
@@ -28,9 +28,11 @@ class ConsoleGateway(Gateway):
         self.authenticate(request)
         if request.query:
             raise web.HTTPBadRequest(text="Invalid console URL")
-        keys = "".join(f'<button type="button" data-key="{code}" disabled>{label}</button>'
-                       for code, label in ((65289, "Tab"), (65307, "Esc"), (65288, "Backspace"),
-                                           (65293, "Enter"), (65361, "←"), (65362, "↑"), (65364, "↓"), (65363, "→")))
+        keys = "".join(f'<button type="button" data-key="{code}" aria-label="{name}" disabled>{label}</button>'
+                       for code, label, name in ((65289, "Tab", "Tab"), (65307, "Esc", "Escape"),
+                                                 (65288, "Backspace", "Backspace"), (65293, "Enter", "Enter"),
+                                                 (65361, "←", "Left arrow"), (65362, "↑", "Up arrow"),
+                                                 (65364, "↓", "Down arrow"), (65363, "→", "Right arrow")))
         content = f'''<section class="desktop-panel"><h2>Unix shell</h2>
 <p>Connect as <strong>{html.escape(self.config['username'])}</strong> without starting the desktop.
 This shell has the account's normal permissions and does not pause agent tasks.</p>
@@ -54,7 +56,7 @@ This shell has the account's normal permissions and does not pause agent tasks.<
 Text size applies when connecting; the terminal fits the available width.</p>
 <p>Disconnect closes this shell. Use <code>tmux</code> or <code>screen</code> for work that should survive disconnects.
 Clipboard and file transfer are disabled.</p><noscript>JavaScript is required for the browser console.</noscript></section>'''
-        navigation = panel_navigation(current="console", available=frozenset({"dashboard", "desktop", "console", "services", "jobs", "logs"}))
+        navigation = self.navigation("console")
         page = render_document(title="Console", style=CSS + "#console-keyboard{width:100%}#screen{min-height:280px}#connect-form[hidden]{display:none}",
                                header='<header><p class="eyebrow">Workspace</p><h1>Console</h1><p>Shell access through Guacamole</p></header>',
                                content=content, navigation=navigation, footer='<footer>Basaltwater · Guacamole SSH</footer>')

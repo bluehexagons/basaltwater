@@ -33,9 +33,11 @@ def capture(command: list[str]) -> dict:
     try:
         result = subprocess.run(command, check=False, capture_output=True,
                                 text=True, errors="replace", timeout=20)
+        # Redact before taking the tail: truncation can otherwise discard the
+        # identifying "Authorization:"/"password=" prefix and retain a secret.
+        stdout, stderr = redact(result.stdout), redact(result.stderr)
         return dict(command=command, returncode=result.returncode,
-                    stdout=redact(result.stdout[-OUTPUT_LIMIT:]),
-                    stderr=redact(result.stderr[-OUTPUT_LIMIT:]),
+                    stdout=stdout[-OUTPUT_LIMIT:], stderr=stderr[-OUTPUT_LIMIT:],
                     truncated=len(result.stdout) > OUTPUT_LIMIT or len(result.stderr) > OUTPUT_LIMIT)
     except (OSError, subprocess.TimeoutExpired) as error:
         return dict(command=command, error=f"{type(error).__name__}: command unavailable or timed out")
@@ -96,20 +98,24 @@ def collect() -> dict:
         services=capture(["systemctl", "show", "--no-pager",
                           "--property=Id,LoadState,ActiveState,SubState,Result,ExecMainStatus,NRestarts,MainPID",
                           "basaltwater-guacamole.service", "basaltwater-guacamole-rdp.service",
+                          "basaltwater-guacamole-ssh.socket", "basaltwater-guacamole-ssh@*.service",
                           "xrdp.service", "xrdp-sesman.service"]),
         journal=capture([*elevate, "journalctl", "--no-pager", "--since=-30min",
                          "--output=short-iso", "-n", "200",
                          "-u", "basaltwater-guacamole.service",
-                         "-u", "basaltwater-guacamole-rdp.service"]),
+                         "-u", "basaltwater-guacamole-rdp.service",
+                         "-u", "basaltwater-guacamole-ssh.socket",
+                         "-u", "basaltwater-guacamole-ssh@*.service"]),
         xrdp_logs=capture([*elevate, "tail", "-n", "120",
                            "/var/log/xrdp.log", "/var/log/xrdp-sesman.log"]),
         versions=capture(["dpkg-query", "--show",
                           "--showformat=${binary:Package}\t${Version}\n",
                           "basaltwater-guacamole", "xrdp", "xorgxrdp",
-                          "libfreerdp3-3", "python3-aiohttp"]),
+                          "libfreerdp3-3", "python3-aiohttp", "openssh-server", "libssh2-1t64"]),
         source_commit=capture(["git", "-C", str(SOURCE_ROOT), "rev-parse", "HEAD"]),
         source_files=[source_info(SOURCE_ROOT / name) for name in (
-            "desktop/config/guacamole.js", "common/service_tools/guacamole_service.py",
+            "desktop/config/guacamole.js", "desktop/config/guacamole-console.js",
+            "common/service_tools/guacamole_service.py", "common/service_tools/guacamole_console.py",
             "common/service_tools/guacamole_protocol.py", "lib/guacamole_config.py")],
         notes=["Read-only collection: no service restarts, desktop input, screenshots, "
                "password files, environment dumps, or configuration secrets.",

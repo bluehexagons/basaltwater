@@ -17,6 +17,7 @@ import html
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import secrets
 import signal
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from aiohttp import WSMsgType, web
 
 from common.service_tools.guacamole_protocol import Parser, filter_instruction, handshake, instruction
+from common.service_tools.web_panel_features import discover_features
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from desktop import session_runtime as desktop
 from lib.atomic_io import read_json_file
@@ -59,6 +61,7 @@ def load_configuration(path: str) -> dict:
             or not re.fullmatch(r"[0-9a-f]{64}", value["certificate"])
             or not isinstance(value.get("ssh_host_key"), str)
             or not re.fullmatch(r"\[127\.0\.0\.1\]:2222 ssh-ed25519 [A-Za-z0-9+/]{68}", value["ssh_host_key"])
+            or ("admin" in value and type(value["admin"]) is not bool)
             or not isinstance(value.get("origins"), list) or not 1 <= len(value["origins"]) <= 64
             or any(not isinstance(origin, str) or not origin.startswith("https://") or len(origin) > 300 for origin in value["origins"])):
         raise ValueError("Invalid Guacamole configuration")
@@ -137,6 +140,14 @@ class Gateway:
         self.session: Session | None = None
         self.lock = asyncio.Lock()
 
+    def navigation(self, current: str):
+        """Keep the same installed-feature links as the rest of the panel."""
+        home = pwd.getpwnam(self.config["username"]).pw_dir
+        pages = discover_features(home, admin=self.config.get("admin") is True).pages | {"desktop"}
+        if "ssh_host_key" in self.config:
+            pages |= {"console"}
+        return panel_navigation(current=current, available=pages)
+
     def authenticate(self, request: web.Request, *, origin: bool = False) -> None:
         expected = "https://" + request.headers.get("Host", "")
         if (request.headers.get("X-Forwarded-Proto") != "https"
@@ -180,6 +191,8 @@ class Gateway:
         except ValueError:
             raise web.HTTPBadRequest(text="Invalid desktop host") from None
         destination = html.escape(self.config['username'] + "@" + host, quote=True)
+        console_link = ('<p><a href="/console/">Open browser console</a> to log into a shell here without starting the desktop.</p>'
+                        if "ssh_host_key" in self.config else "")
         content = f'''<section class="desktop-panel"><h2>Shared desktop</h2>
 <p>Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control.</p>
 <div class="desktop-inspection"><button id="inspect" type="button">Check desktop status</button>
@@ -217,12 +230,12 @@ Direct touch clicks where you tap. Choose a larger display size and Pan display 
 Keep administrator sign-ins and privilege approvals on your own device.</p>
 <noscript>JavaScript is required for the browser desktop.</noscript></section>
 <section class="desktop-panel"><h2>Command line access (SSH)</h2>
-<p><a href="/console/">Open browser console</a> to log into a shell here without starting the desktop.</p>
+{console_link}
 <p>Or use your existing SSH client and key:</p>
 <label>SSH command<input id="ssh-command" value="ssh -- {destination}" readonly spellcheck="false"></label>
 <div class="desktop-inspection"><button id="copy-ssh" type="button">Copy SSH command</button><span id="ssh-status" role="status"></span></div>
 <p>This command uses the panel hostname and SSH port 22. Adjust the host or add <code>-p PORT</code> before <code>--</code> if your SSH endpoint differs.</p></section>'''
-        navigation = panel_navigation(current="desktop", available=frozenset({"dashboard", "desktop", "console", "services", "jobs", "logs"}))
+        navigation = self.navigation("desktop")
         page = render_document(title="Desktop", style=CSS,
                                header='<header><p class="eyebrow">Workspace</p><h1>Desktop</h1></header>',
                                content=content, navigation=navigation,

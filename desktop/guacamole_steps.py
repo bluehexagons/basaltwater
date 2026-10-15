@@ -369,6 +369,7 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
     configure_services({"version": 2, "username": config.username, "uid": account.pw_uid,
                         "origins": origins, "certificate": fingerprint,
                         "ssh_host_key": prepare_ssh_host_key(),
+                        "admin": config.privilege_broker_port is not None,
                         "socket_gid": pwd.getpwnam("www-data").pw_gid},
                        render_units(config.username, account.pw_uid, account.pw_gid))
     print("  ✓ Guacamole browser desktop configured (HTTPS panel only)")

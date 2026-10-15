@@ -59,6 +59,34 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertIn("sha256", info)
             self.assertNotIn("private source", json.dumps(info))
 
+    def test_truncation_does_not_expose_the_tail_of_a_long_credential_line(self):
+        secret = "private-value-" * diagnostics.OUTPUT_LIMIT
+        result = subprocess.CompletedProcess([], 0, "Authorization: Bearer " + secret, "password=" + secret)
+        with patch.object(diagnostics.subprocess, "run", return_value=result):
+            captured = diagnostics.capture(["test"])
+        self.assertTrue(captured["truncated"])
+        self.assertNotIn("private-value", json.dumps(captured))
+        self.assertIn("[redacted]", captured["stdout"])
+        self.assertIn("[redacted]", captured["stderr"])
+
+    def test_report_includes_private_ssh_state_versions_and_console_source_without_key_files(self):
+        with patch.object(diagnostics, "desktop_status", return_value={}), \
+                patch.object(diagnostics, "capture", return_value={}) as capture, \
+                patch.object(diagnostics, "source_info", return_value={}) as sources:
+            diagnostics.collect()
+        commands = [call.args[0] for call in capture.call_args_list]
+        units = next(command for command in commands if command[0] == "systemctl")
+        self.assertIn("basaltwater-guacamole-ssh.socket", units)
+        self.assertIn("basaltwater-guacamole-ssh@*.service", units)
+        journal = next(command for command in commands if "journalctl" in command)
+        self.assertIn("basaltwater-guacamole-ssh@*.service", journal)
+        versions = next(command for command in commands if command[0] == "dpkg-query")
+        self.assertIn("openssh-server", versions)
+        paths = [str(call.args[0]) for call in sources.call_args_list]
+        self.assertTrue(any(path.endswith("guacamole_console.py") for path in paths))
+        self.assertTrue(any(path.endswith("guacamole-console.js") for path in paths))
+        self.assertFalse(any("host_ed25519" in path or "/etc/" in path for path in paths))
+
     def test_root_collects_desktop_status_as_managed_non_root_owner_without_cli(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "desktop.json"

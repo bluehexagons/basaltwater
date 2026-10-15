@@ -202,7 +202,7 @@ def brand_styles() -> str:
         "box-shadow:inset 3px 0 var(--section-ink)}"
         ".brand-texture{pointer-events:none;user-select:none}"
         ".sidebar{isolation:isolate}"
-        ".sidebar>.brand-texture{position:absolute;bottom:16px;left:12px;width:220px;"
+        ".sidebar>.brand-texture{position:absolute;bottom:16px;left:12px;width:min(220px,calc(100% - 24px));"
         "height:160px;color:var(--accent);opacity:.07;z-index:-1}"
         "header{position:relative;isolation:isolate;overflow:hidden}"
         "header{border-top-color:var(--section-ink);"

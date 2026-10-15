@@ -40,8 +40,8 @@ Adding desktop support can require an existing managed desktop to log out;
 save work before setup. See [XRDP](XRDP.md).
 
 Open **Desktop** in the sidebar, or **Desktop (Guacamole)** under the panel's
-**Services**. JavaScript is required on this page. Other panel pages retain
-their existing behavior.
+**Services**. Desktop and Console retain the panel's sidebar links for installed
+features. JavaScript is required on these access pages.
 Enter the Unix password and choose **Connect to desktop**. Connecting explicitly
 starts or reuses the managed desktop. Merely opening the page does not start it.
 The Unix password is used in memory for the RDP handshake and is not saved,
@@ -79,7 +79,8 @@ connection may coexist. The console has the account's normal shell, home,
 network and sudo permissions; it is not the restricted gateway service's shell.
 Agent tasks continue running independently.
 
-The console resizes with the window, rotation and fullscreen view. Choose
+The console resizes with the window, rotation and fullscreen view, including
+when opening or closing its mobile keyboard controls. Choose
 **Text size** before connecting. **Keyboard** exposes phone text input and
 Ctrl, Alt, Tab, Esc and arrow keys; two-finger swipes scroll the terminal.
 Sessions end after one hour or ten minutes without keyboard/pointer input.
@@ -101,7 +102,7 @@ private Unix login endpoint, described below.
 
 ## Observation and human control
 
-New browser connections are view-only. The gateway enforces this even if a
+New browser desktop connections are view-only. The gateway enforces this even if a
 client modifies the JavaScript or sends keyboard/pointer instructions directly.
 
 - **Take control** pauses cooperative agent desktop actions, then enables
@@ -307,7 +308,8 @@ For a shareable JSON report, run
 the desktop owner. Run `sudo -v` first to allow the collector's noninteractive
 log reads. Redirect the output to a private file (for example, set `umask 077`
 before redirecting to `guacamole-diagnostics.json`). The collector records
-bounded service/XRDP logs, desktop state, package versions and source hashes.
+bounded gateway, private SSH and XRDP logs, desktop state, package versions
+(including the native SSH backend) and desktop/console source hashes.
 If run as root, it reads the managed desktop owner from root-owned configuration
 and queries status as that account. When the orchestration CLI is absent, it
 uses the installed desktop runtime directly.
@@ -400,3 +402,16 @@ collaborative browser check passed at 1280 × 800, 390 × 844 and 844 × 390,
 including Unicode input, modifier release, resize messages and reconnects. Full
 socket activation/PAM lifetime under a booted VM and native phone keyboards
 still need qualification on the testing VM.
+
+The subsequent audit fixed missing installed-feature navigation on the access
+pages, stale console polling after reconnect, repeated resize messages, and
+fullscreen feedback. Sidebar textures also fit the narrower access-page sidebar
+without causing a horizontal scrollbar. Offline browser regressions cover these
+lifecycle and mobile-input paths. Diagnostics now include the private SSH backend and redact
+credential lines before truncating log output. In a disposable Debian Trixie
+container booted with systemd, the actual private socket/template units passed
+activation, PAM password login, writable-home and normal shell permission
+checks. Grouped unit removal closed an active shell and removed the endpoint;
+a shortened service lifetime closed the shell with a timeout result. These
+checks qualify the SSH unit lifecycle in that container, not the complete
+hardened gateway on a desktop VM or a native phone keyboard.

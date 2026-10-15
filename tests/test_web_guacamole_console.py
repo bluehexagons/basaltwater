@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from common.service_tools import guacamole_console as console, guacamole_service as service
 from common.service_tools.guacamole_protocol import Parser, filter_instruction, handshake, instruction
+from common.service_tools.web_panel_features import PanelFeatures
 from desktop import guacamole_steps as setup
 from lib.guacamole_config import SSH_SERVICE
 
@@ -24,6 +25,8 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.stack = ExitStack()
         self.desktop = self.stack.enter_context(patch.object(service, "desktop_call", new=AsyncMock(side_effect=AssertionError("Console must not touch desktop"))))
+        self.stack.enter_context(patch.object(service.pwd, "getpwnam", return_value=MagicMock(pw_dir="/home/agent")))
+        self.discovery = self.stack.enter_context(patch.object(service, "discover_features", return_value=PanelFeatures()))
         self.app = service.create_app(dict(username="agent", origins=["https://vm"],
                                           certificate="a" * 64, ssh_host_key=PIN))
         self.gateway = self.app[console.CONSOLE_KEY]
@@ -65,6 +68,22 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get("/console/?host=evil", headers=self.headers)).status, 400)
         self.assertEqual((await self.client.get("/console/assets/unknown.js", headers=self.headers)).status, 404)
         self.assertIsNone(self.gateway.session)
+
+    async def test_both_access_pages_keep_installed_navigation_and_hide_unavailable_sections(self):
+        self.gateway.config["admin"] = True
+        for features in (PanelFeatures(), PanelFeatures(tools=frozenset({"codex", "git", "butler"}),
+                                                        maintenance=True, admin=True)):
+            self.discovery.return_value = features
+            for path in ("/desktop/", "/console/"):
+                with self.subTest(path=path, tools=features.tools):
+                    response = await self.client.get(path, headers=self.headers)
+                    self.assertEqual(response.status, 200)
+                    page = await response.text()
+                    for href in ("/desktop/", "/console/"):
+                        self.assertIn(f'href="{href}"', page)
+                    for href in ("/agents", "/credentials", "/publishing", "/admin", "/maintenance-agent"):
+                        self.assertEqual(f'href="{href}"' in page, bool(features.tools))
+            self.discovery.assert_called_with("/home/agent", admin=True)
 
     async def test_dimensions_and_font_bounds_reject_before_creating_session(self):
         for values in (dict(width=True), dict(width=239), dict(width=3841), dict(height=[]),
