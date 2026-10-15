@@ -43,10 +43,19 @@ def snapshot_unit_file(path: str) -> dict | None:
 
 
 def inspect_unit_state(unit: str) -> dict[str, str]:
-    output = _command("systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState", "--no-pager")
+    """Reject transitions, but allow repairing a service waiting to retry failure."""
+    output = _command("systemctl", "show", unit, "--property=LoadState,ActiveState,SubState,UnitFileState", "--no-pager")
     state = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    if state.get("LoadState") not in {"loaded", "not-found"} or state.get("ActiveState") not in {"active", "inactive", "failed"}:
-        raise RuntimeError(f"Cannot change busy or uninspectable unit: {unit}")
+    # Restart=on-failure reports activating/auto-restart between failed starts.
+    # No start is executing then; refusing this state blocks the setup that
+    # would repair its configuration. Preserve the actual state in snapshots.
+    retrying = (unit.endswith(".service") and state.get("ActiveState") == "activating"
+                and state.get("SubState") == "auto-restart")
+    if (state.get("LoadState") not in {"loaded", "not-found"}
+            or (state.get("ActiveState") not in {"active", "inactive", "failed"} and not retrying)):
+        raise RuntimeError(f"Cannot change busy or uninspectable unit: {unit} "
+                           f"(load={state.get('LoadState', 'unknown')}, "
+                           f"active={state.get('ActiveState', 'unknown')}, sub={state.get('SubState', 'unknown')})")
     if state.get("UnitFileState") not in {"", "enabled", "enabled-runtime", "disabled", "static", "indirect"}:
         raise RuntimeError(f"Unsupported enablement state for {unit}")
     return state
@@ -118,7 +127,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
                     flags = ["--runtime"] if states[name]["UnitFileState"] == "enabled-runtime" else []
                     _command("systemctl", "disable", *flags, name)
                 state = inspect_unit_state(name)
-                if state["ActiveState"] == "active" or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+                if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Unit removal failed verification: {name}")
             for name in removals:
                 remove_file_durable(os.path.join(unit_dir, name))
@@ -127,7 +136,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             _command("systemctl", "daemon-reload")
             for name in managed_removals:
                 state = inspect_unit_state(name)
-                if state["ActiveState"] == "active" or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
+                if state["ActiveState"] in {"active", "activating"} or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Removed unit is still active or enabled: {name}")
             for name in activate:
                 touched.append(name)

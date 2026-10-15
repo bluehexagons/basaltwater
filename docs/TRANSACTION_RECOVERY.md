@@ -84,6 +84,12 @@ Socket activators are stopped before their service templates. Templates have
 file snapshots but no activation-state entry, since an abstract template cannot
 be queried or started; the owning socket stops concrete login instances through
 their declared dependencies. Restore template files before rearming the socket.
+Services waiting after a failed start (`activating` / `auto-restart`) can be
+replaced so setup can repair their configuration. Actual starting, stopping and
+reloading states still block changes. If replacement fails, rollback restores
+the old definition and enablement but does not restart a previously broken
+service that it stopped. Removal verifies that automatic retries have stopped
+before deleting service files.
 A rename sync error can occur after the old release was restored: inspect the
 actual paths and service states rather than treating the error as proof that
 the old tree is still at its backup path. Port or marker-completion failures

@@ -279,6 +279,13 @@ failure, setup also restores the prior non-secret gateway configuration and
 reloads an active restored gateway. Interrupted or failed rollback still needs
 the normal [transaction recovery](TRANSACTION_RECOVERY.md) workflow.
 
+An upgrade can temporarily leave the new runtime rejecting the previous gateway
+configuration. Systemd reports that failed service as `activating` with substate
+`auto-restart` while waiting to retry. Setup accepts this state and installs the
+new configuration and units; it does not require manually stopping the gateway.
+Actual startup, shutdown or reload transitions still block a transaction, and
+the error includes the observed load, active and substate values.
+
 The gateway pins the configured XRDP certificate's SHA-256 fingerprint.
 Certificate verification is not disabled. After changing the XRDP certificate,
 rerun the saved setup or patch with `--guacamole` to update the pin.

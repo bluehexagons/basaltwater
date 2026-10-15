@@ -22,6 +22,7 @@ class TestUnitTransaction(unittest.TestCase):
         self.path.write_text("old unit")
         self.path.chmod(0o640)
         self.active = "active"
+        self.substate = "running"
         self.enabled = "enabled"
         self.failure = None
         self.commands = []
@@ -41,7 +42,7 @@ class TestUnitTransaction(unittest.TestCase):
             raise subprocess.CalledProcessError(1, command)
         output = ""
         if command[:2] == ["systemctl", "show"]:
-            output = f"LoadState=loaded\nActiveState={self.active}\nUnitFileState={self.enabled}\n"
+            output = f"LoadState=loaded\nActiveState={self.active}\nSubState={self.substate}\nUnitFileState={self.enabled}\n"
         elif command[:2] == ["systemctl", "enable"]:
             self.enabled = "enabled-runtime" if "--runtime" in command else "enabled"
         elif command[:2] == ["systemctl", "disable"]:
@@ -60,6 +61,55 @@ class TestUnitTransaction(unittest.TestCase):
         self.assertEqual(self.path.read_text(), "new unit")
         self.assertNotIn(["systemctl", "stop", "demo.timer"], self.commands)
         self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+
+    def test_failed_service_waiting_to_restart_can_be_repaired(self):
+        self.active, self.substate = "activating", "auto-restart"
+        units.replace_units({"demo.service": "repaired service"},
+                            activate=("demo.service",), unit_dir=str(self.root))
+        self.assertEqual(self.active, "active")
+        self.assertEqual((self.root / "demo.service").read_text(), "repaired service")
+        self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+
+    def test_failed_repair_restores_definition_without_restarting_broken_service(self):
+        service = self.root / "demo.service"
+        service.write_text("broken service")
+        self.active, self.substate = "activating", "auto-restart"
+        self.failure = ["systemctl", "restart"]
+        with self.assertRaises(subprocess.CalledProcessError):
+            units.replace_units({"demo.service": "repaired service"},
+                                activate=("demo.service",), unit_dir=str(self.root))
+        self.assertEqual(service.read_text(), "broken service")
+        self.assertEqual(self.active, "inactive")
+        self.assertEqual(self.commands.count(["systemctl", "restart", "demo.service"]), 1)
+        self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
+
+    def test_start_stop_reload_and_incomplete_states_still_block_replacement(self):
+        for active, substate in (("activating", "start"), ("activating", "start-pre"),
+                                 ("activating", ""), ("deactivating", "stop"),
+                                 ("reloading", "reload"), ("unknown", "unknown"),
+                                 ("activating", "auto-restart")):
+            with self.subTest(active=active, substate=substate):
+                self.active, self.substate = active, substate
+                # Services still reject actual transitions. The auto-restart
+                # exception never applies to timers or other activators.
+                name = "demo.timer" if substate == "auto-restart" else "demo.service"
+                with self.assertRaisesRegex(RuntimeError, f"active={active}, sub={substate}"):
+                    units.replace_units({name: "new unit"}, activate=(name,), unit_dir=str(self.root))
+                self.assertEqual(self.path.read_text(), "old unit")
+                self.assertFalse(any(command[1] in {"enable", "restart", "daemon-reload"} for command in self.commands))
+
+    def test_removal_must_stop_automatic_restarts_before_deleting_service(self):
+        service = self.root / "demo.service"
+        service.write_text("broken service")
+        self.active, self.substate = "activating", "auto-restart"
+        original = self.run_command
+        def command(args, **kwargs):
+            if args == ["systemctl", "stop", "demo.service"]:
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return original(args, **kwargs)
+        with patch.object(units, "run", side_effect=command), self.assertRaisesRegex(RuntimeError, "verification"):
+            units.remove_units(("demo.service",), unit_dir=str(self.root))
+        self.assertEqual(service.read_text(), "broken service")
 
     def test_socket_activation_stages_template_without_enabling_it(self):
         units.replace_units({"shell.socket": "socket", "shell@.service": "login"},
