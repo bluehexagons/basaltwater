@@ -13,6 +13,7 @@ import copy
 import hashlib
 from http.server import ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
 import signal
@@ -30,10 +31,19 @@ from common.service_tools import web_panel_service as panel
 from common.service_tools.privilege_approval import ApprovalServer
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.privilege_auth import password_record
+from lib.atomic_io import write_json_atomic
+from lib.validation import validate_filesystem_path
 
 
 def create_certificates(directory: Path) -> dict[str, Path]:
     """Create a fixture-only CA and leaf, including a deliberately wrong name."""
+    directory = directory.absolute()
+    validate_filesystem_path(str(directory), must_exist=True)
+    if any(component.is_symlink() for component in (directory, *directory.parents)):
+        raise ValueError("Fixture directory must not traverse symlinks")
+    metadata = directory.stat()
+    if not directory.is_dir() or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077 or any(directory.iterdir()):
+        raise ValueError("Fixture directory must be an empty, private directory owned by the invoking user")
     ca, key = directory / "ca.crt", directory / "ca.key"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                     "-subj", "/CN=Basaltwater disposable browser fixture", "-addext", "basicConstraints=critical,CA:TRUE",
@@ -58,7 +68,9 @@ class SyntheticBroker:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.records = {}
-        for digit in ("a", "b"):
+        # Separate requests keep approval, denial, expiry and layout checks
+        # independent of execution order and of the other engine.
+        for digit in "abcdef12":
             identifier = digit * 32
             self.records[identifier] = {
                 "id": identifier, "digest": digit * 64, "created": time.time(), "expires": time.time() + 3600,
@@ -69,6 +81,9 @@ class SyntheticBroker:
 
     def __call__(self, message: dict) -> dict:
         with self.lock:
+            for row in self.records.values():
+                if row["state"] == "pending" and row["expires"] <= time.time():
+                    row["state"] = "expired"
             if message["action"] == "list":
                 return {"requests": [{"id": row["id"], "operation": "fixture-only", "state": row["state"], "uid": 1000}
                                      for row in self.records.values()]}
@@ -134,6 +149,8 @@ class FixtureEnvironment:
             return self
         except BaseException:
             self.stack.close()
+            if self.thread.ident is None:
+                self.loop.close()
             raise
 
     def __exit__(self, *args) -> None:
@@ -197,8 +214,15 @@ class FixtureEnvironment:
         return ClientSession()
 
     async def proxy(self, request: web.Request, backend: str) -> web.Response:
-        if backend != "approval" and request.headers.get("Authorization") != self.authorization:
+        if (backend != "approval" or request.path.startswith("/__fixture__/")) and request.headers.get("Authorization") != self.authorization:
             raise web.HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="disposable browser fixture"'})
+        if backend == "approval" and request.method == "POST" and request.path.startswith("/__fixture__/expire/"):
+            identifier = request.path.removeprefix("/__fixture__/expire/")
+            with self.broker.lock:
+                if identifier not in self.broker.records:
+                    raise web.HTTPNotFound()
+                self.broker.records[identifier]["expires"] = time.time() - 1
+            return web.json_response({"expired": True})
         if request.path == "/ca.crt":
             return web.Response(body=self.certificates["ca"].read_bytes(), content_type="application/x-x509-ca-cert",
                                 headers={"Content-Disposition": 'attachment; filename="fixture-ca.crt"'})
@@ -284,7 +308,8 @@ class FixtureEnvironment:
     async def cleanup(self) -> None:
         for runner in reversed(self.runners):
             await runner.cleanup()
-        await self.client.close()
+        if hasattr(self, "client"):
+            await self.client.close()
 
     def stop_loop(self) -> None:
         try:
@@ -302,7 +327,6 @@ class FixtureEnvironment:
 
 def main() -> None:
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
@@ -313,7 +337,7 @@ def main() -> None:
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, lambda *_: done.set())
     with FixtureEnvironment(args.directory, guacamole_assets=args.guacamole_assets) as environment:
-        (args.directory / "fixture.json").write_text(json.dumps(environment.metadata()))
+        write_json_atomic(str(args.directory / "fixture.json"), environment.metadata())
         done.wait()
 
 

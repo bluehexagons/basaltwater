@@ -55,7 +55,7 @@ commands, evidence boundaries, and the native ESR release checklist.
 
 Local qualification on Debian 13.7 amd64 used Node 20.19.2 and pinned Playwright
 `1.63.0-alpha-2026-08-05`: Chromium `152.0.7977.8` and Firefox `153.0`.
-The shared suite passed all 14 cases across both engines, including the
+The shared suite passed all 16 cases across both engines, including the
 disposable Guacamole boundary using the reviewed Guacamole 1.6.0 client.
 Browser profiles and fixture CA trust were temporary; certificate verification
 remained enabled. Native ESR and real guacd/XRDP/deployment checks are not
@@ -67,6 +67,16 @@ first-party SVG with same-origin image permission. Enlarged text at a 390px
 viewport overflowed pairing grids in both engines; grid minima now shrink to
 their container. Both cases have regression coverage. No unconfirmed vendor
 CSS or user-agent-specific branches were added.
+
+Follow-up review tightened registration checks so a disabled or wrong-engine
+Codex entry cannot qualify Chromium, retained unknown registration and runtime
+diagnostics, rejected a mismatched managed Playwright pin, and aligned launcher
+Node environments with the doctor. Setup now enforces the pinned Playwright
+package's Node 20 minimum before installation or reuse. Fixture readiness is
+now atomic and refuses nonempty or shared directories. Qualification summaries derive per-engine
+results and browser versions from completed tests and reject missing/incomplete
+reports. Additional browser checks cover denial, expiry of an existing form,
+and pending approval layout without depending on a previous test's decision.
 
 1. **Add honest browser inventory and health reporting.** Report engine,
    version, context, origin, and separate discovered / launchable /

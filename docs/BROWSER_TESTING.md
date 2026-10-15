@@ -10,8 +10,8 @@ sites, T3 Code, Gogs, HomeBox, or other upstream application UIs.
 
 ## Run the local suite
 
-Use a development machine with the Python development extra installed, Node.js,
-OpenSSL, NSS `certutil` (Debian's `libnss3-tools`), and the selected browsers'
+Use a development machine with the Python development extra installed, Node.js
+20 or newer, OpenSSL, NSS `certutil` (Debian's `libnss3-tools`), and the selected browsers'
 existing OS dependencies. The command never installs packages or downloads
 browser payloads. On a managed development VM with the pinned runtime:
 
@@ -62,8 +62,12 @@ removed when the run ends.
 Results, browser/Playwright versions, console/request diagnostics, and failed
 test traces/screenshots are kept under the invoking user's private
 `~/.local/state/basaltwater/browser-tests/run-*` directory. `summary.json`
-separates first-party outcomes, the Guacamole boundary, native ESR, and project
-UI. `results.json` contains each engine's individual checks and versions.
+records each engine's browser versions, first-party and Guacamole outcomes,
+counts of passed/failed/skipped checks, and whether first-party application
+coverage passed. Native ESR and project UI remain separate. Missing or invalid
+reports, missing browser versions, skipped first-party checks, and incomplete
+required integration checks return nonzero even if the test process returned
+zero. `results.json` contains the individual checks and version attachments.
 Review locally; traces can contain synthetic credentials and form data.
 Remove old run directories after review. Interrupted runs may leave temporary
 fixture/profile directories, which can be removed after their processes exit.
@@ -72,6 +76,7 @@ Coverage includes navigation and keyboard focus, native disclosures, panel
 light/dark themes, desktop/narrow layout, enlarged text, meters, actual form
 submissions and redirects, authentication challenges, Secure/HttpOnly/SameSite
 pairing cookies, nonce replay, forged CSRF, approval origin and replay rejection,
+denial and expiry of a previously rendered approval form,
 and completed CA downloads checked against the displayed fingerprint. Unexpected
 page errors, console errors, and failed required requests fail the run.
 Aborted document navigations that complete as downloads and canceled optional
@@ -122,7 +127,9 @@ fixture_dir=$(mktemp -d)
 
 Leave that terminal running. In another terminal, inspect its private
 `fixture.json` for the loopback HTTPS URLs and disposable login credentials;
-do not paste them into chat. Start Firefox ESR with a new temporary profile
+do not paste them into chat. The fixture accepts only an empty, private directory
+owned by the invoking user and publishes this ready file atomically after
+starting the services. Start Firefox ESR with a new temporary profile
 using `--no-remote --profile /absolute/temporary-profile`. On a managed desktop,
 use its documented session launcher and preserve unrelated applications.
 
@@ -148,6 +155,14 @@ use its documented session launcher and preserve unrelated applications.
 7. Record pass/fail and evidence separately from the Playwright results. Stop
    the fixture process, close the disposable browser, and remove its profile
    and fixture directory, including the test CA's private key.
+
+For the expiry check, load a fresh pending synthetic approval form. In that
+page's developer console, send `fetch('/__fixture__/expire/REQUEST_ID',
+{method: 'POST'})` with its request ID, then submit the original form and
+confirm rejection. This authenticated control exists only in the disposable
+fixture. Separate synthetic requests keep approval, denial, expiry, and pending
+layout checks independent; fixture expiry does not exercise the real broker's
+clock or command execution.
 
 Repeat the documented internal-HTTPS enrollment on a disposable managed
 deployment before release to qualify its actual proxy and service paths.

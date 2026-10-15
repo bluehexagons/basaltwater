@@ -41,15 +41,19 @@ const test = base.extend({
         context: 'disposable persistent profile', network_origin: 'host', boundary: fixture.boundary }), contentType: 'application/json' });
       await use(context);
     } finally {
-      if (context) {
-        if (info.status !== info.expectedStatus) {
-          for (const [index, page] of context.pages().entries())
-            await page.screenshot({ path: info.outputPath(`failure-${index}.png`), fullPage: true }).catch(() => {});
-          await context.tracing.stop({ path: info.outputPath('trace.zip') });
-        } else await context.tracing.stop();
-        await context.close();
+      try {
+        if (context) {
+          try {
+            if (info.status !== info.expectedStatus) {
+              for (const [index, page] of context.pages().entries())
+                await page.screenshot({ path: info.outputPath(`failure-${index}.png`), fullPage: true }).catch(() => {});
+              await context.tracing.stop({ path: info.outputPath('trace.zip') });
+            } else await context.tracing.stop();
+          } finally { await context.close(); }
+        }
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
       }
-      fs.rmSync(directory, { recursive: true, force: true });
     }
   },
   diagnostics: [async ({ page, context }, use, info) => {
@@ -216,6 +220,32 @@ test('approval real form origin, forged token, decision and replay rejection', a
   expect((await postForm(page, url, { csrf, digest, decision: 'approve' })).status).toBe(409);
 });
 
+test('approval denial and expiry reject subsequent decisions', async ({ page, browserName, diagnostics }) => {
+  const denial = (browserName === 'chromium' ? 'c' : 'd').repeat(32);
+  const expiry = (browserName === 'chromium' ? 'e' : 'f').repeat(32);
+  for (const [identifier, decision] of [[denial, 'deny'], [expiry, 'expire']]) {
+    const url = urls.approval + '/requests/' + identifier;
+    await page.goto(url);
+    const csrf = await page.locator('input[name=csrf]').inputValue();
+    const digest = await page.locator('input[name=digest]').inputValue();
+    if (decision === 'deny') {
+      const response = page.waitForResponse(response => response.url() === url && response.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Deny', exact: true }).click();
+      expect((await response).status()).toBe(303);
+      await expect(page.locator('dd').filter({ hasText: /^denied$/ })).toBeVisible();
+    } else {
+      // Change only this synthetic broker's clock boundary after rendering a
+      // valid form. The production handler must reject its now-expired request.
+      expect((await page.request.post(urls.approval + '/__fixture__/expire/' + identifier)).status()).toBe(200);
+    }
+    diagnostics.allowed.add(url);
+    expect((await postForm(page, url, { csrf, digest, decision: 'approve' })).status).toBe(409);
+    await page.goto(url);
+    await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
+    await expect(page.locator('dd').filter({ hasText: new RegExp(`^${decision === 'deny' ? 'denied' : 'expired'}$`) })).toBeVisible();
+  }
+});
+
 test('authentication and invalid HTTPS remain rejected', async ({ page, playwright, diagnostics }) => {
   const anonymous = await playwright.request.newContext({ ignoreHTTPSErrors: false });
   try {
@@ -226,12 +256,13 @@ test('authentication and invalid HTTPS remain rejected', async ({ page, playwrig
 });
 
 test('pairing and approval narrow layout with enlarged text', async ({ page, browserName }) => {
-  const identifier = (browserName === 'chromium' ? 'a' : 'b').repeat(32);
+  const identifier = (browserName === 'chromium' ? '1' : '2').repeat(32);
   for (const url of [urls.pairing + '/devices', urls.approval + '/requests/' + identifier]) {
     await page.goto(url);
     await page.setViewportSize({ width: 390, height: 900 });
     await page.addStyleTag({ content: 'html { font-size: 200%; }' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), url).toBe(true);
+    if (url.startsWith(urls.approval)) await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
   }
 });
 

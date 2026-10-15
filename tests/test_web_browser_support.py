@@ -6,6 +6,7 @@ import base64
 from contextlib import redirect_stderr
 import http.client
 from io import StringIO
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -18,6 +19,7 @@ from common.service_tools.device_pairing_service import PairingRequestHandler, P
 from common.service_tools.privilege_approval import ApprovalServer
 from lib.privilege_auth import password_record
 from scripts import run_browser_tests
+from tests.browser import fixtures
 
 
 class BrowserHarnessSafeguards(unittest.TestCase):
@@ -45,6 +47,99 @@ class BrowserHarnessSafeguards(unittest.TestCase):
                     patch.object(run_browser_tests.subprocess, "Popen") as process, redirect_stderr(StringIO()):
                 self.assertEqual(run_browser_tests.main(["--guacamole-assets", str(asset)]), 1)
             process.assert_not_called()
+
+
+class BrowserQualificationReports(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def report(self, *, firefox_status: str = "passed", guacamole_status: str = "passed", versions: bool = True) -> None:
+        specs = []
+        for title in ("panel form", "Guacamole boundary"):
+            tests = []
+            for engine in ("chromium", "firefox"):
+                status = guacamole_status if title.startswith("Guacamole") else firefox_status if engine == "firefox" else "passed"
+                details = {"engine": engine, "browser_version": "153.0" if engine == "firefox" else "152.0",
+                           "playwright_version": run_browser_tests.PLAYWRIGHT_VERSION}
+                attachments = [{"name": "browser-context", "body": base64.b64encode(json.dumps(details).encode()).decode()}] if versions else []
+                tests.append({"projectName": engine, "expectedStatus": "passed", "status": "expected" if status == "passed" else status,
+                              "results": [{"status": status, "attachments": attachments}]})
+            specs.append({"title": title, "tests": tests})
+        (self.directory / "results.json").write_text(json.dumps({"errors": [], "suites": [{"suites": [{"specs": specs}]}]}))
+
+    def summarize(self, *, guacamole_available: bool = True, returncode: int = 0) -> dict:
+        return run_browser_tests.summarize_results(self.directory, engines=["chromium", "firefox"],
+            playwright_version=run_browser_tests.PLAYWRIGHT_VERSION, context="managed",
+            returncode=returncode, guacamole_available=guacamole_available)
+
+    def test_completed_report_preserves_versions_and_each_engine_outcome(self) -> None:
+        self.report()
+        summary = self.summarize()
+        self.assertEqual(summary["exit_code"], 0)
+        self.assertEqual(summary["outcomes"]["firefox"]["browser_versions"], ["153.0"])
+        for engine in summary["outcomes"].values():
+            self.assertTrue(engine["application_tested"])
+            self.assertEqual(engine["first_party"], {"status": "passed", "counts": {"passed": 1}})
+            self.assertEqual(engine["guacamole"]["status"], "passed")
+
+    def test_missing_or_invalid_report_never_qualifies_a_zero_exit_code(self) -> None:
+        for content in (None, "{", "[]", '{"suites":[]}'):
+            with self.subTest(content=content):
+                if content is not None:
+                    (self.directory / "results.json").write_text(content)
+                summary = self.summarize()
+                self.assertEqual(summary["exit_code"], 1)
+                self.assertTrue(all(not item["application_tested"] for item in summary["outcomes"].values()))
+
+    def test_failed_or_skipped_first_party_engine_is_never_qualified(self) -> None:
+        for status in ("failed", "timedOut", "interrupted", "skipped"):
+            with self.subTest(status=status):
+                self.report(firefox_status=status)
+                summary = self.summarize()
+                self.assertEqual(summary["exit_code"], 1)
+                self.assertTrue(summary["outcomes"]["chromium"]["application_tested"])
+                self.assertFalse(summary["outcomes"]["firefox"]["application_tested"])
+
+    def test_guacamole_failure_cannot_be_hidden_by_available_assets(self) -> None:
+        for status in ("failed", "skipped"):
+            self.report(guacamole_status=status)
+            summary = self.summarize()
+            self.assertEqual(summary["exit_code"], 1)
+            self.assertEqual(summary["outcomes"]["firefox"]["guacamole"]["status"], status)
+
+    def test_optional_missing_guacamole_coverage_is_explicitly_skipped(self) -> None:
+        self.report(guacamole_status="skipped")
+        summary = self.summarize(guacamole_available=False)
+        self.assertEqual(summary["exit_code"], 0)
+        self.assertEqual(summary["outcomes"]["firefox"]["guacamole"],
+                         {"status": "skipped", "counts": {"skipped": 1}, "reason": "pinned assets missing"})
+
+    def test_missing_browser_versions_and_runner_errors_prevent_success(self) -> None:
+        self.report(versions=False)
+        self.assertEqual(self.summarize()["exit_code"], 1)
+        self.report()
+        self.assertEqual(self.summarize(returncode=2)["exit_code"], 2)
+        path = self.directory / "results.json"
+        report = json.loads(path.read_text())
+        report["errors"] = [{"message": "Worker crashed"}]
+        path.write_text(json.dumps(report))
+        self.assertEqual(self.summarize()["exit_code"], 1)
+
+
+class BrowserFixtureSafeguards(unittest.TestCase):
+    def test_existing_files_or_linked_directories_are_rejected_before_openssl(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            private = root / "ca.key"
+            private.write_text("unrelated private key")
+            link = root / "link"
+            link.symlink_to(root, target_is_directory=True)
+            for candidate in (root, link):
+                with patch.object(fixtures.subprocess, "run") as command:
+                    with self.assertRaises(ValueError):
+                        fixtures.create_certificates(candidate)
+                    command.assert_not_called()
+            self.assertEqual(private.read_text(), "unrelated private key")
 
 
 class BrowserFaviconTests(unittest.TestCase):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -19,12 +20,87 @@ sys.path.insert(0, str(ROOT))
 
 from common.browser_automation_steps import PLAYWRIGHT_VERSION
 from lib.agent_browser import _environment, _runtime
+from lib.atomic_io import read_json_file, write_json_atomic
 from lib.guacamole_config import RELEASE
 from lib.remote_utils import run
 from lib.validation import validate_filesystem_path
 
 # all.js extracted from the checksum-verified 1.6.0-bw2 release archive.
 GUACAMOLE_JS_SHA256 = "3a6126a9487ea2e37a1684613b54335c2d32e35d2e33286e719700154701f562"
+
+
+def summarize_results(output: Path, *, engines: list[str], playwright_version: str, context: str,
+                      returncode: int, guacamole_available: bool) -> dict:
+    """Derive qualification from completed checks, never installed prerequisites."""
+    checks = {engine: {"first_party": [], "guacamole": []} for engine in engines}
+    versions = {engine: set() for engine in engines}
+    issues = []
+    try:
+        report = read_json_file(str(output / "results.json"), max_bytes=16 * 1024 * 1024)
+        if not isinstance(report, dict) or not isinstance(report.get("suites"), list):
+            raise ValueError("Playwright report has no suite inventory")
+        if report.get("errors"):
+            issues.append("playwright_report_errors")
+        suites = list(report["suites"])
+        while suites:
+            suite = suites.pop()
+            suites.extend(suite.get("suites", []))
+            for spec in suite.get("specs", []):
+                boundary = "guacamole" if spec["title"].startswith("Guacamole ") else "first_party"
+                for test in spec["tests"]:
+                    engine = test.get("projectName")
+                    if engine not in checks:
+                        continue
+                    results = test.get("results", [])
+                    status = results[-1].get("status") if results else "not-run"
+                    if status == "passed" and (test.get("status") != "expected" or test.get("expectedStatus") != "passed"):
+                        status = "failed"
+                    checks[engine][boundary].append(status)
+                    for result in results:
+                        for attachment in result.get("attachments", []):
+                            if attachment.get("name") != "browser-context":
+                                continue
+                            try:
+                                details = json.loads(base64.b64decode(attachment["body"], validate=True))
+                                version = details.get("browser_version")
+                                if (details.get("engine") == engine and details.get("playwright_version") == playwright_version
+                                        and isinstance(version, str) and version):
+                                    versions[engine].add(version)
+                            except (KeyError, ValueError, AttributeError):
+                                continue
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        issues.append("playwright_report_unavailable_or_invalid")
+
+    def outcome(statuses: list[str]) -> dict:
+        counts = {status: statuses.count(status) for status in sorted(set(statuses))}
+        if not statuses or all(status == "not-run" for status in statuses):
+            status = "not-run"
+        elif any(status not in {"passed", "skipped", "not-run"} for status in statuses):
+            status = "failed"
+        elif all(status == "passed" for status in statuses):
+            status = "passed"
+        elif all(status == "skipped" for status in statuses):
+            status = "skipped"
+        else:
+            status = "incomplete"
+        return {"status": status, "counts": counts}
+
+    outcomes = {}
+    complete = not issues and returncode == 0
+    for engine in engines:
+        first_party = outcome(checks[engine]["first_party"])
+        guacamole = outcome(checks[engine]["guacamole"])
+        if not guacamole_available:
+            guacamole["reason"] = "pinned assets missing"
+        tested = not issues and first_party["status"] == "passed" and bool(versions[engine])
+        complete &= tested and (guacamole["status"] == "passed" if guacamole_available else guacamole["status"] == "skipped")
+        outcomes[engine] = {"browser_versions": sorted(versions[engine]), "application_tested": tested,
+                            "first_party": first_party, "guacamole": guacamole}
+    return {"engines": engines, "playwright_version": playwright_version, "context": context,
+            "network_origin": "host", "workers": 1, "test_exit_code": returncode,
+            "exit_code": returncode or (0 if complete else 1), "issues": issues, "outcomes": outcomes,
+            "guacamole_boundary": "disposable protocol fixture", "native_esr": "not tested: separate release qualification",
+            "project_ui": "out of scope"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime = _runtime(args.context, args.project)
         if not runtime or runtime["version"] != PLAYWRIGHT_VERSION:
             raise ValueError(f"Install the repository-pinned Playwright {PLAYWRIGHT_VERSION} explicitly; no packages are installed by this command")
-        package = json.loads((Path(runtime["module"]) / "package.json").read_text())
+        package = read_json_file(str(Path(runtime["module"]) / "package.json"), max_bytes=64 * 1024)
         if package.get("name") not in {"playwright", "@playwright/test"}:
             raise ValueError("The selected package must include the Playwright test runner")
         for executable in ("openssl", "certutil"):
@@ -89,12 +165,10 @@ def main(argv: list[str] | None = None) -> int:
                     result = run([node, runtime["cli"], "test", "--config", str(ROOT / "tests/browser/playwright.config.cjs"),
                                   *[f"--project={engine}" for engine in engines]],
                                  check=False, env=environment, cwd=ROOT, timeout=1800)
-                    (output / "summary.json").write_text(json.dumps({"engines": engines, "playwright_version": runtime["version"],
-                        "context": args.context, "network_origin": "host", "workers": 1, "exit_code": result.returncode,
-                        "first_party": "see results.json for individual outcomes",
-                        "guacamole_boundary": "disposable protocol fixture" if asset else "not tested: pinned assets missing",
-                        "native_esr": "not tested: separate release qualification", "project_ui": "out of scope"}, indent=2) + "\n")
-                    return result.returncode
+                    summary = summarize_results(output, engines=engines, playwright_version=runtime["version"],
+                                                context=args.context, returncode=result.returncode, guacamole_available=asset is not None)
+                    write_json_atomic(str(output / "summary.json"), summary)
+                    return summary["exit_code"]
                 finally:
                     server.terminate()
                     try:
