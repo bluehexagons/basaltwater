@@ -9,6 +9,6 @@ def migrate(*, system: bool, apply: bool, recovery: bool = False,
     print(
         "infra-tools migration has been retired. Use the intermediate checkout "
         "97da1799615d5ad7e3d34c7c38a38ae41631e5fd for migration or recovery, "
-        "then upgrade to current Basaltwater. See docs/BASALTWATER_MIGRATION.md."
+        "then upgrade to current Basaltwater. See docs/migration-guide.md."
     )
     return 1

@@ -88,7 +88,7 @@ class TestSaveAndLoadSetupCommand(unittest.TestCase):
                         'args': legacy_args,
                     }, file_obj)
 
-                with self.assertRaisesRegex(StateReadError, 'docs/BASALTWATER_MIGRATION.md'):
+                with self.assertRaisesRegex(StateReadError, 'docs/migration-guide.md'):
                     load_setup_command('vm.example')
                 with open(cache_path, encoding='utf-8') as file_obj:
                     self.assertEqual(json.load(file_obj)['args'], legacy_args)

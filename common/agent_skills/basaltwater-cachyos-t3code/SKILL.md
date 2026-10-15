@@ -122,6 +122,6 @@ This profile does not install the VM gateway, VM device-pairing helpers, or
 managed Playwright. Selected native applications install KDE automation
 prerequisites; use `basaltwater-cachyos-desktop` for task-scoped portal consent
 and control. T3 setup does not start desktop control. Do not use VM-specific T3
-repair/update commands for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_MAINTENANCE.md)
+repair/update commands for this service. Read the [CachyOS maintenance reference](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md)
 for deliberate runtime updates (also in the installed checkout at
-`~/.local/share/basaltwater/docs/workstations/CACHYOS_MAINTENANCE.md`).
+`~/.local/share/basaltwater/docs/workstations/cachyos-maintenance.md`).

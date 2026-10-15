@@ -138,7 +138,7 @@ Use DejaVu Sans for the interface and DejaVu Sans Mono for commands, with
 system fallbacks. The editable wordmark SVG keeps its text live. Fonts are
 not bundled or downloaded; install DejaVu when reproducing the reference
 wordmark exactly. DejaVu changes are public domain over Bitstream Vera's
-permissive font license; see [font attribution](FONT_LICENSE.txt).
+permissive font license; see [font attribution](font-license.txt).
 
 The mark and generated artwork are original project assets by bluehexagons
 contributors, distributed under the repository's [Apache-2.0 license](../../LICENSE).

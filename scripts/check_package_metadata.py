@@ -49,9 +49,9 @@ def main() -> int:
     if {"infra-tools", "infra_tools", "basaltwater", "basalt", "bw", "b6"}.intersection(scripts):
         print("pyproject.toml must not add unapproved executable aliases")
         return 1
-    command_reference = (ROOT / "docs" / "reference" / "COMMAND_LINE.md").read_text(encoding="utf-8")
+    command_reference = (ROOT / "docs" / "reference" / "command-line.md").read_text(encoding="utf-8")
     if "basaltw setup" not in command_reference:
-        print("docs/reference/COMMAND_LINE.md must document the basaltw launcher")
+        print("docs/reference/command-line.md must document the basaltw launcher")
         return 1
     print("Package metadata check passed")
     return 0

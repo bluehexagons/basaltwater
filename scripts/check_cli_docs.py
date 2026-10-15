@@ -13,7 +13,7 @@ import basaltwater
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOC = ROOT / "docs" / "reference" / "COMMAND_LINE.md"
+DOC = ROOT / "docs" / "reference" / "command-line.md"
 
 
 def main() -> int:
@@ -34,7 +34,7 @@ def main() -> int:
     }
     missing = sorted((parsed - ignored_aliases) - documented)
     if missing:
-        print("CLI commands missing from docs/reference/COMMAND_LINE.md: " + ", ".join(missing))
+        print("CLI commands missing from docs/reference/command-line.md: " + ", ".join(missing))
         return 1
     print("CLI documentation check passed")
     return 0

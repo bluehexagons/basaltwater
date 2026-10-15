@@ -16,7 +16,7 @@ portal displays the exact arguments and allows one approved attempt. Do not
 put a shell, `sudo`, environment assignments, or secrets in `--command`.
 Managed `basaltwater-web` publication and owner-scoped live gateway actions
 already work without this approval flow. See
-[Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PRIVILEGE_APPROVALS.md)
+[Privilege approvals](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/privilege-approvals.md)
 for the supported actions and portal setup.
 
 Waiting can time out while the original request remains pending or executing.
@@ -30,7 +30,7 @@ For an existing Admin-screen refresh, use `basaltw agent privilege admin-status
 source activation do not establish setup completion. Missing old-broker fields
 and unrelated setup markers are unknown; never use them to infer a failing step
 or replay uncertain work. Keep recovery snapshots until disposable lifecycle
-qualification passes; the [qualification plan](https://github.com/bluehexagons/basaltwater/blob/main/docs/plans/PRIVILEGE_EXECUTION_QUALIFICATION.md)
+qualification passes; the [qualification plan](https://github.com/bluehexagons/basaltwater/blob/main/docs/plans/privilege-execution-qualification.md)
 owns that gate.
 
 If the action becomes unnecessary, use

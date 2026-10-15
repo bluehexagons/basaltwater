@@ -9,7 +9,7 @@ For explicitly requested Firefox coverage, run `basaltw agent browser doctor
 project package without changing package versions or lockfiles. Managed context
 uses `--context managed` without `--project` and leaves MCP on Chromium.
 These diagnostics do not expose browser tools to a session or replace its
-browser policy. See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/BROWSER_AUTOMATION.md#engine-and-context-coverage).
+browser policy. See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#engine-and-context-coverage).
 
 Explicit opt-in `basaltw agent browser register --engine firefox --agent-tool
 codex --json` (or `opencode`) adds `basaltwater-playwright-firefox` after a

@@ -21,7 +21,7 @@ def normalize_workspace_dir(path: str | None = None) -> str:
             if os.path.lexists(legacy):
                 raise ValueError(
                     f"Retired infra-tools workspace at {legacy}; use the intermediate "
-                    "version in docs/BASALTWATER_MIGRATION.md before continuing"
+                    "version in docs/migration-guide.md before continuing"
                 )
     return workspace
 

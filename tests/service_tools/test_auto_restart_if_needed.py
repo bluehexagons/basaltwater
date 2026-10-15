@@ -375,7 +375,7 @@ class TestRestartPolicy(unittest.TestCase):
 
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"no_restart": True, "username": "u", "system_type": "server_lite"})
     def test_refuses_legacy_no_restart(self, _load):
-        with self.assertRaisesRegex(ValueError, 'docs/BASALTWATER_MIGRATION.md'):
+        with self.assertRaisesRegex(ValueError, 'docs/migration-guide.md'):
             auto_restart_if_needed.load_restart_policy()
 
     @patch("common.service_tools.auto_restart_if_needed.load_setup_config", return_value={"username": "u", "system_type": "server_proxmox"})

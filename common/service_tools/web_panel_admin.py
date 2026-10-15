@@ -178,7 +178,7 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
 <a class="refresh-link" href="/admin">Refresh status</a></header>'''
     body = f'<aside class="status failed" role="alert">{escape(error)}</aside>' if error else ""
     if snapshot.get("error"):
-        body += f'<aside class="status" role="status">{escape(snapshot["error"])} See the <a href="https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PRIVILEGE_APPROVALS.md">approval setup guide</a>.</aside>'
+        body += f'<aside class="status" role="status">{escape(snapshot["error"])} See the <a href="https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/privilege-approvals.md">approval setup guide</a>.</aside>'
     else:
         body += '<p class="endpoint">Review an action here, then approve it with your separate password on the privilege approval page. Every host action needs approval. An approved request is executed once.</p>'
         unit_label = {"active": "Running", "activating": "Starting", "deactivating": "Stopping", "inactive": "Ready", "failed": "Stopped after a failure"}.get(snapshot.get("unit_state"), "Unavailable")

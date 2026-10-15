@@ -40,7 +40,7 @@ def _check_journal(root: Path) -> None:
     if plan is None or plan.get("status") != "complete":
         raise ValueError(
             f"Interrupted migration requires recovery with the intermediate version "
-            f"in docs/BASALTWATER_MIGRATION.md before setup: {journal}"
+            f"in docs/migration-guide.md before setup: {journal}"
         )
 
 
@@ -131,7 +131,7 @@ def prepare_target_runtime(source: str, username: str) -> None:
             if os.path.lexists(legacy):
                 raise ValueError(
                     f"Retired infra-tools installation at {legacy}; use the intermediate "
-                    "version in docs/BASALTWATER_MIGRATION.md before setup"
+                    "version in docs/migration-guide.md before setup"
                 )
     setup_common._activate_local_runtime(source)
     repair_syncthing_state_access(root)

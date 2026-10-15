@@ -5,7 +5,7 @@
   <img src="brand/wordmark-light.svg" alt="Basaltwater" width="264" height="48">
 </picture>
 
-Start with [Try Basaltwater on a Debian VM](getting-started/GETTING_STARTED.md)
+Start with [Try Basaltwater on a Debian VM](getting-started/getting-started.md)
 for a guided first setup. The guides are grouped by the work they help you do;
 each section index routes to its detailed pages.
 
@@ -21,13 +21,13 @@ each section index routes to its detailed pages.
 | Shares, synchronization, backups, and storage recovery | [Storage](storage/README.md) |
 | Deployments, web services, and applications | [Services](services/README.md) |
 | Repository changes and coding-agent workflow | [Contributor guide](agents/contributing/README.md) |
-| Project proposals, audits, and release planning | [Plans and issue index](plans/README.md) |
+| Active plans, open issues, and release qualification | [Plans and issue index](plans/README.md) |
 
 ## Project records
 
-- [Release qualification](BASALTWATER_RELEASE.md) tracks the v2.0 preview and
+- [Release qualification](release-qualification.md) tracks the v2.0 preview and
   stable release gate.
-- [Migration guide](BASALTWATER_MIGRATION.md) covers the completed rename and
+- [Migration guide](migration-guide.md) covers the completed rename and
   the remaining supported transition path for older installations.
 - [Identity and visual assets](brand/README.md) documents the Basaltwater mark,
   palette, and reusable brand files.

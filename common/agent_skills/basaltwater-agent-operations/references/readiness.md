@@ -23,7 +23,7 @@ headers without installing a desktop or distro SDL. The `native` inventory
 reports that selection, fixed commands, and pkg-config modules. Missing SDL3 or
 SDL3_image appears in `project_bootstrap_required`; build the project's required
 versions rather than treating their absence as a broken host baseline.
-See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PROJECT_TOOLING.md)
+See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md)
 for native bootstrap, repository Node versions, and capability limits.
 
 Preview terminal-agent updates before applying them as the account that owns

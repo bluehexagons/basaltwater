@@ -26,7 +26,7 @@ class RetiredMigrationTests(unittest.TestCase):
             run.assert_not_called()
             self.assertIn("retired", output.getvalue())
             self.assertIn("97da179", output.getvalue())
-            self.assertIn("docs/BASALTWATER_MIGRATION.md", output.getvalue())
+            self.assertIn("docs/migration-guide.md", output.getvalue())
 
 
 if __name__ == "__main__":

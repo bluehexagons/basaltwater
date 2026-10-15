@@ -1,128 +1,64 @@
-# Planning and Issue Index
+# Planning and issue index
 
-Status: current portfolio index for the `v2.0.0` preview and eventual stable
-release. Refreshed 2026-10-15, this file organizes active project plans, audit
-inputs, and open GitHub issues without replacing the detailed scope in the
-[project roadmap](ROADMAP.md) or the
-[issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md).
+Status: current portfolio for the v2.0.0 preview and stable-release work,
+refreshed 2026-10-15. The roadmap owns priority; an active project plan owns
+its remaining design and acceptance boundary; the issue map records open
+issue scope and evidence.
 
-The active release pass is formal v2.0 qualification. No further CachyOS
-enhancements are planned in this pass; the experimental profile remains
-outside the Debian stable-support gate.
+The package version is 2.0.0rc1. The v2.0.0-rc.1 tag is not published, and
+the stable release remains gated by the [qualification matrix](../release-qualification.md).
+Further CachyOS enhancements are outside this release pass.
 
-## Planning model
+## Current portfolio
 
-- **P0** is the reliability foundation and should block dependent mutation
-  work.
-- **P1** extends that foundation into shared deployment and audit workflows.
-- **P2** adds recovery and broader safe-apply workflows after their underlying
-  state and verification contracts exist.
-- **P3** improves extensibility and release quality once the core lifecycle is
-  dependable.
-- Prioritize safeguards that reduce operator effort; defer controls that add
-  recurring manual administration until usage or incidents justify them.
-- **Unscheduled** work needs a project brief or an explicit roadmap slot before
-  implementation starts.
-- **Reference** documents preserve evidence or completed review decisions; they
-  are not independent implementation queues.
-
-The roadmap owns priority. The issue triage owns issue-to-implementation
-evidence. A detailed project plan owns delivery sequence and acceptance
-criteria.
-
-## Unscheduled concepts
-
-The September 2026 InfraOS discussion draft proposed a Debian-based product
-with signed images, profiles, and manifest-driven enrollment. It never received
-a roadmap slot or implementation commitment, and the detailed draft has been
-retired to keep the maintained portfolio focused. InfraOS is not a supported
-product or operating mode. Reopen the idea as a scoped project brief before
-planning implementation.
-
-The live operator contract is maintained under `docs/`; these plans may
-intentionally describe work deferred beyond `v2.0.0`.
-
-Current examples use `basaltw`. Dated audits and historical proposals retain
-the names used when their evidence was recorded; they do not override the
-[current CLI reference](../reference/COMMAND_LINE.md). Rename implementation and public
-release are separate states, tracked in the [release checklist](../BASALTWATER_RELEASE.md).
-
-## Project portfolio
-
-| Project | State | Priority | Issue alignment | Canonical plan and next boundary |
-| --- | --- | --- | --- | --- |
-| Basaltwater identity and rename | Preview series configured as `2.0.0rc1`; stable qualification pending | Release gate | Stable release [#104](https://github.com/bluehexagons/basaltwater/issues/104) | [Basaltwater rename](BASALTWATER_RENAME.md): source/runtime rename, recent-install migration, documentation, skills and visual identity delivered; existing storage follows the [persistent identity policy](BASALTWATER_CONTRACTS.md#persistent-storage-identities); [release checklist](../BASALTWATER_RELEASE.md) defines preview publication and the required stable qualification matrix. |
-| Managed target-user rename | Implementation, operator docs, and mocked coverage delivered; disposable Debian/systemd qualification pending | v2.0 qualification | No dedicated issue | [Target-user rename](TARGET_USER_RENAME.md): qualify SSH handoff, account/home/state preservation, managed-service reconciliation, interruption, and resume on a disposable target. |
-| Approved command execution | Executor and home growth qualified; setup replay still fails | P0 | No dedicated issue | [Privilege execution qualification](PRIVILEGE_EXECUTION_QUALIFICATION.md): diagnose the failed replay and qualify private-umask source activation, state links, approval-origin preservation and service recovery on disposable Debian/systemd. |
-| Transactional execution and state | Bounded system implemented; live qualification pending | P0 | Former umbrella [#97](https://github.com/bluehexagons/basaltwater/issues/97), now closed | [Transactional execution](TRANSACTIONAL_EXECUTION.md): durable release/unit recovery, strict state readers, repeatable caller inventory and [phase-specific recovery](../operations/TRANSACTION_RECOVERY.md) delivered. Qualify supported hosts through the release matrix; automatic recovery and database rollback remain separate follow-ons. |
-| Application platform ownership and Coolify | Deferred | Unscheduled | Akaunting request [#100](https://github.com/bluehexagons/basaltwater/issues/100) | [Coolify integration](COOLIFY_INTEGRATION.md): record the decision to keep the controller lightweight and revisit Coolify only as an optional, isolated platform for a concrete complex application. |
-| Manifest deployment platform | Activation implemented; remaining platform work queued | P1 | [#63](https://github.com/bluehexagons/basaltwater/issues/63); broader scope stays in this plan after closure of #97 | Preserve transactional activation and implement [deploy secrets](DEPLOY_SECRETS.md), then [CI/CD manifest reuse](CICD_MANIFEST_REUSE.md) for the native path. |
-| Go site convention | Proposed for the next fresh production VM; Ruby/Rails deployment retirement delivered in v2.0.0 | P1 | Deployment scope retained after closure of [#97](https://github.com/bluehexagons/basaltwater/issues/97) | [Go site convention](GO_SITE_CONVENTION.md): implement versioned root-service inference, standard runtime/health/state contracts, compact monorepo composition, and the goclick data cutover. |
-| Plan, audit, and drift detection | Active in domain-specific slices | P1 | Former [#58](https://github.com/bluehexagons/basaltwater/issues/58) and [#38](https://github.com/bluehexagons/basaltwater/issues/38) scopes, both closed; #102/#103 fixes are in `main` with no recurrence reported, but original-host checks remain open; active gap [#108](https://github.com/bluehexagons/basaltwater/issues/108) | [Roadmap](ROADMAP.md), informed by the Proxmox, agent-host, and desktop audit documents below. Define one stable observation/result contract and detect security-log retention gaps. |
-| Interactive orchestration | Needs a project brief; depends on P0 | Unscheduled | [#91](https://github.com/bluehexagons/basaltwater/issues/91) | Reuse setup parsing, workspace records, and transactional execution; do not create a second provisioning engine. |
-| Agent VM workspaces and credentials | Implemented; authenticated non-GitHub providers and offline snapshots deferred | Reference | No dedicated issue | [Agent VM workspaces](AGENT_VM_WORKSPACES.md): explicit tools, VM-level Git policy, target-owned Codex login, explicit provider files, separate GitHub active-user credentials, guided setup, and optional Playwright browser automation are available. |
-| Chromium and Firefox support across web surfaces, projects, and agents | Implemented and locally qualified; native ESR/deployment release checks open | Explicitly prioritized 2026-10-15 | No dedicated issue | [Browser support](FIREFOX_WEB_SUPPORT.md): pinned Chromium and opt-in Firefox MCP, local first-party and disposable Guacamole browser checks, and project guidance delivered. [Qualification](../agents/BROWSER_TESTING.md) retains the separate native ESR/deployment gate; routine CI stays browser-payload-free. |
-| T3 Code compatibility and agent guidance | T3 v0.0.45 and complete Codex/OpenCode/Claude skill bundles delivered; live qualification open | Unscheduled | No dedicated issue | [T3 Code VM improvements](T3_CODE_AGENT_VM_IMPROVEMENTS.md): qualify setup reruns, provider skill discovery, client-origin preview boundaries, and environment-local recording transfer. |
-| Mobile workflows for agents | Android implementation deferred; iOS proposal unscheduled | Unscheduled | No dedicated issue | [Mobile agent support](MOBILE_AGENT_SUPPORT.md): define read-only host observations, explicit SDK ownership, an eligible Android device host, SSH-hosted macOS/Xcode simulation, and project connectivity before implementation. |
-| One shared desktop session per machine | Runtime, setup, skills, productivity tools and bounded AT-SPI implemented; transport qualification open | Unscheduled | Desktop resize/reconnect validation overlaps the desktop audit | [Single-session desktop](SINGLE_SESSION_DESKTOP.md): qualify human RDP reconnect/resize, wider GTK/Qt/application workflows and broader client coverage; current commands include semantic inspection/actions and a disposable Geany smoke check. |
-| CachyOS agentic desktop capabilities | Existing implementation and workstation evidence retained; no enhancements in this release pass | Deferred for this pass | Software qualification [#106](https://github.com/bluehexagons/basaltwater/issues/106) | [CachyOS agentic desktop](CACHYOS_AGENTIC_DESKTOP.md) and [qualification record](CACHYOS_AGENTIC_DESKTOP_QUALIFICATION.md) retain prior evidence and open cases; they do not add work to the v2.0 Debian release gate. |
-| Ubuntu WSL on Windows 11 | Bootstrap, Ubuntu profile, native jobs and manual CI implemented; live Windows qualification pending | Unscheduled | No dedicated issue | [Ubuntu WSL support](UBUNTU_WSL_SUPPORT.md): qualify fresh/resumed Windows bootstrap, worker lifecycle, native artifact uploads, Ubuntu builds and the optional T3 desktop connection on Windows 11. |
-| Shared Debian and CachyOS capability contracts | Proposed; constrained to local-tool overlap and blocked behind core reliability work | Unscheduled | No dedicated issue | [Shared capability contracts](CROSS_DISTRO_SHARED_CAPABILITIES.md): inventory the overlap, add pure capability metadata and adapter tests, then migrate only individually proven low-risk capabilities without broadening OS support. |
-| Godot workflow bundles | Web hosting and publishing-tool installation delivered; .NET, GDExtension, and asset authoring queued; Android deferred | P3 | No dedicated issue | [Godot guide](../workstations/GODOT.md) and [roadmap](ROADMAP.md): retain repeatable bundle selection and add later bundles only with compatibility, verification, and update contracts; mobile host prerequisites belong to the [mobile proposal](MOBILE_AGENT_SUPPORT.md). |
-| Game publishing from VMs | Initial panel/CLI workflows implemented; live qualification and richer adapters open | Unscheduled | No dedicated issue | [Operator guide](../workstations/GAME_PUBLISHING.md), [game publishing](GAME_PUBLISHING.md) and [release communications](GAME_RELEASE_COMMUNICATIONS.md): VM-local authentication, unattended uploads, beta/channel promotion, reviewed English/Spanish writing and scheduled editor handoffs. Steam default release stays manual; automatic posts, rich assets and additional destinations remain qualification-gated. |
-| Generic VM management, agent interfaces, and lightweight Git hosting | Active; provider/schema-tagged Proxmox host records, the initial VM data-disk/mount slice, explicit Gogs LFS paths, and the server-only T3 Code lifecycle implemented; mutation/recovery slices dependency-gated | Unscheduled | No dedicated issue | [VM management, agent interfaces, and lightweight Git hosting](VM_MANAGEMENT_AND_LIGHTWEIGHT_GIT_HOSTING.md): next validate the storage slice on live Proxmox, then sequence provider-neutral VM observation and Gogs safety/health. T3 Code desktop AppImage support is no longer in scope. |
-| Lightweight service monitoring and application candidates | Monitoring proposed; HomeBox native support delivered; VM qualification open | Unscheduled | HomeBox request [#99](https://github.com/bluehexagons/basaltwater/issues/99) closed 2026-09-13 | [Lightweight service and monitoring candidates](LIGHTWEIGHT_SERVICE_CANDIDATES.md): support Gatus first for service checks, Beszel second for VM telemetry, and consider Memos as the first team application; exclude PHP and gate mandatory PostgreSQL dependencies. [HomeBox support](HOMEBOX_SUPPORT.md) records delivered setup, recovery, recurring updates, and full VM qualification still to run. |
-| Background agent capabilities | Panel Codex prompt tasks and scheduling implemented; fleet operations brief and evidence framework proposed | Unscheduled | [#105](https://github.com/bluehexagons/basaltwater/issues/105) and [#107](https://github.com/bluehexagons/basaltwater/issues/107); scheduling scope relates to [#28](https://github.com/bluehexagons/basaltwater/issues/28) | [Panel prompt tasks](../services/WEB_PANEL.md#agent-prompt-tasks) run without T3. [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) still proposes durable fleet evidence, fixed daily briefs, model budgets, incident investigation and recovery rehearsals; extend existing scheduling owners for later coordination. |
-| Recovery workflows | Queued behind transaction and deployment state | P2 | Former recovery scope of closed [#97](https://github.com/bluehexagons/basaltwater/issues/97) | [Roadmap](ROADMAP.md), with Proxmox backup and restore details in the [Proxmox audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md). |
-| Storage integrity and recovery | Core integrity controls and panel snapshots delivered; further automation proposals remain unscheduled | P2, after reliability foundations | No dedicated open issue | [Storage integrity review](../storage/STORAGE_REVIEW.md): verify-before-sync snapshots, common mutation locking, interrupted-manifest reconciliation, resumable scans, persistent incident notifications, and reviewed recovery retention. |
-| Safe network apply and rollback | Address handoff delivered; firewall apply remains | P2 | No dedicated open issue | [Roadmap](ROADMAP.md): extend the verified host/guest address handoff model to reviewed Proxmox firewall artifacts with timed rollback and connectivity confirmation. |
-| Extensibility and release quality | Queued | P3 | No dedicated open issue | [Roadmap](ROADMAP.md): plugin isolation, retained packaging smoke tests, lint/type/coverage gates, and a documented provider contract. |
-
-## Unscheduled issue backlog
-
-The proposed [password manager sister project](PASSWORD_MANAGER_SISTER_PROJECT.md)
-has a separate repository boundary and no scheduled implementation or linked
-issue. Its plan covers vault-format evaluation, an extension-first client,
-encrypted synchronization, browser filling, Basaltwater deployment and recovery,
-and independent security review before a public release.
-
-These open issues have a documented disposition but no scheduled implementation.
-Write or assign a project brief and a roadmap slot before implementation so
-they do not silently compete with P0/P1 work.
-
-| Issue | Disposition | Planning boundary |
+| Area | Current status | Next boundary |
 | --- | --- | --- |
-| [#28 — Scheduling system](https://github.com/bluehexagons/basaltwater/issues/28) | Backlog; proposed direction documented | [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) scopes independent task runs and later maintenance coordination; extend the storage orchestrator for its existing jobs without competing timers. |
-| [#83 — Apt cache support](https://github.com/bluehexagons/basaltwater/issues/83) | Backlog | Specify server ownership, validated client configuration, failure behavior, and rollback first. |
-| [#87 — More default config options](https://github.com/bluehexagons/basaltwater/issues/87) | Backlog | Add a versioned preferences contract only when a supported desktop profile can own it. |
-| [#25 — Multimedia packages](https://github.com/bluehexagons/basaltwater/issues/25) | Partial, deferred | Debian and CachyOS provide individual native media editors and `--av-tools`; broader bundle semantics and profile support remain deferred. |
-| [#100 — Akaunting support](https://github.com/bluehexagons/basaltwater/issues/100) | Deferred | Use [Coolify evaluation](COOLIFY_INTEGRATION.md) only when a concrete application recipe and recovery need justify it. |
-| [#105 — Agent automation systems](https://github.com/bluehexagons/basaltwater/issues/105) and [#107 — Core system agent](https://github.com/bluehexagons/basaltwater/issues/107) | Partial; broader framework proposed | The panel provides account-level Codex tasks and schedules. [Background agent capabilities](BACKGROUND_AGENT_CAPABILITIES.md) still requires fleet evidence, fixed recipes, budgets, and authority contracts. |
+| Release and migration | The fleet namespace cutover is complete; the preview candidate is not published. | Complete the [release matrix](../release-qualification.md) before publishing v2.0.0. |
+| Target-user rename | Implementation and mocked coverage are in main; live qualification is open. | Run the disposable Debian/systemd case in the release matrix. |
+| Privilege execution | The approved executor, review policy, and safe status contract are implemented. | Complete the disposable Debian refresh/recovery qualification in [privilege execution](privilege-execution-qualification.md). |
+| Transaction safety | Bounded recovery is implemented for managed operations; host qualification is open. | Use the [transaction plan](transactional-execution.md) and release matrix for remaining host coverage. |
+| Deployment manifests and secrets | Direct and webhook deployment share existing transaction safeguards; broader manifest reuse is queued. | Sequence [deploy secrets](deploy-secrets.md) before [CI/CD manifest reuse](cicd-manifest-reuse.md). |
+| Go deployment convention | The project-specific `go-site/v1` contract remains proposed; it is not a general CLI support promise. | See the [Go site convention](go-site-convention.md) linked from deployment guidance. |
+| Planning and drift | Domain-specific observations exist; there is no general desired-versus-observed plan command. | Define one stable read-only result contract and address the retention gap in issue #108. |
+| VM management, storage, and Gogs | Provisioning supports declared blank QEMU data disks and local Gogs LFS storage; broader mutation and recovery remain gated. | Validate the current slice on Proxmox, then scope provider-neutral mutation and Gogs restore in [VM management](vm-management-and-lightweight-git-hosting.md). |
+| Proxmox maintenance | Routine audits, guarded updates and reboot checks are available; HA/Ceph orchestration and verified restore are not. | Use [Proxmox maintenance](proxmox-maintenance.md) for current gaps and host qualification.
+| HomeBox | Native service setup, updates, backup, and restore are documented; a disposable-VM release check remains open. | Complete APP-01 in the release matrix and follow [HomeBox operations](../services/homebox.md). |
+| Agent host maintenance | Explicit user-tool updates, safe cache cleanup, and narrow diagnostics are available; fleet policy gaps remain unscheduled. | See the [agent host maintenance brief](agent-host-maintenance.md) and current [agent guides](../agents/README.md). |
+| T3 Code VM | Stable v0.0.45 remains the deployment target; setup and client qualification are incomplete. | Complete the open cases in [T3 Code VM qualification](t3-code-agent-vm-improvements.md). |
+| Shared desktop | The XRDP session, bounded native tools, and human handoff are available; resize can interrupt the RDP connection. | Complete live cases in [XRDP guidance](../workstations/xrdp.md) and review open host/client boundaries in [desktop maintenance](desktop-maintenance.md). |
+| Browser support | Chromium and opt-in Firefox workflows are documented; native ESR/deployment qualification remains open. | Finish the browser cases in [browser testing](../agents/browser-testing.md) and the release matrix. |
+| CachyOS workstation | Current supported setup is documented; new experimental enhancements are deferred. | Use the [workstation guides](../workstations/cachyos.md); issue #106 remains separate from the Debian release gate. |
+| Ubuntu WSL | Bootstrap, profiles, and native jobs are implemented; Windows live qualification is pending. | Qualify a fresh and resumed Windows 11 setup in [WSL support](ubuntu-wsl-support.md). |
+| Shared distro capabilities | The cross-distro adapter proposal is unscheduled. | Keep scope behind reliability work in [shared capability contracts](cross-distro-shared-capabilities.md). |
+| Godot workflows | Web and publishing bundles are supported; later bundles have no compatibility or rollout commitment. | Add a bundle only with its own verification and update contract. |
+| Game publishing | The panel and CLI workflows are available; provider account and rendering behavior are not live-qualified. | Use the [operator guide](../workstations/game-publishing.md), [publishing status](game-publishing.md), and [communications plan](game-release-communications.md). |
+| Background agents | Account-level Codex tasks are available; fleet evidence, fixed recipes, and broader authority remain proposed. | Keep the proposal in [background agent capabilities](background-agent-capabilities.md) unscheduled until a roadmap slot exists. |
+| Storage recovery | Core integrity controls and read-only panel snapshots are documented; additional recovery automation is unscheduled. | Track only the remaining shared recovery needs in the [roadmap](roadmap.md). |
 
-The [issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) tracks the 14 issues
-still open as of 2026-10-08. Fixes for #102 and #103 are in `main` and no
-recurrence has been reported, but their issue acceptance still asks for checks
-on the originally affected hosts, so they remain open.
+## Unscheduled open issues
 
-## Audit inputs and retained evidence
+These issues have no scheduled implementation. Write a focused brief and assign
+a roadmap slot before starting work.
 
-| Document | Lifecycle | Use |
+| Issue | Current disposition | Planning boundary |
 | --- | --- | --- |
-| [Architectural risk review](ARCHITECTURAL_RISK_REVIEW_2026-08-07.md) | Reference with open findings | Evidence feeding transactional execution, startup isolation, and CI/CD trust-boundary work. |
-| [Proxmox setup and maintenance audit](PROXMOX_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | Proxmox update, observability, recovery, hardening, and policy slices. |
-| [CLI-only agent host audit](AGENT_CLI_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | Agent update lifecycle, maintenance windows, audit output, and cache/credential lifecycle. |
-| [Antistatic workload feedback](ANTISTATIC_WORKLOAD_FEEDBACK.md) | Reference and scoped handoff | Remaining runtime/source discovery, disposable refresh qualification and private artifact storage; delivered fixes and Antistatic-owned follow-ups are distinguished. |
-| [RDP desktop agent audit](DESKTOP_AGENT_MAINTENANCE_AUDIT_2026-08-09.md) | Active roadmap input | XRDP identity, configuration rollback, workload safety, and live smoke coverage. |
-| [Test suite audit and coverage plan](TEST_SUITE_AUDIT_2026-09-02.md) | Finalized implementation plan | Canonical backlog for test coverage, domain grouping, redundancy reduction, and unowned test-surface decisions. |
-| [Shared desktop setup audit](DESKTOP_SETUP_AUDIT.md) | Historical diagnostic reference | Captures the unconfirmed XRDP resize/reconnect cause and setup cleanup; live reconnect qualification remains in the single-session desktop plan. |
+| [#91 — Interactive orchestration](https://github.com/bluehexagons/basaltwater/issues/91) | Partial shell; job lifecycle is not defined. | Reuse setup parsing, workspace records, and transaction recovery. |
+| [#63 — Secrets and credentials](https://github.com/bluehexagons/basaltwater/issues/63) | Private workspace credentials exist for selected services. | Add versioned deployment secret references, rotation, and consumer inventory after P0. |
+| [#28 — Scheduling](https://github.com/bluehexagons/basaltwater/issues/28) | Storage and panel jobs have separate existing owners. | Define later fleet coordination without introducing competing timers. |
+| [#25 — Multimedia bundles](https://github.com/bluehexagons/basaltwater/issues/25) | Individual native tools are available; the requested broad bundles are not. | Decide profile scope and package ownership before scheduling. |
+| [#83 — Apt cache](https://github.com/bluehexagons/basaltwater/issues/83) | Cache cleanup exists; no cache server or client proxy is configured. | Specify ownership, endpoint validation, failure behavior, and rollback. |
+| [#87 — Default configuration](https://github.com/bluehexagons/basaltwater/issues/87) | Panel layout and widgets are not modeled. | Define a versioned preference owner for a supported desktop. |
+| [#100 — Akaunting](https://github.com/bluehexagons/basaltwater/issues/100) | Not implemented; Coolify evaluation is deferred. | See the [Coolify decision](coolify-integration.md); reopen only with a concrete deployment and recovery owner. |
+| [#105 and #107 — Agent automation](https://github.com/bluehexagons/basaltwater/issues/105) | Saved account-level Codex tasks exist; a fleet framework is only proposed. | Define evidence, authority, and cost boundaries before implementation. |
+| [#111 — Arch certificate install](https://github.com/bluehexagons/basaltwater/issues/111) | Report lacks a reproducible command or host details. | Collect reproduction details before changing support claims. |
+| [#112 — Hide uninstalled tools](https://github.com/bluehexagons/basaltwater/issues/112) | Request lacks scope and acceptance criteria. | Clarify which panels and unavailable states are expected. |
 
-## Keeping the portfolio current
+The [issue map](issue-triage.md) contains the current 14 open issues as of
+2026-10-15; reports #111 and #112 need more detail before implementation.
 
-When work lands, update the detailed owner first, then this index, the roadmap,
-and the issue triage when their status or ordering changes. Do not create a new
-plan for a slice already owned by one of the projects above. Move completed
-findings into their owning plan or the roadmap. Keep a completed audit only
-while current qualification depends on its evidence; remove snapshots whose
-findings and decisions are already represented by maintained documentation.
-Record newly deferred work explicitly instead of relying on file age or issue
-inactivity.
+## Documentation ownership
+
+Operator guides describe current behavior. The release matrix records
+uncompleted qualification. This portfolio and the roadmap describe active or
+explicitly deferred work. Completed audit snapshots and implementation
+chronologies are not maintained as separate documents.

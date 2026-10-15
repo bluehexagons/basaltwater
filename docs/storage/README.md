@@ -3,13 +3,12 @@
 These guides group recurring storage jobs, shared files, synchronization, and
 recovery. For applications that store data on a host, see
 [Services](../services/README.md). For Proxmox disks and guest storage, see
-[Proxmox](../operations/PROXMOX.md).
+[Proxmox](../operations/proxmox.md).
 
 | Guide | Use it for |
 | --- | --- |
-| [Storage operations](STORAGE_OPERATIONS.md) | Rsync mirrors, par2 protection, schedules, and operation locks |
-| [Generic path backups](BACKUPS.md) | Recurring path mirrors and mounted destinations |
-| [Samba shares](SAMBA_SHARES.md) | Authenticated shares, access changes, removals, and SMB mounts |
-| [Managed Syncthing](SYNCTHING.md) | Private file exchange, relays, administration, and recovery |
-| [Scrub recovery](SCRUB_RECOVERY.md) | Inspect and recover parity scrub findings |
-| [Storage integrity review](STORAGE_REVIEW.md) | Delivered integrity controls and unscheduled follow-up proposals |
+| [Storage operations](storage-operations.md) | Rsync mirrors, par2 protection, schedules, and operation locks |
+| [Generic path backups](backups.md) | Recurring path mirrors and mounted destinations |
+| [Samba shares](samba-shares.md) | Authenticated shares, access changes, removals, and SMB mounts |
+| [Managed Syncthing](syncthing.md) | Private file exchange, relays, administration, and recovery |
+| [Scrub recovery](scrub-recovery.md) | Inspect and recover parity scrub findings |

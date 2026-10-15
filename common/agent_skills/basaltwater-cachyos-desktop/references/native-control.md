@@ -141,5 +141,5 @@ Do not issue `control resume` to work around a human pause.
 The handoff window can be closed independently without resuming input. Close
 only disposable instances created for the task, after confirming saved files.
 Keep editable sources, exports and useful verification logs with the project.
-See the [native desktop guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_DESKTOP.md)
+See the [native desktop guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-desktop.md)
 for implementation limits and live qualification evidence.

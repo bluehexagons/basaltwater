@@ -25,7 +25,7 @@ from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
 
 
-# Review the linked prices in docs/agents/AGENT_CONTEXT.md before advancing this date.
+# Review the linked prices in docs/agents/agent-context.md before advancing this date.
 POLICY_VERIFIED_ON = date(2026, 10, 15)
 POLICY_REVIEW_DAYS = 7
 CODEX_CONTEXT_DEFAULTS = {
@@ -261,7 +261,7 @@ def configure_agent_context_defaults(config: SetupConfig) -> None:
     if not any((config.install_codex, config.install_claude, config.install_opencode)):
         return
     if not _policy_fresh():
-        print(f"  ! Context pricing review is stale (verified {POLICY_VERIFIED_ON}); using conservative managed defaults. Review docs/agents/AGENT_CONTEXT.md.")
+        print(f"  ! Context pricing review is stale (verified {POLICY_VERIFIED_ON}); using conservative managed defaults. Review docs/agents/agent-context.md.")
     account = pwd.getpwnam(config.username)
     home = Path(account.pw_dir)
     if config.install_codex and config.system_type in {"agent_cachyos", "server_wsl"}:

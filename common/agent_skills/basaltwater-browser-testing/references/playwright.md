@@ -10,7 +10,7 @@ existing dependencies. An authorized `browser install` with the same arguments
 downloads only the matching engine, preserving packages and lockfiles.
 Use `--context managed` without `--project` for the managed pinned package.
 Neither command changes MCP's Chromium selection or the session browser policy.
-See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/BROWSER_AUTOMATION.md#engine-and-context-coverage)
+See the [engine/context guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/browser-automation.md#engine-and-context-coverage)
 for dependency and coverage limits.
 
 Firefox automation can be explicitly registered as the separate

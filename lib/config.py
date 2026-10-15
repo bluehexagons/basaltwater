@@ -68,7 +68,7 @@ def validate_current_setup_fields(data: JSONDict) -> None:
         raise RetiredSetupConfigError(
             'Retired setup fields: ' + ', '.join(found)
             + '. Resave configuration using the intermediate version in '
-            'docs/BASALTWATER_MIGRATION.md before upgrading.'
+            'docs/migration-guide.md before upgrading.'
         )
 
 

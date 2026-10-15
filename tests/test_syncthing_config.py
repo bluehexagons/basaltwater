@@ -185,7 +185,7 @@ class SyncthingConfigTest(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(ValueError, "docs/BASALTWATER_MIGRATION.md"):
+        with self.assertRaisesRegex(ValueError, "docs/migration-guide.md"):
             SetupConfig.from_dict("fileserver", "server_lite", data)
         self.assertEqual(data['syncthing_devices'], [["old-device", "OLD-ID"]])
         self.assertEqual(data['syncthing_versioning'], 'trashcan')

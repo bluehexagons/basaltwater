@@ -96,7 +96,7 @@ DESKTOP_APPLICATIONS = {
             "Inspect a licensed score or MIDI task copy with {launch_prefix}{executable} /absolute/task/score.mid. Save an editable MSCZ and export review PDF/MusicXML separately; retain the exact original MIDI bytes.",
             "Check the installed version and --help before scripting. Debian's package is MuseScore 3; native CachyOS uses its repository version. QT_QPA_PLATFORM=offscreen permits terminal-only queries and exports, but does not verify desktop readiness.",
             "The tested Debian MuseScore 3.2.3 GUI crashed with --no-synthesizer; omit that flag from interactive launches. It worked for isolated offscreen exports. A title wait can match the startup splash; use --exclude-title Startup and inspect the actual document.",
-            "Follow the desktop skill's media reference and docs/workstations/MUSIC_DEVELOPMENT.md guide. MIDI import derives notation: inspect quantization, voices, tempo, meter, ties and rests. A successful PDF export does not establish musical correctness or preserve original events.",
+            "Follow the desktop skill's media reference and docs/workstations/music-development.md guide. MIDI import derives notation: inspect quantization, voices, tempo, meter, ties and rests. A successful PDF export does not establish musical correctness or preserve original events.",
             "Keep exported artifacts and isolated preferences outside source assets. Do not bundle MuseScore's fonts, SoundFonts or samples without a separate provenance and license review.",
         ],
     },
@@ -132,8 +132,8 @@ TOOLS = (
     *MUSESCORE_EXECUTABLES,
     "rg", "jq", "aws", "basaltwater-web", "basaltwater-playwright-mcp", "firefox", "firefox-esr", "butler", "steamcmd", *DESKTOP_APPLICATIONS,
 )
-DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/DESKTOP_DEVELOPMENT.md"
-PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/GAME_PUBLISHING.md"
+DESKTOP_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md"
+PUBLISHING_GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/game-publishing.md"
 PUBLISHING_INSTRUCTIONS = [
     "Never request, read or copy publishing credentials into prompts, repositories or the controller. Tool presence does not verify provider authentication.",
     "After a completed export, use basaltw publish complete REPOSITORY ARTIFACT_SUBDIRECTORY INTERNAL_BUILD_ID, then prepare PROJECT_ID and upload ARTIFACT_ID. Upload only under the user's explicit request or standing unattended/scheduled authority.",
@@ -302,7 +302,7 @@ def _native_development(repository: str) -> dict[str, object]:
         "intended_use": "development-and-testing", "final_build_host": "debian",
         "secondary_workflows": ["electron", "native-applications", "native-games"],
         "readiness": "unverified",
-        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_DEVELOPMENT.md",
+        "guide": "https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md",
         "doctor_argv": [*prefix, "doctor", *target],
         "godot_editor_argv": [*prefix, "editor", *target] if godot else None,
         "godot_run_argv": [*prefix, "run", *target] if godot else None,

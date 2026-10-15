@@ -387,7 +387,7 @@ def _ensure_local_runtime_state() -> None:
     ):
         raise RuntimeError(
             f"Retired runtime-relative state at {runtime_state}; use the intermediate "
-            "version in docs/BASALTWATER_MIGRATION.md before replacing this installation"
+            "version in docs/migration-guide.md before replacing this installation"
         )
     if os.path.islink(PERSISTENT_STATE_DIR):
         raise RuntimeError(
@@ -416,7 +416,7 @@ def _activate_local_runtime(build_dir: str) -> None:
     if os.path.lexists(os.path.join(os.path.dirname(REMOTE_INSTALL_DIR), "infra_tools")):
         raise RuntimeError(
             "infra-tools runtime migration is retired; use the intermediate version "
-            "in docs/BASALTWATER_MIGRATION.md before replacing this installation"
+            "in docs/migration-guide.md before replacing this installation"
         )
     if os.path.islink(REMOTE_INSTALL_DIR):
         raise RuntimeError(f"Refusing symlinked runtime directory: {REMOTE_INSTALL_DIR}")

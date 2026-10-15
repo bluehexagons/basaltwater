@@ -7,17 +7,17 @@ see [Storage](../storage/README.md).
 
 | Guide | Use it for |
 | --- | --- |
-| [Deployments and manifests](DEPLOYMENTS.md) | Deploy repositories, static sites, services, and multi-component manifests |
-| [Deployment safety](DEPLOYMENT_SAFETY.md) | Persistent data, verified backups, rollback, and safety boundaries |
-| [Internal web and previews](INTERNAL_WEB.md) | Internal HTTPS, live previews, TLS trust, and cleanup |
-| [CI/CD webhooks](CICD.md) | Webhook jobs, build servers, and executor behavior |
-| [Cloudflare tunnels](CLOUDFLARE.md) | Public ingress, tunnel setup, firewall policy, and webhooks |
-| [Gogs](GOGS.md) | Self-hosted Git, SSH access, storage, and updates |
-| [HomeBox](HOMEBOX.md) | Inventory setup, onboarding, updates, health, and backup/restore |
-| [Antistatic](ANTISTATIC.md) | Lobby server, reports, STUN, and antistatic-db |
-| [Notifications](NOTIFICATIONS.md) | Webhook, mailbox, and panel delivery and alert interpretation |
-| [Web panel](WEB_PANEL.md) | Install and operate the authenticated machine dashboard |
-| [Web panel reference](WEB_PANEL_REFERENCE.md) | API, data limits, diagnostics, and access boundaries |
-| [Authentication hardening](AUTHENTICATION_HARDENING.md) | Reachability, rate limits, temporary bans, and verification |
-| [Protected device pairing](DEVICE_PAIRING.md) | One-time provider links, rotation, and removal |
-| [Client CA trust](CLIENT_CA_TRUST.md) | Enroll and troubleshoot private certificates on client devices |
+| [Deployments and manifests](deployments.md) | Deploy repositories, static sites, services, and multi-component manifests |
+| [Deployment safety](deployment-safety.md) | Persistent data, verified backups, rollback, and safety boundaries |
+| [Internal web and previews](internal-web.md) | Internal HTTPS, live previews, TLS trust, and cleanup |
+| [CI/CD webhooks](cicd.md) | Webhook jobs, build servers, and executor behavior |
+| [Cloudflare tunnels](cloudflare.md) | Public ingress, tunnel setup, firewall policy, and webhooks |
+| [Gogs](gogs.md) | Self-hosted Git, SSH access, storage, and updates |
+| [HomeBox](homebox.md) | Inventory setup, onboarding, updates, health, and backup/restore |
+| [Antistatic](antistatic.md) | Lobby server, reports, STUN, and antistatic-db |
+| [Notifications](notifications.md) | Webhook, mailbox, and panel delivery and alert interpretation |
+| [Web panel](web-panel.md) | Install and operate the authenticated machine dashboard |
+| [Web panel reference](web-panel-reference.md) | API, data limits, diagnostics, and access boundaries |
+| [Authentication hardening](authentication-hardening.md) | Reachability, rate limits, temporary bans, and verification |
+| [Protected device pairing](device-pairing.md) | One-time provider links, rotation, and removal |
+| [Client CA trust](client-ca-trust.md) | Enroll and troubleshoot private certificates on client devices |

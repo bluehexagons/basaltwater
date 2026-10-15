@@ -16,7 +16,7 @@ from lib.validation import validate_filesystem_path
 
 
 KINDS = ("auto", "node-site", "node-package", "node-service", "go-service", "full-stack", "static", "publishing")
-GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PROJECT_TOOLING.md"
+GUIDE = "https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md"
 _SITE_TOOLS = {"vite", "astro", "react-scripts", "@angular/cli", "@sveltejs/kit"}
 _SERVER_TOOLS = {"express", "fastify", "koa", "next", "nuxt", "@nestjs/core"}
 

@@ -20,7 +20,7 @@ from lib.validation import validate_filesystem_path, validate_no_control_charact
 OPERATION_SCHEMA_VERSION = 1
 OperationStatus = Literal["in_progress", "recovery_required"]
 RECOVERY_GUIDANCE = (
-    "preserve the marker and reconcile actual state using docs/operations/TRANSACTION_RECOVERY.md; "
+    "preserve the marker and reconcile actual state using docs/operations/transaction-recovery.md; "
     "resolve it only after verified recovery before retrying"
 )
 

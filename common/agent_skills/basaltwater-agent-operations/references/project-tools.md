@@ -20,8 +20,8 @@ the summary reports missing prerequisites and displays commands without running
 them. Use relevant project recipes when choosing checks for the user's task.
 Undeclared `dev` and `staging` destinations remain unknown; tool presence does
 not prove health or authentication. See the
-[environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/AGENT_ENVIRONMENT.md)
-or `docs/agents/AGENT_ENVIRONMENT.md` in a Basaltwater checkout.
+[environment manifest guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-environment.md)
+or `docs/agents/agent-environment.md` in a Basaltwater checkout.
 
 Blender is optional on Debian agent hosts: setup `--blender` selects the
 configured Debian release's APT package, including on headless `agent_vm`.
@@ -29,13 +29,13 @@ Normal host package maintenance owns its updates. Check `blender --version`
 and use the manifest's background-render recipe for repeatable scene output;
 installation does not establish GPU or interactive desktop readiness. Native
 editing uses the shared desktop skill when that capability is installed.
-See [desktop software support and flags](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/WORKSTATIONS.md#desktop-software-support-and-flags)
-and [Blender workflows](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/DESKTOP_DEVELOPMENT.md#blender).
+See [desktop software support and flags](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/workstations.md#desktop-software-support-and-flags)
+and [Blender workflows](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md#blender).
 
 For image evidence, `basaltw agent visuals compare BEFORE.png AFTER.png --json`
 creates a private standalone viewer with synchronized zoom/scroll, overlays,
 pixel differences, and optional per-image settings. `agent visuals capture`
 replays a project capture command and settings in two managed Git worktrees;
 it retains worktrees and evidence rather than swapping primary assets. Read the
-[visual comparison guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/VISUAL_COMPARISONS.md)
-or `docs/workstations/VISUAL_COMPARISONS.md` before running revision captures.
+[visual comparison guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/visual-comparisons.md)
+or `docs/workstations/visual-comparisons.md` before running revision captures.

@@ -20,7 +20,7 @@ fallbacks do not extend support to outdated systems.
 The primary role is remote Godot application/game development and playtesting
 through T3 Code, Sunshine/Moonlight, and same-user SSH after initial KDE login.
 Electron and native client software are secondary. Use the
-[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_DEVELOPMENT.md)
+[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md)
 for commissioning and project/task commands. Production builds and publishing
 use separate systems; containers and isolated project environments are outside
 this workstation role. Preserve the logged-in desktop and remote access paths.
@@ -53,7 +53,7 @@ is unsupported when Codex is selected. Authentication uses local provider login.
 
 Setup fills missing context budgets while preserving explicit values. For
 pricing thresholds and temporary or session-only larger windows, use the
-[context budget guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/AGENT_CONTEXT.md).
+[context budget guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-context.md).
 An explicit user request authorizes its stated scope; preserve that scope
 across compaction and restore the earlier budget when it ends. Use per-session
 controls instead of changing shared T3 service configuration.
@@ -95,7 +95,7 @@ Fish and agent shells too. `--node` alone retains system/PATH runtimes and does
 not prepare NVM on CachyOS. Custom NVM installations keep their own manager.
 Add `--blender --git-lfs` for source assets. Game development also selects KDE
 automation prerequisites for native Animator work, but starts no input/capture.
-Use the [game development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_GAME_DEVELOPMENT.md)
+Use the [game development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-game-development.md)
 for package scope and sibling workflows. This desktop bundle does not reproduce
 release compiler/formatter pins or prepare a release SDK. Run project checks
 and record their actual workstation/runtime/backend; leave production builds
@@ -129,7 +129,7 @@ Current Shelly also offers cache cleanup; setup leaves its AUR build cache and
 existing distro maintenance configuration alone. No cleanup timer is installed.
 Preserve credentials, sessions, application data,
 and repositories; do not substitute blanket cache deletion or orphan-package
-removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS.md#cleanup-during-setup).
+removal. See the [cleanup policy](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#cleanup-during-setup).
 
 Managed Playwright is not installed. Native KDE automation is explicitly
 started with `basaltw desktop --native start` and requires the owner's portal
@@ -144,7 +144,7 @@ and Inkscape, GIMP, Krita, Audacity and Shotcut asset edits. It covers trusted
 application scripting, editable task copies, exports and reopen/consumer checks,
 with references for the other supported native applications. The manifest
 provides direct native launch commands on CachyOS rather than XRDP commands.
-See the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/DESKTOP_DEVELOPMENT.md).
+See the [desktop development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/desktop-development.md).
 For browser checks, use tools actually available in the session or the project's
 own test commands. Complete scripting/export tasks autonomously. For required
 GUI-only validation, use the user-approved native portal/AT-SPI tools; report
@@ -178,7 +178,7 @@ the command's purpose before requesting authentication. If no graphical agent
 is available or authentication is rejected, use the owner's terminal instead;
 never request a password through chat or tool stdin. Keep the doctor read-only
 and unprivileged. See the
-[privileged-check procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_MAINTENANCE.md#privileged-checks-from-an-agent)
+[privileged-check procedure](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-maintenance.md#privileged-checks-from-an-agent)
 for mirror recovery and effective firewall inspection.
 
 For explicitly requested firewall management, retain the full setup selection
@@ -190,7 +190,7 @@ T3 UDP, and legacy RDP stay blocked. Other rules are retained. A rerun can chang
 the inferred LAN; prefer explicit sources on roaming desktops. No access flags
 leaves policy unchanged; `--no-lan-access` without explicit sources closes managed
 inbound ports. Inspect the documented limitations and effective rules in the
-[firewall guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS.md#optional-workstation-firewall).
+[firewall guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#optional-workstation-firewall).
 
 Additional read-only diagnostics include `command -v`, tool version checks,
 `pacman -Q`, and user service logs. Graphics diagnostics may use `vulkaninfo`
@@ -202,7 +202,7 @@ build configuration and repeat-build measurements. If a container engine is
 already used, `basaltw agent containers inspect --engine podman --json` reports
 its storage without pruning or enabling a service. Capacity preflight is an
 estimate on the graph-root filesystem, independent of root free space.
-See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/PROJECT_TOOLING.md).
+See [project tooling](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/project-tooling.md).
 
 `basaltw agent graphics doctor --context xvfb --json` explicitly starts an
 isolated GLX context probe. `--context display` uses the invoking graphical
@@ -220,7 +220,7 @@ After a refresh, run a reviewed project graphics recipe explicitly with
 settings, executable/commit context and selected graphics-package versions.
 The project owns assertions about the actual renderer and complete image content;
 the generic check only establishes its recipe's outcome. Use the
-[capture backend guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_GAME_DEVELOPMENT.md#capture-backends-and-post-refresh-checks)
+[capture backend guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-game-development.md#capture-backends-and-post-refresh-checks)
 for Wayland, isolated Xvfb and supported offscreen captures. Setup, refresh and
 doctor do not run project code or qualify GPU/desktop behavior automatically.
 An agent running as this account has the account's access to personal files.
@@ -264,7 +264,7 @@ unmanaged executables require an explicit migration or omitting the flag. Etcher
 uses repository `etcher-bin`. Do not launch SteamCMD as a readiness/version probe:
 even `+quit` can download updates and initialize personal Steam state. Setup does
 not log in, publish, flash media, grant disk/input access, or disable Electron's
-sandbox. See the [software guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_SOFTWARE.md)
+sandbox. See the [software guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-software.md)
 for package mappings, Godot export-template requirements, and manual checks.
 
 T3 desktop is another explicit AUR exception: `--t3code-desktop` installs or retains

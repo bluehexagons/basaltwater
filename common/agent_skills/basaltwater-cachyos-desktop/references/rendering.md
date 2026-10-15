@@ -53,5 +53,5 @@ workaround until its SDR capture/presentation framebuffer is independent of the
 desktop window. Interactive HDR/scaling and desktop control require their own
 checks; do not claim them from offscreen evidence or start a portal automatically.
 
-See [CachyOS capture guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/CACHYOS_GAME_DEVELOPMENT.md#capture-backends-and-post-refresh-checks)
-and [visual check behavior](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/VISUAL_COMPARISONS.md#run-a-project-check).
+See [CachyOS capture guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-game-development.md#capture-backends-and-post-refresh-checks)
+and [visual check behavior](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/visual-comparisons.md#run-a-project-check).

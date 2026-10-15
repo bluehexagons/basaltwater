@@ -125,7 +125,7 @@ class TestSetupConfigFromDict(unittest.TestCase):
     def test_legacy_desktop_policy_is_refused_without_mutating_saved_input(self):
         data = {'username': 'agent', 'rdp_max_sessions': 3,
                 'rdp_kill_disconnected': True, 'rdp_disconnected_timeout': 60}
-        with self.assertRaisesRegex(ValueError, 'docs/BASALTWATER_MIGRATION.md'):
+        with self.assertRaisesRegex(ValueError, 'docs/migration-guide.md'):
             SetupConfig.from_dict('vm', 'agent_workstation', data)
         self.assertEqual(data['rdp_max_sessions'], 3)
 
