@@ -51,6 +51,13 @@ version-manager, and system-package installations keep their original manager.
 Existing Codex configuration and credentials are retained; custom `CODEX_HOME`
 is unsupported when Codex is selected. Authentication uses local provider login.
 
+Setup fills missing context budgets while preserving explicit values. For
+pricing thresholds and temporary or session-only larger windows, use the
+[context budget guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_CONTEXT.md).
+An explicit user request authorizes its stated scope; preserve that scope
+across compaction and restore the earlier budget when it ends. Use per-session
+controls instead of changing shared T3 service configuration.
+
 Optional `--notify webhook URL` targets send the result of local setup and
 refresh through the shared JSON webhook sender. `mailbox` is unsupported;
 no notification timer or Debian maintenance/security jobs are installed.

@@ -69,6 +69,11 @@ shells, web search, apps, plugins, MCP servers, or browser features. Shell
 network access still begins outside the workspace boundary and can be requested
 through the normal approval flow instead of being silently enabled.
 
+System defaults also compact the full active Codex context at 240,000 tokens
+to leave room before known long-context price tiers. This is an overridable
+cost preference in both security postures. See [Agent context budgets](AGENT_CONTEXT.md)
+for provider-specific thresholds and temporary or session-scoped user approval.
+
 Standard defaults also expose the account-local `basaltwater-tasks` MCP server
 with task creation, scheduling, and goal controls. This lets terminal and T3
 Codex agents schedule authorized work without requiring project sandbox writes

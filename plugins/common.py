@@ -41,6 +41,7 @@ PLUGIN = PluginDefinition(
         "reconcile_agent_storage",
         "copy_agent_tooling_payload",
         "configure_codex_security_policy",
+        "configure_agent_context_defaults",
         "install_browser_automation",
         "install_git_for_agent_repositories",
         "configure_git_https_credentials",
@@ -267,6 +268,7 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         update_managed_agent_tools,
     )
     from common.agent_security_steps import configure_codex_security_policy
+    from common.agent_context_steps import configure_agent_context_defaults
     from common.t3code_steps import install_t3code_web
     from lib.agent_skill_bundles import SKILL_AGENT_TOOLS
 
@@ -297,6 +299,9 @@ def extend_agent_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -
         steps.append(("Copying agent tool configuration", copy_agent_tooling_payload))
     elif config.git_author_name is not None or config.git_author_email is not None:
         steps.append(("Configuring Git commit identity", configure_git_commit_identity))
+
+    if config.install_codex or config.install_claude or config.install_opencode:
+        steps.append(("Configuring agent context budgets", configure_agent_context_defaults))
 
     # Claude's copied configuration can contain an older managed skill catalog.
     # Refresh after payload seeding so the current source owns managed guidance.
@@ -454,6 +459,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         configure_agent_user_security,
         configure_codex_security_policy,
     )
+    from common.agent_context_steps import configure_agent_context_defaults
     from common.t3code_steps import install_t3code_web
     from common.web_panel_steps import configure_web_panel
     from common.agent_task_steps import configure_agent_task_worker
@@ -491,6 +497,7 @@ def get_custom_step_functions() -> Mapping[str, StepFunc]:
         "reconcile_agent_storage": reconcile_agent_storage,
         "copy_agent_tooling_payload": copy_agent_tooling_payload,
         "configure_codex_security_policy": configure_codex_security_policy,
+        "configure_agent_context_defaults": configure_agent_context_defaults,
         "install_browser_automation": install_browser_automation,
         "clone_agent_repositories": clone_agent_repositories,
         "install_git_for_agent_repositories": install_git_for_agent_repositories,

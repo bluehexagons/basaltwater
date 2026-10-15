@@ -32,6 +32,7 @@ def build_wsl_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         install_agent_cli_launcher, install_claude, install_codex, install_github_cli, install_opencode,
     )
     from lib.agent_skill_bundles import SKILL_AGENT_TOOLS
+    from common.agent_context_steps import configure_agent_context_defaults
     from common.common_steps import install_go, install_node, install_python
     from common.wsl_steps import (
         install_wsl_agent_skills, install_wsl_base, preflight_wsl, report_wsl_readiness,
@@ -54,6 +55,7 @@ def build_wsl_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
             steps.append((title, function))
     if SKILL_AGENT_TOOLS.intersection(config.selected_agent_tools()):
         steps.extend((
+            ("Configuring agent context budgets", configure_agent_context_defaults),
             ("Installing WSL agent management command", install_agent_cli_launcher),
             ("Installing managed WSL agent skills", install_wsl_agent_skills),
         ))

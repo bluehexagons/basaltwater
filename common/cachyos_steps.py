@@ -343,6 +343,13 @@ def prepare_cachyos_workspace(config: SetupConfig) -> None:
         _user_run(["git", "clone", "--", repository, str(destination)], home)
 
 
+def configure_cachyos_agent_context(config: SetupConfig) -> None:
+    """Fill missing user settings without writing system-wide Codex policy."""
+    from common.agent_context_steps import configure_agent_context_defaults
+
+    configure_agent_context_defaults(config)
+
+
 def install_cachyos_skills(config: SetupConfig) -> None:
     home = _home(config)
     unit = home / ".config/systemd/user" / T3_SERVICE

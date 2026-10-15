@@ -14,6 +14,13 @@ The installed `basaltw` launcher provides workspace and project model helpers;
 this profile does not provision Debian VM maintenance, a panel, a gateway, XRDP,
 or managed browser automation.
 
+Setup fills missing provider context budgets. Use the
+[context budget guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_CONTEXT.md)
+for pricing and larger-window controls. Honor an explicit user's temporary or
+session-scoped approval without asking again; carry its scope across
+compaction and restore the prior budget when the approved scope ends. A
+Windows-native provider has separate settings from the Ubuntu provider.
+
 For durable project notes, todos, or private secret-file references, read the
 [project memory guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/AGENT_MEMORY.md)
 when needed. Use `basaltw agent memory list --project . --limit 20 --json`, then

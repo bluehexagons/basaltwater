@@ -86,6 +86,7 @@ _USER_DENIED_GROUPS = _AGENT_DENIED_GROUPS | {
 
 
 def _codex_config_content(*, hardened: bool) -> str:
+    from .agent_context_steps import codex_context_defaults_toml
     from .agent_steps import AGENT_CLI_SOURCE
 
     approval_policy = "never" if hardened else "on-request"
@@ -108,6 +109,8 @@ def _codex_config_content(*, hardened: bool) -> str:
     return (
         f"{_MANAGED_MARKER}\n"
         f"# Policy: {'hardened' if hardened else 'standard'}\n"
+        "# Compact before the 272K input-token pricing boundary.\n"
+        f"{codex_context_defaults_toml()}"
         f'approval_policy = "{approval_policy}"\n'
         f'approvals_reviewer = "{reviewer}"\n'
         'sandbox_mode = "workspace-write"\n'

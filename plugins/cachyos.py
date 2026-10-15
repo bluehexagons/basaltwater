@@ -33,6 +33,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.cachyos_steps import (
         install_cachyos_packages,
         install_cachyos_agents,
+        configure_cachyos_agent_context,
         install_cachyos_skills,
         prepare_cachyos_workspace,
         install_cachyos_t3,
@@ -53,6 +54,7 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
         ("Observing workstation health (read-only)", report_cachyos_host_health),
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
         ("Installing or updating coding agents for the current user", install_cachyos_agents),
+        ("Configuring agent context budgets", configure_cachyos_agent_context),
         ("Preparing the local coding workspace", prepare_cachyos_workspace),
     ]
     if firewall_requested(config):
