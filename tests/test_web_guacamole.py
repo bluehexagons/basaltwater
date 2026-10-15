@@ -19,6 +19,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from common.service_tools import guacamole_service as service
 from common.service_tools.guacamole_protocol import Parser, filter_instruction, handshake, instruction, read_instruction
+from common.service_tools.web_panel_features import PanelFeatures
 from common.web_panel_steps import build_web_panel_manifest, render_web_panel_nginx
 from common import web_panel_steps as panel
 from desktop import guacamole_steps as setup
@@ -551,6 +552,8 @@ class BrowserOwnershipTests(unittest.TestCase):
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.stack = ExitStack()
+        self.account = self.stack.enter_context(patch.object(service.pwd, "getpwnam", return_value=MagicMock(pw_dir="/home/agent")))
+        self.features = self.stack.enter_context(patch.object(service, "discover_features", return_value=PanelFeatures()))
         self.snapshot = dict(state="running", generation="generation-1", geometry=[1600, 900], paused=False)
         self.pause_serial = 0
         self.prior_pause = False
@@ -610,6 +613,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
         self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+        self.account.assert_called_once_with("agent")
+        self.features.assert_called_once_with("/home/agent", admin=False)
         self.desktop_call.assert_not_called()
 
     async def test_inspect_is_read_only_and_does_not_reveal_attachment_or_pause_token(self):
