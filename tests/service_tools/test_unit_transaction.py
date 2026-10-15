@@ -61,6 +61,27 @@ class TestUnitTransaction(unittest.TestCase):
         self.assertNotIn(["systemctl", "stop", "demo.timer"], self.commands)
         self.assertFalse((self.root / ".basaltwater-unit-operation.json").exists())
 
+    def test_socket_activation_stages_template_without_enabling_it(self):
+        units.replace_units({"shell.socket": "socket", "shell@.service": "login"},
+                            activate=("shell.socket",), unit_dir=str(self.root))
+        self.assertEqual((self.root / "shell@.service").read_text(), "login")
+        self.assertIn(["systemctl", "restart", "shell.socket"], self.commands)
+        self.assertFalse(any("shell@.service" in command for command in self.commands if command[0] == "systemctl"))
+        for invalid in ("shell@@.service", "shell@root.service", "shell@.socket"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                units.replace_units({invalid: "bad"}, activate=(), unit_dir=str(self.root))
+        with self.assertRaisesRegex(ValueError, "template"):
+            units.replace_units({"shell@.service": "bad"}, activate=("shell@.service",), unit_dir=str(self.root))
+
+    def test_template_removal_does_not_query_or_stop_an_abstract_service(self):
+        (self.root / "shell@.service").write_text("login template")
+        (self.root / "shell.socket").write_text("socket")
+        units.remove_units(("shell.socket", "shell@.service"), unit_dir=str(self.root))
+        self.assertFalse((self.root / "shell@.service").exists())
+        self.assertFalse((self.root / "shell.socket").exists())
+        self.assertIn(["systemctl", "stop", "shell.socket"], self.commands)
+        self.assertFalse(any("shell@.service" in command for command in self.commands))
+
     def test_command_failures_restore_content_mode_and_state(self):
         for failure in (["systemd-analyze", "verify"], ["systemctl", "daemon-reload"], ["systemctl", "enable"], ["systemctl", "restart"]):
             for active, enabled in (("active", "enabled"), ("inactive", "disabled"), ("active", "enabled-runtime")):

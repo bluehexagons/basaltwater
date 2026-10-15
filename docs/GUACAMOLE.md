@@ -1,8 +1,8 @@
-# Guacamole browser desktop
+# Guacamole browser desktop and console
 
 `--guacamole` installs an embedded browser client for the configured account's
 shared XRDP desktop. This is optional on non-root Debian server and workstation
-profiles, including `agent_vm`, on Debian 13 (Trixie), amd64 or arm64. It requires
+profiles, including `agent_vm`, on Debian 13 (Trixie), amd64. It requires
 an HTTPS web panel. Proxmox hosts, CachyOS, WSL and custom-step profiles are
 unsupported.
 
@@ -28,8 +28,8 @@ basaltw patch 192.168.1.50 agent --guacamole
 
 | Flag | Effect |
 | --- | --- |
-| `--guacamole` | Install the browser desktop and shared desktop prerequisites; requires `--web-panel` and `--ssl` on a new setup |
-| `--no-guacamole` | Remove browser access and its two services; retain the desktop, applications and pinned release |
+| `--guacamole` | Install the browser desktop, console and shared desktop prerequisites; requires `--web-panel` and `--ssl` on a new setup |
+| `--no-guacamole` | Remove browser desktop/console access and their managed units; retain the desktop, applications and pinned release |
 | `--no-web-panel` | Remove the panel and Guacamole access together |
 
 Without `--rdp`, XRDP remains bound to loopback and no RDP firewall ingress is
@@ -70,13 +70,34 @@ the browser, observing or disconnecting releases held modifiers. The text field
 supports Unicode and input composition. Fullscreen support depends on the
 browser; rotation and zoom controls remain available when it is unsupported.
 
-**Command line access (SSH)** provides a copyable command for an existing SSH
+**Console** in the sidebar, or **Open browser console** under Desktop's
+**Command line access (SSH)**, opens an embedded Guacamole SSH terminal.
+Enter the Unix account password and select **Connect to console**. Opening the
+page is read-only; connecting starts a separate shell without starting,
+connecting to, pausing or logging out the desktop. One console and one desktop
+connection may coexist. The console has the account's normal shell, home,
+network and sudo permissions; it is not the restricted gateway service's shell.
+Agent tasks continue running independently.
+
+The console resizes with the window, rotation and fullscreen view. Choose
+**Text size** before connecting. **Keyboard** exposes phone text input and
+Ctrl, Alt, Tab, Esc and arrow keys; two-finger swipes scroll the terminal.
+Sessions end after one hour or ten minutes without keyboard/pointer input.
+Polling, resizing and terminal output do not renew inactivity. Disconnecting,
+closing the tab or expiring the session closes its shell. Use `tmux` or `screen`
+when work should survive disconnects. Clipboard, SFTP, file transfer, recording
+and arbitrary destination/command selection are disabled.
+
+This first console integration ships with `--guacamole` and its shared desktop
+prerequisites. It does not require the desktop to be running, but is not a
+separate headless-only installation option.
+
+The Desktop page also provides a copyable command for an existing SSH
 client. It needs no desktop connection and uses the panel hostname with SSH's
 default port 22; adjust the destination or add `-p PORT` before `--` when SSH
 uses another endpoint. SSH retains its existing authentication policy and
-requires your SSH credentials. This is a client handoff, not a terminal running
-inside the page. An embedded terminal would require a separate authenticated
-backend; the pinned RDP-only gateway does not provide one.
+requires your SSH credentials. The embedded console instead uses its own
+private Unix login endpoint, described below.
 
 ## Observation and human control
 
@@ -103,7 +124,8 @@ client modifies the JavaScript or sends keyboard/pointer instructions directly.
 - **Fullscreen** changes the browser view. The client scales the display locally;
   it does not request live XRDP resolution changes.
 
-One browser connection is supported per VM account. XRDP also supports only one
+One browser desktop connection is supported per VM account, alongside one console.
+XRDP also supports only one
 human RDP connection in this configuration; a native RDP client can take over
 the same display and disconnect the browser. Desktop restart or geometry changes
 require reconnecting. Pause is cooperative same-account coordination, not a
@@ -162,16 +184,24 @@ already upgraded WebSocket. Use **Disconnect**, or restart
 `basaltwater-guacamole.service`, to revoke it immediately. Removing Guacamole
 stops active tunnels. No passwords or screen contents are retained in audit
 logs. Screen contents are visible to anyone with the panel credential and a
-valid desktop login.
+valid Unix account login.
 
 ## Installation and service isolation
 
 Setup downloads a versioned `basaltwater-guacamole` Debian package from
 [the dedicated build repository](https://github.com/bluehexagons/basaltwater-guacamole).
-That repository pins Apache Guacamole 1.6.0 source archives and builds an RDP-only
+That repository pins Apache Guacamole 1.6.0 source archives and builds an RDP/SSH
 `guacd` with its JavaScript client in CI. It maintains build configuration rather
-than an Apache source fork. amd64 and arm64 packages are built natively and
+than an Apache source fork. amd64 packages are built natively and
 checked in fresh Debian containers without development packages.
+Arm64 is unsupported and no longer built; older release assets are historical.
+
+On the shared development VM, the build checkout is
+`/home/agent/repos/basaltwater-guacamole` and the main integration checkout is
+`/home/agent/repos/infra-tools`. These are developer checkout locations, not
+target installation paths. Update the build repository first, wait for its
+build/runtime checks, then tag a new release and pin the downloaded amd64
+package's reviewed SHA-256 in `lib/guacamole_config.py`.
 
 The installer verifies the package SHA-256 pinned in Basaltwater's source and
 checks its name, version and architecture before asking APT to install it.
@@ -180,7 +210,7 @@ from Debian APT. Compilers and development headers stay in build CI. No Java,
 Tomcat, database, Docker daemon or VNC server is installed. The gateway uses
 Debian's FreeRDP 3 packages; upstream labels FreeRDP 3 support experimental.
 
-The initial binary release lives at `/opt/basaltwater-guacamole/1.6.0-bw1`.
+The current binary release lives at `/opt/basaltwater-guacamole/1.6.0-bw2`.
 Unchanged reruns validate and reuse the installed package without downloading
 or rebuilding Guacamole. Unsupported distributions or architectures fail
 explicitly; there is no automatic source-build fallback. Binary release updates
@@ -205,20 +235,42 @@ checks, and an unchanged rerun without another download in a disposable amd64
 container. An existing old source-release directory was preserved during that
 check; this does not qualify a live service upgrade on the testing VM.
 
-Both services run as the configured non-root account with systemd hardening.
+The gateway and RDP relay run as the configured non-root account with systemd hardening.
 `basaltwater-guacamole.service` runs `guacd` and the browser tunnel in a private
-network namespace. The namespace contains only local gateway and RDP relay
+network namespace. The namespace contains only local gateway, RDP and SSH relay
 ports. It has no route to the host's network or arbitrary remote machines.
 `basaltwater-guacamole-rdp.service` provides an account-private Unix socket
 which forwards only to the host's `127.0.0.1:3389` XRDP listener. Nginx reaches
 the HTTP application through a separate Unix socket restricted to the account
 and its web-service group. No raw Guacamole port is exposed on the host.
+
+The private namespace also relays port 2222 to
+`/run/basaltwater-guacamole-ssh/ssh.sock`. The
+`basaltwater-guacamole-ssh.socket` unit accepts at most two connections on that
+account-only Unix socket; it opens no host TCP listener. Each connection starts
+OpenSSH in inetd mode through `basaltwater-guacamole-ssh@.service`.
+OpenSSH performs the normal PAM account/password/session checks, drops to the
+configured user and creates its PTY. This login service begins as root, like
+the public SSH daemon, because a normal Unix login must establish the user's
+groups and permissions. It does not inherit the gateway's read-only home or
+privilege restrictions. It permits only the configured non-root account,
+requires a nonempty Unix password, and disables SSH forwarding and user RCs.
+Its one-hour service limit also bounds a shell if the gateway fails.
+
+The endpoint uses `/etc/basaltwater/guacamole-sshd.conf`, independent of
+`/etc/ssh/sshd_config`; public key-only SSH policy is unchanged. Setup creates
+a dedicated root-private Ed25519 host key under
+`/etc/basaltwater/guacamole-ssh/` and pins its public key in the gateway
+configuration. Passwords stay in memory for the SSH handshake. The gateway
+cannot select another host, port, account, private key or startup command.
+Removing Guacamole stops the private socket and active login instances and
+removes its configuration; the host key is retained for a later reinstall.
 Orderly service stops revoke sessions and release held browser keys/buttons
 and browser-owned pauses before terminating native children. Forced termination
 cannot guarantee input release, but the supervisor expires the browser pause
 lease. Disconnect before maintenance when possible.
 
-Both services report readiness to systemd only after their listeners are
+The gateway and RDP relay report readiness to systemd only after their listeners are
 established. The gateway additionally waits for `guacd` to listen. Setup waits
 for this notification inside the existing grouped unit transaction, so startup
 failure restores prior service definitions and activation state. On activation
@@ -234,6 +286,7 @@ rerun the saved setup or patch with `--guacamole` to update the pin.
 
 ```bash
 sudo systemctl status basaltwater-guacamole.service basaltwater-guacamole-rdp.service
+sudo systemctl status basaltwater-guacamole-ssh.socket
 sudo journalctl -u basaltwater-guacamole.service -n 50 --no-pager
 sudo nginx -t
 basaltw desktop doctor
@@ -241,6 +294,9 @@ basaltw desktop doctor
 
 Run desktop commands as the desktop owner. A login failure can mean an incorrect
 Unix password, a changed XRDP certificate, or an unhealthy shared desktop.
+Console login failures can also mean a locked/expired Unix account, PAM policy,
+or an unhealthy private SSH socket. Inspect the socket and login units rather
+than enabling password authentication on the public SSH listener.
 Missing/private sockets, failed namespace setup, and missing native libraries
 are service readiness failures. Native protocol logs are suppressed to keep
 credentials and desktop contents private; service errors provide bounded generic
@@ -331,3 +387,16 @@ the narrow layout with isolated account state. These checks use the pinned
 JavaScript client and a synthetic stream, not a live XRDP desktop. Native phone
 keyboards and fullscreen transitions still need live-device qualification;
 the collaborative preview did not complete the fullscreen transition.
+
+The 2026-10-15 console follow-up adds the pinned RDP/SSH binary release,
+private OpenSSH Unix-socket endpoint, independent shell attachments, bounded
+terminal resizing and mobile input. The amd64 package passed clean Debian
+runtime installation and native SSH negotiation, PAM password login, terminal
+framebuffer rendering and shell input through the Unix socket in a disposable
+container. The socket/template definitions passed native systemd validation.
+Regression checks cover authentication/CSRF, destinations, session replay,
+expiry, transfer rejection and cleanup without desktop operations. A synthetic
+collaborative browser check passed at 1280 × 800, 390 × 844 and 844 × 390,
+including Unicode input, modifier release, resize messages and reconnects. Full
+socket activation/PAM lifetime under a booted VM and native phone keyboards
+still need qualification on the testing VM.

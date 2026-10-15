@@ -167,6 +167,9 @@ def build_web_panel_manifest(
         services.append({"label": "Desktop (Guacamole)",
                          "url": _http_url(host, config.web_panel_port, "https") + "desktop/",
                          "description": "Observe the shared desktop or take control from the agent"})
+        services.append({"label": "Console (Guacamole)",
+                         "url": _http_url(host, config.web_panel_port, "https") + "console/",
+                         "description": "Unix shell in the browser without starting the desktop"})
 
     for label, spec, default_port, description in (
         ("Antistatic lobby", config.antistatic_server, 8080, "Game lobby"),
@@ -294,7 +297,7 @@ def render_web_panel_nginx(
         from lib.guacamole_config import HTTP_SOCKET
 
         desktop_location = f"""
-    location ^~ /desktop/ {{
+    location ~ ^/(desktop|console)/ {{
         limit_req zone=basaltwater_web_panel_auth burst=10 nodelay;
         limit_req_status 429;
         proxy_pass http://unix:{HTTP_SOCKET};

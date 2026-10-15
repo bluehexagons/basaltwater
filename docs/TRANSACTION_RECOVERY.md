@@ -80,6 +80,10 @@ restarting the group so a restored timer/path cannot activate an unrestored
 service. Removal uses the same lock and snapshot boundary as replacement,
 skips absent managed files, and stops all present units before deleting any
 of their files.
+Socket activators are stopped before their service templates. Templates have
+file snapshots but no activation-state entry, since an abstract template cannot
+be queried or started; the owning socket stops concrete login instances through
+their declared dependencies. Restore template files before rearming the socket.
 A rename sync error can occur after the old release was restored: inspect the
 actual paths and service states rather than treating the error as proof that
 the old tree is still at its backup path. Port or marker-completion failures

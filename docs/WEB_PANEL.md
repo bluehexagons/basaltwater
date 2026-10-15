@@ -11,7 +11,7 @@ under the panel account; no T3 Code installation is required.
 | Check storage capacity | Mounted storage | Mounted local filesystems, available space, inode use, device/type, and read-only state |
 | Find a managed endpoint | Services | Configured and discovered web, SSH, RDP, Samba, Gogs, HomeBox, and Antistatic access |
 | Observe or control an agent desktop | Desktop | Optional browser access, mobile input, zoom and read-only readiness checks for the shared XRDP desktop |
-| Open a shell without a desktop | Desktop → Command line access (SSH) | Copy an SSH command for your existing terminal client |
+| Open a shell without starting a desktop | Console, or Desktop → Open browser console | Guacamole SSH terminal with the Unix password; Desktop also offers an SSH command for an existing client |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
 | Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
@@ -46,6 +46,7 @@ Optional pages and controls follow the tools installed for the panel account:
 | Publishing | Butler or SteamCMD is installed; account controls show installed providers |
 | Maintenance agent | Its managed service and policy file are installed |
 | Desktop | Its Guacamole gateway service is installed |
+| Console | Its private Guacamole SSH socket unit is installed |
 | Admin controls | A valid privilege approval service is configured |
 
 Discovery checks local executable paths and unit files without running tools,
@@ -158,6 +159,11 @@ It enables the shared desktop without opening RDP ingress. Open **Desktop
 connect to observe. **Take control** pauses agent desktop actions; **Resume
 agent** is explicit. The panel password and Unix password remain separate.
 Use `--no-guacamole` to remove browser access while retaining the desktop.
+The same installation provides **Console**, a separate Unix shell with phone
+keyboard controls, text sizes and terminal resizing. It uses the Unix password
+through a private OpenSSH Unix socket, leaving public SSH authentication policy
+unchanged. Connecting to the console does not start or pause the desktop.
+It closes on disconnect or expiry; use `tmux` for persistent work.
 See [Guacamole browser desktop](GUACAMOLE.md) for installation, limits,
 security boundaries and recovery.
 

@@ -90,9 +90,10 @@ async def read_instruction(reader: asyncio.StreamReader) -> list[str]:
 
 async def handshake(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                     username: str, password: str, certificate: str,
-                    geometry: list[int]) -> str:
+                    geometry: list[int], *, ssh_host_key: str | None = None,
+                    font_size: str = "12") -> str:
     """Never accept destinations, connection IDs or protocol options from a browser."""
-    writer.write(instruction("select", "rdp").encode())
+    writer.write(instruction("select", "ssh" if ssh_host_key is not None else "rdp").encode())
     await writer.drain()
     args = await read_instruction(reader)
     if len(args) < 2 or args[0] != "args" or args[1] != "VERSION_1_5_0":
@@ -105,8 +106,20 @@ async def handshake(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         "disable-paste": "true", "enable-drive": "false", "enable-printing": "false",
         "enable-audio-input": "false", "disable-audio": "true", "enable-sftp": "false",
     }
-    if "cert-fingerprints" not in args[2:]:
-        raise ValueError("guacd lacks certificate pinning support")
+    required = "cert-fingerprints"
+    if ssh_host_key is not None:
+        if not ssh_host_key:
+            raise ValueError("An SSH host key pin is required")
+        required = "host-key"
+        parameters = {
+            "hostname": "127.0.0.1", "port": "2222", "username": username,
+            "password": password, "host-key": ssh_host_key, "timeout": "10",
+            "font-name": "DejaVu Sans Mono", "font-size": font_size, "scrollback": "1000",
+            "terminal-type": "xterm-256color", "disable-copy": "true", "disable-paste": "true",
+            "enable-sftp": "false", "create-typescript-path": "false",
+        }
+    if required not in args[2:]:
+        raise ValueError("guacd lacks host identity pinning support")
     writer.write((instruction("size", str(geometry[0]), str(geometry[1]), "96")
                   + instruction("audio") + instruction("video")
                   + instruction("image", "image/png", "image/jpeg", "image/webp")
@@ -118,19 +131,22 @@ async def handshake(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
     return ready[1]
 
 
-def filter_instruction(elements: list[str], controlled: bool) -> str | None:
+def filter_instruction(elements: list[str], controlled: bool, *, allow_resize: bool = False) -> str | None:
     """View-only and transfer restrictions apply even to a modified client."""
     opcode, *args = elements
     counts = {"sync": 1, "nop": 0, "ack": 3, "key": 2, "mouse": 3, "disconnect": 0}
+    if allow_resize:
+        counts["size"] = 2
     if opcode not in counts or len(args) != counts[opcode]:
         raise ValueError("Browser instruction is not permitted")
     numeric = {"sync": [(0, 2**53 - 1)], "key": [(0, 0xFFFFFFFF), (0, 1)],
-               "mouse": [(0, 16384), (0, 16384), (0, 31)]}
+               "mouse": [(0, 16384), (0, 16384), (0, 31)],
+               "size": [(240, 3840), (180, 2160)]}
     for value, (minimum, maximum) in zip(args, numeric.get(opcode, ())):
         if not value or len(value) > 16 or any(c not in "0123456789" for c in value) or not minimum <= int(value) <= maximum:
             raise ValueError("Invalid browser input value")
     if opcode == "ack" and (len(args[1]) > 1024 or any(not a.isascii() or not a.isdigit() or len(a) > 5 for a in (args[0], args[2]))):
         raise ValueError("Invalid browser acknowledgement")
-    if opcode in {"key", "mouse"} and not controlled:
+    if opcode in {"key", "mouse", "size"} and not controlled:
         return None
     return instruction(*elements)

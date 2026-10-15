@@ -34,7 +34,7 @@ from common.service_tools.guacamole_protocol import Parser, filter_instruction, 
 from common.service_tools.web_panel_templates import panel_navigation, render_document
 from desktop import session_runtime as desktop
 from lib.atomic_io import read_json_file
-from lib.guacamole_config import HTTP_SOCKET, RDP_SOCKET, RELEASE
+from lib.guacamole_config import HTTP_SOCKET, RDP_SOCKET, RELEASE, SSH_SOCKET
 from lib.validation import validate_filesystem_path, validate_network_ip
 from lib.validators import validate_host, validate_username
 
@@ -51,12 +51,14 @@ def load_configuration(path: str) -> dict:
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
         raise ValueError("Guacamole configuration must be a root-owned regular file")
     value = read_json_file(path, max_bytes=16384)
-    if (not isinstance(value, dict) or value.get("version") != 1
+    if (not isinstance(value, dict) or value.get("version") != 2
             or not validate_username(value.get("username", ""))
             or type(value.get("uid")) is not int or value["uid"] != os.getuid() or value["uid"] == 0
             or type(value.get("socket_gid")) is not int or value["socket_gid"] < 0
             or not isinstance(value.get("certificate"), str)
             or not re.fullmatch(r"[0-9a-f]{64}", value["certificate"])
+            or not isinstance(value.get("ssh_host_key"), str)
+            or not re.fullmatch(r"\[127\.0\.0\.1\]:2222 ssh-ed25519 [A-Za-z0-9+/]{68}", value["ssh_host_key"])
             or not isinstance(value.get("origins"), list) or not 1 <= len(value["origins"]) <= 64
             or any(not isinstance(origin, str) or not origin.startswith("https://") or len(origin) > 300 for origin in value["origins"])):
         raise ValueError("Invalid Guacamole configuration")
@@ -82,6 +84,7 @@ class Session:
     generation: str
     geometry: list[int]
     password: str = field(repr=False)
+    font_size: str = "12"
     created: float = field(default_factory=time.monotonic)
     activity: float = field(default_factory=time.monotonic)
     attached: bool = False
@@ -125,6 +128,9 @@ class Session:
 
 
 class Gateway:
+    login_error = "Desktop login failed; check the Unix password and XRDP readiness"
+    allow_resize = False
+
     def __init__(self, config: dict):
         self.config = config
         self.csrf = secrets.token_urlsafe(32)
@@ -137,12 +143,12 @@ class Gateway:
                 or request.headers.get("X-Guacamole-User") != self.config["username"]
                 or expected not in self.config["origins"]
                 or (origin and request.headers.get("Origin") != expected)):
-            raise web.HTTPForbidden(text="Desktop access denied")
+            raise web.HTTPForbidden(text="Browser access denied")
 
     async def form(self, request: web.Request, allowed: set[str]) -> dict:
         self.authenticate(request, origin=True)
         if request.query or request.content_type != "application/json":
-            raise web.HTTPBadRequest(text="Invalid desktop request")
+            raise web.HTTPBadRequest(text="Invalid browser request")
         try:
             # read_json_file's duplicate-key rule is also applied to requests.
             def pairs(items):
@@ -154,11 +160,11 @@ class Gateway:
                 return result
             value = json.loads(await request.text(), object_pairs_hook=pairs)
         except (ValueError, UnicodeError):
-            raise web.HTTPBadRequest(text="Invalid desktop request") from None
+            raise web.HTTPBadRequest(text="Invalid browser request") from None
         if (not isinstance(value, dict) or set(value) != allowed | {"csrf"}
                 or not isinstance(value.get("csrf"), str)
                 or not secrets.compare_digest(value["csrf"].encode("utf-8"), self.csrf.encode("ascii"))):
-            raise web.HTTPForbidden(text="Invalid desktop request")
+            raise web.HTTPForbidden(text="Invalid browser request")
         return value
 
     async def page(self, request: web.Request) -> web.Response:
@@ -211,11 +217,12 @@ Direct touch clicks where you tap. Choose a larger display size and Pan display 
 Keep administrator sign-ins and privilege approvals on your own device.</p>
 <noscript>JavaScript is required for the browser desktop.</noscript></section>
 <section class="desktop-panel"><h2>Command line access (SSH)</h2>
-<p>Open a shell in your SSH client without starting the desktop. Use your existing SSH key; the panel and desktop passwords do not replace SSH authentication.</p>
+<p><a href="/console/">Open browser console</a> to log into a shell here without starting the desktop.</p>
+<p>Or use your existing SSH client and key:</p>
 <label>SSH command<input id="ssh-command" value="ssh -- {destination}" readonly spellcheck="false"></label>
 <div class="desktop-inspection"><button id="copy-ssh" type="button">Copy SSH command</button><span id="ssh-status" role="status"></span></div>
 <p>This command uses the panel hostname and SSH port 22. Adjust the host or add <code>-p PORT</code> before <code>--</code> if your SSH endpoint differs.</p></section>'''
-        navigation = panel_navigation(current="desktop", available=frozenset({"dashboard", "desktop", "services", "jobs", "logs"}))
+        navigation = panel_navigation(current="desktop", available=frozenset({"dashboard", "desktop", "console", "services", "jobs", "logs"}))
         page = render_document(title="Desktop", style=CSS,
                                header='<header><p class="eyebrow">Workspace</p><h1>Desktop</h1></header>',
                                content=content, navigation=navigation,
@@ -264,7 +271,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
     def selected_session(self, identifier: str) -> Session:
         session = self.session
         if not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", identifier) or session is None or session.closed.is_set() or not secrets.compare_digest(identifier, session.identifier):
-            raise web.HTTPForbidden(text="Desktop session expired")
+            raise web.HTTPForbidden(text="Browser session expired")
         return session
 
     def check_snapshot(self, session: Session, snapshot: dict) -> None:
@@ -405,14 +412,14 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
         self.authenticate(request, origin=True)
         if set(request.query) != {"attachment"} or len(request.query.getall("attachment")) != 1:
-            raise web.HTTPForbidden(text="Invalid desktop attachment")
+            raise web.HTTPForbidden(text="Invalid browser attachment")
         ws = web.WebSocketResponse(protocols=("guacamole",), heartbeat=20, timeout=2, max_msg_size=65536, compress=False)
         if not ws.can_prepare(request).ok or "guacamole" not in [p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")]:
             raise web.HTTPBadRequest(text="A Guacamole WebSocket is required")
         async with self.lock:
             session = self.selected_session(request.query["attachment"])
             if session.attached or time.monotonic() - session.created >= ATTACH_TIMEOUT:
-                raise web.HTTPForbidden(text="Desktop attachment expired or already used")
+                raise web.HTTPForbidden(text="Browser attachment expired or already used")
             session.attached = True
             session.socket = ws
             # Claim once before any asynchronous work, including upstream login.
@@ -420,7 +427,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             if session.closed.is_set():
-                raise web.HTTPConflict(text="Desktop attachment revoked")
+                raise web.HTTPConflict(text="Browser attachment revoked")
             reader, writer, identifier = tasks[1].result()
             async with self.lock:
                 self.selected_session(session.identifier)
@@ -432,7 +439,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
             await asyncio.wait([tasks[0], *tasks[2:]], return_when=asyncio.FIRST_COMPLETED)
         except (OSError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError):
             if not ws.prepared:
-                raise web.HTTPBadGateway(text="Desktop login failed; check the Unix password and XRDP readiness") from None
+                raise web.HTTPBadGateway(text=self.login_error) from None
         finally:
             session.revoke()
             for task in tasks:
@@ -464,7 +471,7 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 elements = parser.feed(text)
                 if not session.ready and any(row[0] == "sync" for row in elements):
                     async with self.lock:
-                        self.check_snapshot(session, await desktop_call("status"))
+                        await self.validate_input(session)
                         session.ready = True
                 await ws.send_str(text)
         decoder.decode(b"", final=True)
@@ -479,15 +486,14 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                 if self.session is not session or session.closed.is_set():
                     return
                 if any(elements[0] in {"key", "mouse"} for elements in elements_list) and session.controlled:
-                    snapshot = await desktop_call("status")
-                    self.state(session, snapshot)
+                    await self.validate_input(session)
                 for elements in elements_list:
                     # Guacamole's tunnel ping belongs to this WebSocket layer,
                     # not guacd. It cannot renew user inactivity or authorize input.
                     if elements[0] == "" and len(elements) == 3 and elements[1] == "ping" and elements[2].isascii() and elements[2].isdigit():
                         await ws.send_str(instruction(*elements))
                         continue
-                    accepted = filter_instruction(elements, session.controlled)
+                    accepted = filter_instruction(elements, session.controlled, allow_resize=self.allow_resize)
                     if accepted is not None:
                         if elements[0] == "key":
                             if elements[2] == "1":
@@ -502,6 +508,10 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
                         if elements[0] in {"key", "mouse"}:
                             session.activity = time.monotonic()
                 await writer.drain()
+
+    async def validate_input(self, session: Session) -> None:
+        """Confirm the current shared desktop before accepting control input."""
+        self.state(session, await desktop_call("status"))
 
     async def watch(self, session: Session) -> None:
         while self.session is session:
@@ -573,7 +583,7 @@ def create_app(config: dict) -> web.Application:
         except web.HTTPException as exc:
             response = web.Response(body=exc.body, status=exc.status, headers=exc.headers)
         except (OSError, ValueError, RuntimeError, asyncio.TimeoutError):
-            response = web.Response(status=503, text="Desktop unavailable; inspect the desktop and service readiness")
+            response = web.Response(status=503, text="Browser access unavailable; inspect the Guacamole service")
         if not response.prepared:
             response.headers.update({"Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
                                      "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
@@ -591,6 +601,11 @@ def create_app(config: dict) -> web.Application:
     app.router.add_post("/desktop/disconnect", gateway.disconnect)
     app.router.add_post("/desktop/logout", gateway.logout)
     app.router.add_get("/desktop/ws", gateway.websocket)
+
+    if "ssh_host_key" in config:
+        from common.service_tools.guacamole_console import register_console
+
+        register_console(app, config)
 
     async def shutdown(application):
         async with gateway.lock:
@@ -617,13 +632,13 @@ async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> No
         await writer.drain()
 
 
-async def relay(reader, writer, *, outside: bool) -> None:
-    """The only namespace escape is a fixed, account-private local XRDP socket."""
+async def relay(reader, writer, *, outside: bool, console: bool = False) -> None:
+    """Namespace escapes are fixed, account-private XRDP and SSH sockets."""
     upstream = None
     tasks = []
     try:
         other_reader, upstream = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", 3389) if outside else asyncio.open_unix_connection(RDP_SOCKET), 5)
+            asyncio.open_connection("127.0.0.1", 3389) if outside else asyncio.open_unix_connection(SSH_SOCKET if console else RDP_SOCKET), 5)
         tasks = [asyncio.create_task(pipe(reader, upstream)), asyncio.create_task(pipe(other_reader, writer))]
         await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     except OSError:
@@ -680,8 +695,10 @@ async def serve(config: dict | None) -> None:
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=10)
     process = None
     server = None
+    ssh_server = None
     try:
         server = await asyncio.start_server(lambda r, w: relay(r, w, outside=False), "127.0.0.1", 3389)
+        ssh_server = await asyncio.start_server(lambda r, w: relay(r, w, outside=False, console=True), "127.0.0.1", 2222)
         process = await asyncio.create_subprocess_exec(f"{RELEASE}/sbin/guacd", "-f", "-b", "127.0.0.1", "-l", "4822", "-L", "error",
                                                      "-p", str(Path(HTTP_SOCKET).parent / "guacd.pid"),
                                                      env={**{key: value for key, value in os.environ.items() if key != "NOTIFY_SOCKET"},
@@ -710,6 +727,9 @@ async def serve(config: dict | None) -> None:
         if server:
             server.close()
             await server.wait_closed()
+        if ssh_server:
+            ssh_server.close()
+            await ssh_server.wait_closed()
         if process and process.returncode is None:
             process.terminate()
             with contextlib.suppress(asyncio.TimeoutError):

@@ -59,12 +59,16 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
     names = (*units, *remove)
     if len(set(names)) != len(names) or len(set(activate)) != len(activate):
         raise ValueError("Systemd unit names must be unique")
+    if any(name.endswith("@.service") for name in activate):
+        raise ValueError("Activate a socket or concrete instance, not a service template")
     for name in names:
         base, separator, kind = name.rpartition(".")
-        kinds = {"service", "timer", "path", "mount"} if name in remove else {"service", "timer", "path"}
+        kinds = {"service", "socket", "timer", "path", "mount"} if name in remove else {"service", "socket", "timer", "path"}
         if not separator or kind not in kinds:
             raise ValueError(f"Unsupported systemd unit: {name}")
-        validate_service_name_uniqueness(base, [])
+        # Accept service templates used by socket activation, while retaining
+        # the ordinary validator for their fixed, non-instance name.
+        validate_service_name_uniqueness(base.removesuffix("@") if kind == "service" else base, [])
     for content in units.values():
         if not isinstance(content, str) or len(content.encode("utf-8")) > 1024 * 1024:
             raise ValueError("Unit content must be text no larger than 1 MiB")
@@ -84,7 +88,10 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
         try:
             snapshots = {name: snapshot_unit_file(os.path.join(unit_dir, name)) for name in names}
             removals = tuple(name for name in remove if snapshots[name] is not None)
-            states = {name: inspect_unit_state(name) for name in (*activate, *removals)}
+            # Templates have files but no running state. The owning activator
+            # stops its instances (e.g. through PartOf) before file removal.
+            managed_removals = tuple(name for name in removals if not name.endswith("@.service"))
+            states = {name: inspect_unit_state(name) for name in (*activate, *managed_removals)}
             if not units and not removals:
                 store.complete(record.operation_id)
                 resolved = True
@@ -104,7 +111,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             modified = True
             # Stop activators before their service, but retain every file until
             # the entire group is quiescent. A timed-out stop may have acted.
-            for name in removals:
+            for name in managed_removals:
                 touched.append(name)
                 _command("systemctl", "stop", name)
                 if states[name]["UnitFileState"] in {"enabled", "enabled-runtime"}:
@@ -118,7 +125,7 @@ def _reconcile_units(units: dict[str, str], *, activate: tuple[str, ...], remove
             for name, content in units.items():
                 write_text_atomic(os.path.join(unit_dir, name), content, mode=0o644)
             _command("systemctl", "daemon-reload")
-            for name in removals:
+            for name in managed_removals:
                 state = inspect_unit_state(name)
                 if state["ActiveState"] == "active" or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
                     raise RuntimeError(f"Removed unit is still active or enabled: {name}")

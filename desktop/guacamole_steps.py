@@ -6,6 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 import pwd
+import re
 import ssl
 import stat
 import tempfile
@@ -17,12 +18,14 @@ from lib.atomic_io import read_json_file, remove_file_durable, write_json_atomic
 from lib.config import SetupConfig
 from lib.guacamole_config import (
     BINARY_HASHES, BUILD_REPOSITORY, BUILD_VERSION, CONFIG, PACKAGE_NAME, PACKAGE_VERSION,
-    RDP_SERVICE, RELEASE, RELEASE_ROOT, SERVICE, UNIT_MARKER, VERSION, validate_guacamole_settings,
+    RDP_SERVICE, RELEASE, RELEASE_ROOT, SERVICE, SSH_CONFIG, SSH_HOST_KEY, SSH_SERVICE,
+    SSH_SOCKET, UNIT_MARKER, VERSION, validate_guacamole_settings,
 )
 from lib.machine_state import can_manage_system_services
 from lib.remote_utils import install_package, is_dry_run, read_os_release, run
 from lib.unit_transaction import UnitRecoveryError, inspect_unit_state, remove_units, replace_units, snapshot_unit_file
 from lib.validation import validate_filesystem_path
+from lib.validators import validate_username
 
 PACKAGES = ("python3-aiohttp",)
 SCRIPT = "/opt/basaltwater/common/service_tools/guacamole_service.py"
@@ -127,12 +130,14 @@ def validate_release(release: Path) -> None:
     if (not (release / "sbin/guacd").is_file()
             or not os.access(release / "sbin/guacd", os.X_OK)
             or not (release / "share/all.js").is_file()
-            or not list((release / "lib").glob("libguac-client-rdp.so*"))):
+            or any(not list((release / "lib").glob(f"libguac-client-{protocol}.so*")) for protocol in ("rdp", "ssh"))):
         raise RuntimeError("Guacamole release is incomplete; inspect it before rerunning setup")
 
 
 def render_units(username: str, uid: int, gid: int) -> dict[str, str]:
-    """Confine guacd to a namespace containing only a fixed XRDP relay."""
+    """Confine guacd to fixed local endpoints; OpenSSH owns Unix logins."""
+    if username == "root" or not validate_username(username) or uid <= 0 or gid < 0:
+        raise ValueError("Guacamole requires a valid non-root account")
     hardened = f"""Type=notify
 NotifyAccess=main
 TimeoutStartSec=30
@@ -159,6 +164,39 @@ StandardOutput=null
 StandardError=journal
 """
     return {
+        f"{SSH_SERVICE}.socket": f"""{UNIT_MARKER}
+[Unit]
+Description=Private Guacamole Unix shell login socket
+[Socket]
+ListenStream={SSH_SOCKET}
+Accept=yes
+SocketUser={username}
+SocketGroup={gid}
+SocketMode=0600
+DirectoryMode=0711
+RemoveOnStop=yes
+MaxConnections=2
+[Install]
+WantedBy=sockets.target
+""",
+        f"{SSH_SERVICE}@.service": f"""{UNIT_MARKER}
+[Unit]
+Description=Private Guacamole Unix shell login
+PartOf={SSH_SERVICE}.socket
+[Service]
+ExecStart=/usr/sbin/sshd -i -e -f {SSH_CONFIG}
+StandardInput=socket
+StandardOutput=socket
+StandardError=null
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+UMask=0077
+LimitCORE=0
+RuntimeMaxSec=3600
+KillMode=control-group
+TimeoutStopSec=15
+""",
         f"{RDP_SERVICE}.service": f"""{UNIT_MARKER}
 [Unit]
 Description=Private Guacamole connection to local XRDP
@@ -174,8 +212,8 @@ WantedBy=multi-user.target
         f"{SERVICE}.service": f"""{UNIT_MARKER}
 [Unit]
 Description=Embedded Guacamole browser desktop
-After={RDP_SERVICE}.service user@{uid}.service
-Requires={RDP_SERVICE}.service user@{uid}.service
+After={RDP_SERVICE}.service {SSH_SERVICE}.socket user@{uid}.service
+Requires={RDP_SERVICE}.service {SSH_SERVICE}.socket user@{uid}.service
 [Service]
 {hardened}PrivateNetwork=true
 SupplementaryGroups=www-data
@@ -191,16 +229,73 @@ WantedBy=multi-user.target
 
 
 def preflight_units() -> None:
-    for name in (SERVICE, RDP_SERVICE):
-        previous = snapshot_unit_file(f"/etc/systemd/system/{name}.service")
+    for name in managed_units():
+        previous = snapshot_unit_file(f"/etc/systemd/system/{name}")
         if previous and (previous["uid"] != 0 or previous["mode"] & 0o022 or UNIT_MARKER not in previous["content"]):
             raise RuntimeError(f"Refusing unmanaged or unsafe Guacamole service: {name}")
 
 
 def preflight_configuration() -> None:
-    path = Path(CONFIG)
-    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
-        raise RuntimeError("Refusing unsafe Guacamole configuration")
+    for name in (CONFIG, SSH_CONFIG):
+        path = Path(name)
+        if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022)):
+            raise RuntimeError("Refusing unsafe Guacamole configuration")
+    path = Path(SSH_CONFIG)
+    if path.exists() and not path.read_text().startswith(UNIT_MARKER + "\n"):
+        raise RuntimeError("Refusing unmanaged Guacamole SSH configuration")
+
+
+def managed_units() -> tuple[str, ...]:
+    # Stop the socket first; PartOf also stops any active login instances.
+    return (f"{SSH_SERVICE}.socket", f"{SSH_SERVICE}@.service",
+            f"{SERVICE}.service", f"{RDP_SERVICE}.service")
+
+
+def ssh_configuration(username: str) -> str:
+    """A separate private endpoint; never weaken the public SSH daemon."""
+    if username == "root" or not validate_username(username):
+        raise ValueError("Console requires a valid non-root account")
+    return f"""{UNIT_MARKER}
+HostKey {SSH_HOST_KEY}
+UsePAM yes
+AuthenticationMethods password
+PasswordAuthentication yes
+KbdInteractiveAuthentication no
+PubkeyAuthentication no
+PermitRootLogin no
+PermitEmptyPasswords no
+AllowUsers {username}
+AuthorizedKeysFile none
+AllowAgentForwarding no
+AllowTcpForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTunnel no
+PermitUserRC no
+PermitTTY yes
+MaxSessions 1
+MaxAuthTries 3
+LoginGraceTime 30
+LogLevel QUIET
+"""
+
+
+def prepare_ssh_host_key() -> str:
+    """Create a private endpoint key, returning only its public known-hosts pin."""
+    path = Path(SSH_HOST_KEY)
+    _safe_directory(path.parent)
+    path.parent.chmod(0o700)
+    if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid != 0
+                                              or path.stat().st_nlink != 1 or path.stat().st_mode & 0o077)):
+        raise RuntimeError("Unsafe Guacamole SSH host key")
+    if not path.exists():
+        run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)])
+    # Derive from the private key; do not trust a stale adjacent .pub file.
+    public = run(["ssh-keygen", "-y", "-f", str(path)], capture_output=True).stdout.strip()
+    public = " ".join(public.split()[:2])
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]{68}", public):
+        raise RuntimeError("Invalid Guacamole SSH host public key")
+    return "[127.0.0.1]:2222 " + public
 
 
 def remove_guacamole() -> None:
@@ -208,24 +303,28 @@ def remove_guacamole() -> None:
     preflight_units()
     preflight_configuration()
     path = Path(CONFIG)
-    if any(Path(f"/etc/systemd/system/{name}.service").exists() for name in (SERVICE, RDP_SERVICE)):
-        remove_units((f"{SERVICE}.service", f"{RDP_SERVICE}.service"))
+    if any(Path(f"/etc/systemd/system/{name}").exists() for name in managed_units()):
+        remove_units(managed_units())
     path.unlink(missing_ok=True)
+    Path(SSH_CONFIG).unlink(missing_ok=True)
 
 
 def configure_services(settings: dict, units: dict[str, str]) -> None:
     """Restore the previous non-secret configuration on activation failure."""
     preflight_configuration()
-    previous = snapshot_unit_file(CONFIG)
+    previous = {path: snapshot_unit_file(path) for path in (CONFIG, SSH_CONFIG)}
     state = inspect_unit_state(f"{SERVICE}.service")
     try:
         write_json_atomic(CONFIG, settings, mode=0o644)
-        replace_units(units, activate=(f"{RDP_SERVICE}.service", f"{SERVICE}.service"))
+        write_text_atomic(SSH_CONFIG, ssh_configuration(settings["username"]), mode=0o644)
+        run(["/usr/sbin/sshd", "-t", "-f", SSH_CONFIG])
+        replace_units(units, activate=(f"{SSH_SERVICE}.socket", f"{RDP_SERVICE}.service", f"{SERVICE}.service"))
     except BaseException as error:
-        if previous is None:
-            remove_file_durable(CONFIG)
-        else:
-            write_text_atomic(CONFIG, **previous)
+        for path, snapshot in previous.items():
+            if snapshot is None:
+                remove_file_durable(path)
+            else:
+                write_text_atomic(path, **snapshot)
         # Unit rollback restarts old definitions before returning. Reload their
         # restored configuration too; leave unresolved unit recovery quiescent.
         if state["ActiveState"] == "active" and not isinstance(error, UnitRecoveryError):
@@ -249,9 +348,17 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
     for package in PACKAGES:
         if not install_package(package, package, ["apt-get", "install", "-y", "-qq", "--no-install-recommends", package]):
             raise RuntimeError(f"Failed to install Guacamole dependency: {package}")
+    # Server profiles already provide OpenSSH; this is not a second public
+    # listener and its password policy is scoped to the private Unix socket.
+    if not Path("/usr/sbin/sshd").is_file():
+        raise RuntimeError("Guacamole console requires the profile's OpenSSH server")
     account = pwd.getpwnam(config.username)
     if account.pw_uid == 0:
         raise RuntimeError("Guacamole cannot run as root")
+    # OpenSSH's compiled-in privilege separation directory is also needed
+    # when the public SSH daemon has been stopped. The login unit recreates it
+    # after boot; create it now for the configuration preflight below.
+    _safe_directory(Path("/run/sshd"))
     # Pin the configured local XRDP certificate instead of disabling checks.
     cert = Path("/etc/xrdp/cert.pem")
     pem = cert.read_text()
@@ -259,8 +366,9 @@ def configure_guacamole(config: SetupConfig, identities: list[str]) -> None:
     origins = ["https://" + (f"[{host}]" if ":" in host else host) + (f":{config.web_panel_port}" if config.web_panel_port != 443 else "") for host in identities]
     validate_filesystem_path(CONFIG, must_exist=False)
     _safe_directory(Path(CONFIG).parent)
-    configure_services({"version": 1, "username": config.username, "uid": account.pw_uid,
+    configure_services({"version": 2, "username": config.username, "uid": account.pw_uid,
                         "origins": origins, "certificate": fingerprint,
+                        "ssh_host_key": prepare_ssh_host_key(),
                         "socket_gid": pwd.getpwnam("www-data").pw_gid},
                        render_units(config.username, account.pw_uid, account.pw_gid))
     print("  ✓ Guacamole browser desktop configured (HTTPS panel only)")

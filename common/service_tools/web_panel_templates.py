@@ -66,7 +66,7 @@ BRAND_ICONS = {
 }
 NAVIGATION_ICONS = {
     "Dashboard": "dashboard", "Agents": "agents", "Agent tools": "agent-tools",
-    "Desktop": "web-services",
+    "Desktop": "web-services", "Console": "diagnostics",
     "Web services": "web-services", "Security activity": "security",
     "Notifications": "notifications", "Access": "access", "Admin controls": "admin",
     "Git & credentials": "access",
@@ -87,7 +87,7 @@ PAGE_ICONS = {
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
     "credentials": "access",
     "publishing": "export",
-    "desktop": "web-services",
+    "desktop": "web-services", "console": "diagnostics",
     "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
 
@@ -103,7 +103,7 @@ PAGE_TEXTURES = {
     "agents": "contours", "agent-tools": "contours", "publishing": "contours",
     "admin": "facets", "maintenance-agent": "facets", "jobs": "facets",
     "credentials": "mineral", "agent-inbox": "mineral", "logs": "mineral",
-    "services": "water", "desktop": "water",
+    "services": "water", "desktop": "water", "console": "mineral",
 }
 BRAND_NETWORK = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 64" '
@@ -276,6 +276,7 @@ def panel_navigation(
     items: list[NavigationItem] = [
         ("/", "Dashboard", "dashboard"),
         ("/desktop/", "Desktop", "desktop"),
+        ("/console/", "Console", "console"),
         ("/agents", "Agents", "agents"),
         ("/maintenance-agent", "Maintenance agent", "maintenance-agent"),
         ("/agent-inbox", "Agent inbox", "agent-inbox"),

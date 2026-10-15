@@ -93,7 +93,7 @@ class ConfigurationTests(unittest.TestCase):
 
 class InstallerTests(unittest.TestCase):
     def test_pinned_architectures_are_available_on_debian_trixie(self):
-        for arch in ("amd64", "arm64"):
+        for arch in ("amd64",):
             with self.subTest(arch=arch), \
                     patch.object(setup, "read_os_release", return_value=dict(ID="debian", VERSION_CODENAME="trixie")), \
                     patch.object(setup, "run", return_value=subprocess.CompletedProcess([], 0, arch)):
@@ -103,6 +103,7 @@ class InstallerTests(unittest.TestCase):
         for distribution, arch in (
             (dict(ID="ubuntu", VERSION_CODENAME="noble"), "amd64"),
             (dict(ID="debian", VERSION_CODENAME="bookworm"), "amd64"),
+            (dict(ID="debian", VERSION_CODENAME="trixie"), "arm64"),
             (dict(ID="debian", VERSION_CODENAME="trixie"), "riscv64"),
         ):
             with self.subTest(distribution=distribution, arch=arch), \
@@ -218,6 +219,9 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("RuntimeDirectoryMode=0700", relay)
         self.assertNotIn("PrivateNetwork=true", relay)
         self.assertNotIn("User=root", "".join(units.values()))
+        self.assertIn("Accept=yes", units["basaltwater-guacamole-ssh.socket"])
+        self.assertIn("SocketMode=0600", units["basaltwater-guacamole-ssh.socket"])
+        self.assertIn("sshd -i -e -f", units["basaltwater-guacamole-ssh@.service"])
 
     def test_refuses_unmanaged_units_before_any_mutation(self):
         with patch.object(setup, "snapshot_unit_file", return_value={"content": "unmanaged", "uid": 0, "mode": 0o644}), patch.object(setup, "run") as run:
@@ -252,21 +256,24 @@ class InstallerTests(unittest.TestCase):
         for previous in (None, dict(content='{"previous":true}', mode=0o640, uid=0, gid=0)):
             with self.subTest(previous=previous), tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / "config.json"
+                ssh_path = str(Path(temporary) / "sshd.conf")
                 active = previous is not None
                 state = dict(ActiveState="active" if active else "inactive")
-                with patch.object(setup, "CONFIG", str(path)), patch.object(setup, "preflight_configuration"), \
-                        patch.object(setup, "snapshot_unit_file", return_value=previous), \
+                with patch.object(setup, "CONFIG", str(path)), patch.object(setup, "SSH_CONFIG", ssh_path), \
+                        patch.object(setup, "preflight_configuration"), \
+                        patch.object(setup, "snapshot_unit_file", side_effect=[previous, previous]), \
                         patch.object(setup, "inspect_unit_state", return_value=state), \
                         patch.object(setup, "replace_units", side_effect=RuntimeError("startup failed")), \
                         patch.object(setup, "write_text_atomic") as restore, patch.object(setup, "run") as run:
                     with self.assertRaisesRegex(RuntimeError, "startup failed"):
-                        setup.configure_services({"new": True}, {})
+                        setup.configure_services({"username": "agent"}, {})
                     if active:
-                        restore.assert_called_once_with(str(path), **previous)
-                        run.assert_called_once_with(["systemctl", "restart", "basaltwater-guacamole.service"])
+                        restore.assert_any_call(str(path), **previous)
+                        restore.assert_any_call(ssh_path, **previous)
+                        run.assert_any_call(["systemctl", "restart", "basaltwater-guacamole.service"])
                     else:
                         self.assertFalse(path.exists())
-                        run.assert_not_called()
+                    run.assert_any_call(["/usr/sbin/sshd", "-t", "-f", ssh_path])
 
     def test_release_refuses_mutable_files_and_links_outside_release(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -274,7 +281,7 @@ class InstallerTests(unittest.TestCase):
             release.mkdir(mode=0o755)
             for directory in ("sbin", "share", "lib"):
                 (release / directory).mkdir(parents=True, mode=0o755)
-            for name in ("sbin/guacd", "share/all.js", "lib/libguac-client-rdp.so.0"):
+            for name in ("sbin/guacd", "share/all.js", "lib/libguac-client-rdp.so.0", "lib/libguac-client-ssh.so.0"):
                 (release / name).write_text("fixture")
                 (release / name).chmod(0o755 if name.startswith("sbin") else 0o644)
             (release / "lib/libguac-client-rdp.so").symlink_to("libguac-client-rdp.so.0")
@@ -336,8 +343,9 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_startup_uses_listen_flag_and_private_pid_file(self):
         process = MagicMock(returncode=1)
         server = MagicMock(wait_closed=AsyncMock())
+        ssh_server = MagicMock(wait_closed=AsyncMock())
         runner = MagicMock(cleanup=AsyncMock())
-        with patch.object(service.asyncio, "start_server", new=AsyncMock(return_value=server)), \
+        with patch.object(service.asyncio, "start_server", new=AsyncMock(side_effect=[server, ssh_server])), \
                 patch.object(service.asyncio, "create_subprocess_exec", new=AsyncMock(return_value=process)) as launch, \
                 patch.object(service.web, "AppRunner", return_value=runner):
             with self.assertRaisesRegex(RuntimeError, "guacd failed"):
@@ -347,6 +355,7 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command[command.index("-p") + 1], "/run/basaltwater-guacamole/guacd.pid")
         self.assertNotIn("-P", command)
         server.close.assert_called_once()
+        ssh_server.close.assert_called_once()
         runner.cleanup.assert_awaited_once()
 
     def test_incremental_unicode_and_embedded_delimiters(self):

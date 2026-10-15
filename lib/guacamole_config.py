@@ -11,14 +11,13 @@ if TYPE_CHECKING:
     from lib.config import SetupConfig
 
 VERSION = "1.6.0"
-BUILD_VERSION = "1.6.0-bw1"
-PACKAGE_VERSION = "1.6.0-1+bw1"
+BUILD_VERSION = "1.6.0-bw2"
+PACKAGE_VERSION = "1.6.0-1+bw2"
 PACKAGE_NAME = "basaltwater-guacamole"
 BUILD_REPOSITORY = "bluehexagons/basaltwater-guacamole"
 # SHA-256 of reviewed release assets; never trust a remotely supplied checksum.
 BINARY_HASHES = {
-    "amd64": "ec32c33d98a8430b133efcb5fd21fa475455f74c484bda1686e5d4eaa6d67810",
-    "arm64": "7ea7332da16ba4448246dff9cdf46fc24f7582fdaf7d0331a9461dc5bd2fc5d2",
+    "amd64": "d46e3454e3eabb5166222c88e4580823e2a7ed409ace7fb58d517becd6acdda6",
 }
 RELEASE_ROOT = "/opt/basaltwater-guacamole"
 RELEASE = f"{RELEASE_ROOT}/{BUILD_VERSION}"
@@ -27,6 +26,10 @@ HTTP_SOCKET = "/run/basaltwater-guacamole/http.sock"
 RDP_SOCKET = "/run/basaltwater-guacamole-rdp/rdp.sock"
 SERVICE = "basaltwater-guacamole"
 RDP_SERVICE = "basaltwater-guacamole-rdp"
+SSH_SERVICE = "basaltwater-guacamole-ssh"
+SSH_SOCKET = f"/run/{SSH_SERVICE}/ssh.sock"
+SSH_CONFIG = "/etc/basaltwater/guacamole-sshd.conf"
+SSH_HOST_KEY = "/etc/basaltwater/guacamole-ssh/host_ed25519"
 UNIT_MARKER = "# Managed by basaltwater Guacamole"
 
 
