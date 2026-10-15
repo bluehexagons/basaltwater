@@ -12,13 +12,16 @@ See the [planning and issue index](README.md) for the portfolio view and the
 [GitHub issue triage](GITHUB_ISSUE_TRIAGE_2026-08-17.md) for current
 issue-to-implementation evidence.
 
-## Current pass checkpoint (2026-10-08)
+## Current pass checkpoint (2026-10-15)
 
 The source package version is `2.0.0rc1`, corresponding to the opt-in preview
 tag `v2.0.0-rc.1`. No preview tag or public release has been created. The
 release checklist now defines the preview publication gate, stable live-test
 matrix, evidence format, and final sign-off. The current pass is release
-qualification; it does not include further CachyOS enhancements.
+qualification; it does not include further CachyOS enhancements. The local
+Chromium/Firefox implementation and disposable Guacamole checks are complete;
+native Firefox ESR and managed-deployment checks remain explicit release
+qualification items in the [browser-support plan](FIREFOX_WEB_SUPPORT.md).
 
 The bounded P0 transaction system is implemented: shared release locks and
 durable markers, rollback evidence and port restoration, strict state readers,

@@ -44,7 +44,7 @@ Relevant code: [panel templates](../../common/service_tools/web_panel_templates.
 [privilege approval](../../common/service_tools/privilege_approval.py), and
 [agent browser checks](../../lib/agent_browser.py).
 
-## Implementation
+## Delivered implementation
 
 Delivered: engine/context inventory with separate discovery,
 launch, MCP registration and application coverage states; native and Flatpak
@@ -73,75 +73,37 @@ Codex entry cannot qualify Chromium, retained unknown registration and runtime
 diagnostics, rejected a mismatched managed Playwright pin, and aligned launcher
 Node environments with the doctor. Setup now enforces the pinned Playwright
 package's Node 20 minimum before installation or reuse. Fixture readiness is
-now atomic and refuses nonempty or shared directories. Qualification summaries derive per-engine
-results and browser versions from completed tests and reject missing/incomplete
-reports. Additional browser checks cover denial, expiry of an existing form,
-and pending approval layout without depending on a previous test's decision.
+now atomic and refuses nonempty or shared directories. Qualification summaries
+derive per-engine results and browser versions from completed tests and reject
+missing or incomplete reports. Additional browser checks cover denial, expiry
+of an existing form, and pending approval layout without depending on a
+previous test's decision.
 
-1. **Add honest browser inventory and health reporting.** Report engine,
-   version, context, origin, and separate discovered / launchable /
-   MCP-registered / application-tested states. Detect apt and Flatpak desktop
-   Firefox. Do not infer Firefox from an unknown connected-client preview.
-2. **Create a first-party browser test harness.** Run the panel, pairing, and
-   approval pages against local fixtures, synthetic state, and mocked system
-   calls. Run the same core interactions in pinned Playwright Chromium and
-   Firefox on development machines. Cover navigation, keyboard/focus,
-   responsive layout, theme, disclosures, forms, auth, redirects, nonce/CSRF
-   behavior, downloads, console errors, and failed required requests. Bound
-   parallel workers to the host's available resources; retain traces and
-   screenshots on failure in private local output. Never approve a real
-   command or enroll a real device in tests.
-3. **Keep CI inexpensive and qualify native ESR separately.** Do not download
-   browser payloads or run the intensive browser suite on CI servers. Keep
-   routine CI on fast unit, service, and render checks. Use a clean Debian
-   Firefox ESR profile on a development machine to check panel layout,
-   authentication, and documented internal-HTTPS CA flow before release. Keep
-   invalid certificates rejected and record Firefox/OS versions and results.
-4. **Improve Chromium and offer Firefox agent automation as opt-in.** Preserve
-   the exact Playwright-to-Chromium pairing, isolated profile, private evidence
-   directory, safe defaults, and Chromium MCP as the default. Improve its
-   application-level verification and report engine/version/context clearly.
-   Extend the provider and doctor for Firefox, registering a distinct Firefox
-   MCP configuration only when selected. Keep project installs bound to
-   project lockfiles; do not add packages or system dependencies implicitly.
-5. **Fix only reproduced first-party issues.** Check `:has()` layout,
-   disclosure markers, meter appearance, wrapping/overflow, zoom, and dark
-   mode at supported desktop and narrow viewports. Use standards and feature
-   detection; avoid user-agent branches. Keep vendor CSS only with a tested
-   reason.
-6. **Document the project and upstream boundary.** Update browser-testing and
-   Basaltwater project guidance with the Chromium / Firefox ESR / Playwright /
-   project / unknown-preview decision path. Recommend that projects made with
-   Basaltwater run intensive browser suites on developer machines, with
-   concise local commands and separate fast CI checks; projects may document a
-   different policy when their cost and release needs justify it. Qualify only
-   the Guacamole embed/session boundary in Chromium and Firefox, using a
-   disposable service; route upstream UI defects to their owners. Defer T3 Code,
-   Gogs, HomeBox, and other upstream UI checks. Defer a global project
-   browser-support manifest field until multiple consumers need it.
+The implementation work described above is delivered. The local Playwright
+results cover the disposable browser checks; native Debian ESR and managed-
+deployment qualification remain release checks.
 
-## Acceptance criteria
+## Completion record
 
-- Pinned Playwright Chromium remains the default automation baseline; Firefox
-  is separately selectable and reports its own availability and failures.
-- First-party panel, pairing, and approval browser checks run with synthetic
-  fixtures in both engines from a documented developer-machine command.
-- Default CI does not download browser payloads or run the intensive browser
-  suite; fast unit, service, and render checks remain in CI.
-- Guidance for projects made with Basaltwater recommends local intensive
-  browser testing and separate fast CI checks, with the local command and
-  browser targets documented.
-- A documented native ESR qualification covers panel behavior, auth, and
-  internal HTTPS trust before release without bypassing certificate checks.
-- Chromium and Firefox qualification covers the Guacamole embed/session
-  boundary against a disposable service; other upstream application UIs are
-  out of scope.
-- Browser inventory distinguishes discovery, launch, MCP exposure, and an
-  application test; connected previews can report engine `unknown`.
-- Any browser-specific UI fix has a reproduction or regression test.
-- Results distinguish Basaltwater-owned pages, upstream app integration, and
-  project-owned UI. No browser-default, trust-store, or network-exposure change
-  is part of this work.
+- **Met:** Pinned Playwright Chromium remains the default; Firefox is opt-in
+  and reports its own availability and failures.
+- **Met:** First-party panel, pairing, and approval checks run with synthetic
+  fixtures in both engines from the documented local command.
+- **Met:** Routine CI stays browser-payload-free; the intensive suite runs on
+  development machines.
+- **Met:** Project and agent guidance documents the browser selection path,
+  local command, and upstream UI boundaries.
+- **Open release check:** Qualify panel behavior, authentication, and internal
+  HTTPS trust in a clean native Debian Firefox ESR profile without bypassing
+  certificate checks.
+- **Met:** Chromium and Firefox checks cover the Guacamole embed/session
+  boundary against a disposable service.
+- **Met:** Inventory separates discovery, launch, MCP exposure, and application
+  testing; connected previews may report engine `unknown`.
+- **Met:** First-party browser fixes have regression coverage, and results
+  distinguish Basaltwater pages, upstream integrations, and project-owned UI.
+- **Scope held:** Browser defaults, trust stores, and network exposure were not
+  changed.
 
 ## Settled scope decisions
 
@@ -158,10 +120,10 @@ and pending approval layout without depending on a previous test's decision.
   recommend running intensive browser suites on developer machines and keeping
   CI fast; projects can explicitly choose another policy.
 
-Mobile Firefox and a global per-project browser support schema are out of the
-first slice. The implementation agent can choose the fixture layout and
-version-pinning details within the repository's current Playwright/provider
-architecture.
+Mobile Firefox and a global per-project browser support schema remain out of
+scope. The completed fixture and version-pinning choices use the repository's
+current Playwright/provider architecture; revisit them only when new consumers
+or qualification evidence justify a change.
 
 ## References
 
