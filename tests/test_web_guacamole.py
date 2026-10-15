@@ -77,6 +77,9 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_only_enabled_panel_publishes_authenticated_route(self):
         nginx = render_web_panel_nginx(["desktop-vm"], 9443, cert_path="/cert.pem", key_path="/key.pem", guacamole=True)
+        # The separate HTTP listener publishes only the public certificate.
+        # Authentication and failure logging remain mandatory on panel routes.
+        nginx = nginx[nginx.index("    listen 9443 ssl;"):]
         self.assertIn("auth_basic_user_file", nginx)
         self.assertIn("X-Guacamole-User $remote_user", nginx)
         self.assertIn('proxy_set_header Authorization ""', nginx)

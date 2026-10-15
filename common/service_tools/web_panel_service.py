@@ -37,6 +37,8 @@ from common.service_tools.web_panel_diagnostics import (
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_features import PanelFeatures, discover_features, unit_installed
+from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
+from lib.config import WEB_PANEL_CA_HTTP_PORT
 from common.service_tools.web_panel_host import (
     FILESYSTEM_STYLE, collect_filesystems, collect_pressure, render_filesystems,
 )
@@ -1445,68 +1447,121 @@ def _linux_trust_script(
     fingerprint: str,
     download_url: str,
     install_commands: str,
+    *,
+    local_file: bool = False,
+    macos: bool = False,
 ) -> str:
-    return f"""(
-  set -eu
-  download_url={shlex.quote(download_url)}
-  expected_sha256='{fingerprint}'
-  certificate='./basaltwater-ca.crt'
-  temporary=$(mktemp)
-  trap 'rm -f "$temporary"' EXIT
-  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
-  if command -v curl >/dev/null 2>&1; then
-    curl --fail --location --proto '=https' --proto-redir '=https' --show-error --output "$temporary" "$download_url"
+    protocol = "https" if urllib.parse.urlsplit(download_url).scheme == "https" else "http"
+    download = '''  cp ./basaltwater-ca.crt "$temporary"''' if local_file else f'''  if command -v curl >/dev/null 2>&1; then
+    curl --fail --location --max-redirs 0 --proto '={protocol}' --show-error \\
+      --connect-timeout 10 --max-time 60 --max-filesize 1048576 --output "$temporary" "$download_url"
   elif command -v wget >/dev/null 2>&1; then
-    wget --https-only --output-document="$temporary" "$download_url"
+    wget {'--https-only ' if protocol == 'https' else ''}--max-redirect=0 --timeout=60 --tries=1 --output-document="$temporary" "$download_url"
   else
     echo 'Install curl or wget, then run this script again.'
     exit 1
-  fi
-  actual_sha256=$(sha256sum "$temporary")
-  actual_sha256=${{actual_sha256%% *}}
-  if [ "$actual_sha256" != "$expected_sha256" ]; then
-    echo 'SHA-256 mismatch; certificate was not installed.'
-    exit 1
-  fi
-  mv "$temporary" "$certificate"
-  trap - EXIT
-{install_commands}
-  echo 'Certificate downloaded, verified, and installed. Fully restart your browser.'
-)"""
-
-
-def _macos_trust_script(fingerprint: str, download_url: str) -> str:
+  fi'''
+    checksum = "shasum -a 256" if macos else "sha256sum"
     return f"""(
   set -eu
+  # Confirm this expected file hash using basaltwater-web ca over SSH or the VM console.
   download_url={shlex.quote(download_url)}
   expected_sha256='{fingerprint}'
-  certificate='./basaltwater-ca.crt'
   temporary=$(mktemp)
   trap 'rm -f "$temporary"' EXIT
-  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
-  curl --fail --location --proto '=https' --proto-redir '=https' --show-error --output "$temporary" "$download_url"
-  actual_sha256=$(shasum -a 256 "$temporary")
+{download}
+  actual_sha256=$({checksum} "$temporary")
   actual_sha256=${{actual_sha256%% *}}
   if [ "$actual_sha256" != "$expected_sha256" ]; then
     echo 'SHA-256 mismatch; certificate was not installed.'
     exit 1
   fi
-  mv "$temporary" "$certificate"
-  trap - EXIT
-  sudo security add-trusted-cert -d -r trustRoot \\
-    -k /Library/Keychains/System.keychain "$certificate"
-  echo 'Certificate downloaded, verified, and installed. Fully restart your browser.'
+  certificate="$temporary"
+{install_commands}
+  echo 'Certificate verified and installed. Fully restart your browser.'
 )"""
 
 
-def _platform_script(label: str, script: str) -> str:
-    return (
-        '<div class="platform-script"><h3>'
-        + html.escape(label)
-        + "</h3><pre><code>"
-        + html.escape(script)
-        + "</code></pre></div>"
+def _macos_trust_script(fingerprint: str, download_url: str, *, local_file: bool = False) -> str:
+    return _linux_trust_script(
+        fingerprint, download_url,
+        '  sudo security add-trusted-cert -d -r trustRoot \\\n    -k /Library/Keychains/System.keychain "$certificate"',
+        local_file=local_file, macos=True,
     )
+
+
+def _windows_trust_script(fingerprint: str, download_url: str, *, local_file: bool = False) -> str:
+    powershell_url = download_url.replace("'", "''")
+    download = ('  Copy-Item -LiteralPath .\\basaltwater-ca.crt -Destination $Temporary -ErrorAction Stop'
+                if local_file else '  Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 60 -ErrorAction Stop')
+    return f'''& {{
+$DownloadUrl = '{powershell_url}'
+# Confirm this expected file hash using basaltwater-web ca over SSH or the VM console.
+$ExpectedSha256 = "{fingerprint}"
+$Temporary = [System.IO.Path]::GetTempFileName()
+try {{
+{download}
+  $ActualSha256 = (Get-FileHash -LiteralPath $Temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+  if ($ActualSha256 -ne $ExpectedSha256) {{ throw "SHA-256 mismatch; certificate was not installed." }}
+  & certutil.exe -user -addstore -f Root $Temporary
+  if ($LASTEXITCODE -ne 0) {{ throw "certutil failed with exit code $LASTEXITCODE" }}
+  Write-Host "Certificate verified and installed. Fully restart your browser."
+}} finally {{
+  Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+}}
+}}'''
+
+
+def _certificate_scripts(fingerprint: str, download_url: str) -> str:
+    """Render reviewed scripts as inert templates, with a usable no-JS fallback."""
+    parsed = urllib.parse.urlsplit(download_url)
+    host = f"[{parsed.hostname}]" if ":" in str(parsed.hostname) else parsed.hostname
+    http_url = f"http://{host}:{WEB_PANEL_CA_HTTP_PORT}/basaltwater-ca.crt"
+    platforms = (
+        ("debian", "Debian / Ubuntu", '  sudo install -Dm0644 "$certificate" /usr/local/share/ca-certificates/basaltwater-ca.crt\n  sudo update-ca-certificates'),
+        ("arch", "Arch Linux / CachyOS", '  sudo install -Dm0644 "$certificate" /etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt\n  sudo update-ca-trust extract'),
+        ("fedora", "Fedora / RHEL", '  sudo install -Dm0644 "$certificate" /etc/pki/ca-trust/source/anchors/basaltwater-ca.crt\n  sudo update-ca-trust extract'),
+        ("macos", "macOS", ""), ("windows", "Windows PowerShell", ""),
+    )
+    templates: list[str] = []
+    fallback: list[str] = []
+    for key, label, commands in platforms:
+        for method in ("http", "https", "file"):
+            url = http_url if method == "http" else download_url
+            local_file = method == "file"
+            script = (
+                _windows_trust_script(fingerprint, url, local_file=local_file) if key == "windows" else
+                _macos_trust_script(fingerprint, url, local_file=local_file) if key == "macos" else
+                _linux_trust_script(fingerprint, url, commands, local_file=local_file)
+            )
+            variants = {"powershell": script} if key == "windows" else {
+                "posix": script,
+                # Explicitly invoke Bash so fish never interprets POSIX syntax.
+                "fish": "bash -c " + shlex.quote(script),
+            }
+            for shell, variant in variants.items():
+                templates.append(f'<template data-platform="{key}" data-method="{method}" data-shell="{shell}">{html.escape(variant)}</template>')
+            if method == "http":
+                portable = script if key == "windows" else variants["fish"]
+                fallback.append(f'<div class="platform-script"><h3>{label}</h3><pre><code>{html.escape(portable)}</code></pre></div>')
+    return f'''<div data-trust-installer>
+<div class="trust-picker" data-trust-controls hidden>
+<label>Operating system<select data-trust-platform>
+{''.join(f'<option value="{key}">{label}</option>' for key, label, _ in platforms)}
+</select></label>
+<label>Shell<select data-trust-shell><option value="posix">Bash / zsh</option><option value="fish">fish (CachyOS default)</option></select>
+<small>fish examples run the installer in Bash.</small></label>
+<label>Certificate source<select data-trust-method>
+<option value="http">First enrollment · HTTP + SHA-256</option>
+<option value="https">Already trusted · HTTPS</option><option value="file">Local certificate file</option>
+</select></label></div>
+<div data-trust-selected hidden><div class="trust-script-head"><h3 data-trust-title></h3>
+<button type="button" data-trust-copy>Copy script</button></div>
+<p class="trust-intro" data-trust-method-note></p>
+<textarea class="trust-script-output" aria-label="Certificate installation script" data-trust-output readonly spellcheck="false"></textarea>
+<p class="trust-copy-status" role="status" data-trust-status></p></div>
+<div data-trust-fallback><p>First enrollment scripts for your local computer. Linux and macOS examples work in Bash, zsh, and fish by invoking Bash explicitly.</p>{''.join(fallback)}</div>
+{''.join(templates)}</div><script>{CA_SCRIPT}</script>'''
 
 
 def _render_certificate_trust(
@@ -1543,87 +1598,26 @@ basaltwater-web ca --json</code></pre>
     download_url = str(trust["url"])
     trust_url = html.escape(download_url, quote=True)
     fingerprint = str(trust["sha256"])
-    powershell_url = download_url.replace("'", "''")
-    scripts = "".join(
-        (
-            _platform_script(
-                "Debian / Ubuntu",
-                _linux_trust_script(
-                    fingerprint,
-                    download_url,
-                    "  sudo install -m 0644 \"$certificate\" "
-                    "/usr/local/share/ca-certificates/basaltwater-ca.crt\n"
-                    "  sudo update-ca-certificates",
-                ),
-            ),
-            _platform_script(
-                "Arch Linux",
-                _linux_trust_script(
-                    fingerprint,
-                    download_url,
-                    "  if ! sudo trust anchor \"$certificate\"; then\n"
-                    "    sudo install -Dm0644 \"$certificate\" "
-                    "/etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt\n"
-                    "  fi\n"
-                    "  sudo update-ca-trust",
-                ),
-            ),
-            _platform_script(
-                "Fedora / RHEL",
-                _linux_trust_script(
-                    fingerprint,
-                    download_url,
-                    "  sudo install -Dm0644 \"$certificate\" "
-                    "/etc/pki/ca-trust/source/anchors/basaltwater-ca.crt\n"
-                    "  sudo update-ca-trust extract",
-                ),
-            ),
-            _platform_script(
-                "macOS",
-                _macos_trust_script(fingerprint, download_url),
-            ),
-            _platform_script(
-                "Windows PowerShell",
-                f'''$DownloadUrl = '{powershell_url}'
-$ExpectedSha256 = "{fingerprint}"
-$Certificate = Join-Path (Get-Location) "basaltwater-ca.crt"
-$Temporary = [System.IO.Path]::GetTempFileName()
-try {{
-  # Requires an already trusted HTTPS connection. For first enrollment, use SSH.
-  Invoke-WebRequest -Uri $DownloadUrl -OutFile $Temporary -UseBasicParsing -MaximumRedirection 0 -ErrorAction Stop
-  $ActualSha256 = (Get-FileHash -LiteralPath $Temporary -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
-  if ($ActualSha256 -ne $ExpectedSha256) {{
-    throw "SHA-256 mismatch; certificate was not installed."
-  }}
-  Move-Item -LiteralPath $Temporary -Destination $Certificate -Force -ErrorAction Stop
-}} catch {{
-  Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
-  throw
-}}
-& certutil.exe -user -addstore -f Root $Certificate
-if ($LASTEXITCODE -ne 0) {{ throw "certutil failed with exit code $LASTEXITCODE" }}
-Write-Host "Certificate downloaded, verified, and installed. Fully restart your browser."''',
-            ),
-        )
-    )
+    scripts = _certificate_scripts(fingerprint, download_url)
     escaped_fingerprint = html.escape(fingerprint)
     return f'''<section aria-label="Certificate trust">
 <details class="trust-disclosure"><summary><span><span class="trust-summary-label">Certificate trust</span>
 <span class="trust-summary-note">One-time setup for browsers and other devices</span></span></summary>
-<div class="trust-panel"><strong>Trust this machine on another device</strong>
-<p>Install this machine's public CA once to trust the web panel, hosted sites, and managed HTTPS services. The help stays collapsed when you do not need it.</p>
-<p>For first enrollment, copy <code>/srv/basaltwater/web/basaltwater-ca.crt</code> through an existing trusted SSH connection. Obtain its SHA-256 with <code>basaltwater-web ca</code> over that connection or the VM console. Verify that independent value before installation; a fingerprint on a page opened past a certificate warning is not proof of authenticity.</p>
-<div class="trust-actions"><a class="trust-download" href="{trust_url}">Download VM CA certificate</a></div>
+<div class="trust-panel"><strong>Trust this machine on your device</strong>
+<p>Choose the operating system and shell on the computer where you will run the script. Install the public CA once for the panel, hosted sites, and managed HTTPS services.</p>
+<p>Confirm the independently obtained fingerprint with <code>basaltwater-web ca</code> over SSH or the VM console. A fingerprint or script from a page opened past a certificate warning is not proof of authenticity.</p>
 <code class="fingerprint">SHA-256 {escaped_fingerprint}</code>
-<details><summary>Download, verify, and install with a script</summary>
-<p class="trust-intro">These download scripts require HTTPS that your client already trusts. They stop if TLS or the checksum fails. For first enrollment, use the trusted transfer and manual installation steps below. Never bypass a certificate warning to obtain an installation script.</p>
+<h3>Download, verify, and install with a script</h3>
+<p class="trust-intro">First enrollment uses HTTP for the public certificate and checks SHA-256 before installing. It does not require HTTPS that your client already trusts. If port 8442 is unavailable, copy <code>/srv/basaltwater/web/basaltwater-ca.crt</code> through SSH and choose Local certificate file.</p>
 {scripts}
-</details>
-<details><summary>Manual / GUI installation</summary><p class="trust-intro">Transfer the certificate over SSH, or download it through an already trusted HTTPS connection, and compare its SHA-256 with the independently obtained fingerprint before following the platform steps.</p><ul class="trust-gui">
+<p class="trust-next"><strong>After installation:</strong> fully quit and reopen your browser or T3 Code, then retry the server URL. If only one application still fails, check its separate certificate store.</p>
+<div class="trust-actions"><a class="trust-download" href="{trust_url}">Download VM CA certificate</a></div>
+<details><summary>Manual / GUI installation</summary>
+<p class="trust-intro">The download link uses verified HTTPS. For a new device, transfer the public certificate through SSH or another trusted device. Compare the file's SHA-256 with the independently obtained fingerprint before installation.</p><ul class="trust-gui">
 <li><strong>Windows:</strong> download the certificate, open it, choose Install Certificate → Current User, then place it in Trusted Root Certification Authorities.</li>
 <li><strong>macOS:</strong> download it, import it into the System keychain with Keychain Access, open the certificate, and set Trust to Always Trust.</li>
-<li><strong>Linux:</strong> after independent verification, Debian/Ubuntu users can run <code>sudo install -m 0644 basaltwater-ca.crt /usr/local/share/ca-certificates/basaltwater-ca.crt &amp;&amp; sudo update-ca-certificates</code>. On Arch/Fedora, use <code>sudo trust anchor basaltwater-ca.crt &amp;&amp; sudo update-ca-trust</code>.</li>
-<li><strong>Firefox on Linux:</strong> Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import. Chromium-based browsers use the operating-system store.</li>
+<li><strong>Linux:</strong> choose your distribution's script above and select Local certificate file after transferring the verified certificate. Arch Linux and CachyOS install into <code>/etc/ca-certificates/trust-source/anchors/</code> and run <code>sudo update-ca-trust extract</code>.</li>
+<li><strong>Firefox on Linux:</strong> Settings → Privacy &amp; Security → Certificates → View Certificates → Authorities → Import. Sandboxed browsers may also require their own certificate import.</li>
 <li><strong>ChromeOS:</strong> Certificate Manager → Authorities → Import, then enable website trust.</li>
 <li><strong>Android:</strong> Security &amp; privacy → Install a certificate → CA certificate.</li>
 <li><strong>iPhone / iPad:</strong> install the downloaded profile, then enable it under Settings → General → About → Certificate Trust Settings.</li>
@@ -1891,7 +1885,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 
 
 def render_page(state: WebPanelState) -> str:
-    """Render a small no-JavaScript dashboard from current capability state."""
+    """Render the dashboard with progressively enhanced certificate help."""
 
     manifest = state.manifest
     features = state.features()
@@ -2125,7 +2119,7 @@ def render_page(state: WebPanelState) -> str:
     footer = f'<footer><span>Managed by Basaltwater</span><span>Authenticated as {username}</span></footer>'
     return render_document(
         title=f"Web panel · {title}",
-        style=_PAGE_STYLE + FILESYSTEM_STYLE,
+        style=_PAGE_STYLE + FILESYSTEM_STYLE + CA_STYLE,
         header=header,
         content=body,
         navigation=state.navigation("dashboard"),
@@ -2177,7 +2171,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        script_policy = f"script-src {CA_SCRIPT_CSP}; " if content_type == "text/html" else ""
+        self.send_header("Content-Security-Policy", f"default-src 'none'; {script_policy}img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")

@@ -39,6 +39,7 @@ GIT_ACCESS_POLICIES = ("none", "read", "read-write")
 GODOT_BUNDLES = ("web", "publishing")
 DEFAULT_SYNCTHING_ROOT = "/srv/syncthing"
 GODOT_WEB_HTTPS_PORT = 8443
+WEB_PANEL_CA_HTTP_PORT = 8442
 WEB_PANEL_DEFAULT_PORT_SENTINEL = object()
 DEFAULT_AGENT_WEB_PORTS = (80, 443, 8080, 8081)
 _LAN_IPV4_BLOCKS = (
@@ -871,6 +872,25 @@ class SetupConfig:
 
         validate_web_port_settings(self)
         validate_web_panel_settings(self)
+        if self.web_panel_port is not None and self.enable_ssl:
+            listeners = {
+                "--web-panel": self.web_panel_port,
+                "--privilege-broker": self.privilege_broker_port,
+                "--web-interface-port": self.web_interface_port if self.web_interfaces else None,
+                "--device-pairing-port": self.device_pairing_port if self.device_pairing_providers else None,
+                "--homebox-port": self.homebox_port,
+            }
+            for option, spec in (
+                ("--gogs", self.gogs[0] if self.gogs else None),
+                ("--homebox", self.homebox[0] if self.homebox else None),
+                ("--antistatic-server", self.antistatic_server),
+                ("--antistatic-db", self.antistatic_db),
+            ):
+                if isinstance(spec, str) and spec.rsplit(":", 1)[-1] == str(WEB_PANEL_CA_HTTP_PORT):
+                    listeners[option] = WEB_PANEL_CA_HTTP_PORT
+            for option, port in listeners.items():
+                if port == WEB_PANEL_CA_HTTP_PORT:
+                    raise ValueError(f"{option} port {port} is reserved for the web panel's public CA download")
         from lib.maintenance_agent_config import setup_policy
 
         setup_policy(self)
@@ -933,6 +953,7 @@ class SetupConfig:
                 # HTTPS panel certificates and client enrollment use the
                 # shared per-machine internal web origin.
                 ports.append(GODOT_WEB_HTTPS_PORT)
+                ports.append(WEB_PANEL_CA_HTTP_PORT)
         if self.include_web_firewall:
             ports.extend((80, 443))
         if (

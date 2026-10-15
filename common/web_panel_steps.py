@@ -27,7 +27,7 @@ from lib.auth_failure_bans import (
     configure_nginx_auth_failure_ban,
     remove_nginx_auth_failure_ban,
 )
-from lib.config import SetupConfig
+from lib.config import SetupConfig, WEB_PANEL_CA_HTTP_PORT
 from lib.remote_utils import install_package, is_dry_run, is_service_active, run
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
@@ -257,6 +257,8 @@ def render_web_panel_nginx(
     if guacamole and not ssl:
         raise ValueError("Guacamole browser access requires HTTPS")
     listen_options = " ssl" if ssl else ""
+    if ssl and port == WEB_PANEL_CA_HTTP_PORT:
+        raise ValueError("The HTTPS panel cannot use the public CA HTTP port")
     tls = ""
     if ssl:
         tls = f"""
@@ -267,6 +269,30 @@ def render_web_panel_nginx(
     ssl_session_timeout 1d;
 """
     server_names = " ".join(_url_host(identity) for identity in identities)
+    ca_download = ""
+    if ssl:
+        from common.godot_web_steps import GODOT_WEB_CA_DOWNLOAD
+
+        ca_download = f"""
+# Public certificate only: no panel, credentials, redirects, or site content.
+server {{
+    listen {WEB_PANEL_CA_HTTP_PORT};
+    listen [::]:{WEB_PANEL_CA_HTTP_PORT};
+    server_name _;
+    auth_basic off;
+    autoindex off;
+    access_log off;
+    location = /basaltwater-ca.crt {{
+        limit_except GET {{ deny all; }}
+        alias {GODOT_WEB_CA_DOWNLOAD};
+        default_type application/x-x509-ca-cert;
+        add_header Content-Disposition 'attachment; filename="basaltwater-ca.crt"';
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }}
+    location / {{ return 404; }}
+}}
+"""
     ingest_zone = (
         "limit_req_zone $binary_remote_addr "
         "zone=basaltwater_web_panel_ingest:10m rate=30r/m;\n"
@@ -328,6 +354,7 @@ map $status $basaltwater_web_panel_auth_failure {{
 }}
 
 log_format basaltwater_web_panel_auth '$remote_addr [$time_local] basaltwater-auth-failure';
+{ca_download}
 
 server {{
     listen {port}{listen_options};

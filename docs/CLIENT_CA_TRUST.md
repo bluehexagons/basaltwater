@@ -101,10 +101,35 @@ scp USER@VM:/srv/basaltwater/web/basaltwater-ca.crt .
 Another trusted transfer channel is also acceptable. Transfer only
 `basaltwater-ca.crt`; never request or copy the CA private key.
 
-The web panel's download scripts require a client that already trusts the
-HTTPS endpoint. They retain TLS verification and stop on a certificate error;
-they cannot bootstrap an untrusted connection. Obtain first-enrollment
-instructions and the fingerprint through SSH or the VM console. Do not trust
+The web panel's **Certificate trust** section offers operating-system, shell,
+and certificate-source selectors, followed by **Copy script**. Choose the OS
+and shell on the client running the script. Arch Linux / CachyOS selects fish
+by default; its example explicitly invokes Bash so POSIX syntax is not parsed
+by fish. Instructions remain available without JavaScript.
+
+**First enrollment · HTTP + SHA-256** downloads only the public CA through
+`http://VM:8442/basaltwater-ca.crt`. Updated HTTPS panel setup installs this
+certificate-only listener and includes TCP 8442 in the managed web firewall
+policy, using the configured access sources. It does not serve the panel,
+login forms, scripts, directories, or private keys. Other paths return 404.
+It leaves existing port-80 sites alone. An upstream firewall must also allow
+8442 from the enrolling client. Removing the panel removes this listener;
+publicly trusted gateway configurations have no local CA file to download.
+
+The copied script contains the expected SHA-256 of the **certificate file**
+and verifies it before any trust-store change. HTTP does not authenticate the
+download, so confirm the expected hash through SSH or the VM console before
+running the script. A matching hash obtained only from the same unverified
+page is not independent verification. No certificate-check bypass is needed.
+The scripts reject redirects, stop on download/hash/installation failure,
+and remove temporary files; they do not overwrite a certificate in the
+working directory.
+
+If HTTP is unavailable, transfer the file over SSH and select **Local
+certificate file**, running the script from the directory containing it.
+**Already trusted · HTTPS** retains TLS verification and stops on a certificate
+error. Fully restart the client after installation. Obtain first-enrollment
+instructions and the expected hash through a trusted channel; do not trust
 a script or checksum from a page opened past a certificate warning.
 
 Basaltwater webhook senders have a separate compatibility setting. They accept
@@ -157,20 +182,15 @@ sudo update-ca-certificates
 `update-ca-certificates` requires a PEM certificate with a `.crt` extension;
 the file emitted by Basaltwater has that format.
 
-### Arch Linux, Manjaro, and derivatives
+### Arch Linux, CachyOS, Manjaro, and derivatives
 
-```bash
-sudo trust anchor basaltwater-ca.crt
-sudo update-ca-trust
-```
-
-If `trust anchor` reports that there is no writable location, use Arch's local
-anchor directory explicitly:
+Use Arch's local anchor directory explicitly. These commands work in Bash,
+zsh, and fish after the file has been independently verified:
 
 ```bash
 sudo install -Dm0644 basaltwater-ca.crt \
   /etc/ca-certificates/trust-source/anchors/basaltwater-ca.crt
-sudo update-ca-trust
+sudo update-ca-trust extract
 ```
 
 ### Fedora, RHEL, and derivatives
@@ -192,6 +212,7 @@ private profile database.
 The platform procedures follow the Debian
 [`update-ca-certificates`](https://manpages.debian.org/unstable/ca-certificates/update-ca-certificates.8.en.html),
 Arch Linux [TLS trust-management](https://wiki.archlinux.org/title/Transport_Layer_Security#Trust_management),
+[`update-ca-trust`](https://man.archlinux.org/man/update-ca-trust.8),
 and Red Hat [shared system certificate](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/securing_networks/using-shared-system-certificates)
 guidance.
 
