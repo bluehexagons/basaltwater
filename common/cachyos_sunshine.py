@@ -67,8 +67,32 @@ def _default_intel_encoder(path: Path) -> None:
     _directory(path.parent)
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
     write_text_atomic(str(path), previous + ("\n" if previous and not previous.endswith("\n") else "") +
-                      "# Basaltwater default: verified Intel VA-API avoids Vulkan encoder probing\nencoder = vaapi\n", mode=mode)
+                      "# Basaltwater default: prefer verified Intel VA-API before Vulkan probing\nencoder = vaapi\n", mode=mode)
     print("  Sunshine: selected verified Intel VA-API; other settings retained")
+
+
+def _startup_error(since: int) -> RuntimeError:
+    """Classify this start attempt without copying private journal text into reports."""
+    from lib.cachyos_doctor import _probe
+
+    status, output = _probe([
+        "/usr/bin/journalctl", "--user", "--unit=" + SERVICE, "--boot",
+        f"--since=@{since}", "--lines=80", "--no-pager", "--output=cat",
+        "--grep=libva|Couldn't initialize va display|Couldn't find any working encoder",
+    ], os.getuid())
+    detail = "Inspect encoder/capture settings locally. "
+    if (status == "ok" and re.search(
+            r"libva info: Trying to open /[^\s]*build-deps/[^\s]*/libva/lib/dri/", output)
+            and "Couldn't initialize va display" in output):
+        detail = (
+            "Sunshine's bundled libva searched a build-time driver directory and VA-API initialization failed. "
+            "Replace or rebuild the native sunshine package with the correct system driver path (/usr/lib/dri). "
+            "System vainfo success and encoder = vaapi alone do not repair this package failure. "
+        )
+    return RuntimeError(
+        "Sunshine did not start or remain stable. " + detail +
+        f"Inspect journalctl --user -u {SERVICE} -b -n 100 --no-pager, then rerun setup."
+    )
 
 
 def configure(config: SetupConfig) -> None:
@@ -91,17 +115,36 @@ def configure(config: SetupConfig) -> None:
             raise RuntimeError("Sunshine unit and executable must belong to the native sunshine package")
     if values["ActiveState"] != "active":
         _default_intel_encoder(path)
+    since = int(time.time())
     run(["systemctl", "--user", "reset-failed", SERVICE], timeout=15)
-    run(["systemctl", "--user", "enable", "--now", SERVICE], timeout=30)
+    try:
+        result = run(["systemctl", "--user", "enable", "--now", SERVICE],
+                     check=False, capture_output=True, timeout=30)
+    except TimeoutError:
+        raise _startup_error(since) from None
+    if result.returncode:
+        raise _startup_error(since)
     stable = 0
+    previous = None
     for attempt in range(12):
-        result = run(["systemctl", "--user", "is-active", SERVICE],
+        result = run(["systemctl", "--user", "show", SERVICE, "--property=ActiveState",
+                      "--property=MainPID", "--property=InvocationID", "--property=Result"],
                      capture_output=True, check=False, timeout=15)
-        stable = stable + 1 if result.returncode == 0 and result.stdout.strip() == "active" else 0
+        lines = result.stdout.splitlines()
+        state = dict(line.split("=", 1) for line in lines if "=" in line)
+        known = (result.returncode == 0 and len(lines) == 4
+                 and set(state) == {"ActiveState", "MainPID", "InvocationID", "Result"})
+        running = (known and state["ActiveState"] == "active" and state["Result"] == "success"
+                   and re.fullmatch(r"[1-9][0-9]{0,9}", state["MainPID"])
+                   and re.fullmatch(r"[0-9a-f]{32}", state["InvocationID"])
+                   and state["InvocationID"] != "0" * 32)
+        current = (state["MainPID"], state["InvocationID"]) if running else None
+        stable = stable + 1 if current is not None and current == previous else 1 if running else 0
+        previous = current
         if stable >= 3:
             break
-        if result.stdout.strip() == "failed" or attempt == 11:
-            raise RuntimeError("Sunshine did not start; inspect its user journal and encoder/capture settings, then rerun setup")
+        if (known and state["ActiveState"] == "failed") or attempt == 11:
+            raise _startup_error(since)
         time.sleep(1)
     enabled = run(["systemctl", "--user", "is-enabled", SERVICE],
                   capture_output=True, timeout=15)

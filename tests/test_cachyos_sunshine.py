@@ -34,11 +34,14 @@ class SunshineSetupTests(unittest.TestCase):
         stack.enter_context(patch.object(sunshine, "is_dry_run", return_value=False))
         stack.enter_context(patch.object(sunshine.time, "sleep"))
         self.encoder = stack.enter_context(patch.object(sunshine, "_default_intel_encoder"))
+        self.probe = stack.enter_context(patch("lib.cachyos_doctor._probe", return_value=("error", "")))
         self.command = stack.enter_context(patch.object(sunshine, "run", side_effect=self.system_command))
 
     def system_command(self, command, **kwargs):
         text = ""
-        if "show" in command:
+        if "--property=MainPID" in command:
+            text = "ActiveState=active\nMainPID=123\nInvocationID=" + "a" * 32 + "\nResult=success\n"
+        elif "show" in command:
             text = (f"LoadState=loaded\nFragmentPath={sunshine.UNIT}\nDropInPaths=\n"
                     f"Restart=on-failure\nActiveState={self.state}\n")
         elif command[0] == "pacman":
@@ -65,24 +68,128 @@ class SunshineSetupTests(unittest.TestCase):
         sunshine.configure(self.config)
         calls = [call.args[0] for call in self.command.call_args_list]
         self.assertIn(["systemctl", "--user", "enable", "--now", sunshine.SERVICE], calls)
-        self.assertEqual(sum(call[-1] == sunshine.SERVICE and "is-active" in call for call in calls), 3)
+        self.assertEqual(sum("--property=MainPID" in call for call in calls), 3)
         self.assertFalse(any("sudo" in call or "restart" in call or "stop" in call for call in calls))
         self.encoder.assert_not_called()
+        self.probe.assert_not_called()
 
     def test_crash_after_activation_fails_setup_instead_of_claiming_readiness(self):
         count = 0
 
         def command(argv, **kwargs):
             nonlocal count
-            if "is-active" in argv and argv[-1] == sunshine.SERVICE:
+            if "--property=MainPID" in argv:
                 count += 1
-                return subprocess.CompletedProcess(argv, 0 if count == 1 else 3,
-                                                   "active\n" if count == 1 else "failed\n", "")
+                result = self.system_command(argv, **kwargs)
+                if count > 1:
+                    result.stdout = result.stdout.replace("active", "failed").replace("success", "core-dump")
+                return result
             return self.system_command(argv, **kwargs)
 
         self.command.side_effect = command
         with self.assertRaisesRegex(RuntimeError, "did not start"):
             sunshine.configure(self.config)
+
+    def test_restarting_process_cannot_pass_consecutive_active_checks(self):
+        for field in ("MainPID", "InvocationID"):
+            with self.subTest(field=field):
+                count = 0
+
+                def command(argv, **kwargs):
+                    nonlocal count
+                    result = self.system_command(argv, **kwargs)
+                    if "--property=MainPID" in argv:
+                        count += 1
+                        if field == "MainPID":
+                            result.stdout = result.stdout.replace("MainPID=123", f"MainPID={count}")
+                        else:
+                            result.stdout = result.stdout.replace("a" * 32, f"{count:032x}")
+                    return result
+
+                self.command.side_effect = command
+                with self.assertRaisesRegex(RuntimeError, "remain stable"):
+                    sunshine.configure(self.config)
+                self.assertEqual(count, 12)
+
+    def test_slow_start_can_stabilize_after_activation(self):
+        count = 0
+
+        def command(argv, **kwargs):
+            nonlocal count
+            result = self.system_command(argv, **kwargs)
+            if "--property=MainPID" in argv:
+                count += 1
+                if count < 4:
+                    result.stdout = result.stdout.replace("ActiveState=active", "ActiveState=activating")
+            return result
+
+        self.command.side_effect = command
+        sunshine.configure(self.config)
+        self.assertEqual(count, 6)
+
+    def test_uninspectable_or_invalid_process_cannot_establish_startup(self):
+        for invalid in ("MainPID=0", "InvocationID=" + "0" * 32, "Result=core-dump",
+                        "MainPID=123\nMainPID=123"):
+            with self.subTest(invalid=invalid):
+                def command(argv, **kwargs):
+                    result = self.system_command(argv, **kwargs)
+                    if "--property=MainPID" in argv:
+                        field = invalid.split("=", 1)[0]
+                        result.stdout = "\n".join(
+                            invalid if line.startswith(field + "=") else line
+                            for line in result.stdout.splitlines()) + "\n"
+                    return result
+
+                self.command.side_effect = command
+                with self.assertRaisesRegex(RuntimeError, "did not start"):
+                    sunshine.configure(self.config)
+
+    def test_activation_failure_reports_current_attempt_package_fault_without_raw_logs(self):
+        self.probe.return_value = ("ok", (
+            "libva info: Trying to open /home/runner/work/build-deps/build-deps/build/libva/lib/dri/iHD_drv_video.so\n"
+            "Error: Couldn't initialize va display: unknown libva error\nprivate journal data\n"))
+
+        def command(argv, **kwargs):
+            if "enable" in argv:
+                self.assertFalse(kwargs["check"])
+                return subprocess.CompletedProcess(argv, 1, "", "private systemctl error")
+            return self.system_command(argv, **kwargs)
+
+        self.command.side_effect = command
+        with patch.object(sunshine.time, "time", return_value=1234567890), \
+                self.assertRaisesRegex(RuntimeError, "build-time driver directory") as error:
+            sunshine.configure(self.config)
+        self.assertIn("Replace or rebuild the native sunshine package", str(error.exception))
+        self.assertIn("journalctl --user -u " + sunshine.SERVICE, str(error.exception))
+        self.assertNotIn("private", str(error.exception))
+        self.assertNotIn("/home/runner", str(error.exception))
+        journal = self.probe.call_args.args[0]
+        self.assertIn("--since=@1234567890", journal)
+        self.assertIn("--unit=" + sunshine.SERVICE, journal)
+        self.assertIn("--boot", journal)
+
+    def test_unavailable_journal_or_unrelated_vaapi_errors_keep_generic_guidance(self):
+        for status, output in (("error", "private"), ("output-limit", "private"),
+                               ("ok", "libva info: Trying to open /usr/lib/dri/iHD_drv_video.so\n"
+                                "Error: Couldn't initialize va display: permission denied\n"),
+                               ("ok", "libva info: Trying to open /build-deps/build/libva/lib/dri/iHD_drv_video.so\n")):
+            with self.subTest(status=status, output=output):
+                self.probe.return_value = status, output
+                error = str(sunshine._startup_error(1234567890))
+                self.assertIn("encoder/capture settings", error)
+                self.assertNotIn("Replace or rebuild", error)
+                self.assertNotIn("private", error)
+
+    def test_activation_timeout_keeps_actionable_journal_guidance(self):
+        def command(argv, **kwargs):
+            if "enable" in argv:
+                raise TimeoutError("private command data")
+            return self.system_command(argv, **kwargs)
+
+        self.command.side_effect = command
+        with self.assertRaisesRegex(RuntimeError, "journalctl --user -u " + sunshine.SERVICE) as error:
+            sunshine.configure(self.config)
+        self.assertNotIn("private", str(error.exception))
 
     def test_custom_units_and_missing_graphical_session_stop_before_enable(self):
         def command(argv, **kwargs):

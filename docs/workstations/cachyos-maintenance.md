@@ -240,8 +240,9 @@ not establish a streaming failure on those GPUs. See the upstream
 [encoder settings](https://github.com/LizardByte/Sunshine/blob/master/docs/configuration.md#encoder).
 
 `--sunshine` installs the native package and `libva-utils`, enables Sunshine at
-KDE login, and starts its user service. Setup verifies that it remains active
-across consecutive checks. The package's `Restart=on-failure` policy allows a
+KDE login, and starts its user service. Setup verifies that the same process
+and service invocation remain active across consecutive checks; repeated
+restarts cannot count as stable startup. The package's `Restart=on-failure` policy allows a
 normal tray-menu quit or `systemctl --user stop` to leave it stopped for that
 session. It starts again at the next KDE login; `disable --now` stops it
 persistently until setup selects Sunshine again. An already active service is
@@ -285,18 +286,48 @@ streaming. VA-API results do not qualify NVIDIA's separate NVENC path.
 
 For an Intel-only render-device layout with verified H.264 VA-API encoding,
 setup supplies `encoder = vaapi` when no explicit encoder setting exists and
-Sunshine is stopped. This avoids a Vulkan encoder probe that can fail on some
-Intel/Mesa combinations. Other settings, explicit encoder selections, and
+Sunshine is stopped. This prefers VA-API before Vulkan probing, which can fail
+on some Intel/Mesa combinations. Sunshine can still probe other encoders if
+VA-API initialization fails. Other settings, explicit encoder selections, and
 active services are retained. Unknown/mixed GPU layouts retain automatic
 selection; setup does not install or modify graphics drivers.
 
 If logs stop at `Trying encoder [vulkan]` or `Creating encoder [h264_vulkan]`
 and the crash stack points into the Intel Mesa Vulkan driver, try the documented
 `encoder = vaapi` setting in your existing Sunshine configuration, after
-confirming VA-API support. Preserve other settings. This avoids the Vulkan
-encoder probe; it does not repair the driver or prove the VA-API path works.
+confirming VA-API support. Preserve other settings. Check that VA-API actually
+initializes: a failed preferred encoder can still fall back to Vulkan.
 Keep capture selection separate: KDE Wayland is not a wlroots compositor,
 so a missing `wlr-export-dmabuf` interface is not an NVIDIA requirement.
+
+If system `vainfo` works but Sunshine logs `Trying to open` drivers under
+`/home/runner/work/build-deps/.../libva/lib/dri` followed by
+`Couldn't initialize va display`, the Sunshine build carries an incorrect
+VA-API driver search path. This was observed with CachyOS
+`sunshine 2026.1015.174736-1`, followed by a Vulkan fallback crash even with
+`encoder = vaapi`. Setup recognizes this journal pattern for the current start
+attempt and reports a package repair instead of suggesting encoder selection
+alone. Its bounded journal probe reports fixed guidance, keeping raw logs out
+of setup errors and notifications; unavailable logs retain generic guidance
+and the canonical journal command above.
+
+The native package needs replacement or a rebuild with libva's driver path
+set to `/usr/lib/dri`, or linked to the distribution's correctly configured
+system libva. Keep the native package manager's ownership and use the normal
+CachyOS update/rebuild workflow. Reinstalling an unchanged affected build or
+repeating setup cannot repair it. A system `vainfo` result describes its own
+libva, which can differ from Sunshine's bundled copy. An environment override
+is also insufficient for capability-enabled builds using
+[libva's secure environment lookup](https://github.com/intel/libva/blob/master/va/va.c):
+`LIBVA_DRIVERS_PATH` can be ignored. Basaltwater does not remove executable
+capabilities, patch native binaries, or create build-machine paths to work
+around this packaging error. To pause repeated crashes while arranging the
+package repair:
+
+```fish
+systemctl --user stop app-dev.lizardbyte.app.Sunshine.service
+pacman -Q sunshine
+```
 
 After addressing the reported error, the desktop owner can reset the failed
 state and retry the service:
