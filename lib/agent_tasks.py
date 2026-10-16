@@ -28,6 +28,7 @@ from lib.agent_cli import _tool_path
 from lib.atomic_io import write_text_atomic
 from lib.agent_task_context import (
     CodexEvents, MAX_CHECKPOINT_BYTES, PERSISTENCE_MODES, WORKSPACE_MODES, TaskContextStore, private_directory, private_json,
+    validate_follow_up,
 )
 from lib.validation import validate_filesystem_path
 
@@ -258,12 +259,23 @@ def codex_command(task: dict[str, Any], executable: str) -> list[str]:
 
     command = [executable, "-c", 'approval_policy="never"',
                "--sandbox", "read-only" if task["mode"] == "inspect" else "workspace-write"]
+    # Current Codex profiles take precedence over the legacy sandbox settings.
+    # Keep both explicit so older versions enforce the same task boundaries.
+    profile = ":read-only"
     if task["mode"] == "workspace":
+        # Codex merges named profile tables across configuration layers. A fresh
+        # name prevents unrelated profile roots/rules from broadening this run.
+        profile = "basaltwater_task_" + uuid.uuid4().hex
+        temporary_access = "write" if task["temporary_files"] else "read"
+        command += ["-c", f'permissions.{profile}={{extends=":workspace",workspace_roots={{}},'
+                    'filesystem={":tmpdir"="' + temporary_access + '",":slash_tmp"="' + temporary_access
+                    + '"},network={enabled=' + str(task["network"]).lower() + '}}']
         command += ["-c", "sandbox_workspace_write.network_access=" + str(task["network"]).lower()]
         # Do not inherit additional writable roots; temporary grants are explicit.
         command += ["-c", "sandbox_workspace_write.writable_roots=[]",
                     "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=" + str(not task["temporary_files"]).lower(),
                     "-c", "sandbox_workspace_write.exclude_slash_tmp=" + str(not task["temporary_files"]).lower()]
+    command += ["-c", f'default_permissions="{profile}"']
     if task["model"]:
         command += ["--model", task["model"]]
     if task["effort"]:
@@ -312,6 +324,11 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
     environment = os.environ.copy()
     environment["HOME"] = home
     environment["CODEX_HOME"] = os.path.join(home, ".codex")
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.geteuid()}")
+    environment.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={environment['XDG_RUNTIME_DIR']}/bus")
+    # The private systemd socket rejects peers in Codex's PID namespace.
+    # Use the account's ordinary D-Bus connection with the same permissions.
+    environment["SYSTEMCTL_FORCE_BUS"] = "1"
     environment["PATH"] = os.pathsep.join((os.path.join(home, ".local", "bin"),
                                           environment.get("PATH", "/usr/local/bin:/usr/bin:/bin")))
     # A panel task is a new terminal session, independent of the host UI's thread.
@@ -331,6 +348,12 @@ def execute_prompt(task: dict[str, Any], home: str, cancel: threading.Event, *, 
             "only when the requested outcome is verified. Evidence must name concrete checks and results. "
             "The checkpoint is a concise handoff: retain findings, pending work, constraints, and the "
             "next useful action. It is saved outside the editable workspace. "
+            "If useful work needs different permissions or separate authorization, set follow_up to a proposal "
+            "with a reason, exact targets/actions, verification and rollback in its prompt, an absolute source "
+            "directory, and the minimum mode/workspace/network/temporary_files settings. Otherwise use null. "
+            "This only records a request for operator review; it cannot create or run a task, change current "
+            "permissions, approve privileged actions, or bypass administrator policy. Do not use task tools "
+            "to activate a proposal that needs additional authorization. "
             f"Context persistence={task['persistence']}; workspace={task['workspace']}; "
             f"source directory={json.dumps(runtime['source_directory'])}; "
             f"execution directory={json.dumps(runtime['directory'])}. "
@@ -668,6 +691,7 @@ class AgentTasks:
                         raise ValueError("Invalid run time")
                 if not isinstance(run["output"], str) or len(run["output"].encode("utf-8")) > MAX_OUTPUT_BYTES + 128:
                     raise ValueError("Invalid output")
+                validate_follow_up(run.get("follow_up"))
                 duration = run.get("duration_seconds")
                 if duration is not None and (type(duration) not in {int, float} or not math.isfinite(duration) or duration < 0):
                     raise ValueError("Invalid run duration")

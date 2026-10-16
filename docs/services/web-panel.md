@@ -299,6 +299,12 @@ service, time window, and severity; message-text searches are not copied.
 Repeated reviews use a rolling window and may report the same event again.
 They report inaccessible evidence rather than seeking elevated access.
 
+System checkups, maintenance planning, and service/log/job reviews use workspace
+permissions with command network access and an empty private directory for each
+run. This permits local service sockets and readiness probes while keeping the
+source home outside writable roots. Temporary writes remain disabled, and the
+prompts prohibit host changes. Disk-only reviews retain inspection mode.
+
 Data tools require an existing dedicated working directory inside the panel
 account's home. Source and output paths must be below it; relative paths are
 resolved against that directory. Hidden paths, credential-file paths, symlink
@@ -367,14 +373,14 @@ terminal agents are inventoried by diagnostics but do not execute prompt tasks
 in this initial version. Root-managed panels use a locked service account
 without a home and show diagnostics with prompt execution unavailable.
 
-1. Choose a starting template under **Repository work** or **Host checks**,
+1. Choose a starting template under **Repository work** or **Host checks and maintenance**,
    or write a custom prompt. Each template shows its execution mode, suggested
    repeat interval, runtime cap, and additional permissions before selection.
 2. Enter the working directory. Repository templates require you to choose
    the specific checkout; host inspection defaults to the account's home.
 3. Choose **Inspect only** for Codex's read-only sandbox, or **Workspace
    changes** for a directory inside the account's home. Enable command network
-   access when changes require package downloads, and temporary writes when
+   access for service sockets, endpoint checks or package downloads, and temporary writes when
    tests or package tools need `/tmp` or `TMPDIR`. Provider requests still use
    the network in either mode. Configured hooks and MCP integrations retain
    their own permissions.
@@ -421,11 +427,13 @@ editable before submission; selecting a template does not run or schedule it.
 | Update repository documentation | Weekly | 30 minutes | Workspace changes |
 | Review repository security | Weekly | 30 minutes | Inspect only; live web search for advisories |
 | Review release readiness | Once | 20 minutes | Inspect only |
-| Host maintenance review | Daily | 30 minutes | Inspect only |
-| Check backup health | Daily | 15 minutes | Inspect only |
+| Restricted host maintenance check | Daily | 30 minutes | Inspect only; no command network or writes |
+| Host maintenance review | Daily | 30 minutes | Workspace permissions; command network; private run directory |
+| Apply reviewed maintenance fixes | Once; one attempt | 30 minutes | Workspace changes in an explicitly selected directory; command network; supplied repair plan required |
+| Check backup health | Daily | 15 minutes | Workspace permissions; command network; private run directory |
 | Review storage cleanup | Weekly | 15 minutes | Inspect only |
-| Triage a service incident | Once | 20 minutes | Inspect only |
-| Check certificate expiry | Daily | 10 minutes | Inspect only |
+| Triage a service incident | Once | 20 minutes | Workspace permissions; command network; private run directory |
+| Check certificate expiry | Daily | 10 minutes | Workspace permissions; command network; private run directory |
 
 Repository editing templates ask for a clean existing/shared checkout,
 including untracked files, and leave changes for review. A managed persistent
@@ -435,12 +443,33 @@ prompts retain their original instructions. The templates prohibit stashing,
 resetting, cleaning, or committing existing work to clear the checkout.
 Dependency updates follow the project's package manager, lockfiles, and upgrade
 policy, with larger migrations reported for follow-up.
-Host templates inspect existing evidence and recommend follow-up:
+Host check templates inspect existing evidence and recommend follow-up:
 backup checks do not perform restores, storage reviews do not delete files,
 and certificate checks do not renew certificates or change trust. Missing
 configuration or unavailable evidence is reported explicitly. Security review
 uses web search for current advisories and distinguishes confirmed version
 matches from uncertain findings.
+
+Host service review templates select a private run directory and command network access;
+the writable directory is empty scratch space. Their prompts prohibit host file
+changes and service mutations. Inspect-only storage reviews need neither grant.
+Saved tasks and reused receipts retain their original permissions: create a new
+task from the refreshed template to replace a blocked inspection task. Merely
+resuming it does not change its sandbox. Host reviews use explicit doctor
+capabilities; project manifest discovery requires an actual Git checkout.
+
+**Apply reviewed maintenance fixes** requires a selected directory and an exact
+repair plan, including targets, allowed actions, verification, and rollback.
+It can apply that plan within the account's existing access. Missing plans
+produce a blocked report without repairs. Privileged actions require the
+configured Admin approval workflow.
+
+Runs can record a **Follow-up requested** proposal for checks or repairs that
+need different access. **Review follow-up task** opens its actions and proposed
+permissions in the normal task form, defaulting to Once and one attempt. Review
+the original evidence, adjust scope, then save or submit. Opening it never
+creates or runs work, changes the original task, or approves privileged actions.
+Requests remain available in retained receipts after recent history is evicted.
 
 Additional templates appear when the panel's saved setup configuration or
 commands installed for its account indicate a relevant integration. Each shows
@@ -450,19 +479,19 @@ templates still require you to select a suitable checkout.
 
 | Conditional template | Appears when | Default repeat / cap | Scope |
 | --- | --- | --- | --- |
-| Check T3 Code readiness | T3 Code runtime or user service unit is installed | Daily / 15 minutes | Inspect only |
-| Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Inspect only |
-| Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Inspect only |
-| Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Inspect only |
-| Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Inspect only |
+| Check T3 Code readiness | T3 Code runtime or user service unit is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Workspace permissions; command network; private run directory |
 | Review GitHub Actions failures | `gh` is installed | Daily / 20 minutes | Workspace permissions for command network; prompt requests inspection only |
 | Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
 | Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
-| Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Inspect only |
-| Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Daily / 15 minutes | Inspect only |
-| Check Antistatic services | Antistatic lobby or DB is configured | Daily / 15 minutes | Inspect only |
-| Check notification delivery | Panel notification ingest is enabled | Daily / 10 minutes | Inspect only |
-| Check privilege approval readiness | Privilege approvals are configured | Weekly / 15 minutes | Inspect only |
+| Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check Antistatic services | Antistatic lobby or DB is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check notification delivery | Panel notification ingest is enabled | Daily / 10 minutes | Workspace permissions; command network; private run directory |
+| Check privilege approval readiness | Privilege approvals are configured | Weekly / 15 minutes | Workspace permissions; command network; private run directory |
 
 GitHub CI inspection needs command network access; the runner offers that in
 workspace mode, so its prompt explicitly requests no file changes or remote

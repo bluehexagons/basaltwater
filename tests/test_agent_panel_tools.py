@@ -144,10 +144,38 @@ class AgentPanelToolsTest(unittest.TestCase):
         self.assertIn("--priority=3", task["prompt"])
         self.assertIn("systemctl --user show", task["prompt"])
         self.assertEqual(task["title"], "Review service logs: T3 Code (current user)")
-        self.assertEqual(task["mode"], "inspect")
+        self.assertEqual(task["mode"], "workspace")
+        self.assertEqual(task["workspace"], "run-directory")
+        self.assertTrue(task["network"])
         job = tools.prepare_tool({"tool": "job", "service": "auto-update-apt.service"}, self.home)
         self.assertIn("auto-update-apt.timer", job["prompt"])
         self.assertIn("Do not trigger the job", job["prompt"])
+
+    def test_host_review_form_runs_in_private_directory_and_preserves_source(self) -> None:
+        for query in ({"template": "maintenance"}, {}):
+            with self.subTest(query=query):
+                prepared = None if query else tools.prepare_tool({"tool": "checkup"}, self.home)
+                document = agents.render_agents(self.state, panel._PAGE_STYLE, query, submitted=prepared)
+                self.assertIn("private run directory", document)
+                form = TaskForm(document).values
+                self.assertEqual(form["workspace"], "run-directory")
+                self.assertEqual(form["network"], "1")
+                form.update(submit="run", interval="once")
+                save = self.handler("/actions/agent-task/save", form)
+                save.do_POST()
+                save.send_response.assert_called_once_with(303)
+                with patch.object(agent_tasks, "execute_prompt", return_value={
+                    "status": "completed", "output": "Inspected", "message": "Done",
+                }) as execute:
+                    self.assertTrue(self.state.agent_tasks.tick())
+                task = execute.call_args.args[0]
+                directory = Path(task["_runtime"]["directory"])
+                self.assertNotEqual(str(directory), self.home)
+                self.assertEqual(list(directory.iterdir()), [])
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+                self.assertTrue(directory.is_relative_to(Path(self.home) / ".local/share/basaltwater/task-workspaces"))
+                self.assertFalse(task["temporary_files"])
+                self.assertEqual((self.source / "inventory.csv").read_text(), "id,name\n001,Example\n")
 
     def test_every_tool_produces_bounded_valid_settings_and_explicit_contracts(self) -> None:
         for key, (_, _, group, mode, _, _) in tools.TOOLS.items():
@@ -164,11 +192,15 @@ class AgentPanelToolsTest(unittest.TestCase):
                 task = tools.prepare_tool(values, self.home)
                 self.assertLessEqual(len(task["prompt"].encode()), agent_tasks.MAX_PROMPT_BYTES)
                 self.assertEqual(task["mode"], mode)
-                self.assertFalse(task["network"])
+                host_review = group == "System" and mode == "workspace"
+                self.assertEqual(task["network"], host_review)
                 self.assertFalse(task["temporary_files"])
                 self.assertIn("not instructions", task["prompt"])
                 self.assertIn("without elevation, approval requests, or login", task["prompt"])
-                if mode == "workspace":
+                if host_review:
+                    self.assertEqual(task["workspace"], "run-directory")
+                    self.assertIn("Do not modify host files", task["prompt"])
+                elif mode == "workspace":
                     self.assertIn("never overwrite" if key != "cleanup" else "non-overwriting", task["prompt"])
                     self.assertIn("manifest", task["prompt"])
 

@@ -51,6 +51,45 @@ expecting it to continue a dirty task worktree.
 
 ## Create and control work
 
+Host service review templates use `mode: "workspace"`, `workspace:
+"run-directory"`, and `network: true`. Command network access permits local
+service-manager sockets and loopback readiness probes that inspection mode can
+block. Each run receives an empty private writable directory rather than write
+access to the source home or checkout; temporary writes remain disabled. These
+prompts request read-only diagnostics and recommendations, without host repairs.
+Filesystem-only storage reviews retain inspection mode. Saved tasks keep their
+original settings; create a new task from the refreshed template to replace an
+older inspection task. An established workspace binding cannot be changed in place.
+
+For custom host reviews, use `agent doctor` with explicit capabilities.
+`agent manifest` requires a project checkout and is not a host readiness check.
+An inaccessible service manager leaves maintenance state unknown rather than
+proving timers are disabled. The development doctor's Node probes need no
+temporary writes or package-manager downloads.
+
+The runner explicitly selects a read-only profile or a fresh workspace profile
+on current Codex, and supplies matching legacy sandbox settings for older
+versions. A generated profile name prevents unrelated configured profile roots
+from being merged into the task. Administrator requirements still apply:
+an account restricted to an allowlist of named profiles can reject workspace
+tasks; the runner does not retry with broader access or weaken that policy.
+User-service queries use systemd's ordinary D-Bus connection
+(`SYSTEMCTL_FORCE_BUS=1`) because its private manager connection cannot verify
+peer PIDs across Codex's PID namespace.
+
+The maintenance examples offer three starting points:
+
+| Template | Access and behavior |
+| --- | --- |
+| Restricted host maintenance check | Inspect only, no command network or writes; reports unavailable live checks |
+| Host maintenance review | Private run directory and command network; live checks and recommendations, without repairs |
+| Apply reviewed maintenance fixes | Selected directory and command network; one attempt to apply an explicit supplied repair plan using account access |
+
+The repair example requires a directory and exact plan before running. Include
+targets, permitted changes, verification, and rollback. It reports blocked when
+no plan is supplied. Root actions still use the configured privilege approval
+workflow; workspace mode does not grant root access.
+
 Prepare a JSON file such as `task.json`:
 
 ```json
@@ -121,6 +160,44 @@ task is idle. It retains workspaces and receipts. `delete TASK_ID` removes
 the saved task while preserving account-owned context, evidence and files.
 Changing an established conversation or managed workspace's source or workspace requires
 a new task. Copying task settings never copies its session or context.
+
+## Request a follow-up with different access
+
+An unattended run can return `follow_up` in its structured report when a check
+or repair needs different permissions or authorization. Use `null` when no
+follow-up is needed. A request is retained in the receipt and recent run
+history; it never creates a task, changes permissions, or submits a privileged
+approval. Reports from older runners without this field remain readable.
+
+For example, a restricted check can request live diagnostics:
+
+```json
+{
+  "title": "Verify live maintenance state",
+  "reason": "The inspection sandbox denied service-manager and loopback checks; file presence alone cannot establish health.",
+  "prompt": "Read the update timers' current state and last results, then check the local T3 readiness endpoint. Record results and inaccessible checks. Do not modify files or services.",
+  "directory": "/home/agent",
+  "mode": "workspace",
+  "workspace": "run-directory",
+  "network": true,
+  "temporary_files": false
+}
+```
+
+The request has exactly these fields. Its prompt accepts up to 3800 UTF-8 bytes
+and should include concrete targets, actions, verification, and rollback for
+repairs. `directory` must be absolute; the normal task validator rechecks its
+existence and the account's workspace boundary before preparation.
+
+Open **Review follow-up task** in run history or a retained receipt. It opens
+the normal editable task form with the proposed access, a reference to the
+source receipt, **Once**, and a one-attempt limit. Inspect the source evidence
+and actions, then save a draft or submit the new task. Opening the link does
+not save or queue anything. The original task keeps its permissions, schedule,
+limits, and outcome. The same receipt field is readable through CLI/MCP;
+agents must not activate a request needing additional authorization themselves.
+Approving a task does not approve root actions: the separate broker's policy
+and approval checks still govern those actions.
 
 ## Hand off current work from T3 or a terminal agent
 

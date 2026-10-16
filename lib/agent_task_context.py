@@ -22,6 +22,17 @@ MAX_EVENT_BYTES = 1024 * 1024
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 _SESSION = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\Z")
 
+FOLLOW_UP_SCHEMA = {
+    "type": ["object", "null"], "additionalProperties": False,
+    "properties": {
+        "title": {"type": "string"}, "reason": {"type": "string"}, "prompt": {"type": "string", "maxLength": 3800},
+        "directory": {"type": "string"}, "mode": {"type": "string", "enum": ["inspect", "workspace"]},
+        "workspace": {"type": "string", "enum": list(WORKSPACE_MODES)},
+        "network": {"type": "boolean"}, "temporary_files": {"type": "boolean"},
+    },
+    "required": ["title", "reason", "prompt", "directory", "mode", "workspace", "network", "temporary_files"],
+}
+
 REPORT_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -30,9 +41,33 @@ REPORT_SCHEMA = {
         "checkpoint": {"type": "string"},
         "evidence": {"type": "array", "items": {"type": "string"}},
         "retry_after_minutes": {"type": ["integer", "null"], "minimum": 1, "maximum": 43200},
+        "follow_up": FOLLOW_UP_SCHEMA,
     },
-    "required": ["outcome", "summary", "checkpoint", "evidence", "retry_after_minutes"],
+    "required": ["outcome", "summary", "checkpoint", "evidence", "retry_after_minutes", "follow_up"],
 }
+
+
+def validate_follow_up(value: object) -> dict[str, Any] | None:
+    """Validate a bounded proposal, which never grants authority or queues work."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != set(FOLLOW_UP_SCHEMA["required"]):
+        raise ValueError("Invalid task follow-up request")
+    for name, limit in (("title", 120), ("reason", 2000), ("prompt", 3800), ("directory", 4096)):
+        text = value[name]
+        if (not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > limit
+                or any(ord(char) < 32 and not (name in {"reason", "prompt"} and char in "\n\r\t")
+                       or ord(char) == 127 for char in text)):
+            raise ValueError(f"Invalid task follow-up {name}")
+    validate_filesystem_path(value["directory"])
+    if not os.path.isabs(value["directory"]):
+        raise ValueError("Follow-up directory must be absolute")
+    if value["mode"] not in ("inspect", "workspace") or value["workspace"] not in WORKSPACE_MODES:
+        raise ValueError("Invalid task follow-up access")
+    if (type(value["network"]) is not bool or type(value["temporary_files"]) is not bool
+            or value["mode"] == "inspect" and (value["network"] or value["temporary_files"] or value["workspace"] != "existing")):
+        raise ValueError("Invalid task follow-up permissions")
+    return value
 
 
 def private_directory(home: str, directory: Path, *, create: bool = False) -> Path:
@@ -78,8 +113,10 @@ def private_json(path: Path, *, max_bytes: int = MAX_CONTEXT_BYTES) -> dict[str,
 
 def validate_report(value: object) -> dict[str, Any]:
     """Check semantic output separately from a successful provider exit."""
-    if not isinstance(value, dict) or set(value) != set(REPORT_SCHEMA["required"]):
+    required = set(REPORT_SCHEMA["required"]) - {"follow_up"}
+    if not isinstance(value, dict) or set(value) not in (required, required | {"follow_up"}):
         raise ValueError("Codex did not return a complete task report")
+    validate_follow_up(value.get("follow_up"))
     if value["outcome"] not in OUTCOMES:
         raise ValueError("Invalid task report outcome")
     for name, limit in (("summary", 4000), ("checkpoint", MAX_CHECKPOINT_BYTES)):

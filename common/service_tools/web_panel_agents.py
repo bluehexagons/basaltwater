@@ -18,9 +18,11 @@ from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
 from lib.agent_task_api import worker_status
+from lib.agent_task_context import validate_follow_up
+from lib.agent_task_templates import FOLLOW_UP_PROMPT, HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS
 from lib.agent_tasks import (
     AgentTasks, DEFAULT_FAILURE_LIMIT, DEFAULT_TIMEOUT_MINUTES, EFFORTS, MAX_FAILURE_LIMIT,
-    MAX_PROMPT_BYTES, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, WEB_SEARCH_MODES, codex_models, repeat_seconds,
+    MAX_PROMPT_BYTES, MAX_REPEAT_MINUTES, MAX_TIMEOUT_MINUTES, WEB_SEARCH_MODES, codex_models, repeat_seconds, validate_task,
 )
 
 
@@ -33,10 +35,21 @@ _REPOSITORY_EDIT_PREFLIGHT = (
 
 
 PROMPT_TEMPLATES = {
+    "maintenance-local": {
+        "scope": "host", "description": "Check readable local evidence without command network or writes; request fuller checks when needed.",
+        "title": "Restricted host maintenance check", "mode": "inspect", "interval": "daily", "network": False,
+        "prompt": "Inspect local resource, disk, reboot, installed-tool, and readable maintenance configuration evidence using read-only operations. Use agent doctor with explicit capabilities; do not run agent manifest outside a project checkout. Service-manager sockets and endpoint probes may be blocked: distinguish inaccessible checks from actual service failures. Do not change files, services, or schedules. " + FOLLOW_UP_PROMPT,
+    },
     "maintenance": {
         "scope": "host", "description": "Inspect resources, services, update timers, and agent readiness.",
-        "title": "Host maintenance review", "mode": "inspect", "interval": "daily", "network": False,
-        "prompt": "Inspect this host's resource usage, failed services, update timers, reboot state, and agent readiness using available Basaltwater diagnostics. Check T3 Code only if installed. Summarize issues, evidence, and recommended repairs. Do not change the host or expose credentials.",
+        "title": "Host maintenance review", **HOST_REVIEW_SETTINGS, "interval": "daily",
+        "prompt": HOST_REVIEW_PROMPT + "Inspect this host's resource usage, failed services, update timers, reboot state, and agent readiness using available Basaltwater diagnostics. Check T3 Code only if installed. Summarize issues, evidence, and recommended repairs. Do not change the host or expose credentials.",
+    },
+    "maintenance-repair": {
+        "scope": "host", "description": "Apply a supplied repair plan within a selected directory and account access; review targets before running.",
+        "title": "Apply reviewed maintenance fixes", "mode": "workspace", "workspace": "existing",
+        "network": True, "interval": "once", "max_runs": 1, "select_directory": True,
+        "prompt": "Apply the concrete maintenance repair plan supplied below using this account's existing permissions. If no exact targets and actions are supplied, report blocked without changes. Recheck the evidence, maintenance holds, and active work before each action; defer actions that would interrupt active sessions. Limit file edits to the selected directory, preserve unrelated changes, and execute only the named service actions. Validate each repair and record changes, results, and rollback steps. Do not install updates, delete data, reboot, change access policy, or submit privileged requests unless the supplied plan explicitly authorizes that action through the configured approval workflow. " + FOLLOW_UP_PROMPT + "\n\nRepair plan (required):\n",
     },
     "dependencies": {
         "scope": "repository", "description": "Prepare dependency changes and validation for review each week.",
@@ -81,8 +94,8 @@ PROMPT_TEMPLATES = {
     "backups": {
         "scope": "host", "title": "Check backup health",
         "description": "Check backup freshness, job results, and existing verification evidence.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Identify this host's configured backup jobs using available Basaltwater diagnostics, timer state, and readable job metadata or logs. Check the last successful backup, recent failures, next scheduled run, destination capacity when available, retention metadata, and any existing integrity-check or restore-test evidence. If a backup is running, report its state. Distinguish successful job completion from verified recoverability; report missing configuration or inaccessible evidence explicitly. Summarize issues and recommended follow-up. Do not start backups, restore data, change retention, delete files, or expose backup contents or credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Identify this host's configured backup jobs using available Basaltwater diagnostics, timer state, and readable job metadata or logs. Check the last successful backup, recent failures, next scheduled run, destination capacity when available, retention metadata, and any existing integrity-check or restore-test evidence. If a backup is running, report its state. Distinguish successful job completion from verified recoverability; report missing configuration or inaccessible evidence explicitly. Summarize issues and recommended follow-up. Do not start backups, restore data, change retention, delete files, or expose backup contents or credentials.",
     },
     "storage": {
         "scope": "host", "title": "Review storage cleanup",
@@ -93,44 +106,44 @@ PROMPT_TEMPLATES = {
     "incident": {
         "scope": "host", "title": "Triage a service incident",
         "description": "Correlate failed units, recent errors, and resource pressure.",
-        "mode": "inspect", "interval": "once", "network": False, "timeout_minutes": 20,
-        "prompt": "Use available Basaltwater diagnostics and readable service-manager state or recent logs to identify unhealthy services on this host. Check resource pressure, unit state, recent failures, dependency failures, and relevant configuration evidence. Check T3 Code only if installed. Correlate timestamps and distinguish symptoms from likely causes. If no failure is evident, report that and the checks performed. Summarize affected services, evidence, likely causes, and recommended next diagnostic or repair steps. Do not restart services, change configuration, install packages, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "once", "timeout_minutes": 20,
+        "prompt": HOST_REVIEW_PROMPT + "Use available Basaltwater diagnostics and readable service-manager state or recent logs to identify unhealthy services on this host. Check resource pressure, unit state, recent failures, dependency failures, and relevant configuration evidence. Check T3 Code only if installed. Correlate timestamps and distinguish symptoms from likely causes. If no failure is evident, report that and the checks performed. Summarize affected services, evidence, likely causes, and recommended next diagnostic or repair steps. Do not restart services, change configuration, install packages, or expose credentials.",
     },
     "certificates": {
         "scope": "host", "title": "Check certificate expiry",
         "description": "Inspect certificate lifetimes, renewal jobs, and configuration gaps.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
-        "prompt": "Inspect readable public certificate metadata, configured HTTPS service references, and renewal timer or job state on this host. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures and identify services using certificates where the configuration is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect readable public certificate metadata, configured HTTPS service references, and renewal timer or job state on this host. Report expiry dates and remaining lifetimes, highlighting certificates expired or expiring within 30 days. Check recent renewal failures and identify services using certificates where the configuration is readable. Distinguish local certificate metadata from a verified live endpoint; report inaccessible or missing evidence. Recommend follow-up for renewal or configuration gaps. Do not read private keys, issue or replace certificates, change trust stores, reload services, or expose credentials.",
     },
     "t3-readiness": {
         "requires": "t3", "scope": "host", "title": "Check T3 Code readiness",
         "description": "Check the user service, runtime, agent tools, and saved readiness evidence.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect the configured or installed T3 Code runtime using available Basaltwater agent diagnostics without repair options. Check user-service state, runtime and installed version evidence, terminal agent availability, local credential metadata, Git identity readiness, and maintenance holds. Distinguish file presence from verified authentication. Report failures and missing evidence with suggested next steps. Do not update tools, restart services, rotate credentials, read or reveal pairing passwords or credential contents, or change the host.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured or installed T3 Code runtime using available Basaltwater agent diagnostics without repair options. Check user-service state, runtime and installed version evidence, terminal agent availability, local credential metadata, Git identity readiness, and maintenance holds. Distinguish file presence from verified authentication. Report failures and missing evidence with suggested next steps. Do not update tools, restart services, rotate credentials, read or reveal pairing passwords or credential contents, or change the host.",
     },
     "containers": {
         "requires": "containers", "scope": "host", "title": "Review container health",
         "description": "Inspect Docker or Podman health, resource use, and storage pressure.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Use the installed Docker or Podman CLI for bounded read-only inspection of local containers, health status, restart counts, resource usage, and image or volume storage metadata. Check available recent error evidence without dumping environment variables or secrets. Command presence does not prove daemon access; report unavailable sockets, permissions, or health checks explicitly. Identify failing containers and cleanup candidates with evidence. Do not start, stop, restart, exec into, pull, build, prune, remove, or change containers, images, volumes, or networks.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Use the installed Docker or Podman CLI for bounded read-only inspection of local containers, health status, restart counts, resource usage, and image or volume storage metadata. Check available recent error evidence without dumping environment variables or secrets. Command presence does not prove daemon access; report unavailable sockets, permissions, or health checks explicitly. Identify failing containers and cleanup candidates with evidence. Do not start, stop, restart, exec into, pull, build, prune, remove, or change containers, images, volumes, or networks.",
     },
     "web-hosting": {
         "requires": "web_hosting", "scope": "host", "title": "Review web hosting",
         "description": "Check gateway registrations, Nginx state, and local upstream evidence.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect existing Basaltwater web gateway registrations and readable Nginx site metadata, service state, and bounded recent error logs using read-only tools. Identify static sites, forwards, missing document roots, failed upstream services, and certificate or route configuration gaps. Do not infer live public reachability from configuration; distinguish saved configuration from verified health. Report inaccessible files or checks blocked by sandbox permissions. Do not publish sites, register forwards, modify configuration, reload services, renew certificates, or expose credentials or private site contents.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect existing Basaltwater web gateway registrations and readable Nginx site metadata, service state, and bounded recent error logs using read-only tools. Identify static sites, forwards, missing document roots, failed upstream services, and certificate or route configuration gaps. Do not infer live public reachability from configuration; distinguish saved configuration from verified health. Report inaccessible files or checks blocked by sandbox permissions. Do not publish sites, register forwards, modify configuration, reload services, renew certificates, or expose credentials or private site contents.",
     },
     "shared-storage": {
         "requires": "shared_storage", "scope": "host", "title": "Check shared storage",
         "description": "Check configured SMB shares and existing CIFS or SSHFS mounts.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect configured Samba shares and existing CIFS or SSHFS mount metadata using available Basaltwater diagnostics and readable local configuration. Check local service state, mount presence, ownership, relevant errors, and existing backup coverage. Keep checks bounded: avoid traversing unavailable network mounts, reading shared file contents, or printing credentials and mount passwords. An installed client does not prove a share is configured or reachable; report missing evidence. Do not mount, unmount, reconnect, chmod, change share configuration, delete files, or copy data.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect configured Samba shares and existing CIFS or SSHFS mount metadata using available Basaltwater diagnostics and readable local configuration. Check local service state, mount presence, ownership, relevant errors, and existing backup coverage. Keep checks bounded: avoid traversing unavailable network mounts, reading shared file contents, or printing credentials and mount passwords. An installed client does not prove a share is configured or reachable; report missing evidence. Do not mount, unmount, reconnect, chmod, change share configuration, delete files, or copy data.",
     },
     "remote-desktop": {
         "requires": "remote_desktop", "scope": "host", "title": "Check remote desktop readiness",
         "description": "Inspect xrdp, session-manager state, and recent connection failures.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
-        "prompt": "Inspect configured remote desktop access, xrdp and session-manager service state, readable session configuration, and bounded recent connection or startup errors. Report missing desktop components, service failures, and relevant permission or certificate evidence. Local readiness does not prove a remote client can connect; distinguish those checks. Do not open or capture another user's desktop, terminate sessions, restart services, modify accounts or configuration, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect configured remote desktop access, xrdp and session-manager service state, readable session configuration, and bounded recent connection or startup errors. Report missing desktop components, service failures, and relevant permission or certificate evidence. Local readiness does not prove a remote client can connect; distinguish those checks. Do not open or capture another user's desktop, terminate sessions, restart services, modify accounts or configuration, or expose credentials.",
     },
     "github-actions": {
         "requires": "github", "scope": "repository", "title": "Review GitHub Actions failures",
@@ -153,32 +166,32 @@ PROMPT_TEMPLATES = {
     "homebox-health": {
         "requires": "homebox", "scope": "host", "title": "Check HomeBox data protection",
         "description": "Review service health and backup coverage for inventory and attachments.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect the configured HomeBox service using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Identify inventory database and attachment storage paths from configuration without reading their contents. Check available capacity and existing backup-job evidence covering both database and attachments; distinguish job completion from restore verification. Report missing coverage, service failures, and inaccessible evidence. Do not change inventory, query private records, start backups, restore data, copy database files, restart services, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured HomeBox service using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Identify inventory database and attachment storage paths from configuration without reading their contents. Check available capacity and existing backup-job evidence covering both database and attachments; distinguish job completion from restore verification. Report missing coverage, service failures, and inaccessible evidence. Do not change inventory, query private records, start backups, restore data, copy database files, restart services, or expose credentials.",
     },
     "gogs-health": {
         "requires": "gogs", "scope": "host", "title": "Check Gogs repository hosting",
         "description": "Review service errors, repository storage, and existing backup evidence.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect the configured or installed Gogs service using readable local service and configuration metadata and bounded recent error logs. Identify repository, database, and attachment storage locations without reading private repository or database contents. Check capacity, relevant ownership evidence, and existing backup coverage. Distinguish configured locations from verified availability and report inaccessible evidence. Recommend follow-up for failures or protection gaps. Do not change users or repositories, run repository hooks, migrate data, restart services, start backups, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured or installed Gogs service using readable local service and configuration metadata and bounded recent error logs. Identify repository, database, and attachment storage locations without reading private repository or database contents. Check capacity, relevant ownership evidence, and existing backup coverage. Distinguish configured locations from verified availability and report inaccessible evidence. Recommend follow-up for failures or protection gaps. Do not change users or repositories, run repository hooks, migrate data, restart services, start backups, or expose credentials.",
     },
     "antistatic-health": {
         "requires": "antistatic", "scope": "host", "title": "Check Antistatic services",
         "description": "Review configured lobby and database service state and recent errors.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect the configured Antistatic lobby and database services using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Check service state, dependency failures, resource pressure, database storage capacity, and existing backup-job evidence where available. Distinguish configuration from verified application readiness and report unavailable checks. Do not query player records, send game requests, modify databases, restart services, start backups, or expose credentials.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Antistatic lobby and database services using available Basaltwater diagnostics, readable service metadata, and bounded recent error logs. Check service state, dependency failures, resource pressure, database storage capacity, and existing backup-job evidence where available. Distinguish configuration from verified application readiness and report unavailable checks. Do not query player records, send game requests, modify databases, restart services, start backups, or expose credentials.",
     },
     "notifications-health": {
         "requires": "notifications", "scope": "host", "title": "Check notification delivery",
         "description": "Inspect receiver configuration and existing delivery evidence.",
-        "mode": "inspect", "interval": "daily", "network": False, "timeout_minutes": 10,
-        "prompt": "Inspect the configured Basaltwater panel notification receiver using available diagnostics and readable non-secret configuration or existing delivery logs. Check panel and proxy service state, accepted-event timestamps, sender failure or retry evidence, and relevant throttling or authentication errors. No recent events alone does not prove delivery is broken; report expected cadence only when configured evidence supports it. Redact sender links and bearer tokens. Do not reveal or rotate tokens, send test notifications or messages, change sender configuration, or restart services.",
+        **HOST_REVIEW_SETTINGS, "interval": "daily", "timeout_minutes": 10,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Basaltwater panel notification receiver using available diagnostics and readable non-secret configuration or existing delivery logs. Check panel and proxy service state, accepted-event timestamps, sender failure or retry evidence, and relevant throttling or authentication errors. No recent events alone does not prove delivery is broken; report expected cadence only when configured evidence supports it. Redact sender links and bearer tokens. Do not reveal or rotate tokens, send test notifications or messages, change sender configuration, or restart services.",
     },
     "privilege-health": {
         "requires": "privilege", "scope": "host", "title": "Check privilege approval readiness",
         "description": "Review broker service, policy metadata, and available audit evidence.",
-        "mode": "inspect", "interval": "weekly", "network": False, "timeout_minutes": 15,
-        "prompt": "Inspect the configured Basaltwater privilege approval broker using available diagnostics, readable service and policy metadata, and sanitized audit evidence. Check broker service state, socket or endpoint configuration, policy coverage, and recent denial or execution errors. Report inaccessible evidence and distinguish configured permissions from verified readiness. Do not read approval credentials, submit or approve requests, execute privileged commands, change policies or allowlists, restart services, or expose secrets.",
+        **HOST_REVIEW_SETTINGS, "interval": "weekly", "timeout_minutes": 15,
+        "prompt": HOST_REVIEW_PROMPT + "Inspect the configured Basaltwater privilege approval broker using available diagnostics, readable service and policy metadata, and sanitized audit evidence. Check broker service state, socket or endpoint configuration, policy coverage, and recent denial or execution errors. Report inaccessible evidence and distinguish configured permissions from verified readiness. Do not read approval credentials, submit or approve requests, execute privileged commands, change policies or allowlists, restart services, or expose secrets.",
     },
 }
 
@@ -383,10 +396,11 @@ def parse_agent_query(raw: str) -> dict[str, str]:
         return {}
     if set(query) == {"template"} and query["template"][0] in PROMPT_TEMPLATES:
         return {"template": query["template"][0]}
-    if set(query) == {"receipt"}:
-        parts = query["receipt"][0].split(".")
-        if len(parts) == 2 and all(len(part) == 32 and all(c in "0123456789abcdef" for c in part) for part in parts):
-            return {"receipt": query["receipt"][0]}
+    for name in ("receipt", "follow-up"):
+        if set(query) == {name}:
+            parts = query[name][0].split(".")
+            if len(parts) == 2 and all(len(part) == 32 and all(c in "0123456789abcdef" for c in part) for part in parts):
+                return {name: query[name][0]}
     for name in ("edit", "copy", "reuse", "run", "context"):
         if set(query) == {name} and len(query[name][0]) == 32 and all(c in "0123456789abcdef" for c in query[name][0]):
             return {name: query[name][0]}
@@ -439,7 +453,7 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
 def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
     active_scope = templates.get(selected, {}).get("scope", "repository")
     groups = []
-    for scope, label in (("repository", "Repository work"), ("host", "Host checks")):
+    for scope, label in (("repository", "Repository work"), ("host", "Host checks and maintenance")):
         links = []
         for key, template in templates.items():
             if template["scope"] != scope:
@@ -453,6 +467,8 @@ def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> st
                 permissions.append("command network")
             if template.get("temporary_files"):
                 permissions.append("temporary writes")
+            if template.get("workspace") == "run-directory":
+                permissions.append("private run directory")
             if template.get("web_search") == "live":
                 permissions.append("live web search")
             settings = " · ".join([mode, interval, f"{runtime} min cap", *permissions])
@@ -506,7 +522,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             error = error or "This template is unavailable: its required feature or software was not detected. Choose another template or write a custom prompt."
         else:
             defaults.update(template)
-            if template["scope"] == "repository":
+            if template["scope"] == "repository" or template.get("select_directory"):
                 defaults["directory"] = ""
     if "edit" in query:
         task = next((task for task in tasks if task["id"] == query["edit"]), None)
@@ -531,6 +547,23 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
                 defaults["interval"] = "once"
                 defaults["continue_until_done"] = False
                 defaults["start_at"] = 0
+    if "follow-up" in query:
+        try:
+            identifier, run_id = query["follow-up"].split(".")
+            receipt = manager.contexts.receipt(identifier, run_id)
+            proposal = validate_follow_up(receipt.get("follow_up"))
+            if proposal is None:
+                raise ValueError("This run did not request a follow-up")
+            settings = {key: value for key, value in proposal.items() if key != "reason"}
+            settings["prompt"] = (f"Follow-up to task {identifier}, run {run_id}. "
+                                  "Recheck its retained evidence before acting.\n\n" + settings["prompt"])
+            defaults.update(validate_task({**settings, "interval": "once", "max_runs": 1}, manager.home))
+            defaults["id"] = ""
+            source_note = ("Requested by a previous run: " + _redact_log_message(proposal["reason"])
+                           + " Review the evidence, actions, directory, and requested access before submitting. "
+                           "No task has been saved or queued. Privileged actions still require the configured Admin approval workflow.")
+        except (OSError, ValueError, RuntimeError) as exc:
+            error = error or f"Follow-up request unavailable: {exc}"
     if submitted:
         defaults.update(submitted)
     if prepared:
@@ -566,7 +599,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     if isinstance(start, (int, float)):
         start = datetime.fromtimestamp(start, timezone.utc).isoformat().replace("+00:00", "Z") if start else ""
     composer = f'''<div class="agent-panel">{render_heading("Edit prompt task" if editing else "Review prepared task" if prepared else "New prompt task", "agents")}
-{f'<p class="agent-help">{source_note}</p>' if source_note else ''}
+{f'<p class="agent-help">{_escape(source_note)}</p>' if source_note else ''}
 <form class="agent-form" method="post" action="/actions/agent-task/save">
 <input type="hidden" name="csrf" value="{_escape(state.csrf_token)}"><input type="hidden" name="id" value="{_escape(defaults['id'])}">
 <div class="agent-fields"><label>Task name<input name="title" value="{_escape(defaults['title'])}" maxlength="120" required placeholder="Weekly dependency update"></label>
@@ -594,7 +627,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
 <label>Execution mode<select name="mode">{modes}</select></label>
 <label class="agent-check"><input type="checkbox" name="network" value="1"{" checked" if defaults['network'] else ""}><span>Allow command network access for workspace changes, including downloading dependencies.</span></label>
-<p class="agent-help">Inspection uses Codex's read-only sandbox. Workspace changes may edit the selected directory inside this account's home, plus temporary directories when allowed below. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p>
+<p class="agent-help">Inspection uses Codex's read-only sandbox and can block local service sockets and endpoint probes. Workspace changes may edit the execution directory inside this account's home, plus temporary directories when allowed below. Host service reviews use command network access and a private run directory; their prompts prohibit host changes. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p>
 <details{' open' if defaults['custom_model'] else ''}><summary>Additional options</summary>
 <label>Custom model ID <span class="agent-help">(overrides the model selector when entered)</span><input name="custom_model" maxlength="100" value="{_escape(defaults['custom_model'])}" placeholder="Provider model ID"></label>
 <label>Web search<select name="web_search">{search_options}</select></label>
@@ -648,6 +681,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <p>{_escape(_redact_log_message(run['message']))}</p><p class="agent-help">{timing}{exit_note} · Finished {_time(run['finished_at'])} · {_escape(run['task']['mode'])} · model {_escape(run['task']['model'] or 'configured default')} · effort {_escape(run['task']['effort'] or 'default')} · {_escape(run['task']['timeout_minutes'])} min cap · command network {'on' if run['task']['network'] else 'off'} · temporary writes {'on' if run['task']['temporary_files'] else 'off'} · web search {_escape(run['task']['web_search'])} · Codex history {'kept' if run['task']['session_history'] or run['task']['persistence'] == 'conversation' else 'ephemeral'}</p>
 <p class="agent-help">Task outcome: {_escape(run.get('outcome') or 'Not reported by this older run')} · context {_escape(run['task']['persistence'])} · workspace {_escape(run.get('execution_directory') or run['task']['directory'])}</p>
 <a class="refresh-link" href="/agents?reuse={run['id']}">Reuse run settings</a>
+{_render_follow_up(run)}
 <details><summary>Prompt used for this run</summary><pre>{_escape(run['task']['prompt'])}</pre></details><pre>{_escape(_redact_log_message(run['output'])) if run['output'] else 'Output will appear when the run finishes.' if run['status'] == 'running' else 'No output recorded.'}</pre></details>''')
     diagnostics_html = _render_diagnostics(diagnostics, state.csrf_token)
     t3_html = _render_t3_update(state)
@@ -710,8 +744,21 @@ def _render_receipt(manager: AgentTasks, reference: str) -> str:
 <h3>Verification evidence</h3><pre>{display(json.dumps(run.get('evidence', []), ensure_ascii=False, indent=2))}</pre>
 <h3>Checkpoint from this run</h3><pre>{display(run.get('checkpoint', ''))}</pre>
 <h3>Output</h3><pre>{display(run.get('output', ''))}</pre>
+{_render_follow_up(run)}
 <details><summary>Original task settings</summary><pre>{display(json.dumps(run['task'], ensure_ascii=False, indent=2))}</pre></details>
 <p class="agent-help">Historical evidence does not change task permissions or reactivate removed work.</p></section>'''
+
+
+def _render_follow_up(run: dict[str, Any]) -> str:
+    proposal = run.get("follow_up")
+    if not isinstance(proposal, dict):
+        return ""
+    reference = urllib.parse.urlencode({"follow-up": run["task"]["id"] + "." + run["id"]})
+    return f'''<aside class="agent-panel"><h3>Follow-up requested</h3>
+<p>{_escape(_redact_log_message(str(proposal.get('reason', ''))))}</p>
+<p class="agent-help">Requested access: {_escape(proposal.get('mode'))} · {_escape(proposal.get('workspace'))} · command network {'on' if proposal.get('network') else 'off'} · temporary writes {'on' if proposal.get('temporary_files') else 'off'} · <code>{_escape(proposal.get('directory'))}</code></p>
+<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>
+<p class="agent-help">A proposal only. Review and submit a separate task to authorize its actions.</p></aside>'''
 
 
 def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:

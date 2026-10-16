@@ -35,6 +35,22 @@ account's home; command network access and temporary writes are separate options
 Web search is separate from command network access. Configured hooks and MCP
 servers have their own permissions; the panel does not sandbox them separately.
 
+Host service review templates use Workspace changes, an empty private run
+directory and command network access so local service-manager sockets and
+readiness probes are available. Temporary writes stay disabled. Their prompts
+still prohibit host changes or repairs. Use explicit `agent doctor` capabilities
+for host/tool readiness; `agent manifest` requires a project checkout and should
+not run in the empty scratch directory. Saved inspection tasks keep their
+original settings until deliberately replaced from the refreshed template.
+
+The restricted maintenance example retains Inspect only for local evidence;
+the repair example requires a selected directory and an explicit repair plan,
+and defaults to one attempt. When work needs different access, return a
+`follow_up` proposal in the structured report with exact targets, actions,
+minimum permissions, validation, and rollback. This records a request for the
+operator to review and submit as a separate task; do not activate it yourself.
+It does not approve privileged actions or expand this run's authority.
+
 There is no interactive operator reply or sandbox escalation. If a command,
 socket, credential, cache path, or browser tool is inaccessible, report the
 blocked check and evidence still available. Do not start login, bypass the

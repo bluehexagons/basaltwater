@@ -109,5 +109,15 @@ explicitly authorizes that work. It must not escape an exhausted budget by
 creating another task. For operational tasks, read the enabled
 `basaltwater-agent-operations` skill's unattended-task reference.
 
+When a check or repair needs different access or authorization, return a
+`follow_up` proposal in the runner's structured report rather than creating or
+activating broader work. Include `title`, `reason`, `prompt` (at most 3800 UTF-8
+bytes), absolute `directory`, `mode`, `workspace`, `network`, and
+`temporary_files`. Put evidence, exact actions, verification, and rollback in
+the proposal; request the minimum access needed. Use `null` when unnecessary.
+This records evidence only. The operator's **Review follow-up task** link opens
+a one-attempt task for review and submission. It grants neither current-run
+permissions nor privilege approval, and does not reset the original limits.
+
 Full settings, recovery, worker setup, and future T3 adapter design are in the
 [task guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-tasks.md).
