@@ -25,6 +25,26 @@ from lib.validators import validate_host
 ADMINISTRATIVE_SCOPES = (
     "orchestration:read",
     "orchestration:operate",
+    "settings:write",
+    "providers:manage",
+    "environment:maintain",
+    "preview:operate",
+    "diagnostics:read",
+    "terminal:read",
+    "terminal:operate",
+    "source-control:write",
+    "filesystem:read",
+    "filesystem:write",
+    "relay:read",
+    "access:read",
+    "access:write",
+    "relay:write",
+)
+# Before 0.1.0 these broader scopes included the permissions split out above.
+# review:write is now internal-only and cannot be delegated by a pairing grant.
+LEGACY_ADMINISTRATIVE_SCOPES = (
+    "orchestration:read",
+    "orchestration:operate",
     "terminal:operate",
     "review:write",
     "relay:read",
@@ -126,7 +146,9 @@ def _run_t3(command: list[str], label: str) -> subprocess.CompletedProcess[str]:
     return result
 
 
-def _issue_temporary_session(t3_binary: str, base_dir: str) -> tuple[str, str]:
+def _issue_temporary_session(
+    t3_binary: str, base_dir: str
+) -> tuple[str, str, tuple[str, ...]]:
     result = _run_t3(
         [
             t3_binary,
@@ -149,19 +171,27 @@ def _issue_temporary_session(t3_binary: str, base_dir: str) -> tuple[str, str]:
     session_id = payload.get("sessionId")
     token = payload.get("token")
     scopes = payload.get("scopes")
+    administrative_scopes = None
+    if isinstance(scopes, list) and all(isinstance(scope, str) for scope in scopes):
+        administrative_scopes = next(
+            (
+                required
+                for required in (ADMINISTRATIVE_SCOPES, LEGACY_ADMINISTRATIVE_SCOPES)
+                if set(required).issubset(scopes)
+            ),
+            None,
+        )
     if (
         not isinstance(session_id, str)
         or not session_id
         or not isinstance(token, str)
         or not token
-        or not isinstance(scopes, list)
-        or not all(isinstance(scope, str) for scope in scopes)
-        or not set(ADMINISTRATIVE_SCOPES).issubset(scopes)
+        or administrative_scopes is None
     ):
         if isinstance(session_id, str) and session_id:
             _revoke_session(t3_binary, base_dir, session_id)
         raise RuntimeError("T3 did not issue the required administrative session")
-    return session_id, token
+    return session_id, token, administrative_scopes
 
 
 def _revoke_session(t3_binary: str, base_dir: str, session_id: str) -> bool:
@@ -205,12 +235,13 @@ def _request_pairing_link(
     server_url: str,
     bearer_token: str,
     label: str,
+    scopes: tuple[str, ...],
 ) -> dict[str, object]:
     endpoint = f"{server_url}/api/auth/pairing-token"
     body = json.dumps(
         {
             "label": label,
-            "scopes": list(ADMINISTRATIVE_SCOPES),
+            "scopes": list(scopes),
         }
     ).encode("utf-8")
     request = urllib.request.Request(
@@ -275,10 +306,10 @@ def issue_administrative_pairing(
     public_url = _validated_url(base_url, "public T3 base URL")
     pairing_label = _validated_label(label)
 
-    session_id, token = _issue_temporary_session(t3_binary, base_dir)
+    session_id, token, scopes = _issue_temporary_session(t3_binary, base_dir)
     pairing_id: str | None = None
     try:
-        pairing = _request_pairing_link(local_url, token, pairing_label)
+        pairing = _request_pairing_link(local_url, token, pairing_label, scopes)
         raw_pairing_id = pairing.get("id")
         if isinstance(raw_pairing_id, str) and raw_pairing_id:
             pairing_id = raw_pairing_id
@@ -305,7 +336,7 @@ def issue_administrative_pairing(
     return {
         "expiresAt": expires_at,
         "pairUrl": _pairing_url(public_url, credential),
-        "scopes": list(ADMINISTRATIVE_SCOPES),
+        "scopes": list(scopes),
     }
 
 

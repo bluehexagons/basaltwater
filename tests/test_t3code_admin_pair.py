@@ -40,7 +40,9 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
                 patch.object(
                     t3code_admin_pair,
                     "_issue_temporary_session",
-                    return_value=("session-1", "temporary-secret"),
+                    return_value=(
+                        "session-1", "temporary-secret", t3code_admin_pair.ADMINISTRATIVE_SCOPES
+                    ),
                 ),
                 patch.object(
                     t3code_admin_pair,
@@ -74,6 +76,7 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
             "http://127.0.0.1:3773",
             "temporary-secret",
             "Remote app",
+            t3code_admin_pair.ADMINISTRATIVE_SCOPES,
         )
         revoke_session.assert_called_once_with(t3_binary, base_dir, "session-1")
 
@@ -98,6 +101,7 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
                 "http://127.0.0.1:3773",
                 "temporary-secret",
                 "Remote app",
+                t3code_admin_pair.ADMINISTRATIVE_SCOPES,
             )
 
         request = opener.open.call_args.args[0]
@@ -137,6 +141,54 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
 
         revoke_session.assert_called_once_with("/opt/t3", "/tmp/state", "session-1")
 
+    def test_negotiates_current_and_legacy_administrative_session_grants(self) -> None:
+        current = (
+            "orchestration:read", "orchestration:operate", "settings:write",
+            "providers:manage", "environment:maintain", "preview:operate",
+            "diagnostics:read", "terminal:read", "terminal:operate",
+            "source-control:write", "filesystem:read", "filesystem:write",
+            "relay:read", "access:read", "access:write", "relay:write",
+        )
+        legacy = (
+            "orchestration:read", "orchestration:operate", "terminal:operate",
+            "review:write", "relay:read", "access:read", "access:write", "relay:write",
+        )
+        for scopes in (current, legacy):
+            with self.subTest(scopes=scopes):
+                issued = MagicMock(stdout=json.dumps({
+                    "sessionId": "session-1", "token": "temporary-secret",
+                    "scopes": list(scopes),
+                }))
+                with (
+                    patch.object(t3code_admin_pair, "_run_t3", return_value=issued),
+                    patch.object(t3code_admin_pair, "_revoke_session") as revoke,
+                ):
+                    session, token, delegated = t3code_admin_pair._issue_temporary_session(
+                        "/opt/t3", "/tmp/state"
+                    )
+                self.assertEqual((session, token), ("session-1", "temporary-secret"))
+                self.assertEqual(set(delegated), set(scopes))
+                revoke.assert_not_called()
+
+    def test_rejects_incomplete_or_malformed_granular_grants_and_revokes(self) -> None:
+        for scopes in (
+            [scope for scope in t3code_admin_pair.ADMINISTRATIVE_SCOPES
+             if scope != "environment:maintain"],
+            "orchestration:read",
+            ["access:write", {"invalid": "scope"}],
+        ):
+            with self.subTest(scopes=scopes):
+                issued = MagicMock(stdout=json.dumps({
+                    "sessionId": "session-1", "token": "temporary-secret", "scopes": scopes,
+                }))
+                with (
+                    patch.object(t3code_admin_pair, "_run_t3", return_value=issued),
+                    patch.object(t3code_admin_pair, "_revoke_session", return_value=True) as revoke,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "required administrative"):
+                        t3code_admin_pair._issue_temporary_session("/opt/t3", "/tmp/state")
+                revoke.assert_called_once_with("/opt/t3", "/tmp/state", "session-1")
+
     def test_discards_pairing_link_when_temporary_session_cleanup_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             t3_binary = os.path.join(temporary, "t3")
@@ -149,7 +201,9 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
                 patch.object(
                     t3code_admin_pair,
                     "_issue_temporary_session",
-                    return_value=("session-1", "temporary-secret"),
+                    return_value=(
+                        "session-1", "temporary-secret", t3code_admin_pair.ADMINISTRATIVE_SCOPES
+                    ),
                 ),
                 patch.object(
                     t3code_admin_pair,
@@ -190,7 +244,9 @@ class T3CodeAdministrativePairingTest(unittest.TestCase):
                 patch.object(
                     t3code_admin_pair,
                     "_issue_temporary_session",
-                    return_value=("session-1", "temporary-secret"),
+                    return_value=(
+                        "session-1", "temporary-secret", t3code_admin_pair.ADMINISTRATIVE_SCOPES
+                    ),
                 ),
                 patch.object(
                     t3code_admin_pair,

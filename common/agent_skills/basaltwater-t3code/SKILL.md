@@ -68,10 +68,14 @@ For a deliberate T3 update, prefer the connected client's **Update server**
 action. Read [the update procedure](references/updates.md) before a host-side
 update, launcher migration, or native-module repair. It distinguishes
 standalone archives from older npm runtimes and keeps npm policy scoped.
-See the [thread-migration status](references/thread-migration.md) before
-following migration guidance. The current stable deployment does not include
-the orchestration V2 migration; do not install preview builds or modify T3's
-migration state to work around a compatibility warning.
+Stable `0.1.0` introduces orchestration V2. Read the
+[thread-migration procedure](references/thread-migration.md) before the first
+upgrade: arrange the interruption, preserve a complete private recovery copy,
+and update the client too. A `0.0.45` client cannot use the new orchestration
+protocol. Do not modify migration state or downgrade to resolve a mismatch.
+Setup allows up to 30 minutes for migration readiness, prints progress, and
+avoids restarting a runtime that the updater just started. Inspect the boot
+log before interrupting a slow migration or retrying a failed startup.
 
 ## T3 v0.0.45 workflow features
 

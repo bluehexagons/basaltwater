@@ -8,9 +8,10 @@ connected client's explicit **Update server** action when an update should be
 performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
 stable version required by the stable client, or `latest` when both should
 use the latest stable release. Nightly and preview builds are used only for
-isolated forward-compatibility testing. The
-[thread migration status](thread-migration.md) describes the current stable
-boundary. Then run:
+isolated forward-compatibility testing. Stable `0.1.0` introduces orchestration
+V2: before the first upgrade follow the
+[thread migration procedure](thread-migration.md), arrange the interruption and
+private recovery copy, and update the client as well. Then run:
 
 ```bash
 T3_RELEASE=CLIENT_VERSION
@@ -62,3 +63,11 @@ host npm must not rebuild the archive against a different Node runtime.
 `basaltw agent update` remains an agent-only updater; setup reruns update T3
 and selected Codex, Claude Code, and OpenCode installations as well.
 Do not start a second foreground T3 server on the managed port.
+
+The first V2 startup can spend minutes copying and migrating the database before
+it serves HTTP. Basaltwater waits up to 30 minutes with progress every 30 seconds
+and stops waiting early if systemd reports a failed service. It leaves a newly
+updated service running rather than restarting its migration a second time.
+If an older Basaltwater setup timed out, inspect the boot log and service state
+first; do not assume the migration crashed or delete either database. Update
+Basaltwater and rerun the saved setup command to apply the readiness fix.

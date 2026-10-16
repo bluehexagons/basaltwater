@@ -141,6 +141,17 @@ tokens, pairing URLs, and their QR image before they reach persistent logs.
 One-time pairing commands intentionally return a fresh URL to the authenticated
 caller; do not copy that command output into shared logs or diagnostics.
 
+Stable `0.1.0` splits administrative access into granular permissions and
+reserves `review:write` for internal use. Basaltwater's pairing helper validates
+the temporary CLI session's complete administrative grant and delegates the
+matching permission set, while retaining the older grant for pre-V2 servers.
+Incomplete grants are rejected and their temporary session is revoked. This
+preserves provider management, settings, previews, filesystem access, and server
+updates for newly paired clients. If an existing client reports legacy
+permissions after upgrading, enroll it again through the protected pairing
+entrypoint. See the
+[upstream permission contract](https://github.com/pingdotgg/t3code/blob/v0.1.0/packages/contracts/src/auth.ts).
+
 T3 also records non-fatal provider diagnostics. It can health-check optional
 agent CLIs even when setup deliberately omitted them, so a missing-Claude or
 similar warning is not a failed configured capability; compare it with the
@@ -189,10 +200,11 @@ active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
 set `T3_RELEASE` to the exact stable version required by the stable client. Use
 `latest` only when the client is also on the latest stable release; npm's
-`latest` does not select a newer nightly or preview. The current stable
-deployment does not include the orchestration V2 migration; see
-[the migration status](#orchestration-v2-thread-migration) before following
-any migration guidance.
+`latest` does not select a newer nightly or preview. Stable `0.1.0` introduces
+orchestration V2 and requires a compatible client; a `0.0.45` client cannot
+continue against that server. Read
+[the migration procedure](#orchestration-v2-thread-migration) before the first
+V2 upgrade and arrange the interruption and private recovery copy.
 
 ```bash
 # As the target user, using T3 Code's documented updater:
@@ -258,7 +270,14 @@ selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
 from selecting a missing versioned compiler. Basaltwater validates the native
 module, rebuilds an incomplete npm-backed active runtime, and waits for several
-consecutive healthy service and HTTP checks before setup succeeds. The same
+consecutive healthy service and HTTP checks before setup succeeds. Readiness
+allows up to 30 minutes, matching the upstream launcher's preparation window:
+copying an existing database, migrating it, and optimizing SQLite can take
+minutes. Setup prints progress every 30 seconds and fails promptly if systemd
+reports a failed service. It does not restart a newly updated runtime a second
+time while that runtime may be migrating. A readiness timeout alone does not
+prove a crash; inspect the boot log before retrying or interrupting migration.
+The same
 active-runtime repair is available after setup:
 
 ```bash
@@ -304,12 +323,26 @@ use the normal upstream update path; application data stays under
 
 ### Orchestration V2 thread migration
 
-V2 client/server compatibility and thread migration are not part of the current
-stable deployment guidance. A healthy Basaltwater doctor result does not prove
-client protocol compatibility or complete conversation migration. Do not
-install a preview or migrate a managed service based on earlier nightly
-behavior. See the [current migration status](../../common/agent_skills/basaltwater-t3code/references/thread-migration.md)
-for the boundary and release-specific safeguards.
+Stable T3 `0.1.0` changes the client/server orchestration protocol from 1 to 2.
+Update the desktop/mobile client as well as the server; an old client can
+disconnect even while the server is healthy. This is separate from the
+service-state protocol, which remains 3 and is already supported.
+
+Before the first upgrade, stop the service after active work finishes and copy
+the complete private `~/.t3/userdata` directory, including database sidecars and
+attachments. The first V2 launch copies `state.sqlite` to `statev2.sqlite` and
+migrates the copy. Leave both databases intact. Existing threads import
+automatically; continuing one starts a fresh provider session with a budgeted
+history handoff. The V2 desktop app also uses a separate browser profile, so
+websites may need a fresh sign-in.
+
+A healthy Basaltwater doctor result does not prove client protocol compatibility
+or complete conversation migration. Follow the
+[stable migration procedure](../../common/agent_skills/basaltwater-t3code/references/thread-migration.md)
+and verify representative threads in the updated client. Do not delete state,
+reset pairing, edit migration bookkeeping, or downgrade to resolve a mismatch.
+The [upstream migration contract](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/thread-migration.md)
+describes the retained history and its limitations.
 
 Older basaltwater installations used a root-owned
 `basaltwater-t3code.service` and a separate npm runtime. A subsequent setup

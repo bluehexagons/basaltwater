@@ -115,7 +115,10 @@ _T3_SERVICE_INSTALL_INNER_COMMAND = (
     "-u NPM_CONFIG_DANGEROUSLY_ALLOW_ALL_SCRIPTS "
     "t3 service install"
 )
-_T3_READINESS_ATTEMPTS = 20
+# Match the upstream launcher's preparation window: database imports,
+# migrations and SQLite optimization can take minutes on existing histories.
+_T3_READINESS_TIMEOUT = 30 * 60
+_T3_READINESS_PROGRESS_INTERVAL = 30
 _T3_READINESS_STABLE_CHECKS = 3
 _T3_COMMAND_OUTPUT_EXCERPT_LIMIT = 1200
 
@@ -555,7 +558,11 @@ def _wait_for_t3_service(
     """Require the user service and endpoint to remain ready across checks."""
 
     stable_checks = 0
-    for attempt in range(_T3_READINESS_ATTEMPTS):
+    started = time.monotonic()
+    deadline = started + _T3_READINESS_TIMEOUT
+    next_progress = started + _T3_READINESS_PROGRESS_INTERVAL
+    failure = f"within {_T3_READINESS_TIMEOUT} seconds"
+    while time.monotonic() < deadline:
         service = _user_systemctl(
             username,
             uid,
@@ -569,11 +576,24 @@ def _wait_for_t3_service(
                 return
         else:
             stable_checks = 0
-        if attempt + 1 < _T3_READINESS_ATTEMPTS:
-            time.sleep(1)
+            if service.returncode != 0 and _user_systemctl(
+                username, uid, "is-failed", "--quiet", T3_SERVICE_NAME
+            ).returncode == 0:
+                failure = "because systemd reports a failed service"
+                break
+        now = time.monotonic()
+        if now >= next_progress:
+            print(
+                "  Waiting for T3 Code startup "
+                f"({int(now - started)}s; database migration may take several minutes)",
+                flush=True,
+            )
+            next_progress = now + _T3_READINESS_PROGRESS_INTERVAL
+        if now < deadline:
+            time.sleep(min(1, deadline - now))
     service_log = os.path.join(home, ".t3", "userdata", "logs", "boot-service.log")
     raise RuntimeError(
-        "T3 Code user service did not reach stable readiness; inspect "
+        f"T3 Code user service did not reach stable readiness {failure}; inspect "
         f"{service_log} and 'journalctl --user -u {T3_SERVICE_NAME}.service'"
     )
 
@@ -940,12 +960,16 @@ def _install_t3_service(
         enable = _user_systemctl(username, uid, "enable", T3_SERVICE_NAME)
         if enable.returncode != 0:
             raise RuntimeError("Could not enable the T3 Code user service")
+        # A successful runtime-changing `t3 service install` already reloads
+        # the unit and starts it with our preinstalled drop-in. Restarting it
+        # again here interrupts the first database migration unnecessarily.
+        updater_started_service = (
+            update_needed and not update_failed and binary != previous_binary
+        )
         action = (
             "restart"
-            if drop_in_changed
-            or npm_shim_changed
-            or (update_needed and binary != previous_binary)
-            or native_repaired
+            if native_repaired
+            or ((drop_in_changed or npm_shim_changed) and not updater_started_service)
             else "start"
         )
         service_result = _user_systemctl(username, uid, action, T3_SERVICE_NAME)
