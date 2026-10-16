@@ -96,7 +96,9 @@ exercise real origin, digest, CSRF and replay checks without executing commands.
 Desktop and Console use the production pages, JavaScript, session routes and
 WebSockets with a synthetic colored display. They never connect to guacd, XRDP,
 SSH or a real desktop. Enter any sample password. Both surfaces are available in
-either session. They enable HTTPS automatically to retain production transport
+either session. Use `reject-sample-password` to exercise a failed login and
+reconnect without changing the healthy desktop scenario. They enable HTTPS
+automatically to retain production transport
 checks; import the printed CA into a disposable browser profile as described
 above. They require the reviewed Guacamole `share/all.js`, discovered from the
 installed pinned release, or supplied with `--guacamole-assets /absolute/share/all.js`.
@@ -123,8 +125,11 @@ make browser-test BROWSER_ARGS="--grep 'specialized development connect'"
 The local suite launches each specialized development command and checks real
 form submissions, scenario changes, reset, reload and cleanup. Desktop/console
 checks require the reviewed assets and validate a real WebSocket attachment and
-synthetic canvas in each engine. These results cover Basaltwater's interfaces;
-upstream T3 Connect authorization and real desktop login remain deployment checks.
+synthetic canvas in each engine. They also check keyboard escape from the display
+and mobile input, and password failure recovery followed by a successful desktop
+reconnect.
+These results cover Basaltwater's interfaces; upstream T3 Connect authorization
+and real desktop login remain deployment checks.
 
 Static visual specimens remain available through the
 [brand review workflow](../brand/README.md#reproduction-and-review). The static
@@ -215,7 +220,9 @@ Coverage includes navigation and keyboard focus, native disclosures, panel
 light/dark themes, desktop/narrow layout, enlarged text, meters, actual form
 submissions and redirects, authentication challenges, Secure/HttpOnly/SameSite
 pairing cookies, nonce replay, forged CSRF, approval origin and replay rejection,
-denial and expiry of a previously rendered approval form,
+denial and expiry of a previously rendered approval form, safe status recovery
+after a rejected decision, long approval values at narrow widths, readable Connect
+authorization links and keyboard focus,
 and completed CA downloads checked against the displayed fingerprint. Unexpected
 page errors, console errors, and failed required requests fail the run.
 Aborted document navigations that complete as downloads and canceled optional

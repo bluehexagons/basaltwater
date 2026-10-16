@@ -215,8 +215,8 @@ class Gateway:
 <button id="confirm-logout" type="button">Log out desktop now</button><button id="cancel-logout" type="button">Cancel</button></span></div>
 <p id="status" role="status" aria-live="polite">Disconnected</p>
 <p id="lifetime">Connections last at most one hour and expire after ten minutes without input or a control action.</p>
-<div id="screen" tabindex="0" aria-label="Remote desktop"></div>
-<div id="keyboard-panel" hidden><label>Type to desktop<textarea id="desktop-keyboard" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" disabled></textarea></label>
+<div id="screen" tabindex="0" aria-label="Remote desktop" aria-describedby="input-help"></div>
+<div id="keyboard-panel" hidden><label>Type to desktop<textarea id="desktop-keyboard" aria-describedby="input-help" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" disabled></textarea></label>
 <div class="keyboard-keys" role="group" aria-label="Desktop keys">
 <button type="button" data-modifier="65507" aria-pressed="false" disabled>Ctrl</button><button type="button" data-modifier="65513" aria-pressed="false" disabled>Alt</button>
 <button type="button" data-key="65289" disabled>Tab</button><button type="button" data-key="65307" disabled>Esc</button>
@@ -224,7 +224,8 @@ class Gateway:
 <button type="button" data-key="65361" aria-label="Left arrow" disabled>←</button><button type="button" data-key="65362" aria-label="Up arrow" disabled>↑</button>
 <button type="button" data-key="65364" aria-label="Down arrow" disabled>↓</button><button type="button" data-key="65363" aria-label="Right arrow" disabled>→</button></div></div>
 </div>
-<p>On touch screens, Trackpad moves the pointer relative to your finger; tap to click and use two fingers to scroll.
+<p id="input-help">Press Ctrl + Alt + Shift together to release keyboard input and focus the Keyboard button; then use Tab to move through the page controls.
+On touch screens, Trackpad moves the pointer relative to your finger; tap to click and use two fingers to scroll.
 Direct touch clicks where you tap. Choose a larger display size and Pan display to scroll without clicking the desktop.</p>
 <p>Clipboard, file transfer, audio and recording are disabled. Closing this connection keeps the desktop running.
 Keep administrator sign-ins and privilege approvals on your own device.</p>

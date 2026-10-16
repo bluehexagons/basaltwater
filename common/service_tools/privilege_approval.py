@@ -27,7 +27,7 @@ from lib.privilege_policy import APPROVAL_SOCKET, ID_PATTERN, canonical, load_po
 from common.service_tools.web_panel_templates import render_favicon
 
 STYLE = """
-body{font:17px system-ui,sans-serif;color:#172a3a;background:#eef2f5;margin:0}
+body{font:17px system-ui,sans-serif;color:#172a3a;background:#eef2f5;margin:0;overflow-wrap:anywhere}
 main{max-width:850px;margin:3rem auto;padding:2rem;background:white;border-radius:12px}
 h1{margin-top:0}a{color:#145c93}code,pre{overflow-wrap:anywhere;white-space:pre-wrap}
 dt{font-weight:650;margin-top:1rem}dd{margin:.3rem 0}button{font:inherit;padding:.7rem 1.2rem;
@@ -158,7 +158,9 @@ class ApprovalHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.authorized():
             return
+        request_id = None
         try:
+            request_id = self.request_id()
             if self.headers.get_all("Origin") != [self.server.origin]:
                 raise ValueError("Cross-origin approval rejected")
             if (self.headers.get("Content-Type") != "application/x-www-form-urlencoded"
@@ -170,7 +172,6 @@ class ApprovalHandler(BaseHTTPRequestHandler):
             form = parse_qs(self.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=3)
             if set(form) != {"csrf", "digest", "decision"} or any(len(v) != 1 for v in form.values()):
                 raise ValueError("Invalid form fields")
-            request_id = self.request_id()
             request = self.server.exchange({"action": "status", "id": request_id})
             expected = csrf(self.server.secret, request, self.server.auth["username"])
             if not hmac.compare_digest(form["csrf"][0].encode(), expected.encode()) or form["decision"][0] not in {"approve", "deny"}:
@@ -179,7 +180,10 @@ class ApprovalHandler(BaseHTTPRequestHandler):
                                   "approve": form["decision"][0] == "approve", "actor": self.server.auth["username"]})
             self.respond(303, "", location="/requests/" + request_id)
         except (OSError, ValueError):
-            self.respond(409, page("<p>Approval was not confirmed. Reload the request to check its status before taking further action.</p>"))
+            recovery = (f'<p><a href="/requests/{request_id}">Check request status</a></p>'
+                        if request_id else "")
+            self.respond(409, page("<p>Approval was not confirmed. Check its status before taking further action.</p>"
+                                   + recovery + '<p><a href="/">All requests</a></p>'))
 
 
 class ApprovalServer(HTTPServer):

@@ -122,6 +122,8 @@ input[type=text] { width: min(100%, 32rem); min-height: 2.7rem; margin-top: .45r
 pre { max-height: 20rem; margin: 0; padding: .9rem 1rem; overflow: auto; border-top: 1px solid #e4e7ec;
   background: #101828; color: #e6edf7; font: .9rem/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.output a, .output a:visited { color: #a4caff; text-underline-offset: .15em; }
+.output a:focus-visible { outline: 3px solid #84adff; outline-offset: 2px; }
 .link-box { margin: 1rem 0; padding: .8rem; border: 1px solid #d9e1ec; border-radius: .6rem; background: #f8fafc; }
 .link-box code { display: block; margin-top: .35rem; overflow-wrap: anywhere; }
 .footer-nav { margin-top: 1.25rem; }

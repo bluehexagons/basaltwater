@@ -47,12 +47,13 @@ This shell has the account's normal permissions and does not pause agent tasks.<
 <label>Text size<select id="font-size"><option value="10">Small</option><option value="12" selected>Medium</option><option value="16">Large</option><option value="20">Extra large</option></select></label>
 </div><p id="status" role="status" aria-live="polite">Disconnected</p>
 <p id="lifetime">Sessions end after one hour or ten minutes without input.</p>
-<div id="screen" tabindex="0" aria-label="Remote Unix console"></div>
-<div id="keyboard-panel" hidden><label>Type to console<textarea id="console-keyboard" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" disabled></textarea></label>
+<div id="screen" tabindex="0" aria-label="Remote Unix console" aria-describedby="input-help"></div>
+<div id="keyboard-panel" hidden><label>Type to console<textarea id="console-keyboard" aria-describedby="input-help" rows="1" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" disabled></textarea></label>
 <div class="keyboard-keys" role="group" aria-label="Console keys">
 <button type="button" data-modifier="65507" aria-pressed="false" disabled>Ctrl</button>
 <button type="button" data-modifier="65513" aria-pressed="false" disabled>Alt</button>{keys}</div></div></div>
-<p>Click the console to type. On phones, use Keyboard for text and extra keys; swipe with two fingers to scroll.
+<p id="input-help">Click the console to type. Press Ctrl + Alt + Shift together to release keyboard input and focus the Keyboard button; then use Tab to move through the page controls.
+On phones, use Keyboard for text and extra keys; swipe with two fingers to scroll.
 Text size applies when connecting; the terminal fits the available width.</p>
 <p>Disconnect closes this shell. Use <code>tmux</code> or <code>screen</code> for work that should survive disconnects.
 Clipboard and file transfer are disabled.</p><noscript>JavaScript is required for the browser console.</noscript></section>'''

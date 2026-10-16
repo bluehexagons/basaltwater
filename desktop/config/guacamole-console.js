@@ -170,6 +170,14 @@
             ArrowLeft: 0xFF51, ArrowUp: 0xFF52, ArrowRight: 0xFF53, ArrowDown: 0xFF54}[event.key];
         if (key && !event.isComposing) { event.preventDefault(); tap(key); }
     });
+    for (const target of [screen, text]) target.addEventListener("keydown", event => {
+        if (!connected || busy || !event.ctrlKey || !event.altKey || !event.shiftKey) return;
+        // Capture before Guacamole consumes Tab and other remote keys.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        releaseKeys();
+        byId("keyboard-toggle").focus();
+    }, {capture: true});
     for (const button of buttons) {
         button.addEventListener("pointerdown", event => event.preventDefault());
         button.addEventListener("click", () => {

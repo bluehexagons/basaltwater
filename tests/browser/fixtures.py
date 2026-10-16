@@ -82,6 +82,12 @@ class SyntheticBroker:
                 "plan": {"machine": "c" * 32, "uid": 1000, "operation": "fixture-only",
                          "argv": ["fixture-no-executor"], "parameters": {}, "effect": "Record a synthetic decision only"},
             }
+            if digit in "12":
+                # A single long argument is valid command input. Reviewers must
+                # still be able to read it on a phone without sideways scrolling.
+                self.records[identifier]["plan"]["argv"].append("x" * 512)
+                self.records[identifier]["plan"]["parameters"] = {"argument": "x" * 512}
+                self.records[identifier]["reason"] += " " + "y" * 512
 
     def __call__(self, message: dict) -> dict:
         with self.lock:

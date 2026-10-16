@@ -170,7 +170,7 @@ class SyntheticDesktop:
     async def login(self, session):
         from common.service_tools.guacamole_protocol import instruction
 
-        if self.scenario == "degraded":
+        if self.scenario == "degraded" or session.password == "reject-sample-password":
             session.password = ""
             raise OSError("Synthetic login unavailable")
 

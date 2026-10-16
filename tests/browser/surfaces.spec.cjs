@@ -287,7 +287,11 @@ test('approval denial and expiry reject subsequent decisions', async ({ page, br
     }
     diagnostics.allowed.add(url);
     expect((await postForm(page, url, { csrf, digest, decision: 'approve' })).status).toBe(409);
-    await page.goto(url);
+    const recovery = page.getByRole('link', { name: 'Check request status', exact: true });
+    await expect(recovery).toHaveAttribute('href', '/requests/' + identifier);
+    const checked = page.waitForResponse(response => response.url() === url && response.request().method() === 'GET');
+    await recovery.click();
+    expect((await checked).status()).toBe(200);
     await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toHaveCount(0);
     await expect(page.locator('dd').filter({ hasText: new RegExp(`^${decision === 'deny' ? 'denied' : 'expired'}$`) })).toBeVisible();
   }
@@ -312,7 +316,10 @@ test('pairing and approval narrow layout with enlarged text', async ({ page, bro
     await page.setViewportSize({ width: 390, height: 900 });
     await page.addStyleTag({ content: 'html { font-size: 200%; }' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), url).toBe(true);
-    if (url.startsWith(urls.approval)) await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
+    if (url.startsWith(urls.approval)) {
+      await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
+      await expect(page.locator('dd').filter({ hasText: 'x'.repeat(512) }).first()).toBeVisible();
+    }
   }
 });
 
@@ -381,6 +388,9 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
       const response = await page.goto(settings.url + route);
       expect(response.status(), route).toBe(200);
       await expect(page.locator('#panel-development')).toBeVisible();
+      await page.setViewportSize({ width: 320, height: 900 });
+      await page.addStyleTag({ content: 'html { font-size: 200%; }' });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), route).toBe(true);
     }
     await page.setViewportSize({ width: 390, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
@@ -470,6 +480,26 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         await expect(page.getByLabel('Start Connect automatically')).not.toBeChecked();
         await page.getByRole('button', { name: 'Start authorization' }).click();
         await expect(page.getByText('Authorization in progress', { exact: true })).toBeVisible();
+        const authorizationLink = page.locator('.output pre a');
+        await expect(authorizationLink).toHaveAttribute('href', dev.url + '/__dev__/authorize');
+        const contrast = await authorizationLink.evaluate(link => {
+          const luminance = color => {
+            const values = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+              const channel = value / 255;
+              return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+            });
+            return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+          };
+          const foreground = luminance(getComputedStyle(link).color);
+          const background = luminance(getComputedStyle(link.closest('pre')).backgroundColor);
+          return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        });
+        expect(contrast, 'Authorization URL has readable contrast').toBeGreaterThanOrEqual(4.5);
+        await authorizationLink.focus();
+        await page.keyboard.press('Tab');
+        await page.keyboard.press('Shift+Tab');
+        await expect(authorizationLink).toBeFocused();
+        expect(await authorizationLink.evaluate(link => getComputedStyle(link).outlineWidth)).toBe('3px');
         await page.getByLabel('Response or authorization code').fill('unsaved-sample');
         await dev.restart(() => fs.writeFileSync(dev.watched, 'authorization in progress'));
         await expect(page.locator('#panel-reload')).toBeVisible();
@@ -500,9 +530,18 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         await expect.poll(() => toolbar.getAttribute('data-generation')).toBe(dev.generation());
         await expect(page.locator('dd').filter({ hasText: /^approved$/ })).toBeVisible();
       } else {
+        const sent = [];
+        page.on('websocket', socket => socket.on('framesent', frame => sent.push(String(frame.payload))));
         if (surface === 'desktop') {
           await page.getByRole('button', { name: 'Check desktop status' }).click();
           await expect(page.locator('#desktop-status')).toContainText('running');
+          diagnostics.expectedConsole.push(dev.url.replace(/^http/, 'ws') + '/desktop/ws?attachment=');
+          await page.getByLabel('Unix account password').fill('reject-sample-password');
+          await page.getByRole('button', { name: 'Connect to desktop', exact: true }).click();
+          await expect(page.locator('#status')).toContainText('Unix password');
+          await expect(page.locator('#password')).toBeEnabled();
+          await expect(page.locator('#password')).toHaveValue('');
+          await expect(page.getByRole('button', { name: 'Connect to desktop', exact: true })).toBeEnabled();
         }
         await page.getByLabel('Unix account password').fill('synthetic-no-login');
         await page.getByRole('button', { name: `Connect to ${surface}`, exact: true }).click();
@@ -513,6 +552,25 @@ for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) 
         if (surface === 'desktop') {
           await page.getByRole('button', { name: 'Take control', exact: true }).click();
           await expect(page.getByRole('button', { name: 'You have control' })).toHaveAttribute('aria-pressed', 'true');
+        }
+        for (const id of ['screen', `${surface}-keyboard`]) {
+          const target = page.locator('#' + id);
+          if (id !== 'screen')
+            await page.getByRole('button', { name: 'Keyboard', exact: true }).click();
+          await target.focus();
+          await page.keyboard.press('Tab');
+          await expect(target).toBeFocused(); // Tab still reaches the remote application.
+          if (id === 'screen') await page.keyboard.down('a');
+          await page.keyboard.press('Control+Alt+Shift');
+          await expect(page.getByRole('button', { name: 'Keyboard', exact: true })).toBeFocused();
+          if (id === 'screen') {
+            await expect.poll(() => sent.join('').includes('3.key,2.97,1.0;')).toBe(true);
+            await page.keyboard.up('a');
+          }
+          await page.keyboard.press('Tab');
+          await expect(page.getByRole('button', { name: 'Keyboard', exact: true })).not.toBeFocused();
+        }
+        if (surface === 'desktop') {
           await page.getByRole('button', { name: 'Observe only', exact: true }).click();
         }
         await page.getByRole('button', { name: surface === 'desktop' ? 'Disconnect browser session' : 'Disconnect', exact: true }).click();

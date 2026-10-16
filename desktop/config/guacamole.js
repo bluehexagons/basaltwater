@@ -190,7 +190,7 @@
             client.getDisplay().onresize = scale;
             client.onerror = tunnel.onerror = () => {
                 if (client !== current) return;
-                connectionError = "Desktop stream failed. Reconnect after checking desktop readiness.";
+                connectionError = "Desktop connection failed. Check the Unix password and desktop readiness, then reconnect.";
                 status.textContent = connectionError;
             };
             tunnel.onstatechange = state => {
@@ -341,6 +341,14 @@
             ArrowLeft: 0xFF51, ArrowUp: 0xFF52, ArrowRight: 0xFF53, ArrowDown: 0xFF54}[event.key];
         if (key && !event.isComposing) { event.preventDefault(); tapKey(key); }
     });
+    for (const target of [screen, textInput]) target.addEventListener("keydown", event => {
+        if (!connected || busy || !event.ctrlKey || !event.altKey || !event.shiftKey) return;
+        // Capture before Guacamole consumes Tab and other remote keys.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        releaseKeys();
+        byId("keyboard-toggle").focus();
+    }, {capture: true});
     for (const button of inputButtons) {
         // Keep the phone keyboard open when using the extra keys.
         button.addEventListener("pointerdown", event => event.preventDefault());

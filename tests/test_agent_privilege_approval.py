@@ -114,6 +114,24 @@ class ApprovalTests(unittest.TestCase):
         self.assertEqual(self.post(form)[0], 409)
         self.assertEqual(self.broker.status(other["id"])["state"], "pending")
 
+    def test_unconfirmed_decision_links_to_status_without_replaying(self):
+        form = self.form()
+        self.assertEqual(self.post(form)[0], 303)
+        status, _, content = self.post(form)
+        self.assertEqual(status, 409)
+        self.assertIn(f'<a href="{self.path}">Check request status</a>', content)
+        self.assertIn('<a href="/">All requests</a>', content)
+        self.assertIn("approved", self.call()[2])
+        self.runner.assert_not_called()
+
+    def test_invalid_request_path_has_only_safe_recovery_link(self):
+        status, _, content = self.call("POST", path='//evil.example/<script>', body="", headers={
+            "Origin": self.origin, "Content-Type": "application/x-www-form-urlencoded"})
+        self.assertEqual(status, 409)
+        self.assertNotIn("Check request status", content)
+        self.assertEqual(re.findall(r'href="([^"]+)"', content), ["/favicon.svg", "/"])
+        self.runner.assert_not_called()
+
     def test_denial_and_queue(self):
         self.assertIn(self.request["id"], self.call(path="/")[2])
         self.assertEqual(self.post(self.form("deny"))[0], 303)

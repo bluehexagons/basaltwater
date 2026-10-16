@@ -70,6 +70,11 @@ the browser, observing or disconnecting releases held modifiers. The text field
 supports Unicode and input composition. Fullscreen support depends on the
 browser; rotation and zoom controls remain available when it is unsupported.
 
+In both Desktop and Console, press **Ctrl + Alt + Shift** together to release
+held keys and move focus from the remote display or text field to **Keyboard**.
+Then use Tab or Shift+Tab to navigate the page controls. Without this shortcut,
+Tab and Escape continue to reach the remote application.
+
 **Console** in the sidebar, or **Open browser console** under Desktop's
 **Command line access (SSH)**, opens an embedded Guacamole SSH terminal.
 Enter the Unix account password and select **Connect to console**. Opening the
