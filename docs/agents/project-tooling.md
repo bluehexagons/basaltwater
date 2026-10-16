@@ -277,8 +277,9 @@ scripts, changes the shell PATH or modifies NVM's default alias.
 
 `basaltw agent doctor --capability development` inventories the managed tools
 independently of the current checkout. Node/package-manager version probes run
-in a private temporary directory using the selected installation's interpreter;
-Corepack network downloads are disabled. A project's npm-only policy therefore
+from `/` using the selected installation's interpreter, without creating temporary
+files. Corepack project selection, auto-pinning, latest-version lookup and network
+downloads are disabled. A project's npm-only policy therefore
 does not make an installed pnpm appear missing. A broken selected installation
 still needs repair through saved setup or an explicit per-version install.
 

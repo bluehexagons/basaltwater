@@ -1449,13 +1449,13 @@ def _maintenance_status() -> JSONDict:
         )
         if (
             service_name in _AGENT_HOST_OPTIONAL_MAINTENANCE_UNITS
-            and timer.get("LoadState") != "loaded"
-            and service.get("LoadState") != "loaded"
+            and timer.get("LoadState") == "not-found"
+            and service.get("LoadState") == "not-found"
         ):
             continue
-        loaded = timer.get("LoadState") == "loaded"
-        enabled = timer.get("UnitFileState") in {"enabled", "enabled-runtime"}
-        active = timer.get("ActiveState") == "active"
+        loaded = timer.get("LoadState") == "loaded" if timer else None
+        enabled = timer.get("UnitFileState") in {"enabled", "enabled-runtime"} if timer else None
+        active = timer.get("ActiveState") == "active" if timer else None
         result = service.get("Result")
         units[service_name] = {
             "loaded": loaded,
@@ -1467,9 +1467,11 @@ def _maintenance_status() -> JSONDict:
             ),
             "next_run": format_timer_next_trigger(timer) if loaded else None,
         }
+        if not timer or not service:
+            warnings.append(f"{service_name} maintenance state could not be inspected; service-manager access may be unavailable")
         if result == "failed" or service.get("ActiveState") == "failed":
             errors.append(f"{service_name} maintenance last failed")
-        elif not loaded or not enabled or not active:
+        elif timer and (not loaded or not enabled or not active):
             warnings.append(f"{timer_name} is not enabled and active")
     return {
         "units": units,
@@ -1826,20 +1828,22 @@ def _inspect_node_development(home: str) -> JSONDict:
     environment = os.environ.copy()
     environment["PATH"] = os.pathsep.join((node_bin or "", environment.get("PATH", "")))
     environment["COREPACK_ENABLE_NETWORK"] = "0"
+    environment["COREPACK_ENABLE_PROJECT_SPEC"] = "0"
+    environment["COREPACK_ENABLE_AUTO_PIN"] = "0"
+    environment["COREPACK_DEFAULT_TO_LATEST"] = "0"
     # Corepack honors packageManager/devEngines in ancestor package.json files.
     # Inspect the installed tools outside the invoking project, using their own
-    # Node interpreter, without letting a version probe download a manager.
-    with tempfile.TemporaryDirectory(prefix="basaltwater-node-probe-", dir="/tmp") as probe:
-        def version(path: str) -> Optional[str]:
-            return (
-                _command_version(path, environment=environment, cwd=probe)
-                if path and os.path.isfile(path) else None
-            )
+    # Node interpreter, without downloads, project writes or temporary files.
+    def version(path: str) -> Optional[str]:
+        return (
+            _command_version(path, environment=environment, cwd="/")
+            if path and os.path.isfile(path) else None
+        )
 
-        node_version = version(node_path)
-        npm_version = version(npm_path)
-        pnpm_version = version(pnpm_path)
-        corepack_version = version(corepack_path)
+    node_version = version(node_path)
+    npm_version = version(npm_path)
+    pnpm_version = version(pnpm_path)
+    corepack_version = version(corepack_path)
     if node_version is None:
         issues.append("node_default_missing")
     if npm_version is None:

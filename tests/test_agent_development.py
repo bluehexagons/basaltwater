@@ -69,6 +69,10 @@ class AgentDevelopmentReadinessTests(unittest.TestCase):
                 ):
                     return subprocess.CompletedProcess(command, 1, "", "Wrong Node interpreter")
                 self.assertTrue(directory.is_dir())
+                self.assertEqual(environment["COREPACK_ENABLE_NETWORK"], "0")
+                self.assertEqual(environment["COREPACK_ENABLE_PROJECT_SPEC"], "0")
+                self.assertEqual(environment["COREPACK_ENABLE_AUTO_PIN"], "0")
+                self.assertEqual(environment["COREPACK_DEFAULT_TO_LATEST"], "0")
                 probe_directories.add(str(directory))
                 return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name] + "\n", "")
 
@@ -76,14 +80,14 @@ class AgentDevelopmentReadinessTests(unittest.TestCase):
                 patch.object(agent_cli, "_nvm_node_bin", return_value=str(node_bin)),
                 patch.dict(os.environ, {"PATH": "/other-node/bin:/usr/bin"}),
                 patch.object(agent_cli.subprocess, "run", side_effect=run) as process,
+                patch.object(agent_cli.tempfile, "TemporaryDirectory", side_effect=PermissionError("read-only filesystem")),
             ):
                 result = agent_cli._inspect_node_development(str(home))
 
             self.assertTrue(result["healthy"])
             self.assertEqual(result["pnpm"], "12.6.0")
             self.assertEqual(process.call_count, 4)
-            self.assertEqual(len(probe_directories), 1)
-            self.assertTrue(all(not Path(directory).exists() for directory in probe_directories))
+            self.assertEqual(probe_directories, {"/"})
 
     def test_development_readiness_ignores_absent_optional_toolchains(self) -> None:
         healthy_node = {

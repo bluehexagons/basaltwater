@@ -228,6 +228,39 @@ class TestAgentHostReadiness(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["warnings"], [])
 
+    def test_unavailable_systemd_does_not_report_disabled_or_absent_timers(self) -> None:
+        with patch("lib.agent_cli._systemd_properties", return_value={}):
+            result = _maintenance_status()
+
+        self.assertEqual(result["errors"], [])
+        self.assertIn("auto-update-node", result["units"])
+        self.assertIn("auto-update-godot", result["units"])
+        self.assertEqual(len(result["warnings"]), len(result["units"]))
+        for unit in result["units"].values():
+            for name in ("loaded", "enabled", "active", "last_result", "last_exit_status", "next_run"):
+                self.assertIsNone(unit[name])
+        self.assertTrue(all("could not be inspected" in warning for warning in result["warnings"]))
+
+    def test_partial_systemd_evidence_preserves_observed_failures(self) -> None:
+        for unavailable in (".timer", ".service"):
+            with self.subTest(unavailable=unavailable):
+                def properties(unit: str, _properties: tuple[str, ...]) -> dict[str, str]:
+                    if unit.endswith(unavailable):
+                        return {}
+                    if unit.endswith(".timer"):
+                        return {"LoadState": "loaded", "ActiveState": "inactive", "UnitFileState": "disabled"}
+                    return {"LoadState": "loaded", "ActiveState": "failed", "Result": "exit-code", "ExecMainStatus": "1"}
+
+                with patch("lib.agent_cli._systemd_properties", side_effect=properties):
+                    result = _maintenance_status()
+                self.assertIn("security-monitor maintenance state could not be inspected; service-manager access may be unavailable", result["warnings"])
+                if unavailable == ".timer":
+                    self.assertIn("security-monitor maintenance last failed", result["errors"])
+                    self.assertIsNone(result["units"]["security-monitor"]["enabled"])
+                else:
+                    self.assertIn("security-monitor.timer is not enabled and active", result["warnings"])
+                    self.assertFalse(result["units"]["security-monitor"]["enabled"])
+
     def test_read_meminfo_converts_kibibytes_to_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = os.path.join(temp_dir, "meminfo")
