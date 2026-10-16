@@ -239,6 +239,11 @@ class TestCertificateDownloadTrust(unittest.TestCase):
         self.assertIn("http://[fd00::1]:8442/basaltwater-ca.crt", rendered)
 
     def _run_installer(self, directory, script, payload, *, download_exit=0, install_exit=0):
+        # CachyOS keeps shasum in /usr/bin/core_perl, outside the fixture PATH.
+        # Expose the real checksum tool without inheriting other user commands.
+        shasum = shutil.which("shasum")
+        if shasum:
+            os.symlink(shasum, os.path.join(directory, "shasum"))
         for name, body in (
             ("curl", '''printf '%s\\n' "$@" > curl-args
 while [ "$1" != --output ]; do shift; done
