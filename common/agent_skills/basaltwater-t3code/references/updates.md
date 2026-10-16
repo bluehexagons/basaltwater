@@ -55,8 +55,12 @@ through unchanged.
 
 If an older npm-backed update rolled back with a native-module load error,
 rerun the VM's Basaltwater setup. It repairs the retained candidate without
-stopping the working active version; then retry **Update server**. The doctor
-repairs and verifies npm-backed active runtimes. Standalone archives are checked
+stopping the working active version; then retry **Update server**.
+If a retained candidate cannot be repaired, setup warns and continues with the
+upstream updater and active-runtime checks instead of letting an obsolete
+candidate block the current release. Validation of the active runtime and
+service remains required. The doctor repairs and verifies npm-backed active
+runtimes. Standalone archives are checked
 with their embedded Node, without requiring host Node for the probe. If that
 check fails, restore the matching upstream release archive and rerun setup;
 host npm must not rebuild the archive against a different Node runtime.
@@ -67,7 +71,9 @@ Do not start a second foreground T3 server on the managed port.
 The first V2 startup can spend minutes copying and migrating the database before
 it serves HTTP. Basaltwater waits up to 30 minutes with progress every 30 seconds
 and stops waiting early if systemd reports a failed service. It leaves a newly
-updated service running rather than restarting its migration a second time.
+updated service running rather than restarting its migration a second time,
+including same-version launcher repairs. Readiness requires HTTP 200 and three
+checks from the same systemd service invocation; a restart resets the count.
 If an older Basaltwater setup timed out, inspect the boot log and service state
 first; do not assume the migration crashed or delete either database. Update
 Basaltwater and rerun the saved setup command to apply the readiness fix.

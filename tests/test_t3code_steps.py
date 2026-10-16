@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from common.t3code_steps import (
     _active_t3_binary,
@@ -20,6 +20,8 @@ from common.t3code_steps import (
     _install_t3_service,
     _rebuild_t3_native_runtime,
     _temporary_t3_loginctl_shim,
+    _t3_local_endpoint_reachable,
+    _t3_service_invocation,
     _wait_for_t3_service,
     _write_passthrough_wrapper,
     install_t3code_web,
@@ -609,6 +611,66 @@ class T3CodeWebTest(unittest.TestCase):
             )
             self.assertIn(f'exec {real_loginctl} "$@"', content)
 
+    def test_same_version_refresh_restarts_only_when_updater_did_not(self) -> None:
+        for updater_restarts in (True, False):
+            with (
+                self.subTest(updater_restarts=updater_restarts),
+                tempfile.TemporaryDirectory() as home,
+            ):
+                workspace = os.path.join(home, "repos")
+                os.makedirs(workspace)
+                node_bin = self._write_node_tools(home)
+                binary = self._write_upstream_native_runtime(
+                    home, "0.1.0", protocol=3
+                )
+                invocation = ["a" * 32]
+                completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                def update(*_args, **_kwargs):
+                    if updater_restarts:
+                        invocation[0] = "b" * 32
+                    return completed
+
+                def systemctl(_username, _uid, action, *_args):
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=invocation[0] if action == "show" else "",
+                        stderr="",
+                    )
+
+                with (
+                    patch("common.t3code_steps.install_package", return_value=True),
+                    patch("common.t3code_steps._ensure_user_manager"),
+                    patch(
+                        "common.t3code_steps._node_bin_directory", return_value=node_bin
+                    ),
+                    patch("common.t3code_steps.shutil.which", return_value="/bin/true"),
+                    patch("common.t3code_steps._run_as_login_user", side_effect=update),
+                    patch(
+                        "common.t3code_steps._t3_native_runtime_healthy", return_value=True
+                    ),
+                    patch("common.t3code_steps._wait_for_t3_service"),
+                    patch(
+                        "common.t3code_steps._user_systemctl", side_effect=systemctl
+                    ) as manager,
+                    patch("common.t3code_steps.os.chown"),
+                    patch(
+                        "common.t3code_steps.LEGACY_T3_SERVICE_FILE",
+                        os.path.join(home, "legacy"),
+                    ),
+                ):
+                    self.assertEqual(
+                        _install_t3_service(
+                            home, "agent", os.getuid(), os.getgid(), workspace,
+                            "127.0.0.1", 3773, refresh=True,
+                        ),
+                        binary,
+                    )
+
+                actions = [call.args[2] for call in manager.call_args_list]
+                self.assertIn("start" if updater_restarts else "restart", actions)
+                self.assertEqual("restart" in actions, not updater_restarts)
+
     def test_refresh_retains_valid_runtime_when_updater_fails(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             workspace = os.path.join(home, "repos")
@@ -980,6 +1042,75 @@ class T3CodeWebTest(unittest.TestCase):
                 )
             )
 
+    def test_failed_retained_candidate_repair_does_not_block_managed_runtime(self) -> None:
+        for update_succeeds in (True, False):
+            with (
+                self.subTest(update_succeeds=update_succeeds),
+                tempfile.TemporaryDirectory() as home,
+            ):
+                workspace = os.path.join(home, "repos")
+                os.makedirs(workspace)
+                node_bin = self._write_node_tools(home)
+                active_binary = self._write_upstream_native_runtime(
+                    home, "0.0.45", protocol=3
+                )
+                candidate_binary = os.path.join(home, "retained", "t3")
+                completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                def update(*_args, **_kwargs):
+                    if update_succeeds:
+                        self._write_upstream_native_runtime(home, "0.1.0", protocol=3)
+                        return completed
+                    return SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+
+                with (
+                    patch("common.t3code_steps.install_package", return_value=True),
+                    patch("common.t3code_steps._ensure_user_manager"),
+                    patch(
+                        "common.t3code_steps._node_bin_directory", return_value=node_bin
+                    ),
+                    patch("common.t3code_steps.shutil.which", return_value="/bin/true"),
+                    patch(
+                        "common.t3code_steps._run_as_login_user", side_effect=update
+                    ) as updater,
+                    patch(
+                        "common.t3code_steps._retained_failed_t3_binary",
+                        return_value=("0.0.46", candidate_binary),
+                    ),
+                    patch(
+                        "common.t3code_steps._t3_native_runtime_healthy",
+                        side_effect=lambda _user, _home, _node, binary: binary != candidate_binary,
+                    ),
+                    patch(
+                        "common.t3code_steps._rebuild_t3_native_runtime",
+                        side_effect=RuntimeError("cannot repair this candidate"),
+                    ) as repair,
+                    patch("common.t3code_steps._wait_for_t3_service") as readiness,
+                    patch("common.t3code_steps._user_systemctl", return_value=completed),
+                    patch("common.t3code_steps.os.chown"),
+                    patch("builtins.print") as messages,
+                    patch(
+                        "common.t3code_steps.LEGACY_T3_SERVICE_FILE",
+                        os.path.join(home, "legacy"),
+                    ),
+                ):
+                    result = _install_t3_service(
+                        home, "agent", os.getuid(), os.getgid(), workspace,
+                        "127.0.0.1", 3773, refresh=True,
+                    )
+
+                self.assertEqual(result, _active_t3_binary(home))
+                self.assertEqual(result == active_binary, not update_succeeds)
+                updater.assert_called_once()
+                repair.assert_called_once_with("agent", home, node_bin, candidate_binary)
+                readiness.assert_called_once()
+                self.assertTrue(
+                    any(
+                        "Could not repair retained" in call.args[0]
+                        for call in messages.call_args_list
+                    )
+                )
+
     def test_native_rebuild_uses_scoped_npm_script_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as home:
             binary = self._write_upstream_runtime(home)
@@ -1031,8 +1162,38 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn("--foreground-scripts --prefix", command)
             self.assertIn("node-pty msgpackr-extract", command)
 
+    def test_endpoint_readiness_rejects_http_errors(self) -> None:
+        from urllib.error import HTTPError
+
+        for status in (200, 401, 404, 503):
+            with self.subTest(status=status):
+                response = MagicMock()
+                response.__enter__.return_value.status = status
+                error = HTTPError("http://127.0.0.1:3773/", status, "error", {}, None)
+                with patch(
+                    "common.t3code_steps.open_loopback",
+                    return_value=response,
+                    side_effect=error if status >= 400 else None,
+                ):
+                    self.assertEqual(
+                        _t3_local_endpoint_reachable("0.0.0.0", 3773), status == 200
+                    )
+
+    def test_service_invocation_requires_a_valid_systemd_id(self) -> None:
+        for code, output, expected in (
+            (0, "A" * 32 + "\n", "a" * 32),
+            (0, "", None),
+            (0, "unexpected output", None),
+            (1, "a" * 32, None),
+        ):
+            with self.subTest(code=code, output=output), patch(
+                "common.t3code_steps._user_systemctl",
+                return_value=SimpleNamespace(returncode=code, stdout=output),
+            ):
+                self.assertEqual(_t3_service_invocation("agent", 1000), expected)
+
     def test_readiness_requires_three_consecutive_healthy_checks(self) -> None:
-        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        completed = SimpleNamespace(returncode=0, stdout="a" * 32, stderr="")
         with (
             patch("common.t3code_steps._user_systemctl", return_value=completed),
             patch(
@@ -1045,8 +1206,42 @@ class T3CodeWebTest(unittest.TestCase):
 
         self.assertEqual(endpoint.call_count, 5)
 
-    def test_readiness_allows_slow_database_migration_without_restarting(self) -> None:
+    def test_readiness_does_not_count_checks_across_service_restarts(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with (
+            patch("common.t3code_steps._user_systemctl", return_value=completed),
+            patch(
+                "common.t3code_steps._t3_local_endpoint_reachable", return_value=True
+            ) as endpoint,
+            patch(
+                "common.t3code_steps._t3_service_invocation",
+                side_effect=["a" * 32, "b" * 32, "b" * 32, "b" * 32],
+            ),
+            patch("common.t3code_steps.time.sleep"),
+        ):
+            _wait_for_t3_service("agent", 1000, "127.0.0.1", 3773, "/home/agent")
+
+        self.assertEqual(endpoint.call_count, 4)
+
+    def test_readiness_waits_until_service_identity_can_be_verified(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with (
+            patch("common.t3code_steps._user_systemctl", return_value=completed),
+            patch(
+                "common.t3code_steps._t3_local_endpoint_reachable", return_value=True
+            ) as endpoint,
+            patch(
+                "common.t3code_steps._t3_service_invocation",
+                side_effect=[None, None, "a" * 32, "a" * 32, "a" * 32],
+            ),
+            patch("common.t3code_steps.time.sleep"),
+        ):
+            _wait_for_t3_service("agent", 1000, "127.0.0.1", 3773, "/home/agent")
+
+        self.assertEqual(endpoint.call_count, 5)
+
+    def test_readiness_allows_slow_database_migration_without_restarting(self) -> None:
+        completed = SimpleNamespace(returncode=0, stdout="a" * 32, stderr="")
         elapsed = [0.0]
 
         def sleep(seconds):
@@ -1066,7 +1261,9 @@ class T3CodeWebTest(unittest.TestCase):
 
         self.assertEqual(elapsed[0], 92)
         self.assertEqual(progress.call_count, 3)
-        self.assertTrue(all(call.args[2] == "is-active" for call in service.call_args_list))
+        self.assertTrue(
+            all(call.args[2] in {"is-active", "show"} for call in service.call_args_list)
+        )
 
     def test_readiness_fails_promptly_when_systemd_exhausts_restarts(self) -> None:
         completed = SimpleNamespace(returncode=0, stdout="", stderr="")

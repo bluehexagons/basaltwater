@@ -541,9 +541,7 @@ def _t3_local_endpoint_reachable(host: str, port: int) -> bool:
             f"http://{_url_host(local_host)}:{port}/",
             timeout=2,
         ) as response:
-            return response.status < 500
-    except urllib.error.HTTPError as exc:
-        return exc.code < 500
+            return response.status == 200
     except (OSError, urllib.error.URLError, TimeoutError, ValueError):
         return False
 
@@ -558,6 +556,7 @@ def _wait_for_t3_service(
     """Require the user service and endpoint to remain ready across checks."""
 
     stable_checks = 0
+    stable_invocation = None
     started = time.monotonic()
     deadline = started + _T3_READINESS_TIMEOUT
     next_progress = started + _T3_READINESS_PROGRESS_INTERVAL
@@ -571,9 +570,16 @@ def _wait_for_t3_service(
             T3_SERVICE_NAME,
         )
         if service.returncode == 0 and _t3_local_endpoint_reachable(host, port):
-            stable_checks += 1
-            if stable_checks >= _T3_READINESS_STABLE_CHECKS:
-                return
+            invocation = _t3_service_invocation(username, uid)
+            if invocation is None:
+                stable_checks = 0
+            else:
+                stable_checks = (
+                    stable_checks + 1 if invocation == stable_invocation else 1
+                )
+                stable_invocation = invocation
+                if stable_checks >= _T3_READINESS_STABLE_CHECKS:
+                    return
         else:
             stable_checks = 0
             if service.returncode != 0 and _user_systemctl(
@@ -628,6 +634,18 @@ def _ensure_user_manager(username: str, uid: int) -> None:
     if manager.returncode != 0:
         detail = (manager.stderr or manager.stdout or "").strip()
         raise RuntimeError(f"Could not start the T3 Code user manager: {detail}")
+
+
+def _t3_service_invocation(username: str, uid: int) -> str | None:
+    """Identify one service start, independently of the selected runtime version."""
+
+    result = _user_systemctl(
+        username, uid, "show", "--property=InvocationID", "--value", T3_SERVICE_NAME
+    )
+    invocation = (result.stdout or "").strip()
+    if result.returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{32}", invocation):
+        return invocation.lower()
+    return None
 
 
 def _remove_legacy_shell_path(home: str, uid: int, gid: int) -> bool:
@@ -863,6 +881,11 @@ def _install_t3_service(
     service_was_present = os.path.isfile(service_file)
     update_needed = refresh or binary is None or not os.path.isfile(service_file)
     update_failed = False
+    previous_invocation = (
+        _t3_service_invocation(username, uid)
+        if update_needed and service_was_present
+        else None
+    )
 
     legacy_present = os.path.lexists(LEGACY_T3_SERVICE_FILE)
     if legacy_present and (
@@ -889,16 +912,26 @@ def _install_t3_service(
                 node_bin,
                 candidate_binary,
             ):
-                _rebuild_t3_native_runtime(
-                    username,
-                    home,
-                    node_bin,
-                    candidate_binary,
-                )
-                print(
-                    "  ✓ Repaired retained T3 Code "
-                    f"v{candidate_version} update candidate"
-                )
+                try:
+                    _rebuild_t3_native_runtime(
+                        username,
+                        home,
+                        node_bin,
+                        candidate_binary,
+                    )
+                except RuntimeError:
+                    # A superseded candidate must not prevent a newer update
+                    # or validation of the working active runtime below.
+                    print(
+                        "  ⚠ Could not repair retained T3 Code "
+                        f"v{candidate_version} update candidate; "
+                        "continuing with managed runtime checks"
+                    )
+                else:
+                    print(
+                        "  ✓ Repaired retained T3 Code "
+                        f"v{candidate_version} update candidate"
+                    )
         if update_needed:
             with _temporary_t3_loginctl_shim(home, username) as shim_path:
                 result = _run_as_login_user(
@@ -960,12 +993,16 @@ def _install_t3_service(
         enable = _user_systemctl(username, uid, "enable", T3_SERVICE_NAME)
         if enable.returncode != 0:
             raise RuntimeError("Could not enable the T3 Code user service")
-        # A successful runtime-changing `t3 service install` already reloads
-        # the unit and starts it with our preinstalled drop-in. Restarting it
-        # again here interrupts the first database migration unnecessarily.
-        updater_started_service = (
-            update_needed and not update_failed and binary != previous_binary
-        )
+        # The updater can start a new runtime or repair the same version's
+        # launcher. Either start loads our preinstalled drop-in, and another
+        # restart would interrupt its database migration unnecessarily.
+        updater_started_service = False
+        if update_needed and not update_failed:
+            current_invocation = _t3_service_invocation(username, uid)
+            updater_started_service = binary != previous_binary or (
+                current_invocation is not None
+                and current_invocation != previous_invocation
+            )
         action = (
             "restart"
             if native_repaired

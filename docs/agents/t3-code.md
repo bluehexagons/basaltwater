@@ -264,21 +264,28 @@ produced an incomplete candidate and T3 rolled back, setup identifies the retain
 and rebuilds its two trusted native dependencies without stopping the active
 working version. Then retry **Update server** in the client. A refresh setup
 performs the same repair before invoking the upstream updater.
+If that retained candidate cannot be repaired, setup warns and continues with
+the upstream updater and active-runtime checks. An obsolete failed candidate
+does not block installing the current release or retaining a healthy service;
+failure to validate the selected active runtime still stops setup.
 
 Older npm-backed T3 runtimes need a local `node-pty` build, so Basaltwater also
 selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
 from selecting a missing versioned compiler. Basaltwater validates the native
 module, rebuilds an incomplete npm-backed active runtime, and waits for several
-consecutive healthy service and HTTP checks before setup succeeds. Readiness
+consecutive healthy service and HTTP 200 checks from the same systemd service
+invocation before setup succeeds. A restart resets those checks. Readiness
 allows up to 30 minutes, matching the upstream launcher's preparation window:
 copying an existing database, migrating it, and optimizing SQLite can take
 minutes. Setup prints progress every 30 seconds and fails promptly if systemd
 reports a failed service. It does not restart a newly updated runtime a second
-time while that runtime may be migrating. A readiness timeout alone does not
-prove a crash; inspect the boot log before retrying or interrupting migration.
-The same
-active-runtime repair is available after setup:
+time while that runtime may be migrating. This also covers an updater that
+restarts a repaired launcher without changing the version. Managed configuration
+changes still restart the service when the updater leaves it running unchanged.
+A readiness timeout alone does not prove a crash; inspect the boot log before
+retrying or interrupting migration. The same active-runtime repair is available
+after setup:
 
 ```bash
 basaltw agent doctor --capability t3code --fix
@@ -326,7 +333,10 @@ use the normal upstream update path; application data stays under
 Stable T3 `0.1.0` changes the client/server orchestration protocol from 1 to 2.
 Update the desktop/mobile client as well as the server; an old client can
 disconnect even while the server is healthy. This is separate from the
-service-state protocol, which remains 3 and is already supported.
+service-state protocol, which remains 3 and is already supported. The matching
+desktop release is `0.1.0`; the mobile release is `2.0`. If the mobile update
+has not reached your app store, use the server's web app in a mobile browser.
+See the [release's client compatibility notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
 
 Before the first upgrade, stop the service after active work finishes and copy
 the complete private `~/.t3/userdata` directory, including database sidecars and

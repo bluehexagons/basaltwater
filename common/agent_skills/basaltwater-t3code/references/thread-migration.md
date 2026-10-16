@@ -50,8 +50,11 @@ are not recreated.
 ## Update the client and verify
 
 The client/server orchestration protocol changes from 1 to 2. A `0.0.45` client
-cannot communicate with the new server; update it to stable `0.1.0` or a
-compatible later release and reconnect. This is separate from service-state
+cannot communicate with the new server; update desktop clients to stable
+`0.1.0`, mobile clients to `2.0`, or compatible later releases and reconnect.
+If the mobile update is not yet available in your app store, use the server's
+web app in a mobile browser. See the [release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
+This is separate from service-state
 protocol 3, which Basaltwater already supports. Do not delete state or reset
 pairing to fix a protocol mismatch. The V2 desktop app uses a separate browser
 profile, so websites opened inside it may need a fresh sign-in.
