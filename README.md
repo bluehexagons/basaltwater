@@ -178,12 +178,12 @@ encryption, TCP 445 only, and validated configuration reloads. See the
 
 On Debian profiles, automatic APT updates remain enabled, while language
 ecosystem upgrades and release selection use conservative freshness and opt-in
-policies. Cleanup uses
-bounded cache, log, journal, and temporary-artifact policies and purges packages
-APT marks unused, including superseded kernels. It expires recognized crash
-reports and returns unused filesystem blocks to supported physical, virtual,
-and Proxmox storage, then checks block and inode pressure across local mounts.
-See the
+policies. Cleanup uses bounded cache, log, journal, and temporary-artifact
+policies. On APT hosts other than Proxmox, it purges packages APT marks unused,
+including superseded kernels; Proxmox uses guarded kernel-only cleanup. It
+expires recognized crash reports and returns unused filesystem blocks to
+supported physical, virtual, and Proxmox storage, then checks block and inode
+pressure across local mounts. See the
 [recurring maintenance guide](docs/operations/maintenance.md).
 CachyOS uses [bounded cleanup during setup](docs/workstations/cachyos.md#cleanup-during-setup)
 and keeps system updates under the desktop user's control.
@@ -218,8 +218,10 @@ smoke-testing all installed launchers outside the source tree:
 
 ```bash
 make check
-./run_tests.py --suite smoke
 ```
+
+For the faster smoke-suite edit loop without the wheel build, use
+`make check-fast`.
 
 Routine continuous integration runs the suite in Debian Trixie on Python 3.13,
 the interpreter shipped by that release. Version-tagged releases additionally

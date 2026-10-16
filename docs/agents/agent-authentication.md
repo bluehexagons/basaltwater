@@ -132,7 +132,7 @@ it does not disable explicitly selected provider files or GitHub credentials.
 `--git-auth active` reads GitHub credentials from the invoking controller user,
 or the original user under `sudo`. Coding-agent active credential copying has
 been removed, including `agent auth set --active` for Codex, Claude, and
-OpenCode; that rotation option now supports only `--tool gh`.
+OpenCode; that rotation option is limited to `--tool gh`.
 
 For `gh`, Basaltwater uses the selected `hosts.yml` token. If GitHub CLI stores
 the token in an operating-system keyring, Basaltwater asks the authenticated

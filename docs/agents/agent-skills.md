@@ -75,7 +75,8 @@ XRDP, or managed browser skills. See
 
 The limited [`agent_cachyos` profile](../workstations/cachyos.md) has a separate catalog:
 `basaltwater-cachyos-workstation`, `basaltwater-cachyos-workspace`,
-`basaltwater-cachyos-desktop`, the shared `basaltwater-subagents`, and optional
+`basaltwater-cachyos-desktop`, the shared `basaltwater-project-development`,
+`basaltwater-frontend-design`, and `basaltwater-subagents`, plus optional
 `basaltwater-cachyos-t3code`.
 It does not receive the VM or browser skills below.
 Its installer reconciles known managed VM skills while preserving personal

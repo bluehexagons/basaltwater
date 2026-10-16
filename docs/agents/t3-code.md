@@ -189,9 +189,10 @@ active agent work and terminal commands finish. Keep the client open while the
 launcher downloads, installs, restarts, and reconnects. For a host-side update,
 set `T3_RELEASE` to the exact stable version required by the stable client. Use
 `latest` only when the client is also on the latest stable release; npm's
-`latest` does not select a newer nightly or preview. When orchestration V2
-reaches stable, before the first update follow
-[the thread migration guidance](#orchestration-v2-thread-migration):
+`latest` does not select a newer nightly or preview. The current stable
+deployment does not include the orchestration V2 migration; see
+[the migration status](#orchestration-v2-thread-migration) before following
+any migration guidance.
 
 ```bash
 # As the target user, using T3 Code's documented updater:
@@ -252,14 +253,6 @@ and rebuilds its two trusted native dependencies without stopping the active
 working version. Then retry **Update server** in the client. A refresh setup
 performs the same repair before invoking the upstream updater.
 
-T3 v0.0.35 also invokes `loginctl enable-linger` without a username. That can
-fail in the sessionless `runuser` environment used by remote setup even after
-Basaltwater has enabled lingering as root. During the upstream update only,
-Basaltwater places a short-lived `loginctl` compatibility shim first in PATH;
-it confirms lingering is already enabled, otherwise adds the validated target
-username to that exact no-argument request, and delegates every other
-invocation unchanged. The shim is removed immediately after the updater exits.
-
 Older npm-backed T3 runtimes need a local `node-pty` build, so Basaltwater also
 selects the `gcc` and `g++` provided by `build-essential` for setup-time and
 service-initiated updates. This prevents a stale inherited `CC` or `CXX` value
@@ -272,14 +265,11 @@ active-runtime repair is available after setup:
 basaltw agent doctor --capability t3code --fix
 ```
 
-The current live baseline covers stable v0.0.45 on a managed host: service and
-host readiness, the private HTTPS route, administrative pairing,
-collaborative preview interaction, and recording transfer. Fresh provider-matrix
-installation and skill discovery, direct/private-port and relay client behavior,
-full browser enrollment, and cloud-account sign-in remain unverified. Readiness
-is checked after deliberate updates and reboot; there is no automatic post-boot
-audit. Complete T3-01 in the [release qualification matrix](../release-qualification.md)
-before claiming release qualification.
+Doctor results establish service readiness only; they do not establish
+connected-client presentation, provider sign-in, or remote browser reachability.
+After updates and reboots, record readiness as the target account with
+`basaltw agent doctor --capability t3code --capability host --record`. No
+automatic post-boot readiness audit runs.
 
 T3's service-state protocol identifies the launcher and runtime contract, and
 upstream has changed that contract as its executable layout evolved. Basaltwater
@@ -377,18 +367,15 @@ An unpaired browser can report WebSocket authentication failures while showing
 the native pairing form. A bare URL has not enrolled that browser; complete
 the normal pairing flow before judging authenticated WebSocket access.
 
-During the v0.0.45 post-setup check, the private HTTPS origin also returned
+On T3 v0.0.45, cloud-account sign-in at a private HTTPS origin can return
 HTTP 400 from `clerk.t3.codes` with a production-key domain error requiring
 `t3.codes`. T3 loads its browser cloud-account provider from its bundled public
 configuration; see the upstream [app entrypoint](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/main.tsx)
 and [browser auth shell](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/components/clerk/BrowserManagedAuthShell.tsx).
-The pairing form, native administrative pairing endpoint, gateway certificate
-checks, and preview interaction still passed. Cloud-account sign-in on that
-private browser origin remains unverified. Identify the failed request's
-origin before changing credentials or pairing; a Clerk domain rejection does
-not establish that Basaltwater's TLS route or native pairing is broken.
-Preserve the managed authentication policy and upstream assets while tracking
-that cloud-account limitation separately.
+This browser cloud-account flow is separate from native pairing and gateway
+trust. Keep cloud-account sign-in unverified on that origin; a Clerk domain
+rejection does not establish a TLS or native pairing failure. Preserve the
+managed authentication policy and upstream assets.
 
 ## Git and provider behavior
 
@@ -423,14 +410,13 @@ The managed T3 skill also uses native `link_pull_request` and
 `list_thread_pull_requests` tools when available, so PRs created through `gh`
 appear in T3's linked-PR panel, including all layers of a stack.
 
-### Optional mobile device workflows
+### Native mobile device workflows
 
 T3 also offers a Device panel and `device_*` tools for native mobile testing.
 Basaltwater does not provision their SDKs, emulators, or simulator hosts and
 does not enable agent device access during setup. Existing `--device-pairing`
-enrolls T3 clients; it does not grant simulator control. Android implementation
-is deferred, and iOS through a separate Mac is an unscheduled proposal. See
-the [mobile support plan](../plans/mobile-agent-support.md) and the
+enrolls T3 clients; it does not grant simulator control. See the
+[mobile support plan](../plans/mobile-agent-support.md) and the
 [upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/devices.md)
 for ownership and prerequisites. Responsive browser presets remain browser
 coverage rather than native-device verification.
@@ -471,32 +457,17 @@ by its setup manifest. Use `agent doctor --tool gh` to check GitHub credentials
 directly. The doctor does not send a model prompt or establish that a previous
 provider timeout was resolved by running diagnostics.
 
-### Codex provider status timeout
+### Provider status timeouts
 
-T3 v0.0.42 limits its Codex app-server status probe to 10 seconds. The message
-`Timed out while checking Codex app-server provider status.` means that probe
-did not complete; it does not establish that the credentials are invalid.
-See the upstream [probe implementation](https://github.com/pingdotgg/t3code/blob/v0.0.42/apps/server/src/provider/Layers/CodexProvider.ts)
-and [timeout constant](https://github.com/pingdotgg/t3code/blob/v0.0.42/apps/server/src/provider/providerSnapshot.ts).
-
-An [upstream report](https://github.com/pingdotgg/t3code/issues/7230) describes
-timeouts being cached as provider errors, including across restarts. After
-setup finishes and the host is idle, open **Settings → Providers** in T3 and
-refresh the Codex provider status. Then try a prompt in T3. Successful direct
-CLI prompts alone do not validate T3's separate app-server probe.
-
-Basaltwater's completion access summary includes this recovery hint when T3
-and Codex are selected. Refresh remains a client action: the T3 v0.0.42 CLI
-does not expose a provider-refresh command. Setup does not restart the service
-or edit its provider cache to force a refresh.
-
-If refreshing still times out, record the T3 server and Codex versions, collect
-`basaltw agent doctor --capability t3code --capability host`, and inspect the
-service log around the refresh time. Remove sensitive content before sharing
-logs. Host contention is a possible trigger, not a diagnosis from this message
-alone. Do not replace credentials, delete T3 state, or restart active sessions
-solely because this status probe timed out. Basaltwater's service readiness
-check does not clear T3's provider cache or fix this upstream timeout behavior.
+`Timed out while checking Codex app-server provider status.` means the T3
+provider probe did not complete; it does not establish that credentials are
+invalid. After setup finishes and the host is idle, refresh provider status in
+**Settings → Providers** and retry in T3. A successful Codex CLI request does
+not validate T3's separate app-server probe. If it continues to time out,
+record T3 and Codex versions, collect the doctor result, and inspect a redacted
+service-log excerpt. Host contention is one possible trigger, not a diagnosis.
+Do not replace credentials, delete T3 state, or restart active sessions solely
+because a provider status probe timed out.
 
 ### Doctor checks and repairs
 

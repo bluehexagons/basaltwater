@@ -8,9 +8,9 @@ connected client's explicit **Update server** action when an update should be
 performed outside setup. For a host-side update, set `T3_RELEASE` to the exact
 stable version required by the stable client, or `latest` when both should
 use the latest stable release. Nightly and preview builds are used only for
-isolated forward-compatibility testing. When orchestration V2 reaches stable,
-before the first upgrade read [the thread migration procedure](thread-migration.md)
-and arrange a private recovery copy and the required interruption. Then run:
+isolated forward-compatibility testing. The
+[thread migration status](thread-migration.md) describes the current stable
+boundary. Then run:
 
 ```bash
 T3_RELEASE=CLIENT_VERSION
@@ -37,7 +37,8 @@ If the client says the update requires a newer T3 Code service launcher,
 reconcile it with the matching stable release's command above. Alternatively,
 rerunning the saved Basaltwater setup command on that VM also reconciles the
 launcher and runtime. The doctor validates the selected runtime. Do not pass
-`--allow-downgrade` or replace an existing V2 database with its V1 source.
+`--allow-downgrade` or restore older application data over a newer database
+without release-specific upstream recovery instructions.
 Basaltwater recognizes service-state
 protocols 2 and 3, including the standalone executable runtime layout used by
 current T3 releases.

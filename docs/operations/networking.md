@@ -82,9 +82,9 @@ identifies exactly one matching VM or LXC on the saved Proxmox node. It then
 updates `qm ipconfig0` or `pct net0` after guest SSH is verified, preserving the
 existing bridge, firewall, MAC, device type, and unchanged address-family
 fields. It checks guest SSH again after the Proxmox update and restores the
-previous Proxmox value if that final check fails. The preflight now requires
-every listed guest to be readable, refuses metadata that changed concurrently,
-and reads the value back after applying it. Use `patch ... --activate-network`
+previous Proxmox value if that final check fails. The preflight requires every
+listed guest to be readable, refuses metadata that changed concurrently, and
+reads the value back after applying it. Use `patch ... --activate-network`
 for existing hosted guests; initial hosted setup boots directly on its
 configured address and rejects the live-handoff flag.
 

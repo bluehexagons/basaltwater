@@ -323,32 +323,29 @@ inspect by receipt where possible and otherwise request reconciliation rather
 than repost. Destinations complete independently; show partial success without
 republishing successful posts. Never silently delete a published post as rollback.
 
-## Delivery and acceptance
+## Remaining delivery and acceptance
 
-Extend the parent plan in three slices after its upload/job foundation:
+Release records, explicit beta promotion, the human Steam default-branch
+handoff, reviewed drafts/translations, and provider-editor exports are
+available. Live provider account behavior and rendered editor output remain
+unqualified. Automated publication adapters and scheduling are follow-on work.
 
-| Slice | Result | Required evidence |
-| --- | --- | --- |
-| Promotion and release coordination | Release records, allowed beta promotion, itch.io artifact re-upload, and Steam default handoff. | Correct BuildID/digest, stale-target rejection, exact branch observation, explicit default/public rejection through every automatic path, and manual default completion evidence. |
-| Editorial preparation and review | Manifest language extension, agent/operator drafts, translations, destination previews, human review queue, immutable approvals, and provider-editor exports. | English-only defaults, English/Spanish review and rendering, other valid languages accepted with accurate capability limits, manifest round-trips, and every locale/public text field requiring human review. |
-| Publication adapters and scheduling | Explicit adapter capabilities, human handoffs, qualified automated submission, one-off schedules, release gates, inspection, and reconciliation. | Exact approved payload only, no duplicate posts after interruption, late jobs held, remote schedules distinguished, external edits detected where inspectable, and manual actions never reported as automatic successes. |
+Before enabling an adapter, verify it submits only the exact approved payload,
+respects release gates and publication windows, and can inspect or reconcile an
+ambiguous result without duplicating a post. Track provider-native schedules as
+remote commitments and distinguish their cancellation from pausing a local job.
+Keep destination outcomes independent so a partial success does not republish
+completed destinations. Default-branch release remains a human action.
 
-Use mocked APIs/processes and temporary directories for tests. Include old
-manifests, publishing-only manifests, language-list changes, extra configured
-languages, invalid locale mappings, broken CSV round-trips, hidden text fields,
-changed images, unreviewed translations, stale review tokens, queue/approval races, publication
-window expiry, partial multi-provider success, beta/default aliases, provider
-session expiry, and failure between remote acceptance and receipt persistence.
-
-Later live qualification uses authorized test apps/projects and clearly reviewed
-test posts, covering English-to-Spanish and Spanish-to-English translations,
-English-only defaults, edits, accents, punctuation, and destination rendering
-as well as first publication. Human
-review of Spanish uses the operator's language competence; machine scoring is
-not a replacement. Additional languages get structural tests initially, not an
-unsupported claim of linguistic or provider-rendering qualification.
-Record unsupported automation as a handoff capability, not a passing automated
-test. Default-branch release is never automated as a qualification shortcut.
+Qualification should cover schema and locale variation, stale or changed
+content and approvals, interruption during submission, partial provider
+success, release-gate and lateness handling, and rejection of default-branch
+automation. Use mocked APIs and temporary directories before authorized live
+qualification with clearly reviewed test posts. Live language checks cover
+English and Spanish in both directions, edits, punctuation, and destination
+rendering; a qualified reviewer must assess Spanish. Other languages initially
+receive structural checks only. Unsupported automation remains a human handoff,
+not a passing automated test. Default-branch release is never automated.
 
 ## Website/blog and social delivery plan
 

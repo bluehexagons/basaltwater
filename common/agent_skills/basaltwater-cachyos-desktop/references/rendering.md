@@ -47,11 +47,5 @@ application data and settle time-based transitions before paired comparisons.
 Use matching backends for comparisons, and report startup/CPU-preparation
 timings separately from GPU work and end-to-end FPS.
 
-Antistatic's observed oversized Wayland SDR PNG clipping is worked around with
-`SDL_VIDEODRIVER=offscreen` plus its capture harness's `--no-xvfb`; retain that
-workaround until its SDR capture/presentation framebuffer is independent of the
-desktop window. Interactive HDR/scaling and desktop control require their own
-checks; do not claim them from offscreen evidence or start a portal automatically.
-
 See [CachyOS capture guidance](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-game-development.md#capture-backends-and-post-refresh-checks)
 and [visual check behavior](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/visual-comparisons.md#run-a-project-check).

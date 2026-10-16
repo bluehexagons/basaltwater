@@ -452,7 +452,7 @@ sudo -u USER /usr/bin/python3 \
 ```
 
 Replace `USER` with the setup account. Omit `--dry-run` to run cleanup now.
-Rerun setup to install the updated helper and daily timer on an existing host;
+Rerun setup to install this helper and daily timer on an existing host;
 updating the controller checkout alone does not change the target's timer.
 
 Cleanup never removes installed language runtime versions, Proxmox backups,

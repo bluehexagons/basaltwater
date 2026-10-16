@@ -63,7 +63,7 @@ systemctl list-timers cachyos-rate-mirrors.timer --no-pager
 getent hosts HOST_FROM_ERROR
 ```
 
-A successful lookup now does not establish that DNS or HTTPS worked during
+A successful lookup does not establish that DNS or HTTPS worked during
 the failed run. Check the loaded local unit to see its current retry policy;
 the service policy belongs to CachyOS and may change with normal updates.
 Basaltwater observes it without installing retries, changing distro units,
@@ -174,8 +174,8 @@ Custom T3 state locations require separate inspection.
 
 ## T3 desktop login startup
 
-`--t3code-desktop` now enables T3 Code at each KDE login. Existing desktop
-installations acquire this behavior on their next desktop setup or refresh:
+Desktop mode enables T3 Code at each KDE login. Existing desktop installations
+acquire this behavior on their next setup or refresh:
 
 ```fish
 basaltw refresh --dry-run

@@ -326,9 +326,9 @@ that environment's connection host and port. T3 v0.0.45 rejects public relay
 hosts with an authenticated-preview-gateway requirement; the target does not
 add a relay tunnel. Keep a remote loopback development server on loopback and
 use Basaltwater's existing HTTPS forward rather than broadening its binding.
-These boundaries were checked against the
-[pinned upstream resolver](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/browser/browserTargetResolver.ts)
-and its tests; they do not establish live client reachability.
+The pinned upstream resolver and its tests define these boundaries; they do
+not establish live client reachability. See the
+[resolver](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/browser/browserTargetResolver.ts).
 
 An `environment-port` preview target is a host rewrite, not a tunnel from the
 connected client to VM loopback. T3 maps the requested port onto the host in
@@ -553,7 +553,7 @@ Flatpak-only installs, and reports versions when available. A connected preview
 has engine `unknown` until the session establishes it. Never infer Firefox
 coverage from a viewport preset or an unknown preview.
 The ordinary browser capability doctor below qualifies managed Chromium and
-its MCP integration only. Its result now includes the engine, context, and
+its MCP integration only. Its result includes the engine, context, and
 network origin explicitly, also retained in redacted readiness and support
 records. Older records without those fields leave the context unknown.
 

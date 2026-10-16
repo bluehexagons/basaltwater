@@ -431,8 +431,8 @@ raw output and exact prompt settings remain in private state. Users must avoid
 putting credentials in prompts, and output can contain application data.
 Removing a task retains its existing run history, context and workspace files.
 Removing the web panel retains the independent worker; pause its tasks first
-if they should stop. See [persistent tasks](../agents/agent-tasks.md) for storage, API,
-limits and upcoming T3 adapter qualification.
+if they should stop. See [persistent tasks](../agents/agent-tasks.md) for storage,
+API, and limits.
 
 Runtime diagnostics use the existing local tool and credential inspectors.
 T3 Code is checked only when its runtime directory or user service unit is present,

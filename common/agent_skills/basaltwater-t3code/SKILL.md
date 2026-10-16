@@ -68,28 +68,10 @@ For a deliberate T3 update, prefer the connected client's **Update server**
 action. Read [the update procedure](references/updates.md) before a host-side
 update, launcher migration, or native-module repair. It distinguishes
 standalone archives from older npm runtimes and keeps npm policy scoped.
-When orchestration V2 reaches stable, before the first upgrade read
-[the thread migration procedure](references/thread-migration.md). It covers
-the private recovery copy, automatic database import, matching client protocol,
-and fresh provider session needed to continue older conversations. Support
-forward upgrades; do not downgrade or edit T3's migration bookkeeping.
-
-## Upcoming stable features: orchestration V2
-
-The V2 guidance was checked against an isolated nightly artifact in advance
-of its stable release. Recheck the published stable migration contract before
-deployment; nightly testing does not change the managed release channel.
-
-On V2 releases, provider switches and migrated conversations use budgeted
-portable handoffs. Retrieve omitted saved history with T3's thread-reading
-tools when exposed, and repeat important constraints before continuing.
-
-The ACP Registry in **Settings → Providers → Add provider** can add other
-agents to the server environment. It installs and authenticates agents through
-T3; it does not select additional Basaltwater-managed terminal agents or
-install their managed skills. Use it only for a provider the user requests.
-Keep that provider's native sandbox, account configuration, and update
-ownership distinct from Basaltwater's selected Codex/Claude/OpenCode tools.
+See the [thread-migration status](references/thread-migration.md) before
+following migration guidance. The current stable deployment does not include
+the orchestration V2 migration; do not install preview builds or modify T3's
+migration state to work around a compatibility warning.
 
 ## T3 v0.0.45 workflow features
 
@@ -125,13 +107,11 @@ alone do not supply.
 
 ## Long-running work
 
-Use the `basaltwater-agent-tasks` skill for scheduled follow-ups, event-driven
-checks, and bounded goals. Standard managed Codex sessions expose the account's
-`basaltwater-tasks` MCP controls; the CLI is also available within the session's
-permissions. Hand off findings with `initial_checkpoint` and choose an isolated
-workspace for concurrent edits. Current stable scheduled runs use independent
-Codex context and do not inherit this T3 thread's tools or browser. Native T3
-thread execution remains unavailable until stable-release qualification.
+Use `basaltwater-agent-tasks` for scheduled follow-ups and bounded goals.
+The task skill documents the available controls, handoff fields, and workspace
+choices. Stable scheduled runs use independent Codex context; they do not
+inherit this T3 thread's tools or browser. Native T3 thread execution is not
+part of the current stable workflow.
 
 Use the `basaltwater-agent-operations` skill for bounded maintenance holds and
 redacted readiness records. Holds are shared across this account's tasks;
@@ -140,28 +120,16 @@ on it. An unattended inspection must not create or release holds.
 
 ## Browser previews
 
-Use the browser skill installed for this VM: `basaltwater-browser-testing` when
-managed Playwright is also provisioned, or
-`basaltwater-t3-preview-testing` when T3 preview is the only browser surface.
-Those skills account for the preview depending on the connected T3 application
-remaining open.
+Use the installed browser skill: `basaltwater-browser-testing` when managed
+Playwright is provisioned, or `basaltwater-t3-preview-testing` when T3 preview
+is the only browser surface. Follow its connectivity, trust, and recovery
+boundaries.
 
 An explicit preview `net::ERR_CERT_AUTHORITY_INVALID` is a connected-client
 trust issue, not a T3 service failure. Certificate enrollment is optional.
-Use Playwright only when the installed browser skill's fallback conditions are
-met; otherwise continue with server checks. Offer the verified
-`basaltwater-web ca` enrollment URL and fingerprint only when the user wants
-collaborative preview access restored.
-Never weaken TLS or require client trust to complete unrelated work.
-
-A healthy T3 doctor result does not exercise the connected desktop client's
-preview-presentation bridge. If background preview navigation or DOM checks
-work but `preview_open` produces no visible UI and snapshots keep failing, use
-the installed browser skill's stale-preview workflow. Restarting the desktop
-client may not clear VM-side tab state. Only after the user accepts interruption
-of active T3 sessions, restart the managed server with
-`systemctl --user restart t3code.service`, reconnect, and retry once. Do not
-turn this deliberate recovery into an automatic setup or monitoring restart.
+Never weaken TLS or require client trust to complete unrelated work. Restarting
+the managed server interrupts active T3 sessions; use the browser skill's
+stale-preview procedure and obtain the owner's agreement before that recovery.
 
 ## Pairing
 

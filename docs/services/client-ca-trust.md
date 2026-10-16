@@ -57,13 +57,11 @@ account. Client enrollment cannot repair this VM-side problem. The panel
 shows the diagnostic and withholds download and installation instructions
 until the live gateway can be verified.
 
-Older shared gateway setup could configure
-`/srv/basaltwater/web/basaltwater-ca.crt` without creating it on VMs that did
-not enable Godot hosting. Shared setup now publishes the public CA for panel,
-T3 Code, and other gateway users before recording its path in the policy.
-Repeating setup restores that copy from the existing VM-local CA and repairs
-its file permissions. It does not rotate the CA or require previously enrolled
-clients to trust a new root.
+Shared gateway setup publishes the public CA for panel, T3 Code, and other
+gateway users before recording its path in the policy. Repeating setup restores
+that copy from the existing VM-local CA and repairs its file permissions. It
+does not rotate the CA or require previously enrolled clients to trust a new
+root.
 
 On a Debian VM with a saved setup, use SSH or the VM console to review and run:
 
@@ -108,7 +106,7 @@ by default; its example explicitly invokes Bash so POSIX syntax is not parsed
 by fish. Instructions remain available without JavaScript.
 
 **First enrollment · HTTP + SHA-256** downloads only the public CA through
-`http://VM:8442/basaltwater-ca.crt`. Updated HTTPS panel setup installs this
+`http://VM:8442/basaltwater-ca.crt`. HTTPS panel setup installs this
 certificate-only listener and includes TCP 8442 in the managed web firewall
 policy, using the configured access sources. It does not serve the panel,
 login forms, scripts, directories, or private keys. Other paths return 404.

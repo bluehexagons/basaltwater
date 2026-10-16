@@ -55,7 +55,7 @@ personal, repository, plugin, or system skills and does not inspect provider
 configuration or credentials. `session_access` remains `unverified`: check the
 active agent's skill list and enabled settings separately. See
 [skill access by launch context](agent-skills.md#access-from-different-sessions).
-Desktop guidance now includes relevant local entrypoints from either provider
+Desktop skill guidance links relevant local entrypoints from either provider
 catalog, including Claude-only installations.
 
 Installed desktop applications appear with supported workflows and a link to

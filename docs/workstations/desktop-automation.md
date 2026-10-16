@@ -72,9 +72,9 @@ An absence result refers only to showing controls inside that root.
 
 The usual node, time and output limits still apply within the subtree; the depth
 limit remains relative to the application root.
-If needed, inspect a smaller container next. Descendant references work with the
-normal `element` commands, which now resolve targets directly along their
-recorded ancestry instead of rescanning unrelated UI.
+If needed, inspect a smaller container next. Normal `element` commands resolve
+descendant references along their recorded ancestry without rescanning
+unrelated UI.
 
 ## Act on observed controls
 

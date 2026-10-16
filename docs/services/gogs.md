@@ -350,10 +350,9 @@ or export, not as the live SQLite, repository, or LFS-object filesystem.
 
 - A setup failure refreshing `authorized_keys` with `panic: error getting work
   directory: stat .: permission denied` means the Gogs CLI inherited a directory
-  inaccessible to `git`. Update Basaltwater and rerun setup. Managed admin
-  commands now change to `/opt/gogs/current`, and release checks run from the
-  candidate release directory. This fix does not require `--nopasswd` or broader
-  home-directory permissions.
+  inaccessible to `git`. Managed admin commands run from `/opt/gogs/current`,
+  and release checks run from the candidate release directory. The managed
+  workflow does not require `--nopasswd` or broader home-directory permissions.
 - An SSL or hostname setup that fails nginx validation fails setup and leaves Gogs
   stopped unless a prior verified release can be restored; run `sudo nginx -t`
   and inspect the generated `gogs_<hostname>` site before retrying.

@@ -95,9 +95,9 @@ while idle; it retains files and evidence and does not reapply the initial hando
 Current stable execution uses an independent Codex process. It does not resume
 this T3 thread, inherit its tools or preview, or automatically post its results
 back here. Summarize the thread's findings into the portable checkpoint rather
-than copying provider session IDs or modifying T3's database. Upcoming native
-T3 scheduling, thread handoffs, and goals remain capability-gated until a stable
-release is qualified; use one scheduling owner for each task.
+than copying provider session IDs or modifying T3's database. Native T3
+scheduling and thread handoffs are not part of the current stable workflow; use
+one scheduling owner for each task.
 
 After managed skills or MCP configuration refresh, finish the current turn
 before using T3's **Restart agent session** command to reload the provider.
@@ -119,5 +119,5 @@ This records evidence only. The operator's **Review follow-up task** link opens
 a one-attempt task for review and submission. It grants neither current-run
 permissions nor privilege approval, and does not reset the original limits.
 
-Full settings, recovery, worker setup, and future T3 adapter design are in the
+Full settings, recovery, and worker setup are in the
 [task guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/agents/agent-tasks.md).

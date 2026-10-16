@@ -73,14 +73,11 @@ can load lazily: force pixel access or render before treating `image.has_data`
 alone as a missing-texture result. Inspect textured appearance in the native
 viewport or a deliberate render and in the consuming application when available.
 
-The tested CachyOS package includes a Draco bridge and passed a textured
-compressed GLB export/fresh import with UVs and loaded pixels. Debian's
-missing-Draco warning is not a CachyOS readiness result. Qualify the actual
-asset when `KHR_draco_mesh_compression` is required. Blender 5.2.2 also logs
-`MeshOptimizer is not available` for its missing optional bridge during ordinary
-successful exports. Check enabled extensions, operator result, artifact and
-fresh import together. Do not silently drop a compression requirement, replace
-the native package or install unrelated libraries to suppress warnings.
+When a project requires `KHR_draco_mesh_compression`, verify the installed
+extension, exporter settings, artifact and fresh import together. Blender may
+log `MeshOptimizer is not available` for an optional bridge during an otherwise
+successful export. Do not silently drop a compression requirement, replace the
+native package or install unrelated libraries to suppress warnings.
 
 ## Render and compare
 

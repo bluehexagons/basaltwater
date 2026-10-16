@@ -302,8 +302,8 @@ The VM/hardware console becomes a text/recovery surface; direct physical-console
 GUI attachment is not provided. Existing application packages and home data stay.
 Unknown display-manager aliases require operator migration. OCI and
 `--harden-user` configurations are rejected because persistent user services
-are required. XFCE is the primary target; other environments and LXC need the
-live qualification below before relying on them.
+are required. XFCE is the supported default; other desktop environments and
+LXC have only basic, unqualified coverage.
 
 The dedicated `basaltwater-desktop` group contains only the configured owner. SSH's
 `remoteusers` group remains separate. User window-manager overrides and alternate
@@ -335,32 +335,24 @@ unmask only the former display
 manager and `display-manager.service`, and deliberately start that service.
 Rollback restores configuration, not unsaved applications. Keep SSH available.
 
-## Live qualification
+## Current behavior and limits
 
-The current tested configuration supports local peer-authenticated startup,
-native application launch/input/capture, pause and handoff, clipboard in both
-directions, normal logout, and reconnect to the retained session.
+The supported path provides local peer-authenticated startup, native
+application launch/input/capture, pause and handoff, clipboard in both
+directions, normal logout, and reconnect to a retained session.
 
-Dynamic resizing remains usable with interruption, not qualified as seamless.
-With Remmina 1.4.43 and FreeRDP 3.31.1, resize causes a brief black screen and
-automatic reconnect while the desktop process and generation remain alive.
+With Remmina 1.4.43 and FreeRDP 3.31.1, dynamic resizing can briefly blank the
+screen and trigger an automatic reconnect while the desktop process and
+session generation remain alive.
 The server log reports `Fastpath update Cached Pointer [a] failed`; the peer
 or protocol interaction that causes the cache inconsistency is unknown. A
-24-bpp client profile also reconnects. Do not treat this evidence as proof of
-an XRDP-only or FreeRDP-only defect.
+24-bpp client profile also reconnects. Treat resizing as interrupted rather
+than seamless; the cause is not isolated to XRDP or FreeRDP.
 
-Screen lock/unlock and automatic locking are outside the default contract.
-Audio redirection, keyring unlock, multi-monitor behavior, and other desktop
-environments remain unqualified. Agent pause is not a screen lock.
+Screen locking and automatic locking are outside the default contract. Audio
+redirection, keyring unlock, multi-monitor behavior, and other desktop
+environments are not supported guarantees. Agent pause is not a screen lock.
 
-Fresh setup, concurrent starts, supported client and keyboard combinations,
-failure recovery, interrupted setup, and administrator rollback remain open in
-[DSK-01 of the release matrix](../release-qualification.md#stable-qualification-matrix).
-Keep detailed result records private and maintain only current qualification
-status here.
-
-Mocked lifecycle tests do not establish live transport, lock, audio, keyring,
-or multi-monitor compatibility.
 ## Managed configuration
 
 | File | Purpose |
@@ -474,9 +466,8 @@ not treated as XRDP acceleration. In the usual VM case the session therefore
 uses the software fallback and no GPU group is added.
 
 Software mode sets an empty `DRMDevice` to disable xorgxrdp's default render-node
-probe. Older templates used `UseGlamor=false` and `SWCursor=true`, neither of
-which xorgxrdp 0.10.5 reads. Removing these ineffective options does not disable
-RDP cursor caching or fix the observed resize disconnect.
+probe. This selects software rendering; it does not change RDP cursor caching
+or the resize-disconnect behavior described below.
 
 Unprivileged Proxmox LXC guests support basic XRDP access, but host limits may
 affect desktop polish. A VM is the better choice for a reproducible graphical
@@ -517,10 +508,8 @@ fixed XFCE display profile can also prevent a session from starting; rerun
 `patch` to restore the managed desktop settings.
 
 If the connection log reports that `ip` is not needed, reapply the current
-configuration. Older managed `xrdp.ini` files included an obsolete `ip` field
-in the local Xorg session entry. The warning itself is harmless, but the same
-older configuration may also contain an absolute Xorg `-config` path that
-prevents a non-root X server from starting.
+configuration. The warning itself is harmless. An absolute Xorg `-config` path
+in the local session entry prevents a non-root X server from starting.
 
 If `xrdp-sesman.log` waits ten seconds and then reports `Unable to open display`
 without creating an Xorg log, check whether AppArmor enforces the `Xorg`
@@ -558,19 +547,16 @@ Distribution-packaged Remmina clients are the compatibility target; an older
 client comparison is diagnostic, not a deployment requirement. Record the
 running FreeRDP version as well as Remmina's version.
 
-XRDP 0.10.6.1 does not recognize `enable_gfx=false`. Older basaltwater templates
-included that ineffective setting while claiming to force classic RDP. The
-template now documents actual negotiation: `max_bpp=32` permits GFX/H.264.
-Removing the ignored setting does not change behavior or fix the cached-pointer
-disconnect. `use_fastpath=both` and `new_cursors=true` match upstream defaults.
+XRDP 0.10.6.1 does not recognize `enable_gfx=false`; `max_bpp=32` permits
+GFX/H.264 negotiation. `use_fastpath=both` and `new_cursors=true` match
+upstream defaults. This configuration does not resolve the cached-pointer
+disconnect described above.
 
-For the cached-pointer failure recorded above, compare the same installed
-client with a 24-bit color-depth profile, reconnect, and repeat dynamic resizing.
-XRDP rejects GFX negotiation below 32 bpp, so this tests the classic path without
-changing client packages or disabling the dynamic virtual channel needed for
-resizing. Verify the negotiated pipeline in the server log. A passing comparison
-would justify further server-side compatibility work; it would not establish
-that all clients should lose GFX by default. Relevant upstream sources are the
+To check the classic path, compare the same installed client with a 24-bit
+color-depth profile, reconnect, and repeat dynamic resizing. XRDP rejects GFX
+negotiation below 32 bpp. Verify the negotiated pipeline in the server log;
+this client-specific check does not justify disabling GFX by default. Relevant
+upstream sources are the
 [XRDP negotiation code](https://github.com/neutrinolabs/xrdp/blob/v0.10.6.1/libxrdp/xrdp_sec.c)
 and [FreeRDP cache recreation change](https://github.com/FreeRDP/FreeRDP/pull/13196).
 

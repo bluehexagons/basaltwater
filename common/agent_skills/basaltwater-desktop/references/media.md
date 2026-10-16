@@ -88,10 +88,9 @@ The `--wait-window Audacity` launch can match its startup splash rather than a
 loaded document. Inspect the real document and any Welcome dialog before input;
 dialogs may have role `frame`, not `dialog`. Use returned AT-SPI button/menu
 actions. For a fade, select the intended range, then inspect Effect > Fading >
-Fade In/Out and invoke the observed menu item. `Ctrl+S` saves the project;
-`Ctrl+Shift+E` opens Export Audio in the tested 3.7 version. Set both filename
-and output folder, choose the intended format/rate/channels and export range,
-then verify the saved samples rather than assuming a UI action completed it.
+Fade In/Out and invoke the observed menu item. Use the observed Export Audio
+controls, set filename, output folder, format, rate, channels and range, then
+verify the saved samples rather than assuming a UI action completed it.
 Optional [mod-script-pipe scripting](https://manual.audacityteam.org/man/scripting.html)
 is disabled by default. It requires an intentional Preferences > Modules change
 and restart; do not enable it or restart unrelated work just for a routine UI
@@ -140,14 +139,11 @@ installed version before scripting. MuseScore 3 supports isolated preferences
 with `-c /absolute/task/profile` and converter exports with `-o review.pdf`;
 terminal-only queries/exports can require `QT_QPA_PLATFORM=offscreen`.
 
-In the tested Debian 3.2.3 package, `--no-synthesizer` worked for offscreen
-conversion but crashed interactive startup. Omit it from GUI launches; `--no-midi`
-alone opened the score successfully. A `--wait-window MuseScore` match can be
-the splash; add `--exclude-title Startup --stable-seconds 1`, then inspect
-launch status and the actual document before input.
-Cancelling the first-run wizard may exit the application. Qt score controls
-may expose only an AT-SPI application root even when the GTK file dialog offers
-usable filename/button references. See the [music-tool guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/music-development.md).
+Do not assume a converter-only flag is safe for GUI startup. A
+`--wait-window MuseScore` match can be the splash; inspect launch status and the
+loaded score before input. Qt score controls may expose only an AT-SPI
+application root even when the GTK file dialog offers usable filename/button
+references. See the [music-tool guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/music-development.md).
 
 Save editable MSCZ and inspection exports separately from immutable input MIDI.
 Import quantization, voices, meter, tempo, rests and ties can differ from the
