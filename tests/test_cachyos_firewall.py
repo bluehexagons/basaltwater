@@ -39,8 +39,10 @@ class FirewallTests(unittest.TestCase):
         ]))
 
     def test_explicit_sources_roundtrip_and_no_lan_is_supported(self):
-        config = self.config("--lan-access", "--access-source", "192.168.3.4", "10.1.2.0/24")
-        self.assertEqual(firewall.access_sources(config), ["10.1.2.0/24", "192.168.3.4/32"])
+        config = self.config("--access-source", "192.168.3.4", "10.1.2.0/24")
+        with patch.object(firewall, "run") as command:
+            self.assertEqual(firewall.access_sources(config), ["10.1.2.0/24", "192.168.3.4/32"])
+        command.assert_not_called()
         self.assertTrue(firewall.firewall_requested(self.config("--no-lan-access")))
         self.assertFalse(firewall.firewall_requested(self.config()))
         for value in ("0.0.0.0/0", "192.0.2.0/24", "::/0", "fd00::/64", "192.168.0.0/8"):
@@ -61,6 +63,24 @@ class FirewallTests(unittest.TestCase):
             routes.append({"dev": "tun0", "gateway": "10.5.0.1"})
             with self.assertRaisesRegex(ValueError, "--access-source"):
                 firewall.access_sources(self.config("--lan-access"))
+
+    def test_lan_and_explicit_sources_are_combined_without_bypassing_discovery(self):
+        routes = [{"dev": "eth0", "gateway": "192.168.0.1"}]
+        addresses = [{"ifname": "eth0", "link_type": "ether", "addr_info": [
+            {"local": "192.168.0.158", "prefixlen": 24, "scope": "global"},
+        ]}]
+
+        def run(command, **kwargs):
+            return CompletedProcess(command, 0, json.dumps(routes if "route" in command else addresses))
+
+        with patch.object(firewall, "run", side_effect=run):
+            for explicit in (("192.168.68.0/22",), ("192.168.68.0/22", "192.168.0.0/24")):
+                with self.subTest(explicit=explicit):
+                    config = self.config("--lan-access", "--access-source", *explicit)
+                    self.assertEqual(firewall.access_sources(config), ["192.168.0.0/24", "192.168.68.0/22"])
+            routes.append({"dev": "wlan0", "gateway": "10.2.3.1"})
+            with self.assertRaisesRegex(ValueError, "--no-lan-access --access-source"):
+                firewall.access_sources(config)
 
     def test_custom_t3_port_cannot_reopen_protected_services(self):
         for port in (3389, 47984, 47989, 47990, 48010):
@@ -110,6 +130,13 @@ class FirewallTests(unittest.TestCase):
 
         def run(command, **kwargs):
             calls.append(command)
+            if command[0] == "ip":
+                data = ([{"dev": "eth0", "gateway": "192.168.0.1"}] if "route" in command else [
+                    {"ifname": "eth0", "link_type": "ether", "addr_info": [
+                        {"local": "192.168.0.158", "prefixlen": 24, "scope": "global"},
+                    ]},
+                ])
+                return CompletedProcess(command, 0, json.dumps(data))
             if "ufw" not in command:
                 return CompletedProcess(command, 0, "")
             args = command[command.index("ufw") + 1:]
@@ -153,15 +180,20 @@ class FirewallTests(unittest.TestCase):
                 kwargs["on_output"](result.stdout)
                 return result.returncode
             stack.enter_context(patch.object(firewall, "run_streamed", side_effect=stream))
-            for source in ("192.168.1.0/24", "10.3.0.0/24"):
-                config = self.config("--t3code-desktop", "--sunshine", "--access-source", source)
+            for options, sources in (
+                (("--access-source", "192.168.1.0/24"), {"192.168.1.0/24"}),
+                (("--lan-access", "--access-source", "192.168.68.0/22"), {"192.168.0.0/24", "192.168.68.0/22"}),
+                (("--no-lan-access", "--access-source", "10.3.0.0/24"), {"10.3.0.0/24"}),
+            ):
+                config = self.config("--t3code-desktop", "--sunshine", *options)
                 firewall.configure_firewall(config)
                 allows = [rule for rule in rules if rule[4] == "allow"]
-                self.assertTrue(all(rule[2] == source and not rule[3] for rule in allows))
+                self.assertEqual({rule[2] for rule in allows}, sources)
+                self.assertTrue(all(not rule[3] for rule in allows))
                 self.assertNotIn("47990", [rule[1] for rule in allows])
                 self.assertNotIn("3389", [rule[1] for rule in allows])
-                self.assertEqual(len(allows), 5)
-                self.assertEqual(len(rules), len(firewall.GUARDED) * 2 + 5)
+                self.assertEqual(len(allows), 5 * len(sources))
+                self.assertEqual(len(rules), len(firewall.GUARDED) * 2 + 5 * len(sources))
             firewall.configure_firewall(self.config("--no-lan-access"))
             self.assertFalse(any(rule[4] == "allow" for rule in rules))
         self.assertFalse(any("reset" in call for call in calls))

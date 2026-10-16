@@ -102,15 +102,25 @@ device-specific overrides based only on a warning.
 ## Direct T3 access across LAN subnets
 
 `--lan-access` allows the default-route private subnet discovered on the
-workstation; it does not allow every private address range. Explicit
-`--access-source` values replace inferred LAN discovery, even when
-`--lan-access` remains selected. Include every intended network in the saved
-setup and preview changes with `basaltw refresh --dry-run` before applying.
+workstation; it does not allow every private address range. Combining it with
+`--access-source` allows both the discovered LAN and the explicit sources. For
+example, a workstation on `192.168.0.0/24` with
+`--lan-access --access-source 192.168.68.0/22` allows both networks. Use
+`--no-lan-access --access-source PRIVATE_IP_OR_CIDR` for explicit sources alone.
+Include every intended routed network in the saved setup and preview changes
+with `basaltw refresh --dry-run` before applying.
 
 Access sources apply to all selected managed services, including Sunshine;
 they are not a T3-only allowance. The router must route the client to the
 workstation and permit traffic between networks. A host firewall allow cannot
 create that route or bypass router isolation/NAT.
+
+Test the workstation's current IPv4 address from the affected client. Check the
+client's source address as seen by the workstation: a router that performs NAT
+can present a source on the workstation's LAN instead of the client's original
+subnet. IPv6 is outside these IPv4 source allowances. Inspect effective rules
+with `sudo ufw status numbered` and `sudo ufw show raw`; saved rule files alone
+do not prove that the live firewall permits a new connection.
 
 T3 Connect and direct LAN pairing are separate connection modes. Use the T3
 desktop's connection settings for Connect, or test a new connection from the

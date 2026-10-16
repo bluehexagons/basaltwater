@@ -128,7 +128,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | T3 Code web service | `--web-interface t3code`, then use the T3 Connect flow below; optionally add `--web-interface-host PRIVATE_IPV4` and `--web-interface-port PORT` for direct LAN pairing |
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
-| Restrict inbound workstation access | `--lan-access`, or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access` closes managed access |
+| Restrict inbound workstation access | `--lan-access` and/or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access --no-access-source` closes managed access |
 | Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
 
 Examples:
@@ -436,8 +436,10 @@ reset. Active firewalld/nftables services or disabled UFW IPv6 support stop
 preflight with remediation instead of combining incompatible policies.
 
 `--lan-access` trusts the single private IPv4 subnet on the default-route
-interface. Ambiguous/VPN/multiple-network cases require `--access-source`, which
-overrides discovery. Explicit sources must be RFC1918 IPv4 addresses or subnets;
+interface. Combining it with `--access-source` allows both the discovered LAN
+and the explicit sources. For ambiguous/VPN/multiple-network cases, use
+`--no-lan-access --access-source PRIVATE_IP_OR_CIDR` to select explicit sources
+without discovery. Explicit sources must be RFC1918 IPv4 addresses or subnets;
 public sources, IPv6 sources, and all-network wildcards are refused. Rerunning
 refresh re-evaluates the current LAN; use explicit device addresses when you do
 not want that behavior on a roaming workstation.

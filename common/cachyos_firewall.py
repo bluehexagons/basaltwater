@@ -68,17 +68,15 @@ def validate_sources(values: list[str]) -> list[str]:
 
 
 def access_sources(config: SetupConfig) -> list[str]:
-    # Explicit sources override discovery, rather than silently widening access.
-    if config.access_sources:
-        return validate_sources(config.access_sources)
+    sources = set(validate_sources(config.access_sources or []))
     if not config.lan_access:
-        return []
+        return sorted(sources)
     routes = json.loads(run(["ip", "-j", "-4", "route", "show", "default"],
                             capture_output=True, timeout=10).stdout)
     devices = {route.get("dev") for route in routes if route.get("gateway")}
     addresses = json.loads(run(["ip", "-j", "-d", "-4", "address", "show", "up"],
                                capture_output=True, timeout=10).stdout)
-    sources = set()
+    lan_sources = set()
     for interface in addresses:
         if (interface.get("ifname") not in devices or interface.get("link_type") != "ether"
                 or interface.get("linkinfo", {}).get("info_kind") in {"tun", "wireguard", "veth", "bridge"}):
@@ -88,12 +86,13 @@ def access_sources(config: SetupConfig) -> list[str]:
                 continue
             value = f"{address['local']}/{address['prefixlen']}"
             try:
-                sources.update(validate_sources([value]))
+                lan_sources.update(validate_sources([value]))
             except ValueError:
                 continue
-    if len(devices) != 1 or len(sources) != 1:
-        raise ValueError("Cannot identify one private default-route LAN; use --access-source IP_OR_CIDR")
-    return sorted(sources)
+    if len(devices) != 1 or len(lan_sources) != 1:
+        raise ValueError("Cannot identify one private default-route LAN; "
+                         "use --no-lan-access --access-source IP_OR_CIDR")
+    return sorted(sources | lan_sources)
 
 
 def preflight_firewall(config: SetupConfig) -> None:
