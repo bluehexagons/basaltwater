@@ -27,12 +27,14 @@ from aiohttp import ClientSession, web
 
 from common.service_tools import device_pairing_service as pairing
 from common.service_tools import guacamole_service as guacamole
+from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_service as panel
 from common.service_tools.privilege_approval import ApprovalServer
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.privilege_auth import password_record
 from lib.atomic_io import write_json_atomic
 from lib.validation import validate_filesystem_path
+from scripts.panel_samples import job_rows
 
 
 def create_certificates(directory: Path) -> dict[str, Path]:
@@ -47,11 +49,13 @@ def create_certificates(directory: Path) -> dict[str, Path]:
     ca, key = directory / "ca.crt", directory / "ca.key"
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                     "-subj", "/CN=Basaltwater disposable browser fixture", "-addext", "basicConstraints=critical,CA:TRUE",
+                    "-addext", "keyUsage=critical,keyCertSign,cRLSign",
                     "-keyout", str(key), "-out", str(ca)], check=True, capture_output=True, timeout=30)
     result = {"ca": ca}
     for name, san in (("server", "DNS:localhost,IP:127.0.0.1"), ("invalid", "DNS:wrong.example.test")):
         leaf_key, csr, cert, extensions = [directory / f"{name}.{suffix}" for suffix in ("key", "csr", "crt", "ext")]
-        extensions.write_text(f"subjectAltName={san}\nbasicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\n")
+        extensions.write_text(f"subjectAltName={san}\nbasicConstraints=critical,CA:FALSE\n"
+                             "keyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n")
         subprocess.run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=localhost",
                         "-keyout", str(leaf_key), "-out", str(csr)], check=True, capture_output=True, timeout=30)
         subprocess.run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(key),
@@ -191,6 +195,7 @@ class FixtureEnvironment:
             {"label": "Synthetic service", "value": "active", "description": "Fixture only"}]))
         self.stack.enter_context(patch.object(state, "t3_update_available", return_value=True))
         self.stack.enter_context(patch.object(state, "trigger_t3_update", side_effect=self.synthetic_update))
+        self.stack.enter_context(patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)))
         return state
 
     def synthetic_update(self) -> bool:

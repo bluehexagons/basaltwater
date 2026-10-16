@@ -8,6 +8,73 @@ disposable protocol service. Native Debian Firefox ESR has a separate release
 check below. None of these results asserts compatibility for arbitrary project
 sites, T3 Code, Gogs, HomeBox, or other upstream application UIs.
 
+## Develop the web panel locally
+
+Activate the repository's development environment and start the panel directly
+from your checkout as a regular development account:
+
+```bash
+source .venv/bin/activate
+make panel-dev
+make panel-dev PANEL_ARGS="--scenario degraded --port 8766 --open"
+```
+
+The command prints the loopback URL (normally `http://127.0.0.1:8765`), a
+disposable Basic Auth login, and its private temporary state directory. It needs
+no panel installation, Nginx, systemd services, or installed agent tools. Use
+`--port 0` to select an available port. It never binds to a network interface
+other than loopback. Stop with Ctrl-C to shut down the worker and remove the
+session's data and credentials.
+
+The production page renderers, routes, form parsing, validation, CSRF checks,
+task store and inbox are used. Host observations and mutations are replaced by
+development adapters: no real commands, agents, updates, approvals or provider
+requests run. Saved Git author fields and token-presence flags belong to the
+temporary fixture; submitted tokens are discarded. Do not enter real secrets.
+Publishing renders an empty fixture and rejects provider/file operations;
+Desktop and Console require their separate integration fixtures. Simulated task
+runs show success in normal scenarios and failure in `degraded`. Their workspace
+preparation and evidence are simulated too; this does not qualify real execution.
+
+Choose a scenario through `--scenario` or the development controls above each
+page:
+
+- `full` (default): optional panel pages, an example task and an unread message.
+- `minimal`: core inspection pages with optional tools absent.
+- `empty`: optional pages and forms with no saved tasks, messages or job records.
+- `degraded`: high resource use, collector notices and simulated operation failures.
+
+Switching scenarios or selecting **Reset sample data** clears the session's
+temporary account and seeds the selected scenario again. Ordinary source reloads
+preserve saved drafts, inbox changes and simulated account settings. The listener,
+URL and login stay unchanged. Python changes under `common/service_tools`, `lib`
+and `scripts` restart the worker in a fresh interpreter. `--watch PATH` adds a
+file or directory; additions and deletions are detected. After a reload, the
+browser refreshes automatically unless an input has been edited; then it offers
+a reload link and preserves the unsaved form. `--no-refresh` disables browser
+refresh and `--no-reload` disables source watching. A worker syntax/startup error
+is printed in the terminal; after a reload failure, editing the file again retries
+startup.
+
+HTTP keeps everyday layout/form work simple. HTTPS-only credential and publishing
+forms retain their transport restrictions. For transport-sensitive checks:
+
+```bash
+make panel-dev PANEL_ARGS="--https"
+```
+
+This mode requires OpenSSL and the development extra. It prints a session CA path
+and SHA-256 fingerprint. Verify that fingerprint locally and import the CA only
+into a disposable browser profile using the procedure below. Never bypass TLS
+verification or add this CA to the host trust store. The certificate and login
+survive source reloads; all CA material is removed when the development session
+ends. Use the dedicated pairing/approval/Guacamole suite for those services.
+
+Static visual specimens remain available through the
+[brand review workflow](../brand/README.md#reproduction-and-review). The static
+exporter, browser fixture and development scenarios share deterministic job
+records from `scripts/panel_samples.py`; interactive changes never alter exports.
+
 ## Run the local suite
 
 Use a development machine with the Python development extra installed, Node.js
@@ -38,6 +105,22 @@ directory's Playwright CLI. Then select that installed runtime:
 make browser-test BROWSER_ARGS="--context project --project /absolute/browser-runtime"
 make browser-test BROWSER_ARGS="--engine firefox"
 ```
+
+For a short edit/test loop, filter by a Playwright test-title regular expression:
+
+```bash
+make browser-test BROWSER_ARGS="--engine chromium --grep 'panel development'"
+make browser-test BROWSER_ARGS="--engine chromium --grep 'panel form' --headed --trace"
+```
+
+`--headed` requires a working graphical desktop. `--trace` retains successful
+traces too; failed tests retain traces and screenshots by default. A filtered
+run reports `scope: focused`, its selection, and `selected_checks_passed` for
+each engine. It never sets `application_tested` or claims full qualification.
+No matching tests, failed selected checks and skipped first-party checks fail
+the command. Run without `--grep` for the full suite. The development-server
+case exercises real forms, all four scenarios, source reload, preservation of
+saved and unsaved edits, reset, and cleanup on shutdown.
 
 The standalone runtime must include `playwright` or `@playwright/test` at the
 repository's exact pin. `playwright-core` alone lacks the test runner. Selecting

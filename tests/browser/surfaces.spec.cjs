@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const modulePath = process.env.BASALTW_PLAYWRIGHT_MODULE;
 const { test: base, expect } = require(require(path.join(modulePath, 'package.json')).name === '@playwright/test' ? modulePath : path.join(modulePath, 'test'));
 const fixture = JSON.parse(fs.readFileSync(process.env.BASALTW_BROWSER_FIXTURE, 'utf8'));
@@ -25,7 +25,7 @@ const test = base.extend({
       trust(browserName === 'firefox' ? profile : path.join(directory, '.pki/nssdb'));
       const type = playwright[browserName];
       context = await type.launchPersistentContext(profile, {
-        headless: true, executablePath: type.executablePath(),
+        headless: process.env.BASALTW_BROWSER_HEADED !== '1', executablePath: type.executablePath(),
         chromiumSandbox: true,
         env: { ...process.env, HOME: directory },
         args: browserName === 'chromium' ? ['--disable-features=NativeNotifications'] : [],
@@ -47,8 +47,10 @@ const test = base.extend({
             if (info.status !== info.expectedStatus) {
               for (const [index, page] of context.pages().entries())
                 await page.screenshot({ path: info.outputPath(`failure-${index}.png`), fullPage: true }).catch(() => {});
+            }
+            if (info.status !== info.expectedStatus || process.env.BASALTW_BROWSER_TRACE === '1')
               await context.tracing.stop({ path: info.outputPath('trace.zip') });
-            } else await context.tracing.stop();
+            else await context.tracing.stop();
           } finally { await context.close(); }
         }
       } finally {
@@ -247,6 +249,9 @@ test('approval denial and expiry reject subsequent decisions', async ({ page, br
 });
 
 test('authentication and invalid HTTPS remain rejected', async ({ page, playwright, diagnostics }) => {
+  // Python 3.13 and other strict clients require CA/leaf key-usage extensions.
+  execFileSync('openssl', ['verify', '-x509_strict', '-CAfile', fixture.ca,
+    path.join(path.dirname(fixture.ca), 'server.crt')]);
   const anonymous = await playwright.request.newContext({ ignoreHTTPSErrors: false });
   try {
     for (const origin of [urls.panel, urls.pairing, urls.approval]) expect((await anonymous.get(origin + '/')).status()).toBe(401);
@@ -289,4 +294,101 @@ test('Guacamole embed/session boundary with disposable protocol service', async 
   const rejected = await page.evaluate(async () => (await fetch('/desktop/session', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csrf: 'forged', password: 'fixture' }) })).status);
   expect(rejected).toBe(403);
+});
+
+test('panel development forms, scenarios, reload, reset and cleanup', async ({ page }) => {
+  test.setTimeout(90000);
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'basaltwater-panel-watch-'));
+  const watched = path.join(temporary, 'extra.css');
+  fs.writeFileSync(watched, 'initial');
+  const server = spawn(process.env.BASALTW_BROWSER_PYTHON,
+    [path.join(__dirname, '../../scripts/panel_dev.py'), '--port', '0', '--watch', watched],
+    { cwd: path.join(__dirname, '../..'), stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  let stateDirectory;
+  server.stdout.on('data', chunk => { stdout += chunk; });
+  server.stderr.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise(resolve => server.once('exit', resolve));
+  try {
+    await expect.poll(() => {
+      stateDirectory = stdout.match(/Temporary state: ([^\r\n]+)/)?.[1];
+      return stateDirectory && fs.existsSync(path.join(stateDirectory, 'ready.json'));
+    }, { timeout: 30000, message: 'Development server starts' }).toBe(true);
+    const settings = JSON.parse(fs.readFileSync(path.join(stateDirectory, 'settings.json')));
+    const authorization = 'Basic ' + Buffer.from(`${settings.username}:${settings.password}`).toString('base64');
+    // Use this disposable server's credentials without modifying the fixture login.
+    await page.route(settings.url + '/**', route => route.continue({ headers: { ...route.request().headers(), authorization } }));
+    const status = async () => (await page.request.get(settings.url + '/__dev__/status', { headers: { authorization } })).json();
+    const generation = async () => (await status()).generation;
+    const waitForRestart = async previous => {
+      await expect.poll(generation, { timeout: 20000 }).not.toBe(previous);
+    };
+    await page.goto(settings.url);
+    await page.goto(settings.url + '/agents');
+    await page.getByRole('button', { name: 'Run now', exact: true }).first().click();
+    await expect.poll(async () => {
+      await page.reload();
+      return page.getByText('Synthetic execution; no provider was contacted', { exact: true }).count();
+    }).toBe(1);
+    for (const route of ['/agents', '/agent-tools', '/agent-inbox', '/maintenance-agent', '/admin', '/publishing',
+                         '/services?load=1', '/jobs?load=1', '/logs?load=1', '/credentials']) {
+      const response = await page.goto(settings.url + route);
+      expect(response.status(), route).toBe(200);
+      await expect(page.locator('#panel-development')).toBeVisible();
+    }
+    await page.setViewportSize({ width: 390, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByLabel('Author name', { exact: true }).fill('Browser Developer');
+    await page.getByLabel('Author email', { exact: true }).fill('browser@example.test');
+    await page.getByRole('button', { name: 'Save commit identity' }).click();
+    await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Browser Developer');
+    let previous = await generation();
+    fs.writeFileSync(watched, 'reload once');
+    await waitForRestart(previous);
+    await expect.poll(() => page.locator('#panel-development').getAttribute('data-generation')).toBe(await generation());
+    await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Browser Developer');
+
+    // A code reload preserves unsaved edits and offers a deliberate refresh.
+    await page.getByLabel('Author name', { exact: true }).fill('Unsaved developer');
+    previous = await generation();
+    fs.writeFileSync(watched, 'reload twice');
+    await waitForRestart(previous);
+    await expect(page.locator('#panel-reload')).toBeVisible();
+    await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Unsaved developer');
+    await page.locator('#panel-reload').click();
+    await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Browser Developer');
+
+    const toolbar = page.locator('#panel-development');
+    previous = await generation();
+    await toolbar.getByRole('button', { name: 'Reset sample data' }).click();
+    await waitForRestart(previous);
+    await page.goto(settings.url + '/credentials');
+    await expect(page.getByLabel('Author name', { exact: true })).toHaveValue('Development Operator');
+    for (const scenario of ['minimal', 'empty', 'degraded']) {
+      previous = await generation();
+      await toolbar.getByLabel('Scenario').selectOption(scenario);
+      await toolbar.getByRole('button', { name: 'Switch scenario' }).click();
+      await waitForRestart(previous);
+      await page.goto(settings.url);
+      await expect(toolbar.getByLabel('Scenario')).toHaveValue(scenario);
+      if (scenario === 'minimal') await expect(page.locator('.sidebar a[href="/agents"]')).toHaveCount(0);
+      if (scenario === 'empty') {
+        await page.goto(settings.url + '/agent-inbox');
+        await expect(page.getByText('No unread messages.', { exact: true })).toBeVisible();
+      }
+      if (scenario === 'degraded') await expect(page.getByRole('meter', { name: 'Memory used' })).toHaveAttribute('value', '94');
+    }
+    expect(stderr, 'No development worker exceptions').toBe('');
+    // Leave the page before shutdown so background reload polling stops cleanly.
+    await page.goto(urls.panel);
+  } finally {
+    server.kill('SIGTERM');
+    const stopped = await Promise.race([exited.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 15000))]);
+    if (!stopped) server.kill('SIGKILL');
+    fs.rmSync(temporary, { recursive: true, force: true });
+    expect(stopped, 'Supervisor and worker stop gracefully').toBe(true);
+    if (stateDirectory) expect(fs.existsSync(stateDirectory), 'Disposable state removed').toBe(false);
+  }
 });

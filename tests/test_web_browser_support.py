@@ -125,6 +125,23 @@ class BrowserQualificationReports(unittest.TestCase):
         path.write_text(json.dumps(report))
         self.assertEqual(self.summarize()["exit_code"], 1)
 
+    def test_focused_results_never_claim_full_application_qualification(self) -> None:
+        self.report()
+        summary = run_browser_tests.summarize_results(self.directory, engines=["chromium", "firefox"],
+            playwright_version=run_browser_tests.PLAYWRIGHT_VERSION, context="managed",
+            returncode=0, guacamole_available=True, selection="panel")
+        self.assertEqual(summary["exit_code"], 0)
+        self.assertEqual(summary["scope"], "focused")
+        self.assertTrue(all(outcome["selected_checks_passed"] for outcome in summary["outcomes"].values()))
+        self.assertTrue(all(not outcome["application_tested"] for outcome in summary["outcomes"].values()))
+
+    def test_focused_first_party_skips_are_failures_even_without_guacamole(self) -> None:
+        self.report(firefox_status="skipped", guacamole_status="skipped")
+        summary = run_browser_tests.summarize_results(self.directory, engines=["chromium", "firefox"],
+            playwright_version=run_browser_tests.PLAYWRIGHT_VERSION, context="managed",
+            returncode=0, guacamole_available=False, selection="panel")
+        self.assertEqual(summary["exit_code"], 1)
+
 
 class BrowserFixtureSafeguards(unittest.TestCase):
     def test_existing_files_or_linked_directories_are_rejected_before_openssl(self) -> None:

@@ -30,6 +30,7 @@ from common.service_tools import web_panel_host as host
 from common.service_tools import web_panel_maintenance as maintenance
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.maintenance_agent_config import DEFAULTS as MAINTENANCE_DEFAULTS
+from scripts.panel_samples import job_rows
 
 GUIDE_STYLE = """
 .identity-intro { display: grid; grid-template-columns: minmax(0, 1fr) 160px;
@@ -235,20 +236,6 @@ def export_assets(assets: Path) -> None:
         "access": [{"label": "SSH", "value": "ssh operator@workshop.example.test", "description": "Verified host identity"}],
     }, agent_home="/home/operator")
     state.csrf_token = "brand-preview-not-a-runtime-token"
-    job_rows = []
-    for service, label, status, tone, timer, result in (
-        ("auto-update-apt.service", "Package updates", "Last run failed", "error", "active", "exit-code"),
-        ("cleanup-maintenance.service", "System cleanup", "Last run succeeded", "warning", "inactive", "success"),
-        ("security-monitor.service", "Security monitoring", "Last run succeeded", "info", "active", "success"),
-    ):
-        job_rows.append({
-            "service": service, "label": label, "status": status, "tone": tone,
-            "timer": timer, "enabled": "enabled", "result": result,
-            "next": "In about 45 minutes" if timer == "active" else "Timer is not active",
-            "triggered": "2026-01-01 09:00:00 UTC", "started": "2026-01-01 09:00:01 UTC",
-            "finished": "2026-01-01 09:02:14 UTC", "exit": "1" if tone == "error" else "0",
-            "persistent": "Yes",
-        })
     patchers = (
         patch.object(panel, "discover_basaltwater_web_services", return_value=[]),
         patch.object(panel, "discover_certificate_trust", return_value=None),
@@ -294,7 +281,7 @@ def export_assets(assets: Path) -> None:
             key: template for key, template in agents.PROMPT_TEMPLATES.items() if "requires" not in template
         }),
         patch.object(state.admin, "snapshot", return_value={"blocked": {}, "requests": [], "unit_state": "inactive"}),
-        patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows, [], absent=9)),
+        patch.object(jobs, "collect_jobs", return_value=jobs.JobSnapshot(job_rows(), [], absent=9)),
         patch.object(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []}),
         patch.object(maintenance, "load_policy", return_value={**MAINTENANCE_DEFAULTS, "enabled": True}),
         patch.object(maintenance, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),

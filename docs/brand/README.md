@@ -166,6 +166,12 @@ or read private host state. Review [identity](index.html), [README](readme.html)
 for example through a loopback
 `python3 -m http.server --bind 127.0.0.1 --directory docs/brand` server.
 
+For working forms and source reload, use `make panel-dev` from an activated
+development environment. Its disposable scenarios use the production handlers
+and share sample job records with these exports. See
+[local panel development](../agents/browser-testing.md#develop-the-web-panel-locally)
+for startup, scenario controls and simulated-action boundaries.
+
 Review light/dark themes at 375 and 1280 pixels, keyboard skip-link focus,
 horizontal overflow, native disclosures, and the symbol at 16 pixels when
 changing the geometry. Loaded jobs and diagnostics specimens use fixed synthetic

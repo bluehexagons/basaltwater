@@ -30,7 +30,7 @@ GUACAMOLE_JS_SHA256 = "3a6126a9487ea2e37a1684613b54335c2d32e35d2e33286e719700154
 
 
 def summarize_results(output: Path, *, engines: list[str], playwright_version: str, context: str,
-                      returncode: int, guacamole_available: bool) -> dict:
+                      returncode: int, guacamole_available: bool, selection: str | None = None) -> dict:
     """Derive qualification from completed checks, never installed prerequisites."""
     checks = {engine: {"first_party": [], "guacamole": []} for engine in engines}
     versions = {engine: set() for engine in engines}
@@ -92,15 +92,22 @@ def summarize_results(output: Path, *, engines: list[str], playwright_version: s
         guacamole = outcome(checks[engine]["guacamole"])
         if not guacamole_available:
             guacamole["reason"] = "pinned assets missing"
-        tested = not issues and first_party["status"] == "passed" and bool(versions[engine])
-        complete &= tested and (guacamole["status"] == "passed" if guacamole_available else guacamole["status"] == "skipped")
+        tested = not issues and first_party["status"] == "passed" and bool(versions[engine]) and selection is None
+        selected_statuses = checks[engine]["first_party"] + checks[engine]["guacamole"]
+        selected_passed = not issues and bool(versions[engine]) and "passed" in selected_statuses and all(
+            status == "passed" for status in checks[engine]["first_party"]) and all(
+            status == "passed" or (status == "skipped" and not guacamole_available)
+            for status in checks[engine]["guacamole"])
+        complete &= selected_passed if selection is not None else tested and (
+            guacamole["status"] == "passed" if guacamole_available else guacamole["status"] == "skipped")
         outcomes[engine] = {"browser_versions": sorted(versions[engine]), "application_tested": tested,
+                            "selected_checks_passed": selected_passed,
                             "first_party": first_party, "guacamole": guacamole}
     return {"engines": engines, "playwright_version": playwright_version, "context": context,
             "network_origin": "host", "workers": 1, "test_exit_code": returncode,
             "exit_code": returncode or (0 if complete else 1), "issues": issues, "outcomes": outcomes,
             "guacamole_boundary": "disposable protocol fixture", "native_esr": "not tested: separate release qualification",
-            "project_ui": "out of scope"}
+            "project_ui": "out of scope", "scope": "focused" if selection is not None else "full", "selection": selection}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -110,7 +117,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", help="Existing locked Playwright package directory")
     parser.add_argument("--guacamole-assets", type=Path, help="Existing pinned Guacamole share/all.js")
     parser.add_argument("--require-guacamole", action="store_true", help="Fail instead of reporting missing integration prerequisites")
+    parser.add_argument("--grep", help="Run tests matching this Playwright title regex; results are focused, not full qualification")
+    parser.add_argument("--headed", action="store_true", help="Show the selected browser on the development desktop")
+    parser.add_argument("--trace", action="store_true", help="Keep traces for successful checks too")
     args = parser.parse_args(argv)
+    if args.grep is not None and (not args.grep.strip() or len(args.grep) > 512):
+        parser.error("--grep must be a non-empty title regex of at most 512 characters")
     if os.environ.get("CI"):
         parser.error("Intensive browser checks run on development machines, outside CI")
     try:
@@ -160,13 +172,16 @@ def main(argv: list[str] | None = None) -> int:
                         time.sleep(0.1)
                     environment = _environment(args.context)
                     environment.update({"BASALTW_BROWSER_FIXTURE": str(metadata), "BASALTW_BROWSER_OUTPUT": str(output),
-                                        "BASALTW_PLAYWRIGHT_MODULE": runtime["module"], "NODE_EXTRA_CA_CERTS": str(directory / "ca.crt")})
+                                        "BASALTW_PLAYWRIGHT_MODULE": runtime["module"], "NODE_EXTRA_CA_CERTS": str(directory / "ca.crt"),
+                                        "BASALTW_BROWSER_HEADED": "1" if args.headed else "0",
+                                        "BASALTW_BROWSER_TRACE": "1" if args.trace else "0", "BASALTW_BROWSER_PYTHON": sys.executable})
                     engines = list(dict.fromkeys(args.engine or ("chromium", "firefox")))
                     result = run([node, runtime["cli"], "test", "--config", str(ROOT / "tests/browser/playwright.config.cjs"),
-                                  *[f"--project={engine}" for engine in engines]],
+                                  *[f"--project={engine}" for engine in engines], *(["--grep", args.grep] if args.grep is not None else [])],
                                  check=False, env=environment, cwd=ROOT, timeout=1800)
                     summary = summarize_results(output, engines=engines, playwright_version=runtime["version"],
-                                                context=args.context, returncode=result.returncode, guacamole_available=asset is not None)
+                                                context=args.context, returncode=result.returncode, guacamole_available=asset is not None,
+                                                selection=args.grep)
                     write_json_atomic(str(output / "summary.json"), summary)
                     return summary["exit_code"]
                 finally:
