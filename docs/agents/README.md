@@ -14,6 +14,7 @@ browser-approved privileged-action panel, start with
 | Need | Guide |
 | --- | --- |
 | General workflow for any coding project | [Project development skill](../../common/agent_skills/basaltwater-project-development/SKILL.md) and [subagent workflows](agent-subagents.md) |
+| Design or substantially reshape a frontend | [Frontend design skill](../../common/agent_skills/basaltwater-frontend-design/SKILL.md) |
 | Choose a headless or graphical coding profile | [Agentic VMs](agentic-vms.md) |
 | Review isolation, sudo, prompt-injection, and supply-chain boundaries | [Agent security](agent-security.md) |
 | Set up, rotate, or recover provider credentials | [Agent authentication](agent-authentication.md), [Credentials](credentials.md) |

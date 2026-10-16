@@ -54,16 +54,18 @@ each selected agent after setup. In T3 Code, choose the Ubuntu distribution in
 Settings > Connections.
 
 Selected Codex, Claude Code, or OpenCode installations also receive the `basaltw`
-helper and the `basaltwater-wsl-workspace` and `basaltwater-subagents` skills in
-the Ubuntu account's catalog. Codex/OpenCode use `~/.agents/skills`; Claude uses
-`~/.claude/skills`. These skills cover Linux workspaces, bounded delegation, and
-project model learning without assuming Debian VM services. T3 Code must connect
-to the intended distribution/account to discover them; a native Windows provider
-uses a separate home. Use `basaltw agent manifest /absolute/project --json` inside
-Ubuntu and check the active agent's skill list. The manifest's non-CachyOS profile
-label is generic; it does not establish WSL service readiness. Rerun installation
-from updated pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the
-existing source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
+helper and the `basaltwater-wsl-workspace`, `basaltwater-project-development`,
+`basaltwater-frontend-design`, and `basaltwater-subagents` skills in the Ubuntu
+account's catalog. Codex/OpenCode use `~/.agents/skills`; Claude uses
+`~/.claude/skills`. These skills cover Linux workspaces, general project
+workflow, frontend design, and bounded delegation without assuming Debian VM
+services. T3 Code must connect to the intended distribution/account to discover
+them; a native Windows provider uses a separate home. Use
+`basaltw agent manifest /absolute/project --json` inside Ubuntu and check the
+active agent's skill list. The manifest's non-CachyOS profile label is generic;
+it does not establish WSL service readiness. Rerun installation from updated
+pinned source to refresh skills; `Manage-Wsl.ps1 refresh` retains the existing
+source revision. See [skill access](../agents/agent-skills.md#access-from-different-sessions).
 
 ## Run a native PowerShell job
 

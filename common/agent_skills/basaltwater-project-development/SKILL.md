@@ -29,6 +29,10 @@ priority session and user instructions as well.
 - Keep edits within the requested scope. Update documentation that describes
   current behavior and durable decisions; keep task progress in the project's
   tracking tools instead of lasting docs.
+- For a new frontend screen or component, a substantial UI redesign, or work
+  where visual and interaction design are part of the request, use the installed
+  `basaltwater-frontend-design` skill. Skip it for backend-only work, isolated
+  bug fixes, and small copy edits.
 - Consider subagents for independent research, file audits, or review when the
   context and time saved justify handoff and integration costs. Keep coupled
   edits under one owner. Use the installed `basaltwater-subagents` skill for
