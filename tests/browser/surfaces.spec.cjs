@@ -10,19 +10,61 @@ const { test: base, expect } = require(require(path.join(modulePath, 'package.js
 const fixture = JSON.parse(fs.readFileSync(process.env.BASALTW_BROWSER_FIXTURE, 'utf8'));
 const urls = fixture.urls;
 
-function trust(directory) {
+function trust(directory, additionalCA) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   execFileSync('certutil', ['-N', '--empty-password', '-d', `sql:${directory}`]);
   execFileSync('certutil', ['-A', '-d', `sql:${directory}`, '-n', 'Disposable fixture CA', '-t', 'C,,', '-i', fixture.ca]);
+  if (additionalCA) execFileSync('certutil', ['-A', '-d', `sql:${directory}`, '-n', 'Disposable development CA', '-t', 'C,,', '-i', additionalCA]);
 }
 
 const test = base.extend({
-  context: async ({ playwright, browserName }, use, info) => {
+  developmentSurface: [null, { option: true }],
+  developmentServer: async ({ developmentSurface }, use) => {
+    if (!developmentSurface) { await use(null); return; }
+    const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'basaltwater-specialized-watch-'));
+    const watched = path.join(temporary, 'extra.css');
+    fs.writeFileSync(watched, 'initial');
+    const args = [path.join(__dirname, '../../scripts/panel_dev.py'), '--port', '0', '--surface', developmentSurface, '--watch', watched];
+    if (['desktop', 'console'].includes(developmentSurface)) args.push('--guacamole-assets', process.env.BASALTW_BROWSER_GUACAMOLE_ASSETS);
+    const server = spawn(process.env.BASALTW_BROWSER_PYTHON, args,
+      { cwd: path.join(__dirname, '../..'), stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = '', stateDirectory;
+    server.stdout.on('data', chunk => { stdout += chunk; });
+    server.stderr.on('data', chunk => { stderr += chunk; });
+    const exited = new Promise(resolve => server.once('exit', resolve));
+    try {
+      await expect.poll(() => {
+        stateDirectory = stdout.match(/Temporary state: ([^\r\n]+)/)?.[1];
+        return !!stateDirectory && fs.existsSync(path.join(stateDirectory, 'ready.json'));
+      }, { timeout: 30000, message: 'Specialized development server starts' }).toBe(true);
+      const settings = JSON.parse(fs.readFileSync(path.join(stateDirectory, 'settings.json')));
+      const generation = () => {
+        try { return JSON.parse(fs.readFileSync(path.join(stateDirectory, 'ready.json'))).generation; }
+        catch { return null; }
+      };
+      await use({ ...settings, watched, generation,
+        ca: settings.https ? path.join(stateDirectory, 'certificates/ca.crt') : null,
+        restart: async action => {
+          const previous = generation();
+          await action();
+          await expect.poll(() => { const current = generation(); return !!current && current !== previous; }, { timeout: 20000 }).toBe(true);
+        } });
+    } finally {
+      server.kill('SIGTERM');
+      const stopped = await Promise.race([exited.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 15000))]);
+      if (!stopped) server.kill('SIGKILL');
+      fs.rmSync(temporary, { recursive: true, force: true });
+      expect(stopped, 'Specialized supervisor and worker stop gracefully').toBe(true);
+      if (stateDirectory) expect(fs.existsSync(stateDirectory), 'Specialized disposable state removed').toBe(false);
+      expect(stderr, 'No specialized worker exceptions').toBe('');
+    }
+  },
+  context: async ({ playwright, browserName, developmentServer }, use, info) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'basaltwater-browser-profile-'));
     const profile = path.join(directory, 'profile');
     let context;
     try {
-      trust(browserName === 'firefox' ? profile : path.join(directory, '.pki/nssdb'));
+      trust(browserName === 'firefox' ? profile : path.join(directory, '.pki/nssdb'), developmentServer?.ca);
       const type = playwright[browserName];
       context = await type.launchPersistentContext(profile, {
         headless: process.env.BASALTW_BROWSER_HEADED !== '1', executablePath: type.executablePath(),
@@ -30,7 +72,8 @@ const test = base.extend({
         env: { ...process.env, HOME: directory },
         args: browserName === 'chromium' ? ['--disable-features=NativeNotifications'] : [],
         viewport: { width: 1440, height: 900 },
-        httpCredentials: { username: fixture.username, password: fixture.password },
+        httpCredentials: { username: developmentServer?.username || fixture.username,
+          password: developmentServer?.password || fixture.password },
         extraHTTPHeaders: { 'X-Fixture-Engine': browserName },
         ignoreHTTPSErrors: false,
         firefoxUserPrefs: { 'security.enterprise_roots.enabled': false },
@@ -60,6 +103,7 @@ const test = base.extend({
   },
   diagnostics: [async ({ page, context }, use, info) => {
     const allowed = new Set();
+    const expectedConsole = [];
     const errors = [];
     const failures = [];
     const downloads = new Set();
@@ -75,7 +119,8 @@ const test = base.extend({
     });
     page.on('pageerror', error => errors.push(`Page error: ${error.message}`));
     page.on('console', message => {
-      if (message.type() === 'error' && !allowed.has(message.location().url)) errors.push(`Console: ${message.text()}`);
+      if (message.type() === 'error' && !allowed.has(message.location().url)
+          && !expectedConsole.some(prefix => message.text().includes(prefix))) errors.push(`Console: ${message.text()}`);
     });
     page.on('requestfailed', request => {
       failures.push({ url: request.url(), error: request.failure()?.errorText });
@@ -89,7 +134,7 @@ const test = base.extend({
       if (response.ok()) authChallenges.delete(response.url());
       if (response.status() >= 400 && !allowed.has(response.url())) errors.push(`HTTP ${response.status()}: ${response.url()}`);
     });
-    await use({ allowed });
+    await use({ allowed, expectedConsole });
     for (const failure of failures) {
       // Browsers abort the document navigation when handing it to the
       // download manager. The download test independently verifies completion.
@@ -392,3 +437,119 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     if (stateDirectory) expect(fs.existsSync(stateDirectory), 'Disposable state removed').toBe(false);
   }
 });
+
+for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) {
+  const guacamole = ['desktop', 'console'].includes(surface);
+  test.describe(`${surface} development`, () => {
+    test.use({ developmentSurface: guacamole && !process.env.BASALTW_BROWSER_GUACAMOLE_ASSETS ? null : surface });
+    test(`${guacamole ? 'Guacamole ' : ''}specialized development ${surface} forms, scenarios and reload`, async ({ page, developmentServer: dev, diagnostics }) => {
+      test.skip(guacamole && !process.env.BASALTW_BROWSER_GUACAMOLE_ASSETS, 'Pinned Guacamole assets missing');
+      test.setTimeout(90000);
+      const entry = dev.url + dev.entry;
+      const toolbar = page.locator('#panel-development');
+      const reload = async () => {
+        await dev.restart(() => fs.writeFileSync(dev.watched, crypto.randomUUID()));
+        await expect(page.locator('#panel-reload')).toBeVisible();
+        await page.locator('#panel-reload').click();
+        await expect(toolbar).toHaveAttribute('data-generation', dev.generation());
+      };
+      const scenario = async name => {
+        await toolbar.getByLabel('Scenario').selectOption(name);
+        await dev.restart(() => toolbar.getByRole('button', { name: 'Switch scenario' }).click());
+        await page.goto(entry);
+        await expect(toolbar.getByLabel('Scenario')).toHaveValue(name);
+      };
+      await page.goto(entry);
+      await expect(toolbar).toBeVisible();
+      await page.setViewportSize({ width: 390, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      if (surface === 'connect') {
+        await page.getByLabel('Start Connect automatically').uncheck();
+        await page.getByRole('button', { name: 'Apply setting' }).click();
+        await expect(page.getByLabel('Start Connect automatically')).not.toBeChecked();
+        await page.getByRole('button', { name: 'Start authorization' }).click();
+        await expect(page.getByText('Authorization in progress', { exact: true })).toBeVisible();
+        await page.getByLabel('Response or authorization code').fill('unsaved-sample');
+        await dev.restart(() => fs.writeFileSync(dev.watched, 'authorization in progress'));
+        await expect(page.locator('#panel-reload')).toBeVisible();
+        await expect(page.getByLabel('Response or authorization code')).toHaveValue('unsaved-sample');
+        await page.locator('#panel-reload').click();
+        await expect(page.getByText('Authorization in progress', { exact: true })).toBeVisible();
+        await page.getByLabel('Response or authorization code').fill('sample-response');
+        await page.getByRole('button', { name: 'Send response' }).click();
+        await expect(page.getByText('Authorization completed', { exact: true })).toBeVisible();
+        // Automatic refresh after a successful POST must navigate with GET.
+        await dev.restart(() => fs.writeFileSync(dev.watched, 'completed'));
+        await expect.poll(() => toolbar.getAttribute('data-generation')).toBe(dev.generation());
+        await expect(page.getByText('Authorization completed', { exact: true })).toBeVisible();
+      } else if (surface === 'pairing') {
+        await page.getByRole('button', { name: 'Pair another T3 Code client' }).click();
+        await expect(page.getByRole('heading', { name: 'Continue in T3 Code' })).toBeVisible();
+        await page.getByRole('link', { name: 'Open pairing link' }).click();
+        await expect(page).toHaveURL(dev.url + '/pair#token=synthetic-only');
+        await expect(page.getByRole('heading', { name: 'Synthetic destination' })).toBeVisible();
+        await page.goto(dev.url + '/');
+        await expect(page).toHaveURL(dev.url + '/pair#token=synthetic-only');
+        await page.goto(entry);
+      } else if (surface === 'approval') {
+        await page.getByRole('link', { name: 'development-only' }).first().click();
+        await page.getByRole('button', { name: 'Approve once', exact: true }).click();
+        await expect(page.locator('dd').filter({ hasText: /^approved$/ })).toBeVisible();
+        await dev.restart(() => fs.writeFileSync(dev.watched, 'approved'));
+        await expect.poll(() => toolbar.getAttribute('data-generation')).toBe(dev.generation());
+        await expect(page.locator('dd').filter({ hasText: /^approved$/ })).toBeVisible();
+      } else {
+        if (surface === 'desktop') {
+          await page.getByRole('button', { name: 'Check desktop status' }).click();
+          await expect(page.locator('#desktop-status')).toContainText('running');
+        }
+        await page.getByLabel('Unix account password').fill('synthetic-no-login');
+        await page.getByRole('button', { name: `Connect to ${surface}`, exact: true }).click();
+        await expect(page.locator('#screen canvas').first()).toBeVisible();
+        await expect(page.locator('#password')).toHaveValue('');
+        await expect.poll(() => page.locator('#screen canvas').first().evaluate(canvas =>
+          Array.from(canvas.getContext('2d').getImageData(10, 10, 1, 1).data))).toEqual([64, 128, 192, 255]);
+        if (surface === 'desktop') {
+          await page.getByRole('button', { name: 'Take control', exact: true }).click();
+          await expect(page.getByRole('button', { name: 'You have control' })).toHaveAttribute('aria-pressed', 'true');
+          await page.getByRole('button', { name: 'Observe only', exact: true }).click();
+        }
+        await page.getByRole('button', { name: surface === 'desktop' ? 'Disconnect browser session' : 'Disconnect', exact: true }).click();
+        await expect(page.locator('#screen')).toBeEmpty();
+        await reload();
+      }
+      await dev.restart(() => toolbar.getByRole('button', { name: 'Reset sample data' }).click());
+      await page.goto(entry);
+      if (surface === 'connect') await expect(page.getByText('Authorization completed', { exact: true })).toHaveCount(0);
+      if (surface === 'approval') {
+        await page.getByRole('link', { name: 'development-only' }).first().click();
+        await expect(page.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible();
+      }
+      for (const name of ['minimal', 'empty']) {
+        await scenario(name);
+        if (surface === 'approval' && name === 'empty') await expect(page.getByRole('link', { name: 'development-only' })).toHaveCount(0);
+      }
+      if (surface === 'approval') diagnostics.allowed.add(entry);
+      await scenario('degraded');
+      if (surface === 'connect') {
+        await page.getByRole('button', { name: 'Start authorization' }).click();
+        await expect(page.getByText('Authorization did not complete', { exact: true })).toBeVisible();
+      } else if (surface === 'pairing') {
+        diagnostics.allowed.add(dev.url + '/pair/t3code');
+        await page.getByRole('button', { name: 'Pair another T3 Code client' }).click();
+        await expect(page.getByRole('heading', { name: 'Could not create pairing link' })).toBeVisible();
+      } else if (surface === 'approval') {
+        await expect(page.getByText('Request unavailable. No approval was submitted.')).toBeVisible();
+      } else {
+        diagnostics.allowed.add(dev.url + `/${surface}/session`);
+        if (surface === 'console') diagnostics.expectedConsole.push(dev.url.replace(/^http/, 'ws') + '/console/ws?attachment=');
+        await page.getByLabel('Unix account password').fill('synthetic-no-login');
+        await page.getByRole('button', { name: `Connect to ${surface}`, exact: true }).click();
+        if (surface === 'console') await expect(page.locator('#status')).toContainText('Console connection failed');
+        else await expect(page.locator('#status')).toContainText('unavailable');
+      }
+      await page.goto('about:blank');
+    });
+  });
+}

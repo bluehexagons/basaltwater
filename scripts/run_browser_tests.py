@@ -174,7 +174,8 @@ def main(argv: list[str] | None = None) -> int:
                     environment.update({"BASALTW_BROWSER_FIXTURE": str(metadata), "BASALTW_BROWSER_OUTPUT": str(output),
                                         "BASALTW_PLAYWRIGHT_MODULE": runtime["module"], "NODE_EXTRA_CA_CERTS": str(directory / "ca.crt"),
                                         "BASALTW_BROWSER_HEADED": "1" if args.headed else "0",
-                                        "BASALTW_BROWSER_TRACE": "1" if args.trace else "0", "BASALTW_BROWSER_PYTHON": sys.executable})
+                                        "BASALTW_BROWSER_TRACE": "1" if args.trace else "0", "BASALTW_BROWSER_PYTHON": sys.executable,
+                                        "BASALTW_BROWSER_GUACAMOLE_ASSETS": str(asset.resolve()) if asset else ""})
                     engines = list(dict.fromkeys(args.engine or ("chromium", "firefox")))
                     result = run([node, runtime["cli"], "test", "--config", str(ROOT / "tests/browser/playwright.config.cjs"),
                                   *[f"--project={engine}" for engine in engines], *(["--grep", args.grep] if args.grep is not None else [])],

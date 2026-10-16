@@ -35,6 +35,10 @@ from lib.atomic_io import read_json_file, write_json_atomic
 from lib.validation import validate_filesystem_path, validate_network_port
 from scripts.panel_scenarios import SCENARIOS, Scenario
 
+SURFACES = ("panel", "pairing", "connect", "approval", "desktop", "console")
+ENTRY_PATHS = {"panel": "/", "pairing": "/devices", "connect": "/connect/t3code",
+               "approval": "/", "desktop": "/desktop/", "console": "/console/"}
+
 RELOAD_SCRIPT = """'use strict';
 const toolbar = document.getElementById('panel-development');
 let dirty = false;
@@ -45,7 +49,7 @@ setInterval(async () => {
     if (!response.ok) return;
     const status = await response.json();
     if (status.generation !== toolbar.dataset.generation) {
-      if (!dirty) location.reload();
+      if (!dirty && !document.querySelector('#screen canvas')) location.replace(location.href);
       else document.getElementById('panel-reload').hidden = false;
     }
   } catch (_) { /* The worker is restarting; try again next interval. */ }
@@ -53,10 +57,44 @@ setInterval(async () => {
 """
 
 
+def development_html(body: str, settings: dict, generation: str, csrf: str) -> str:
+    """Add the same controls to every production surface in development only."""
+    import re
+
+    options = "".join(f'<option{" selected" if name == settings["scenario"] else ""}>{name}</option>' for name in SCENARIOS)
+    toolbar = f'''<aside id="panel-development" data-generation="{generation}" style="padding:12px;border:2px solid #667085;margin-bottom:16px;overflow-wrap:anywhere">
+<strong>Local development · simulated operations</strong>
+<form method="post" action="/__dev__/control"><input type="hidden" name="csrf" value="{html.escape(csrf, quote=True)}">
+<label>Scenario <select name="scenario">{options}</select></label>
+<button name="action" value="scenario">Switch scenario</button> <button name="action" value="reset">Reset sample data</button></form>
+<a id="panel-reload" href="" hidden>Changes ready — reload when finished editing</a>
+<span>Temporary data only. Use sample credentials. Provider, approval and desktop actions are simulated.</span></aside>'''
+    body = re.sub(r"<main\b[^>]*>", lambda match: match[0] + toolbar, body, count=1)
+    if settings["refresh"]:
+        script = '<script src="/__dev__/reload.js" defer></script>'
+        body = body.replace("</body>", script + "</body>") if "</body>" in body else body.replace("</html>", script + "</html>")
+    return body
+
+
+def development_control(body: bytes, csrf: str, settings: dict, directory: Path) -> None:
+    """Validate development controls independently of each service's real forms."""
+    if not 1 <= len(body) <= 1024:
+        raise ValueError("Invalid control size")
+    values = parse_qs(body.decode(), keep_blank_values=True, max_num_fields=3)
+    if set(values) != {"csrf", "scenario", "action"} or any(len(value) != 1 for value in values.values()):
+        raise ValueError("Invalid controls")
+    if not secrets.compare_digest(values["csrf"][0].encode(), csrf.encode()):
+        raise PermissionError("Invalid CSRF token")
+    if values["scenario"][0] not in SCENARIOS or values["action"][0] not in {"scenario", "reset"}:
+        raise ValueError("Unknown development control")
+    write_json_atomic(str(directory / "request.json"), {
+        "scenario": values["scenario"][0] if values["action"] == ["scenario"] else settings["scenario"]})
+
+
 def source_snapshot(extra: list[Path] | None = None) -> dict[str, tuple[int, int]]:
     """Watch panel code and its libraries, excluding state and generated exports."""
-    paths = [path for directory in ("common/service_tools", "lib", "scripts")
-             for path in (ROOT / directory).rglob("*.py")]
+    paths = [path for directory in ("common/service_tools", "lib", "scripts", "desktop/config")
+             for path in (ROOT / directory).rglob("*") if path.suffix in {".py", ".js", ".css", ".html", ".template"}]
     for path in extra or []:
         paths.extend(path.rglob("*") if path.is_dir() else [path])
     result = {}
@@ -105,17 +143,7 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
 
         def _send(self, status, body, content_type, *, headers=None) -> None:
             if content_type == "text/html":
-                options = "".join(f'<option{" selected" if name == settings["scenario"] else ""}>{name}</option>' for name in SCENARIOS)
-                toolbar = f'''<aside id="panel-development" data-generation="{generation}" style="padding:12px;border:2px solid var(--accent);margin-bottom:16px">
-<strong>Local development · simulated operations</strong>
-<form method="post" action="/__dev__/control"><input type="hidden" name="csrf" value="{html.escape(state.csrf_token, quote=True)}">
-<label>Scenario <select name="scenario">{options}</select></label>
-<button name="action" value="scenario">Switch scenario</button> <button name="action" value="reset">Reset sample data</button></form>
-<a id="panel-reload" href="" hidden>Changes ready — reload when finished editing</a>
-<span>Changes stay in temporary state. Publishing provider actions are unavailable.</span></aside>'''
-                body = body.replace('<main id="main" tabindex="-1">', '<main id="main" tabindex="-1">' + toolbar)
-                if settings["refresh"]:
-                    body = body.replace("</body>", '<script src="/__dev__/reload.js" defer></script></body>')
+                body = development_html(body, settings, generation, state.csrf_token)
             super()._send(status, body, content_type, headers=headers)
 
         def send_header(self, keyword, value) -> None:
@@ -145,15 +173,10 @@ def development_handler(state: panel.WebPanelState, settings: dict, generation: 
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 1 <= length <= 1024:
                     raise ValueError("Invalid control size")
-                values = parse_qs(self.rfile.read(length).decode(), keep_blank_values=True, max_num_fields=3)
-                if set(values) != {"csrf", "scenario", "action"} or any(len(value) != 1 for value in values.values()):
-                    raise ValueError("Invalid controls")
-                if not secrets.compare_digest(values["csrf"][0].encode(), state.csrf_token.encode()):
-                    self._send(HTTPStatus.FORBIDDEN, "Invalid CSRF token\n", "text/plain")
-                    return
-                if values["scenario"][0] not in SCENARIOS or values["action"][0] not in {"scenario", "reset"}:
-                    raise ValueError("Unknown development control")
-                write_json_atomic(str(directory / "request.json"), {"scenario": values["scenario"][0] if values["action"] == ["scenario"] else settings["scenario"]})
+                development_control(self.rfile.read(length), state.csrf_token, settings, directory)
+            except PermissionError:
+                self._send(HTTPStatus.FORBIDDEN, "Invalid CSRF token\n", "text/plain")
+                return
             except (ValueError, UnicodeError):
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid development controls\n", "text/plain")
                 return
@@ -179,6 +202,10 @@ def worker(directory: Path, descriptor: int) -> int:
         # No subprocess from any handler or scheduler can reach the host.
         stack.enter_context(patch.object(subprocess, "run", side_effect=RuntimeError("Host commands disabled in panel development")))
         stack.enter_context(patch.object(subprocess, "Popen", side_effect=RuntimeError("Processes disabled in panel development")))
+        if settings["surface"] != "panel":
+            from scripts.panel_specialized import serve
+
+            return serve(directory, descriptor, settings, done, stack)
         state = panel.WebPanelState({
             "host": "development.example.test", "username": "operator", "title": "Development machine",
             "system_type": "server_dev", "features": {}, "services": [], "access": [],
@@ -239,6 +266,8 @@ def supervise(args: argparse.Namespace, directory: Path) -> int:
             port = listener.getsockname()[1]
             url = f"{'https' if args.https else 'http'}://127.0.0.1:{port}"
             settings = {"url": url, "scenario": args.scenario, "https": args.https,
+                        "surface": args.surface, "entry": ENTRY_PATHS[args.surface],
+                        "guacamole_assets": str(args.guacamole_assets) if args.guacamole_assets else None,
                         "refresh": not args.no_refresh, "username": "developer", "password": secrets.token_urlsafe(24)}
             if args.https:
                 # The same CA and leaf survive every worker restart in this session.
@@ -250,7 +279,7 @@ def supervise(args: argparse.Namespace, directory: Path) -> int:
                 fingerprint = hashlib.sha256(created["ca"].read_bytes()).hexdigest()
                 print(f"Private-profile CA: {created['ca']}\nSHA-256: {fingerprint}", flush=True)
             write_json_atomic(str(directory / "settings.json"), settings)
-            print(f"Panel: {url}\nLogin: {settings['username']} / {settings['password']}\nTemporary state: {directory}\n"
+            print(f"Panel: {url}{settings['entry']}\nLogin: {settings['username']} / {settings['password']}\nTemporary state: {directory}\n"
                   "Ctrl-C stops the server and removes this session's data.", flush=True)
             snapshot = source_snapshot(args.watch)
             first = True
@@ -272,7 +301,7 @@ def supervise(args: argparse.Namespace, directory: Path) -> int:
                     else:
                         print(f"Ready · {settings['scenario']} · reload {'off' if args.no_reload else 'on'}", flush=True)
                         if first and args.open:
-                            webbrowser.open(url)
+                            webbrowser.open(url + settings["entry"])
                     first = False
                     while not done.wait(0.4):
                         request = directory / "request.json"
@@ -306,6 +335,7 @@ def supervise(args: argparse.Namespace, directory: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--surface", choices=SURFACES, default="panel", help="Production panel to develop (default: panel)")
     parser.add_argument("--scenario", choices=SCENARIOS, default="full")
     parser.add_argument("--port", type=int, default=8765, help="Loopback port; 0 selects a free port (default: 8765)")
     parser.add_argument("--https", action="store_true", help="Use a session CA for transport-sensitive forms")
@@ -313,6 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-reload", action="store_true", help="Disable source watching")
     parser.add_argument("--no-refresh", action="store_true", help="Disable automatic browser refresh")
     parser.add_argument("--watch", type=Path, action="append", default=[], help="Also watch this file or directory (repeatable)")
+    parser.add_argument("--guacamole-assets", type=Path, help="Reviewed Guacamole share/all.js for desktop/console")
     parser.add_argument("--worker", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--socket-fd", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -328,6 +359,15 @@ def main(argv: list[str] | None = None) -> int:
             return worker(args.worker, args.socket_fd)
         if args.socket_fd is not None:
             parser.error("An inherited listener is only valid for a worker")
+        if args.surface in {"desktop", "console"}:
+            from scripts.run_browser_tests import GUACAMOLE_JS_SHA256
+            from lib.guacamole_config import RELEASE
+
+            args.guacamole_assets = (args.guacamole_assets or Path(RELEASE) / "share/all.js").absolute()
+            validate_filesystem_path(str(args.guacamole_assets), must_exist=True)
+            if hashlib.sha256(args.guacamole_assets.read_bytes()).hexdigest() != GUACAMOLE_JS_SHA256:
+                raise ValueError("Guacamole all.js does not match the reviewed pinned client")
+            args.https = True  # Keep the production gateway's HTTPS/origin checks.
         with tempfile.TemporaryDirectory(prefix="basaltwater-panel-dev-") as temporary:
             return supervise(args, Path(temporary))
     except (OSError, RuntimeError, ValueError) as exc:

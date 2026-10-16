@@ -31,8 +31,7 @@ task store and inbox are used. Host observations and mutations are replaced by
 development adapters: no real commands, agents, updates, approvals or provider
 requests run. Saved Git author fields and token-presence flags belong to the
 temporary fixture; submitted tokens are discarded. Do not enter real secrets.
-Publishing renders an empty fixture and rejects provider/file operations;
-Desktop and Console require their separate integration fixtures. Simulated task
+Publishing renders an empty fixture and rejects provider/file operations. Simulated task
 runs show success in normal scenarios and failure in `degraded`. Their workspace
 preparation and evidence are simulated too; this does not qualify real execution.
 
@@ -68,7 +67,64 @@ and SHA-256 fingerprint. Verify that fingerprint locally and import the CA only
 into a disposable browser profile using the procedure below. Never bypass TLS
 verification or add this CA to the host trust store. The certificate and login
 survive source reloads; all CA material is removed when the development session
-ends. Use the dedicated pairing/approval/Guacamole suite for those services.
+ends. The same TLS option is available for pairing and approval development.
+
+### Specialized panels
+
+Select a first-party surface with the same command:
+
+```bash
+make panel-dev PANEL_ARGS="--surface connect"
+make panel-dev PANEL_ARGS="--surface pairing --https"
+make panel-dev PANEL_ARGS="--surface approval"
+make panel-dev PANEL_ARGS="--surface desktop"
+make panel-dev PANEL_ARGS="--surface console --port 8766"
+```
+
+The printed URL opens the selected page. Pairing and Connect share the production
+portal: `/devices` shows enrollment and relay controls, `/connect/t3code` shows
+Connect, and `/` exercises automatic browser enrollment. Links end at a synthetic
+local destination. Start authorization, enter any sample response, refresh status,
+and toggle startup through the real nonce-protected forms. No relay is installed,
+account authorized, or service restarted. Sample responses are discarded.
+
+Approval runs the production approval handler against a simulated broker. `full`
+includes pending, approved, denied and expired requests; `minimal` includes one
+pending request, `empty` none, and `degraded` shows broker unavailability. Decisions
+exercise real origin, digest, CSRF and replay checks without executing commands.
+
+Desktop and Console use the production pages, JavaScript, session routes and
+WebSockets with a synthetic colored display. They never connect to guacd, XRDP,
+SSH or a real desktop. Enter any sample password. Both surfaces are available in
+either session. They enable HTTPS automatically to retain production transport
+checks; import the printed CA into a disposable browser profile as described
+above. They require the reviewed Guacamole `share/all.js`, discovered from the
+installed pinned release, or supplied with `--guacamole-assets /absolute/share/all.js`.
+The checksum must match the reviewed client; this command installs nothing.
+
+All surfaces share scenario/reset controls, stable URLs and credentials, source
+watching and browser refresh. `full` starts Connect linked and the synthetic desktop
+running; `minimal` and `empty` start Connect disabled, and `empty` leaves the
+desktop stopped until Connect to desktop is selected. `degraded` simulates provider,
+relay, broker and desktop failures. Saved Connect state and approval decisions
+survive source reloads and clear on reset/scenario changes. Nonces, approval CSRF
+tokens, and desktop/console sessions are renewed on source reload; an active
+display or unsaved form offers a reload link instead of an automatic refresh.
+Watching includes desktop JavaScript and templates, plus any `--watch` paths.
+After deliberately reloading a display, reconnect with a sample password.
+
+Run the matching focused browser checks while editing, then the full suite:
+
+```bash
+make browser-test BROWSER_ARGS="--grep 'specialized development' --require-guacamole"
+make browser-test BROWSER_ARGS="--grep 'specialized development connect'"
+```
+
+The local suite launches each specialized development command and checks real
+form submissions, scenario changes, reset, reload and cleanup. Desktop/console
+checks require the reviewed assets and validate a real WebSocket attachment and
+synthetic canvas in each engine. These results cover Basaltwater's interfaces;
+upstream T3 Connect authorization and real desktop login remain deployment checks.
 
 Static visual specimens remain available through the
 [brand review workflow](../brand/README.md#reproduction-and-review). The static

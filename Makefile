@@ -26,7 +26,7 @@ help:
 	@echo "  make package-check     Check package launcher metadata"
 	@echo "  make artifact-check    Build, install, and smoke-test the wheel"
 	@echo "  make browser-test      Local intensive Chromium/Firefox checks (never run by CI)"
-	@echo "  make panel-dev         Local panel with sample data, simulated actions and reload"
+	@echo "  make panel-dev         Local panels with sample data, simulated actions and reload"
 	@echo "  make clean             Remove Python cache files"
 	@echo "  make help              Show this help message"
 	@echo ""
@@ -38,6 +38,7 @@ help:
 	@echo "  make test TEST=test_scrub_par2"
 	@echo "  make test TEST=service_tools/test_storage_ops"
 	@echo '  make test SUITE="web network" TEST_ARGS="--durations 20"'
+	@echo '  make panel-dev PANEL_ARGS="--surface connect"'
 	@echo "  make coverage          Run the default suite with branch coverage"
 
 # Full verification with or without coverage. CI does not repeat the suite.

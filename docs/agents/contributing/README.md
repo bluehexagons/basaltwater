@@ -104,7 +104,11 @@ For interactive panel edits, run `make panel-dev` in the activated environment.
 It serves the production handlers on loopback with sample scenarios, simulated
 host actions, private temporary state and automatic source/browser reload.
 Use `PANEL_ARGS="--scenario degraded"` for failure states or `PANEL_ARGS="--https"`
-for transport-sensitive forms. See the [local panel workflow](../browser-testing.md#develop-the-web-panel-locally)
+for transport-sensitive forms. `PANEL_ARGS="--surface connect"` opens T3 Connect;
+`pairing`, `approval`, `desktop`, and `console` select the other specialized
+panels with the same reset/reload workflow. Desktop and Console require reviewed
+Guacamole assets and enable HTTPS automatically.
+See the [local panel workflow](../browser-testing.md#develop-the-web-panel-locally)
 for scenario/reset controls, supported simulated actions and certificate trust.
 For a focused browser check use
 `make browser-test BROWSER_ARGS="--engine chromium --grep 'panel development'"`;
