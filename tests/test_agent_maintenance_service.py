@@ -372,12 +372,14 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
         self.maintenance = SimpleNamespace(pw_name="basaltwater-maintenance", pw_uid=101, pw_gid=101, pw_dir=str(self.home))
         self.panel = SimpleNamespace(pw_name="basaltwater-web-panel", pw_uid=102, pw_gid=102)
         self.owners = {str(self.home): 101, str(self.root): 0,
-                       str(self.control): 101, str(self.config_file.parent): 0}
+                       str(self.control): 101, str(self.config_file.parent): 0,
+                       str(self.control / "settings.lock"): 101}
         self.retained = {"checked_at": "earlier", "issues": [], "routines": [], "review": {"status": "skipped"}}
         write_json_atomic(str(self.control / "settings.json"), {**DEFAULTS, "enabled": True, "interval": 120, "daily_calls": 0})
         write_json_atomic(str(self.root / "reports.json"), {"version": 1, "context": {}, "reports": [self.retained]})
         (self.root / "state.json").write_text("retained private counters")
         (self.control / "unrelated").write_text("operator file")
+        (self.control / "settings.lock").touch(mode=0o600)
         real_fstat = os.fstat
 
         def metadata(fd: int) -> os.stat_result:
@@ -429,6 +431,19 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
                 self.assertEqual(self.owners[str(self.root)], 0)
                 self.assertEqual((self.root / "state.json").read_text(), "retained private counters")
                 self.assertEqual((self.control / "unrelated").read_text(), "operator file")
+                self.assertEqual(self.owners[str(self.control / "settings.lock")], controller.pw_uid)
+                real_lstat = Path.lstat
+
+                def owned_metadata(path):
+                    fields = list(real_lstat(path))
+                    if os.fspath(path) in self.owners:
+                        fields[4] = self.owners[os.fspath(path)]
+                    return os.stat_result(fields)
+
+                with (patch.object(agent.os, "geteuid", return_value=controller.pw_uid),
+                      patch.object(Path, "lstat", owned_metadata)):
+                    updated = agent.configure_policy({"routines": True}, path=str(self.control / "settings.json"))
+                self.assertTrue(updated["routines"])
 
     def test_explicit_no_panel_and_no_agent_disables_previous_panel_policy(self) -> None:
         self.owners[str(self.control)] = self.panel.pw_uid
@@ -456,6 +471,37 @@ class MaintenanceControllerMigrationTest(unittest.TestCase):
                     self.configure(panel=True)
         self.write.assert_not_called()
         steps.os.fchown.assert_not_called()
+
+    def test_unsafe_policy_locks_are_rejected_without_overwriting_settings(self) -> None:
+        lock = self.control / "settings.lock"
+        original = (self.control / "settings.json").read_bytes()
+        for kind in ("symlink", "foreign", "public", "hardlink"):
+            with self.subTest(kind=kind):
+                lock.unlink()
+                self.owners[str(lock)] = 101
+                if kind == "symlink":
+                    lock.symlink_to(self.control / "settings.json")
+                else:
+                    lock.touch(mode=0o644 if kind == "public" else 0o600)
+                    if kind == "foreign":
+                        self.owners[str(lock)] = 999
+                    elif kind == "hardlink":
+                        os.link(lock, self.control / "other-lock")
+                with self.assertRaisesRegex(RuntimeError, "maintenance settings lock"):
+                    self.configure(panel=True)
+                self.write.assert_not_called()
+                self.assertEqual((self.control / "settings.json").read_bytes(), original)
+
+    def test_busy_policy_lock_stops_setup_without_changing_policy(self) -> None:
+        original = (self.control / "settings.json").read_bytes()
+        original_owners = self.owners.copy()
+        with patch.object(steps.fcntl, "flock", side_effect=BlockingIOError):
+            with self.assertRaisesRegex(RuntimeError, "being updated; retry setup"):
+                self.configure(panel=True)
+        self.write.assert_not_called()
+        steps.os.fchown.assert_not_called()
+        self.assertEqual(self.owners, original_owners)
+        self.assertEqual((self.control / "settings.json").read_bytes(), original)
 
 
 class MaintenanceChecksTest(unittest.TestCase):

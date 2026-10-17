@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import copy
+import fcntl
 import grp
 import os
 import pwd
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -64,16 +68,51 @@ def _identity(config: SetupConfig) -> pwd.struct_passwd:
     return account
 
 
+def _validate_directory(descriptor: int, path: str, allowed_uids: set[int]) -> None:
+    metadata = os.fstat(descriptor)
+    if metadata.st_uid not in allowed_uids or metadata.st_mode & 0o022:
+        raise RuntimeError(f"Unsafe maintenance directory: {path}")
+
+
 def _directory(path: str, uid: int, gid: int, mode: int, *, prior_uids: set[int] | None = None) -> None:
     validate_filesystem_path(path)
     # Only the control directory may migrate from a recognized controller.
     # Descriptor mutations cannot follow a replaced path or symlink ancestor.
     with directory_fd(path, create=True, mode=mode) as descriptor:
-        metadata = os.fstat(descriptor)
-        if metadata.st_uid not in {0, uid, *(prior_uids or ())} or metadata.st_mode & 0o022:
-            raise RuntimeError(f"Unsafe maintenance directory: {path}")
+        _validate_directory(descriptor, path, {0, uid, *(prior_uids or ())})
         os.fchown(descriptor, uid, gid)
         os.fchmod(descriptor, mode)
+
+
+@contextmanager
+def _policy_lock(uid: int, prior_uids: set[int]) -> Iterator[int]:
+    """Acquire the existing policy lock before changing controller ownership."""
+    with directory_fd(DATA_DIR, create=True, mode=0o750) as data:
+        _validate_directory(data, DATA_DIR, {0})
+        with directory_fd(CONTROL_DIR, create=True, mode=0o700) as directory:
+            _validate_directory(directory, CONTROL_DIR, {0, uid, *prior_uids})
+            try:
+                descriptor = os.open(
+                    "settings.lock",
+                    os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=directory,
+                )
+            except OSError as exc:
+                raise RuntimeError("Cannot open maintenance settings lock") from exc
+            try:
+                metadata = os.fstat(descriptor)
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or metadata.st_uid not in {0, uid, *prior_uids}
+                        or metadata.st_mode & 0o077):
+                    raise RuntimeError("Unsafe maintenance settings lock")
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise RuntimeError("Maintenance settings are being updated; retry setup") from exc
+                yield descriptor
+            finally:
+                os.close(descriptor)
 
 
 def configure_maintenance_agent(config: SetupConfig) -> None:
@@ -109,20 +148,23 @@ def configure_maintenance_agent(config: SetupConfig) -> None:
                 continue
             if prior.pw_name == name and prior.pw_uid != 0:
                 prior_uids.add(prior.pw_uid)
-    _directory(DATA_DIR, 0, controller.pw_gid, 0o750)
-    _directory(CONTROL_DIR, controller.pw_uid, controller.pw_gid, 0o700, prior_uids=prior_uids)
     with directory_fd(config_parent, create=True) as descriptor:
         metadata = os.fstat(descriptor)
         if metadata.st_uid != 0 or metadata.st_mode & 0o022:
             raise RuntimeError("Unsafe maintenance configuration directory")
     policy_path = os.path.join(CONTROL_DIR, "settings.json")
-    policy = setup_policy(config)
-    if os.path.lexists(policy_path):
-        existing = load_policy(policy_path)  # Corrupt/unsupported state is never overwritten.
-        overrides = {key: value for key, value in policy.items()
-                     if getattr(config, "maintenance_agent" if key == "enabled" else "maintenance_agent_" + key, None) is not None}
-        policy = {**existing, **overrides}
-    write_json_atomic(policy_path, policy, uid=controller.pw_uid, gid=controller.pw_gid)
+    with _policy_lock(controller.pw_uid, prior_uids) as lock:
+        _directory(DATA_DIR, 0, controller.pw_gid, 0o750)
+        _directory(CONTROL_DIR, controller.pw_uid, controller.pw_gid, 0o700, prior_uids=prior_uids)
+        os.fchown(lock, controller.pw_uid, controller.pw_gid)
+        os.fchmod(lock, 0o600)
+        policy = setup_policy(config)
+        if os.path.lexists(policy_path):
+            existing = load_policy(policy_path)  # Corrupt/unsupported state is never overwritten.
+            overrides = {key: value for key, value in policy.items()
+                         if getattr(config, "maintenance_agent" if key == "enabled" else "maintenance_agent_" + key, None) is not None}
+            policy = {**existing, **overrides}
+        write_json_atomic(policy_path, policy, uid=controller.pw_uid, gid=controller.pw_gid)
     baseline = {"version": 1, "username": owner.pw_name, "report_gid": controller.pw_gid, "context": maintenance_context(config)}
     write_json_atomic(CONFIG_FILE, baseline, mode=0o644)
     reports_path = os.path.join(DATA_DIR, "reports.json")

@@ -33,10 +33,13 @@ can run the CLI as that account with `sudo -u ACCOUNT -H python3
 Root setup reruns can switch controls between these two managed accounts when
 adding or removing the panel. Saved policy and reports are retained, including
 when using `--no-web-panel --no-maintenance-agent` to remove panel access and
-pause supervision together. Only the control directory and rewritten settings
-change owner; private supervisor state stays root-owned, and exported reports
-remain root-owned with the current controller's readable group. Unrelated
-directory owners and symlinked directory components are refused.
+pause supervision together. The control directory, rewritten settings, and
+private settings lock change owner. Private supervisor state stays root-owned,
+and exported reports remain root-owned with the current controller's readable
+group. Unrelated directory owners and symlinked directory components are refused.
+Setup acquires the policy lock before changing ownership or retaining saved
+settings. An active policy edit stops setup with a retry message and preserves
+the previous controller's access.
 
 Explicitly enabling AI reviews installs Codex on Debian targets. Setting
 `--maintenance-agent-daily-calls 0` skips that installation. Panel-only

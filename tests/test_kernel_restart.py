@@ -165,7 +165,11 @@ class KernelRestartTests(unittest.TestCase):
     def test_setup_installs_hook_and_reports_pending_kernel(self, _dry, _kernel, probe, timer):
         with tempfile.TemporaryDirectory() as directory:
             hook = Path(directory) / "basaltwater-reboot-required"
-            with patch.object(kernel_restart, "KERNEL_HOOK", str(hook)), patch("builtins.print") as output:
+            with (
+                patch.object(kernel_restart, "KERNEL_HOOK", str(hook)),
+                patch("builtins.print") as output,
+                patch("security.security_steps.can_restart_system", return_value=True),
+            ):
                 config = SetupConfig(username="root", host="ts1", system_type="server_proxmox")
                 configure_auto_restart(config)
                 with (
@@ -182,10 +186,12 @@ class KernelRestartTests(unittest.TestCase):
     @patch("security.security_steps.install_kernel_restart_hook")
     @patch("common.common_steps.newer_installed_kernel")
     @patch("security.security_steps.configure_maintenance_timer", return_value=True)
-    def test_dry_run_and_container_do_not_install_or_probe(self, _timer, probe, install):
+    def test_dry_run_and_non_restartable_machine_do_not_install_or_probe(self, _timer, probe, install):
         for dry, capable in ((True, True), (False, False)):
-            with patch("security.security_steps.is_dry_run", return_value=dry), patch(
-                "security.security_steps.can_modify_kernel", return_value=capable
+            with (
+                patch("security.security_steps.is_dry_run", return_value=dry),
+                patch("security.security_steps.can_modify_kernel", return_value=capable),
+                patch("security.security_steps.can_restart_system", return_value=capable),
             ):
                 configure_auto_restart(SetupConfig(username="root", host="ts1", system_type="server_proxmox"))
         probe.assert_not_called()
