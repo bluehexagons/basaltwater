@@ -48,7 +48,7 @@ class TestPluginRegistry(unittest.TestCase):
         registry = get_plugin_registry()
         self.assertEqual(
             [plugin.name for plugin in registry.plugins],
-            ["core", "cachyos", "common", "desktop", "post_setup", "security", "smb", "sync", "web", "proxmox", "server", "workstation", "wsl"],
+            ["core", "cachyos", "common", "desktop", "post_setup", "security", "smb", "sync", "web", "proxmox", "server", "wsl", "workstation"],
         )
         self.assertEqual(
             [plugin.plugin_kind for plugin in registry.plugins],
@@ -375,6 +375,29 @@ class TestPluginRegistry(unittest.TestCase):
             step_names.index("Installing CLI tools"),
             step_names.index("Installing GitHub CLI"),
         )
+
+    def test_workstation_profiles_compose_requested_services_once(self):
+        expected = (
+            "Setting up antistatic lobby server",
+            "Setting up antistatic-db service",
+            "Setting up Gogs service",
+            "Configuring Gogs auto-update",
+        )
+        for profile in ("workstation_desktop", "pc_dev", "workstation_dev",
+                        "agent_workstation", "agent_code_vm"):
+            for enabled in (False, True):
+                with self.subTest(profile=profile, enabled=enabled):
+                    config = SetupConfig(
+                        host="192.0.2.10", username="user", system_type=profile,
+                        antistatic_server=":8080" if enabled else None,
+                        antistatic_db=":8081" if enabled else None,
+                        gogs=[":3000"] if enabled else None,
+                    )
+                    names = [name for name, _ in get_steps_for_system_type(config)]
+                    for name in expected:
+                        self.assertEqual(names.count(name), int(enabled))
+                        if enabled:
+                            self.assertLess(names.index(name), names.index("Running setup maintenance"))
 
     def test_workstation_dev_editor_is_explicit(self):
         minimal = SetupConfig(

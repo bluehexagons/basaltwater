@@ -1009,16 +1009,16 @@ def add_setup_arguments(
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    device_pairing_group.add_argument(
+        "--no-device-pairing",
+        dest="disable_device_pairing",
+        action="store_true",
+        help=(
+            "Remove the managed device-pairing portal and its Basic Auth "
+            "credentials from a saved host"
+        ),
+    )
     if not for_remote:
-        device_pairing_group.add_argument(
-            "--no-device-pairing",
-            dest="disable_device_pairing",
-            action="store_true",
-            help=(
-                "Remove the managed device-pairing portal and its Basic Auth "
-                "credentials from a saved host"
-            ),
-        )
         parser.add_argument(
             "--device-pairing-auth-file",
             metavar="PATH",

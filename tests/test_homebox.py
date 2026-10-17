@@ -13,6 +13,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tarfile
 import tempfile
 from types import SimpleNamespace
@@ -45,6 +46,42 @@ def state(**kwargs):
 
 
 class HomeBoxConfigTests(unittest.TestCase):
+    def test_controller_rejects_invalid_homebox_before_staging_or_provisioning(self):
+        from lib import setup_common
+
+        cases = (
+            ("server_lite", [":7745", "/var/lib/basaltwater"], [], "overlaps"),
+            ("workstation_dev", [":7745"], [], "server setup profile"),
+            ("server_lite", [":7745"], ["--web-panel", "7745"], "conflicts"),
+            ("server_lite", [":65536"], [], "port"),
+        )
+        for profile, spec, options, error in cases:
+            for hosted in (False, True):
+                with self.subTest(profile=profile, spec=spec, hosted=hosted), \
+                        tempfile.TemporaryDirectory() as workspace, contextlib.ExitStack() as stack:
+                    argv = ["setup", "192.0.2.10", "operator", "--timezone", "UTC",
+                            "--workspace", workspace,
+                            "--homebox", *spec, *options]
+                    if hosted:
+                        argv += ["--provision-on", "192.0.2.20", "--machine", "vm"]
+                    stack.enter_context(patch.object(sys, "argv", argv))
+                    stack.enter_context(patch.object(setup_common, "argcomplete", None))
+                    stack.enter_context(patch.object(setup_common, "set_workspace_dir"))
+                    stack.enter_context(patch.object(setup_common, "prompt_for_missing_passwords"))
+                    stack.enter_context(patch.object(setup_common, "_apply_hosted_proxmox_defaults"))
+                    stack.enter_context(patch("lib.credentials.load_workspace_credentials", return_value={}))
+                    remote = stack.enter_context(patch.object(setup_common, "run_remote_setup"))
+                    stage = stack.enter_context(patch.object(setup_common, "copy_project_files"))
+                    provision = stack.enter_context(patch("lib.proxmox_vm.provision_vm"))
+                    save = stack.enter_context(patch.object(setup_common, "save_setup_command"))
+                    output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    self.assertEqual(setup_common.setup_main(profile, "test", lambda _: None), 1)
+                    self.assertIn(error, output.getvalue())
+                    remote.assert_not_called()
+                    stage.assert_not_called()
+                    provision.assert_not_called()
+                    save.assert_not_called()
+
     def test_spec_and_defaults(self):
         self.assertEqual(parse_homebox_spec(":7745"), ("", 7745))
         self.assertEqual(parse_homebox_spec("Inventory.example.com"), ("inventory.example.com", 443))

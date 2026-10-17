@@ -1278,6 +1278,8 @@ class SetupConfig:
         for tool in self.agent_tools_removed or []:
             args.append(f"--no-agent-tool {shlex.quote(tool)}")
 
+        if self.disable_web_interface:
+            args.append("--no-web-interface")
         for interface in self.web_interfaces or []:
             args.append(f"--web-interface {shlex.quote(interface)}")
         if self.web_interfaces:
@@ -1291,6 +1293,8 @@ class SetupConfig:
             args.append(f"--web-port {port}")
         if not self.default_web_ports:
             args.append("--no-default-web-ports")
+        if self.disable_device_pairing:
+            args.append("--no-device-pairing")
         for provider in self.device_pairing_providers or []:
             args.append(f"--device-pairing {shlex.quote(provider)}")
         if self.device_pairing_providers:

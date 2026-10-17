@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -15,6 +17,36 @@ from lib.config import SetupConfig
 
 
 class TestAgentSecurityConfig(unittest.TestCase):
+    def test_profile_opt_outs_survive_controller_to_target_roundtrip(self):
+        from remote_setup import config_from_remote_args
+        from lib.system_types import get_steps_for_system_type
+
+        controller = create_setup_argument_parser("controller")
+        remote = create_setup_argument_parser("remote", for_remote=True)
+        for flags in (
+            ["--no-device-pairing"],
+            ["--no-device-pairing", "--no-web-interface"],
+        ):
+            with self.subTest(flags=flags):
+                args = controller.parse_args(
+                    ["192.0.2.10", "agent", "--machine", "vm", "--timezone", "UTC",
+                     "--password", "test-desktop-password", *flags]
+                )
+                original = SetupConfig.from_args(args, "agent_code_vm")
+                argv = shlex.split(" ".join(original.to_remote_args()))
+                for flag in flags:
+                    self.assertIn(flag, argv)
+                with patch("remote_setup.resolve_machine_type", return_value="vm"):
+                    target = config_from_remote_args(remote.parse_args(argv))
+                self.assertTrue(target.disable_device_pairing)
+                self.assertIsNone(target.device_pairing_providers)
+                self.assertEqual(target.disable_web_interface, original.disable_web_interface)
+                self.assertEqual(target.web_interfaces, original.web_interfaces)
+                names = [name for name, _ in get_steps_for_system_type(target)]
+                # A retained web interface reconciles and removes its pairing portal.
+                self.assertEqual("Installing T3 Code web interface" in names,
+                                 not target.disable_web_interface)
+
     def test_security_flags_propagate_to_remote_setup(self):
         config = SetupConfig(
             host="testhost",
