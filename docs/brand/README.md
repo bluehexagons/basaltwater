@@ -72,8 +72,8 @@ The dashboard keeps basalt joints. Agent pages use flowing contours;
 administration, maintenance and jobs use angular facets; access, inbox and
 diagnostics use mineral grain; services and desktop access use stepped water.
 Header textures fade toward the text and use ten percent opacity. A seven-percent
-mineral accent sits at the bottom of the desktop sidebar; an eight-percent
-current accents footers.
+mineral texture sits at the bottom of the desktop sidebar; an eight-percent
+water texture accents footers.
 The mobile navigation omits the sidebar texture. Forms, logs, tables and metric
 surfaces remain plain. All textures are decorative, ignore pointer input, and
 disappear in forced-color mode. There is no animation.

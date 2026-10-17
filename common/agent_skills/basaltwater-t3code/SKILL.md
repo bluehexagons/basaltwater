@@ -77,7 +77,7 @@ Setup allows up to 30 minutes for migration readiness, prints progress, and
 avoids restarting a runtime that the updater just started. Inspect the boot
 log before interrupting a slow migration or retrying a failed startup.
 
-## T3 v0.0.45 workflow features
+## Current workflow
 
 After setup refreshes managed skills, or after changing plugins or MCP servers,
 use **Restart agent session** in T3's command palette (`Ctrl+K` on Linux/Windows,
@@ -86,12 +86,17 @@ the conversation with a new provider process and reloads its skills, plugins,
 and MCP servers. This is a per-thread action; reloading agent configuration does
 not require restarting the whole T3 service.
 
-**Settings → Providers → Update all** updates supported outdated providers on
-every connected environment. Use it for an explicitly requested bulk update;
-for a single VM or provider, use its individual update control or the existing
-`basaltw agent update HOST USER --tool TOOL` flow. T3 omits manual-only update
-methods from the bulk action. Follow a deliberate provider update with
-`basaltw agent doctor --tool TOOL --capability t3code --capability host --record`.
+Use the **Update all** control at the bottom of T3's sidebar for a requested
+bulk update across connected environments. It updates outdated providers,
+servers, and the desktop app. For one provider on one VM, use that provider's
+individual control in **Settings → Providers** or
+`basaltw agent update HOST USER --tool TOOL`. After a provider update, record
+readiness with:
+
+```bash
+basaltw agent doctor --tool TOOL \
+  --capability t3code --capability host --record
+```
 Basaltwater's recorded readiness and rollback history belong to updates made
 through Basaltwater; a T3 update does not create those records automatically.
 

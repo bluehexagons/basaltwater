@@ -422,7 +422,7 @@ managed authentication policy and upstream assets.
 
 ## Git and provider behavior
 
-### Features available in v0.0.45
+### Current provider and thread workflows
 
 After installing or updating Basaltwater's managed skills, use **Restart agent
 session** from T3's command palette (`Ctrl+K` on Linux/Windows, `Cmd+K` on
@@ -431,14 +431,16 @@ that reloads skills, plugins, and MCP servers. Finish the current turn first.
 This provides a per-thread way to load configuration changes while keeping
 the background T3 service running.
 
-**Settings → Providers → Update all** updates supported outdated providers on
-every connected environment. Hover the control to inspect its targets. Use an
-individual provider control or `basaltw agent update HOST USER --tool TOOL` for
-a narrower update. Manual-only methods are excluded from T3's bulk action.
-After a T3 provider update, run Basaltwater's doctor and record readiness;
-Basaltwater's updater records and rollback backups are only created by its own
-update flow. See the upstream
-[provider update guide](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/updating.md#update-providers).
+Use the **Update all** control at the bottom of T3's sidebar for a requested
+bulk update across connected environments. It updates outdated providers,
+servers, and the desktop app. For one provider on one VM, use that provider's
+individual control in **Settings → Providers** or
+`basaltw agent update HOST USER --tool TOOL`. After a T3 provider update, run
+Basaltwater's doctor and record readiness; its updater records and rollback
+backups are created only by its own update flow. See the upstream
+[provider update guide](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/updating.md#update-providers)
+and [release notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0)
+for the global update action.
 
 **No project** threads use individual folders under `~/.t3/scratch` on the
 managed Debian service. Deleting a thread keeps its files. The host doctor
@@ -447,7 +449,7 @@ maintenance preserves them. CachyOS web installations use the `scratch` folder
 under their isolated T3 data directory. For repository changes, choose a
 project and an isolated worktree. T3 hides projectless threads when its data
 directory is inside a Git checkout. See the upstream
-[projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/thread-sidebar.md#start-without-a-project).
+[projectless thread guide](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/thread-sidebar.md#start-without-a-project).
 
 The managed T3 skill also uses native `link_pull_request` and
 `list_thread_pull_requests` tools when available, so PRs created through `gh`
@@ -460,7 +462,7 @@ Basaltwater does not provision their SDKs, emulators, or simulator hosts and
 does not enable agent device access during setup. Existing `--device-pairing`
 enrolls T3 clients; it does not grant simulator control. See the
 [mobile support plan](../plans/mobile-agent-support.md) and the
-[upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/devices.md)
+[upstream device workflow](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/devices.md)
 for ownership and prerequisites. Responsive browser presets remain browser
 coverage rather than native-device verification.
 

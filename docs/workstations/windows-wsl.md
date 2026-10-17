@@ -22,7 +22,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -Profile server_wsl -
 From Command Prompt, the equivalent one-line entry point is:
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP ('basaltwater-wsl-'+[guid]::NewGuid()+'.ps1'); Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $p -ErrorAction Stop; & $p -Profile server_wsl -BuildServer -Node -Python"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:TEMP ('basaltwater-wsl-'+[guid]::NewGuid()+'.ps1'); Invoke-WebRequest 'https://raw.githubusercontent.com/bluehexagons/basaltwater/main/install.ps1' -UseBasicParsing -OutFile $p -ErrorAction Stop; & $p -Profile server_wsl -BuildServer -T3CodeDesktop -Node -Python -AgentTool gh,codex"
 ```
 
 Use `-Plan` to check the intended options without installing. `-LinuxUser`,

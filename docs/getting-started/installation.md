@@ -33,8 +33,8 @@ account password and grants administrator privileges to that command. If the
 account cannot use it, ask the machine's administrator to provide access before
 following system-installation examples.
 
-The installer blocks work in fish, Bash, and Zsh by explicitly invoking `sh`.
-They use `curl` and a temporary download that is removed on exit.
+The examples work from fish, Bash, and Zsh because they explicitly invoke
+`sh`. They use `curl` and a temporary download that is removed on exit.
 They execute only after a successful complete download. If curl is missing,
 install it through your distribution's package manager; on Debian:
 

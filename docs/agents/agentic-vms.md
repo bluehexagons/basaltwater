@@ -69,7 +69,8 @@ the GitHub CLI and Codex defaults. Add OpenCode and Playwright when the project
 needs those tools. This example provides the web panel as a convenient launch
 point for the separate approval page.
 Set `RDP_PASSWORD` through your secure secret source for the desktop account;
-it is separate from the panel and approval passwords.
+it is separate from the panel and approval passwords. Set
+`PANEL_PASSWORD` through the same approved secret source for the panel.
 
 ```bash
 basaltw setup agent_code_vm 192.168.1.60 agent \
@@ -80,14 +81,18 @@ basaltw setup agent_code_vm 192.168.1.60 agent \
   --browser-automation playwright \
   --lan-access \
   --web-panel 9443 --ssl \
-  --web-panel-password 'replace-with-a-separate-panel-password' \
+  --web-panel-password "$PANEL_PASSWORD" \
   --privilege-broker \
   --privilege-broker-password
 ```
 
-The approval password flag prompts without displaying the secret. Replace the
-web-panel placeholder with a different password through your approved secret
-input method; do not reuse it for the approval page. The web panel at its
+The `--password` and `--web-panel-password` options pass values in command-line
+arguments. A shell variable keeps the literal value out of shell history, but
+process inspectors may still see the expanded argument. Run setup from a
+trusted controller and never put literal credentials in a saved or committed
+command. The approval password flag prompts without displaying the secret.
+Keep the panel password separate from the approval-page password. The web
+panel at its
 managed HTTPS URL lists **Privilege approvals**. That link opens a different
 HTTPS origin with its own password and service identity: signing into the web
 panel never grants approval authority.

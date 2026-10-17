@@ -2005,9 +2005,11 @@ file and refuse hosts that have not been enrolled by setup or explicitly.
 
 ## Testing and bootstrap
 
-The [installation guide](../getting-started/installation.md) covers supported installation and
-local control-plane commands. Use the following when working from a checkout
-or refreshing completion manually:
+The [installation guide](../getting-started/installation.md) covers supported
+installation and local control-plane commands. Use the following when working
+from a checkout or refreshing completion manually. Completion setup requires
+`basaltw` and `register-python-argcomplete` on `PATH`; see the
+[shell-completion reference](shell-completion.md) if either command is missing.
 
 ```bash
 python3 -m unittest discover -s tests

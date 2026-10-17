@@ -21,6 +21,11 @@ basaltw setup workstation_dev 192.168.0.41 agent \
   --rdp-source 192.168.0.0/24 --rdp-source 10.0.0.0/8
 ```
 
+The `--password` option passes its value in a command-line argument. A shell
+variable keeps the literal value out of shell history, but process inspectors
+may still see the expanded argument. Run setup from a trusted controller and
+never put literal credentials in a saved or committed command.
+
 `--browser-automation playwright` currently requires `--agent-tool codex`
 or `--agent-tool opencode`. It registers the managed
 `basaltwater-playwright` MCP server
@@ -124,9 +129,12 @@ storage pressure instead of an ambiguous locator timeout.
 
 Website authentication is deliberately not part of Basaltwater credential
 copying. Supply site-specific credentials through the application or a scoped
-secret workflow appropriate to the task; do not put passwords or session tokens
-in setup commands, repository files, prompts intended for logging, or agent
-configuration. Isolated mode discards any cookies created during the session.
+secret workflow appropriate to the task. Never type literal passwords or
+session tokens into setup commands, repository files, prompts intended for
+logging, or agent configuration. Even when a setup command uses an environment
+variable, its expanded value may be visible to local process inspectors; use a
+trusted controller. Isolated mode discards any cookies created during the
+session.
 
 ## Choosing Playwright or collaborative preview
 
@@ -322,13 +330,13 @@ native target with the retained tab ID:
 Pass exactly one of `url` or `target`. The target defaults to HTTP and accepts
 `protocol: "https"` when the development endpoint uses TLS. A private remote
 environment can use this target only when the service is already reachable at
-that environment's connection host and port. T3 v0.0.45 rejects public relay
+that environment's connection host and port. T3 v0.1.0 rejects public relay
 hosts with an authenticated-preview-gateway requirement; the target does not
 add a relay tunnel. Keep a remote loopback development server on loopback and
 use Basaltwater's existing HTTPS forward rather than broadening its binding.
 The pinned upstream resolver and its tests define these boundaries; they do
 not establish live client reachability. See the
-[resolver](https://github.com/pingdotgg/t3code/blob/v0.0.45/apps/web/src/browser/browserTargetResolver.ts).
+[resolver](https://github.com/pingdotgg/t3code/blob/v0.1.0/apps/web/src/browser/browserTargetResolver.ts).
 
 An `environment-port` preview target is a host rewrite, not a tunnel from the
 connected client to VM loopback. T3 maps the requested port onto the host in
