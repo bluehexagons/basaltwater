@@ -114,6 +114,25 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.assertEqual(self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "release", "hours": "2"})[0], 422)
         self.assertFalse(holds.inspect_agent_maintenance(self.home)["active"])
 
+    def test_invalid_settings_preserve_unsaved_values_without_changing_saved_status(self) -> None:
+        values = {key: str(value) for key, value in DEFAULTS.items() if type(value) is not bool}
+        values.update(csrf=self.state.csrf_token, submit="save", enabled="1", interval="120",
+                      model='bad"<script>', daily_calls="4")
+        status, body, _ = self.request("/actions/maintenance-agent", values)
+        self.assertEqual(status, 422)
+        self.assertIn('class="maintenance-settings" open', body)
+        self.assertIn('name="interval" min="15" max="10080" value="120"', body)
+        self.assertIn('name="daily_calls" min="0" max="24" value="4"', body)
+        self.assertIn('name="enabled" value="1" checked', body)
+        self.assertNotIn('name="security" value="1" checked', body)
+        self.assertIn('value="bad&quot;&lt;script&gt;"', body)
+        self.assertIn('>Maintenance disabled</strong>', body)
+        self.assertIn('value="run" disabled', body)
+        self.assertEqual(agent.load_policy(self.policy), DEFAULTS)
+        status, body, _ = self.request("/actions/maintenance-agent", {"csrf": self.state.csrf_token, "submit": "hold", "hours": "73"})
+        self.assertEqual(status, 422)
+        self.assertIn('value="73" required', body)
+
     def test_inbox_routes_deliver_and_acknowledge_messages_across_instances(self) -> None:
         values = {"csrf": self.state.csrf_token, "submit": "send", "recipient": "parent", "sender": "operator", "message": "Worker complete"}
         status, _, location = self.request("/actions/agent-inbox", values)
@@ -143,16 +162,55 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         self.assertIn("Healthy checks use no AI", body)
         self.assertIn('href="/agent-inbox"', body)
 
+    def test_failed_message_keeps_mailbox_and_draft_without_delivering(self) -> None:
+        inbox = AgentInbox(self.home)
+        inbox.send("worker", "parent", "Parent mailbox evidence")
+        for recipient in ("parent", "../invalid"):
+            status, body, _ = self.request("/actions/agent-inbox", {
+                "csrf": self.state.csrf_token, "submit": "send", "recipient": recipient,
+                "sender": "bad sender", "message": '<script>Keep this draft & fix the sender</script>',
+            })
+            self.assertEqual(status, 422)
+            self.assertIn('class="maintenance-settings" open', body)
+            self.assertIn(f'name="recipient" maxlength="64" value="{recipient}"', body)
+            self.assertIn('value="bad sender"', body)
+            self.assertIn('&lt;script&gt;Keep this draft &amp; fix the sender&lt;/script&gt;', body)
+            self.assertNotIn('<script>', body)
+            if recipient == "parent":
+                self.assertIn('Showing <strong>parent</strong> · 1 unread', body)
+                self.assertIn("Parent mailbox evidence", body)
+        self.assertEqual(len(inbox.list("parent")), 1)
+        self.assertEqual(inbox.list("operator"), [])
+
+    def test_message_timestamp_cannot_make_existing_mail_unreadable(self) -> None:
+        inbox = AgentInbox(self.home)
+        record = inbox.send("worker", "operator", "Still readable")
+        record["created_at"] = 10 ** 100
+        write_json_atomic(str(inbox.path), {"version": 1, "messages": [record]})
+        status, body, _ = self.request("/agent-inbox")
+        self.assertEqual(status, 200)
+        self.assertIn("Still readable", body)
+        self.assertIn("Time unavailable", body)
+
     def test_records_show_interruption_and_corrupt_inbox_is_actionable(self) -> None:
         report = {"checked_at": "earlier", "check_status": "interrupted", "issues": [], "routines": [], "review": {"status": "failed"}}
         write_json_atomic(self.reports, {"version": 1, "context": {}, "reports": [report]})
         self.assertIn("Check interrupted", self.request("/maintenance-agent")[1])
+        body = self.request("/maintenance-agent")[1]
+        self.assertIn('Incomplete check · 0 findings', body)
+        self.assertNotIn('No findings in the checks performed.', body)
         inbox = AgentInbox(self.home)
         inbox.send("worker", "operator", "hello")
         inbox.path.write_text('{"version":2,"messages":[]}')
         status, body, _ = self.request("/agent-inbox")
         self.assertEqual(status, 200)
         self.assertIn("preserve and inspect", body)
+        self.assertEqual(inbox.path.read_text(), '{"version":2,"messages":[]}')
+        status, body, _ = self.request("/actions/agent-inbox", {"csrf": self.state.csrf_token,
+            "submit": "send", "recipient": "operator", "sender": "operator", "message": "Keep this draft during recovery"})
+        self.assertEqual(status, 422)
+        self.assertIn("Keep this draft during recovery", body)
+        self.assertIn('class="maintenance-settings" open', body)
         self.assertEqual(inbox.path.read_text(), '{"version":2,"messages":[]}')
 
 

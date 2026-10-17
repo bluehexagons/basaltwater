@@ -451,6 +451,97 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
 
 test.describe('agent task workflow', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('maintenance records and settings stay usable after validation errors', async ({ page, developmentServer: dev, diagnostics }, info) => {
+    await page.goto(dev.url + '/maintenance-agent');
+    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('Maintenance enabled');
+    await expect(page.getByLabel('Routine model', { exact: true })).not.toBeVisible();
+    await page.getByRole('button', { name: 'Check now', exact: true }).click();
+    const records = page.getByRole('region', { name: 'Maintenance records', exact: true });
+    await expect(records).toContainText('Synthetic development check');
+    await page.getByRole('navigation', { name: 'Maintenance sections' }).getByRole('link', { name: 'Settings', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await page.getByLabel('Check interval (minutes)', { exact: true }).fill('120');
+    await page.getByLabel('Routine model', { exact: true }).fill('bad model');
+    await page.getByLabel('Run managed housekeeping daily', { exact: true }).check();
+    diagnostics.allowed.add(dev.url + '/actions/maintenance-agent');
+    await page.getByRole('button', { name: 'Save maintenance settings', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Invalid model');
+    await expect(page.getByLabel('Routine model', { exact: true })).toHaveValue('bad model');
+    await expect(page.getByLabel('Check interval (minutes)', { exact: true })).toHaveValue('120');
+    await expect(page.getByLabel('Run managed housekeeping daily', { exact: true })).toBeChecked();
+    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('60 minutes · housekeeping off');
+    await page.getByLabel('Routine model', { exact: true }).fill('auto');
+    await page.getByLabel('Enable maintenance agent', { exact: true }).uncheck();
+    await page.getByRole('button', { name: 'Save maintenance settings', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Check now', exact: true })).toBeDisabled();
+    await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('120 minutes · housekeeping on');
+    await page.getByText('Manage restart hold', { exact: true }).click();
+    await page.getByLabel('Hold duration (hours)', { exact: true }).fill('2');
+    await page.getByRole('button', { name: 'Hold automatic restarts', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('Automatic restarts held until');
+    await page.getByRole('button', { name: 'Release restart hold', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('No active automatic restart hold');
+    await page.screenshot({ path: info.outputPath('maintenance-desktop.png'), fullPage: true });
+    await page.goto('about:blank');
+  });
+
+  test('inbox shows unread mail first and preserves a failed message draft', async ({ page, developmentServer: dev, diagnostics }, info) => {
+    await page.goto(dev.url + '/agent-inbox');
+    await expect(page.getByRole('region', { name: 'Unread messages', exact: true })).toContainText('Synthetic build completed');
+    await expect(page.locator('time')).toContainText('UTC');
+    await expect(page.getByLabel('Message', { exact: true })).not.toBeVisible();
+    await page.getByRole('link', { name: 'Write message', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Message', { exact: true })).toBeVisible();
+    await page.getByLabel('Recipient', { exact: true }).fill('reviewer');
+    await page.getByLabel('Sender label', { exact: true }).fill('bad sender');
+    await page.getByLabel('Message', { exact: true }).fill('Synthetic review complete. Please inspect the report.');
+    diagnostics.allowed.add(dev.url + '/actions/agent-inbox');
+    await page.getByRole('button', { name: 'Send to inbox', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByLabel('Mailbox', { exact: true })).toHaveValue('reviewer');
+    await expect(page.getByLabel('Recipient', { exact: true })).toHaveValue('reviewer');
+    await expect(page.getByLabel('Sender label', { exact: true })).toHaveValue('bad sender');
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue('Synthetic review complete. Please inspect the report.');
+    await page.getByLabel('Sender label', { exact: true }).fill('operator');
+    await page.getByRole('button', { name: 'Send to inbox', exact: true }).click();
+    await expect(page).toHaveURL(dev.url + '/agent-inbox?mailbox=reviewer');
+    await expect(page.getByRole('region', { name: 'Unread messages', exact: true })).toContainText('Synthetic review complete.');
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Mark read', exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath('inbox-desktop.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Mark read', exact: true }).click();
+    await expect(page.getByText('No unread messages.', { exact: true })).toBeVisible();
+    await page.goto('about:blank');
+  });
+
+  test('guided tasks hand off to review and agent support pages fit enlarged mobile text', async ({ page, developmentServer: dev }, info) => {
+    await page.goto(dev.url + '/agent-tools');
+    await page.getByRole('link', { name: 'Set up task: Review service logs', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Service', exact: true }).selectOption('t3code.service');
+    await page.getByRole('combobox', { name: 'Time window', exact: true }).selectOption('boot');
+    await page.getByRole('button', { name: 'Prepare prompt for review', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review prepared task', exact: true })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Prompt', exact: true })).toHaveValue(/journalctl --user --unit=t3code.service/);
+    await expect(page.getByRole('link', { name: 'View latest result', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+    await expect(page.getByRole('article', { name: 'Review service logs: T3 Code (current user)', exact: true })).toContainText('Draft');
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      for (const route of ['/maintenance-agent', '/agent-inbox', '/agent-tools?tool=logs', '/agent-tools?tool=data-import']) {
+        await page.goto(dev.url + route);
+        await page.setViewportSize({ width: 320, height: 900 });
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = '200%';
+          for (const details of document.querySelectorAll('details')) details.open = true;
+        });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}: ${route}`).toBe(true);
+      }
+    }
+    await page.screenshot({ path: info.outputPath('guided-task-mobile-dark.png'), fullPage: true });
+    await page.goto('about:blank');
+  });
+
   test('agent tasks are discoverable and usable without JavaScript on narrow screens', async ({ page, developmentServer: dev, diagnostics }, info) => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/agents');

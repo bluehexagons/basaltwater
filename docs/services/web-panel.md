@@ -347,8 +347,16 @@ enables it during setup. Checks continue independently of the panel and T3 Code.
 Healthy checks make no AI calls. Opt-in housekeeping requests fixed existing
 cleanup jobs; AI reviews provide recommendations.
 
+The page leads with the saved enabled state, check interval, and **Check now**.
+Maintenance records appear before the settings form; incomplete checks retain
+a warning even when they recorded no findings. Expand **Maintenance settings**
+to edit grouped check/housekeeping and AI review/limit controls. Disabled agents
+show the settings immediately. Failed submissions preserve entered settings
+for correction while the status summary continues to show the saved policy.
+
 **Automatic restart hold** exposes the same account-local hold as
-`basaltw agent maintenance hold`. Choose 1–72 whole hours (default 8), extend
+`basaltw agent maintenance hold`. Expand **Manage restart hold** to choose
+1–72 whole hours (default 8), extend
 the hold, inspect its UTC expiry, or release it early. Holds defer managed
 automatic restarts; checks, package updates, housekeeping and manual restarts
 continue under their existing policies. Opening the page never creates or
@@ -356,7 +364,12 @@ extends a hold. The controls require a writable home owned by the panel
 account; locked service accounts cannot create holds for another user.
 
 Open **Agent inbox** to read a mailbox, send a message, or acknowledge one after
-handling it. Terminal workers can use `basaltw agent inbox wait` between tasks
+handling it. Unread messages appear first with sender labels and UTC timestamps;
+**Mark read** explicitly acknowledges a handled message. **Write message** opens
+the composer without JavaScript. If sending fails, the mailbox, recipient,
+sender, and draft text remain available for correction. Messages are limited
+to 4,000 UTF-8 bytes, so non-ASCII text can reach the limit in fewer characters.
+Terminal workers can use `basaltw agent inbox wait` between tasks
 for cooperative wake. Messages survive restarts and reading never acknowledges
 them. Mailboxes share the panel account's trust boundary; root-profile panels
 cannot expose another account's inbox.

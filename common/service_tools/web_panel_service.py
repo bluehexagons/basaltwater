@@ -2363,7 +2363,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 else:
                     inbox_action(self.state, submitted)
             except (OSError, RuntimeError, ValueError) as exc:
-                body = render_maintenance(self.state, _PAGE_STYLE, error=str(exc)) if path.endswith("maintenance-agent") else render_inbox(self.state, _PAGE_STYLE, error=str(exc))
+                body = render_maintenance(self.state, _PAGE_STYLE, error=str(exc), submitted=submitted) if path.endswith("maintenance-agent") else render_inbox(self.state, _PAGE_STYLE, error=str(exc), submitted=submitted)
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, body, "text/html")
                 return
             self.send_response(HTTPStatus.SEE_OTHER)
