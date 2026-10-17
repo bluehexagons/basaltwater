@@ -23,6 +23,23 @@ from lib.config import SetupConfig
 
 
 class TestPluginRegistry(unittest.TestCase):
+    def test_web_rdp_uses_one_shared_firewall_before_desktop_setup(self):
+        from security.steps import configure_firewall, configure_firewall_web
+
+        config = SetupConfig(
+            host="192.0.2.10", username="user", system_type="server_web",
+            include_web_firewall=True, include_web_server=True,
+            enable_rdp=True, include_desktop=True, rdp_allowed_sources=["192.0.2.0/24"],
+        )
+        steps = get_steps_for_system_type(config)
+        functions = [function for _, function in steps]
+        self.assertEqual(functions.count(configure_firewall), 1)
+        self.assertNotIn(configure_firewall_web, functions)
+        firewall_index = functions.index(configure_firewall)
+        rdp_indices = [index for index, (_, function) in enumerate(steps) if "rdp" in function.__name__]
+        self.assertTrue(rdp_indices)
+        self.assertLess(firewall_index, min(rdp_indices))
+
     def test_builtin_system_types_match_expected_order(self):
         self.assertEqual(
             get_system_type_names(),

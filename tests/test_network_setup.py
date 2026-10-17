@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from common import network_steps
@@ -239,6 +240,56 @@ class TestNetworkSetupValidation(unittest.TestCase):
 
 
 class TestNetworkConfigRendering(unittest.TestCase):
+    def test_ifupdown_legacy_backup_conflict_preserves_both_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            dropins = Path(temp_dir) / "interfaces.d"
+            dropins.mkdir()
+            legacy = dropins / "eth0.basaltwater.bak"
+            legacy.write_text("legacy config\n")
+            backups = Path(f"{dropins}.basaltwater-backups")
+            backups.mkdir()
+            destination = backups / legacy.name
+            destination.write_text("other saved config\n")
+            with patch.object(network_steps, "IFUPDOWN_CONFIG_DIR", str(dropins)):
+                with self.assertRaisesRegex(RuntimeError, "destination conflict.*retry"):
+                    network_steps._relocate_ifupdown_backups()
+            self.assertEqual(legacy.read_text(), "legacy config\n")
+            self.assertEqual(destination.read_text(), "other saved config\n")
+
+    def test_ifupdown_dropin_backups_are_not_included_and_rollback_restores_them(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                dropins = root / "interfaces.d"
+                dropins.mkdir()
+                main = root / "interfaces"
+                main.write_text(f"source {dropins}/*\n")
+                dropin = dropins / "eth0"
+                original = "auto eth0\niface eth0 inet dhcp\n    metric 10\n"
+                dropin.write_text(original)
+                old_backup = dropins / "eth0.basaltwater.bak"
+                if legacy:
+                    old_backup.write_text(original + "# original backup\n")
+                before = {str(path): path.read_text() for path in root.rglob("*") if path.is_file()}
+                with patch.multiple(
+                    network_steps, IFUPDOWN_MAIN_CONFIG_PATH=str(main),
+                    IFUPDOWN_CONFIG_DIR=str(dropins),
+                    IFUPDOWN_CONFIG_PATH=str(dropins / "basaltwater_static"),
+                    CLOUD_INIT_NETWORK_CONFIG_PATH=str(root / "cloud.cfg"),
+                ):
+                    rollback = network_steps._capture_persistence_rollback("ifupdown", "eth0")
+                    network_steps._configure_ifupdown(_config(static_ipv4="192.168.10.20/24"), "eth0")
+                    network_steps._configure_ifupdown(_config(static_ipv4="192.168.10.20/24"), "eth0")
+                    included = "".join(path.read_text() for path in dropins.glob("*"))
+                    self.assertNotIn("inet dhcp", included)
+                    self.assertEqual(included.count("iface eth0 inet static"), 1)
+                    backups = list(root.glob("interfaces.d.basaltwater-backups/*"))
+                    self.assertEqual(len(backups), 1)
+                    self.assertEqual(backups[0].read_text(), original + ("# original backup\n" if legacy else ""))
+                    network_steps._restore_persistence_rollback(rollback, "ifupdown")
+                after = {str(path): path.read_text() for path in root.rglob("*") if path.is_file()}
+                self.assertEqual(after, before)
+
     @patch("common.network_steps.shutil.which", return_value="/usr/bin/nmcli")
     def test_command_available_uses_executable_lookup(self, mock_which: MagicMock):
         self.assertTrue(network_steps._command_available("nmcli"))
@@ -448,6 +499,7 @@ class TestLiveNetworkTransition(unittest.TestCase):
 
     @patch("common.network_steps.run")
     def test_abort_removes_only_temporary_transition_state(self, mock_run):
+        mock_run.return_value = subprocess.CompletedProcess([], 0, "[]", "")
         with tempfile.TemporaryDirectory() as temp_dir:
             pending_path = os.path.join(temp_dir, "transition.json")
             network_path = os.path.join(temp_dir, "static.network")
@@ -490,6 +542,50 @@ class TestLiveNetworkTransition(unittest.TestCase):
         )
         self.assertIn("ip -4 route flush table 20000", commands)
         self.assertIn("ip -4 address del 192.168.10.21/24 dev eth0", commands)
+
+    @patch("common.network_steps.run")
+    def test_failed_abort_cleanup_retains_record_and_can_retry(self, mock_run):
+        for resource in ("rule", "route", "address", "probe", "timeout", "invalid"):
+            with self.subTest(resource=resource), tempfile.TemporaryDirectory() as temp_dir:
+                pending = os.path.join(temp_dir, "transition.json")
+                network = os.path.join(temp_dir, "static.network")
+                cloud = os.path.join(temp_dir, "cloud.cfg")
+                payload = _transition_payload(network, cloud)
+                network_steps.write_json_atomic(pending, payload)
+                failed = True
+
+                def run(command, **_kwargs):
+                    output = "[]"
+                    code = 0
+                    if failed and resource == "timeout":
+                        raise TimeoutError("ip command timed out")
+                    if " del " in command or " flush " in command:
+                        code = 1  # Includes already-absent objects on retry.
+                    elif failed:
+                        if resource == "rule" and "rule show" in command:
+                            output = '[{"priority":20000,"src":"192.168.10.21","table":20000}]'
+                        elif resource == "route" and "route show" in command:
+                            output = '[{"dst":"default","table":20000}]'
+                        elif resource == "address" and "address show" in command:
+                            output = "2: eth0 inet 192.168.10.21/24 scope global eth0"
+                        elif resource == "probe" and "rule show" in command:
+                            code = 1
+                        elif resource == "invalid" and "rule show" in command:
+                            output = "invalid JSON"
+                    return subprocess.CompletedProcess([], code, output, "permission denied" if code else "")
+
+                mock_run.side_effect = run
+                with patch.multiple(
+                    network_steps, NETWORK_TRANSITION_PATH=pending,
+                    NETWORKD_CONFIG_PATH=network, CLOUD_INIT_NETWORK_CONFIG_PATH=cloud,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "cleanup.*retry"):
+                        network_steps.abort_network_transition("a" * 64)
+                    with open(pending, encoding="utf-8") as stream:
+                        self.assertEqual(network_steps.json.load(stream), payload)
+                    failed = False
+                    network_steps.abort_network_transition("a" * 64)
+                    self.assertFalse(os.path.exists(pending))
 
     @patch("common.network_steps._restore_persistence_rollback")
     @patch(

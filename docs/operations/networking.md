@@ -22,6 +22,13 @@ on that link (an IPv6 link-local gateway is also accepted). `--dns` is repeatabl
 supports active NetworkManager, systemd-networkd, and ifupdown installations.
 It disables future cloud-init network regeneration when cloud-init is present.
 
+For ifupdown, original drop-in backups are stored in
+`/etc/network/interfaces.d.basaltwater-backups/`, outside the active
+`interfaces.d/*` include. Existing `.basaltwater.bak` drop-ins are moved there
+verbatim. A conflicting destination or unsafe backup stops setup for manual
+resolution; rollback snapshots cover both locations. The main `interfaces`
+file retains its adjacent `.basaltwater.bak` backup.
+
 Direct remote setup stages persistent configuration without bouncing the live
 interface, which prevents a mid-run SSH disconnect. Activate it with a planned
 reboot or explicit interface restart after reviewing the generated settings.
@@ -51,6 +58,12 @@ successful handoff moves the saved host record to the new address; the
 one-shot activation flag is not saved. The old live address remains available
 until reboot, when the verified persistent configuration becomes the sole
 assignment.
+
+Abort verifies that temporary addresses, policy rules, and routes are absent.
+Already-absent objects are safe to retry. If cleanup fails or cannot be
+verified, the target retains `/run/basaltwater-network-transition.json` and
+reports the transition ID and abort command for retry after resolving the
+failure.
 
 Hosted Proxmox guests receive their initial addressing during provisioning and
 therefore boot with it active. The controller retains the gateway and DNS
@@ -94,6 +107,9 @@ also refuses a selected Linux bridge at runtime to avoid erasing Proxmox
 bridge ports or other topology settings from ifupdown configuration.
 
 ## LAN Access Inference
+
+`server_web --rdp` uses the shared service firewall reconciliation before RDP
+setup, applying both the configured web ports and RDP source restrictions.
 
 `--lan-access` scopes managed inbound services to the target's adjacent private
 network. A target in any RFC 1918 block produces its local `/24`; an IPv6 ULA

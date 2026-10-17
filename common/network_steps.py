@@ -310,12 +310,36 @@ def _strip_ifupdown_stanzas(content: str, interface: str) -> str:
     return "".join(output)
 
 
+def _ifupdown_backup_path(path: str) -> str:
+    if os.path.dirname(path) == os.path.abspath(IFUPDOWN_CONFIG_DIR):
+        return os.path.join(
+            f"{IFUPDOWN_CONFIG_DIR}.basaltwater-backups",
+            f"{os.path.basename(path)}.basaltwater.bak",
+        )
+    return f"{path}.basaltwater.bak"
+
+
+def _relocate_ifupdown_backups() -> None:
+    # source interfaces.d/* includes backup files too. Preserve old backups
+    # verbatim outside that directory before removing any active stanzas.
+    for path in sorted(glob.glob(os.path.join(IFUPDOWN_CONFIG_DIR, "*.basaltwater.bak"))):
+        destination = _ifupdown_backup_path(path.removesuffix(".basaltwater.bak"))
+        if os.path.islink(path) or not os.path.isfile(path) or os.path.lexists(destination):
+            raise RuntimeError(
+                f"Cannot safely relocate ifupdown backup {path} to {destination}; "
+                "resolve the unsafe file or destination conflict and retry"
+            )
+        os.makedirs(os.path.dirname(destination), mode=0o700, exist_ok=True)
+        os.rename(path, destination)
+
+
 def _write_with_backup(path: str, content: str) -> None:
     current_mode = 0o644
     if os.path.exists(path):
         current_mode = stat.S_IMODE(os.stat(path).st_mode)
-        backup_path = f"{path}.basaltwater.bak"
+        backup_path = _ifupdown_backup_path(path)
         if not os.path.exists(backup_path):
+            os.makedirs(os.path.dirname(backup_path), mode=0o700, exist_ok=True)
             shutil.copy2(path, backup_path)
     write_text_atomic(path, content, mode=current_mode)
 
@@ -395,6 +419,7 @@ def _render_ifupdown_config(config: SetupConfig, interface: str) -> str:
 
 
 def _configure_ifupdown(config: SetupConfig, interface: str) -> None:
+    _relocate_ifupdown_backups()
     _ensure_ifupdown_include()
     write_text_atomic(
         IFUPDOWN_CONFIG_PATH,
@@ -527,8 +552,8 @@ def _ifupdown_snapshot_paths() -> list[str]:
     for path in glob.glob(os.path.join(IFUPDOWN_CONFIG_DIR, "*")):
         if os.path.isfile(path) or os.path.islink(path):
             paths.add(path)
-        if not path.endswith(".basaltwater.bak"):
-            paths.add(f"{path}.basaltwater.bak")
+        original_path = path.removesuffix(".basaltwater.bak")
+        paths.add(_ifupdown_backup_path(original_path))
     paths.add(f"{IFUPDOWN_MAIN_CONFIG_PATH}.basaltwater.bak")
     return sorted(paths)
 
@@ -586,7 +611,13 @@ def _allowed_rollback_file(path: str, backend: str) -> bool:
         IFUPDOWN_CONFIG_PATH,
     }:
         return True
-    return os.path.dirname(path) == os.path.abspath(IFUPDOWN_CONFIG_DIR)
+    return (
+        os.path.dirname(path) == os.path.abspath(IFUPDOWN_CONFIG_DIR)
+        or (
+            os.path.dirname(path) == os.path.abspath(f"{IFUPDOWN_CONFIG_DIR}.basaltwater-backups")
+            and path.endswith(".basaltwater.bak")
+        )
+    )
 
 
 def _validate_persistence_rollback(rollback: object, backend: str) -> JSONDict:
@@ -933,15 +964,37 @@ def commit_network_transition(expected_id: MaybeStr = None) -> None:
     )
 
 
-def abort_network_transition(expected_id: MaybeStr = None) -> None:
-    """Restore persistence and remove temporary state from a transition."""
+def _verify_transition_cleanup(transition: NetworkTransition) -> None:
+    """Require absence of owned objects, including after failed delete commands."""
 
-    if not os.path.exists(NETWORK_TRANSITION_PATH):
-        return
-    transition = _load_network_transition()
-    _require_transition_id(transition, expected_id)
-    _restore_persistence_rollback(transition.rollback, transition.backend)
+    for version, table in transition.policy_tables.items():
+        family_flag = "-4" if version == "4" else "-6"
+        for resource, selector in (("rule", ""), ("route", " table all")):
+            result = run(
+                f"ip {family_flag} -j {resource} show{selector}",
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Could not inspect IPv{version} {resource}s: "
+                    f"{(result.stderr or '').strip()}"
+                )
+            objects = json.loads(result.stdout or "")
+            if not isinstance(objects, list) or not all(isinstance(obj, dict) for obj in objects):
+                raise RuntimeError(f"Invalid IPv{version} {resource} inventory")
+            # This table was reserved empty for this transition. Any remaining
+            # route or reference to it means cleanup is incomplete.
+            if any(str(obj.get("table")) == str(table) for obj in objects):
+                raise RuntimeError(f"IPv{version} {resource} remains for policy table {table}")
 
+    for address in transition.added_addresses:
+        parsed = ipaddress.ip_interface(address)
+        if str(parsed.ip) in _active_interface_addresses(transition.interface, parsed.version):
+            raise RuntimeError(f"Temporary address {address} remains on {transition.interface}")
+
+
+def _remove_transition_live_state(transition: NetworkTransition) -> None:
     for version, table in transition.policy_tables.items():
         family_flag = "-4" if version == "4" else "-6"
         address_value = (
@@ -974,6 +1027,25 @@ def abort_network_transition(expected_id: MaybeStr = None) -> None:
             check=False,
             capture_output=True,
         )
+
+
+def abort_network_transition(expected_id: MaybeStr = None) -> None:
+    """Restore persistence and remove temporary state from a transition."""
+
+    if not os.path.exists(NETWORK_TRANSITION_PATH):
+        return
+    transition = _load_network_transition()
+    _require_transition_id(transition, expected_id)
+    _restore_persistence_rollback(transition.rollback, transition.backend)
+    try:
+        _remove_transition_live_state(transition)
+        _verify_transition_cleanup(transition)
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise RuntimeError(
+            f"Network transition cleanup incomplete: {exc}; retained "
+            f"{NETWORK_TRANSITION_PATH}. Resolve the failure and retry "
+            f"--abort-transition {transition.transition_id}"
+        ) from exc
     os.unlink(NETWORK_TRANSITION_PATH)
 
 
