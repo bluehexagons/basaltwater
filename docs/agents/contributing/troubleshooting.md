@@ -64,6 +64,25 @@ remote even when Flatpak is already installed. Callers must check
 `install_flatpak_if_needed()` before proceeding; its result includes remote
 preparation. LibreOffice retains its APT fallback when Flatpak preparation fails.
 
+## Service configuration failures
+
+Rejected nginx configuration must fail the setup step after restoring the
+previous site and enabled entry. Restore regular files and symlinks as they
+were, including a previously absent entry. Reload failures also require rollback
+because activation may have partially completed. The webhook setup removes a
+newly rejected configuration; Antistatic restores an existing site's contents
+and enabled state.
+
+Stage deploy sudoers rules in a dot-prefixed candidate, validate the candidate
+and current include tree before replacement, then validate the activated tree.
+Restore the previous rule if activation fails. Never remove a working rule and
+report success after a failed validation.
+
+An explicit device-pairing opt-out removes the existing portal, credentials,
+Connect restart units and pairing HTTPS route even when the T3 web interface
+is also disabled. That cleanup belongs in the step plan independently of web
+installation; a web opt-out alone does not request pairing removal.
+
 ## Target-side helper imports and automatic swap
 
 Launch trusted scripts under `lib/` with `python3 -I /absolute/path/to/helper.py`

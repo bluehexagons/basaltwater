@@ -18,6 +18,10 @@
 | Hosts, IP addresses, usernames | `lib.validators` |
 
 Validate before remote or system mutations.
+`prepare_validated_runtime_config()` must validate feature settings before
+staging or replacing the target runtime. Remote argument serialization must
+preserve explicit opt-outs, including `--no-web-interface` and
+`--no-device-pairing`, so profile defaults cannot re-enable them on the target.
 Identity validators match the complete input, reject control-character suffixes,
 and accept ASCII IPv4 digits only. Hostnames may have one terminal DNS root dot;
 repeated terminal dots and names longer than 253 characters are rejected.
@@ -44,6 +48,9 @@ Use the helper for the operation, not a generic container check.
 plugins own `step_builder` functions; capability plugins supply shared
 extensions or custom steps. Extend the owning plugin path rather than adding a
 second dispatcher.
+Optional Gogs and Antistatic services use the shared server capability
+extensions on both server and workstation profiles. Test the generated step
+plan as well as argument parsing when exposing an option on another profile.
 
 ## Repository areas
 
@@ -93,3 +100,10 @@ removing a group; both operations share a lock and recovery marker.
 Snapshots protect files and activation state, not arbitrary application data.
 See the [transaction safety reference](transaction-safety.md) and
 [operator recovery guide](../../operations/transaction-recovery.md).
+
+Use `lib.setup_directories.directory_fd()` for privileged directory ownership
+and mode changes on service-owned paths. It opens each path component without
+following symlinks; apply `os.fchown()` and `os.fchmod()` to its descriptor.
+Use `check_directory_path()` to reject existing unsafe components before
+starting a group of mutations. The descriptor check remains necessary when
+creating or opening the directory because its owner can change paths later.
