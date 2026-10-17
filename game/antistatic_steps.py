@@ -10,6 +10,7 @@ import hashlib
 import os
 import shlex
 import tempfile
+import stat
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,6 +28,11 @@ from lib.auth_failure_bans import configure_nginx_auth_failure_ban
 from lib.remote_utils import install_package, run, user_exists
 from lib.state_read import StateReadError
 from lib.unit_transaction import replace_units
+from lib.atomic_io import write_bytes_atomic, write_text_atomic
+
+
+NGINX_SITES_AVAILABLE_DIR = "/etc/nginx/sites-available"
+NGINX_SITES_ENABLED_DIR = "/etc/nginx/sites-enabled"
 
 
 ANTISTATIC_USER = "antistatic"
@@ -430,15 +436,66 @@ server {{
 
 
 def _configure_nginx_proxy(config: SetupConfig, domain: str, port: int) -> None:
-    """Write an nginx site config and reload nginx."""
+    """Restore the previous site and enabled entry when setup or activation fails."""
+    name = "antistatic_" + domain.replace(".", "_").replace("-", "_")
+    config_file = os.path.join(NGINX_SITES_AVAILABLE_DIR, name)
+    enabled_link = os.path.join(NGINX_SITES_ENABLED_DIR, name)
+    snapshots = {}
+    for path in (config_file, enabled_link):
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            snapshots[path] = None
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            snapshots[path] = ("link", os.readlink(path), info)
+        elif stat.S_ISREG(info.st_mode):
+            with open(path, "rb") as file_obj:
+                snapshots[path] = ("file", file_obj.read(), info)
+        else:
+            raise ValueError(f"Unsafe nginx site path: {path}")
+    try:
+        _apply_nginx_proxy(config, domain, port, config_file, enabled_link)
+    except BaseException as error:
+        errors = []
+        for path, snapshot in snapshots.items():
+            try:
+                if snapshot is None:
+                    if os.path.lexists(path):
+                        os.unlink(path)
+                else:
+                    kind, content, info = snapshot
+                    if kind == "file":
+                        write_bytes_atomic(path, content, mode=stat.S_IMODE(info.st_mode),
+                                           uid=info.st_uid, gid=info.st_gid)
+                    else:
+                        if os.path.lexists(path):
+                            os.unlink(path)
+                        os.symlink(content, path)
+                        os.lchown(path, info.st_uid, info.st_gid)
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+        try:
+            if run("nginx -t", check=False).returncode != 0:
+                raise RuntimeError("Restored nginx configuration test failed")
+            if run("systemctl reload nginx", check=False).returncode != 0:
+                raise RuntimeError("Restored nginx reload failed")
+        except Exception as exc:
+            errors.append(str(exc))
+        if errors:
+            raise RuntimeError("Nginx site rollback failed: " + "; ".join(errors)) from error
+        raise
+
+
+def _apply_nginx_proxy(
+    config: SetupConfig, domain: str, port: int, config_file: str, enabled_link: str,
+) -> None:
+    """Write and activate the site while the caller owns rollback."""
     from lib.nginx_config import generate_self_signed_cert
 
     generate_self_signed_cert(domain)
 
-    domain_slug = domain.replace(".", "_").replace("-", "_")
-    config_name = f"antistatic_{domain_slug}"
-    config_file = f"/etc/nginx/sites-available/{config_name}"
-    enabled_link = f"/etc/nginx/sites-enabled/{config_name}"
+    config_name = os.path.basename(config_file)
 
     run("mkdir -p /var/www/letsencrypt/.well-known/acme-challenge")
 
@@ -452,13 +509,13 @@ def _configure_nginx_proxy(config: SetupConfig, domain: str, port: int) -> None:
         forwarded_client_ip=forwarded_client_ip,
         private_origin=config.enable_cloudflare,
     )
-    with open(config_file, "w", encoding="utf-8") as fh:
-        fh.write(config_content)
+    write_text_atomic(config_file, config_content, mode=0o644)
     print(f"  ✓ Created nginx config: {config_file}")
 
-    if not os.path.exists(enabled_link):
-        run(f"ln -s {shlex.quote(config_file)} {shlex.quote(enabled_link)}")
-        print(f"  ✓ Enabled nginx site: {config_name}")
+    if os.path.lexists(enabled_link):
+        os.unlink(enabled_link)
+    os.symlink(config_file, enabled_link)
+    print(f"  ✓ Enabled nginx site: {config_name}")
 
     result = run("nginx -t", check=False)
     if result.returncode != 0:
@@ -477,17 +534,18 @@ def _configure_nginx_proxy(config: SetupConfig, domain: str, port: int) -> None:
 
         install_certbot(config)
         if obtain_letsencrypt_certificate([domain], config.ssl_email, domain):
-            with open(config_file, "w", encoding="utf-8") as fh:
-                fh.write(
-                    generate_antistatic_nginx_config(
-                        domain,
-                        port,
-                        enable_https_redirect=True,
-                        forwarded_proto=forwarded_proto,
-                        forwarded_client_ip=forwarded_client_ip,
-                        private_origin=False,
-                    )
-                )
+            write_text_atomic(
+                config_file,
+                generate_antistatic_nginx_config(
+                    domain,
+                    port,
+                    enable_https_redirect=True,
+                    forwarded_proto=forwarded_proto,
+                    forwarded_client_ip=forwarded_client_ip,
+                    private_origin=False,
+                ),
+                mode=0o644,
+            )
             setup_certificate_renewal()
             result = run("nginx -t", check=False)
             if result.returncode == 0:

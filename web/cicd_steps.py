@@ -6,12 +6,15 @@ import os
 import secrets
 import re
 import stat
+import pwd
+import grp
 
 from lib.atomic_io import write_text_atomic
 from lib.config import SetupConfig
 from lib.cicd_build import BUILD_HOME, BUILD_USER
 from lib.remote_utils import run, is_package_installed
 from lib.unit_transaction import replace_units
+from lib.setup_directories import check_directory_path, directory_fd
 from web.service_tools.cicd_security import DEFAULT_BRANCHES
 from web.service_tools.cicd_config import load_config_file, save_config_file
 
@@ -20,6 +23,7 @@ CICD_USER = "webhook"
 CICD_HOME = "/var/lib/basaltwater/cicd"
 SECRET_FILE = "/etc/basaltwater/cicd/webhook_secret"
 ENV_FILE = "/etc/basaltwater/cicd/webhook.env"
+WEBHOOK_NGINX_CONF = "/etc/nginx/conf.d/webhook.conf"
 
 
 def _read_webhook_secret(path: str) -> str:
@@ -60,18 +64,26 @@ def secure_cicd_directories(directories: list[str]) -> None:
         )
 
     for directory in directories:
-        run(["chown", f"{CICD_USER}:{CICD_USER}", directory])
-        run(["chmod", "711" if directory == CICD_HOME else "750", directory])
+        check_directory_path(directory)
+    uid = pwd.getpwnam(CICD_USER).pw_uid
+    gid = grp.getgrnam(CICD_USER).gr_gid
+    for directory in directories:
+        with directory_fd(directory, create=True, mode=0o750) as descriptor:
+            os.fchown(descriptor, uid, gid)
+            os.fchmod(descriptor, 0o711 if directory == CICD_HOME else 0o750)
 
 
 def create_isolated_build_directories() -> None:
     """Create build-owned directories without recursively touching credentials."""
-    for directory in (BUILD_HOME, f"{BUILD_HOME}/workspaces"):
-        if os.path.islink(directory):
-            raise ValueError(f"Build directory cannot be a symlink: {directory}")
-        os.makedirs(directory, mode=0o700, exist_ok=True)
-        run(["chown", f"{BUILD_USER}:{BUILD_USER}", directory])
-        run(["chmod", "700", directory])
+    directories = (BUILD_HOME, f"{BUILD_HOME}/workspaces")
+    for directory in directories:
+        check_directory_path(directory)
+    uid = pwd.getpwnam(BUILD_USER).pw_uid
+    gid = grp.getgrnam(BUILD_USER).gr_gid
+    for directory in directories:
+        with directory_fd(directory, create=True, mode=0o700) as descriptor:
+            os.fchown(descriptor, uid, gid)
+            os.fchmod(descriptor, 0o700)
 
 
 def install_cicd_dependencies(config: SetupConfig) -> None:
@@ -132,9 +144,10 @@ def create_cicd_directories(config: SetupConfig) -> None:
         f"{CICD_HOME}/logs",
     ]
 
-    os.makedirs("/etc/basaltwater/cicd", mode=0o755, exist_ok=True)
     for directory in state_directories:
-        os.makedirs(directory, mode=0o750, exist_ok=True)
+        check_directory_path(directory)
+    with directory_fd("/etc/basaltwater/cicd", create=True):
+        pass
 
     secure_cicd_directories(state_directories)
     create_isolated_build_directories()
@@ -360,7 +373,7 @@ WantedBy=multi-user.target
 
 def configure_nginx_for_webhook(config: SetupConfig) -> None:
     """Configure nginx to reverse proxy webhook endpoint."""
-    nginx_conf = "/etc/nginx/conf.d/webhook.conf"
+    nginx_conf = WEBHOOK_NGINX_CONF
     
     if os.path.exists(nginx_conf):
         print("  ✓ Nginx webhook configuration already exists")
@@ -414,20 +427,23 @@ server {
 }
 """
     
-    os.makedirs("/etc/nginx/conf.d", exist_ok=True)
-    
-    with open(nginx_conf, 'w') as f:
-        f.write(nginx_content)
-    
-    # Test nginx configuration
-    result = run("nginx -t", check=False)
-    if result.returncode != 0:
-        print("  ⚠ nginx configuration test failed")
+    write_text_atomic(nginx_conf, nginx_content, mode=0o644)
+    reload_attempted = False
+    try:
+        result = run("nginx -t", check=False)
+        if result.returncode != 0:
+            raise RuntimeError("Nginx webhook configuration test failed")
+        reload_attempted = True
+        if run(["systemctl", "reload", "nginx"], check=False).returncode != 0:
+            raise RuntimeError("Failed to reload nginx for webhook")
+    except BaseException:
         os.remove(nginx_conf)
-        return
-    
-    # Reload nginx
-    run(["systemctl", "reload", "nginx"])
+        if reload_attempted:
+            if run("nginx -t", check=False).returncode != 0:
+                raise RuntimeError("Restored nginx webhook configuration test failed")
+            if run(["systemctl", "reload", "nginx"], check=False).returncode != 0:
+                raise RuntimeError("Restored nginx webhook reload failed")
+        raise
     
     print("  ✓ Configured nginx for webhook endpoint")
 

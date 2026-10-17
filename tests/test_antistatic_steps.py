@@ -394,6 +394,20 @@ class TestAntistaticAdminEnvironment(unittest.TestCase):
 
 
 class TestConfigureAntistaticNginx(unittest.TestCase):
+    def setUp(self):
+        self.root = self.enterContext(tempfile.TemporaryDirectory())
+        self.available = os.path.join(self.root, 'available')
+        self.enabled = os.path.join(self.root, 'enabled')
+        os.mkdir(self.available)
+        os.mkdir(self.enabled)
+        self.enterContext(patch.object(antistatic_steps, 'NGINX_SITES_AVAILABLE_DIR', self.available))
+        self.enterContext(patch.object(antistatic_steps, 'NGINX_SITES_ENABLED_DIR', self.enabled))
+        self.enterContext(patch.object(antistatic_steps.os, 'fchown'))
+        self.enterContext(patch.object(antistatic_steps.os, 'lchown'))
+        self.write = self.enterContext(patch.object(
+            antistatic_steps, 'write_text_atomic', wraps=antistatic_steps.write_text_atomic,
+        ))
+
     @patch("web.ssl_steps.setup_certificate_renewal")
     @patch("web.ssl_steps.obtain_letsencrypt_certificate", return_value=True)
     @patch("web.ssl_steps.install_certbot")
@@ -423,12 +437,10 @@ class TestConfigureAntistaticNginx(unittest.TestCase):
             ],
         ), patch(
             "game.antistatic_steps.configure_nginx_auth_failure_ban"
-        ) as configure_ban, patch(
-            "builtins.open", unittest.mock.mock_open()
-        ) as mock_file:
+        ) as configure_ban:
             _configure_nginx_proxy(config, "lobby.example.com", 8080)
 
-        final_content = mock_file().write.call_args_list[-1].args[0]
+        final_content = self.write.call_args_list[-1].args[1]
         self.assertIn("/etc/letsencrypt/live/lobby.example.com/fullchain.pem", final_content)
         self.assertIn("return 301 https://$host$request_uri;", final_content)
         configure_ban.assert_called_once_with(
@@ -453,10 +465,10 @@ class TestConfigureAntistaticNginx(unittest.TestCase):
             return_value=("/etc/nginx/ssl/lobby.crt", "/etc/nginx/ssl/lobby.key"),
         ), patch(
             "game.antistatic_steps.configure_nginx_auth_failure_ban"
-        ), patch("builtins.open", unittest.mock.mock_open()) as mock_file:
+        ):
             _configure_nginx_proxy(config, "lobby.example.com", 8080)
 
-        content = mock_file().write.call_args.args[0]
+        content = self.write.call_args.args[1]
         self.assertNotIn("return 301 https://$host$request_uri;", content)
 
     @patch("web.ssl_steps.setup_certificate_renewal")
@@ -480,11 +492,74 @@ class TestConfigureAntistaticNginx(unittest.TestCase):
         with patch(
             "lib.nginx_config.get_ssl_cert_path",
             return_value=("/etc/nginx/ssl/lobby.crt", "/etc/nginx/ssl/lobby.key"),
-        ), patch("builtins.open", unittest.mock.mock_open()), self.assertRaisesRegex(
+        ), self.assertRaisesRegex(
             RuntimeError,
             "Failed to obtain a trusted certificate",
         ):
             _configure_nginx_proxy(config, "lobby.example.com", 8080)
+
+    def test_failed_activation_restores_existing_and_new_site_entries(self):
+        for state in ('new', 'disabled', 'link', 'dangling', 'file'):
+            for failure in ('test', 'reload', 'exception', 'link'):
+                with self.subTest(state=state, failure=failure):
+                    target = os.path.join(self.available, 'antistatic_lobby_example_com')
+                    enabled = os.path.join(self.enabled, 'antistatic_lobby_example_com')
+                    for path in (target, enabled):
+                        if os.path.lexists(path):
+                            os.unlink(path)
+                    if state != 'new':
+                        with open(target, 'w') as stream:
+                            stream.write('old site')
+                        os.chmod(target, 0o640)
+                    if state in ('link', 'dangling'):
+                        os.symlink(target if state == 'link' else '../missing', enabled)
+                    elif state == 'file':
+                        with open(enabled, 'w') as stream:
+                            stream.write('old enabled config')
+                    calls = []
+
+                    def activate(command, **kwargs):
+                        calls.append(command)
+                        if command == 'nginx -t' and calls.count(command) == 1 and failure == 'test':
+                            return SimpleNamespace(returncode=1)
+                        if command == 'systemctl reload nginx' and calls.count(command) == 1:
+                            if failure == 'reload':
+                                return SimpleNamespace(returncode=1)
+                            if failure == 'exception':
+                                raise OSError('reload interrupted')
+                        return SimpleNamespace(returncode=0)
+
+                    real_symlink = os.symlink
+                    linked = []
+
+                    def link(source, destination):
+                        linked.append(destination)
+                        if failure == 'link' and len(linked) == 1:
+                            raise OSError('link activation failed')
+                        return real_symlink(source, destination)
+
+                    with patch('lib.nginx_config.generate_self_signed_cert'), \
+                         patch.object(antistatic_steps, 'generate_antistatic_nginx_config', return_value='new site'), \
+                         patch.object(antistatic_steps, 'run', side_effect=activate), \
+                         patch.object(antistatic_steps.os, 'symlink', side_effect=link), \
+                         patch.object(antistatic_steps, 'configure_nginx_auth_failure_ban') as ban:
+                        with self.assertRaises((RuntimeError, OSError)):
+                            _configure_nginx_proxy(SimpleNamespace(enable_ssl=False, enable_cloudflare=False),
+                                                   'lobby.example.com', 8080)
+                    ban.assert_not_called()
+                    if state == 'new':
+                        self.assertFalse(os.path.lexists(target))
+                    else:
+                        with open(target) as stream:
+                            self.assertEqual(stream.read(), 'old site')
+                        self.assertEqual(os.stat(target).st_mode & 0o777, 0o640)
+                    if state in ('new', 'disabled'):
+                        self.assertFalse(os.path.lexists(enabled))
+                    elif state in ('link', 'dangling'):
+                        self.assertEqual(os.readlink(enabled), target if state == 'link' else '../missing')
+                    else:
+                        with open(enabled) as stream:
+                            self.assertEqual(stream.read(), 'old enabled config')
 
 
 class TestAntistaticReleaseCompatibility(unittest.TestCase):

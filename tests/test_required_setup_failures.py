@@ -137,29 +137,24 @@ class TestRequiredCICDMutations(unittest.TestCase):
             ["apt-get", "install", "-y", "-qq", "git"],
         )
 
-    @patch("web.cicd_steps.os.makedirs")
+    @patch("web.cicd_steps.check_directory_path")
+    @patch("web.cicd_steps.directory_fd")
     @patch("web.cicd_steps.run", return_value=SimpleNamespace(returncode=1))
     def test_missing_service_user_stops_directory_setup(
-        self, _run, _makedirs
+        self, _run, _directory_fd, _check_path
     ) -> None:
         with self.assertRaisesRegex(RuntimeError, "user 'webhook' does not exist"):
             create_cicd_directories(_config())
 
-    @patch("web.cicd_steps.os.makedirs")
-    @patch("web.cicd_steps.run")
+    @patch("web.cicd_steps.check_directory_path")
+    @patch("web.cicd_steps.directory_fd")
+    @patch("web.cicd_steps.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=123))
+    @patch("web.cicd_steps.grp.getgrnam", return_value=SimpleNamespace(gr_gid=456))
+    @patch("web.cicd_steps.os.fchown", side_effect=RuntimeError("permission mutation failed"))
+    @patch("web.cicd_steps.run", return_value=SimpleNamespace(returncode=0))
     def test_directory_permission_failure_reaches_caller(
-        self, mock_run, _makedirs
+        self, _run, _fchown, _group, _user, _directory_fd, _check_path
     ) -> None:
-        def run_side_effect(
-            command: str | list[str],
-            **_kwargs: object,
-        ) -> SimpleNamespace:
-            if command == ["id", "webhook"]:
-                return SimpleNamespace(returncode=0)
-            raise RuntimeError("permission mutation failed")
-
-        mock_run.side_effect = run_side_effect
-
         with self.assertRaisesRegex(RuntimeError, "permission mutation failed"):
             create_cicd_directories(_config())
 
