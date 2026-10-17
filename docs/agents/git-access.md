@@ -158,6 +158,9 @@ Never bypass a trust failure with `http.sslVerify=false`.
 The target receives a URL-scoped Git include and a mode-`0600` credential-store
 file below `~/.config/basaltwater/git/`. The scoped helper leaves GitHub's `gh`
 helper intact. Standard HTTPS and Git LFS use the same origin credential.
+The store contains plaintext passwords or tokens; the hardened Codex policy
+denies reads of `~/.config/basaltwater/git/credentials`. Helper filenames are
+shell-quoted before Git config escaping, including for homes containing spaces.
 
 Updating the workspace password and rerunning setup rotates the managed
 origin. Remove every Basaltwater-managed Git credential and private CA setting
@@ -166,6 +169,10 @@ with:
 ```bash
 basaltw patch 192.168.0.41 agent --no-git-credentials
 ```
+
+Removal rejects symlinks and directories owned by another user throughout the
+managed path before changing the include. Cleanup stays anchored to opened
+directories so a concurrent pathname replacement cannot redirect deletion.
 
 ## Troubleshooting
 

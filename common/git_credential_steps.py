@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 import os
 import pwd
 import shlex
 import shutil
+import stat
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from common.common_steps import _run_as_login_user
@@ -18,6 +21,7 @@ from lib.git_credentials import (
     normalize_git_https_origin,
 )
 from lib.remote_utils import is_dry_run
+from lib.setup_directories import directory_fd
 
 
 _MANAGED_RELATIVE_DIR = os.path.join(".config", "basaltwater", "git")
@@ -137,6 +141,54 @@ def _credential_store_line(origin: str, username: str, password: str) -> str:
     return urlunsplit((parsed.scheme, authenticated_netloc, "", "", ""))
 
 
+@contextmanager
+def _managed_removal_directory(
+    account: pwd.struct_passwd,
+) -> Iterator[tuple[int, int] | None]:
+    """Validate ownership and retain nofollow anchors before changing Git config."""
+    with ExitStack() as stack:
+        try:
+            descriptor = stack.enter_context(directory_fd(account.pw_dir))
+            if os.fstat(descriptor).st_uid != account.pw_uid:
+                raise RuntimeError("Refusing managed Git home owned by another user")
+            for component in _MANAGED_RELATIVE_DIR.split(os.sep):
+                parent = descriptor
+                descriptor = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=parent,
+                )
+                stack.callback(os.close, descriptor)
+                if os.fstat(descriptor).st_uid != account.pw_uid:
+                    raise RuntimeError(
+                        "Refusing managed Git credential directory owned by another user"
+                    )
+        except FileNotFoundError:
+            yield None
+            return
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("Refusing unsafe managed Git credential ancestry") from exc
+        yield parent, descriptor
+
+
+def _remove_opened_managed_directory(parent: int, descriptor: int) -> None:
+    """Delete only inside the validated tree, even if an ancestor is replaced."""
+    for name in os.listdir(descriptor):
+        entry = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        if stat.S_ISDIR(entry.st_mode):
+            shutil.rmtree(name, dir_fd=descriptor)
+        else:
+            os.unlink(name, dir_fd=descriptor)
+    try:
+        current = os.stat("git", dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    opened = os.fstat(descriptor)
+    if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+        raise RuntimeError("Managed Git credential directory changed during removal")
+    os.rmdir("git", dir_fd=parent)
+
+
 def _managed_git_config(
     credential_specs: list[list[str]],
     ca_paths: dict[str, str],
@@ -153,7 +205,7 @@ def _managed_git_config(
                     "\thelper =",
                     "\thelper = "
                     + _git_config_quote(
-                        f"store --file={credential_path}"
+                        f"store --file={shlex.quote(credential_path)}"
                     ),
                 )
             )
@@ -180,18 +232,10 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
     credential_path = os.path.join(managed_dir, _MANAGED_CREDENTIAL_NAME)
 
     if config.clear_git_credentials:
-        _remove_managed_include(config, account, include_path)
-        if os.path.lexists(managed_dir):
-            if os.path.islink(managed_dir) or not os.path.isdir(managed_dir):
-                raise RuntimeError(
-                    f"Refusing unsafe managed Git credential path: {managed_dir}"
-                )
-            if os.stat(managed_dir).st_uid != account.pw_uid:
-                raise RuntimeError(
-                    "Refusing managed Git credential path owned by another user: "
-                    f"{managed_dir}"
-                )
-            shutil.rmtree(managed_dir)
+        with _managed_removal_directory(account) as opened:
+            _remove_managed_include(config, account, include_path)
+            if opened is not None:
+                _remove_opened_managed_directory(*opened)
         print("  ✓ Removed managed Git HTTPS credentials")
         return
 
