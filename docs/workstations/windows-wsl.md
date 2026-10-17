@@ -31,6 +31,14 @@ Ubuntu WSL distribution, and absolute Windows drive directory for a new
 distro. Without a distro name, setup selects the newest versioned stable Ubuntu
 listed by WSL. Only an explicitly selected existing distro is reused; setup
 preserves other distros.
+Setup saves whether the selection was explicit and whether installation
+successfully created the distro. If an automatically selected name is already
+installed, setup stops before Linux preparation. Authorize reuse with the saved
+installer's `-Resume -DistroName Ubuntu-XX.XX`, using the exact saved name.
+Older saved states lack selection evidence and require the same explicit
+confirmation for an existing distro. An interruption after WSL installation but
+before ownership is saved also requires explicit confirmation; setup never
+assumes ownership from an attempted installation.
 Catalog selection handles WSL's null-padded output and excludes preview names.
 Before running Linux preparation scripts, setup checks Ubuntu's system Python
 and installs `python3` if missing. Python 3.10 or newer is required; an older
@@ -38,6 +46,13 @@ system Python stops preparation with remediation rather than upgrading Ubuntu.
 Bootstrap probes run explicitly as root;
 coding tools and builds still belong to the configured non-root Linux account.
 Existing `wsl.conf` settings are retained, including files without a final newline.
+Restart intent is saved before account/systemd preparation. After interruption,
+resume restarts only the selected distro even if its configuration is already
+unchanged; a live PID1 check also detects systemd settings not yet applied.
+New accounts have root-protected preparation markers under
+`/var/lib/basaltwater/wsl-accounts`. An interrupted password prompt is retried
+before adding sudo membership or completing preparation. Existing accounts
+without a pending managed marker retain their password and lock policy.
 `-Channel main|dev` or `-Version REF` pins the source revision. `-Go`, `-Node`,
 `-Python`, and `-AgentTool gh,codex,claude,opencode` select Ubuntu tools.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create
@@ -118,6 +133,10 @@ source. `stop` terminates the selected distribution and interrupts its active
 work. The optional login worker keeps WSL available after its terminal closes;
 logout, sleep, reboot, or `wsl --shutdown` can still interrupt jobs. Use
 `-Resume` after fixing an interrupted installation.
+Selected user-managed Codex, Claude Code, and OpenCode tools run the shared
+agent updater after installation and skill setup. Tools freshly installed in
+that run skip the redundant update; executables owned by an external package
+manager remain under that manager's control.
 
 ## Run manual Windows CI
 
@@ -137,6 +156,10 @@ files and test installer planning and native job success, script changes,
 timeout, log limits, and digest rejection. Upload is replaced by a local test
 function; no artifact token or external receiver is needed. A hosted Server
 runner cannot qualify the Windows 11 bootstrap or T3 desktop.
+Installer recovery tests mock WSL entirely, including explicit distro reuse,
+saved ownership, and interrupted systemd restarts. Python account recovery tests
+mock account commands and use temporary directories. These checks do not qualify
+real Windows/WSL interruption behavior.
 
 `wsl` runs the native tests first, then uses a self-hosted runner labeled
 `self-hosted`, `Windows`, `X64`, and `basaltwater-wsl`. Configure that runner on

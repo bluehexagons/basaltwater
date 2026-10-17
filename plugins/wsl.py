@@ -30,6 +30,7 @@ PLUGIN = PluginDefinition(
 def build_wsl_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.agent_steps import (
         install_agent_cli_launcher, install_claude, install_codex, install_github_cli, install_opencode,
+        update_managed_agent_tools,
     )
     from lib.agent_skill_bundles import SKILL_AGENT_TOOLS
     from common.agent_context_steps import configure_agent_context_defaults
@@ -58,6 +59,7 @@ def build_wsl_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
             ("Configuring agent context budgets", configure_agent_context_defaults),
             ("Installing WSL agent management command", install_agent_cli_launcher),
             ("Installing managed WSL agent skills", install_wsl_agent_skills),
+            ("Updating managed agent tools", update_managed_agent_tools),
         ))
     steps.append(("Checking WSL tool readiness", report_wsl_readiness))
     return steps

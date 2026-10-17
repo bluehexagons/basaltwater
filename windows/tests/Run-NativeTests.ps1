@@ -57,7 +57,8 @@ try {
     $errors = $null
     $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $repo 'install.ps1'), [ref]$tokens, [ref]$errors)
-    foreach ($name in @('Invoke-Checked', 'Select-Distro', 'Ensure-UbuntuPython')) {
+    foreach ($name in @('Invoke-Checked', 'Select-Distro', 'Ensure-UbuntuPython',
+                        'Initialize-DistroSelection', 'Ensure-Distro', 'Ensure-UbuntuConfiguration')) {
         $definition = $installerAst.Find({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
@@ -111,8 +112,101 @@ try {
         Remove-Item Function:\Save-State
         Remove-Item Function:\Select-Distro
         Remove-Item Function:\Ensure-UbuntuPython
-        Remove-Item Function:\Invoke-Checked
         Remove-Variable BootstrapCalls, BootstrapPythonInstalled, BootstrapOldPython, BootstrapPackageFailure -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    # Recover state using serialized snapshots, with every WSL operation mocked.
+    function Save-State($value) {
+        if ($script:InterruptOwnershipSave -and $value.DistroOwned) {
+            throw 'simulated interrupted ownership save'
+        }
+        $script:SavedSetup = $value | ConvertTo-Json
+    }
+    function global:wsl.exe {
+        param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+        $global:LASTEXITCODE = 0
+        $script:RecoveryCalls += ,$Arguments
+        switch ($Arguments[0]) {
+            '--list' {
+                if ($Arguments -contains '--quiet') {
+                    if ($script:DistroInstalled) { return 'Ubuntu-26.04' }
+                } else { return 'Ubuntu-26.04 Ubuntu 26.04 LTS' }
+                return
+            }
+            '--install' { $script:DistroInstalled = $true; return }
+            '--terminate' {
+                if ($script:RestartFailure) { throw 'simulated interrupted restart' }
+                Assert-True ($Arguments[1] -eq $state.Distro) 'Restart targeted another distro'
+                return
+            }
+        }
+        if ($Arguments -contains 'configure') {
+            $saved = $script:SavedSetup | ConvertFrom-Json
+            Assert-True $saved.RestartRequired 'Restart intent was not saved before configure'
+            return $script:ConfigureResult
+        }
+        if ($Arguments -contains '/proc/1/comm') { return $script:PidOne }
+        throw "Unexpected WSL recovery operation: $Arguments"
+    }
+    try {
+        $DistroName = ''
+        $script:InterruptOwnershipSave = $false
+        $state = [pscustomobject]@{ Distro = 'Ubuntu-26.04'; LinuxUser = 'agent'; DistroLocation = '' }
+        $script:RecoveryCalls = @()
+        $script:DistroInstalled = $true
+        Initialize-DistroSelection
+        Assert-Throws { Ensure-Distro } 'not explicitly selected'
+        Assert-True ($script:RecoveryCalls.Count -eq 1) 'Legacy state mutated an unconfirmed distro'
+        $DistroName = 'Ubuntu-24.04'
+        Assert-Throws { Initialize-DistroSelection } 'must match'
+        $DistroName = $state.Distro
+        Initialize-DistroSelection
+        Ensure-Distro
+        Assert-True ($state.DistroSelection -eq 'explicit') 'Explicit legacy recovery was not saved'
+
+        $DistroName = ''
+        $state.DistroSelection = 'automatic'
+        Assert-Throws { Ensure-Distro } 'not explicitly selected'
+        $script:DistroInstalled = $false
+        Save-State $state
+        $script:InterruptOwnershipSave = $true
+        Assert-Throws { Ensure-Distro } 'interrupted ownership save'
+        $state = $script:SavedSetup | ConvertFrom-Json
+        Assert-Throws { Ensure-Distro } 'not explicitly selected'
+        $script:InterruptOwnershipSave = $false
+        $script:DistroInstalled = $false
+        Ensure-Distro
+        $state = $script:SavedSetup | ConvertFrom-Json
+        Assert-True $state.DistroOwned 'Successful installation did not persist ownership'
+        $script:RecoveryCalls = @()
+        Ensure-Distro
+        Assert-True ($script:RecoveryCalls.Count -eq 1) 'Owned distro was installed again on resume'
+
+        $script:ConfigureResult = 'CHANGED'
+        $script:PidOne = 'init'
+        $script:RestartFailure = $true
+        Assert-Throws { Ensure-UbuntuConfiguration '/source/wsl_prepare.py' } 'interrupted restart'
+        $state = $script:SavedSetup | ConvertFrom-Json
+        Assert-True $state.RestartRequired 'Interrupted restart lost recovery intent'
+        $script:RestartFailure = $false
+        $script:ConfigureResult = 'UNCHANGED'
+        $script:PidOne = 'systemd'
+        $script:RecoveryCalls = @()
+        Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
+        Assert-True (@($script:RecoveryCalls | Where-Object { $_[0] -eq '--terminate' }).Count -eq 1) 'Resume skipped pending restart after UNCHANGED'
+        Assert-True (-not $state.RestartRequired) 'Successful restart did not clear intent'
+        $script:RecoveryCalls = @()
+        Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
+        Assert-True (@($script:RecoveryCalls | Where-Object { $_[0] -eq '--terminate' }).Count -eq 0) 'Unchanged ready distro restarted unnecessarily'
+        $script:PidOne = 'init'
+        $script:RecoveryCalls = @()
+        Ensure-UbuntuConfiguration '/source/wsl_prepare.py'
+        Assert-True (@($script:RecoveryCalls | Where-Object { $_[0] -eq '--terminate' }).Count -eq 1) 'Legacy stale PID1 was not restarted'
+    } finally {
+        foreach ($name in @('wsl.exe', 'Save-State', 'Invoke-Checked', 'Initialize-DistroSelection',
+                            'Ensure-Distro', 'Ensure-UbuntuConfiguration')) {
+            Remove-Item "Function:\$name"
+        }
     }
 
     function global:Get-CimInstance {
