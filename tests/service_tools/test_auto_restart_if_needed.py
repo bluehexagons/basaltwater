@@ -324,12 +324,16 @@ class TestRestartPolicy(unittest.TestCase):
                 "auto_restart": False, "auto_restart_force_days": 0,
             }),
             patch.object(auto_restart_if_needed, "get_uptime_seconds", return_value=3600),
+            patch.object(auto_restart_if_needed, "get_active_sessions", return_value=[]),
+            patch.object(auto_restart_if_needed, "get_active_agent_workloads", return_value=[]),
+            patch.object(auto_restart_if_needed.subprocess, "run") as command,
             patch.object(auto_restart_if_needed, "record_deferral") as defer,
             patch.object(auto_restart_if_needed, "perform_restart") as restart,
         ):
             self.assertEqual(auto_restart_if_needed._check_restart([]), 0)
         defer.assert_called_once_with("automatic restarts are disabled", [])
         restart.assert_not_called()
+        command.assert_not_called()
 
     def test_forced_proxmox_restart_still_requires_evacuated_healthy_node(self):
         with (
