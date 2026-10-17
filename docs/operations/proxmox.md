@@ -212,6 +212,14 @@ own its swap layout. It retains the host's permissive reverse-path filtering
 because strict filtering can drop valid routed, NATed, or bridged guest
 traffic.
 
+Kernel hardening checks and reconciles its managed live sysctls on every setup rerun,
+including the permissive `all` and `default` reverse-path filtering settings,
+even when `/etc/sysctl.d/99-security-hardening.conf` already matches. This
+repairs live drift and retries a partially failed application. Settings absent
+from the running kernel are skipped; failure to apply an available setting
+stops setup rather than reporting hardening success. Guests without permission
+to modify the host kernel retain the existing capability-based skip.
+
 Generic AppArmor, auditd, and PAM policies are not applied unchanged to a
 hypervisor; they must account for Proxmox roles, realms, API tokens, SSH,
 firewall, and cluster requirements. Journald limits and maintenance schedules
