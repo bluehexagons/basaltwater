@@ -9,7 +9,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from common.git_credential_steps import configure_git_https_credentials
+from common.git_credential_steps import (
+    _managed_git_config,
+    configure_git_https_credentials,
+)
 from lib.arg_parser import create_setup_argument_parser
 from lib.cache import merge_setup_configs
 from lib.config import SetupConfig
@@ -320,6 +323,134 @@ class TestGitCredentialConfiguration(unittest.TestCase):
 
 
 class TestTargetGitCredentialSetup(unittest.TestCase):
+    def test_helper_argv_survives_config_and_shell_quoting(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            for home_name in ("agent home", "agent's home", 'agent "home" \\ $HOME'):
+                with self.subTest(home=home_name):
+                    credential_path = os.path.join(
+                        temporary, home_name, ".config", "basaltwater", "git", "credentials"
+                    )
+                    content = _managed_git_config(
+                        [[ORIGIN, "gitadmin"]], {}, credential_path
+                    )
+                    encoded = next(
+                        line.split("=", 1)[1].strip()
+                        for line in content.splitlines()
+                        if line.startswith("\thelper = ")
+                    )
+                    # The generated value uses Git's double-quoted string subset:
+                    # backslash and double quote escapes, with literal single quotes.
+                    (helper,) = shlex.split(encoded)
+                    self.assertEqual(
+                        shlex.split("git credential-" + helper + " get"),
+                        ["git", "credential-store", "--file=" + credential_path, "get"],
+                    )
+
+    def _clear(self, home: str, run=None) -> None:
+        account = SimpleNamespace(
+            pw_dir=home, pw_uid=os.getuid(), pw_gid=os.getgid()
+        )
+        with (
+            patch("common.git_credential_steps._target_account", return_value=account),
+            patch("common.git_credential_steps._run_as_login_user", side_effect=run) as command,
+            patch("common.git_credential_steps.is_dry_run", return_value=False),
+        ):
+            if run is None:
+                command.return_value = SimpleNamespace(returncode=5, stdout="", stderr="")
+            configure_git_https_credentials(_config(clear_git_credentials=True))
+
+    def test_clear_absent_path_does_not_create_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            self._clear(home)
+            self.assertEqual(os.listdir(home), [])
+
+    def test_clear_rejects_unsafe_ancestry_before_changing_include(self) -> None:
+        for component in (".config", "basaltwater", "git"):
+            for symlink in (True, False):
+                with self.subTest(component=component, symlink=symlink):
+                    with tempfile.TemporaryDirectory() as home:
+                        outside = os.path.join(home, "outside")
+                        os.makedirs(os.path.join(outside, "git"))
+                        sentinel = os.path.join(outside, "git", "keep")
+                        with open(sentinel, "w", encoding="utf-8") as file_obj:
+                            file_obj.write("keep")
+                        components = [".config", "basaltwater", "git"]
+                        path = os.path.join(home, *components[:components.index(component) + 1])
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        if symlink:
+                            os.symlink(outside, path)
+                        else:
+                            with open(path, "w", encoding="utf-8") as file_obj:
+                                file_obj.write("not a directory")
+                        with patch("common.git_credential_steps._remove_managed_include") as remove:
+                            with self.assertRaisesRegex(RuntimeError, "unsafe managed Git"):
+                                self._clear(home)
+                            remove.assert_not_called()
+                        self.assertTrue(os.path.isfile(sentinel))
+
+    def test_clear_rejects_foreign_owned_directory_before_changing_include(self) -> None:
+        real_fstat = os.fstat
+        for index in range(4):
+            with self.subTest(component=index), tempfile.TemporaryDirectory() as home:
+                managed = os.path.join(home, ".config", "basaltwater", "git")
+                os.makedirs(managed)
+                calls = 0
+
+                def foreign_owner(descriptor):
+                    nonlocal calls
+                    value = real_fstat(descriptor)
+                    calls += 1
+                    if calls == index + 1:
+                        return SimpleNamespace(st_uid=os.getuid() + 1)
+                    return value
+
+                with (
+                    patch("common.git_credential_steps.os.fstat", side_effect=foreign_owner),
+                    patch("common.git_credential_steps._remove_managed_include") as remove,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "owned by another user"):
+                        self._clear(home)
+                    remove.assert_not_called()
+                self.assertTrue(os.path.isdir(managed))
+
+    def test_clear_stays_anchored_when_ancestor_is_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            ancestor = os.path.join(home, ".config", "basaltwater")
+            managed = os.path.join(ancestor, "git")
+            outside = os.path.join(home, "outside")
+            os.makedirs(os.path.join(managed, "ca"))
+            os.makedirs(os.path.join(outside, "git"))
+            sentinel = os.path.join(outside, "git", "keep")
+            with open(sentinel, "w", encoding="utf-8") as file_obj:
+                file_obj.write("keep")
+            os.symlink(outside, os.path.join(managed, "external"))
+
+            def replace_ancestor(*_args, **_kwargs):
+                os.rename(ancestor, ancestor + ".original")
+                os.symlink(outside, ancestor)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            self._clear(home, replace_ancestor)
+            self.assertFalse(os.path.exists(os.path.join(ancestor + ".original", "git")))
+            self.assertTrue(os.path.isfile(sentinel))
+
+    def test_clear_does_not_delete_replacement_managed_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            managed = os.path.join(home, ".config", "basaltwater", "git")
+            os.makedirs(managed)
+            sentinel = os.path.join(managed, "keep")
+
+            def replace_directory(*_args, **_kwargs):
+                os.rename(managed, managed + ".original")
+                os.mkdir(managed)
+                with open(sentinel, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("keep")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with self.assertRaisesRegex(RuntimeError, "changed during removal"):
+                self._clear(home, replace_directory)
+            self.assertTrue(os.path.isfile(sentinel))
+
     def _run_as_user(self, username, home, command, **_kwargs):
         self.assertEqual(username, "agent")
         self.assertEqual(home, self.home)

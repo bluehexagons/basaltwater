@@ -126,6 +126,10 @@ class TestCodexSecurityPolicy(unittest.TestCase):
         )
         self.assertIn("~/.ssh", requirements["permissions"]["filesystem"]["deny_read"])
         self.assertIn(
+            "~/.config/basaltwater/git/credentials",
+            requirements["permissions"]["filesystem"]["deny_read"],
+        )
+        self.assertIn(
             "~/.config/gh",
             requirements["permissions"]["filesystem"]["deny_read"],
         )

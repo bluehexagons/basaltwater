@@ -158,6 +158,7 @@ def _codex_requirements_content() -> str:
         '    "~/.cargo/credentials*",\n'
         '    "~/.claude/.credentials.json",\n'
         '    "~/.codex/auth.json",\n'
+        '    "~/.config/basaltwater/git/credentials",\n'
         '    "~/.config/containers/auth.json",\n'
         '    "~/.config/gcloud",\n'
         '    "~/.config/gh",\n'
