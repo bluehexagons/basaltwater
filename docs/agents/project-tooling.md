@@ -295,7 +295,10 @@ describe the underlying conventions.
 ## Python tooling installation checks
 
 Managed uv installation accepts an existing `~/.local/bin/uv` only when it is
-a regular executable and `uv --version` succeeds in the target user's environment.
+a regular executable and `uv --version` exits successfully with recognizable
+`uv X.Y.Z` output (optionally including build metadata) in the target user's
+environment. Local and target-user version probes have a ten-second deadline;
+empty or unrelated output, failed execution, and timeouts mean uv is unusable.
 This check also runs when updates are disabled, after installation, and after
 self-update. Invalid files or symlinks are replaced through the validated vendor
 installer; symlink targets are preserved. A directory or other special entry at

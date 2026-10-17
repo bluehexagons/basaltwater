@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import stat
@@ -20,6 +21,7 @@ from lib.config import SetupConfig
 from lib.maintenance_defaults import APT_LOCK_OPTIONS, APT_UPDATE_OPTIONS
 from lib.machine_state import can_manage_time_sync, can_modify_kernel
 from lib.remote_utils import (
+    DEFAULT_COMMAND_TIMEOUT_SECONDS,
     USER_SHELL_ENV_OPTIONS,
     file_contains,
     install_package,
@@ -805,6 +807,7 @@ def _run_as_login_user(
     *,
     check: bool = True,
     capture_output: bool = False,
+    timeout: Optional[float] = DEFAULT_COMMAND_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
     """Run a shell command in the target user's home and systemd session."""
     if not validate_username(username):
@@ -835,6 +838,7 @@ def _run_as_login_user(
         f"bash -lc {shlex.quote(shell_script)}",
         check=check,
         capture_output=capture_output,
+        timeout=timeout,
     )
 
 
@@ -1266,17 +1270,24 @@ def install_or_update_uv(
     def usable() -> bool:
         if not os.path.isfile(uv_path) or not os.access(uv_path, os.X_OK):
             return False
-        if username:
-            result = _run_as_login_user(
-                username, user_home, f"{safe_uv_path} --version",
-                check=False, capture_output=True,
-            )
-        else:
-            result = run(
-                f"env HOME={safe_home} {safe_uv_path} --version",
-                check=False, capture_output=True, timeout=10,
-            )
-        return result.returncode == 0
+        try:
+            if username:
+                result = _run_as_login_user(
+                    username, user_home, f"{safe_uv_path} --version",
+                    check=False, capture_output=True, timeout=10,
+                )
+            else:
+                result = run(
+                    f"env HOME={safe_home} {safe_uv_path} --version",
+                    check=False, capture_output=True, timeout=10,
+                )
+        except OSError:
+            # Includes run()'s CommandTimeoutError (a TimeoutError subclass).
+            return False
+        return result.returncode == 0 and re.fullmatch(
+            r"uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?(?: \([^\r\n()]+\))?",
+            (result.stdout or "").strip(),
+        ) is not None
 
     if not usable():
         if os.path.lexists(uv_path) and not (

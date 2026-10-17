@@ -69,7 +69,7 @@ class TestPythonFlag(unittest.TestCase):
                     with open(os.path.join(uv_dir, "uv"), "w", encoding="utf-8"):
                         pass
                     os.chmod(os.path.join(uv_dir, "uv"), 0o755)
-                return MagicMock(returncode=0, stdout="", stderr="")
+                return MagicMock(returncode=0, stdout="uv 0.8.22 (abcdef123 2025-09-23)\n", stderr="")
 
             mock_run.side_effect = run_side_effect
             with patch("common.common_steps.tempfile.mkstemp", return_value=(fd, installer_path)):

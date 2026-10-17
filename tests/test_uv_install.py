@@ -14,6 +14,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from common import common_steps
 from common.common_steps import _validate_uv_install_script
+from lib.remote_utils import CommandTimeoutError, DEFAULT_COMMAND_TIMEOUT_SECONDS
+
+
+UV_VERSION = 'uv 0.8.22 (abcdef123 2025-09-23)\n'
 
 
 class TestValidateUvInstallScript(unittest.TestCase):
@@ -182,7 +186,7 @@ class TestInstallOrUpdateUv(unittest.TestCase):
     @patch("common.common_steps.run")
     def test_user_uv_update_repairs_ownership_and_sets_login_env(self, mock_run):
         self.create_uv()
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        mock_run.return_value = SimpleNamespace(returncode=0, stdout=UV_VERSION, stderr="")
 
         result = common_steps.install_or_update_uv(self.home, username="user")
 
@@ -197,14 +201,85 @@ class TestInstallOrUpdateUv(unittest.TestCase):
             )
         )
         self.assertEqual(sum(f'{self.uv} --version' in command for command in commands), 2)
+        for args, kwargs in mock_run.call_args_list:
+            if '--version' in args[0]:
+                self.assertEqual(kwargs['timeout'], 10)
+            elif 'self update' in args[0]:
+                self.assertEqual(kwargs['timeout'], DEFAULT_COMMAND_TIMEOUT_SECONDS)
 
     @patch('common.common_steps.run')
     def test_usable_existing_uv_skips_download_and_update(self, run):
         self.create_uv()
-        run.return_value = SimpleNamespace(returncode=0)
+        run.return_value = SimpleNamespace(returncode=0, stdout=UV_VERSION)
         self.assertTrue(common_steps.install_or_update_uv(self.home, update=False))
         self.assertEqual(run.call_count, 1)
         self.assertIn(f'{self.uv} --version', run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs['timeout'], 10)
+
+    @patch('common.common_steps.run')
+    def test_plain_uv_version_is_usable(self, run):
+        self.create_uv()
+        run.return_value = SimpleNamespace(returncode=0, stdout='uv 0.8.22\n')
+        self.assertTrue(common_steps.install_or_update_uv(self.home, update=False))
+        self.assertEqual(run.call_count, 1)
+
+    def test_invalid_version_probes_repair_initially_and_fail_final_verification(self):
+        outcomes = (
+            SimpleNamespace(returncode=0, stdout=''),
+            SimpleNamespace(returncode=0, stdout='some other tool 0.8.22\n'),
+            SimpleNamespace(returncode=0, stdout='uv not-a-version\n'),
+            SimpleNamespace(returncode=1, stdout=UV_VERSION),
+            CommandTimeoutError('uv --version', 10),
+            PermissionError('cannot execute probe'),
+        )
+        for username in (None, 'user'):
+            for phase in ('initial', 'installed', 'updated'):
+                for outcome in outcomes:
+                    with self.subTest(username=username, phase=phase, outcome=outcome):
+                        if phase != 'installed':
+                            self.create_uv()
+                            # A successful no-op executable is not uv.
+                            self.uv.write_text('#!/bin/sh\nexit 0\n')
+                        installed = False
+                        updated = False
+
+                        def run(command, **kwargs):
+                            nonlocal installed, updated
+                            if isinstance(command, list):
+                                Path(command[-1]).write_text('#!/bin/sh\n# astral.sh/uv\n')
+                            elif ' sh ' in command:
+                                self.create_uv()
+                                installed = True
+                            elif 'self update' in command:
+                                updated = True
+                            elif '--version' in command:
+                                self.assertEqual(kwargs['timeout'], 10)
+                                self.assertFalse(kwargs['check'])
+                                self.assertTrue(kwargs['capture_output'])
+                                invalid = (
+                                    (phase == 'initial' and not installed)
+                                    or (phase == 'installed' and installed)
+                                    or (phase == 'updated' and updated)
+                                )
+                                if invalid:
+                                    if isinstance(outcome, Exception):
+                                        raise outcome
+                                    return outcome
+                                return SimpleNamespace(returncode=0, stdout=UV_VERSION)
+                            self.assertEqual(
+                                kwargs.get('timeout', DEFAULT_COMMAND_TIMEOUT_SECONDS),
+                                DEFAULT_COMMAND_TIMEOUT_SECONDS,
+                            )
+                            return SimpleNamespace(returncode=0)
+
+                        with patch('common.common_steps.run', side_effect=run):
+                            result = common_steps.install_or_update_uv(
+                                self.home, username=username, update=phase == 'updated',
+                            )
+                        self.assertEqual(result, phase == 'initial')
+                        self.assertEqual(installed, phase != 'updated')
+                        self.assertEqual(updated, phase == 'updated')
+                        self.uv.unlink()
 
     @patch('common.common_steps.run')
     def test_directory_is_preserved_and_fails_without_download(self, run):
@@ -238,7 +313,7 @@ class TestInstallOrUpdateUv(unittest.TestCase):
                         self.create_uv()
                         installed = True
                     elif '--version' in command:
-                        return SimpleNamespace(returncode=0 if installed else 1)
+                        return SimpleNamespace(returncode=0 if installed else 1, stdout=UV_VERSION)
                     return SimpleNamespace(returncode=0)
 
                 with patch('common.common_steps.run', side_effect=run):
@@ -281,15 +356,15 @@ class TestInstallOrUpdateUv(unittest.TestCase):
     @patch('common.common_steps.run')
     def test_update_success_cannot_hide_broken_result(self, run):
         self.create_uv()
-        run.side_effect = [SimpleNamespace(returncode=0), SimpleNamespace(returncode=0),
-                           SimpleNamespace(returncode=1)]
+        run.side_effect = [SimpleNamespace(returncode=0, stdout=UV_VERSION), SimpleNamespace(returncode=0),
+                           SimpleNamespace(returncode=1, stdout=UV_VERSION)]
         self.assertFalse(common_steps.install_or_update_uv(self.home))
 
     @patch('common.common_steps.run')
     def test_failed_update_can_retain_usable_uv(self, run):
         self.create_uv()
-        run.side_effect = [SimpleNamespace(returncode=0), SimpleNamespace(returncode=1),
-                           SimpleNamespace(returncode=0)]
+        run.side_effect = [SimpleNamespace(returncode=0, stdout=UV_VERSION), SimpleNamespace(returncode=1),
+                           SimpleNamespace(returncode=0, stdout=UV_VERSION)]
         self.assertTrue(common_steps.install_or_update_uv(self.home))
 
 
