@@ -132,7 +132,7 @@ password={password}
     
     def _escape_systemd_description(value: str) -> str:
         """Escape value for safe use in a systemd Description field."""
-        return value.replace("\\", "\\\\").replace("\n", " ").replace('"', "'")
+        return value.replace("%", "%%").replace("\\", "\\\\").replace("\n", " ").replace('"', "'")
     
     escaped_desc = _escape_systemd_description(mountpoint)
     
@@ -145,10 +145,10 @@ After=network-online.target
 Wants=network-online.target
 
 [Mount]
-What={unc_path}
-Where={mountpoint}
+What={unc_path.replace('%', '%%')}
+Where={mountpoint.replace('%', '%%')}
 Type=cifs
-Options=credentials={creds_file},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail,x-systemd.automount,x-systemd.idle-timeout=60
+Options=credentials={creds_file.replace('%', '%%')},uid={config.username},gid={config.username},file_mode=0644,dir_mode=0755,vers=3.0,seal,nofail,x-systemd.automount,x-systemd.idle-timeout=60
 
 [Install]
 WantedBy=multi-user.target

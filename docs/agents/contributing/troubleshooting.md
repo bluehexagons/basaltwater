@@ -78,6 +78,12 @@ and current include tree before replacement, then validate the activated tree.
 Restore the previous rule if activation fails. Never remove a working rule and
 report success after a failed validation.
 
+SMB mount units must escape literal `%` as `%%` in `Description`, `What`,
+`Where` and `Options`; keep the actual directory and credentials filename
+unchanged. Otherwise systemd expands specifiers and may reject the unit or use
+the wrong share or credentials path. See the upstream
+[mount unit reference](https://github.com/systemd/systemd/blob/v257/man/systemd.mount.xml).
+
 An explicit device-pairing opt-out removes the existing portal, credentials,
 Connect restart units and pairing HTTPS route even when the T3 web interface
 is also disabled. That cleanup belongs in the step plan independently of web

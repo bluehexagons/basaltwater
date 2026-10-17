@@ -150,6 +150,38 @@ class TestConfigureSmbMountUnit(unittest.TestCase):
         mock_makedirs.assert_not_called()
         mock_run.assert_not_called()
 
+    def test_unit_values_preserve_literal_percent_signs(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            credentials = os.path.join(root, "creds%h")
+            unit = unittest.mock.mock_open()
+            with patch.object(smb_mount_steps, "open", unit, create=True), \
+                 patch.object(smb_mount_steps, "run", return_value=MagicMock(
+                     returncode=0, stdout="mnt-share\\x25h\n",
+                 )), \
+                 patch.object(smb_mount_steps, "cleanup_systemd_unit"), \
+                 patch.object(smb_mount_steps, "check_directory_path"), \
+                 patch.object(smb_mount_steps, "directory_fd"), \
+                 patch.object(smb_mount_steps, "_write_credentials") as write_credentials, \
+                 patch.object(smb_mount_steps, "SMB_CREDENTIALS_DIR", credentials), \
+                 patch.object(smb_mount_steps.pwd, "getpwnam", return_value=MagicMock(pw_uid=123)), \
+                 patch.object(smb_mount_steps.grp, "getgrnam", return_value=MagicMock(gr_gid=456)), \
+                 patch.object(smb_mount_steps.os, "fchown"):
+                smb_mount_steps.configure_smb_mount(
+                    SetupConfig(host="h", username="alice", system_type="server_lite"),
+                    ["/mnt/share%h", "192.0.2.10", "svc:secret", "docs%H", "/reports%u"],
+                )
+            body = unit().write.call_args.args[0]
+            self.assertIn("Description=SMB mount for /mnt/share%%h\n", body)
+            self.assertIn("What=//192.0.2.10/docs%%H/reports%%u\n", body)
+            self.assertIn("Where=/mnt/share%%h\n", body)
+            self.assertIn(
+                "Options=credentials=" + credentials.replace("%", "%%") + "/credentials-mnt-share\\x25h,",
+                body,
+            )
+            write_credentials.assert_called_once_with(
+                credentials, "credentials-mnt-share\\x25h", "username=svc\npassword=secret\n",
+            )
+
     def test_symlink_mount_or_credentials_components_fail_before_mutation(self):
         for credentials in (False, True):
             for leaf in (False, True):
