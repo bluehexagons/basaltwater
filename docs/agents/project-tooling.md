@@ -226,7 +226,10 @@ only selects metadata. Selection does not alter NVM's default alias. Installatio
 runs NVM in a child shell; an existing default alias remains NVM-managed.
 An exact version that conflicts with project Node engines is rejected before
 NVM preparation or installation. Major/minor pins and aliases are checked
-against the engines once NVM resolves the installed version.
+against the engines using the exact version active in the NVM install shell.
+An older compatible installed runtime cannot hide an incompatible resolution.
+The resolved executable must also report that version before optional global
+package managers are installed; a failure leaves the runtime available for inspection.
 Package-manager installation is optional and explicit, checks Node engine
 compatibility, and runs outside the checkout's package-manager policy.
 This explicit installation enables only the selected tools' own setup scripts
@@ -288,6 +291,16 @@ work through ordinary NVM or system toolchains without Basaltwater. NVM's
 [project version-file guidance](https://github.com/nvm-sh/nvm#nvmrc) and npm's
 [stable range reference](https://docs.npmjs.com/cli/v6/using-npm/semver/)
 describe the underlying conventions.
+
+## Python tooling installation checks
+
+Managed uv installation accepts an existing `~/.local/bin/uv` only when it is
+a regular executable and `uv --version` succeeds in the target user's environment.
+This check also runs when updates are disabled, after installation, and after
+self-update. Invalid files or symlinks are replaced through the validated vendor
+installer; symlink targets are preserved. A directory or other special entry at
+that path is preserved and fails explicitly for operator repair. A failed update
+can retain a working uv, but an unusable result fails setup.
 
 ## Debian native game development
 

@@ -1247,17 +1247,43 @@ def install_or_update_uv(
     *,
     update: bool = True,
 ) -> bool:
-    """Install or update uv for a user. Returns True if uv is available afterwards."""
+    """Install or update uv; success requires an executable that reports its version."""
+    validate_filesystem_path(user_home)
+    if not os.path.isabs(user_home):
+        raise ValueError("User tool home must be absolute")
+    if username and not validate_username(username):
+        raise ValueError("Invalid uv installation username")
     uv_path = os.path.join(user_home, ".local", "bin", "uv")
     safe_home = shlex.quote(user_home)
-    if username:
-        _chown_existing_paths(username, _user_tool_paths(user_home))
-
     if is_dry_run():
         print("  [DRY-RUN] Skipping uv install/update")
         return True
 
-    if not os.path.exists(uv_path):
+    if username:
+        _chown_existing_paths(username, _user_tool_paths(user_home))
+    safe_uv_path = shlex.quote(uv_path)
+
+    def usable() -> bool:
+        if not os.path.isfile(uv_path) or not os.access(uv_path, os.X_OK):
+            return False
+        if username:
+            result = _run_as_login_user(
+                username, user_home, f"{safe_uv_path} --version",
+                check=False, capture_output=True,
+            )
+        else:
+            result = run(
+                f"env HOME={safe_home} {safe_uv_path} --version",
+                check=False, capture_output=True, timeout=10,
+            )
+        return result.returncode == 0
+
+    if not usable():
+        if os.path.lexists(uv_path) and not (
+            os.path.isfile(uv_path) or os.path.islink(uv_path)
+        ):
+            print(f"  ✗ Refusing to replace non-file uv path: {uv_path}")
+            return False
         fd, installer_path = tempfile.mkstemp(prefix="basaltwater_uv_install_", suffix=".sh")
         os.close(fd)
         safe_installer = shlex.quote(installer_path)
@@ -1304,6 +1330,10 @@ def install_or_update_uv(
             if username:
                 os.chmod(installer_path, 0o644)
 
+            # Remove only the invalid entry, never a symlink's target or a directory.
+            if os.path.lexists(uv_path):
+                os.unlink(uv_path)
+
             if username:
                 install_result = _run_as_login_user(
                     username,
@@ -1314,7 +1344,8 @@ def install_or_update_uv(
             else:
                 install_result = run(f"env HOME={safe_home} sh {safe_installer}", check=False)
 
-            if install_result.returncode != 0 or not os.path.exists(uv_path):
+            if install_result.returncode != 0 or not usable():
+                print("  ✗ uv installation did not produce a usable executable")
                 return False
         finally:
             try:
@@ -1322,9 +1353,8 @@ def install_or_update_uv(
             except OSError:
                 pass
 
-    safe_uv_path = shlex.quote(uv_path)
-    if not update and os.path.exists(uv_path):
-        print("  ✓ uv already installed; skipping update")
+    if not update:
+        print("  ✓ uv available; skipping update")
         return True
 
     if username:
@@ -1338,12 +1368,15 @@ def install_or_update_uv(
     else:
         update_result = run(f"env HOME={safe_home} {safe_uv_path} self update", check=False)
 
+    if not usable():
+        print("  ✗ uv is unusable after update")
+        return False
     if update_result.returncode == 0:
         print("  ✓ uv updated")
     else:
         print("  ⚠ uv update failed")
 
-    return os.path.exists(uv_path)
+    return True
 
 
 def install_python(config: SetupConfig) -> None:

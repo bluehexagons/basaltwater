@@ -68,6 +68,7 @@ class TestPythonFlag(unittest.TestCase):
                     os.makedirs(uv_dir, exist_ok=True)
                     with open(os.path.join(uv_dir, "uv"), "w", encoding="utf-8"):
                         pass
+                    os.chmod(os.path.join(uv_dir, "uv"), 0o755)
                 return MagicMock(returncode=0, stdout="", stderr="")
 
             mock_run.side_effect = run_side_effect
