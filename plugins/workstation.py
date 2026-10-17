@@ -15,7 +15,7 @@ PLUGIN = PluginDefinition(
     name="workstation",
     module=__name__,
     plugin_kind="composition",
-    dependencies=("common", "core", "desktop", "security", "sync", "web"),
+    dependencies=("common", "core", "desktop", "security", "server", "sync", "web"),
     system_types=(
         SystemTypeDefinition(
             name="workstation_desktop",
@@ -103,6 +103,7 @@ def build_workstation_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     )
     from plugins.security import get_security_steps, get_web_firewall_steps
     from plugins.sync import extend_syncthing_steps
+    from plugins.server import extend_antistatic_steps, extend_gogs_steps
     from plugins.web import (
         extend_app_server_steps,
         extend_build_server_steps,
@@ -133,6 +134,8 @@ def build_workstation_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     extend_cicd_steps(config, steps)
     extend_app_server_steps(config, steps)
     extend_build_server_steps(config, steps)
+    extend_antistatic_steps(config, steps)
+    extend_gogs_steps(config, steps)
     extend_syncthing_steps(config, steps)
     extend_web_panel_steps(config, steps)
     steps.extend(get_final_steps(config))

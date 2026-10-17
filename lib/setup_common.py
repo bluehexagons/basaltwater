@@ -33,6 +33,7 @@ from lib.setup_payloads import PAYLOAD_NAMES, link_payloads, move_payloads, payl
 from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
 from lib.credentials import prepare_runtime_config, store_cli_credentials
+from lib.homebox_config import validate_homebox_settings
 from lib.network_transition import finish_network_transition
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host, sync_proxmox_host
 from lib.validators import validate_host, validate_username
@@ -1279,6 +1280,7 @@ def prepare_validated_runtime_config(
     )
     validate_gogs_settings(runtime_config)
     validate_antistatic_settings(runtime_config)
+    validate_homebox_settings(runtime_config)
     validate_hosted_flags(runtime_config)
     validate_network_setup_settings(runtime_config)
     validate_rdp_settings(runtime_config)
