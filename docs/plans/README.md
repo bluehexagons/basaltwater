@@ -45,7 +45,7 @@ a roadmap slot before starting work.
 | [#83 — Apt cache](https://github.com/bluehexagons/basaltwater/issues/83) | Cache cleanup exists; no cache server or client proxy is configured. | Specify ownership, endpoint validation, failure behavior, and rollback. |
 | [#87 — Default configuration](https://github.com/bluehexagons/basaltwater/issues/87) | Panel layout and widgets are not modeled. | Define a versioned preference owner for a supported desktop. |
 | [#100 — Akaunting](https://github.com/bluehexagons/basaltwater/issues/100) | Not implemented; Coolify evaluation is deferred. | Reopen only with a concrete deployment and recovery owner. |
-| [#105 and #107 — Agent automation](https://github.com/bluehexagons/basaltwater/issues/105) | Saved Codex tasks and panel task preparation exist; a fleet manager, shared evidence, and agent chat are not implemented. | Define evidence, authority, and cost boundaries before implementation. |
+| [#105](https://github.com/bluehexagons/basaltwater/issues/105) and [#107](https://github.com/bluehexagons/basaltwater/issues/107) — Agent automation | Saved Codex tasks and panel task preparation exist; a fleet manager, shared evidence, and agent chat are not implemented. | Define evidence, authority, and cost boundaries before implementation. |
 | [#111 — Arch certificate install](https://github.com/bluehexagons/basaltwater/issues/111) | Report lacks a reproducible command or host details. | Collect reproduction details before changing support claims. |
 | [#112 — Hide uninstalled tools](https://github.com/bluehexagons/basaltwater/issues/112) | Request lacks scope and acceptance criteria. | Clarify which panels and unavailable states are expected. |
 

@@ -45,19 +45,27 @@ an Nginx site to refresh ingress rules.
 ## Manual setup
 
 1. Install `cloudflared` using the [Cloudflare installation guide](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
-2. Authenticate and create a tunnel:
+2. Authenticate and create a tunnel as your regular user:
 
    ```bash
    cloudflared tunnel login
    cloudflared tunnel create basaltwater
    ```
 
-3. Replace `<tunnel-id>` below with the ID returned by `cloudflared tunnel create`.
-   Write the result to `/etc/cloudflared/config.yml`:
+3. Set `TUNNEL_ID` to the ID printed by `cloudflared tunnel create`. Install
+   the credentials file for the system service with root-only permissions, then
+   write `/etc/cloudflared/config.yml`:
 
-   ```yaml
-   tunnel: <tunnel-id>
-   credentials-file: /etc/cloudflared/<tunnel-id>.json
+   ```bash
+   TUNNEL_ID="replace-with-the-id-from-cloudflared"
+   sudo install -d -o root -g root -m 0750 /etc/cloudflared
+   sudo install -o root -g root -m 0600 \
+     "$HOME/.cloudflared/${TUNNEL_ID}.json" \
+     "/etc/cloudflared/${TUNNEL_ID}.json"
+
+   sudo tee /etc/cloudflared/config.yml >/dev/null <<EOF
+   tunnel: ${TUNNEL_ID}
+   credentials-file: /etc/cloudflared/${TUNNEL_ID}.json
 
    ingress:
      - hostname: example.com
@@ -65,6 +73,8 @@ an Nginx site to refresh ingress rules.
      - hostname: api.example.com
        service: http://localhost:80
      - service: http_status:404
+   EOF
+   sudo chmod 0600 /etc/cloudflared/config.yml
    ```
 
 4. Install and start the service:
