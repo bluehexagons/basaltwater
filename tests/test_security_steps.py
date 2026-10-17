@@ -256,10 +256,15 @@ class TestHardenSSH(unittest.TestCase):
         self.activate.assert_not_called()
 
     @patch("security.security_steps.shutil.which", return_value=None)
+    @patch("security.security_steps.os.path.isfile", return_value=False)
+    @patch("security.security_steps.os.makedirs")
+    @patch("security.security_steps.write_text_atomic")
     @patch("security.security_steps.run")
-    def test_skips_when_sshd_is_not_installed(self, mock_run, _which):
+    def test_skips_when_sshd_is_not_installed(self, mock_run, write, makedirs, _isfile, _which):
         harden_ssh(SetupConfig(username="u", host="h", system_type="server_lite"))
         mock_run.assert_not_called()
+        makedirs.assert_not_called()
+        write.assert_not_called()
 
     @patch("security.security_steps.shutil.which", return_value="/usr/sbin/sshd")
     @patch("security.security_steps.run")
