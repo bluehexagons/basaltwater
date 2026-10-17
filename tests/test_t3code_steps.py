@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -25,9 +26,11 @@ from common.t3code_steps import (
     _wait_for_t3_service,
     _write_passthrough_wrapper,
     install_t3code_web,
+    remove_device_pairing,
 )
 from lib.config import SetupConfig
 from lib.validation import validate_web_interface_settings
+from plugins.common import extend_agent_steps
 
 
 class T3CodeWebTest(unittest.TestCase):
@@ -114,6 +117,131 @@ class T3CodeWebTest(unittest.TestCase):
         config = self._config()
         self.assertEqual(config.web_interface_host, "0.0.0.0")
         validate_web_interface_settings(config)
+
+    def test_pairing_opt_out_plan_with_and_without_web_interface(self) -> None:
+        for disable_web in (False, True):
+            for disable_pairing in (False, True):
+                with self.subTest(web=disable_web, pairing=disable_pairing):
+                    config = self._config(
+                        disable_web_interface=disable_web,
+                        disable_device_pairing=disable_pairing,
+                    )
+                    steps = []
+                    extend_agent_steps(config, steps)
+                    functions = [function for _label, function in steps]
+                    self.assertEqual(install_t3code_web in functions, not disable_web)
+                    self.assertEqual(
+                        functions.count(remove_device_pairing),
+                        int(disable_web and disable_pairing),
+                    )
+
+    def test_pairing_opt_out_removes_existing_portal_without_installing_web(self) -> None:
+        config = self._config(
+            disable_web_interface=True,
+            disable_device_pairing=True,
+        )
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            config_dir = os.path.join(home, "device-pairing")
+            state_dir = os.path.join(home, ".t3")
+            os.makedirs(config_dir)
+            os.makedirs(state_dir)
+            paths = {
+                "DEVICE_PAIRING_CONFIG_DIR": config_dir,
+                "DEVICE_PAIRING_AUTH_FILE": os.path.join(config_dir, "htpasswd"),
+                "DEVICE_PAIRING_PROVIDERS_FILE": os.path.join(config_dir, "providers.json"),
+                "DEVICE_PAIRING_SERVICE_FILE": os.path.join(home, "pairing.service"),
+                "DEVICE_PAIRING_NGINX_SITE": os.path.join(home, "nginx-site"),
+                "DEVICE_PAIRING_NGINX_LINK": os.path.join(home, "nginx-link"),
+                "T3_CONNECT_RESTART_PATH_FILE": os.path.join(home, "connect.path"),
+                "T3_CONNECT_RESTART_SERVICE_FILE": os.path.join(home, "connect.service"),
+            }
+            for name, path in paths.items():
+                stack.enter_context(patch(f"common.t3code_steps.{name}", path))
+                if name != "DEVICE_PAIRING_CONFIG_DIR":
+                    with open(path, "w", encoding="utf-8") as file_obj:
+                        file_obj.write("managed fixture\n")
+            request = os.path.join(state_dir, "basaltwater-connect-restart")
+            with open(request, "w", encoding="utf-8") as file_obj:
+                file_obj.write("restart\n")
+            stack.enter_context(patch("common.t3code_steps.is_dry_run", return_value=False))
+            stack.enter_context(patch("common.t3code_steps._user_home", return_value=home))
+            stack.enter_context(patch("common.t3code_steps.os.geteuid", return_value=0))
+            stack.enter_context(patch(
+                "common.t3code_steps.shutil.which", return_value="/usr/sbin/nginx"
+            ))
+            remove_ban = stack.enter_context(patch(
+                "common.t3code_steps.remove_nginx_auth_failure_ban"
+            ))
+            run_command = stack.enter_context(patch(
+                "common.t3code_steps.run",
+                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+            ))
+            install_service = stack.enter_context(patch(
+                "common.t3code_steps._install_t3_service"
+            ))
+            install_package = stack.enter_context(patch(
+                "common.t3code_steps.install_package"
+            ))
+            steps = []
+            extend_agent_steps(config, steps)
+            cleanup = next(
+                function for _label, function in steps
+                if function is remove_device_pairing
+            )
+            cleanup(config)
+
+            for path in (*paths.values(), request):
+                self.assertFalse(os.path.lexists(path), path)
+            commands = [call.args[0] for call in run_command.call_args_list]
+            self.assertIn("systemctl disable --now basaltwater-device-pairing.service", commands)
+            self.assertIn("systemctl disable --now basaltwater-t3code-connect.path", commands)
+            self.assertIn("systemctl disable --now basaltwater-t3code-connect.service", commands)
+            self.assertIn("nginx -t", commands)
+            self.assertIn("systemctl reload nginx", commands)
+            forwards = [command for command in commands if "forward " in command]
+            self.assertEqual(len(forwards), 1)
+            self.assertIn("forward remove t3code-pairing --json", forwards[0])
+            self.assertFalse(any(
+                "restart" in command or "forward add" in command
+                for command in commands
+            ))
+            remove_ban.assert_called_once_with("device-pairing")
+            install_service.assert_not_called()
+            install_package.assert_not_called()
+
+    def test_pairing_removal_refuses_symlinked_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            config_dir = os.path.join(home, "device-pairing")
+            destination = os.path.join(home, "unmanaged")
+            os.makedirs(destination)
+            credentials = os.path.join(destination, "htpasswd")
+            with open(credentials, "w", encoding="utf-8") as file_obj:
+                file_obj.write("preserved fixture\n")
+            os.symlink(destination, config_dir)
+            with (
+                patch("common.t3code_steps.is_dry_run", return_value=False),
+                patch("common.t3code_steps._user_home", return_value=home),
+                patch("common.t3code_steps.DEVICE_PAIRING_CONFIG_DIR", config_dir),
+                patch("common.t3code_steps.run") as run_command,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Refusing unsafe device-pairing"):
+                    remove_device_pairing(self._config(disable_device_pairing=True))
+            self.assertTrue(os.path.isfile(credentials))
+            run_command.assert_not_called()
+
+    def test_pairing_removal_dry_run_has_no_side_effects(self) -> None:
+        with (
+            patch("common.t3code_steps.is_dry_run", return_value=True),
+            patch("common.t3code_steps._user_home") as user_home,
+            patch("common.t3code_steps._remove_device_pairing") as remove_portal,
+            patch("common.t3code_steps._remove_connect_restart_units") as remove_units,
+            patch("common.t3code_steps.run") as run_command,
+        ):
+            remove_device_pairing(self._config(disable_device_pairing=True))
+        user_home.assert_not_called()
+        remove_portal.assert_not_called()
+        remove_units.assert_not_called()
+        run_command.assert_not_called()
 
     def test_https_gateway_is_optional_when_managed_utility_is_unavailable(self) -> None:
         with patch("common.t3code_steps.os.path.isfile", return_value=False):
@@ -1415,7 +1543,7 @@ class T3CodeWebTest(unittest.TestCase):
                 ) as install_service,
                 patch("common.t3code_steps._ensure_t3_agent_skill", return_value=False),
                 patch("common.t3code_steps._remove_connect_restart_units"),
-                patch("common.t3code_steps._remove_device_pairing"),
+                patch("common.t3code_steps._remove_device_pairing") as remove_portal,
                 patch("common.t3code_steps._remove_t3_https"),
                 patch("common.t3code_steps._configure_t3_https", return_value={}),
                 patch("common.t3code_steps.T3_ADMIN_PAIR_SCRIPT", admin_pair_script),
@@ -1425,10 +1553,12 @@ class T3CodeWebTest(unittest.TestCase):
                         web_interface_sources=None,
                         web_interface_host="127.0.0.1",
                         agent_workspace=workspace,
+                        disable_device_pairing=True,
                     )
                 )
 
             install_service.assert_called_once()
+            remove_portal.assert_called_once_with()
             self.assertTrue(install_service.call_args.kwargs["refresh"])
 
             wrapper = os.path.join(
