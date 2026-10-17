@@ -98,6 +98,25 @@ class TestRestrictedFirewallVerification(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "requires a deny or reject incoming default"):
             configure_firewall(self.config)
 
+    def test_web_rdp_plan_restricts_both_services_before_removing_broad_rules(self) -> None:
+        from lib.system_types import get_steps_for_system_type
+
+        self.config.system_type = "server_web"
+        self.config.include_web_firewall = True
+        self.config.enable_rdp = True
+        self.config.rdp_allowed_sources = ["10.20.0.0/24"]
+        firewalls = [function for _, function in get_steps_for_system_type(self.config)
+                     if function in (configure_firewall, configure_firewall_web)]
+        self.assertEqual(firewalls, [configure_firewall])
+        firewalls[0](self.config)
+        commands = [call.args[0] for call in self.command.call_args_list]
+        for prefix, removal in (
+            ("ufw limit from 10.20.0.0/24 to any port 3389 proto tcp", "ufw delete allow 3389/tcp"),
+            ("ufw allow from 192.168.0.0/24 to any port 443 proto tcp", "ufw delete allow 443/tcp"),
+        ):
+            replacement = next(command for command in commands if command.startswith(prefix))
+            self.assertLess(commands.index(replacement), commands.index(removal))
+
     def test_broad_rules_covering_restricted_ports_are_rejected(self) -> None:
         for destination in (
             "Anywhere", "Anywhere/tcp", "Anywhere (v6)", "22,443/tcp",

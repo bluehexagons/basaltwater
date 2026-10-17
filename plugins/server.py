@@ -125,7 +125,12 @@ def build_server_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     steps: list[tuple[str, StepFunc]] = list(get_common_steps(config))
 
     if config.include_web_firewall:
-        steps.extend(get_web_firewall_steps())
+        if config.enable_rdp:
+            from security.steps import configure_firewall
+
+            steps.append(("Configuring firewall for web and RDP services", configure_firewall))
+        else:
+            steps.extend(get_web_firewall_steps())
     elif config.system_type == "server_lite" and (
         config.effective_web_ports()
         or config.homebox == []
