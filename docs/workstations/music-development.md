@@ -102,20 +102,12 @@ dimensions and runtime for large files; keep the PDF and generated images in
 the task's artifact directory. Metadata and extracted text alone cannot qualify
 score layout.
 
-For GUI work use the manifest launch vector and an absolute task-copy path.
+For GUI work, use the manifest launch vector and an absolute task-copy path.
 Follow [desktop controls](desktop-automation.md) and the managed desktop skill;
-inspect the actual document, save MSCZ, reopen and verify separate exports.
-Offscreen conversion does not validate GUI responsiveness, perceived audio,
-musical correctness or the product's score layout.
-
-## MuseScore workflow limits
-
-Converter flags and desktop behavior vary by installed package version. Check
-the local help output before using an offscreen conversion, keep an isolated
-task profile, and verify a nonempty export against the source events. For GUI
-work, wait for the score window rather than treating the startup splash as
-readiness. Package discovery and PDF rendering do not qualify musical
-correctness, audio playback, or the consuming project's layout.
+wait for the score window rather than the startup splash, then inspect the
+document, save MSCZ, reopen it and verify separate exports. Offscreen conversion
+does not validate GUI responsiveness, perceived audio, musical correctness or
+the product's score layout.
 
 ## Test input without physical devices
 

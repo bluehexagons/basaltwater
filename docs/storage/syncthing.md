@@ -51,7 +51,7 @@ basaltw setup server_lite fileserver admin \
 ```
 
 Basaltwater creates the root for the setup user and confines the systemd
-service to that root. Setup verifies an basaltwater-declared VM data mount
+service to that root. Setup verifies any Basaltwater-declared VM data mount
 before writing to it, and the generated service also uses `RequiresMountsFor=`
 for declared or separately managed mounts. This prevents a missing disk from
 redirecting setup or synchronization writes into the root filesystem.

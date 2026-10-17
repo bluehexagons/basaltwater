@@ -159,11 +159,12 @@ basaltw shares fileserver \
   --share write documents /srv/documents alice,carol
 ```
 
-Update a user's workspace password while updating a share:
+Update a user's workspace password, then apply it to the share. Use the same
+workspace as the saved host:
 
 ```bash
+basaltw credentials set carol
 basaltw shares fileserver \
-  --credential carol 'new-password' \
   --share write documents /srv/documents alice,carol
 ```
 

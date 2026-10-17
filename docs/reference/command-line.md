@@ -1686,7 +1686,7 @@ a new baseline. All paths refer to the target. Commands support `--json`,
 | `--samba-metadata-cache PATH` | Put Samba's disposable TDB metadata cache in an absolute directory outside share paths |
 | `--no-samba-metadata-cache` | Return Samba metadata caching to `/var/cache/samba` |
 | `--share TYPE NAME PATH USERS` | Configure one Samba directory share |
-| `--credential USERNAME PASSWORD` | Define a password for username-only share entries |
+| `--credential USERNAME PASSWORD` | Transient password for username-only share entries; prefer workspace credentials to avoid shell-history and process-argument exposure |
 | `--smbclient` | Install SMB/CIFS client |
 | `--mount-smb MOUNTPOINT IP CREDENTIALS SHARE SUBDIR` | Mount an SMB share persistently; `SUBDIR` may be `/` |
 | `--syncthing` | Install a managed, non-root Syncthing endpoint with an authenticated HTTPS admin UI |
@@ -1822,7 +1822,7 @@ basaltw proxmox probe <host>
 basaltw proxmox probe-cluster <address> [--user USER] [--key PATH] [--tag TAG]
 basaltw proxmox join-cluster <host> --via <member> [--link INDEX=IP]... [--join-address HOST] [--timeout SECONDS] [--dry-run] [--yes]
 basaltw proxmox audit <host> [<host> ...] [--json]
-basaltw proxmox rolling-update <target> [<target> ...] [--dry-run] [--reboot-timeout SECONDS]
+basaltw proxmox rolling-update <target> [<target> ...] [--dry-run] [--resume] [--reboot-timeout SECONDS]
 basaltw proxmox top <host> [<host> ...]
 basaltw proxmox plan place [options]
 basaltw proxmox plan rebalance [options]
@@ -1956,8 +1956,12 @@ shell applies the same confirmation rule.
 `rolling-update` uses saved setup commands and workspace credentials. It audits
 all targets before making changes, audits each node again after its update and
 reboot, and stops before an automatic reboot if that node still has running or
-locked guests. Mutating subcommands accept `--dry-run` where supported; a rolling
-update dry run still performs the read-only preflight audits.
+locked guests. After inspecting saved checkpoints, `--resume` continues the
+same ordered targets with unchanged setup, skips completed nodes, retries known
+failed patches, and refuses uncertain in-progress outcomes. See [Proxmox
+operations](../operations/proxmox.md) for manual recovery. Mutating subcommands
+accept `--dry-run` where supported; a rolling update dry run still performs the
+read-only preflight audits.
 
 ### Interactive Shell
 

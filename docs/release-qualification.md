@@ -1,6 +1,6 @@
 # Basaltwater v2.0 preview and release qualification
 
-Status (2026-10-15): the source is moving to a release-candidate preview
+Status (2026-10-17): the source is moving to a release-candidate preview
 series. `pyproject.toml` declares `2.0.0rc1`; the matching GitHub tag
 `v2.0.0-rc.1` has not been created or published. The latest final release
 remains `v0.2.0`. This document is the qualification record and release gate

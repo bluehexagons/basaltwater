@@ -8,9 +8,10 @@
 Infrastructure management, from one machine to your whole network.
 
 The command is `basaltw` and the Python entry point is `basaltwater.py`.
-Only the Basaltwater namespace is supported. The completed infra-tools
-migration is retired; remaining old installations must use the documented
-[intermediate version](docs/migration-guide.md) first.
+Only the Basaltwater namespace is supported. The infra-tools migration is
+complete, and its migration command has been retired. Remaining old
+installations must first use the documented
+[intermediate version](docs/migration-guide.md).
 
 The [identity guide](docs/brand/README.md) includes editable assets and visual specimens.
 

@@ -10,15 +10,17 @@ unsupported.
 
 ```bash
 basaltw setup agent_vm 192.168.1.50 agent \
-  --web-panel --ssl --web-panel-password 'panel-password' \
-  --guacamole --password 'unix-account-password'
+  --web-panel --ssl --web-panel-password "$PANEL_PASSWORD" \
+  --guacamole --password "$RDP_PASSWORD"
 ```
 
-Use your normal credential provisioning workflow for the Unix password; neither
-password should be copied into scripts or shell history. An existing account
-needs a valid Unix password for the browser RDP login. Guacamole does not reuse
-the panel's Basic Auth password and cannot use local Unix peer authentication
-for its RDP connection. `--harden-user`, which locks password login, is rejected.
+Provide both values from a protected secret source. Variables keep literal
+passwords out of shell history, but expanded arguments may be visible to local
+process inspectors; run setup on a trusted controller and do not store the
+values in scripts. An existing account needs a valid Unix password for browser
+RDP login. Guacamole does not reuse the panel's Basic Auth password and cannot
+use local Unix peer authentication for its RDP connection. `--harden-user`,
+which locks password login, is rejected.
 
 For an existing HTTPS panel, saved panel port and TLS settings are retained:
 
@@ -206,9 +208,8 @@ than an Apache source fork. amd64 packages are built natively and
 checked in fresh Debian containers without development packages.
 Arm64 is unsupported and no longer built; older release assets are historical.
 
-The dedicated build repository pins the Apache Guacamole 1.6.0 source archives
-and builds the package in CI. Review the amd64 package and its SHA-256 before
-updating the version and pin in `lib/guacamole_config.py`.
+Review the amd64 package and its SHA-256 before updating the version and pin in
+`lib/guacamole_config.py`.
 
 The installer verifies the package SHA-256 pinned in Basaltwater's source and
 checks its name, version and architecture before asking APT to install it.
