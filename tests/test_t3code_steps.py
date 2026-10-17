@@ -20,6 +20,7 @@ from common.t3code_steps import (
     _install_t3_npm_shim,
     _install_t3_service,
     _rebuild_t3_native_runtime,
+    _remove_t3_https,
     _temporary_t3_loginctl_shim,
     _t3_local_endpoint_reachable,
     _t3_service_invocation,
@@ -29,6 +30,7 @@ from common.t3code_steps import (
     remove_device_pairing,
 )
 from lib.config import SetupConfig
+from lib.remote_utils import CommandExecutionError
 from lib.validation import validate_web_interface_settings
 from plugins.common import extend_agent_steps
 
@@ -113,6 +115,40 @@ class T3CodeWebTest(unittest.TestCase):
             os.chmod(path, 0o755)
         return node_bin
 
+    @staticmethod
+    def _pairing_cleanup_paths(
+        home: str, stack: ExitStack, *, installed: bool = True
+    ) -> dict[str, str]:
+        config_dir = os.path.join(home, "device-pairing")
+        paths = {
+            "DEVICE_PAIRING_CONFIG_DIR": config_dir,
+            "DEVICE_PAIRING_AUTH_FILE": os.path.join(config_dir, "htpasswd"),
+            "DEVICE_PAIRING_PROVIDERS_FILE": os.path.join(config_dir, "providers.json"),
+            "DEVICE_PAIRING_SERVICE_FILE": os.path.join(home, "pairing.service"),
+            "DEVICE_PAIRING_NGINX_SITE": os.path.join(home, "nginx-site"),
+            "DEVICE_PAIRING_NGINX_LINK": os.path.join(home, "nginx-link"),
+            "T3_CONNECT_RESTART_PATH_FILE": os.path.join(home, "connect.path"),
+            "T3_CONNECT_RESTART_SERVICE_FILE": os.path.join(home, "connect.service"),
+        }
+        if installed:
+            os.makedirs(config_dir)
+        for name, path in paths.items():
+            stack.enter_context(patch(f"common.t3code_steps.{name}", path))
+            if installed and name not in {
+                "DEVICE_PAIRING_CONFIG_DIR", "DEVICE_PAIRING_NGINX_LINK"
+            }:
+                with open(path, "w", encoding="utf-8") as file_obj:
+                    file_obj.write("managed fixture\n")
+        if installed:
+            os.symlink(paths["DEVICE_PAIRING_NGINX_SITE"], paths["DEVICE_PAIRING_NGINX_LINK"])
+        stack.enter_context(patch("common.t3code_steps.is_dry_run", return_value=False))
+        stack.enter_context(patch("common.t3code_steps._user_home", return_value=home))
+        stack.enter_context(patch("common.t3code_steps.os.geteuid", return_value=0))
+        stack.enter_context(patch(
+            "common.t3code_steps.shutil.which", return_value="/usr/sbin/nginx"
+        ))
+        return paths
+
     def test_source_promotes_default_bind_to_all_interfaces(self) -> None:
         config = self._config()
         self.assertEqual(config.web_interface_host, "0.0.0.0")
@@ -141,40 +177,37 @@ class T3CodeWebTest(unittest.TestCase):
             disable_device_pairing=True,
         )
         with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
-            config_dir = os.path.join(home, "device-pairing")
+            paths = self._pairing_cleanup_paths(home, stack)
             state_dir = os.path.join(home, ".t3")
-            os.makedirs(config_dir)
             os.makedirs(state_dir)
-            paths = {
-                "DEVICE_PAIRING_CONFIG_DIR": config_dir,
-                "DEVICE_PAIRING_AUTH_FILE": os.path.join(config_dir, "htpasswd"),
-                "DEVICE_PAIRING_PROVIDERS_FILE": os.path.join(config_dir, "providers.json"),
-                "DEVICE_PAIRING_SERVICE_FILE": os.path.join(home, "pairing.service"),
-                "DEVICE_PAIRING_NGINX_SITE": os.path.join(home, "nginx-site"),
-                "DEVICE_PAIRING_NGINX_LINK": os.path.join(home, "nginx-link"),
-                "T3_CONNECT_RESTART_PATH_FILE": os.path.join(home, "connect.path"),
-                "T3_CONNECT_RESTART_SERVICE_FILE": os.path.join(home, "connect.service"),
-            }
-            for name, path in paths.items():
-                stack.enter_context(patch(f"common.t3code_steps.{name}", path))
-                if name != "DEVICE_PAIRING_CONFIG_DIR":
-                    with open(path, "w", encoding="utf-8") as file_obj:
-                        file_obj.write("managed fixture\n")
             request = os.path.join(state_dir, "basaltwater-connect-restart")
             with open(request, "w", encoding="utf-8") as file_obj:
                 file_obj.write("restart\n")
-            stack.enter_context(patch("common.t3code_steps.is_dry_run", return_value=False))
-            stack.enter_context(patch("common.t3code_steps._user_home", return_value=home))
-            stack.enter_context(patch("common.t3code_steps.os.geteuid", return_value=0))
+            utility = "/usr/local/bin/basaltwater-web"
+            path_exists = os.path.exists
             stack.enter_context(patch(
-                "common.t3code_steps.shutil.which", return_value="/usr/sbin/nginx"
+                "common.t3code_steps.os.path.exists",
+                side_effect=lambda path: path == utility or path_exists(path),
             ))
             remove_ban = stack.enter_context(patch(
                 "common.t3code_steps.remove_nginx_auth_failure_ban"
             ))
+            routes = {"t3code", "t3code-pairing"}
+
+            def run(command, **_kwargs):
+                if " forward list " in command:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps({"forwards": [{"name": name} for name in routes]}),
+                        stderr="",
+                    )
+                if " forward remove " in command:
+                    routes.remove(shlex.split(command)[4])
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
             run_command = stack.enter_context(patch(
                 "common.t3code_steps.run",
-                return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+                side_effect=run,
             ))
             install_service = stack.enter_context(patch(
                 "common.t3code_steps._install_t3_service"
@@ -189,6 +222,8 @@ class T3CodeWebTest(unittest.TestCase):
                 if function is remove_device_pairing
             )
             cleanup(config)
+            first_run_calls = run_command.call_count
+            cleanup(config)
 
             for path in (*paths.values(), request):
                 self.assertFalse(os.path.lexists(path), path)
@@ -198,16 +233,115 @@ class T3CodeWebTest(unittest.TestCase):
             self.assertIn("systemctl disable --now basaltwater-t3code-connect.service", commands)
             self.assertIn("nginx -t", commands)
             self.assertIn("systemctl reload nginx", commands)
-            forwards = [command for command in commands if "forward " in command]
+            forwards = [command for command in commands if "forward remove " in command]
             self.assertEqual(len(forwards), 1)
             self.assertIn("forward remove t3code-pairing --json", forwards[0])
+            self.assertEqual(routes, {"t3code"})
+            self.assertEqual(
+                [call.args[0] for call in run_command.call_args_list[first_run_calls:]],
+                [f"SUDO_USER=agent {utility} forward list --json"],
+            )
             self.assertFalse(any(
                 "restart" in command or "forward add" in command
                 for command in commands
             ))
-            remove_ban.assert_called_once_with("device-pairing")
+            self.assertEqual(remove_ban.call_count, 2)
+            remove_ban.assert_called_with("device-pairing")
             install_service.assert_not_called()
             install_package.assert_not_called()
+
+    def test_pairing_removal_propagates_required_service_stop_failures(self) -> None:
+        for key, unit in (
+            ("DEVICE_PAIRING_SERVICE_FILE", "basaltwater-device-pairing.service"),
+            ("T3_CONNECT_RESTART_PATH_FILE", "basaltwater-t3code-connect.path"),
+            ("T3_CONNECT_RESTART_SERVICE_FILE", "basaltwater-t3code-connect.service"),
+        ):
+            with (
+                self.subTest(unit=unit),
+                tempfile.TemporaryDirectory() as home,
+                ExitStack() as stack,
+            ):
+                paths = self._pairing_cleanup_paths(home, stack)
+                failed_command = f"systemctl disable --now {unit}"
+
+                def run(command, *, check=True, **_kwargs):
+                    code = int(command == failed_command)
+                    if check and code:
+                        raise CommandExecutionError(command, code, "stop refused")
+                    return SimpleNamespace(returncode=code, stdout="", stderr="")
+
+                stack.enter_context(patch("common.t3code_steps.run", side_effect=run))
+                stack.enter_context(patch("common.t3code_steps.remove_nginx_auth_failure_ban"))
+                remove_https = stack.enter_context(patch("common.t3code_steps._remove_t3_https"))
+                with self.assertRaisesRegex(CommandExecutionError, "stop refused"):
+                    remove_device_pairing(self._config(disable_device_pairing=True))
+                self.assertTrue(os.path.exists(paths[key]))
+                remove_https.assert_not_called()
+
+    def test_pairing_removal_retries_failed_nginx_validation_and_reload(self) -> None:
+        for failed_command in ("nginx -t", "systemctl reload nginx"):
+            for symlink in (True, False):
+                with (
+                    self.subTest(command=failed_command, symlink=symlink),
+                    tempfile.TemporaryDirectory() as home,
+                    ExitStack() as stack,
+                ):
+                    paths = self._pairing_cleanup_paths(home, stack)
+                    link = paths["DEVICE_PAIRING_NGINX_LINK"]
+                    if not symlink:
+                        os.unlink(link)
+                        with open(link, "w", encoding="utf-8") as file_obj:
+                            file_obj.write("managed enabled fixture\n")
+                        os.chmod(link, 0o640)
+                    failed = False
+
+                    def run(command, *, check=True, **_kwargs):
+                        nonlocal failed
+                        if command == failed_command and not failed:
+                            failed = True
+                            if check:
+                                raise CommandExecutionError(command, 1, "reload refused")
+                            return SimpleNamespace(returncode=1, stdout="", stderr="invalid")
+                        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+                    commands = stack.enter_context(patch(
+                        "common.t3code_steps.run", side_effect=run
+                    ))
+                    stack.enter_context(patch("common.t3code_steps.remove_nginx_auth_failure_ban"))
+                    remove_https = stack.enter_context(patch("common.t3code_steps._remove_t3_https"))
+                    with self.assertRaisesRegex(RuntimeError, "invalid|reload refused"):
+                        remove_device_pairing(self._config(disable_device_pairing=True))
+                    remove_https.assert_not_called()
+                    for key in (
+                        "DEVICE_PAIRING_NGINX_SITE", "DEVICE_PAIRING_AUTH_FILE",
+                        "DEVICE_PAIRING_PROVIDERS_FILE",
+                    ):
+                        self.assertTrue(os.path.exists(paths[key]))
+                    if symlink:
+                        self.assertEqual(os.readlink(link), paths["DEVICE_PAIRING_NGINX_SITE"])
+                    else:
+                        with open(link, encoding="utf-8") as file_obj:
+                            self.assertEqual(file_obj.read(), "managed enabled fixture\n")
+                        self.assertEqual(os.stat(link).st_mode & 0o777, 0o640)
+
+                    remove_device_pairing(self._config(disable_device_pairing=True))
+                    for path in paths.values():
+                        self.assertFalse(os.path.lexists(path), path)
+                    reloads = [
+                        call for call in commands.call_args_list
+                        if call.args[0] == "systemctl reload nginx"
+                    ]
+                    self.assertEqual(len(reloads), 2 if "reload" in failed_command else 1)
+
+    def test_pairing_removal_without_an_install_does_not_run_system_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as home, ExitStack() as stack:
+            self._pairing_cleanup_paths(home, stack, installed=False)
+            stack.enter_context(patch("common.t3code_steps.os.path.exists", return_value=False))
+            stack.enter_context(patch("common.t3code_steps.remove_nginx_auth_failure_ban"))
+            commands = stack.enter_context(patch("common.t3code_steps.run"))
+            remove_device_pairing(self._config(disable_device_pairing=True))
+            remove_device_pairing(self._config(disable_device_pairing=True))
+            commands.assert_not_called()
 
     def test_pairing_removal_refuses_symlinked_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as home:
@@ -246,6 +380,79 @@ class T3CodeWebTest(unittest.TestCase):
     def test_https_gateway_is_optional_when_managed_utility_is_unavailable(self) -> None:
         with patch("common.t3code_steps.os.path.isfile", return_value=False):
             self.assertEqual(_configure_t3_https(self._config(), 3773, None), {})
+
+    def test_https_removal_skips_missing_utility(self) -> None:
+        with (
+            patch("common.t3code_steps.os.path.exists", return_value=False),
+            patch("common.t3code_steps.run") as commands,
+        ):
+            _remove_t3_https(self._config())
+        commands.assert_not_called()
+
+    def test_https_removal_skips_absent_routes_and_preserves_other_routes(self) -> None:
+        for routes in ([], [{"name": "another-app"}], [{"name": "t3code"}]):
+            for pairing_only in (True, False):
+                with (
+                    self.subTest(routes=routes, pairing_only=pairing_only),
+                    patch("common.t3code_steps.os.path.exists", return_value=True),
+                    patch("common.t3code_steps.run", return_value=SimpleNamespace(
+                        returncode=0, stdout=json.dumps({"forwards": routes}), stderr=""
+                    )) as commands,
+                ):
+                    _remove_t3_https(self._config(), pairing_only=pairing_only)
+                    removals = [
+                        call.args[0] for call in commands.call_args_list
+                        if " forward remove " in call.args[0]
+                    ]
+                    self.assertEqual(
+                        removals,
+                        ["SUDO_USER=agent /usr/local/bin/basaltwater-web forward remove t3code --json"]
+                        if routes == [{"name": "t3code"}] and not pairing_only else [],
+                    )
+
+    def test_https_removal_propagates_list_and_existing_route_failures(self) -> None:
+        for failure in ("list", "t3code-pairing", "t3code"):
+            with (
+                self.subTest(failure=failure),
+                patch("common.t3code_steps.os.path.exists", return_value=True),
+            ):
+                def run(command, *, check=True, **_kwargs):
+                    fails = (
+                        " forward list " in command if failure == "list"
+                        else f" forward remove {failure} --json" in command
+                    )
+                    if fails and check:
+                        raise CommandExecutionError(command, 1, "gateway refused")
+                    return SimpleNamespace(
+                        returncode=int(fails),
+                        stdout=json.dumps({"forwards": [
+                            {"name": "t3code-pairing"}, {"name": "t3code"},
+                        ]}),
+                        stderr="gateway refused" if fails else "",
+                    )
+
+                with patch("common.t3code_steps.run", side_effect=run) as commands:
+                    with self.assertRaisesRegex(CommandExecutionError, "gateway refused"):
+                        _remove_t3_https(self._config())
+                if failure == "list":
+                    self.assertEqual(commands.call_count, 1)
+
+    def test_https_removal_rejects_invalid_route_inventory(self) -> None:
+        for output in (
+            "invalid json", "null", "[]", "{}", '{"forwards": {}}',
+            '{"forwards": [null]}', '{"forwards": [{}]}',
+            '{"forwards": [{"name": 1}]}',
+        ):
+            with (
+                self.subTest(output=output),
+                patch("common.t3code_steps.os.path.exists", return_value=True),
+                patch("common.t3code_steps.run", return_value=SimpleNamespace(
+                    returncode=0, stdout=output, stderr=""
+                )) as commands,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "invalid forward list"):
+                    _remove_t3_https(self._config())
+                self.assertEqual(commands.call_count, 1)
 
     def test_https_gateway_preserves_t3_file_upload_limit(self) -> None:
         completed = SimpleNamespace(

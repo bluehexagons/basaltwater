@@ -24,7 +24,7 @@ from common.agent_steps import (
     install_managed_agent_skills,
 )
 from common.common_steps import _run_as_login_user
-from lib.atomic_io import write_text_atomic
+from lib.atomic_io import write_bytes_atomic, write_text_atomic
 from lib.auth_failure_bans import (
     configure_nginx_auth_failure_ban,
     remove_nginx_auth_failure_ban,
@@ -1586,30 +1586,51 @@ def _remove_device_pairing() -> None:
         raise RuntimeError(
             f"Refusing unsafe device-pairing config path: {DEVICE_PAIRING_CONFIG_DIR}"
         )
-    changed = False
     if os.path.exists(DEVICE_PAIRING_SERVICE_FILE):
-        run(f"systemctl disable --now {DEVICE_PAIRING_SERVICE_NAME}.service", check=False)
+        run(f"systemctl disable --now {DEVICE_PAIRING_SERVICE_NAME}.service")
         os.remove(DEVICE_PAIRING_SERVICE_FILE)
         run("systemctl daemon-reload")
+    link_target = None
+    link_content = None
+    link_mode = 0o644
+    if os.path.lexists(DEVICE_PAIRING_NGINX_LINK):
+        if os.path.islink(DEVICE_PAIRING_NGINX_LINK):
+            link_target = os.readlink(DEVICE_PAIRING_NGINX_LINK)
+        else:
+            with open(DEVICE_PAIRING_NGINX_LINK, "rb") as file_obj:
+                link_content = file_obj.read()
+            link_mode = os.stat(DEVICE_PAIRING_NGINX_LINK).st_mode & 0o777
+        os.remove(DEVICE_PAIRING_NGINX_LINK)
+    nginx_changed = (
+        link_target is not None
+        or link_content is not None
+        or os.path.lexists(DEVICE_PAIRING_NGINX_SITE)
+    )
+    try:
+        if nginx_changed and shutil.which("nginx"):
+            validation = run("nginx -t", check=False, capture_output=True)
+            if validation.returncode != 0:
+                raise RuntimeError("Nginx configuration is invalid after removing device pairing")
+            run("systemctl reload nginx")
+    except Exception:
+        # Retain the on-disk removal signal so a retry must reload Nginx too.
+        if link_target is not None:
+            os.symlink(link_target, DEVICE_PAIRING_NGINX_LINK)
+        elif link_content is not None:
+            write_bytes_atomic(DEVICE_PAIRING_NGINX_LINK, link_content, mode=link_mode)
+        raise
     for path in (
-        DEVICE_PAIRING_NGINX_LINK,
         DEVICE_PAIRING_NGINX_SITE,
         DEVICE_PAIRING_PROVIDERS_FILE,
         DEVICE_PAIRING_AUTH_FILE,
     ):
         if os.path.lexists(path):
             os.remove(path)
-            changed = True
     if os.path.isdir(DEVICE_PAIRING_CONFIG_DIR):
         try:
             os.rmdir(DEVICE_PAIRING_CONFIG_DIR)
         except OSError:
             pass
-    if changed and shutil.which("nginx"):
-        validation = run("nginx -t", check=False, capture_output=True)
-        if validation.returncode != 0:
-            raise RuntimeError("Nginx configuration is invalid after removing device pairing")
-        run("systemctl reload nginx", check=False)
     remove_nginx_auth_failure_ban("device-pairing")
 
 
@@ -1687,7 +1708,7 @@ def _remove_connect_restart_units(state_dir: str | None = None) -> None:
         if os.path.lexists(unit_path):
             if os.path.islink(unit_path):
                 raise RuntimeError(f"Refusing symlinked managed unit: {unit_path}")
-            run(f"systemctl disable --now {unit_name}", check=False)
+            run(f"systemctl disable --now {unit_name}")
             os.remove(unit_path)
             changed = True
     if state_dir is not None:
@@ -1808,17 +1829,30 @@ def _set_pairing_t3_https_port(https_port: int) -> None:
 
 def _remove_t3_https(config: SetupConfig, *, pairing_only: bool = False) -> None:
     utility = "/usr/local/bin/basaltwater-web"
+    if not os.path.exists(utility):
+        return
+    command = "SUDO_USER=" + shlex.quote(config.username) + " " + shlex.quote(utility)
+    result = run(command + " forward list --json", capture_output=True)
+    try:
+        payload = json.loads(result.stdout)
+        forwards = payload.get("forwards") if isinstance(payload, dict) else None
+        if not isinstance(forwards, list) or any(
+            not isinstance(route, dict) or not isinstance(route.get("name"), str)
+            for route in forwards
+        ):
+            raise ValueError("Invalid forward list")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("HTTPS gateway returned an invalid forward list") from exc
+    existing_names = {route["name"] for route in forwards}
     names = ("t3code-pairing",) if pairing_only else ("t3code-pairing", "t3code")
     for name in names:
+        if name not in existing_names:
+            continue
         run(
-            "SUDO_USER="
-            + shlex.quote(config.username)
-            + " "
-            + shlex.quote(utility)
+            command
             + " forward remove "
             + shlex.quote(name)
             + " --json",
-            check=False,
             capture_output=True,
         )
 
