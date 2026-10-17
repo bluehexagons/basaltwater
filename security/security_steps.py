@@ -20,6 +20,7 @@ from lib.machine_state import (
     can_manage_mdns,
     can_manage_system_services,
     can_modify_kernel,
+    can_restart_system,
     is_container,
     is_hardware,
     is_vm,
@@ -1557,11 +1558,11 @@ def configure_proxmox_management_firewall(config: SetupConfig) -> None:
 
 def configure_auto_restart(config: SetupConfig) -> None:
     """Configure automatic restart at 2 AM when updates require it."""
-    if not can_modify_kernel():
-        print("  ✓ Skipping automatic restart service (container)")
+    if not can_restart_system():
+        print("  ✓ Skipping automatic restart service (machine cannot restart itself)")
         return
 
-    if not is_dry_run():
+    if not is_dry_run() and can_modify_kernel():
         install_kernel_restart_hook()
 
     configured = configure_maintenance_timer(

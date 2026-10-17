@@ -315,6 +315,22 @@ class TestRestartPolicy(unittest.TestCase):
         root = self.enterContext(tempfile.TemporaryDirectory())
         self.enterContext(patch.object(auto_restart_if_needed, 'STATE_FILE', os.path.join(root, 'state.json')))
 
+    def test_disabled_policy_with_no_force_deadline_defers_on_restart_capable_guest(self):
+        with (
+            patch.object(auto_restart_if_needed, "check_restart_required", return_value=True),
+            patch.object(auto_restart_if_needed, "can_restart_system", return_value=True),
+            patch.object(auto_restart_if_needed, "load_setup_config", return_value={
+                "username": "u", "system_type": "server_lite", "machine_type": "unprivileged",
+                "auto_restart": False, "auto_restart_force_days": 0,
+            }),
+            patch.object(auto_restart_if_needed, "get_uptime_seconds", return_value=3600),
+            patch.object(auto_restart_if_needed, "record_deferral") as defer,
+            patch.object(auto_restart_if_needed, "perform_restart") as restart,
+        ):
+            self.assertEqual(auto_restart_if_needed._check_restart([]), 0)
+        defer.assert_called_once_with("automatic restarts are disabled", [])
+        restart.assert_not_called()
+
     def test_forced_proxmox_restart_still_requires_evacuated_healthy_node(self):
         with (
             patch.object(auto_restart_if_needed, "check_restart_required", return_value=True),

@@ -11,6 +11,9 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from lib.maintenance_systemd import configure_maintenance_timer
+from lib.config import SetupConfig
+from common import common_steps
+from security import security_steps
 
 
 class TestConfigureMaintenanceTimer(unittest.TestCase):
@@ -140,6 +143,79 @@ class TestConfigureMaintenanceTimer(unittest.TestCase):
             "ReadWritePaths=-/home/agent/.config/tool",
             service_content,
         )
+
+
+class TestMaintenanceTimerCallers(unittest.TestCase):
+    def test_optional_update_timer_failures_reach_setup(self):
+        config = SetupConfig("example.test", "agent", "server_web")
+        for configure, name in ((common_steps.configure_auto_update_uv, "uv"),
+                                (common_steps.configure_auto_update_gogs, "Gogs")):
+            with (
+                self.subTest(name=name),
+                patch.object(common_steps, "get_user_home", return_value="/home/agent"),
+                patch("lib.maintenance_systemd.os.path.exists", return_value=True),
+                patch("lib.maintenance_systemd.is_dry_run", return_value=False),
+                patch("lib.maintenance_systemd.replace_units", side_effect=RuntimeError("activation failed; restored")) as replace,
+            ):
+                with self.assertRaisesRegex(RuntimeError, name + " auto-update timer failed verification"):
+                    configure(config)
+                replace.assert_called_once()
+
+    def test_optional_update_missing_prerequisites_and_dry_runs_remain_skips(self):
+        config = SetupConfig("example.test", "agent", "server_web")
+        for configure in (common_steps.configure_auto_update_uv, common_steps.configure_auto_update_gogs):
+            for installed, dry_run in ((False, False), (True, True)):
+                with (
+                    self.subTest(configure=configure.__name__, installed=installed, dry_run=dry_run),
+                    patch.object(common_steps, "get_user_home", return_value="/home/agent"),
+                    patch("lib.maintenance_systemd.os.path.exists", return_value=installed),
+                    patch("lib.maintenance_systemd.is_dry_run", return_value=dry_run),
+                    patch("lib.maintenance_systemd.replace_units") as replace,
+                ):
+                    configure(config)
+                    replace.assert_not_called()
+
+    def test_lxc_restart_timer_is_installed_without_kernel_hook_even_when_policy_disabled(self):
+        config = SetupConfig("example.test", "agent", "server_web", machine_type="unprivileged",
+                             auto_restart=False, auto_restart_force_days=0)
+        with (
+            patch("lib.machine_state.get_machine_type", return_value="unprivileged"),
+            patch.object(security_steps, "is_dry_run", return_value=False),
+            patch("lib.maintenance_systemd.is_dry_run", return_value=False),
+            patch("lib.maintenance_systemd.replace_units") as replace,
+            patch.object(security_steps, "install_kernel_restart_hook") as hook,
+        ):
+            security_steps.configure_auto_restart(config)
+        hook.assert_not_called()
+        self.assertEqual(replace.call_args.kwargs["activate"], ("auto-restart-if-needed.timer",))
+        timer = replace.call_args.args[0]["auto-restart-if-needed.timer"]
+        self.assertIn("OnCalendar=*-*-* 02:00:00", timer)
+        self.assertIn("OnBootSec=30min", timer)
+
+    def test_restart_timer_failure_propagates_in_lxc(self):
+        with (
+            patch("lib.machine_state.get_machine_type", return_value="unprivileged"),
+            patch.object(security_steps, "is_dry_run", return_value=False),
+            patch("lib.maintenance_systemd.is_dry_run", return_value=False),
+            patch("lib.maintenance_systemd.replace_units", side_effect=RuntimeError("restored previous timer")),
+            patch.object(security_steps, "install_kernel_restart_hook") as hook,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Automatic restart timer failed verification"):
+                security_steps.configure_auto_restart(SetupConfig("example.test", "agent", "server_web"))
+        hook.assert_not_called()
+
+    def test_restart_capability_and_dry_run_boundaries(self):
+        for machine, dry_run in (("oci", False), ("wsl", False), ("vm", True), ("vm", False)):
+            with (
+                self.subTest(machine=machine, dry_run=dry_run),
+                patch("lib.machine_state.get_machine_type", return_value=machine),
+                patch.object(security_steps, "is_dry_run", return_value=dry_run),
+                patch.object(security_steps, "configure_maintenance_timer", return_value=True) as timer,
+                patch.object(security_steps, "install_kernel_restart_hook") as hook,
+            ):
+                security_steps.configure_auto_restart(SetupConfig("example.test", "agent", "server_web"))
+                self.assertEqual(timer.call_count, int(machine == "vm"))
+                self.assertEqual(hook.call_count, int(machine == "vm" and not dry_run))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ same job at the same instant.
 |------|----------|-------|
 | `security-monitor.timer` | Every 15 minutes | VM, bare-metal, and Proxmox host security events; XRDP certificate health when configured |
 | `auto-update-apt.timer` | Daily at 06:00 | Security-enabled setups |
-| `auto-restart-if-needed.timer` | Daily at 02:00 and 30 minutes after boot | Kernel-capable machines; saved policy chooses restart or deferral |
+| `auto-restart-if-needed.timer` | Daily at 02:00 and 30 minutes after boot | Machines that can restart themselves, including LXC; saved policy chooses restart or deferral |
 | `auto-update-node.timer` | Sunday at 03:00 | Setups with Node.js/nvm |
 | `auto-update-uv.timer` | Sunday at 05:00 | Setups with Python and uv |
 | `auto-update-gogs.timer` | Sunday at 05:30 | Setups with Gogs |
@@ -27,6 +27,9 @@ Container capabilities are respected. OCI containers cannot restart the system,
 and security monitoring, auditd, AppArmor, and kernel-level setup are skipped
 where the container cannot safely provide them. An unprivileged LXC can request
 an in-container restart, but still does not receive host-kernel controls.
+Its restart timer is installed without the kernel post-install hook. Disabling
+automatic restarts leaves the timer available to record policy deferrals; the
+saved forced-restart deadline remains independent (`0` disables that deadline).
 
 Inspect a job and its recent output with:
 
@@ -42,8 +45,10 @@ provides a journal stream, Basaltwater suppresses the additional syslog sink so
 each event appears once in `journalctl`.
 
 Required host timers are verified during setup. Failure to reload, enable,
-start, or confirm the security-monitor, APT-update, cleanup, user-cache, or
-restart timer stops setup. When the replacement APT timer cannot be verified,
+start, or confirm the security-monitor, APT-update, cleanup, user-cache,
+restart, uv-update, or Gogs-update timer stops setup. Missing uv or Gogs
+prerequisites and dry runs still skip unit installation successfully.
+When the replacement APT timer cannot be verified,
 Debian's existing APT timers remain enabled.
 `basaltw agent doctor --capability host` also reports installed Node,
 Godot, and Codex authentication timers, while omitting those optional jobs on
