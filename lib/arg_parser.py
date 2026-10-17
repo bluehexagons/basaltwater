@@ -183,7 +183,14 @@ def add_setup_arguments(
             help="Workspace root for saved setups, credentials, known_hosts, and history"
         )
     
-    parser.add_argument("-p", "--password", help="User password")
+    parser.add_argument(
+        "-p",
+        "--password",
+        help=(
+            "User password; a command-line value may appear in shell history "
+            "and process arguments"
+        ),
+    )
     parser.add_argument(
         "--nopasswd",
         action=argparse.BooleanOptionalAction if not for_remote else "store_true",
@@ -1025,8 +1032,11 @@ def add_setup_arguments(
             dest="device_pairing_auth_password",
             metavar="PASSWORD",
             help=(
-                "Controller-local portal password; transient and hashed before "
-                "staging (the portal username defaults to the setup username)"
+                "Controller-local portal password; hashed before staging and not "
+                "saved. The username defaults to the setup username. When pairing "
+                "is enabled, omit this option for a hidden prompt or use "
+                "--device-pairing-auth-file; a command-line value may appear in "
+                "shell history and process arguments"
             ),
         )
     web_panel_group = parser.add_mutually_exclusive_group()
@@ -1045,7 +1055,11 @@ def add_setup_arguments(
         parser.add_argument("--privilege-broker-host", help=argparse.SUPPRESS)
     else:
         parser.add_argument("--privilege-broker-password", nargs="?", const="", metavar="PASSWORD",
-                            help="Set a separate approval password; omit the value to prompt securely")
+                            help=(
+                                "Set a separate approval password; omit the value to prompt "
+                                "securely. A command-line value may appear in shell history "
+                                "and process arguments"
+                            ))
     web_panel_group.add_argument(
         "--web-panel",
         dest="web_panel_port",
@@ -1091,7 +1105,8 @@ def add_setup_arguments(
             metavar="PASSWORD",
             help=(
                 "Controller-local web panel password; transient and hashed "
-                "before staging (the username is the setup username)"
+                "before staging (the username is the setup username). A "
+                "command-line value may appear in shell history and process arguments"
             ),
         )
     browser_automation_group = parser.add_mutually_exclusive_group()
@@ -1363,21 +1378,47 @@ def add_setup_arguments(
         action="store_true",
         help="Clear a saved custom Samba metadata-cache directory",
     )
-    parser.add_argument("--share", dest="samba_shares", 
-                       action="append", nargs=4, metavar=("ACCESS_TYPE", "SHARE_NAME", "PATH", "USERS"),
-                       help="Configure one Samba directory share: access_type (read|write), share_name, absolute path, comma-separated username:password pairs or usernames that resolve via --credential (can be used multiple times)")
+    parser.add_argument(
+        "--share",
+        dest="samba_shares",
+        action="append",
+        nargs=4,
+        metavar=("ACCESS_TYPE", "SHARE_NAME", "PATH", "USERS"),
+        help=(
+            "Configure a Samba share: access_type (read|write), share_name, "
+            "absolute path, and comma-separated usernames or username:password "
+            "pairs. Prefer saved workspace credentials; inline passwords may "
+            "appear in shell history and process arguments. Repeat as needed"
+        ),
+    )
     parser.add_argument("--credential", dest="share_credentials",
                         action="append", nargs=2, metavar=("USERNAME", "PASSWORD"),
-                        help="Save a workspace credential for a matching Gogs admin, Git HTTPS login, Samba share, or SMB mount username (can be used multiple times)")
+                        help=(
+                            "Save a workspace credential for a Gogs admin, Git HTTPS login, "
+                            "Samba share, or SMB mount. Passing PASSWORD may expose it in "
+                            "shell history and process arguments; use basaltw credentials "
+                            "set USERNAME for hidden entry. Repeat as needed"
+                        ))
     
     parser.add_argument("--smbclient", dest="enable_smbclient", 
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true", 
                        default=None if not for_remote else False,
                        help="Install SMB/CIFS client packages for connecting to network shares (default: enabled for pc_dev)")
     
-    parser.add_argument("--mount-smb", dest="smb_mounts",
-                        action="append", nargs=5, metavar=("MOUNTPOINT", "IP", "CREDENTIALS", "SHARE", "SUBDIR"),
-                        help="Mount SMB share: /mnt/path, ip_address, username or username:password, share_name, /share/subdirectory (can be used multiple times). Auto-enables --smbclient")
+    parser.add_argument(
+        "--mount-smb",
+        dest="smb_mounts",
+        action="append",
+        nargs=5,
+        metavar=("MOUNTPOINT", "IP", "CREDENTIALS", "SHARE", "SUBDIR"),
+        help=(
+            "Mount an SMB share; CREDENTIALS may be a username with a saved "
+            "workspace credential or username:password. Prefer saved credentials; "
+            "inline passwords may "
+            "appear in shell history and process arguments. This also enables "
+            "--smbclient. Repeat as needed"
+        ),
+    )
 
     syncthing_group = parser.add_mutually_exclusive_group()
     syncthing_group.add_argument(

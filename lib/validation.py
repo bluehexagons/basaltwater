@@ -164,7 +164,7 @@ def validate_syncthing_settings(config: Any) -> None:
 
 
 def validate_channel(channel: str) -> str:
-    """Validate and return an basaltwater release channel selector."""
+    """Validate and return a Basaltwater release channel selector."""
 
     if not isinstance(channel, str) or not channel:
         raise ValueError("Channel must be a non-empty string")

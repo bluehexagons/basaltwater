@@ -361,9 +361,9 @@ def setup_user(config: SetupConfig) -> None:
 def _ensure_vm_setup_user_sudoers(config: SetupConfig) -> None:
     """Reconcile the VM setup user's optional passwordless sudo rule.
 
-    ``--nopasswd`` requests the capable compatibility behavior. Keeping the
-    rule under an basaltwater-owned filename lets root-driven setup reruns add,
-    repair, or remove it without changing other policy.
+    ``--nopasswd`` enables the managed passwordless sudo rule for non-root VM
+    setup users. The rule uses a Basaltwater-owned filename so root-driven setup
+    reruns can add, repair, or remove it without changing other policy.
     """
     if config.username == "root":
         return

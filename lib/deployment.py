@@ -870,7 +870,7 @@ class DeploymentOrchestrator:
     def deploy_manifest(self, manifest: Manifest, source_path: str, domain: Optional[str],
                         path: str, git_url: str, commit_hash: Optional[str],
                         keep_source: bool = False) -> list[dict[str, Any]]:
-        """Deploy every component of an basaltwater.json manifest.
+        """Deploy every component of a `basaltwater.json` manifest.
 
         Returns one nginx "dep" descriptor per component. Components declare
         their own domains, so a single repo can serve a static apex site and a

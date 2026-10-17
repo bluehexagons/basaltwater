@@ -347,7 +347,7 @@ def _prepare_samba_share(
 
 
 def _managed_share_group(section: str) -> Optional[str]:
-    """Return the managed group for an basaltwater-generated share section."""
+    """Return the managed group for a Basaltwater-generated share section."""
 
     header_match = re.match(r"(?m)^[ \t]*\[([^\]\r\n]+)\]", section)
     if not header_match:

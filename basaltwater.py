@@ -11,15 +11,7 @@ Usage:
     basaltw patch <host> [options]
     basaltw --help
 
-System Types:
-    control_plane         Infrastructure control plane setup
-    workstation_desktop  Desktop workstation setup
-    pc_dev              PC development environment
-    workstation_dev     Developer workstation setup
-    server_dev          Development server setup
-    server_web          Web server setup
-    server_lite         Lightweight server setup
-    server_proxmox      Proxmox server setup
+Run `basaltw setup --help` for the current system types and their descriptions.
 """
 
 from __future__ import annotations
@@ -357,7 +349,11 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         action="append",
         nargs=4,
         metavar=("ACCESS_TYPE", "SHARE_NAME", "PATH", "USERS"),
-        help="Add or replace a share by name; repeat as needed",
+        help=(
+            "Add or replace a share; USERS may be usernames or username:password "
+            "pairs. Prefer saved workspace credentials; inline passwords may "
+            "appear in shell history and process arguments. Repeat as needed"
+        ),
     )
     shares_parser.add_argument(
         "--remove-share",
@@ -372,7 +368,11 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
         action="append",
         nargs=2,
         metavar=("USERNAME", "PASSWORD"),
-        help="Save or update a share user's workspace credential",
+        help=(
+            "Save or update a share credential. Passing PASSWORD may expose it "
+            "in shell history and process arguments; use basaltw credentials "
+            "set USERNAME for hidden entry. Repeat as needed"
+        ),
     )
     shares_parser.add_argument("--dry-run", action="store_true")
     shares_parser.add_argument(
@@ -611,7 +611,7 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     credentials_set_parser.add_argument(
         "password",
         nargs="?",
-        help="Credential password (omit to enter it without exposing it in process arguments)",
+        help="Credential password (omit to enter it without exposing it in shell history or process arguments)",
     )
 
     credentials_subparsers.add_parser("list", help="List saved credential usernames")

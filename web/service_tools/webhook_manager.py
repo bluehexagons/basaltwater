@@ -5,13 +5,13 @@ Manage CI/CD Webhook Configuration
 Helper script for managing webhook configurations and testing the CI/CD system.
 
 Usage:
-    webhook-manager.py list              - List configured repositories
-    webhook-manager.py add <url>         - Add repository configuration
-    webhook-manager.py remove <url>      - Remove repository configuration
-    webhook-manager.py show-secret       - Display webhook secret
-    webhook-manager.py test <url>        - Test webhook configuration
-    webhook-manager.py logs [service]    - Show service logs
-    webhook-manager.py status            - Show service status
+    webhook-manager list              - List configured repositories
+    webhook-manager add <url>         - Add repository configuration
+    webhook-manager remove <url>      - Remove repository configuration
+    webhook-manager show-secret       - Display webhook secret
+    webhook-manager test <url>        - Test webhook configuration
+    webhook-manager logs [service]    - Show service logs
+    webhook-manager status            - Show service status
 """
 
 from __future__ import annotations
@@ -298,7 +298,7 @@ def main():
     if args.command in privileged_commands:
         if os.geteuid() != 0:
             print("Error: This command requires root privileges")
-            print("Run with: sudo webhook-manager.py ...")
+            print("Run with: sudo webhook-manager ...")
             return 1
     
     commands = {
