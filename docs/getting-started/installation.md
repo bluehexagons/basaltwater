@@ -413,7 +413,11 @@ are preserved. Existing source files are backed up, and an unmanaged
 `basaltwater-debian.sources` file is not overwritten. Existing current Debian
 base and security entries are reused; the managed file is limited to any
 missing suite, and a redundant managed file from an older installer run is
-removed.
+removed. An existing entry must be enabled, include binary packages and the
+case-sensitive `main` component,
+and associate the official mirror with the current suite in the same line or
+deb822 stanza. CD-ROM cleanup affects only its active entry; other stanzas in
+the same source file are retained.
 
 The installer and setup print APT progress directly. Setup package operations
 wait up to five minutes while another package operation releases the APT lock,

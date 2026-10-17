@@ -21,6 +21,67 @@ from lib.apt_sources import (
 
 
 class TestAptSources(unittest.TestCase):
+    def test_component_case_does_not_cover_main_or_poison_managed_repair(self):
+        for filename, content in (
+            (
+                "debian.list",
+                "deb https://deb.debian.org/debian trixie MAIN\n"
+                "deb https://security.debian.org/debian-security trixie-security MAIN\n",
+            ),
+            (
+                "debian.sources",
+                "Types: deb\nURIs: https://deb.debian.org/debian\n"
+                "Suites: trixie\nComponents: MAIN\n\n"
+                "Types: deb\nURIs: https://security.debian.org/debian-security\n"
+                "Suites: trixie-security\nComponents: MAIN\n",
+            ),
+        ):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                apt = root / "apt"
+                sources = apt / "sources.list.d"
+                sources.mkdir(parents=True)
+                (sources / filename).write_text(content)
+                release = root / "os-release"
+                release.write_text("ID=debian\nVERSION_CODENAME=trixie\n")
+                before = inspect_apt_sources("trixie", str(apt))
+                self.assertFalse(before.has_official_base)
+                self.assertFalse(before.has_official_security)
+                with patch("lib.apt_sources._find_debian_archive_keyring", return_value=str(root / "keyring")):
+                    status = ensure_debian_package_sources(str(apt), str(release))
+                    self.assertTrue(status.has_official_base)
+                    self.assertTrue(status.has_official_security)
+                    managed = sources / MANAGED_SOURCE_FILENAME
+                    self.assertIn("Components: main MAIN", managed.read_text())
+                    managed_before = managed.read_bytes()
+                    ensure_debian_package_sources(str(apt), str(release))
+                    self.assertEqual(managed.read_bytes(), managed_before)
+
+    def test_source_only_cdrom_cleanup_preserves_other_stanzas(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apt = root / "apt"
+            sources = apt / "sources.list.d"
+            sources.mkdir(parents=True)
+            source = sources / "mixed.sources"
+            retained = (
+                "Types: deb-src\nURIs: cdrom:[Disabled]/\nSuites: trixie\n"
+                "Components: main\nEnabled: no\n\n"
+                "Types: deb\nURIs: https://packages.example.test/repo\nSuites: stable\nComponents: main\n"
+            )
+            original = (
+                "Types: deb-src\nURIs: cdrom:[Disc]/\nSuites: trixie\nComponents: main\n\n"
+                + retained
+            )
+            source.write_text(original)
+            release = root / "os-release"
+            release.write_text("ID=debian\nVERSION_CODENAME=trixie\n")
+            with patch("lib.apt_sources._find_debian_archive_keyring", return_value=str(root / "keyring")):
+                ensure_debian_package_sources(str(apt), str(release))
+            self.assertIn("# Disabled by basaltwater: Types: deb-src", source.read_text())
+            self.assertIn(retained, source.read_text())
+            self.assertEqual(Path(str(source) + ".basaltwater.bak").read_text(), original)
+
     def test_preserves_pinned_desktop_source_and_repairs_prior_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

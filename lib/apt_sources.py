@@ -274,13 +274,13 @@ def _source_status(codename: str, entries: tuple[AptSourceEntry, ...]) -> AptSou
     has_main = any(
         _is_official_base_uri(entry.uri)
         and entry.suite == codename
-        and "main" in {component.lower() for component in entry.components}
+        and "main" in entry.components
         for entry in entries
     )
     has_security = any(
         _is_official_security_uri(entry.uri)
         and entry.suite == f"{codename}-security"
-        and "main" in {component.lower() for component in entry.components}
+        and "main" in entry.components
         for entry in entries
     )
     return AptSourceStatus(
@@ -323,9 +323,8 @@ def _components_for_managed_sources(entries: tuple[AptSourceEntry, ...]) -> tupl
         for component in entry.components:
             if not _DEBIAN_COMPONENT_PATTERN.fullmatch(component):
                 continue
-            normalized = component.lower()
-            if normalized not in seen:
-                seen.add(normalized)
+            if component not in seen:
+                seen.add(component)
                 components.append(component)
     if "main" not in seen:
         components.insert(0, "main")
@@ -430,16 +429,14 @@ def _disable_cdrom_sources(apt_dir: str) -> list[str]:
             output: list[str] = []
             changed = False
             for stanza in _deb822_stanzas(content):
-                entries = _parse_deb822_stanza(stanza, path)
                 fields = _deb822_fields(stanza)
                 has_active_cdrom = (
                     fields.get("enabled", ["yes"])[0].lower() != "no"
-                    and "deb" in {source_type.lower() for source_type in fields.get("types", [])}
+                    and any(source_type.lower() in {"deb", "deb-src"}
+                            for source_type in fields.get("types", []))
                     and any(_is_cdrom_uri(uri) for uri in fields.get("uris", []))
                 )
-                if has_active_cdrom or (
-                    entries and any(_is_cdrom_uri(entry.uri) for entry in entries)
-                ):
+                if has_active_cdrom:
                     output.extend(_comment_lines(stanza))
                     changed = True
                 else:

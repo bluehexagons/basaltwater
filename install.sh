@@ -433,54 +433,138 @@ managed_path="$source_dir/basaltwater-debian.sources"
 
 mkdir -p "$source_dir"
 
+# Inspect complete entries rather than matching unrelated lines in a file.
+# Python is not yet available here; keep the parser compatible with POSIX awk.
+inspect_source_file() {
+    awk -v action="$1" -v format="$2" -v codename="$codename" '
+        function trim(value) {
+            sub(/^[[:space:]]+/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+            return value
+        }
+        function has_word(value, word, words, count, i) {
+            count=split(trim(value), words, /[[:space:]]+/)
+            for (i=1; i<=count; i++) if (words[i] == word) return 1
+            return 0
+        }
+        function inspect_entry(uris, suites, components, words, count, i, uri) {
+            if (!has_word(components, "main")) return
+            count=split(trim(uris), words, /[[:space:]]+/)
+            for (i=1; i<=count; i++) {
+                uri=words[i]
+                # URL paths are case-sensitive; normalize only the origin.
+                if (match(uri, /^[^:]+:\/\/[^/]+/))
+                    uri=tolower(substr(uri, 1, RLENGTH)) substr(uri, RLENGTH+1)
+                if (uri ~ /^https?:\/\/deb[.]debian[.]org\/debian\/?$/ && has_word(suites, codename))
+                    base=1
+                if (uri ~ /^https?:\/\/(security[.]debian[.]org(\/debian-security)?|deb[.]debian[.]org\/debian-security)\/?$/ && has_word(suites, codename "-security"))
+                    security=1
+            }
+        }
+        function finish_stanza(disable, lines, count, i) {
+            disable=0
+            if (tolower(trim(fields["enabled"])) != "no") {
+                if (action == "coverage") {
+                    if (has_word(tolower(fields["types"]), "deb"))
+                        inspect_entry(fields["uris"], fields["suites"], fields["components"])
+                } else if ((has_word(tolower(fields["types"]), "deb") || has_word(tolower(fields["types"]), "deb-src")) && tolower(fields["uris"]) ~ /(^|[[:space:]])cdrom:/)
+                    disable=1
+            }
+            if (disable) cdrom=1
+            if (action == "disable-cdrom") {
+                if (disable) {
+                    count=split(stanza, lines, "\n")
+                    for (i=1; i<count; i++) print "# Disabled by basaltwater: " lines[i]
+                } else printf "%s", stanza
+            }
+            for (i in fields) delete fields[i]
+            stanza=""
+            field=""
+        }
+        format == "list" {
+            line=trim($0)
+            sub(/[[:space:]]*#.*/, "", line)
+            if (line !~ /^deb[[:space:]]+/) next
+            sub(/^deb[[:space:]]+/, "", line)
+            sub(/^\[[^]]*\][[:space:]]+/, "", line)
+            count=split(line, words, /[[:space:]]+/)
+            components=""
+            for (i=3; i<=count; i++) components=components " " words[i]
+            inspect_entry(words[1], words[2], components)
+            next
+        }
+        /^[[:space:]]*$/ {
+            finish_stanza()
+            if (action == "disable-cdrom") print
+            next
+        }
+        {
+            stanza=stanza $0 "\n"
+            if ($0 ~ /^[[:space:]]*#/) next
+            if ($0 ~ /^[[:space:]]/ && field != "") {
+                fields[field]=fields[field] " " trim($0)
+            } else {
+                separator=index($0, ":")
+                field=""
+                if (separator) {
+                    field=tolower(trim(substr($0, 1, separator-1)))
+                    fields[field]=trim(substr($0, separator+1))
+                }
+            }
+        }
+        END {
+            if (format == "sources") finish_stanza()
+            if (action == "coverage") {
+                if (base) print "base"
+                if (security) print "security"
+            }
+            if (action == "cdrom" && cdrom) print "cdrom"
+        }
+    ' "$3"
+}
+
 for source_path in "$apt_dir/sources.list" "$source_dir"/*.list; do
     [ -f "$source_path" ] || continue
-    if grep -Eq '^[[:space:]]*deb[[:space:]]+(\[[^]]*\][[:space:]]+)?cdrom:' "$source_path"; then
+    if grep -Eq '^[[:space:]]*deb(-src)?[[:space:]]+(\[[^]]*\][[:space:]]+)?cdrom:' "$source_path"; then
         backup_path="$source_path.basaltwater.bak"
         [ -e "$backup_path" ] || cp -p "$source_path" "$backup_path"
-        sed -i -E 's/^([[:space:]]*deb[[:space:]]+(\[[^]]*\][[:space:]]+)?cdrom:)/# Disabled by basaltwater: \1/' "$source_path"
+        sed -i -E 's/^([[:space:]]*deb(-src)?[[:space:]]+(\[[^]]*\][[:space:]]+)?cdrom:)/# Disabled by basaltwater: \1/' "$source_path"
     fi
 done
 
 for source_path in "$source_dir"/*.sources; do
     [ -f "$source_path" ] || continue
-    if awk '
-        /^[[:space:]]*#/ { next }
-        /(^|[[:space:]])cdrom:/ { found=1; exit }
-        END { exit found ? 0 : 1 }
-    ' "$source_path"; then
+    cdrom=$(inspect_source_file cdrom sources "$source_path")
+    [ -n "$cdrom" ] || continue
+    temporary_path=$(mktemp "$source_path.basaltwater.XXXXXX")
+    # Retain the source file mode and owner when replacing a changed file.
+    cp -p "$source_path" "$temporary_path"
+    inspect_source_file disable-cdrom sources "$source_path" > "$temporary_path"
+    if cmp -s "$source_path" "$temporary_path"; then
+        rm -f "$temporary_path"
+    else
         backup_path="$source_path.basaltwater.bak"
         [ -e "$backup_path" ] || cp -p "$source_path" "$backup_path"
-        sed -i 's/^/# Disabled by basaltwater: /' "$source_path"
+        mv "$temporary_path" "$source_path"
     fi
 done
 
 has_current_base=0
 has_current_security=0
-for source_path in "$apt_dir/sources.list" "$source_dir"/*.list; do
+for source_path in "$apt_dir/sources.list" "$source_dir"/*.list "$source_dir"/*.sources; do
     [ -f "$source_path" ] || continue
     [ "$source_path" = "$managed_path" ] && continue
-    if grep -Eq "^[[:space:]]*deb[[:space:]]+(\\[[^]]*\\][[:space:]]+)?https?://deb[.]debian[.]org/debian/?([[:space:]]|$)" "$source_path" \
-        && grep -Eq "^[[:space:]]*deb.*[[:space:]]${codename}([[:space:]]|$)" "$source_path"; then
-        has_current_base=1
-    fi
-    if grep -Eq "^[[:space:]]*deb[[:space:]]+(\\[[^]]*\\][[:space:]]+)?https?://security[.]debian[.]org/debian-security/?([[:space:]]|$)" "$source_path" \
-        && grep -Eq "^[[:space:]]*deb.*[[:space:]]${codename}-security([[:space:]]|$)" "$source_path"; then
-        has_current_security=1
-    fi
-done
-
-for source_path in "$source_dir"/*.sources; do
-    [ -f "$source_path" ] || continue
-    [ "$source_path" = "$managed_path" ] && continue
-    if grep -Eq '^[[:space:]]*URIs:[[:space:]]*https?://deb[.]debian[.]org/debian/?([[:space:]]|$)' "$source_path" \
-        && grep -Eq "^[[:space:]]*Suites:.*([[:space:]]|^)${codename}([[:space:]]|$)" "$source_path"; then
-        has_current_base=1
-    fi
-    if grep -Eq '^[[:space:]]*URIs:[[:space:]]*https?://security[.]debian[.]org/debian-security/?([[:space:]]|$)' "$source_path" \
-        && grep -Eq "^[[:space:]]*Suites:.*([[:space:]]|^)${codename}-security([[:space:]]|$)" "$source_path"; then
-        has_current_security=1
-    fi
+    case "$source_path" in
+        *.sources) source_format=sources ;;
+        *) source_format=list ;;
+    esac
+    coverage=$(inspect_source_file coverage "$source_format" "$source_path")
+    for suite in $coverage; do
+        case "$suite" in
+            base) has_current_base=1 ;;
+            security) has_current_security=1 ;;
+        esac
+    done
 done
 
 if [ "$has_current_base" -eq 1 ] && [ "$has_current_security" -eq 1 ]; then
