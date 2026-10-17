@@ -373,8 +373,9 @@ terminal agents are inventoried by diagnostics but do not execute prompt tasks
 in this initial version. Root-managed panels use a locked service account
 without a home and show diagnostics with prompt execution unavailable.
 
-1. Choose a starting template under **Repository work** or **Host checks and maintenance**,
-   or write a custom prompt. Each template shows its execution mode, suggested
+1. Select **New task** to write a custom prompt, **Templates** for a starting
+   point under **Repository work** or **Host checks and maintenance**, or
+   **Guided tasks** for system and data tools. Each template shows its execution mode, suggested
    repeat interval, runtime cap, and additional permissions before selection.
 2. Enter the working directory. Repository templates require you to choose
    the specific checkout; host inspection defaults to the account's home.
@@ -386,7 +387,7 @@ without a home and show diagnostics with prompt execution unavailable.
    their own permissions.
 4. Select a model and reasoning effort, or keep the configured defaults. The
    model dropdown reads Codex's local cache without contacting the provider;
-   **Additional options** accepts a custom model ID when needed. Model access
+   **Model and web search** accepts a custom model ID when needed. Model access
    and supported effort levels depend on the installed CLI and account.
 5. Set **Maximum runtime** in whole minutes, from 1 minute to 7 days (default
    30 minutes). Waiting and sleeping count toward this wall-clock limit. This
@@ -400,11 +401,12 @@ without a home and show diagnostics with prompt execution unavailable.
    prompt, without running it or enabling repetition. Before Codex is installed,
    drafts can be prepared through the task CLI; panel prompt forms appear once
    Codex is installed.
-7. Set **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
+7. Open **Scheduling options** to set a first-run time, custom interval, or
+   **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
    The default is 3. Failed, blocked, or interrupted runs count toward this
    limit; cancellation preserves the count, and progress or completion resets it.
 
-Choose **Context persistence** independently of **Workspace**. A checkpoint
+Open **Context and workspace** to choose **Context persistence** independently of **Workspace**. A checkpoint
 carries findings and next steps into a new conversation; conversation mode
 resumes the exact saved Codex session. Managed directories begin empty; a
 persistent worktree starts from the source repository's committed HEAD and
@@ -506,13 +508,16 @@ actions. Availability filters only the starting catalog: saved tasks retain
 their prompts and settings if an integration is later removed. Opening a stale
 template link explains why it is unavailable and leaves the custom form usable.
 
-Additional options control Codex's web search independently of command network
+**Model and web search** controls Codex's web search independently of command network
 access: disabled, cached results, or live search. Runs use ephemeral Codex
 sessions by default; enable **Keep fresh Codex session history** to retain them
 in Codex too. This does not resume them. Conversation persistence always retains
 its session. Run evidence is retained with every choice.
 
-Saved tasks show their next run, last outcome, and working directory. Use
+Saved tasks use responsive cards with status, repetition, next run, latest
+outcome, and working directory. Active and queued work appears first, followed
+by tasks needing review. **View latest result** opens the retained report
+directly; **View live run** opens a running task's current record. Use
 **Pause**, **Resume**, **Edit**, **Run now**, or **Remove** to manage them.
 Use **Start schedule** to activate a recurring draft. Running a draft manually
 does not activate its repeat schedule. **Duplicate** opens a new form with a
@@ -520,7 +525,9 @@ saved task's settings so you can adjust its directory, model, or prompt. Run
 history's **Reuse run settings** uses the prompt and execution settings recorded
 for that specific run, even after the task is edited or removed. Reuse defaults
 to Once to avoid enabling another recurring schedule inadvertently. Neither
-link saves or executes work until you submit the form.
+link saves or executes work until you submit the form. **Task settings and more
+actions** contains duplicate, context, removal, and reset controls, plus full
+execution settings. Removing a task keeps its retained run history.
 
 Schedules that reach their failure limit show **Auto-paused** and the failure
 count. Inspect the last run, edit the task if needed, then use **Resume** to
@@ -532,16 +539,23 @@ completion, waiting, blocked and failed work; blocked reports count toward
 failure pausing even with a successful process exit. Review evidence before
 resuming work.
 
-Once tasks are saved, the screen leads with their status; expand **Create a
-prompt task** to add another, or select a saved task's **Edit** link. Selecting
-a template, editing, duplicating, or reusing settings puts the selected form
-before the saved-task list.
+The screen leads with task status and offers **New task** prominently. Workflow
+links lead to templates, guided tasks, run history, and setup/diagnostics.
+The task form keeps the prompt, directory, permissions, runtime, and repetition
+visible; disclosures group model/search, context/workspace, scheduling, and
+goal/usage settings. Relevant groups open for non-default settings and after
+validation errors. Selecting a template, editing, duplicating, or reusing
+settings puts the selected form before the saved-task list. All task controls
+and disclosures work without JavaScript.
 Pausing stops future work and clears a queued run; cancel an active run
 separately. Cancellation stops processes, but does not undo completed edits.
 Run history retains the prompt and settings used, timestamps, duration, exit
 code when available, and bounded output. Summary cards show the active/queued
 work, repeating schedules, drafts, automatically paused tasks, recent outcomes,
-and recorded wall time for retained finished runs. These are retained-history
+and tasks needing review. Run history shows recorded wall time for retained
+finished runs and puts execution settings inside each report's disclosure.
+Outcome badges distinguish blocked or failed work from a completed CLI process.
+These are retained-history
 totals, not lifetime usage or spending estimates. Active runs show elapsed time
 and remaining runtime at page load. Use **Refresh status** to update results
 and timing without automatic reloads that would discard a prompt draft.
@@ -561,6 +575,7 @@ for review. The runner executes serially across its shared CLI/panel controls;
 select a managed task worktree when editing could overlap another agent session.
 Removing the panel leaves independent tasks running; pause them explicitly.
 
+Under **Setup and diagnostics**, expand **Check installation and sign-in readiness**.
 **Check agent readiness** collects versions and local credential metadata for
 Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and
 the timestamp of any saved readiness record. T3 Code is checked when installed;

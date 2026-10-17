@@ -59,7 +59,7 @@ const test = base.extend({
       expect(stderr, 'No specialized worker exceptions').toBe('');
     }
   },
-  context: async ({ playwright, browserName, developmentServer }, use, info) => {
+  context: async ({ playwright, browserName, developmentServer, javaScriptEnabled }, use, info) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'basaltwater-browser-profile-'));
     const profile = path.join(directory, 'profile');
     let context;
@@ -72,6 +72,7 @@ const test = base.extend({
         env: { ...process.env, HOME: directory },
         args: browserName === 'chromium' ? ['--disable-features=NativeNotifications'] : [],
         viewport: { width: 1440, height: 900 },
+        javaScriptEnabled,
         httpCredentials: { username: developmentServer?.username || fixture.username,
           password: developmentServer?.password || fixture.password },
         extraHTTPHeaders: { 'X-Fixture-Engine': browserName },
@@ -446,6 +447,83 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     expect(stopped, 'Supervisor and worker stop gracefully').toBe(true);
     if (stateDirectory) expect(fs.existsSync(stateDirectory), 'Disposable state removed').toBe(false);
   }
+});
+
+test.describe('agent task workflow', () => {
+  test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('agent tasks are discoverable and usable without JavaScript on narrow screens', async ({ page, developmentServer: dev, diagnostics }, info) => {
+    test.setTimeout(90000);
+    await page.goto(dev.url + '/agents');
+    const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
+    await expect(sample.getByRole('button', { name: 'Run now', exact: true })).toBeVisible();
+    await expect(sample.getByRole('button', { name: 'Remove', exact: true })).not.toBeVisible();
+    const newTask = page.locator('header').getByRole('link', { name: 'New task', exact: true });
+    await newTask.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Task name', { exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Context persistence', exact: true })).not.toBeVisible();
+    await expect(page.getByLabel('First run with timezone', { exact: true })).not.toBeVisible();
+    await page.getByLabel('Task name', { exact: true }).fill('Browser workflow draft');
+    await page.getByLabel('Prompt', { exact: true }).fill('Inspect the synthetic workspace and report findings.');
+    await page.getByRole('combobox', { name: 'Execution mode', exact: true }).selectOption('workspace');
+    await page.getByLabel('Allow temporary file writes', { exact: false }).check();
+    await page.getByLabel('Maximum runtime (minutes)', { exact: true }).fill('45');
+    await page.getByRole('combobox', { name: 'Repeat', exact: true }).selectOption('custom');
+    const scheduling = page.locator('.agent-form > details').filter({ has: page.locator('summary', { hasText: 'Scheduling options' }) });
+    await scheduling.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await page.getByLabel('Custom repeat interval (minutes)', { exact: true }).fill('360');
+    await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+    const draft = page.getByRole('article', { name: 'Browser workflow draft', exact: true });
+    await expect(draft.getByText('Draft', { exact: true })).toBeVisible();
+    await expect(draft.getByText('Every 360 minutes', { exact: true })).toBeVisible();
+    await draft.getByRole('button', { name: 'Start schedule', exact: true }).click();
+    await expect(draft.getByText('Scheduled', { exact: true })).toBeVisible();
+    await draft.getByRole('button', { name: 'Pause', exact: true }).click();
+    await expect(draft.getByText('Paused', { exact: true })).toBeVisible();
+    await draft.getByRole('link', { name: 'Edit', exact: true }).click();
+    await expect(page.getByLabel('Custom repeat interval (minutes)', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Custom repeat interval (minutes)', { exact: true })).toHaveValue('360');
+    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).toBeChecked();
+
+    // Server validation preserves inputs and opens options needed for correction.
+    await page.getByLabel('Working directory', { exact: true }).fill('/missing-synthetic-directory');
+    diagnostics.allowed.add(dev.url + '/actions/agent-task/save');
+    await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByLabel('Task name', { exact: true })).toHaveValue('Browser workflow draft');
+    await expect(page.getByRole('combobox', { name: 'Context persistence', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Back to tasks', exact: true }).click();
+    await sample.getByRole('button', { name: 'Run now', exact: true }).click();
+    await expect.poll(async () => {
+      await page.reload();
+      return sample.getByRole('link', { name: 'View latest result', exact: true }).count();
+    }).toBe(1);
+    await sample.getByRole('link', { name: 'View latest result', exact: true }).click();
+    await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
+    await page.getByRole('navigation', { name: 'Agent workflow' }).getByRole('link', { name: 'Templates', exact: true }).click();
+    await page.getByRole('link', { name: /^Repair failing checks/ }).click();
+    await expect(page.getByLabel('Working directory', { exact: true })).toHaveValue('');
+    await expect(page.getByRole('combobox', { name: 'Execution mode', exact: true })).toHaveValue('workspace');
+    await expect(page.getByLabel('Allow temporary file writes', { exact: false })).toBeChecked();
+
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      for (const route of ['/agents', '/agents?view=new', '/agents?view=templates', '/agents?template=backups']) {
+        await page.goto(dev.url + route);
+        await page.setViewportSize({ width: 320, height: 900 });
+        await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${colorScheme}: ${route}`).toBe(true);
+        // Actions within a task must fit without an internal horizontal scroller.
+        for (const card of await page.locator('.agent-task').all())
+          expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(dev.url + '/agents');
+    await page.screenshot({ path: info.outputPath('agents-desktop-dark.png'), fullPage: true });
+    await page.goto('about:blank');
+  });
 });
 
 for (const surface of ['connect', 'pairing', 'approval', 'desktop', 'console']) {

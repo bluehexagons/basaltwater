@@ -881,7 +881,8 @@ class AgentScreenTest(unittest.TestCase):
         self.assertFalse(task["enabled"])
         self.assertFalse(task["queued"])
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
-        self.assertIn("Draft<small>daily", page)
+        self.assertIn('>Draft</span>', page)
+        self.assertIn('<dt>Schedule</dt><dd>Every 24 hours</dd>', page)
         self.assertIn("Start schedule</button>", page)
 
     def test_custom_schedule_form_edit_copy_and_reuse_preserve_interval(self) -> None:
@@ -1002,7 +1003,8 @@ class AgentScreenTest(unittest.TestCase):
         self.assertIn("0 drafts · 1 paused after failures", page)
         self.assertIn("1 failed/interrupted · 0 cancelled · latest 1 finished runs", page)
         self.assertIn("2m 05s duration · exit code 2", page)
-        self.assertIn("Auto-paused<small>daily", page)
+        self.assertIn('>Auto-paused</span>', page)
+        self.assertIn('<dt>Schedule</dt><dd>Every 24 hours</dd>', page)
         self.assertIn("1 consecutive failure · pause at 1", page)
         self.assertIn(f'href="/agents?copy={identifier}"', page)
         self.assertIn("Reuse run settings", page)
@@ -1197,9 +1199,44 @@ class AgentScreenTest(unittest.TestCase):
 
     def test_query_rejects_unsupported_filters_before_rendering(self) -> None:
         for query in ("load=1", "template=no", "edit=../../etc/passwd", "template=repository&template=maintenance",
+                      "view=unknown", "view=new&view=templates", "view=new&template=repository",
                       "copy=../task", "reuse=no", "run=../history", f"run={'a' * 32}&run={'a' * 32}", f"copy={'a' * 32}&reuse={'b' * 32}"):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 agents.parse_agent_query(query)
+
+    def test_new_task_and_template_views_only_prepare_work(self) -> None:
+        before = self.state.agent_tasks.snapshot()
+        with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
+            for view in ("new", "templates"):
+                query = agents.parse_agent_query("view=" + view)
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
+                self.assertIn('aria-label="Agent workflow"', page)
+                if view == "new":
+                    self.assertIn('class="agent-form"', page)
+                    self.assertNotIn('<details><summary>Create a prompt task</summary>', page)
+                else:
+                    self.assertIn("Task templates</h2>", page)
+                    self.assertNotIn('class="agent-form"', page)
+                self.assertEqual(self.state.agent_tasks.snapshot(), before)
+        execute.assert_not_called()
+        checks.assert_not_called()
+
+    def test_task_list_prioritizes_queue_and_attention_and_links_to_results(self) -> None:
+        settings = {"title": "Draft", "prompt": "Inspect", "directory": self.temporary.name,
+                    "mode": "inspect", "interval": "once"}
+        draft = self.state.agent_tasks.create(settings, run_now=False, draft=True)
+        blocked = self.state.agent_tasks.create({**settings, "title": "Blocked"}, run_now=True)
+        with patch.object(tasks, "execute_prompt", return_value={"status": "completed", "outcome": "blocked", "output": "Report", "message": "Needs access"}):
+            self.state.agent_tasks.tick()
+        run = self.state.agent_tasks.snapshot()["runs"][0]
+        queued = self.state.agent_tasks.create({**settings, "title": "Queued"}, run_now=True)
+        page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+        positions = [page.index(f'<h3 id="task-{identifier}"') for identifier in (queued, blocked, draft)]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(f'href="/agents?run={run["id"]}#run-{run["id"]}">View latest result', page)
+        self.assertIn('<span class="badge error">blocked</span>', page)
+        self.assertIn('Cancel queued run</button>', page)
+        self.assertIn('class="agent-task agent-task-attention"', page)
 
     def test_diagnostics_skip_t3_when_absent_and_do_not_repair_when_present(self) -> None:
         with (
