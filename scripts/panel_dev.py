@@ -62,13 +62,15 @@ def development_html(body: str, settings: dict, generation: str, csrf: str) -> s
     import re
 
     options = "".join(f'<option{" selected" if name == settings["scenario"] else ""}>{name}</option>' for name in SCENARIOS)
-    toolbar = f'''<aside id="panel-development" data-generation="{generation}" style="padding:12px;border:2px solid #667085;margin-bottom:16px;overflow-wrap:anywhere">
+    button_style = "flex:1 1 10rem;width:auto;min-width:0;min-height:44px;margin:0;padding:10px 14px;white-space:normal;line-height:1.4"
+    toolbar = f'''<aside id="panel-development" data-generation="{generation}" style="display:grid;gap:14px;padding:16px;border:1px solid var(--line,#667085);border-radius:12px;margin-bottom:20px;overflow-wrap:anywhere">
 <strong>Local development · simulated operations</strong>
-<form method="post" action="/__dev__/control"><input type="hidden" name="csrf" value="{html.escape(csrf, quote=True)}">
-<label>Scenario <select name="scenario">{options}</select></label>
-<button name="action" value="scenario">Switch scenario</button> <button name="action" value="reset">Reset sample data</button></form>
+<form method="post" action="/__dev__/control" style="display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:0"><input type="hidden" name="csrf" value="{html.escape(csrf, quote=True)}">
+<label style="display:grid;gap:6px;flex:1 1 14rem;min-width:0;margin:0">Scenario <select name="scenario" style="width:100%;min-width:0;min-height:44px;margin:0">{options}</select></label>
+<div style="display:flex;flex-wrap:wrap;gap:8px;flex:2 1 22rem;min-width:0">
+<button name="action" value="scenario" style="{button_style}">Switch scenario</button><button name="action" value="reset" style="{button_style}">Reset sample data</button></div></form>
 <a id="panel-reload" href="" hidden>Changes ready — reload when finished editing</a>
-<span>Temporary data only. Use sample credentials. Provider, approval and desktop actions are simulated.</span></aside>'''
+<p style="margin:0;font-size:.85rem;line-height:1.5">Temporary data only. Use sample credentials. Provider, approval and desktop actions are simulated.</p></aside>'''
     body = re.sub(r"<main\b[^>]*>", lambda match: match[0] + toolbar, body, count=1)
     if settings["refresh"]:
         script = '<script src="/__dev__/reload.js" defer></script>'
