@@ -53,6 +53,8 @@ New accounts have root-protected preparation markers under
 `/var/lib/basaltwater/wsl-accounts`. An interrupted password prompt is retried
 before adding sudo membership or completing preparation. Existing accounts
 without a pending managed marker retain their password and lock policy.
+Setup syncs the state directory hierarchy and pending marker before creating
+an account; a directory sync failure stops preparation before account changes.
 `-Channel main|dev` or `-Version REF` pins the source revision. `-Go`, `-Node`,
 `-Python`, and `-AgentTool gh,codex,claude,opencode` select Ubuntu tools.
 `-T3CodeDesktop` installs the native Windows app with WinGet and does not create

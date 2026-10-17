@@ -80,6 +80,49 @@ class WslStepTests(unittest.TestCase):
 
 
 class WslPrepareTests(unittest.TestCase):
+    def test_account_hierarchy_and_marker_are_synced_before_useradd(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            accounts = root / "state/accounts"
+            synced = set()
+
+            def sync(descriptor):
+                metadata = wsl_prepare.os.fstat(descriptor)
+                synced.add((metadata.st_dev, metadata.st_ino))
+
+            def run(command, **_kwargs):
+                if command[0] == "useradd":
+                    for path in (root, accounts.parent, accounts):
+                        metadata = path.stat()
+                        self.assertIn((metadata.st_dev, metadata.st_ino), synced)
+                    self.assertTrue(wsl_prepare.read_json_file(str(accounts / "agent.json"))["password_pending"])
+
+            with patch.object(wsl_prepare, "CONF", root / "wsl.conf"), \
+                 patch.object(wsl_prepare, "ACCOUNTS", accounts), \
+                 patch.object(wsl_prepare.os, "geteuid", return_value=0), \
+                 patch.object(wsl_prepare.os, "fchown"), \
+                 patch.object(wsl_prepare.os, "fsync", side_effect=sync), \
+                 patch.object(wsl_prepare.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"}), \
+                 patch.object(wsl_prepare.pwd, "getpwnam", side_effect=KeyError("agent")), \
+                 patch.object(wsl_prepare.subprocess, "run", side_effect=run):
+                wsl_prepare.configure("agent")
+
+    def test_directory_sync_failure_stops_before_account_operations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(wsl_prepare, "CONF", root / "wsl.conf"), \
+                 patch.object(wsl_prepare, "ACCOUNTS", root / "state/accounts"), \
+                 patch.object(wsl_prepare.os, "geteuid", return_value=0), \
+                 patch.object(wsl_prepare.os, "fchown"), \
+                 patch.object(wsl_prepare.os, "fsync", side_effect=OSError("directory sync failed")), \
+                 patch.object(wsl_prepare.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"}), \
+                 patch.object(wsl_prepare.pwd, "getpwnam") as lookup, \
+                 patch.object(wsl_prepare.subprocess, "run") as run:
+                with self.assertRaisesRegex(OSError, "directory sync failed"):
+                    wsl_prepare.configure("agent")
+                lookup.assert_not_called()
+                run.assert_not_called()
+
     def test_invalid_account_marker_stops_before_account_operations(self):
         for content in ('null', '{"version": 2, "password_pending": true}',
                         '{"version": 1, "password_pending": 1}'):

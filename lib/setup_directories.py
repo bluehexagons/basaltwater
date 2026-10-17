@@ -16,6 +16,8 @@ def directory_fd(path: str, *, create: bool = False, mode: int = 0o755) -> Itera
 
     Mutations through the returned descriptor remain on the opened directory
     even if an unprivileged owner replaces its pathname during setup.
+    Creation syncs every parent entry before yielding, including entries left
+    by an interrupted earlier invocation, so subsequent state writes are durable.
     """
     validate_filesystem_path(path)
     if not os.path.isabs(path) or ".." in path.split(os.sep):
@@ -36,8 +38,12 @@ def directory_fd(path: str, *, create: bool = False, mode: int = 0o755) -> Itera
                 except FileExistsError:
                     pass
                 child = os.open(component, flags, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
+            parent, descriptor = descriptor, child
+            try:
+                if create:
+                    os.fsync(parent)
+            finally:
+                os.close(parent)
         yield descriptor
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.ENOTDIR):
