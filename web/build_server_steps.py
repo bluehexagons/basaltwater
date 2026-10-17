@@ -147,9 +147,6 @@ def create_build_workspace_dirs(config: SetupConfig) -> None:
         f"{CICD_HOME}/jobs",
     ]
 
-    for directory in directories:
-        os.makedirs(directory, mode=0o750, exist_ok=True)
-
     secure_cicd_directories(directories)
     create_isolated_build_directories()
 

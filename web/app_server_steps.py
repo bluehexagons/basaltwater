@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 
 from lib.config import SetupConfig
+from lib.atomic_io import write_bytes_atomic
 from lib.remote_utils import run, is_package_installed, is_service_active
 
 
 DEPLOY_ADMIN_SOURCE = "/opt/basaltwater/web/service_tools/deploy_admin.py"
 DEPLOY_ADMIN_HELPER = "/usr/local/sbin/basaltwater-deploy-admin"
+DEPLOY_SUDOERS_FILE = "/etc/sudoers.d/deploy-nginx"
 
 
 def install_app_server_dependencies(config: SetupConfig) -> None:
@@ -52,7 +55,7 @@ def create_deploy_user(config: SetupConfig) -> None:
 
 def configure_deploy_sudoers(config: SetupConfig) -> None:
     """Install the validated deploy helper and its minimal sudo permission."""
-    sudoers_file = "/etc/sudoers.d/deploy-nginx"
+    sudoers_file = DEPLOY_SUDOERS_FILE
 
     if not os.path.isfile(DEPLOY_ADMIN_SOURCE):
         raise RuntimeError(f"Deploy admin helper source not found: {DEPLOY_ADMIN_SOURCE}")
@@ -66,17 +69,43 @@ def configure_deploy_sudoers(config: SetupConfig) -> None:
 deploy ALL=(root) NOPASSWD: {DEPLOY_ADMIN_HELPER} *
 """
     
-    os.makedirs("/etc/sudoers.d", exist_ok=True)
-    with open(sudoers_file, 'w') as f:
-        f.write(sudoers_content)
-    
-    os.chmod(sudoers_file, 0o440)
-    
-    result = run(["visudo", "-c"], check=False)
-    if result.returncode != 0:
-        print("  ⚠ Sudoers validation failed, removing...")
-        os.remove(sudoers_file)
-        return
+    sudoers_dir = os.path.dirname(sudoers_file)
+    os.makedirs(sudoers_dir, exist_ok=True)
+    # Dots keep the candidate outside sudo's includedir activation rules.
+    descriptor, candidate = tempfile.mkstemp(prefix=".deploy-nginx-", dir=sudoers_dir)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file_obj:
+            file_obj.write(sudoers_content)
+            os.fchown(file_obj.fileno(), 0, 0)
+            os.fchmod(file_obj.fileno(), 0o440)
+        result = run(["visudo", "-c", "-f", candidate], check=False)
+        if result.returncode != 0:
+            raise RuntimeError("Deploy sudoers candidate validation failed")
+        # Validate the current include tree too, before replacing any live rule.
+        if run(["visudo", "-c"], check=False).returncode != 0:
+            raise RuntimeError("Existing sudoers validation failed")
+        previous = None
+        if os.path.lexists(sudoers_file):
+            if os.path.islink(sudoers_file):
+                raise ValueError("Deploy sudoers rule must not be a symlink")
+            with open(sudoers_file, "rb") as file_obj:
+                info = os.fstat(file_obj.fileno())
+                previous = (file_obj.read(), info)
+        os.replace(candidate, sudoers_file)
+        try:
+            if run(["visudo", "-c"], check=False).returncode != 0:
+                raise RuntimeError("Activated deploy sudoers validation failed")
+        except BaseException:
+            if previous is None:
+                os.unlink(sudoers_file)
+            else:
+                content, info = previous
+                write_bytes_atomic(sudoers_file, content, mode=info.st_mode & 0o7777,
+                                   uid=info.st_uid, gid=info.st_gid)
+            raise
+    finally:
+        if os.path.exists(candidate):
+            os.unlink(candidate)
     
     print("  ✓ Configured deploy user sudoers")
 

@@ -3,12 +3,44 @@
 from __future__ import annotations
 import os
 import shlex
+import grp
+import pwd
+import secrets
 from typing import Any, Optional
 
 from lib.config import SetupConfig
 from lib.remote_utils import run
 from lib.systemd_service import cleanup_systemd_unit
 from lib.validation import validate_smb_mount_specs
+from lib.validators import validate_username
+from lib.setup_directories import check_directory_path, directory_fd
+
+
+SMB_CREDENTIALS_DIR = "/root/.smb"
+
+
+def _write_credentials(directory: str, name: str, content: str) -> None:
+    """Replace credentials through a private no-follow directory descriptor."""
+    with directory_fd(directory, create=True, mode=0o700) as parent:
+        os.fchown(parent, 0, 0)
+        os.fchmod(parent, 0o700)
+        temporary = ".credentials-" + secrets.token_hex(16)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=parent)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as file_obj:
+                os.fchown(file_obj.fileno(), 0, 0)
+                os.fchmod(file_obj.fileno(), 0o600)
+                file_obj.write(content)
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
+            os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=parent)
+            except FileNotFoundError:
+                pass
 
 
 def parse_smb_mount_spec(mount_spec: Optional[list[str]]) -> dict[str, Any]:
@@ -63,21 +95,27 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
     password = mount_config['password']
     share = mount_config['share']
     subdir = mount_config['subdir']
+    if not validate_username(config.username):
+        raise ValueError("Invalid SMB mount owner")
+    check_directory_path(mountpoint)
+    check_directory_path(SMB_CREDENTIALS_DIR)
+    uid = pwd.getpwnam(config.username).pw_uid
+    gid = grp.getgrnam(config.username).gr_gid
     
     result = run(f"systemd-escape -p {shlex.quote(mountpoint)}", capture_output=True, text=True)
     escaped_mountpoint = result.stdout.strip()
-    if not escaped_mountpoint or "/" in escaped_mountpoint:
+    if not escaped_mountpoint or "/" in escaped_mountpoint or any(
+        ord(char) < 32 or ord(char) == 127 for char in escaped_mountpoint
+    ):
         raise RuntimeError(f"Unable to derive a safe systemd unit name for mountpoint: {mountpoint}")
 
     unit_name = f"{escaped_mountpoint}.mount"
     unit_path = f"/etc/systemd/system/{unit_name}"
 
-    os.makedirs(mountpoint, exist_ok=True)
-    run(f"chown {shlex.quote(config.username)}:{shlex.quote(config.username)} {shlex.quote(mountpoint)}")
+    with directory_fd(mountpoint, create=True) as descriptor:
+        os.fchown(descriptor, uid, gid)
 
-    credentials_dir = "/root/.smb"
-    os.makedirs(credentials_dir, exist_ok=True)
-    run(f"chmod 700 {shlex.quote(credentials_dir)}")
+    credentials_dir = SMB_CREDENTIALS_DIR
 
     # Use the already collision-resistant systemd-escaped mount name. The old
     # slash-to-underscore conversion made /mnt/a_b and /mnt/a/b share one
@@ -88,10 +126,7 @@ def configure_smb_mount(config: SetupConfig, mount_spec: Optional[list[str]] = N
 password={password}
 """
     
-    with open(creds_file, 'w') as f:
-        f.write(creds_content)
-    run(f"chown root:root {shlex.quote(creds_file)}")
-    run(f"chmod 600 {shlex.quote(creds_file)}")
+    _write_credentials(credentials_dir, os.path.basename(creds_file), creds_content)
     
     unc_path = f"//{ip}/{share}{subdir}"
     

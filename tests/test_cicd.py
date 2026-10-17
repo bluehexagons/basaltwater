@@ -9,7 +9,7 @@ import hashlib
 import subprocess
 import tempfile
 import time
-from unittest.mock import call, patch, mock_open, MagicMock
+from unittest.mock import call, patch, MagicMock
 import sys
 import os
 
@@ -100,33 +100,20 @@ class TestCICDSteps(unittest.TestCase):
         self.assertIn('/var/lib/basaltwater/cicd/build', mock_run.call_args_list[1][0][0])
         self.assertIn('cicd-build', mock_run.call_args_list[1][0][0])
     
-    @patch('web.cicd_steps.os.path.exists')
-    @patch('web.cicd_steps.os.makedirs')
-    @patch('web.cicd_steps.run')
-    def test_create_cicd_directories(self, mock_run, mock_makedirs, mock_exists):
+    @patch('web.cicd_steps.create_isolated_build_directories')
+    @patch('web.cicd_steps.secure_cicd_directories')
+    @patch('web.cicd_steps.directory_fd')
+    @patch('web.cicd_steps.check_directory_path')
+    def test_create_cicd_directories(self, check_path, directory, secure, isolated):
         """Test that we create required directories."""
-        mock_exists.return_value = False
-        mock_config = MagicMock()
-        
-        # Mock that webhook user exists (id command succeeds)
-        mock_run.return_value = MagicMock(returncode=0)
-        
-        create_cicd_directories(mock_config)
-        
-        # Should create multiple directories
-        self.assertGreaterEqual(mock_makedirs.call_count, 4)
-        
-        # Should check for webhook user existence
-        user_check_calls = [call for call in mock_run.call_args_list if call.args[0] == ['id', 'webhook']]
-        self.assertGreater(len(user_check_calls), 0)
-        
-        # Should set ownership (when user exists)
-        ownership_calls = [call for call in mock_run.call_args_list if 'chown' in str(call)]
-        self.assertGreater(len(ownership_calls), 0)
-        self.assertFalse(
-            any("-R" in call.args[0] for call in mock_run.call_args_list),
-            "CI/CD directory setup must preserve private-key and credential file modes",
-        )
+        create_cicd_directories(MagicMock())
+        self.assertEqual(check_path.call_count, 3)
+        directory.assert_called_once_with('/etc/basaltwater/cicd', create=True)
+        secure.assert_called_once_with([
+            '/var/lib/basaltwater/cicd', '/var/lib/basaltwater/cicd/jobs',
+            '/var/lib/basaltwater/cicd/logs',
+        ])
+        isolated.assert_called_once()
     
     @patch('web.cicd_steps.os.path.exists')
     @patch('web.cicd_steps.secrets.token_urlsafe')
@@ -250,12 +237,12 @@ class TestCICDSteps(unittest.TestCase):
             MagicMock(returncode=0),  # systemctl reload nginx
         ]
         
-        with patch('builtins.open', mock_open()) as mock_file:
+        with patch('web.cicd_steps.write_text_atomic') as write:
             configure_nginx_for_webhook(mock_config)
         
         # Should write nginx config
-        mock_file.assert_called_once()
-        written_config = ''.join(call.args[0] for call in mock_file().write.call_args_list)
+        write.assert_called_once()
+        written_config = write.call_args.args[1]
         self.assertIn('client_max_body_size 1m;', written_config)
         
         # Should test nginx config
@@ -265,6 +252,113 @@ class TestCICDSteps(unittest.TestCase):
         # Should reload nginx
         reload_calls = [call for call in mock_run.call_args_list if call.args[0] == ['systemctl', 'reload', 'nginx']]
         self.assertGreater(len(reload_calls), 0)
+
+
+class TestSetupDirectorySafety(unittest.TestCase):
+    def test_symlink_components_are_rejected_before_creation_or_ownership(self):
+        from web import cicd_steps as steps
+        for isolated in (False, True):
+            for leaf in (False, True):
+                with self.subTest(isolated=isolated, leaf=leaf), tempfile.TemporaryDirectory() as root:
+                    outside = os.path.join(root, 'outside')
+                    os.mkdir(outside)
+                    linked = os.path.join(root, 'linked')
+                    os.symlink(outside, linked)
+                    target = linked if leaf else os.path.join(linked, 'new')
+                    with patch.object(steps, 'run', return_value=MagicMock(returncode=0)), \
+                         patch.object(steps, 'BUILD_HOME', target), \
+                         patch.object(steps.os, 'fchown') as chown:
+                        with self.assertRaisesRegex(ValueError, 'symlink'):
+                            if isolated:
+                                steps.create_isolated_build_directories()
+                            else:
+                                steps.secure_cicd_directories([target])
+                    chown.assert_not_called()
+                    self.assertEqual(os.listdir(outside), [])
+
+    def test_opened_directory_survives_path_swap_without_touching_target(self):
+        from lib.setup_directories import directory_fd
+        with tempfile.TemporaryDirectory() as root:
+            target = os.path.join(root, 'target')
+            outside = os.path.join(root, 'outside')
+            moved = os.path.join(root, 'moved')
+            os.mkdir(target)
+            os.mkdir(outside, 0o755)
+            with directory_fd(target) as descriptor, patch('lib.setup_directories.os.fchown') as chown:
+                os.rename(target, moved)
+                os.symlink(outside, target)
+                os.fchown(descriptor, 123, 456)
+                os.fchmod(descriptor, 0o700)
+                chown.assert_called_once_with(descriptor, 123, 456)
+                self.assertEqual(os.fstat(chown.call_args.args[0]).st_ino, os.stat(moved).st_ino)
+            self.assertEqual(os.stat(moved).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(outside).st_mode & 0o777, 0o755)
+
+    def test_symlink_inserted_between_mkdir_and_open_is_rejected(self):
+        from lib.setup_directories import directory_fd
+        with tempfile.TemporaryDirectory() as root:
+            outside = os.path.join(root, 'outside')
+            os.mkdir(outside)
+            real_mkdir = os.mkdir
+
+            def race(name, mode=0o777, *, dir_fd=None):
+                if name == 'new':
+                    os.symlink(outside, name, dir_fd=dir_fd)
+                else:
+                    real_mkdir(name, mode=mode, dir_fd=dir_fd)
+
+            with patch('lib.setup_directories.os.mkdir', side_effect=race):
+                with self.assertRaisesRegex(ValueError, 'symlink'):
+                    with directory_fd(os.path.join(root, 'new'), create=True):
+                        self.fail('must reject raced symlink')
+            self.assertEqual(os.listdir(outside), [])
+
+    def test_cicd_modes_preserve_private_files(self):
+        from web import cicd_steps as steps
+        with tempfile.TemporaryDirectory() as root:
+            home = os.path.join(root, 'cicd')
+            build = os.path.join(home, 'build')
+            os.makedirs(build)
+            key = os.path.join(build, 'key')
+            with open(key, 'w') as stream:
+                stream.write('private')
+            os.chmod(key, 0o600)
+            with patch.object(steps, 'CICD_HOME', home), patch.object(steps, 'BUILD_HOME', build), \
+                 patch.object(steps, 'run', return_value=MagicMock(returncode=0)), \
+                 patch.object(steps.pwd, 'getpwnam', return_value=MagicMock(pw_uid=123)), \
+                 patch.object(steps.grp, 'getgrnam', return_value=MagicMock(gr_gid=456)), \
+                 patch.object(steps.os, 'fchown') as chown:
+                steps.secure_cicd_directories([home, os.path.join(home, 'jobs')])
+                steps.create_isolated_build_directories()
+            self.assertEqual(chown.call_count, 4)
+            self.assertEqual(os.stat(home).st_mode & 0o777, 0o711)
+            self.assertEqual(os.stat(os.path.join(home, 'jobs')).st_mode & 0o777, 0o750)
+            self.assertEqual(os.stat(build).st_mode & 0o777, 0o700)
+            self.assertEqual(os.stat(key).st_mode & 0o777, 0o600)
+
+    def test_webhook_nginx_failures_raise_and_remove_candidate(self):
+        from web import cicd_steps as steps
+        for failure in ('test', 'reload', 'exception'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:
+                target = os.path.join(root, 'webhook.conf')
+                calls = []
+
+                def activate(command, **kwargs):
+                    calls.append(command)
+                    if len(calls) == 1 and failure == 'test':
+                        return MagicMock(returncode=1)
+                    if len(calls) == 2:
+                        if failure == 'exception':
+                            raise OSError('reload interrupted')
+                        if failure == 'reload':
+                            return MagicMock(returncode=1)
+                    return MagicMock(returncode=0)
+
+                with patch.object(steps, 'WEBHOOK_NGINX_CONF', target), \
+                     patch.object(steps, 'run', side_effect=activate):
+                    with self.assertRaises((RuntimeError, OSError)):
+                        steps.configure_nginx_for_webhook(MagicMock())
+                self.assertFalse(os.path.exists(target))
 
 
 class TestWebhookSignatureVerification(unittest.TestCase):
@@ -384,32 +478,59 @@ class TestAppServerSteps(unittest.TestCase):
         
         self.assertGreater(mock_run.call_count, 1)
 
-    @patch('web.app_server_steps.os.path.isfile', return_value=True)
-    @patch('web.app_server_steps.os.makedirs')
-    @patch('web.app_server_steps.shutil.copyfile')
-    @patch('web.app_server_steps.os.chown')
-    @patch('web.app_server_steps.os.chmod')
-    @patch('web.app_server_steps.run')
-    def test_deploy_sudoers_exposes_only_validating_helper(
-        self,
-        mock_run,
-        _mock_chmod,
-        _mock_chown,
-        _mock_copy,
-        _mock_makedirs,
-        _mock_isfile,
-    ):
-        from web.app_server_steps import configure_deploy_sudoers
+    def test_deploy_sudoers_validation_and_rollback(self):
+        from web import app_server_steps as steps
 
-        mock_run.return_value = MagicMock(returncode=0)
-        with patch('builtins.open', mock_open()) as mock_file:
-            configure_deploy_sudoers(MagicMock())
+        for existing in (False, True):
+            for failure in (None, 0, 1, 2):
+                with self.subTest(existing=existing, failure=failure), tempfile.TemporaryDirectory() as root:
+                    source = os.path.join(root, 'source')
+                    helper = os.path.join(root, 'helper')
+                    target = os.path.join(root, 'deploy-nginx')
+                    with open(source, 'w') as stream:
+                        stream.write('helper')
+                    if existing:
+                        with open(target, 'w') as stream:
+                            stream.write('old rule')
+                        os.chmod(target, 0o440)
+                    calls = []
 
-        written_sudoers = ''.join(call.args[0] for call in mock_file().write.call_args_list)
-        self.assertIn('/usr/local/sbin/basaltwater-deploy-admin *', written_sudoers)
-        self.assertNotIn('/usr/bin/rm', written_sudoers)
-        self.assertNotIn('/usr/bin/mkdir', written_sudoers)
-        self.assertNotIn('/usr/bin/touch', written_sudoers)
+                    def validate(command, **kwargs):
+                        index = len(calls)
+                        calls.append(command)
+                        if index == 0:
+                            self.assertEqual(command[:3], ['visudo', '-c', '-f'])
+                            with open(command[3]) as stream:
+                                body = stream.read()
+                            self.assertIn(helper + ' *', body)
+                            self.assertNotIn('/usr/bin/rm', body)
+                            self.assertEqual(os.stat(command[3]).st_mode & 0o777, 0o440)
+                            if existing:
+                                with open(target) as stream:
+                                    self.assertEqual(stream.read(), 'old rule')
+                            else:
+                                self.assertFalse(os.path.exists(target))
+                        return MagicMock(returncode=int(index == failure))
+
+                    with patch.object(steps, 'DEPLOY_ADMIN_SOURCE', source), \
+                         patch.object(steps, 'DEPLOY_ADMIN_HELPER', helper), \
+                         patch.object(steps, 'DEPLOY_SUDOERS_FILE', target), \
+                         patch.object(steps.os, 'chown'), patch.object(steps.os, 'fchown'), \
+                         patch.object(steps, 'run', side_effect=validate):
+                        if failure is None:
+                            steps.configure_deploy_sudoers(MagicMock())
+                            with open(target) as stream:
+                                self.assertIn(helper + ' *', stream.read())
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, 'validation failed'):
+                                steps.configure_deploy_sudoers(MagicMock())
+                            if existing:
+                                with open(target) as stream:
+                                    self.assertEqual(stream.read(), 'old rule')
+                                self.assertEqual(os.stat(target).st_mode & 0o777, 0o440)
+                            else:
+                                self.assertFalse(os.path.exists(target))
+                    self.assertFalse(any(name.startswith('.deploy-nginx-') for name in os.listdir(root)))
 
 
 class TestBuildServerSteps(unittest.TestCase):
@@ -463,7 +584,7 @@ class TestBuildServerSteps(unittest.TestCase):
 
         create_build_workspace_dirs(MagicMock())
 
-        self.assertEqual(mock_makedirs.call_count, 4)
+        mock_makedirs.assert_not_called()
         mock_isolated.assert_called_once()
         mock_secure_directories.assert_called_once()
 
