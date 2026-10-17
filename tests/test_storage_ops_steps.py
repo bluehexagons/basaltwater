@@ -20,6 +20,22 @@ from sync.storage_ops_steps import (
 
 class TestGenerateMountCheckCondition(unittest.TestCase):
     @patch("lib.task_utils.get_mount_ancestor", return_value=None)
+    def test_only_used_mounts_are_required_and_percent_is_literal(self, _ancestor):
+        config = SetupConfig(
+            host="test", username="test", system_type="server_lite",
+            sync_specs=[["/srv/data", "/mnt/backup%20/copy", "daily"]],
+            smb_mounts=[
+                ["/mnt/backup%20", "nas", "user:password", "backup", "/"],
+                ["/mnt/media", "other", "user:password", "media", "/"],
+            ],
+        )
+        condition = generate_mount_check_condition(config)
+        self.assertIn("/mnt/backup%%20", condition)
+        self.assertNotIn("/mnt/media", condition)
+        config.backup_specs = [["/mnt/media/photos", "/srv/photos", "weekly"]]
+        self.assertIn("/mnt/media", generate_mount_check_condition(config))
+
+    @patch("lib.task_utils.get_mount_ancestor", return_value=None)
     def test_includes_derived_mnt_mountpoint_when_unmounted(self, _ancestor):
         config = SetupConfig(
             host="test",

@@ -213,8 +213,8 @@ def has_mount_paths(config: "SetupConfig | RuntimeConfig") -> bool:
 def get_mount_points_from_config(config: SetupConfig) -> set[str]:
     """Get all unique mount points from storage specs.
 
-    Collects mount points for paths that are under /mnt and SMB mount points
-    defined in ``config.smb_mounts``.
+    Collects mount points for paths under /mnt and declared SMB or VM mounts
+    containing a configured storage-operation path.
 
     Args:
         config: Setup configuration
@@ -223,8 +223,13 @@ def get_mount_points_from_config(config: SetupConfig) -> set[str]:
         Set of mount point paths (including both /mnt-based and SMB mounts)
     """
     mount_points: set[str] = set()
+    storage_paths = {
+        os.path.abspath(path)
+        for path in get_all_storage_paths(config)
+        if os.path.isabs(path)
+    }
 
-    for path in get_all_storage_paths(config):
+    for path in storage_paths:
         if is_path_under_mnt(path):
             mount_ancestor = get_mount_ancestor(path)
             if mount_ancestor:
@@ -244,10 +249,16 @@ def get_mount_points_from_config(config: SetupConfig) -> set[str]:
     smb_mounts = getattr(config, 'smb_mounts', None) or []
     for mount_spec in smb_mounts:
         if mount_spec:
-            mount_points.add(mount_spec[0])
+            root = os.path.abspath(mount_spec[0])
+            if any(path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+                   for path in storage_paths):
+                mount_points.add(root)
 
     for mount_spec in getattr(config, "storage_mounts", None) or []:
         if len(mount_spec) >= 2:
-            mount_points.add(mount_spec[1])
+            root = os.path.abspath(mount_spec[1])
+            if any(path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+                   for path in storage_paths):
+                mount_points.add(root)
 
     return mount_points

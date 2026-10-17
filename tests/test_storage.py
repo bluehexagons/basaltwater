@@ -342,12 +342,30 @@ class TestGetMountPointsFromConfig(unittest.TestCase):
     def test_includes_smb_mount_points(self):
         config = SetupConfig(
             host='test', username='test', system_type='server_lite',
-            sync_specs=[],
+            sync_specs=[['/srv/nas/data', '/home/test/backup', 'daily']],
             scrub_specs=[],
             smb_mounts=[['/srv/nas', '1.2.3.4', 'u:p', 'share', '/']],
         )
         mount_points = get_mount_points_from_config(config)
         self.assertIn('/srv/nas', mount_points)
+
+    def test_unrelated_mounts_do_not_gate_local_operations(self):
+        config = SetupConfig(
+            host='test', username='test', system_type='server_lite',
+            sync_specs=[['/srv/data-extra', '/srv/backup', 'daily']],
+            smb_mounts=[['/srv/data', '1.2.3.4', 'u:p', 'share', '/']],
+            storage_mounts=[['unused', '/srv/unrelated', 'ext4', 'empty']],
+        )
+        self.assertEqual(get_mount_points_from_config(config), set())
+
+    def test_declared_child_mount_is_required_even_with_mounted_parent(self):
+        config = SetupConfig(
+            host='test', username='test', system_type='server_lite',
+            backup_specs=[['/srv/data', '/mnt/backup/nested/copy', 'daily']],
+            smb_mounts=[['/mnt/backup/nested', '1.2.3.4', 'u:p', 'share', '/']],
+        )
+        with patch.object(tu, 'get_mount_ancestor', return_value='/mnt/backup'):
+            self.assertIn('/mnt/backup/nested', get_mount_points_from_config(config))
 
     def test_includes_declared_vm_storage_mount_points(self):
         config = SetupConfig(

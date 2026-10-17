@@ -143,6 +143,6 @@ def generate_mount_check_condition(config: SetupConfig) -> str:
 
     # Use static script with mount points as arguments
     check_script_path = f"{REMOTE_INSTALL_DIR}/sync/service_tools/check_storage_ops_mounts.py"
-    mount_args = " ".join(shlex.quote(mp) for mp in sorted(mount_points))
+    mount_args = " ".join(shlex.quote(mp.replace("%", "%%")) for mp in sorted(mount_points))
 
     return f"ExecCondition=/usr/bin/python3 {shlex.quote(check_script_path)} {mount_args}\n"

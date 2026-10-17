@@ -970,8 +970,9 @@ def _verify_transition_cleanup(transition: NetworkTransition) -> None:
     for version, table in transition.policy_tables.items():
         family_flag = "-4" if version == "4" else "-6"
         for resource, selector in (("rule", ""), ("route", " table all")):
+            # Keep table identities numeric even when rt_tables defines names.
             result = run(
-                f"ip {family_flag} -j {resource} show{selector}",
+                f"ip {family_flag} -N -j {resource} show{selector}",
                 check=False,
                 capture_output=True,
             )

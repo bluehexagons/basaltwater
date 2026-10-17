@@ -69,6 +69,9 @@ a mounted parent does not satisfy a missing child mount. Declared VM data disks 
 also protected by a systemd mount guard on the storage service. If an expected
 SMB, VM, or other mounted filesystem is unavailable, the operation is skipped
 or prevented from starting instead of writing to an underlying local directory.
+The service mount guard includes only mounts used by configured sync, backup,
+or scrub paths. An unrelated configured share does not block storage work.
+Literal percent signs in mount paths are escaped when generating the unit.
 
 ## Parity and repair behavior
 

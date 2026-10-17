@@ -545,7 +545,7 @@ class TestLiveNetworkTransition(unittest.TestCase):
 
     @patch("common.network_steps.run")
     def test_failed_abort_cleanup_retains_record_and_can_retry(self, mock_run):
-        for resource in ("rule", "route", "address", "probe", "timeout", "invalid"):
+        for resource in ("rule", "route", "address", "probe", "timeout", "invalid", "named"):
             with self.subTest(resource=resource), tempfile.TemporaryDirectory() as temp_dir:
                 pending = os.path.join(temp_dir, "transition.json")
                 network = os.path.join(temp_dir, "static.network")
@@ -564,6 +564,9 @@ class TestLiveNetworkTransition(unittest.TestCase):
                     elif failed:
                         if resource == "rule" and "rule show" in command:
                             output = '[{"priority":20000,"src":"192.168.10.21","table":20000}]'
+                        elif resource == "named" and "rule show" in command:
+                            table = 20000 if " -N " in command else "custom-transition"
+                            output = network_steps.json.dumps([{"table": table}])
                         elif resource == "route" and "route show" in command:
                             output = '[{"dst":"default","table":20000}]'
                         elif resource == "address" and "address show" in command:
