@@ -1806,9 +1806,10 @@ def _set_pairing_t3_https_port(https_port: int) -> None:
     run(f"systemctl restart {DEVICE_PAIRING_SERVICE_NAME}.service")
 
 
-def _remove_t3_https(config: SetupConfig) -> None:
+def _remove_t3_https(config: SetupConfig, *, pairing_only: bool = False) -> None:
     utility = "/usr/local/bin/basaltwater-web"
-    for name in ("t3code-pairing", "t3code"):
+    names = ("t3code-pairing",) if pairing_only else ("t3code-pairing", "t3code")
+    for name in names:
         run(
             "SUDO_USER="
             + shlex.quote(config.username)
@@ -1820,6 +1821,19 @@ def _remove_t3_https(config: SetupConfig) -> None:
             check=False,
             capture_output=True,
         )
+
+
+def remove_device_pairing(config: SetupConfig) -> None:
+    """Remove managed enrollment without installing or restarting T3 Code."""
+
+    if is_dry_run():
+        print("  [DRY-RUN] Would remove the managed device-pairing portal and credentials")
+        return
+
+    home = _user_home(config)
+    _remove_device_pairing()
+    _remove_connect_restart_units(os.path.join(home, ".t3"))
+    _remove_t3_https(config, pairing_only=True)
 
 
 def install_t3code_web(config: SetupConfig) -> None:
@@ -1953,4 +1967,4 @@ def install_t3code_web(config: SetupConfig) -> None:
         )
 
 
-__all__ = ["install_t3code_web"]
+__all__ = ["install_t3code_web", "remove_device_pairing"]
