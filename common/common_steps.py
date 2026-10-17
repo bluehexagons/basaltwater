@@ -1384,7 +1384,7 @@ def configure_auto_update_uv(config: SetupConfig) -> None:
     user_home = get_user_home(config.username)
     uv_path = f"{user_home}/.local/bin/uv"
 
-    configure_maintenance_timer(
+    configured = configure_maintenance_timer(
         service_name="auto-update-uv",
         service_desc="Auto-update uv package manager",
         timer_desc="Auto-update uv weekly",
@@ -1396,11 +1396,13 @@ def configure_auto_update_uv(config: SetupConfig) -> None:
         environment={ECOSYSTEM_AUTO_UPGRADE_ENV: "0"},
         purpose="auto-update",
     )
+    if not configured:
+        raise RuntimeError("uv auto-update timer failed verification")
 
 
 def configure_auto_update_gogs(config: SetupConfig) -> None:
     """Configure automatic updates for Gogs."""
-    configure_maintenance_timer(
+    configured = configure_maintenance_timer(
         service_name="auto-update-gogs",
         service_desc="Auto-update Gogs service",
         timer_desc="Auto-update Gogs weekly",
@@ -1410,6 +1412,8 @@ def configure_auto_update_gogs(config: SetupConfig) -> None:
         check_name="Gogs",
         purpose="auto-update",
     )
+    if not configured:
+        raise RuntimeError("Gogs auto-update timer failed verification")
 
 
 def configure_auto_update_homebox(config: SetupConfig) -> None:

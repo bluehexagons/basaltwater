@@ -308,7 +308,7 @@ class MaintenanceExecutionTest(unittest.TestCase):
             config_file = Path(home) / "config/baseline.json"
             # The target account stays non-root even when CI itself runs as root.
             account = SimpleNamespace(pw_name="agent", pw_uid=1000, pw_gid=1000, pw_dir=home)
-            real_stat, real_lstat = os.stat, os.lstat
+            real_stat, real_lstat, real_fstat = os.stat, os.lstat, os.fstat
             directory_owners = {home: account.pw_uid, str(root): 0,
                                 str(control): account.pw_uid, str(config_file.parent): 0}
             def target_metadata(path: str | Path, metadata: os.stat_result) -> os.stat_result:
@@ -326,7 +326,8 @@ class MaintenanceExecutionTest(unittest.TestCase):
                 patch.object(steps.pwd, "getpwnam", return_value=account) as controller,
                 patch.object(steps.os, "stat", side_effect=lambda path, *args, **kwargs: target_metadata(path, real_stat(path, *args, **kwargs))),
                 patch.object(steps.os, "lstat", side_effect=lambda path, *args, **kwargs: target_metadata(path, real_lstat(path, *args, **kwargs))),
-                patch.object(steps.os, "chown"),
+                patch.object(steps.os, "fstat", side_effect=lambda fd: target_metadata(os.readlink(f"/proc/self/fd/{fd}"), real_fstat(fd))),
+                patch.object(steps.os, "fchown"),
                 patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))) as write,
                 patch.object(steps, "replace_units") as replace,
                 patch("common.agent_steps.install_codex") as install,
@@ -355,6 +356,106 @@ class MaintenanceExecutionTest(unittest.TestCase):
                     steps.configure_maintenance_agent(config)
                 self.assertLessEqual((root / "reports.json").stat().st_size, 5000)
                 self.assertEqual(agent.load_reports(str(root / "reports.json"))["reports"][-1], large_record)
+
+
+class MaintenanceControllerMigrationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name)
+        self.root = self.home / "maintenance"
+        self.control = self.root / "control"
+        self.root.mkdir(mode=0o750)
+        self.control.mkdir(mode=0o700)
+        self.config_file = self.home / "config/baseline.json"
+        self.config_file.parent.mkdir(mode=0o755)
+        self.maintenance = SimpleNamespace(pw_name="basaltwater-maintenance", pw_uid=101, pw_gid=101, pw_dir=str(self.home))
+        self.panel = SimpleNamespace(pw_name="basaltwater-web-panel", pw_uid=102, pw_gid=102)
+        self.owners = {str(self.home): 101, str(self.root): 0,
+                       str(self.control): 101, str(self.config_file.parent): 0}
+        self.retained = {"checked_at": "earlier", "issues": [], "routines": [], "review": {"status": "skipped"}}
+        write_json_atomic(str(self.control / "settings.json"), {**DEFAULTS, "enabled": True, "interval": 120, "daily_calls": 0})
+        write_json_atomic(str(self.root / "reports.json"), {"version": 1, "context": {}, "reports": [self.retained]})
+        (self.root / "state.json").write_text("retained private counters")
+        (self.control / "unrelated").write_text("operator file")
+        real_fstat = os.fstat
+
+        def metadata(fd: int) -> os.stat_result:
+            fields = list(real_fstat(fd))
+            path = os.readlink(f"/proc/self/fd/{fd}")
+            if path in self.owners:
+                fields[4] = self.owners[path]
+            return os.stat_result(fields)
+
+        def chown(fd: int, uid: int, gid: int) -> None:
+            self.owners[os.readlink(f"/proc/self/fd/{fd}")] = uid
+
+        patches = [
+            patch.multiple(steps, CONFIG_FILE=str(self.config_file), DATA_DIR=str(self.root), CONTROL_DIR=str(self.control)),
+            patch.object(steps, "is_dry_run", return_value=False),
+            patch.object(steps, "_identity", return_value=self.maintenance),
+            patch.object(steps, "_load_baseline"),
+            patch.object(steps.pwd, "getpwnam", side_effect={self.maintenance.pw_name: self.maintenance, self.panel.pw_name: self.panel}.__getitem__),
+            patch.object(steps.os, "fstat", side_effect=metadata),
+            patch.object(steps.os, "fchown", side_effect=chown),
+            patch.object(steps, "maintenance_context", return_value={"units": []}),
+            patch.object(steps, "replace_units"),
+            patch.object(steps, "run"),
+            patch("common.agent_steps.install_codex"),
+        ]
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+        self.write = patch.object(steps, "write_json_atomic", side_effect=lambda path, value, **kwargs: write_json_atomic(path, value, mode=kwargs.get("mode", 0o600))).start()
+        self.addCleanup(patch.stopall)
+
+    def configure(self, *, panel: bool, enabled: bool | None = None) -> None:
+        steps.configure_maintenance_agent(SetupConfig("example.test", "root", "server_web", machine_type="vm",
+                                                     web_panel_port=8445 if panel else None, maintenance_agent=enabled))
+
+    def test_both_controller_transitions_preserve_policy_reports_and_private_state(self) -> None:
+        for panel, controller in ((True, self.panel), (False, self.maintenance)):
+            with self.subTest(panel=panel):
+                self.configure(panel=panel)
+                self.assertEqual(self.owners[str(self.control)], controller.pw_uid)
+                policy = agent.load_policy(str(self.control / "settings.json"))
+                self.assertTrue(policy["enabled"])
+                self.assertEqual((policy["interval"], policy["daily_calls"]), (120, 0))
+                settings_write = next(call for call in self.write.call_args_list[-3:] if call.args[0].endswith("settings.json"))
+                self.assertEqual((settings_write.kwargs["uid"], settings_write.kwargs["gid"]), (controller.pw_uid, controller.pw_gid))
+                self.assertEqual(agent.load_reports(str(self.root / "reports.json"))["reports"], [self.retained])
+                self.assertEqual(self.write.call_args.kwargs["uid"], 0)
+                self.assertEqual(self.write.call_args.kwargs["gid"], controller.pw_gid)
+                self.assertEqual(self.owners[str(self.root)], 0)
+                self.assertEqual((self.root / "state.json").read_text(), "retained private counters")
+                self.assertEqual((self.control / "unrelated").read_text(), "operator file")
+
+    def test_explicit_no_panel_and_no_agent_disables_previous_panel_policy(self) -> None:
+        self.owners[str(self.control)] = self.panel.pw_uid
+        self.configure(panel=False, enabled=False)
+        self.assertFalse(agent.load_policy(str(self.control / "settings.json"))["enabled"])
+        self.assertEqual(self.owners[str(self.control)], self.maintenance.pw_uid)
+        self.assertEqual(agent.load_reports(str(self.root / "reports.json"))["reports"], [self.retained])
+
+    def test_foreign_control_owner_is_rejected_without_overwriting_settings(self) -> None:
+        self.owners[str(self.control)] = 999
+        original = (self.control / "settings.json").read_bytes()
+        with self.assertRaisesRegex(RuntimeError, "Unsafe maintenance directory"):
+            self.configure(panel=True)
+        self.write.assert_not_called()
+        self.assertEqual((self.control / "settings.json").read_bytes(), original)
+
+    def test_symlink_ancestors_are_rejected_before_mutation(self) -> None:
+        alias = self.home / "alias"
+        alias.symlink_to(self.home, target_is_directory=True)
+        for field, path in (("DATA_DIR", alias / "maintenance"),
+                            ("CONTROL_DIR", alias / "maintenance/control"),
+                            ("CONFIG_FILE", alias / "config/baseline.json")):
+            with self.subTest(field=field), patch.object(steps, field, str(path)):
+                with self.assertRaisesRegex(ValueError, "symlink"):
+                    self.configure(panel=True)
+        self.write.assert_not_called()
+        steps.os.fchown.assert_not_called()
 
 
 class MaintenanceChecksTest(unittest.TestCase):

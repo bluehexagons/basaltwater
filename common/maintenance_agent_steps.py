@@ -6,7 +6,6 @@ import copy
 import grp
 import os
 import pwd
-import stat
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +15,7 @@ from lib.machine_state import can_manage_system_services
 from lib.maintenance_agent import _load_baseline, bound_report_history, load_policy, load_reports
 from lib.maintenance_agent_config import CONFIG_FILE, CONTROL_DIR, DATA_DIR, SERVICE_NAME, setup_policy
 from lib.remote_utils import is_dry_run, run
+from lib.setup_directories import check_directory_path, directory_fd
 from lib.unit_transaction import replace_units
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
@@ -64,17 +64,16 @@ def _identity(config: SetupConfig) -> pwd.struct_passwd:
     return account
 
 
-def _directory(path: str, uid: int, gid: int, mode: int) -> None:
+def _directory(path: str, uid: int, gid: int, mode: int, *, prior_uids: set[int] | None = None) -> None:
     validate_filesystem_path(path)
-    # Never change ownership through an existing symlink or a foreign directory.
-    target = Path(path)
-    if os.path.lexists(target):
-        metadata = target.lstat()
-        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in {0, uid} or metadata.st_mode & 0o022:
+    # Only the control directory may migrate from a recognized controller.
+    # Descriptor mutations cannot follow a replaced path or symlink ancestor.
+    with directory_fd(path, create=True, mode=mode) as descriptor:
+        metadata = os.fstat(descriptor)
+        if metadata.st_uid not in {0, uid, *(prior_uids or ())} or metadata.st_mode & 0o022:
             raise RuntimeError(f"Unsafe maintenance directory: {path}")
-    target.mkdir(parents=True, mode=mode, exist_ok=True)
-    os.chown(target, uid, gid)
-    os.chmod(target, mode)
+        os.fchown(descriptor, uid, gid)
+        os.fchmod(descriptor, mode)
 
 
 def configure_maintenance_agent(config: SetupConfig) -> None:
@@ -86,24 +85,36 @@ def configure_maintenance_agent(config: SetupConfig) -> None:
     if is_dry_run():
         print("  [DRY-RUN] Would configure tailored maintenance supervision and panel controls")
         return
+    config_parent = str(Path(CONFIG_FILE).parent)
+    for path in (DATA_DIR, CONTROL_DIR, config_parent):
+        check_directory_path(path)
     if os.path.lexists(CONFIG_FILE):
         _load_baseline(CONFIG_FILE)
     owner = _identity(config)
     if not validate_username(owner.pw_name) or owner.pw_uid == 0:
         raise ValueError("Maintenance AI requires a non-root account")
     validate_filesystem_path(owner.pw_dir, must_exist=True)
-    if os.path.islink(owner.pw_dir) or os.stat(owner.pw_dir).st_uid != owner.pw_uid:
-        raise RuntimeError("Maintenance account must own its home")
+    with directory_fd(owner.pw_dir) as descriptor:
+        if os.fstat(descriptor).st_uid != owner.pw_uid:
+            raise RuntimeError("Maintenance account must own its home")
     controller = owner
     if config.web_panel_port is not None:
         controller = pwd.getpwnam("basaltwater-web-panel" if config.username == "root" else config.username)
+    prior_uids: set[int] = set()
+    if config.username == "root":
+        for name in (_ACCOUNT, "basaltwater-web-panel"):
+            try:
+                prior = pwd.getpwnam(name)
+            except KeyError:
+                continue
+            if prior.pw_name == name and prior.pw_uid != 0:
+                prior_uids.add(prior.pw_uid)
     _directory(DATA_DIR, 0, controller.pw_gid, 0o750)
-    _directory(CONTROL_DIR, controller.pw_uid, controller.pw_gid, 0o700)
-    config_parent = Path(CONFIG_FILE).parent
-    validate_filesystem_path(str(config_parent))
-    if config_parent.is_symlink() or config_parent.exists() and (not config_parent.is_dir() or config_parent.stat().st_uid != 0 or config_parent.stat().st_mode & 0o022):
-        raise RuntimeError("Unsafe maintenance configuration directory")
-    config_parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    _directory(CONTROL_DIR, controller.pw_uid, controller.pw_gid, 0o700, prior_uids=prior_uids)
+    with directory_fd(config_parent, create=True) as descriptor:
+        metadata = os.fstat(descriptor)
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise RuntimeError("Unsafe maintenance configuration directory")
     policy_path = os.path.join(CONTROL_DIR, "settings.json")
     policy = setup_policy(config)
     if os.path.lexists(policy_path):

@@ -847,6 +847,7 @@ class TestConfigureAutoUpdates(unittest.TestCase):
 
 class TestConfigureMaintenanceTimers(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch("security.security_steps.can_restart_system", return_value=True))
         patcher = patch("security.security_steps.install_kernel_restart_hook")
         patcher.start()
         self.addCleanup(patcher.stop)
