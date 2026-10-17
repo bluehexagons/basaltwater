@@ -31,7 +31,9 @@ the notification API contract.
 
 Every page uses the same grouped sidebar, containing only destinations with
 their own pages. The dashboard's **On this page** links navigate its visible
-sections. On smaller screens the navigation becomes a horizontal scrollable row.
+sections. On smaller screens, **Panel menu** shows the current section and opens
+the full grouped list. The menu works with touch and keyboard without JavaScript;
+destinations wrap to fit enlarged text.
 Light and dark themes follow
 the device preference. Memory and disk meters retain numeric values, and
 service states have text labels as well as color.
@@ -287,7 +289,7 @@ These shortcuts open a setup form and never run a prompt automatically.
 
 Select **Set up task**, fill in its inputs, then **Prepare prompt for review**.
 The resulting Agents form shows the full prompt and normal model, effort,
-runtime, permission, failure-limit, and repetition controls. Choose **Run now**,
+runtime, permission, failure-limit, and repetition controls. Choose **Start task**,
 **Create schedule**, or **Save draft** only after reviewing it. Preparation
 neither saves nor queues a task. Reports and saved execution settings appear in
 **Agents → Run history**. There is no separate scheduler or T3 Code dependency.
@@ -408,7 +410,7 @@ without a home and show diagnostics with prompt execution unavailable.
 6. Choose once, hourly, daily, weekly, or **Custom interval**. Custom intervals
    accept 1–43,200 whole minutes (30 days): 360 means every 6 hours; 20,160 means
    every 2 weeks. The custom field applies only when Custom interval is selected.
-   **Run now** queues an immediate run
+   **Start task** queues an immediate run
    and enables repetition when selected. **Create schedule** starts after one
    interval. **Save draft** stores an inactive task, including a one-time
    prompt, without running it or enabling repetition. Before Codex is installed,
@@ -531,7 +533,7 @@ Saved tasks use responsive cards with status, repetition, next run, latest
 outcome, and working directory. Active and queued work appears first, followed
 by tasks needing review. **View latest result** opens the retained report
 directly; **View live run** opens a running task's current record. Use
-**Pause**, **Resume**, **Edit**, **Run now**, or **Remove** to manage them.
+**Pause**, **Resume**, **Edit**, **Run once**, or **Remove** to manage them.
 Use **Start schedule** to activate a recurring draft. Running a draft manually
 does not activate its repeat schedule. **Duplicate** opens a new form with a
 saved task's settings so you can adjust its directory, model, or prompt. Run
@@ -572,6 +574,11 @@ These are retained-history
 totals, not lifetime usage or spending estimates. Active runs show elapsed time
 and remaining runtime at page load. Use **Refresh status** to update results
 and timing without automatic reloads that would discard a prompt draft.
+Refreshing a selected run, task context, or receipt keeps that evidence open.
+Unreadable task storage shows unavailable counts and a retry link on the task
+list; it does not claim that the account has no tasks or run history. A submitted
+prompt stays visible with instructions to copy its settings before reloading.
+Execution controls remain disabled until storage recovers.
 
 New non-root Debian setups with Codex selected install an independent task
 worker. It runs without the panel or T3 Code, and the screen reports its live
@@ -580,7 +587,7 @@ scheduling until setup installs the worker. Tasks persist across panel and host 
 downtime, each overdue schedule runs at most once, then advances to its next
 interval. Deadlines crossed while a task is running are skipped, preserving its
 cadence without immediately starting another run of that task. An explicit
-Run now request remains available. Changing the elapsed interval resets the next
+Run once request remains available. Changing the elapsed interval resets the next
 deadline to a full interval from saving; editing other settings keeps the existing
 deadline. Paused tasks and drafts remain inactive after edits. These are elapsed
 intervals rather than calendar times. Runs interrupted by a restart are labelled

@@ -257,8 +257,17 @@ def brand_styles() -> str:
         ".journal-error{border-left-color:var(--bad)}"
         ".journal-warning{border-left-color:var(--warning)}"
         ".admin-tools{margin-top:12px}"
+        ".nav-mobile{display:none}"
         "@media(max-width:900px){.sidebar a.brand{margin:0 8px 6px;min-height:36px}"
-        ".sidebar>.brand-texture{display:none}}"
+        ".sidebar>.brand-texture,.sidebar .nav-desktop{display:none}"
+        ".nav-mobile{display:block;margin:0}"
+        ".nav-mobile>summary{width:100%;padding:10px 12px;border:1px solid var(--line);"
+        "border-radius:8px;color:var(--text);background:var(--bg)}"
+        ".nav-mobile>summary strong{font-size:.83rem}"
+        ".nav-location{display:block;margin-left:18px;color:var(--section-ink);font-size:.83rem}"
+        ".sidebar .nav-mobile .nav-links{display:block;overflow:visible;padding:0}"
+        ".nav-mobile .nav-group{display:block;margin-top:16px}"
+        ".sidebar .nav-mobile a{white-space:normal}}"
         "@media(max-width:560px){.empty-art{gap:14px;padding:16px}"
         ".empty-art .brand-network{width:80px;height:40px}}"
         "@media(forced-colors:active){.brand svg{--brand-water:CanvasText}"
@@ -305,6 +314,7 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
     items = tuple(items)
     home = items[0][0] if items else "/"
     home_label = "Basaltwater dashboard" if home == "/" else "Basaltwater home"
+    location = next((label for _, label, current in items if current), "Choose a section")
     groups = {
         "Dashboard": "Workspace", "Admin controls": "Administration", "Local service status": "Inspect",
     }
@@ -324,8 +334,12 @@ def render_sidebar(items: Iterable[NavigationItem]) -> str:
     return (
         '<nav class="sidebar" aria-label="Panel sections">'
         f'<a class="brand" href="{html.escape(home, quote=True)}" aria-label="{home_label}">{BRAND_SYMBOL}<span>Basaltwater</span></a>'
-        '<div class="nav-links">'
-        f'{"".join(links)}</div>{render_texture("mineral", pattern_id="brand-sidebar")}</nav>'
+        '<div class="nav-links nav-desktop">'
+        f'{"".join(links)}</div>'
+        '<details class="nav-mobile"><summary><strong>Panel menu</strong>'
+        f'<span class="nav-location">{html.escape(location)}</span></summary>'
+        f'<div class="nav-links">{"".join(links)}</div></details>'
+        f'{render_texture("mineral", pattern_id="brand-sidebar")}</nav>'
     )
 
 

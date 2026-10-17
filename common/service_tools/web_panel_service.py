@@ -2531,7 +2531,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                         manager.update(identifier, submitted)
                     else:
                         if choice not in {"run", "schedule", "draft"}:
-                            raise ValueError("Select Run now, Create schedule, or Save draft")
+                            raise ValueError("Select Start task, Create schedule, or Save draft")
                         manager.create(submitted, run_now=choice == "run", draft=choice == "draft")
             except ValueError as exc:
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_agents(

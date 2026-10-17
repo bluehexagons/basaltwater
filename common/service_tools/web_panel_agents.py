@@ -537,7 +537,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         error = error or "This run is no longer in retained history. Open a recent run below."
     now = time.time()
     diagnostics = state.agent_diagnostics.snapshot()
-    ready = manager.available() and not manager.error and not storage_error
+    account_ready = manager.available()
+    ready = account_ready and not manager.error and not storage_error
     codex_installed = bool(_tool_path("codex", manager.home))
     templates = _available_templates(state.manifest, manager.home)
     defaults: dict[str, Any] = {"title": "", "prompt": "", "directory": manager.home,
@@ -604,8 +605,13 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         source_note = "Prepared from Agent tools. No task has been saved or queued. Review the prompt, model, runtime, permissions, and repetition before submitting."
     editing = bool(defaults["id"])
     composing = prepared or submitted is not None or bool(set(query) & {"template", "edit", "copy", "reuse", "follow-up"}) or query.get("view") == "new"
-    alert = f'<aside class="status failed" role="alert"><strong>Agent tools need attention</strong><p>{_escape(error or manager.error)}</p></aside>' if error or manager.error else ""
-    if not ready:
+    alert_title = "Task storage unavailable" if storage_error else "Agent tools need attention"
+    retry = ""
+    if storage_error:
+        retry = ('<p>Your settings are shown below. Copy your prompt and settings before reloading to retry storage.</p>'
+                 if composing else '<p><a class="inline-link" href="/agents">Retry task storage</a></p>')
+    alert = f'<aside class="status failed" role="alert"><strong>{alert_title}</strong><p>{_escape(error or manager.error)}</p>{retry}</aside>' if error or manager.error else ""
+    if not account_ready:
         alert += '<p class="empty">Prompt execution requires a non-root panel account with its own home directory. Diagnostics remain available.</p>'
     elif not codex_installed:
         alert += '<p class="empty">Install and sign in to Codex as the panel account to run prompts. T3 Code is optional.</p>'
@@ -648,7 +654,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <label class="agent-check"><input type="checkbox" name="temporary_files" value="1"{" checked" if defaults['temporary_files'] else ""}><span>Allow temporary file writes for workspace changes (/tmp and TMPDIR). Needed by many test and package tools.</span></label>
 <p class="agent-help">Inspection uses Codex's read-only sandbox and can block local service sockets and endpoint probes. Workspace changes may edit the execution directory inside this account's home, plus temporary directories when allowed. Host service reviews use command network access and a private run directory; their prompts prohibit host changes. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p></fieldset>
 <div class="agent-fields"><label>Maximum runtime (minutes)<input type="number" name="timeout_minutes" min="1" max="{MAX_TIMEOUT_MINUTES}" step="1" value="{_escape(defaults['timeout_minutes'])}" required></label><label>Repeat<select name="interval">{options}</select></label></div>
-<p class="agent-help">1 minute to 7 days, including time spent waiting. A duration cap is not an exact spending limit. Run now also enables the selected repetition; Save draft stays inactive.</p>
+<p class="agent-help">1 minute to 7 days, including time spent waiting. A duration cap is not an exact spending limit.</p>
 <details{' open' if submitted is not None or defaults['model'] or defaults['effort'] or defaults['custom_model'] or defaults['web_search'] != 'disabled' else ''}><summary>Model and web search <small>· {_escape(defaults['custom_model'] or defaults['model'] or 'Configured model')} · effort {_escape(defaults['effort'] or 'default')} · search {_escape(defaults['web_search'])}</small></summary>
 <div class="agent-fields"><label>Model<select name="model">{model_options}</select></label><label>Reasoning effort<select name="effort">{effort_options}</select></label></div>
 <p class="agent-help">Model choices use Codex's local cache; availability and effort support depend on your account and model.</p>
@@ -661,7 +667,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <label class="agent-check"><input type="checkbox" name="session_history" value="1"{" checked" if defaults['session_history'] else ""}><span>Keep fresh Codex session history on this account. Conversation persistence always keeps its session. Run evidence is retained either way.</span></label></details>
 <details{' open' if submitted is not None or defaults['interval'] != 'once' or start or defaults['failure_limit'] != DEFAULT_FAILURE_LIMIT else ''}><summary>Scheduling options <small>· start time, custom interval and failure policy</small></summary>
 <label>First run with timezone<input name="start_at" value="{_escape(start)}" placeholder="2026-11-01T09:00:00-06:00"></label>
-<p class="agent-help">Optional start time for Create schedule. Once runs once at this time; repeating tasks use it to start their cadence. An overdue start produces one catch-up run. Run now starts immediately and consumes a one-time schedule. Event tasks wait for notifications and leave this blank.</p>
+<p class="agent-help">Optional start time for Create schedule. Once runs once at this time; repeating tasks use it to start their cadence. An overdue start produces one catch-up run. Start task starts immediately and consumes a one-time schedule. Event tasks wait for notifications and leave this blank.</p>
 <label>Custom repeat interval (minutes)<input type="number" name="repeat_minutes" min="1" max="{MAX_REPEAT_MINUTES}" step="1" value="{_escape(defaults['repeat_minutes'] or 60)}" required></label>
 <p class="agent-help">Applies when Repeat is Custom interval. 1 minute to 30 days; for example, 360 for every 6 hours or 20160 for every 2 weeks. Intervals missed during a run are skipped.</p>
 <label>Pause schedule after failures<input type="number" name="failure_limit" min="0" max="{MAX_FAILURE_LIMIT}" step="1" value="{_escape(defaults['failure_limit'])}" required></label>
@@ -674,9 +680,9 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-fields"><label>Token budget<input type="number" name="token_budget" min="0" max="1000000000000" value="{_escape(defaults['token_budget'])}" required></label><label>Run attempts per UTC day<input type="number" name="daily_limit" min="0" max="1000" value="{_escape(defaults['daily_limit'])}" required></label></div>
 <div class="agent-fields"><label>Minimum failure backoff (minutes)<input type="number" name="backoff_minutes" min="0" max="{MAX_REPEAT_MINUTES}" value="{_escape(defaults['backoff_minutes'])}" required></label><label>Retained evidence runs<input type="number" name="history_limit" min="1" max="1000" value="{_escape(defaults['history_limit'])}" required></label></div>
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
-<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Run now</button><button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button><button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
+<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Start task</button><button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button><button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
 <a href="/agents">Back to tasks</a></div>
-<p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Repeated prompts use the same directory. Create schedule starts after one interval; Run now also enables repetition when selected. Save draft stores the task without running or scheduling it.</p></form></div>'''
+<p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Start task runs now and activates the selected repetition, event trigger, or goal continuation. Create schedule uses the first-run time or waits one interval. Save draft stays inactive. Saving changes preserves an existing schedule's active or paused state.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
     helper = f'''<aside class="agent-panel agent-helper"><details><summary>Start from a template</summary><p class="agent-help">Selecting a template replaces this form. Review its prompt, directory, permissions, and repetition before submitting.</p>{template_links}</details></aside>'''
     rows = []
@@ -686,7 +692,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         latest = next((run for run in reversed(runs) if run["task"]["id"] == task["id"]), None)
         running = bool(latest and latest["status"] == "running")
         task_status = "Running" if running else "Queued" if task["queued"] else "Scheduled" if task["enabled"] else "Draft" if task.get("draft") else "Auto-paused" if task.get("auto_paused") else "Paused" if repeat_seconds(task) else "One-time"
-        controls = _action_form(state.csrf_token, task["id"], "cancel", "Cancel run" if running else "Cancel queued run") if running or task["queued"] else _action_form(state.csrf_token, task["id"], "run", "Run now")
+        controls = _action_form(state.csrf_token, task["id"], "cancel", "Cancel run" if running else "Cancel queued run") if running or task["queued"] else _action_form(state.csrf_token, task["id"], "run", "Run once")
         if repeat_seconds(task) or task["interval"] == "event" or task["start_at"] > now or task["enabled"] and task["start_at"]:
             controls += _action_form(state.csrf_token, task["id"], "pause" if task["enabled"] else "resume", "Pause" if task["enabled"] else "Start schedule" if task.get("draft") else "Resume")
         if latest:
@@ -713,15 +719,18 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         attention = _task_needs_review(task, runs)
         tone = "warning" if attention or running or task["queued"] else "success" if task["enabled"] else ""
         due_label = _time(next_due) if next_due is not None else "Waiting in queue" if task["queued"] else "Not scheduled"
+        run_note = '<p class="agent-help">Run once keeps this schedule ' + ('active.' if task['enabled'] else 'inactive. Use ' + ('Start schedule' if task.get('draft') else 'Resume') + ' to enable it.') + '</p>' if repeat_seconds(task) and not running and not task['queued'] else ""
         if next_due is not None and next_due <= now:
             due_label += " · due; waiting for worker"
         rows.append(f'''<li><article class="agent-task{' agent-task-active' if running or task['queued'] else ' agent-task-attention' if attention else ''}" aria-labelledby="task-{task['id']}">
 <div class="agent-task-head"><div><h3 id="task-{task['id']}">{_escape(task['title'])}</h3><p class="agent-help"><code>{_escape(task['directory'])}</code></p></div><span class="badge {tone}">{task_status}</span></div>
 {stop_note}<dl class="agent-task-facts"><div><dt>Schedule</dt><dd>{_escape(interval_label)}</dd></div><div><dt>Next run · UTC</dt><dd>{due_label}</dd></div><div><dt>Latest result</dt><dd>{last.capitalize()}<small>{last_timing}</small></dd></div></dl>
-<div class="agent-buttons">{controls}</div>
+<div class="agent-buttons">{controls}</div>{run_note}
 <details><summary>Task settings and more actions</summary><p class="agent-help">{'Inspect only' if task['mode'] == 'inspect' else 'Workspace changes'} · command network {"on" if task['network'] else "off"} · {_escape(task['timeout_minutes'])} min cap · {_escape(task['model'] or 'Configured model')} · effort {_escape(task['effort'] or 'default')}</p>
 <p class="agent-help">{failure_note} · {_escape(task['persistence'])} · {_escape(task['workspace'])} · {task['attempts']} attempts · {task['tokens_used']} reported tokens</p><div class="agent-buttons">{more}</div><p class="agent-help">Remove deletes the saved task; retained run history stays available. Reset context keeps workspace files and receipts.</p></details></article></li>''')
     schedules = '<ul class="agent-task-list">' + "".join(rows) + '</ul>' if rows else '''<div class="agent-panel agent-start"><p><strong>No prompt tasks yet.</strong><br>Write a prompt, choose a starting template, or use Agent tools for a guided system or data task.</p><a class="refresh-link agent-primary" href="/agents?view=new">New task</a><a class="refresh-link" href="/agents?view=templates">Browse templates</a></div>'''
+    if storage_error:
+        schedules = '<p class="empty">Saved tasks could not be loaded. Restore access to task storage, then retry to see schedules and results.</p>'
     history = []
     for run in reversed(runs):
         tone = "error" if run["status"] in {"failed", "interrupted"} or run.get("outcome") in {"blocked", "failed"} else "success" if run["status"] == "completed" else "warning"
@@ -741,8 +750,9 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     t3_html = _render_t3_update(state)
     workbench = f'<div class="agent-columns">{helper}{composer}</div>'
     if not composing:
-        workbench = f'<details><summary>Create a prompt task</summary>{workbench}</details>'
-    task_section = f'''<section aria-labelledby="agent-tasks-heading"><div class="section-heading">{render_heading("Prompt tasks", "agents", heading_id="agent-tasks-heading")}<span class="count">{len(tasks)} saved · {sum(t['enabled'] and bool(repeat_seconds(t)) for t in tasks)} repeating · {sum(t['queued'] for t in tasks)} queued{_other_schedules(tasks)}</span></div>{schedules}</section>'''
+        workbench = "" if storage_error else f'<details><summary>Create a prompt task</summary>{workbench}</details>'
+    task_count = "Unavailable" if storage_error else f"{len(tasks)} saved · {sum(t['enabled'] and bool(repeat_seconds(t)) for t in tasks)} repeating · {sum(t['queued'] for t in tasks)} queued{_other_schedules(tasks)}"
+    task_section = f'''<section aria-labelledby="agent-tasks-heading"><div class="section-heading">{render_heading("Prompt tasks", "agents", heading_id="agent-tasks-heading")}<span class="count">{task_count}</span></div>{schedules}</section>'''
     header = f'''<header class="dashboard-header"><div><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Run tasks, manage schedules, and review results on <code>{_escape(state.manifest['host'])}</code>.</p></div><a class="refresh-link agent-primary" href="/agents?view=new">New task</a></header>'''
     navigation = '<nav class="agent-nav" aria-label="Agent workflow">' + ''.join(
         f'<a href="{href}"' + (' aria-current="page"' if current else '') + f'>{label}</a>'
@@ -767,11 +777,18 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     context_html = _render_task_context(manager, query["context"]) if "context" in query else ""
     if "receipt" in query:
         context_html += _render_receipt(manager, query["receipt"])
-    overview = f'<div class="section-heading"><p class="agent-help">Saved panel tasks · one run at a time · all times UTC</p><a class="refresh-link" href="/agents">Refresh status</a></div>{_render_run_summary(tasks, runs)}{active_html}'
+    refresh_href = "/agents"
+    if "run" in query:
+        refresh_href += "?" + urllib.parse.urlencode({"run": query["run"]}) + "#run-" + query["run"]
+    elif "context" in query or "receipt" in query:
+        refresh_href += "?" + urllib.parse.urlencode({key: value for key, value in query.items() if key in {"context", "receipt"}})
+    overview = f'<div class="section-heading"><p class="agent-help">Saved panel tasks · one run at a time · all times UTC</p><a class="refresh-link" href="{_escape(refresh_href)}">Refresh status</a></div>{"" if storage_error else _render_run_summary(tasks, runs)}{active_html}'
     catalog = f'<section>{render_heading("Task templates", "agent-tools")}<p class="endpoint">Choose a starting point, then review and submit its prompt. Selecting a template never runs or schedules work. Templates follow configured features and detected commands; detection does not verify health or sign-in.</p>{template_links}</section>'
     main = catalog if query.get('view') == 'templates' else workbench + task_section if composing else overview + context_html + task_section + workbench
+    history_count = "Unavailable" if storage_error else f"Latest {len(runs)} runs · {_duration(sum(_run_seconds(run, now) for run in runs if run['status'] != 'running'))} recorded runtime"
+    history_empty = "Run history could not be loaded. Retry after restoring task storage." if storage_error else "No prompt runs have been recorded. Run a task to see its report here."
     content = f'''{navigation}{alert}{main}
-<section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">Latest {len(runs)} runs · {_duration(sum(_run_seconds(run, now) for run in runs if run['status'] != 'running'))} recorded runtime</span></div><div class="agent-history">{''.join(history) or '<p class="empty">No prompt runs have been recorded. Run a task to see its report here.</p>'}</div></section>
+<section aria-labelledby="agent-history-heading"><div class="section-heading">{render_heading("Run history", "jobs", heading_id="agent-history-heading")}<span class="count">{history_count}</span></div><div class="agent-history">{''.join(history) or '<p class="empty">' + history_empty + '</p>'}</div></section>
 <section aria-labelledby="agent-diagnostics-heading"><div class="section-heading">{render_heading("Runtime diagnostics", "diagnostics", heading_id="agent-diagnostics-heading")}<span class="count">Loaded on request</span></div>{worker_html}<details{' open' if diagnostics['status'] != 'not_loaded' or not ready or not codex_installed else ''}><summary>Check installation and sign-in readiness</summary>{diagnostics_html}{t3_html}<p class="agent-help">One prompt runs at a time using its saved runtime cap, model, effort, and permissions. The independent task worker runs without this panel or T3 Code. Older installations use the panel until setup installs the worker. Missed intervals produce at most one catch-up run. Host restarts interrupt active work. No root execution or sandbox bypass is offered.</p></details></section>'''
     return render_document(title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
                            header=header, content=content, navigation=state.navigation("agents"),

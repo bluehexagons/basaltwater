@@ -156,8 +156,10 @@ class DashboardTest(unittest.TestCase):
         collect_diagnostics.assert_not_called()
         sidebars = [page.split('<nav class="sidebar"', 1)[1].split('</nav>', 1)[0] for page in pages]
         for sidebar in sidebars:
-            self.assertEqual(sidebar.count('aria-current="page"'), 1)
-            self.assertEqual(sidebar.replace(' aria-current="page"', ''), sidebars[0].replace(' aria-current="page"', ''))
+            self.assertEqual(sidebar.count('aria-current="page"'), 2)
+            desktop = sidebar.split('<div class="nav-links nav-desktop">', 1)[1].split('</div>', 1)[0]
+            expected = sidebars[0].split('<div class="nav-links nav-desktop">', 1)[1].split('</div>', 1)[0]
+            self.assertEqual(desktop.replace(' aria-current="page"', ''), expected.replace(' aria-current="page"', ''))
             self.assertNotIn("One machine", sidebar)
             self.assertNotIn("whole workspace", sidebar)
 

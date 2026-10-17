@@ -46,8 +46,16 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertNotIn('href="/#', sidebar)
         self.assertNotIn('href="/agents"', sidebar)
         self.assertNotIn('href="/credentials"', sidebar)
-        self.assertEqual(sidebar.count('aria-current="page"'), 1)
+        root = ET.fromstring(sidebar)
+        groups = [node for node in root.iter("div") if "nav-links" in node.attrib.get("class", "").split()]
+        self.assertEqual(len(groups), 2)
+        for group in groups:
+            self.assertEqual(len(group.findall('.//a[@aria-current="page"]')), 1)
         self.assertIn('href="/jobs" aria-current="page"', sidebar)
+        menu = root.find('.//details[@class="nav-mobile"]')
+        self.assertNotIn("open", menu.attrib)
+        self.assertEqual("".join(menu.find("summary").itertext()), "Panel menuScheduled jobs")
+        self.assertEqual([link.attrib["href"] for link in menu.findall('.//a')], ["/", "/services", "/jobs", "/logs"])
 
     def test_every_view_has_identical_navigation_destinations(self) -> None:
         available = features.PanelFeatures(tools=frozenset({"git", "codex", "butler"}), admin=True, maintenance=True).pages
@@ -102,6 +110,64 @@ class WebPanelTemplateTest(unittest.TestCase):
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
 
 
+class AgentWorkflowFeedbackTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from common.service_tools import web_panel_agents as agents
+
+        self.home = self.enterContext(tempfile.TemporaryDirectory())
+        self.state = panel.WebPanelState({"host": "example.test", "username": "operator", "features": {}}, agent_home=self.home)
+        self.addCleanup(self.state.agent_tasks.close)
+        self.enterContext(patch.object(self.state, "features", return_value=features.PanelFeatures(tools=frozenset({"codex", "git"}))))
+        self.enterContext(patch.object(self.state.agent_tasks, "available", return_value=True))
+        self.enterContext(patch.object(agents, "_tool_path", return_value="/test/codex"))
+        self.enterContext(patch("lib.agent_tasks._tool_path", return_value="/test/codex"))
+        self.enterContext(patch.object(agents, "worker_status", return_value={"installed": False, "running": False}))
+        self.values = {"title": "Review repository", "prompt": "Inspect and report.", "directory": self.home, "mode": "inspect", "interval": "weekly"}
+
+    def test_unreadable_storage_is_not_presented_as_an_empty_account(self) -> None:
+        with patch.object(self.state.agent_tasks, "snapshot", side_effect=RuntimeError("Unreadable <task storage>")):
+            page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+            submitted = panel.render_agents(self.state, panel._PAGE_STYLE, {}, submitted=self.values)
+        self.assertIn("Task storage unavailable", page)
+        self.assertIn("Unreadable &lt;task storage&gt;", page)
+        self.assertIn('href="/agents">Retry task storage', page)
+        for misleading in ("No prompt tasks yet", "No prompt runs have been recorded", "0 running", "0 saved", "requires a non-root panel account"):
+            self.assertNotIn(misleading, page)
+        self.assertIn("Run history could not be loaded", page)
+        self.assertIn('value="Review repository"', submitted)
+        self.assertIn("Inspect and report.</textarea>", submitted)
+        self.assertNotIn("Retry task storage</a>", submitted)
+        self.assertIn("Copy your prompt and settings before reloading", submitted)
+        self.assertIn('value="run" disabled>Start task', submitted)
+
+    def test_manual_run_label_explains_an_inactive_repeating_draft(self) -> None:
+        identifier = self.state.agent_tasks.create(self.values, run_now=False, draft=True)
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn('value="run">Run once', page)
+        self.assertIn("Run once keeps this schedule inactive. Use Start schedule to enable it.", page)
+        self.state.agent_tasks.action(identifier, "resume")
+        page = panel.render_agents(self.state, panel._PAGE_STYLE, {})
+        self.assertIn("Run once keeps this schedule active.", page)
+        composer = panel.render_agents(self.state, panel._PAGE_STYLE, {"view": "new"})
+        self.assertIn('value="run">Start task', composer)
+        self.assertIn("Start task runs now and activates the selected repetition", composer)
+
+    def test_status_refresh_keeps_the_selected_run_and_retained_evidence(self) -> None:
+        from lib import agent_tasks
+
+        self.state.agent_tasks.create(self.values, run_now=True)
+        with patch.object(agent_tasks, "execute_prompt", return_value={"status": "completed", "output": "Report ready", "message": "Done"}):
+            self.state.agent_tasks.tick()
+        run = self.state.agent_tasks.snapshot()["runs"][0]
+        for query, target in (({"run": run["id"]}, f"/agents?run={run['id']}#run-{run['id']}"),
+                              ({"context": run["task"]["id"]}, f"/agents?context={run['task']['id']}"),
+                              ({"receipt": run["task"]["id"] + "." + run["id"]}, f"/agents?receipt={run['task']['id']}.{run['id']}")):
+            with self.subTest(query=query):
+                page = panel.render_agents(self.state, panel._PAGE_STYLE, query)
+                self.assertIn(f'href="{target}">Refresh status', page)
+        self.assertIn("Report ready", page)
+
+
 class PanelFeatureTest(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
@@ -118,7 +184,7 @@ class PanelFeatureTest(unittest.TestCase):
             available = self.state.features()
             sidebar = render_sidebar(self.state.navigation("dashboard"))
         self.assertEqual(available.pages, frozenset({"dashboard", "services", "jobs", "logs"}))
-        self.assertEqual(sidebar.count('aria-current="page"'), 1)
+        self.assertEqual(sidebar.count('aria-current="page"'), 2)
         self.assertNotIn('href="/#', sidebar)
         for path in ("agents", "credentials", "admin", "publishing", "maintenance-agent", "agent-tools", "agent-inbox"):
             self.assertNotIn(f'href="/{path}"', sidebar)

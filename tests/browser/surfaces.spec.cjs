@@ -201,6 +201,9 @@ test('panel navigation, keyboard focus, layout, theme and disclosures', async ({
     }
   }
   expect(backgrounds[0]).not.toEqual(backgrounds[1]);
+  await page.locator('.nav-mobile > summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.nav-mobile')).toHaveAttribute('open', '');
   await page.getByRole('navigation', { name: 'Panel sections' }).getByRole('link', { name: 'Local service status' }).click();
   await page.getByRole('button', { name: 'Load local service status' }).click();
   await expect(page.getByText('Synthetic service', { exact: true })).toBeVisible();
@@ -379,7 +382,7 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
     };
     await page.goto(settings.url);
     await page.goto(settings.url + '/agents');
-    await page.getByRole('button', { name: 'Run now', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Run once', exact: true }).first().click();
     await expect.poll(async () => {
       await page.reload();
       return page.getByText('Synthetic execution; no provider was contacted', { exact: true }).count();
@@ -451,6 +454,31 @@ test('panel development forms, scenarios, reload, reset and cleanup', async ({ p
 
 test.describe('agent task workflow', () => {
   test.use({ developmentSurface: 'panel', javaScriptEnabled: false });
+  test('panel menu exposes every destination and current section without JavaScript', async ({ page, developmentServer: dev }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.goto(dev.url + '/publishing');
+    const navigation = page.getByRole('navigation', { name: 'Panel sections', exact: true });
+    const menu = navigation.locator('.nav-mobile');
+    await expect(menu.locator('summary')).toContainText('Publishing');
+    await expect(navigation.getByRole('link', { name: 'Service diagnostics', exact: true })).not.toBeVisible();
+    await menu.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    await expect(menu).toHaveAttribute('open', '');
+    for (const label of ['Dashboard', 'Agents', 'Maintenance agent', 'Agent inbox', 'Agent tools',
+                         'Git & credentials', 'Publishing', 'Admin controls', 'Local service status', 'Scheduled jobs', 'Service diagnostics'])
+      await expect(navigation.getByRole('link', { name: label, exact: true })).toBeVisible();
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    expect(await menu.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await navigation.getByRole('link', { name: 'Service diagnostics', exact: true }).click();
+    await expect(menu.locator('summary')).toContainText('Service diagnostics');
+    await expect(menu).not.toHaveAttribute('open', '');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(menu).not.toBeVisible();
+    await expect(navigation.getByRole('link', { name: 'Service diagnostics', exact: true })).toHaveAttribute('aria-current', 'page');
+    await page.goto('about:blank');
+  });
+
   test('maintenance records and settings stay usable after validation errors', async ({ page, developmentServer: dev, diagnostics }, info) => {
     await page.goto(dev.url + '/maintenance-agent');
     await expect(page.getByRole('region', { name: 'Saved maintenance status' })).toContainText('Maintenance enabled');
@@ -546,7 +574,7 @@ test.describe('agent task workflow', () => {
     test.setTimeout(90000);
     await page.goto(dev.url + '/agents');
     const sample = page.getByRole('article', { name: 'Example inspection', exact: true });
-    await expect(sample.getByRole('button', { name: 'Run now', exact: true })).toBeVisible();
+    await expect(sample.getByRole('button', { name: 'Run once', exact: true })).toBeVisible();
     await expect(sample.getByRole('button', { name: 'Remove', exact: true })).not.toBeVisible();
     const newTask = page.locator('header').getByRole('link', { name: 'New task', exact: true });
     await newTask.focus();
@@ -568,6 +596,7 @@ test.describe('agent task workflow', () => {
     const draft = page.getByRole('article', { name: 'Browser workflow draft', exact: true });
     await expect(draft.getByText('Draft', { exact: true })).toBeVisible();
     await expect(draft.getByText('Every 360 minutes', { exact: true })).toBeVisible();
+    await expect(draft).toContainText('Run once keeps this schedule inactive. Use Start schedule to enable it.');
     await draft.getByRole('button', { name: 'Start schedule', exact: true }).click();
     await expect(draft.getByText('Scheduled', { exact: true })).toBeVisible();
     await draft.getByRole('button', { name: 'Pause', exact: true }).click();
@@ -585,12 +614,16 @@ test.describe('agent task workflow', () => {
     await expect(page.getByLabel('Task name', { exact: true })).toHaveValue('Browser workflow draft');
     await expect(page.getByRole('combobox', { name: 'Context persistence', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Back to tasks', exact: true }).click();
-    await sample.getByRole('button', { name: 'Run now', exact: true }).click();
+    await sample.getByRole('button', { name: 'Run once', exact: true }).click();
     await expect.poll(async () => {
       await page.reload();
       return sample.getByRole('link', { name: 'View latest result', exact: true }).count();
     }).toBe(1);
     await sample.getByRole('link', { name: 'View latest result', exact: true }).click();
+    await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
+    const selectedRun = page.url();
+    await page.getByRole('link', { name: 'Refresh status', exact: true }).click();
+    await expect(page).toHaveURL(selectedRun);
     await expect(page.locator('.agent-run[open]')).toContainText('Synthetic execution; no provider was contacted');
     await page.getByRole('navigation', { name: 'Agent workflow' }).getByRole('link', { name: 'Templates', exact: true }).click();
     await page.getByRole('link', { name: /^Repair failing checks/ }).click();
