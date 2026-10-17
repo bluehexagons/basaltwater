@@ -1312,7 +1312,7 @@ def configure_firewall_web(config: SetupConfig) -> None:
 
 
 def configure_firewall_ssh_only(config: SetupConfig) -> None:
-    """Configure firewall to allow only SSH (for servers without web/RDP)."""
+    """Configure SSH and optional mDNS firewall rules, without adding web or RDP access."""
     _verify_ssh_firewall_peer(config)
     result = run("ufw status 2>/dev/null | grep -q 'Status: active'", check=False)
     firewall_active = result.returncode == 0

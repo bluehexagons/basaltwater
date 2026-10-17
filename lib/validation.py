@@ -287,13 +287,13 @@ def validate_redundancy_percentage(redundancy: str) -> int:
 
 
 def validate_directory_empty(directory: str) -> None:
-    """Validate that directory is empty.
+    """Validate that a directory has no visible entries; hidden entries are ignored.
     
     Args:
         directory: Directory path to check
         
     Raises:
-        ValueError: If directory is not empty or doesn't exist
+        ValueError: If the path is not an existing directory or contains visible entries
     """
     validate_filesystem_path(directory, must_exist=True)
     

@@ -7,7 +7,7 @@ timeline.
 T3 owns device discovery, streaming, control, and its device tools. Device
 pairing enrolls a T3 client; it does not authorize simulator control. T3's
 first device listing can install tools on a configured SSH host, so device
-discovery must be an explicit, authorized action. See the [T3 device guide](https://github.com/pingdotgg/t3code/blob/v0.0.45/docs/user/devices.md).
+discovery must be an explicit, authorized action. See the [T3 device guide](https://github.com/pingdotgg/t3code/blob/v0.1.0/docs/user/devices.md).
 
 Any future support requires a concrete mobile project and an authorized,
 disposable device host. Android needs an eligible Linux/KVM host; iOS simulation

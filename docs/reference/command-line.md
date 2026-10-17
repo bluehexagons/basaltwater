@@ -2,8 +2,8 @@
 
 Reference for the `v2.0.0` preview series and eventual stable `basaltw` CLI.
 The code help, `basaltwater.py`, and `lib/arg_parser.py` are the source of
-truth; this page summarizes the command surface and behaviors that are easy to
-miss.
+truth; this page summarizes the main command surface and behaviors that are
+easy to miss. Feature guides document their full option sets.
 
 Related pages:
 
@@ -25,6 +25,10 @@ Related pages:
   skills and capability routing
 - [`agent-subagents.md`](../agents/agent-subagents.md) for subagent integration and project model learning
 - [`agent-tasks.md`](../agents/agent-tasks.md) for persistent tasks, goals, schedules and shared agent controls
+- [`web-panel.md`](../services/web-panel.md) for panel setup, account access, and panel-specific options
+- [`device-pairing.md`](../services/device-pairing.md) for protected browser and app enrollment options
+- [`maintenance-agents.md`](../operations/maintenance-agents.md) for maintenance-agent policy options
+- [`guacamole.md`](../workstations/guacamole.md) for browser-based desktop and console options
 - [`agent-memory.md`](../agents/agent-memory.md) for private project notes, todo claims and secret-file references
 - [`agent-security.md`](../agents/agent-security.md) for coding-user privilege,
   Codex session policy, hardened mode, and accepted security boundaries
@@ -303,10 +307,10 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `host` | Hostname or IP address; with `--provision-on`, use IPv4 or IPv4/PREFIX (bare IPv4 means `/24`) |
 | `username` | Optional SSH username |
 | `-k, --key PATH` | SSH private key |
-| `-p, --password PASS` | SSH password |
+| `-p, --password PASS` | Target Unix account password, also used for RDP when enabled. A command-line value may appear in shell history and process arguments. |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove the VM setup user's unrestricted passwordless sudo capability rule; disabled by default |
 | `--privilege-broker [PORT]` / `--no-privilege-broker` | Install or remove the separate HTTPS approval page and one-shot privilege broker at the managed host; the default port is 9444 and it requires a non-root agent VM user and conflicts with `--nopasswd` and hardened modes |
-| `--privilege-broker-password [PASSWORD]` | Set the independent approval-page password; omit `PASSWORD` to prompt securely, and omit the flag on a patch to retain the existing password |
+| `--privilege-broker-password [PASSWORD]` | Set the independent approval-page password; omit `PASSWORD` to prompt securely, and omit the flag on a patch to retain the existing password. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent group restrictions and the hardened coding-agent policy; mutually exclusive with `--nopasswd` when enabled |
 | `--harden-user` / `--no-harden-user` | Also apply or remove password locking, mode-`0700` home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled systemd lingering; enabling implies `--harden-agent` and rejects RDP |
 | `-t, --timezone TZ` | Timezone |
@@ -779,7 +783,7 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--t3code-ready` | Add the headless T3 Code-ready profile: GitHub CLI, Codex, read-write Git, T3 web service, and protected pairing |
 | `--nopasswd` / `--no-nopasswd` | Retain or remove unrestricted passwordless sudo for the VM setup identity; capability opt-in |
 | `--privilege-broker [PORT]` / `--no-privilege-broker` | Enable or disable a separately authenticated HTTPS page at the managed host (port 9444 by default) for one-shot approved reboot and registered service-restart requests; see [Privilege approvals](../agents/privilege-approvals.md) |
-| `--privilege-broker-password [PASSWORD]` | Assign or rotate the approval-page password; omitting the value prompts privately and the stored setup command excludes the password hash |
+| `--privilege-broker-password [PASSWORD]` | Assign or rotate the approval-page password; omitting the value prompts privately and the stored setup command excludes the password hash. A command-line value may appear in shell history and process arguments. |
 | `--harden-agent` / `--no-harden-agent` | Apply or remove administrator/root-equivalent supplementary-group restrictions and the stricter agent policy |
 | `--harden-user` / `--no-harden-user` | Apply or remove the password lock, private home, sensitive system-data/device-group restrictions, SSH forwarding/user-rc restrictions, and disabled lingering; enabling implies agent hardening and is incompatible with RDP |
 | `--agent-tool TOOL[,TOOL...]` | Add one or more provider tools (`gh`, `codex`, `claude`, or `opencode`) to profile defaults |
@@ -796,7 +800,7 @@ sudo basaltw setup workstation_dev localhost "$USER" \
 | `--device-pairing PROVIDER` | Install the protected browser enrollment portal for a provider; repeatable, currently `t3code`; unavailable for `agent_cachyos`, which uses native T3 pairing |
 | `--device-pairing-port PORT` | Pairing portal port; default `3774` and must differ from the web-interface port |
 | `--device-pairing-auth-file PATH` | Controller-local Nginx htpasswd file for the portal; transient and not saved |
-| `--device-pairing-password PASS` | Controller-local portal password; hashed locally, transient, and not saved; the portal username defaults to the setup username |
+| `--device-pairing-password PASS` | Controller-local portal password; hashed locally, transient, and not saved; the portal username defaults to the setup username. A command-line value may appear in shell history and process arguments; prefer a hidden prompt or password file. |
 | `--no-device-pairing` | Remove the pairing broker, Nginx site, firewall rule, and installed portal password file from a saved host |
 | `--browser-automation PROVIDER` | Install and register explicit agent browser automation; currently `playwright`, with selected Codex and/or OpenCode required |
 | `--no-browser-automation` | Disable profile-provided browser automation |
