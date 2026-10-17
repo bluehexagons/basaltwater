@@ -161,7 +161,12 @@ function Select-Distro {
 function Ensure-Distro {
     $installed = (& wsl.exe --list --quiet | Out-String) -replace [char]0, ''
     if ($LASTEXITCODE -ne 0) { throw "Could not list installed WSL distributions" }
-    if ($installed -match ("(?m)^" + [regex]::Escape($state.Distro) + "\s*$")) { return }
+    if ($installed -match ("(?m)^" + [regex]::Escape($state.Distro) + "\s*$")) {
+        if ($state.DistroSelection -ne 'explicit' -and -not $state.DistroOwned) {
+            throw "Existing distro was not explicitly selected or confirmed created by setup. Rerun -Resume -DistroName $($state.Distro) to authorize reuse."
+        }
+        return
+    }
     $online = (& wsl.exe --list --online | Out-String) -replace [char]0, ''
     if ($LASTEXITCODE -ne 0 -or $online -notmatch ("\b" + [regex]::Escape($state.Distro) + "\b")) {
         throw "Selected Ubuntu distribution is neither installed nor available online"
@@ -169,6 +174,47 @@ function Ensure-Distro {
     $arguments = @('--install', '--distribution', $state.Distro, '--no-launch')
     if ($state.DistroLocation) { $arguments += @('--location', $state.DistroLocation) }
     Invoke-Checked "Ubuntu installation" { & wsl.exe @arguments }
+    $state.DistroOwned = $true
+    Save-State $state
+}
+
+function Initialize-DistroSelection {
+    # Old states cannot establish whether the user explicitly selected a distro.
+    if (-not $state.PSObject.Properties['DistroSelection']) {
+        $state | Add-Member -NotePropertyName DistroSelection -NotePropertyValue 'unknown'
+    }
+    if (-not $state.PSObject.Properties['DistroOwned']) {
+        $state | Add-Member -NotePropertyName DistroOwned -NotePropertyValue $false
+    }
+    if (-not $state.PSObject.Properties['RestartRequired']) {
+        $state | Add-Member -NotePropertyName RestartRequired -NotePropertyValue $false
+    }
+    if ($DistroName) {
+        if ($state.Distro -and $state.Distro -ne $DistroName) {
+            throw 'Resume -DistroName must match the saved distribution'
+        }
+        $state.Distro = $DistroName
+        $state.DistroSelection = 'explicit'
+    }
+    Save-State $state
+}
+
+function Ensure-UbuntuConfiguration([string]$prepare) {
+    $pendingRestart = $state.RestartRequired
+    # Persist before Linux configuration: an interrupted run must still restart
+    # even when the next configure invocation reports UNCHANGED.
+    $state.RestartRequired = $true
+    Save-State $state
+    $changed = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare configure --user $state.LinuxUser
+    if ($LASTEXITCODE -ne 0) { throw "Ubuntu user/systemd preparation failed" }
+    $pidOne = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/cat /proc/1/comm
+    if ($LASTEXITCODE -ne 0) { throw 'Could not check Ubuntu systemd readiness' }
+    if ($pendingRestart -or ($changed | Select-Object -Last 1) -eq 'CHANGED' -or
+        ($pidOne | Select-Object -Last 1) -ne 'systemd') {
+        Invoke-Checked "WSL distribution restart" { & wsl.exe --terminate $state.Distro }
+    }
+    $state.RestartRequired = $false
+    Save-State $state
 }
 
 function Wsl-Path([string]$windowsPath) {
@@ -244,6 +290,9 @@ try {
             Revision = $resolved.Revision
             Source = $resolved.Source
             Distro = $DistroName
+            DistroSelection = $(if ($DistroName) { 'explicit' } else { 'automatic' })
+            DistroOwned = $false
+            RestartRequired = $false
             DistroLocation = $DistroLocation
             LinuxUser = $LinuxUser
             BuildServer = [bool]$BuildServer
@@ -261,6 +310,7 @@ try {
         return
     }
 
+    Initialize-DistroSelection
     if (-not (Ensure-Wsl)) {
         $state.Phase = "restart-required"
         Save-State $state
@@ -281,11 +331,7 @@ try {
     Ensure-UbuntuPython
     $prepare = Wsl-Path (Join-Path $state.Source "windows\wsl_prepare.py")
     $sourcePath = Wsl-Path $state.Source
-    $changed = & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare configure --user $state.LinuxUser
-    if ($LASTEXITCODE -ne 0) { throw "Ubuntu user/systemd preparation failed" }
-    if (($changed | Select-Object -Last 1) -eq "CHANGED") {
-        Invoke-Checked "WSL distribution restart" { & wsl.exe --terminate $state.Distro }
-    }
+    Ensure-UbuntuConfiguration $prepare
     Invoke-Checked "source staging" {
         & wsl.exe --distribution $state.Distro --user root --exec /usr/bin/python3 $prepare stage --source $sourcePath --revision $state.Revision
     }

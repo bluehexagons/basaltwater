@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -61,11 +62,15 @@ class WslStepTests(unittest.TestCase):
                                      machine_type="wsl", agent_tools=tools)
                 functions = [function.__name__ for _title, function in build_wsl_steps(config)]
                 if set(tools).intersection({"codex", "claude", "opencode"}):
-                    self.assertEqual(functions[-3:], ["install_agent_cli_launcher", "install_wsl_agent_skills",
-                                                     "report_wsl_readiness"])
+                    self.assertEqual(functions[-4:], ["install_agent_cli_launcher", "install_wsl_agent_skills",
+                                                     "update_managed_agent_tools", "report_wsl_readiness"])
+                    for tool in tools:
+                        self.assertLess(functions.index(f"install_{tool}"),
+                                        functions.index("update_managed_agent_tools"))
                 else:
                     self.assertNotIn("install_agent_cli_launcher", functions)
                     self.assertNotIn("install_wsl_agent_skills", functions)
+                    self.assertNotIn("update_managed_agent_tools", functions)
 
     def test_skill_dry_run_never_writes_catalogs(self):
         with patch.object(wsl_steps, "is_dry_run", return_value=True), \
@@ -75,6 +80,83 @@ class WslStepTests(unittest.TestCase):
 
 
 class WslPrepareTests(unittest.TestCase):
+    def test_invalid_account_marker_stops_before_account_operations(self):
+        for content in ('null', '{"version": 2, "password_pending": true}',
+                        '{"version": 1, "password_pending": 1}'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                accounts = root / "accounts"
+                accounts.mkdir()
+                marker = accounts / "agent.json"
+                marker.write_text(content)
+                with patch.object(wsl_prepare, "CONF", root / "wsl.conf"), \
+                     patch.object(wsl_prepare, "ACCOUNTS", accounts), \
+                     patch.object(wsl_prepare.os, "geteuid", return_value=0), \
+                     patch.object(wsl_prepare.os, "fchown"), \
+                     patch.object(wsl_prepare.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"}), \
+                     patch.object(wsl_prepare.pwd, "getpwnam") as lookup, \
+                     patch.object(wsl_prepare.subprocess, "run") as run:
+                    with self.assertRaisesRegex(ValueError, "account preparation state"):
+                        wsl_prepare.configure("agent")
+                    lookup.assert_not_called()
+                    run.assert_not_called()
+                self.assertEqual(marker.read_text(), content)
+
+    def test_interrupted_managed_password_is_retried_before_sudo_and_completion(self):
+        for interruption in (subprocess.CalledProcessError(1, "passwd"), KeyboardInterrupt()):
+            with self.subTest(interruption=type(interruption)), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                calls = []
+                exists = False
+
+                def lookup(_username):
+                    if not exists:
+                        raise KeyError("agent")
+                    return SimpleNamespace(pw_name="agent")
+
+                def run(command, **_kwargs):
+                    nonlocal exists
+                    calls.append(command)
+                    if command[0] == "useradd":
+                        exists = True
+                    if command[0] == "passwd" and len(calls) == 2:
+                        raise interruption
+
+                with patch.object(wsl_prepare, "CONF", root / "wsl.conf"), \
+                     patch.object(wsl_prepare, "ACCOUNTS", root / "accounts"), \
+                     patch.object(wsl_prepare.os, "geteuid", return_value=0), \
+                     patch.object(wsl_prepare.os, "fchown"), \
+                     patch.object(wsl_prepare.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"}), \
+                     patch.object(wsl_prepare.pwd, "getpwnam", side_effect=lookup), \
+                     patch.object(wsl_prepare.subprocess, "run", side_effect=run):
+                    with self.assertRaises(type(interruption)):
+                        wsl_prepare.configure("agent")
+                    marker = root / "accounts/agent.json"
+                    self.assertTrue(wsl_prepare.read_json_file(str(marker))["password_pending"])
+                    self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(marker.parent.stat().st_mode & 0o777, 0o700)
+                    self.assertFalse((root / "wsl.conf").exists())
+                    wsl_prepare.configure("agent")
+                    self.assertFalse(wsl_prepare.read_json_file(str(marker))["password_pending"])
+                    wsl_prepare.configure("agent")
+                self.assertEqual([call[0] for call in calls],
+                                 ["useradd", "passwd", "passwd", "usermod", "usermod"])
+
+    def test_preexisting_locked_account_does_not_receive_password_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(wsl_prepare, "CONF", root / "wsl.conf"), \
+                 patch.object(wsl_prepare, "ACCOUNTS", root / "accounts"), \
+                 patch.object(wsl_prepare.os, "geteuid", return_value=0), \
+                 patch.object(wsl_prepare.os, "fchown"), \
+                 patch.object(wsl_prepare.platform, "freedesktop_os_release", return_value={"ID": "ubuntu"}), \
+                 patch.object(wsl_prepare.pwd, "getpwnam"), \
+                 patch.object(wsl_prepare.subprocess, "run") as run:
+                wsl_prepare.configure("agent")
+                wsl_prepare.configure("agent")
+            self.assertEqual([call.args[0][0] for call in run.call_args_list], ["usermod", "usermod"])
+            self.assertFalse((root / "accounts/agent.json").exists())
+
     def test_ini_insertion_separates_an_unterminated_existing_setting(self):
         for section, key, value in (("boot", "systemd", "true"), ("user", "default", "agent")):
             with self.subTest(section=section):

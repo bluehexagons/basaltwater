@@ -17,10 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lib.validation import validate_filesystem_path
 from lib.validators import validate_username
+from lib.atomic_io import read_json_file, write_json_atomic, write_text_atomic
+from lib.setup_directories import directory_fd
 
 
 CONF = Path("/etc/wsl.conf")
 RELEASES = Path("/opt/basaltwater/releases")
+ACCOUNTS = Path("/var/lib/basaltwater/wsl-accounts")
 
 
 def _set_ini_value(lines: list[str], section: str, key: str, value: str) -> bool:
@@ -60,12 +63,33 @@ def configure(username: str) -> None:
         raise ValueError("Run preparation as root in the selected Ubuntu distribution")
     if not validate_username(username) or username == "root":
         raise ValueError("Invalid non-root Ubuntu username")
+    # Only accounts with a durable pending marker belong to this recovery flow.
+    # Never reset a deliberately locked, preexisting account's password.
+    with directory_fd(str(ACCOUNTS), create=True, mode=0o700) as descriptor:
+        os.fchown(descriptor, 0, 0)
+        os.fchmod(descriptor, 0o700)
+    marker = ACCOUNTS / f"{username}.json"
+    try:
+        account_state = read_json_file(str(marker))
+    except FileNotFoundError:
+        account_state = None
+    else:
+        if (not isinstance(account_state, dict)
+                or set(account_state) != {"version", "password_pending"}
+                or type(account_state["version"]) is not int
+                or account_state["version"] != 1
+                or type(account_state["password_pending"]) is not bool):
+            raise ValueError(f"Invalid WSL account preparation state: {marker}")
     try:
         pwd.getpwnam(username)
     except KeyError:
+        account_state = {"version": 1, "password_pending": True}
+        write_json_atomic(str(marker), account_state)
         subprocess.run(["useradd", "-m", "-s", "/bin/bash", username], check=True)
+    if account_state and account_state["password_pending"]:
         print(f"Set the password for Ubuntu user {username}:")
         subprocess.run(["passwd", username], check=True)
+        write_json_atomic(str(marker), {"version": 1, "password_pending": False})
     subprocess.run(["usermod", "-aG", "sudo", username], check=True)
     if CONF.is_symlink():
         raise ValueError("/etc/wsl.conf must not be a symlink")
@@ -73,12 +97,7 @@ def configure(username: str) -> None:
     changed = _set_ini_value(lines, "boot", "systemd", "true")
     changed = _set_ini_value(lines, "user", "default", username) or changed
     if changed:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
-                                         dir=CONF.parent, delete=False) as output:
-            output.writelines(lines)
-            temporary = Path(output.name)
-        temporary.chmod(0o644)
-        os.replace(temporary, CONF)
+        write_text_atomic(str(CONF), "".join(lines), mode=0o644)
     print("CHANGED" if changed else "UNCHANGED")
 
 
