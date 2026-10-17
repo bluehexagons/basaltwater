@@ -30,6 +30,40 @@ that represents the action being changed. For invalid input, inspect
 For architecture and test expectations, see the
 [contributor guide](README.md).
 
+## Debian source repair after repository changes
+
+When replacing `basaltwater-debian.sources`, calculate missing base and security
+suites using the other source files. The managed file is replaced in full, so
+its existing entries must not count as coverage that survives replacement.
+Regression tests should remove an external base or security source after an
+initial repair and verify that both suites remain available on subsequent runs.
+
+## Account homes and fresh SSH directories
+
+Use `get_user_home()` for existing accounts, including root and users whose
+homes are outside `/home`. SSH keys, Python tooling and uv timer checks must use
+the same passwd home. Create `.ssh` and generate its keys as the target account;
+a root-created directory with mode `0700` prevents the user from writing keys.
+
+The shell installer requires `curl` even when `wget` is available: the uv
+bootstrap downloads its installer with `curl`. Include it in both prerequisite
+detection and automatic package installation.
+
+## Managed swap blocks in fstab
+
+Replace an existing managed swap block in place and preserve surrounding mount
+entries and whitespace. Removing both separating newlines can concatenate two
+unrelated mounts into an invalid line. Cover replacement, removal and reruns with
+mount entries on both sides of the managed block.
+
+## Required desktop application installs
+
+Verify requested applications and their required plugins after installation,
+and propagate failed installs to the setup runner. Reconcile the system Flathub
+remote even when Flatpak is already installed. Callers must check
+`install_flatpak_if_needed()` before proceeding; its result includes remote
+preparation. LibreOffice retains its APT fallback when Flatpak preparation fails.
+
 ## Target-side helper imports and automatic swap
 
 Launch trusted scripts under `lib/` with `python3 -I /absolute/path/to/helper.py`

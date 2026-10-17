@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from lib.apt_sources import (
     MANAGED_SOURCE_FILENAME,
@@ -295,6 +296,33 @@ class TestAptSources(unittest.TestCase):
             self.assertEqual(inspect_apt_sources("noble", apt_dir).entries, ())
         finally:
             shutil.rmtree(root)
+
+    def test_repair_retains_managed_suites_after_other_sources_are_removed(self):
+        for source in (
+            "deb https://deb.debian.org/debian trixie main\n",
+            "deb https://security.debian.org/debian-security trixie-security main\n",
+        ):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                apt_dir = root / "apt"
+                (apt_dir / "sources.list.d").mkdir(parents=True)
+                external = apt_dir / "sources.list"
+                external.write_text(source, encoding="utf-8")
+                release = root / "os-release"
+                release.write_text("ID=debian\nVERSION_CODENAME=trixie\n", encoding="utf-8")
+                keyring = root / "keyring.gpg"
+                keyring.write_bytes(b"test keyring")
+
+                with patch("lib.apt_sources._find_debian_archive_keyring", return_value=str(keyring)):
+                    ensure_debian_package_sources(str(apt_dir), str(release))
+                    external.unlink()
+                    status = ensure_debian_package_sources(str(apt_dir), str(release))
+                    self.assertTrue(status.has_official_base)
+                    self.assertTrue(status.has_official_security)
+                    managed = apt_dir / "sources.list.d" / MANAGED_SOURCE_FILENAME
+                    before_rerun = managed.read_bytes()
+                    ensure_debian_package_sources(str(apt_dir), str(release))
+                    self.assertEqual(managed.read_bytes(), before_rerun)
 
 
 if __name__ == "__main__":

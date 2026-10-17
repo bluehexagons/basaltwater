@@ -461,6 +461,38 @@ class TestInstallScript(unittest.TestCase):
             self.assertIn("python3", result.stderr)
             self.assertIn("rsync", result.stderr)
 
+    def test_missing_curl_is_installed_even_when_wget_is_available(self):
+        for has_wget in (False, True):
+            with self.subTest(has_wget=has_wget), tempfile.TemporaryDirectory() as directory:
+                _, _, environment = self._create_fixture(directory)
+                environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="ubuntu")
+                minimal_bin = Path(directory, "minimal-bin")
+                minimal_bin.mkdir()
+                for name in ("sh", "head", "awk", "basename", "python3", "git", "env"):
+                    (minimal_bin / name).symlink_to(shutil.which(name))
+                for name in ("ssh", "rsync", "sleep", *(["wget"] if has_wget else [])):
+                    command = minimal_bin / name
+                    command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                    command.chmod(0o755)
+                apt_log = Path(directory, "apt.log")
+                apt = minimal_bin / "apt-get"
+                apt.write_text(
+                    '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_APT_LOG"\n'
+                    'case " $* " in *" install "*) exit 79 ;; esac\n',
+                    encoding="utf-8",
+                )
+                apt.chmod(0o755)
+                environment["TEST_APT_LOG"] = str(apt_log)
+                environment["PATH"] = os.pathsep.join((str(Path(directory, "bin")), str(minimal_bin)))
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--install-dir", str(Path(directory, "installed"))],
+                    env=environment, capture_output=True, text=True, timeout=20,
+                )
+                self.assertEqual(result.returncode, 79, result.stderr)
+                calls = apt_log.read_text().splitlines()
+                self.assertEqual(len(calls), 2)
+                self.assertIn("curl", calls[1].split())
+
     def test_cachyos_local_setup_keeps_the_human_user_without_elevation(self):
         with tempfile.TemporaryDirectory() as directory:
             _home, log_path, environment = self._create_fixture(directory)

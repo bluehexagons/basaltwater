@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ from common.common_steps import (
     check_debian_package_sources,
     configure_time_sync,
     ensure_python_alias,
+    generate_ssh_key,
     install_av_tools,
     install_cli_tools,
     install_data_analysis_tools,
@@ -361,6 +363,46 @@ class TestUserCommandEnvironment(unittest.TestCase):
         self.assertIn("PATH=/home/agent/.local/bin:/home/agent/.opencode/bin", command)
         self.assertIn("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", command)
         self.assertNotIn("/home/loren", command)
+
+
+class TestUserSSHKeys(unittest.TestCase):
+    @patch("common.common_steps.run")
+    @patch("common.common_steps._run_as_login_user")
+    def test_fresh_ssh_directory_and_keys_are_created_as_the_target_user(self, run_as_user, root_run):
+        with tempfile.TemporaryDirectory(prefix="ssh home ") as home, patch(
+            "common.common_steps.get_user_home", return_value=home
+        ):
+            config = SetupConfig(host="host", username="agent", system_type="server_dev")
+            generate_ssh_key(config)
+            username, actual_home, script = run_as_user.call_args.args
+            self.assertEqual((username, actual_home), ("agent", home))
+            commands = script.split(" && ")
+            self.assertEqual(shlex.split(commands[1]), ["mkdir", "-p", f"{home}/.ssh"])
+            self.assertEqual(shlex.split(commands[2]), ["chmod", "700", f"{home}/.ssh"])
+            self.assertIn(f"{home}/.ssh/id_ed25519", shlex.split(commands[3]))
+            self.assertEqual(shlex.split(commands[3])[0], "ssh-keygen")
+        root_run.assert_not_called()
+
+    @patch("common.common_steps._run_as_login_user")
+    def test_existing_key_is_preserved_and_symlink_directory_is_rejected(self, run_as_user):
+        with tempfile.TemporaryDirectory() as home, patch(
+            "common.common_steps.get_user_home", return_value=home
+        ):
+            config = SetupConfig(host="host", username="root", system_type="server_dev")
+            directory = os.path.join(home, ".ssh")
+            os.mkdir(directory)
+            key = os.path.join(directory, "id_ed25519")
+            with open(key, "w", encoding="utf-8") as stream:
+                stream.write("existing key")
+            generate_ssh_key(config)
+            with open(key, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "existing key")
+            os.unlink(key)
+            os.rmdir(directory)
+            os.symlink(home, directory)
+            with self.assertRaisesRegex(RuntimeError, "SSH path"):
+                generate_ssh_key(config)
+        run_as_user.assert_not_called()
 
 
 class TestVMSudoers(unittest.TestCase):

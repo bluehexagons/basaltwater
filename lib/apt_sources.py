@@ -262,6 +262,12 @@ def inspect_apt_sources(
 
     codename = validate_debian_codename(codename)
     entries = parse_apt_sources(apt_dir)
+    return _source_status(codename, entries)
+
+
+def _source_status(codename: str, entries: tuple[AptSourceEntry, ...]) -> AptSourceStatus:
+    """Compute coverage from the entries that will survive a source replacement."""
+
     cdrom_sources = tuple(
         sorted({entry.path for entry in entries if _is_cdrom_uri(entry.uri)})
     )
@@ -529,20 +535,11 @@ def _remove_redundant_managed_source(
     if MANAGED_SOURCE_MARKER not in managed_content:
         return False
 
-    other_entries = tuple(entry for entry in status.entries if entry.path != path)
-    has_base = any(
-        _is_official_base_uri(entry.uri)
-        and entry.suite == status.codename
-        and "main" in {component.lower() for component in entry.components}
-        for entry in other_entries
+    other_status = _source_status(
+        status.codename,
+        tuple(entry for entry in status.entries if entry.path != path),
     )
-    has_security = any(
-        _is_official_security_uri(entry.uri)
-        and entry.suite == f"{status.codename}-security"
-        and "main" in {component.lower() for component in entry.components}
-        for entry in other_entries
-    )
-    if not (has_base and has_security):
+    if not (other_status.has_official_base and other_status.has_official_security):
         return False
 
     _backup_file(path)
@@ -582,12 +579,18 @@ def ensure_debian_package_sources(
         status = inspect_apt_sources(codename, apt_dir)
     added_managed_sources = False
     if not status.has_official_base or not status.has_official_security:
+        # The managed file is replaced in full. Its current entries cannot
+        # count as coverage supplied by files that survive that replacement.
+        other_status = _source_status(
+            codename,
+            tuple(entry for entry in status.entries if entry.path != _managed_source_path(apt_dir)),
+        )
         added_managed_sources = _ensure_managed_sources(
             apt_dir,
             codename,
             components,
-            include_base=not status.has_official_base,
-            include_security=not status.has_official_security,
+            include_base=not other_status.has_official_base,
+            include_security=not other_status.has_official_security,
         )
         status = inspect_apt_sources(codename, apt_dir)
 

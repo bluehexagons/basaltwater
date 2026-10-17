@@ -374,7 +374,7 @@ fi
 
 missing_prerequisite=0
 missing_prerequisites=""
-for command_name in python3 git ssh rsync; do
+for command_name in python3 git ssh rsync curl; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         missing_prerequisite=1
         if [ -n "$missing_prerequisites" ]; then
@@ -383,14 +383,6 @@ for command_name in python3 git ssh rsync; do
         missing_prerequisites="$missing_prerequisites$command_name"
     fi
 done
-if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    missing_prerequisite=1
-    if [ -n "$missing_prerequisites" ]; then
-        missing_prerequisites="$missing_prerequisites, "
-    fi
-    missing_prerequisites="${missing_prerequisites}curl or wget"
-fi
-
 if [ "$PLAN_ONLY" -eq 1 ]; then
     printf 'Installer plan for %s (%s):\n' "$TARGET_USER" "$HOST_OS_ID"
     printf '  Source destination: %s\n  Requested channel: %s\n' "$INSTALL_DIR" "$CHANNEL"
@@ -577,7 +569,7 @@ if [ "$HOST_OS_SUPPORTED" -eq 1 ] && [ "$missing_prerequisite" -eq 1 ]; then
         -o DPkg::Lock::Timeout=120 \
         -o Dpkg::Use-Pty=0 \
         install -y -q \
-        ca-certificates git openssh-client python3 rsync
+        ca-certificates curl git openssh-client python3 rsync
 fi
 
 python3 - "$INSTALL_DIR" "$TARGET_HOME" "$HOST_OS_ID" <<'EOF'

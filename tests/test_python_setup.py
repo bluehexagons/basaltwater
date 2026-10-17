@@ -37,13 +37,16 @@ class TestPythonFlag(unittest.TestCase):
         self.assertIn("Configuring uv auto-update", step_names)
 
     @patch("common.common_steps.install_or_update_uv", return_value=True)
+    @patch("common.common_steps.get_user_home", return_value="/srv/build user")
     @patch("common.common_steps.shutil.which", side_effect=["/usr/bin/python3", "/usr/bin/python"])
     @patch("common.common_steps.run")
-    def test_remote_install_python_skips_completion(self, mock_run, _which, _install_uv):
+    def test_remote_install_python_skips_completion(self, mock_run, _which, _home, install_uv):
         config = SetupConfig(host="host", username="user", system_type="server_dev", install_python=True)
         common_steps.install_python(config)
         commands = [args[0] for args, _ in mock_run.call_args_list]
         self.assertFalse(any("argcomplete" in cmd for cmd in commands))
+        self.assertEqual(install_uv.call_args.kwargs["user_home"], "/srv/build user")
+        _home.assert_called_once_with("user")
 
     @patch("common.common_steps.is_dry_run", return_value=True)
     def test_install_or_update_uv_returns_true_in_dry_run(self, _is_dry_run):
@@ -84,8 +87,9 @@ class TestPythonFlag(unittest.TestCase):
         self.assertEqual(observed_modes, [0o644])
 
     @patch("common.common_steps.configure_maintenance_timer")
-    def test_configure_auto_update_uv_disables_ecosystem_auto_upgrades(self, mock_configure):
-        config = SetupConfig(host="host", username="user", system_type="server_dev", install_python=True)
+    @patch("common.common_steps.get_user_home", return_value="/root")
+    def test_configure_auto_update_uv_disables_ecosystem_auto_upgrades(self, _home, mock_configure):
+        config = SetupConfig(host="host", username="root", system_type="server_dev", install_python=True)
         common_steps.configure_auto_update_uv(config)
         mock_configure.assert_called_once_with(
             service_name="auto-update-uv",
@@ -93,9 +97,9 @@ class TestPythonFlag(unittest.TestCase):
             timer_desc="Auto-update uv weekly",
             script_path="/opt/basaltwater/common/service_tools/auto_update_uv.py",
             schedule="Sun *-*-* 05:00:00",
-            check_path="/home/user/.local/bin/uv",
+            check_path="/root/.local/bin/uv",
             check_name="uv",
-            user="user",
+            user="root",
             environment={ECOSYSTEM_AUTO_UPGRADE_ENV: "0"},
             purpose="auto-update",
         )

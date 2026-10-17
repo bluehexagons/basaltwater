@@ -384,10 +384,11 @@ packages, and requires these controller commands to already be available:
 - `git`
 - `ssh`
 - `rsync`
-- `curl` or `wget`
+- `curl`
 
 Install the equivalent packages with the host distribution's package manager
-before rerunning the installer. CachyOS has its own limited
+before rerunning the installer. The uv bootstrap also requires `curl`, so
+`wget` alone does not satisfy the installer prerequisites. CachyOS has its own limited
 [local coding setup](../workstations/cachyos.md), including prerequisite installation, and does
 not use this unsupported-host confirmation path.
 

@@ -91,10 +91,10 @@ bulk update across connected environments. It updates outdated providers,
 servers, and the desktop app. For one provider on one VM, use that provider's
 individual control in **Settings → Providers** or
 `basaltw agent update HOST USER --tool TOOL`. After a provider update, record
-readiness with:
+readiness with the updated tool's name, for example:
 
 ```bash
-basaltw agent doctor --tool TOOL \
+basaltw agent doctor --tool codex \
   --capability t3code --capability host --record
 ```
 Basaltwater's recorded readiness and rollback history belong to updates made

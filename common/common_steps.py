@@ -456,26 +456,35 @@ def _ensure_vm_setup_user_sudoers(config: SetupConfig) -> None:
 
 def generate_ssh_key(config: SetupConfig) -> None:
     """Generate SSH key pair for user using default algorithm."""
-    safe_username = shlex.quote(config.username)
-    user_home = f"/home/{config.username}"
+    if is_dry_run():
+        print("  [DRY-RUN] Would generate the user's SSH key")
+        return
+    if not validate_username(config.username):
+        raise ValueError("Invalid SSH key username")
+    user_home = get_user_home(config.username)
     ssh_dir = f"{user_home}/.ssh"
     private_key = f"{ssh_dir}/id_ed25519"
     public_key = f"{private_key}.pub"
+
+    if os.path.lexists(ssh_dir) and (os.path.islink(ssh_dir) or not os.path.isdir(ssh_dir)):
+        raise RuntimeError(f"Refusing non-directory SSH path: {ssh_dir}")
     
     if os.path.exists(private_key):
         print(f"  ✓ SSH key already exists for {config.username}")
         return
     
-    run(f"mkdir -p {shlex.quote(ssh_dir)}")
-    run(f"chmod 700 {shlex.quote(ssh_dir)}")
-    
     safe_private_key = shlex.quote(private_key)
     safe_comment = shlex.quote(f"{config.username}@workstation")
-    run(f"runuser -u {safe_username} -- ssh-keygen -t ed25519 -f {safe_private_key} -N '' -C {safe_comment}")
-    
-    run(f"chown -R {safe_username}:{safe_username} {shlex.quote(ssh_dir)}")
-    run(f"chmod 600 {shlex.quote(private_key)}")
-    run(f"chmod 644 {shlex.quote(public_key)}")
+    # Create the directory as its owner before generating keys. Root-created
+    # mode-0700 directories prevent a fresh account from writing its key pair.
+    _run_as_login_user(
+        config.username,
+        user_home,
+        f"umask 077 && mkdir -p {shlex.quote(ssh_dir)} && "
+        f"chmod 700 {shlex.quote(ssh_dir)} && "
+        f"ssh-keygen -t ed25519 -f {safe_private_key} -N '' -C {safe_comment} && "
+        f"chmod 600 {safe_private_key} && chmod 644 {shlex.quote(public_key)}",
+    )
     
     print(f"  ✓ SSH key generated for {config.username} (~/.ssh/id_ed25519)")
 
@@ -1343,7 +1352,7 @@ def install_python(config: SetupConfig) -> None:
         print("  [DRY-RUN] Would install Python tooling")
         return
 
-    user_home = f"/home/{config.username}"
+    user_home = get_user_home(config.username)
 
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
     run(f"{_APT_GET} install -y -qq python3 python3-venv curl")
@@ -1372,7 +1381,7 @@ def install_python(config: SetupConfig) -> None:
 
 def configure_auto_update_uv(config: SetupConfig) -> None:
     """Configure automatic updates for uv."""
-    user_home = f"/home/{config.username}"
+    user_home = get_user_home(config.username)
     uv_path = f"{user_home}/.local/bin/uv"
 
     configure_maintenance_timer(
@@ -1467,7 +1476,7 @@ def install_flatpak_packages(config: SetupConfig) -> None:
         return
     
     from lib.machine_state import is_container
-    from desktop.apps_steps import is_flatpak_installed, install_flatpak_if_needed, is_flatpak_app_installed
+    from desktop.apps_steps import install_flatpak_if_needed, is_flatpak_app_installed
     
     # In containers, flatpak often doesn't work
     if is_container():
@@ -1475,10 +1484,8 @@ def install_flatpak_packages(config: SetupConfig) -> None:
         return
     
     # Ensure flatpak is installed
-    install_flatpak_if_needed()
-    
-    if not is_flatpak_installed():
-        raise RuntimeError("Flatpak is unavailable for the requested package installation")
+    if not install_flatpak_if_needed():
+        raise RuntimeError("Flatpak is unavailable or its system Flathub remote could not be configured")
     
     print("  Installing custom flatpak packages...")
     FLATPAK_REMOTE = "flathub"

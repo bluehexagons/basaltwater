@@ -88,11 +88,14 @@ class TestRequiredCommonMutations(unittest.TestCase):
         config.flatpak_packages = ["org.example.Application"]
         with (
             patch("lib.machine_state.is_container", return_value=False),
-            patch("desktop.apps_steps.install_flatpak_if_needed"),
-            patch("desktop.apps_steps.is_flatpak_installed", return_value=False),
+            patch("desktop.apps_steps.install_flatpak_if_needed", return_value=False),
+            patch("desktop.apps_steps.is_flatpak_app_installed") as app_probe,
+            patch.object(common_steps, "run") as command,
         ):
             with self.assertRaisesRegex(RuntimeError, "Flatpak is unavailable"):
                 common_steps.install_flatpak_packages(config)
+        app_probe.assert_not_called()
+        command.assert_not_called()
 
     def test_cloudflare_direct_access_rule_failure_stops_configuration(self):
         config = _config()
