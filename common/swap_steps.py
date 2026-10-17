@@ -291,20 +291,24 @@ def _replace_fstab(entries: list[str]) -> None:
     end = current.find(FSTAB_END)
     if (start == -1) != (end == -1) or (start != -1 and end < start):
         raise RuntimeError("/etc/fstab contains an incomplete basaltwater swap block")
-    if start != -1:
-        end += len(FSTAB_END)
-        while end < len(current) and current[end] == "\n":
-            end += 1
-        current = current[:start].rstrip("\n") + current[end:]
     block = ""
     if entries:
         block = "\n".join((FSTAB_BEGIN, *entries, FSTAB_END)) + "\n"
-    content = current.rstrip("\n")
-    if content and block:
-        content += "\n\n"
-    elif content:
-        content += "\n"
-    content += block
+    if start != -1:
+        end += len(FSTAB_END)
+        # Remove only the closing marker's line ending. All surrounding
+        # newlines belong to unmanaged content, including mount boundaries.
+        if end < len(current) and current[end] == "\n":
+            end += 1
+        content = current[:start] + block + current[end:]
+    else:
+        content = current
+        if content and block:
+            if not content.endswith("\n"):
+                content += "\n"
+            if not content.endswith("\n\n"):
+                content += "\n"
+        content += block
     write_text_atomic(FSTAB_PATH, content, mode=0o644)
 
 

@@ -202,6 +202,49 @@ class TestSwapConfiguration(unittest.TestCase):
         self.assertEqual(content.count(FSTAB_BEGIN), 1)
         self.assertEqual(content.count(FSTAB_END), 1)
 
+    def test_fstab_block_changes_preserve_surrounding_content_exactly(self):
+        old_block = f"{FSTAB_BEGIN}\n/old-swap none swap sw 0 0\n{FSTAB_END}\n"
+        entry = "UUID=swap none swap sw,pri=10 0 0"
+        new_block = f"{FSTAB_BEGIN}\n{entry}\n{FSTAB_END}\n"
+        root = "UUID=root / ext4 defaults 0 1\n"
+        data = "UUID=data /data ext4 defaults 0 2"
+        for prefix, suffix in (
+            (root, data + "\n"),
+            ("# root mount\n" + root + "\n\n", "\n# data mount\n" + data + "\n\n"),
+            (root, data),
+            ("", data + "\n"),
+            (root, ""),
+            ("", ""),
+        ):
+            for entries, block in (([], ""), ([entry], new_block)):
+                with (
+                    self.subTest(prefix=prefix, suffix=suffix, entries=entries),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    path = os.path.join(directory, "fstab")
+                    with open(path, "w", encoding="utf-8") as fstab:
+                        fstab.write(prefix + old_block + suffix)
+                    with (
+                        patch("common.swap_steps.FSTAB_PATH", path),
+                        patch("common.swap_steps.run") as mock_run,
+                    ):
+                        for _ in range(2):
+                            _replace_fstab(entries)
+                            with open(path, encoding="utf-8") as fstab:
+                                self.assertEqual(fstab.read(), prefix + block + suffix)
+                        mock_run.assert_not_called()
+
+    def test_fstab_removal_preserves_content_without_a_managed_block(self):
+        for content in ("", "# mounts\n\n", "UUID=root / ext4 defaults 0 1"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "fstab")
+                with open(path, "w", encoding="utf-8") as fstab:
+                    fstab.write(content)
+                with patch("common.swap_steps.FSTAB_PATH", path):
+                    _replace_fstab([])
+                with open(path, encoding="utf-8") as fstab:
+                    self.assertEqual(fstab.read(), content)
+
     def test_managed_swap_fstab_entries_do_not_block_boot_when_missing(self):
         file_entry = _fstab_entry(
             {
