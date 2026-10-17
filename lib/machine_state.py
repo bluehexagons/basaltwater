@@ -15,6 +15,7 @@ from lib.atomic_io import write_json_atomic
 from lib.state_read import StateReadError, read_state_object
 from lib.config import AUTO_MACHINE_TYPE, DEFAULT_MACHINE_TYPE, MACHINE_TYPES
 from lib.plugin_registry import get_system_type_names
+from lib.setup_directories import check_directory_path, directory_fd
 from lib.validators import validate_username
 
 
@@ -314,6 +315,8 @@ def can_restart_system() -> bool:
 
 def save_setup_config(config_dict: dict[str, Any]) -> None:
     """Save the setup configuration to the target system for later recall."""
+    notification_directory = os.path.dirname(NOTIFICATION_CONFIG_FILE)
+    check_directory_path(notification_directory)
     load_setup_config()
     os.makedirs(STATE_DIR, exist_ok=True)
 
@@ -340,12 +343,22 @@ def save_setup_config(config_dict: dict[str, Any]) -> None:
             sanitized_config.get("notification_strict_https") is True
         ),
     }
-    write_json_atomic(
-        NOTIFICATION_CONFIG_FILE,
-        notification_state,
-        mode=0o640 if notification_group != -1 else 0o600,
-        gid=notification_group,
-    )
+    with directory_fd(notification_directory, create=True) as descriptor:
+        metadata = os.fstat(descriptor)
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise RuntimeError("Unsafe notification configuration directory")
+        # This shared directory also contains other services' configuration.
+        # Reconcile traversal even after creation under a restrictive umask;
+        # individual files retain their own restricted readers.
+        os.fchown(descriptor, 0, 0)
+        os.fchmod(descriptor, 0o755)
+        write_json_atomic(
+            NOTIFICATION_CONFIG_FILE,
+            notification_state,
+            mode=0o640 if notification_group != -1 else 0o600,
+            uid=0,
+            gid=notification_group,
+        )
 
 
 def _validate_setup_config(config: Any) -> Optional[str]:

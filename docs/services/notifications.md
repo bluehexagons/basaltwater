@@ -125,7 +125,12 @@ For enablement, disablement, rotation, retention, and API limits, see
 > setup state because scheduled jobs need it. Scheduled jobs also receive a
 > root-owned `/etc/basaltwater/notifications.json` subset on Debian containing the
 > notification targets, level, and HTTPS policy, so they do not need access to
-> the full root-only setup state.
+> the full root-only setup state. Setup reconciles the shared `/etc/basaltwater`
+> directory to `root:root` mode `0755` for service traversal. The subset itself
+> remains `root:<configured user's primary group>` mode `0640`, or root-only
+> mode `0600` until that account exists. Re-running setup repairs a directory
+> previously created with mode `0700`; symlinked, non-root-owned, or
+> group/world-writable configuration directories are rejected.
 
 ## Choose a delivery level
 

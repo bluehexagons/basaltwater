@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -240,6 +241,22 @@ class TestSaveLoadMachineState(unittest.TestCase):
 
 
 class TestSaveLoadSetupConfig(unittest.TestCase):
+    def setUp(self):
+        # Model root-owned target directories without changing host ownership.
+        real_fstat = os.fstat
+
+        def target_fstat(descriptor):
+            metadata = real_fstat(descriptor)
+            if stat.S_ISDIR(metadata.st_mode):
+                values = list(metadata)
+                values[4] = 0  # st_uid
+                return os.stat_result(values)
+            return metadata
+
+        self.chown = self.enterContext(patch.object(ms.os, 'fchown'))
+        self.enterContext(patch.object(ms.os, 'fstat', side_effect=target_fstat))
+        self.enterContext(patch.object(ms.pwd, 'getpwnam', side_effect=KeyError('test')))
+
     def test_save_and_load_setup_config(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             config_file = os.path.join(tmpdir, 'setup.json')
@@ -320,7 +337,80 @@ class TestSaveLoadSetupConfig(unittest.TestCase):
         notification_call = mock_write.call_args_list[-1]
         self.assertEqual(notification_call.args[0], notification_file)
         self.assertEqual(notification_call.kwargs['mode'], 0o640)
+        self.assertEqual(notification_call.kwargs['uid'], 0)
         self.assertEqual(notification_call.kwargs['gid'], 1234)
+
+    def test_notification_directory_traversable_with_restrictive_umask(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as tmpdir:
+                directory = os.path.join(tmpdir, 'basaltwater')
+                notification_file = os.path.join(directory, 'notifications.json')
+                config_file = os.path.join(tmpdir, 'setup.json')
+                if existing:
+                    os.mkdir(directory, mode=0o700)
+                previous_umask = os.umask(0o077)
+                try:
+                    with patch.object(ms, 'STATE_DIR', tmpdir), \
+                         patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                         patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file), \
+                         patch.object(ms.pwd, 'getpwnam', return_value=SimpleNamespace(pw_gid=1234)):
+                        ms.save_setup_config({'username': 'agent', 'system_type': 'server_web'})
+                        self.assertIsNotNone(ms.load_notification_state())
+                finally:
+                    os.umask(previous_umask)
+
+                self.assertEqual(stat.S_IMODE(os.stat(directory).st_mode), 0o755)
+                self.assertEqual(stat.S_IMODE(os.stat(notification_file).st_mode), 0o640)
+                self.assertEqual(stat.S_IMODE(os.stat(config_file).st_mode), 0o600)
+                self.assertEqual(
+                    [(call.args[1], call.args[2]) for call in self.chown.call_args_list[-2:]],
+                    [(0, 0), (0, 1234)],
+                )
+
+    def test_notification_state_without_account_stays_private(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            notification_file = os.path.join(tmpdir, 'basaltwater', 'notifications.json')
+            with patch.object(ms, 'STATE_DIR', tmpdir), \
+                 patch.object(ms, 'SETUP_CONFIG_FILE', os.path.join(tmpdir, 'setup.json')), \
+                 patch.object(ms, 'NOTIFICATION_CONFIG_FILE', notification_file):
+                ms.save_setup_config({'username': 'missing', 'system_type': 'server_web'})
+            self.assertEqual(stat.S_IMODE(os.stat(notification_file).st_mode), 0o600)
+            self.assertEqual(self.chown.call_args.args[1:], (0, -1))
+
+    def test_notification_directory_rejects_symlink_components(self):
+        for ancestor in (False, True):
+            with self.subTest(ancestor=ancestor), tempfile.TemporaryDirectory() as tmpdir:
+                target = os.path.join(tmpdir, 'target')
+                os.mkdir(target, mode=0o700)
+                link = os.path.join(tmpdir, 'link')
+                os.symlink(target, link)
+                directory = os.path.join(link, 'basaltwater') if ancestor else link
+                config_file = os.path.join(tmpdir, 'setup.json')
+                with patch.object(ms, 'STATE_DIR', tmpdir), \
+                     patch.object(ms, 'SETUP_CONFIG_FILE', config_file), \
+                     patch.object(ms, 'NOTIFICATION_CONFIG_FILE', os.path.join(directory, 'notifications.json')):
+                    with self.assertRaisesRegex(ValueError, 'symlink or non-directory'):
+                        ms.save_setup_config({'username': 'agent', 'system_type': 'server_web'})
+                self.assertEqual(os.listdir(target), [])
+                self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o700)
+                self.assertFalse(os.path.exists(config_file))
+                self.chown.assert_not_called()
+
+    def test_notification_directory_rejects_unsafe_owner_or_write_permissions(self):
+        for mode, uid in ((0o777, 0), (0o775, 0), (0o755, 1234)):
+            with self.subTest(mode=mode, uid=uid), tempfile.TemporaryDirectory() as tmpdir:
+                directory = os.path.join(tmpdir, 'basaltwater')
+                os.mkdir(directory)
+                os.chmod(directory, mode)
+                with patch.object(ms, 'STATE_DIR', tmpdir), \
+                     patch.object(ms, 'SETUP_CONFIG_FILE', os.path.join(tmpdir, 'setup.json')), \
+                     patch.object(ms, 'NOTIFICATION_CONFIG_FILE', os.path.join(directory, 'notifications.json')), \
+                     patch.object(ms.os, 'fstat', return_value=SimpleNamespace(st_uid=uid, st_mode=stat.S_IFDIR | mode)):
+                    with self.assertRaisesRegex(RuntimeError, 'Unsafe notification configuration directory'):
+                        ms.save_setup_config({'username': 'agent', 'system_type': 'server_web'})
+                self.assertEqual(os.listdir(directory), [])
+                self.assertEqual(stat.S_IMODE(os.stat(directory).st_mode), mode)
+                self.chown.assert_not_called()
 
     def test_load_missing_notification_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
