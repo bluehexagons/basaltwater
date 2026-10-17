@@ -413,11 +413,32 @@ def run_node_command(args: argparse.Namespace) -> int:
                 mark_runtime(nvm.parent, existing.version, owner="project")
             result = subprocess.run([
                 "/bin/bash", "--noprofile", "--norc", "-c",
-                '. "$1" --no-use && nvm install "$2"', "basaltwater-node-install", str(nvm), version,
-            ], check=False)
+                '. "$1" --no-use && nvm install "$2" >&2 && nvm current',
+                "basaltwater-node-install", str(nvm), version,
+            ], check=False, capture_output=True, text=True)
+            if result.stderr:
+                print(result.stderr, end="", file=sys.stderr)
             if result.returncode:
                 return result.returncode
-            selection = select_node(args.project, version=version, nvm_dir=str(nvm.parent))
+            # Validate what this install resolved, not another compatible entry
+            # in the inventory (or a compatible Node found on PATH).
+            installed = _version(result.stdout)
+            installed_version = ".".join(map(str, installed))
+            requirement = _resolve_alias(version, nvm.parent)
+            if not satisfies(installed, requirement) or (engines and not satisfies(installed, engines)):
+                raise ValueError(
+                    f"Installed Node {installed_version} does not satisfy request {version!r}"
+                    + (f" and project engines {engines!r}" if engines else "")
+                )
+            executable = nvm.parent.resolve() / "versions/node" / ("v" + installed_version) / "bin/node"
+            if not executable.is_file() or not os.access(executable, os.X_OK):
+                raise ValueError(f"Installed Node executable is unavailable: {executable}")
+            with tempfile.TemporaryDirectory(prefix="basaltwater-node-install-") as probe:
+                observed = _probe_version(str(executable), cwd=probe, environment=_probe_environment(probe))
+            if observed != installed_version:
+                raise ValueError(f"Installed Node {installed_version} failed version verification")
+            selection = NodeSelection(str(executable), installed_version, "--version" if args.version else "project pin",
+                                      requirement, engines, str(nvm.parent.resolve()), "nvm")
             mark_runtime(nvm.parent, selection.version, owner="project")
             if managers:
                 environment = selection.environment()
