@@ -878,6 +878,7 @@ Match all
 
 
 def harden_kernel(config: SetupConfig) -> None:
+    """Persist hardening and reconcile available live settings on every run."""
     if is_dry_run():
         print("  [DRY-RUN] Would apply kernel hardening parameters")
         return
@@ -933,24 +934,35 @@ fs.protected_regular=2
 kernel.core_uses_pid=1
 """
 
+    existing = None
     if os.path.exists(_SYSCTL_HARDENING_FILE):
         try:
             with open(_SYSCTL_HARDENING_FILE, "r") as f:
                 existing = f.read()
         except OSError:
             existing = None
-        if existing == kernel_hardening:
-            print("  ✓ Kernel already hardened")
-            return
+    if existing != kernel_hardening:
+        with open(_SYSCTL_HARDENING_FILE, "w") as f:
+            f.write(kernel_hardening)
 
-    with open(_SYSCTL_HARDENING_FILE, "w") as f:
-        f.write(kernel_hardening)
+    # The file records intent, not successful activation. Reconcile even when it
+    # matches, so partial failures and later live drift are repaired on retry.
+    # Kernel builds may omit features such as IPv6, Yama, or BPF JIT. Skip only
+    # absent controls; failures writing an available control must stop setup.
+    for line in kernel_hardening.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        key, desired = line.split("=", 1)
+        if not os.path.exists("/proc/sys/" + key.replace(".", "/")):
+            print(f"  ℹ Skipping unavailable kernel parameter {key}")
+            continue
+        current = run(f"sysctl -n {shlex.quote(key)}", capture_output=True)
+        # Some controls, notably unprivileged_bpf_disabled=1, are irreversible
+        # until reboot and may reject even a repeated write of the same value.
+        if (current.stdout or "").strip() != desired:
+            run(f"sysctl -w {shlex.quote(line)}")
 
-    result = run(f"sysctl -p {_SYSCTL_HARDENING_FILE}", check=False)
-    if result.returncode != 0:
-        print("  ⚠ Some kernel parameters may not have applied (check logs)")
-
-    print("  ✓ Kernel hardened (network protection, security restrictions)")
+    print("  ✓ Kernel hardening reconciled (available network and security settings)")
 
 
 def configure_login_banners(config: SetupConfig) -> None:

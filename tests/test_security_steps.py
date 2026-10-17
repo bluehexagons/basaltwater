@@ -287,14 +287,43 @@ class TestHardenSSH(unittest.TestCase):
 
 
 class TestHardenKernel(unittest.TestCase):
-    @patch("security.security_steps.can_modify_kernel", return_value=True)
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.open", new_callable=mock_open)
-    @patch("security.security_steps.os.path.exists", return_value=False)
-    def test_writes_sysctl_file_with_modern_protections(self, _exists, mock_file, mock_run, _ckm):
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        harden_kernel(SetupConfig(username="u", host="h", system_type="server_lite"))
-        written = "".join(call.args[0] for call in mock_file().write.call_args_list)
+    def setUp(self):
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        self.sysctl_file = os.path.join(temporary, "hardening.conf")
+        self.enterContext(patch("security.security_steps._SYSCTL_HARDENING_FILE", self.sysctl_file))
+        self.capability = self.enterContext(patch("security.security_steps.can_modify_kernel", return_value=True))
+        self.enterContext(patch("security.security_steps.is_dry_run", return_value=False))
+        self.command = self.enterContext(patch("security.security_steps.run"))
+        self.live = {}
+        self.absent = set()
+        real_exists = os.path.exists
+
+        def exists(path):
+            if path.startswith("/proc/sys/"):
+                return path not in self.absent
+            return real_exists(path)
+
+        self.enterContext(patch("security.security_steps.os.path.exists", side_effect=exists))
+        self.command.side_effect = self.apply_setting
+        self.config = SetupConfig(username="u", host="h", system_type="server_lite")
+
+    def apply_setting(self, command, **kwargs):
+        self.assertNotEqual(kwargs.get("check"), False)
+        if command.startswith("sysctl -n "):
+            key = command.removeprefix("sysctl -n ")
+            return SimpleNamespace(returncode=0, stdout=self.live.get(key, "0") + "\n")
+        self.assertTrue(command.startswith("sysctl -w "))
+        key, value = command.removeprefix("sysctl -w ").split("=", 1)
+        self.live[key] = value
+        return SimpleNamespace(returncode=0)
+
+    def read_config(self):
+        with open(self.sysctl_file, encoding="utf-8") as file_obj:
+            return file_obj.read()
+
+    def test_writes_sysctl_file_with_modern_protections(self):
+        harden_kernel(self.config)
+        written = self.read_config()
         for directive in (
             "kernel.kptr_restrict=2",
             "kernel.unprivileged_bpf_disabled=1",
@@ -303,45 +332,81 @@ class TestHardenKernel(unittest.TestCase):
         ):
             self.assertIn(directive, written)
 
-    @patch("security.security_steps.can_modify_kernel", return_value=True)
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.os.path.exists", return_value=True)
-    def test_skips_when_existing_content_matches(self, _exists, mock_run, _ckm):
-        # Read the bytes the function would write, then mock open() to return them.
-        from security.security_steps import _SYSCTL_HARDENING_FILE  # noqa: F401
-        # Import inside function to avoid leaking; we re-run the function once
-        # to produce expected content.
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        captured = {}
-        m = mock_open()
-        # First call: prime with the expected content by running once with non-existent file
-        with patch("security.security_steps.os.path.exists", return_value=False), \
-             patch("security.security_steps.open", m):
-            harden_kernel(SetupConfig(username="u", host="h", system_type="server_lite"))
-        expected = "".join(call.args[0] for call in m().write.call_args_list)
+    def test_matching_file_repairs_live_drift_without_rewriting(self):
+        harden_kernel(self.config)
+        self.live["kernel.kptr_restrict"] = "0"
+        self.live["net.ipv4.conf.all.rp_filter"] = "0"
+        with patch("security.security_steps.open", wraps=open) as file_open:
+            harden_kernel(self.config)
+        self.assertTrue(all(call.args[1] == "r" for call in file_open.call_args_list))
+        self.assertEqual(self.live["kernel.kptr_restrict"], "2")
+        self.assertEqual(self.live["net.ipv4.conf.all.rp_filter"], "1")
 
-        m2 = mock_open(read_data=expected)
-        with patch("security.security_steps.open", m2):
-            harden_kernel(SetupConfig(username="u", host="h", system_type="server_lite"))
-        # No write should have happened because content matched.
-        self.assertEqual(m2().write.call_count, 0)
-        captured["ok"] = True
-        self.assertTrue(captured["ok"])
+    def test_matching_irreversible_setting_is_not_written_again(self):
+        harden_kernel(self.config)
+        self.command.reset_mock()
+        harden_kernel(self.config)
+        self.assertTrue(self.command.called)
+        self.assertTrue(all(call.args[0].startswith("sysctl -n ") for call in self.command.call_args_list))
 
-    @patch("security.security_steps.can_modify_kernel", return_value=True)
-    @patch("security.security_steps.run")
-    @patch("security.security_steps.open", new_callable=mock_open)
-    @patch("security.security_steps.os.path.exists", return_value=False)
-    def test_proxmox_preserves_asymmetric_guest_networking(
-        self, _exists, mock_file, mock_run, _ckm
-    ):
-        mock_run.return_value = SimpleNamespace(returncode=0)
-        harden_kernel(SetupConfig(username="u", host="h", system_type="server_proxmox"))
+    def test_partial_failure_propagates_and_matching_file_retry_repairs_proxmox(self):
+        self.config.system_type = "server_proxmox"
+        self.live["net.ipv4.conf.default.rp_filter"] = "1"
+        self.live["net.ipv4.conf.all.rp_filter"] = "1"
 
-        written = "".join(call.args[0] for call in mock_file().write.call_args_list)
+        def fail_partway(command, **kwargs):
+            if command == "sysctl -w net.ipv4.conf.all.rp_filter=0":
+                raise RuntimeError("mock sysctl permission denied")
+            return self.apply_setting(command, **kwargs)
+
+        self.command.side_effect = fail_partway
+        with patch("builtins.print") as output:
+            with self.assertRaisesRegex(RuntimeError, "permission denied"):
+                harden_kernel(self.config)
+        self.assertFalse(any("✓ Kernel" in call.args[0] for call in output.call_args_list))
+        self.assertEqual(self.live["net.ipv4.conf.default.rp_filter"], "0")
+        self.assertEqual(self.live["net.ipv4.conf.all.rp_filter"], "1")
+        expected = self.read_config()
+
+        self.command.side_effect = self.apply_setting
+        harden_kernel(self.config)
+        self.assertEqual(self.read_config(), expected)
+        self.assertEqual(self.live["net.ipv4.conf.all.rp_filter"], "0")
+        self.assertEqual(self.live["kernel.core_uses_pid"], "1")
+
+    def test_absent_optional_kernel_features_are_skipped(self):
+        keys = ("net.ipv6.conf.all.accept_redirects", "kernel.yama.ptrace_scope", "net.core.bpf_jit_harden")
+        self.absent = {"/proc/sys/" + key.replace(".", "/") for key in keys}
+        harden_kernel(self.config)
+        for key in keys:
+            self.assertNotIn(key, self.live)
+        self.assertEqual(self.live["kernel.core_uses_pid"], "1")
+
+    def test_capability_gate_skips_all_files_and_commands(self):
+        self.capability.return_value = False
+        with patch("security.security_steps.open") as file_open:
+            harden_kernel(self.config)
+        file_open.assert_not_called()
+        self.command.assert_not_called()
+
+    def test_dry_run_skips_all_files_and_commands(self):
+        with patch("security.security_steps.is_dry_run", return_value=True), patch("security.security_steps.open") as file_open:
+            harden_kernel(self.config)
+        file_open.assert_not_called()
+        self.command.assert_not_called()
+
+    def test_proxmox_preserves_asymmetric_guest_networking(self):
+        self.config.system_type = "server_proxmox"
+        harden_kernel(self.config)
+        written = self.read_config()
         self.assertIn("net.ipv4.conf.default.rp_filter=0", written)
         self.assertIn("net.ipv4.conf.all.rp_filter=0", written)
         self.assertNotIn("net.ipv4.conf.all.rp_filter=1", written)
+        self.live["net.ipv4.conf.all.rp_filter"] = "1"
+        self.live["net.ipv4.conf.default.rp_filter"] = "1"
+        harden_kernel(self.config)
+        self.assertEqual(self.live["net.ipv4.conf.all.rp_filter"], "0")
+        self.assertEqual(self.live["net.ipv4.conf.default.rp_filter"], "0")
 
 
 class TestConfigureFail2Ban(unittest.TestCase):
