@@ -431,7 +431,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
 
             self._clear(home, replace_ancestor)
-            self.assertFalse(os.path.exists(os.path.join(ancestor + ".original", "git")))
+            self.assertEqual(os.listdir(os.path.join(ancestor + ".original", "git")), [])
             self.assertTrue(os.path.isfile(sentinel))
 
     def test_clear_does_not_delete_replacement_managed_directory(self) -> None:
@@ -450,6 +450,26 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "changed during removal"):
                 self._clear(home, replace_directory)
             self.assertTrue(os.path.isfile(sentinel))
+
+    def test_clear_preserves_directory_replaced_after_identity_check(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            managed = os.path.join(home, ".config", "basaltwater", "git")
+            os.makedirs(managed)
+            with open(os.path.join(managed, "credentials"), "w", encoding="utf-8") as file_obj:
+                file_obj.write("disposable")
+            original_stat = os.stat
+
+            def replace_after_stat(path, *args, **kwargs):
+                result = original_stat(path, *args, **kwargs)
+                if path == "git" and "dir_fd" in kwargs:
+                    os.rename(managed, managed + ".original")
+                    os.mkdir(managed)
+                return result
+
+            with patch("common.git_credential_steps.os.stat", side_effect=replace_after_stat):
+                self._clear(home)
+            self.assertTrue(os.path.isdir(managed))
+            self.assertEqual(os.listdir(managed + ".original"), [])
 
     def _run_as_user(self, username, home, command, **_kwargs):
         self.assertEqual(username, "agent")
@@ -525,7 +545,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
             self.assertEqual(os.stat(include_path).st_mode & 0o777, 0o600)
             self.assertFalse(os.path.exists(stale_ca))
 
-    def test_clear_removes_only_managed_directory(self) -> None:
+    def test_clear_removes_only_managed_contents(self) -> None:
         with tempfile.TemporaryDirectory() as self.home:
             managed = os.path.join(self.home, ".config", "basaltwater", "git")
             os.makedirs(managed)
@@ -548,7 +568,7 @@ class TestTargetGitCredentialSetup(unittest.TestCase):
                     _config(clear_git_credentials=True)
                 )
 
-            self.assertFalse(os.path.exists(managed))
+            self.assertEqual(os.listdir(managed), [])
             self.assertTrue(os.path.isfile(unrelated))
 
     def test_refuses_symlinked_managed_directory(self) -> None:

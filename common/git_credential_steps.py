@@ -171,8 +171,8 @@ def _managed_removal_directory(
         yield parent, descriptor
 
 
-def _remove_opened_managed_directory(parent: int, descriptor: int) -> None:
-    """Delete only inside the validated tree, even if an ancestor is replaced."""
+def _clear_opened_managed_directory(parent: int, descriptor: int) -> None:
+    """Clear the opened tree while retaining its replaceable directory entry."""
     for name in os.listdir(descriptor):
         entry = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
         if stat.S_ISDIR(entry.st_mode):
@@ -186,7 +186,8 @@ def _remove_opened_managed_directory(parent: int, descriptor: int) -> None:
     opened = os.fstat(descriptor)
     if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
         raise RuntimeError("Managed Git credential directory changed during removal")
-    os.rmdir("git", dir_fd=parent)
+    # The user can replace this entry after the identity check. Retaining the
+    # empty directory avoids a path-based rmdir deleting that replacement.
 
 
 def _managed_git_config(
@@ -235,7 +236,7 @@ def configure_git_https_credentials(config: SetupConfig) -> None:
         with _managed_removal_directory(account) as opened:
             _remove_managed_include(config, account, include_path)
             if opened is not None:
-                _remove_opened_managed_directory(*opened)
+                _clear_opened_managed_directory(*opened)
         print("  ✓ Removed managed Git HTTPS credentials")
         return
 

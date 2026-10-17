@@ -173,6 +173,7 @@ basaltw patch 192.168.0.41 agent --no-git-credentials
 Removal rejects symlinks and directories owned by another user throughout the
 managed path before changing the include. Cleanup stays anchored to opened
 directories so a concurrent pathname replacement cannot redirect deletion.
+It retains the empty managed directory to avoid removing a concurrent replacement.
 
 ## Troubleshooting
 
