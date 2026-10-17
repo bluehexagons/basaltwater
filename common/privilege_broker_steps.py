@@ -21,6 +21,7 @@ from lib.privilege_policy import (
 )
 from lib.privilege_setup import privilege_broker_origin, validate_broker_settings
 from lib.remote_utils import is_dry_run, is_service_active, run
+from lib.setup_directories import directory_fd
 from lib.validators import validate_username
 
 MARKER = "# Managed by basaltwater privilege broker"
@@ -202,6 +203,16 @@ def configure_privilege_broker(config) -> None:
             protected_path(os.path.dirname(directory), directory=True)
             os.mkdir(directory, 0o755)
         protected_path(directory, directory=True)
+        if directory in (os.path.dirname(CONFIG_DIR), CONFIG_DIR):
+            with directory_fd(directory) as descriptor:
+                metadata = os.fstat(descriptor)
+                if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+                    raise ValueError(f"Unsafe privilege configuration directory: {directory}")
+                # The dedicated approval identity reads the non-secret policy.
+                # Reconcile traversal after restrictive umasks and on reruns;
+                # credentials retain their individual root-only modes.
+                os.fchown(descriptor, 0, 0)
+                os.fchmod(descriptor, 0o755)
     for path in (POLICY_PATH, AUTH_PATH, CONFIG_DIR + "/server.crt", CONFIG_DIR + "/server.key"):
         if os.path.lexists(path):
             protected_path(path)

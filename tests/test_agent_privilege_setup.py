@@ -6,8 +6,10 @@ import argparse
 from contextlib import ExitStack, redirect_stderr
 import io
 import json
+import os
 from pathlib import Path
 import shlex
+import stat
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -154,7 +156,7 @@ class LifecycleTests(unittest.TestCase):
         self.stack = self.enterContext(ExitStack())
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.directory = self.root / "config"
-        self.directory.mkdir()
+        self.directory.mkdir(mode=0o755)
         self.units = self.root / "units"
         self.units.mkdir()
         self.policy_path = self.directory / "policy.json"
@@ -180,6 +182,18 @@ class LifecycleTests(unittest.TestCase):
                      "run": self.run, "is_service_active": Mock(return_value=True), "_https_ready": self.ready}
         for name, value in functions.items():
             self.stack.enter_context(patch.object(steps, name, value))
+        real_fstat = os.fstat
+
+        def target_fstat(descriptor):
+            metadata = real_fstat(descriptor)
+            if stat.S_ISDIR(metadata.st_mode):
+                values = list(metadata)
+                values[4] = 0  # Model root-owned directories without host chown.
+                return os.stat_result(values)
+            return metadata
+
+        self.stack.enter_context(patch.object(steps.os, "fstat", side_effect=target_fstat))
+        self.chown = self.stack.enter_context(patch.object(steps.os, "fchown"))
         self.stack.enter_context(patch.object(steps.os, "walk", return_value=[]))
         self.stack.enter_context(patch.object(steps.pwd, "getpwnam",
             return_value=SimpleNamespace(pw_name="agent", pw_uid=1000, pw_gid=1000)))
@@ -212,6 +226,58 @@ class LifecycleTests(unittest.TestCase):
         self.steps.configure_privilege_broker(self.config)
         self.assertEqual(json.loads(self.auth_path.read_text()), changed)
         self.assertTrue(self.polkit_path.read_text().startswith("// Managed"))
+
+    def test_private_umask_keeps_policy_accessible_and_credentials_private(self):
+        self.directory.rmdir()
+        old_umask = os.umask(0o077)
+        try:
+            self.steps.configure_privilege_broker(self.config)
+        finally:
+            os.umask(old_umask)
+
+        for path in (self.root, self.directory):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(self.policy_path.stat().st_mode), 0o644)
+        for name in ("auth.json", "server.crt", "server.key"):
+            self.assertEqual(stat.S_IMODE((self.directory / name).stat().st_mode), 0o600)
+
+    def test_rerun_repairs_directory_traversal_and_preserves_policy(self):
+        self.steps.configure_privilege_broker(self.config)
+        original = json.loads(self.policy_path.read_text())
+        original["services"] = {"reviewed.service": "allow"}
+        self.policy_path.write_text(json.dumps(original))
+        self.root.chmod(0o700)
+        self.directory.chmod(0o700)
+        self.config.privilege_broker_auth = None
+
+        self.steps.configure_privilege_broker(self.config)
+
+        self.assertEqual(json.loads(self.policy_path.read_text()), original)
+        for path in (self.root, self.directory):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o755)
+
+    def test_unsafe_directory_is_rejected_before_install(self):
+        for uid, mode in ((1000, 0o755), (0, 0o775), (0, 0o757)):
+            with self.subTest(uid=uid, mode=mode), patch.object(
+                self.steps.os, "fstat",
+                return_value=SimpleNamespace(st_uid=uid, st_mode=stat.S_IFDIR | mode),
+            ):
+                with self.assertRaisesRegex(ValueError, "Unsafe privilege configuration directory"):
+                    self.steps.configure_privilege_broker(self.config)
+                self.assertFalse(self.policy_path.exists())
+                self.chown.assert_not_called()
+
+    def test_linked_directory_is_rejected_without_changing_target(self):
+        self.directory.rmdir()
+        target = self.root / "elsewhere"
+        target.mkdir(mode=0o700)
+        self.directory.symlink_to(target, target_is_directory=True)
+
+        with self.assertRaisesRegex(ValueError, "symlink or non-directory"):
+            self.steps.configure_privilege_broker(self.config)
+
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+        self.assertFalse(self.policy_path.exists())
 
     def test_disable_removes_authority_but_retains_policy(self):
         self.steps.configure_privilege_broker(self.config)
