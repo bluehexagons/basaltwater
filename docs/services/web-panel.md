@@ -410,12 +410,12 @@ without a home and show diagnostics with prompt execution unavailable.
 6. Choose once, hourly, daily, weekly, or **Custom interval**. Custom intervals
    accept 1–43,200 whole minutes (30 days): 360 means every 6 hours; 20,160 means
    every 2 weeks. The custom field applies only when Custom interval is selected.
-   **Start task** queues an immediate run
-   and enables repetition when selected. **Create schedule** starts after one
-   interval. **Save draft** stores an inactive task, including a one-time
-   prompt, without running it or enabling repetition. Before Codex is installed,
-   drafts can be prepared through the task CLI; panel prompt forms appear once
-   Codex is installed.
+   **Start task** queues an immediate run and enables repetition when selected.
+   **Create schedule** uses the first-run time when set; otherwise it starts
+   after one interval. **Save draft** stores an inactive task, including a
+   one-time prompt, without running it or enabling repetition. Before Codex is
+   installed, drafts can be prepared through the task CLI; panel prompt forms
+   appear once Codex is installed.
 7. Open **Scheduling options** to set a first-run time, custom interval, or
    **Pause schedule after failures** from 1 to 10, or 0 to keep repeating.
    The default is 3. Failed, blocked, or interrupted runs count toward this

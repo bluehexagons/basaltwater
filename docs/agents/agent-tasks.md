@@ -144,7 +144,7 @@ quotes or shell metacharacters; no intermediate settings file is required.
 `start_at` accepts a UTC epoch number or an ISO date with timezone. For example,
 `"interval": "once", "start_at": "2026-11-01T09:00:00-06:00"` schedules one
 invocation for that instant. An overdue first run catches up once. A manual
-Run now consumes a one-time schedule. Repeating tasks use the first-run time
+run consumes a one-time schedule. Repeating tasks use the first-run time
 to anchor their elapsed cadence; a Once goal then continues at its configured
 goal interval. Rescheduling a finished one-time task requires a future
 `start_at` and explicit Resume. Event tasks leave `start_at` unset.
