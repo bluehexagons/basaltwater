@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
 import math
@@ -98,11 +99,32 @@ def move_payloads(source: str, destination: str) -> None:
             shutil.move(path, os.path.join(destination, name))
 
 
-def link_payloads(source: str, runtime: str) -> None:
-    for name in PAYLOAD_NAMES:
-        path = os.path.join(source, name)
-        if os.path.exists(path):
-            os.symlink(path, os.path.join(runtime, name))
+@contextmanager
+def link_payloads(source: str, runtime: str) -> Iterator[None]:
+    """Expose this lease's payloads and remove only links created by this call."""
+    links: list[tuple[str, str]] = []
+    try:
+        for name in PAYLOAD_NAMES:
+            path = os.path.join(source, name)
+            if os.path.exists(path):
+                destination = os.path.join(runtime, name)
+                if os.path.lexists(destination):
+                    raise FileExistsError(f"Refusing existing setup payload entry: {destination}")
+                # Record intent before publication so an interruption after the
+                # system call still removes the link it just created.
+                links.append((destination, path))
+                os.symlink(path, destination)
+        yield
+    finally:
+        failures: list[str] = []
+        for destination, target in reversed(links):
+            try:
+                if os.path.islink(destination) and os.readlink(destination) == target:
+                    os.unlink(destination)
+            except OSError as exc:
+                failures.append(f"{destination}: {exc}")
+        if failures:
+            raise RuntimeError("Setup payload link cleanup failed: " + "; ".join(failures))
 
 
 def receive_payloads(stream, destination: str) -> None:
@@ -162,17 +184,11 @@ def main() -> int:
             while stream.remaining:
                 stream.read(min(65536, stream.remaining))
         runtime = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        link_payloads(payload, runtime)
-        try:
+        with link_payloads(payload, runtime):
             return run([
                 sys.executable, "-u", os.path.join(runtime, "remote_setup.py"),
                 "--args-file", os.path.join(payload, ".remote_setup_args.json"),
             ], check=False, timeout=args.timeout, interactive=relay).returncode
-        finally:
-            for name in PAYLOAD_NAMES:
-                path = os.path.join(runtime, name)
-                if os.path.islink(path):
-                    os.unlink(path)
 
 
 if __name__ == "__main__":

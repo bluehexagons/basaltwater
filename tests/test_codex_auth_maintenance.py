@@ -349,13 +349,13 @@ class TestCodexAuthMaintenanceSetup(unittest.TestCase):
                     with open(source, "w", encoding="utf-8") as stream:
                         json.dump(dict(stale, tokens={"refresh_token": "source-secret"}), stream)
                     os.chmod(source, 0o600)
-                    setup_payloads.link_payloads(lease, runtime)
-                    copy_agent_tooling_payload(SetupConfig(
-                        host="host", username="agent", system_type="server_dev", install_codex=True,
-                    ))
-                    run.assert_called_once()
-                    self.assertFalse(os.path.lexists(alias))
-                    self.assertTrue(os.path.isfile(source))
+                    with setup_payloads.link_payloads(lease, runtime):
+                        copy_agent_tooling_payload(SetupConfig(
+                            host="host", username="agent", system_type="server_dev", install_codex=True,
+                        ))
+                        run.assert_called_once()
+                        self.assertFalse(os.path.lexists(alias))
+                        self.assertTrue(os.path.isfile(source))
                 self.assertFalse(os.path.exists(lease))
             with open(destination, encoding="utf-8") as stream:
                 self.assertEqual(json.load(stream)["tokens"]["refresh_token"], "renewed-secret")

@@ -12,6 +12,7 @@ retry until the recorded recovery path is inspected.
 | Persistent files and state | `lib.atomic_io` | Atomic same-directory publication and bounded regular-file reads; corrupt or unsupported state is preserved and reported. |
 | Durable operation boundaries | `lib.operation_state` | Versioned markers and locks identify the active attempt, record phases, and prevent a fresh operation from bypassing unfinished work. |
 | Setup runtime activation | `lib.setup_common` | Stage replacements beside the runtime, restore previous source or managed payloads on failure or interruption, and retain private backups when restoration cannot finish. |
+| Private setup payloads | `lib.setup_payloads` | Use the `link_payloads()` context manager for lease links; partial publication and interrupted execution remove only that call's links, preserving preexisting or replaced entries. |
 | Managed systemd units | `lib.unit_transaction` | Replacement and grouped removal stage and verify unit files, snapshot activation state, and restore the previous configuration when activation fails. |
 | Application deployment | Static and manifest deployment orchestration | Stage a sibling release, retain the previous tree through activation and health checks, and preserve recovery state after interruption. |
 | Generated Nginx configuration | Nginx reconciliation | Use its own lock, durable snapshots, `nginx -t`, reload verification, and recovery marker. This is separate from application release activation. |

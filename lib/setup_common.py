@@ -1499,19 +1499,13 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
                     move_payloads(build_dir, payload)
                     from lib.setup_upgrade import prepare_target_runtime
                     prepare_target_runtime(build_dir, config.username)
-                    link_payloads(payload, REMOTE_INSTALL_DIR)
-                    command_tokens[-1] = os.path.join(payload, REMOTE_ARGS_FILENAME)
-                    try:
+                    with link_payloads(payload, REMOTE_INSTALL_DIR):
+                        command_tokens[-1] = os.path.join(payload, REMOTE_ARGS_FILENAME)
                         returncode = run_streamed(
                             command_tokens, timeout=setup_timeout,
                             on_output=_relay_setup_output, env=env, cwd=REMOTE_INSTALL_DIR,
                             **prompt_options,
                         )
-                    finally:
-                        for name in PAYLOAD_NAMES:
-                            path = os.path.join(REMOTE_INSTALL_DIR, name)
-                            if os.path.islink(path):
-                                os.unlink(path)
                 return finish_network_transition(config, returncode)
             except Exception as e:
                 print(f"Error running local setup: {e}")
