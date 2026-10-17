@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -238,6 +239,153 @@ class TestDesktopApps(unittest.TestCase):
             install_editor(config)
 
 
+class TestRequiredDesktopApps(unittest.TestCase):
+    def setUp(self):
+        from desktop import apps_steps
+
+        self.apps = apps_steps
+        self.config = SetupConfig(
+            host="vm", username="agent", system_type="agent_vm",
+            install_office=True,
+        )
+        for name, value in (
+            ("run", Mock(returncode=0)),
+            ("is_package_installed", False),
+            ("is_flatpak_app_installed", False),
+            ("is_container", False),
+        ):
+            patcher = patch.object(apps_steps, name, return_value=value)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+        environment = patch.dict("os.environ")
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_flatpak_reconciles_system_remote_on_every_rerun(self):
+        for _ in range(2):
+            self.assertTrue(self.apps.install_flatpak_if_needed())
+        self.assertEqual([call.args[0] for call in self.run.call_args_list], [
+            "which flatpak",
+            "flatpak remote-add --system --if-not-exists flathub "
+            "https://flathub.org/repo/flathub.flatpakrepo",
+        ] * 2)
+
+    def test_flatpak_install_is_verified_before_remote_setup(self):
+        self.run.side_effect = [Mock(returncode=1), Mock(returncode=0),
+                                Mock(returncode=0), Mock(returncode=0)]
+        self.assertTrue(self.apps.install_flatpak_if_needed())
+        self.assertEqual([call.args[0] for call in self.run.call_args_list], [
+            "which flatpak", "apt-get install -y -qq flatpak", "which flatpak",
+            "flatpak remote-add --system --if-not-exists flathub "
+            "https://flathub.org/repo/flathub.flatpakrepo",
+        ])
+
+    def test_flatpak_failed_or_unverified_install_returns_false(self):
+        for results in ((1, 1), (1, 0, 1)):
+            with self.subTest(results=results):
+                self.run.reset_mock()
+                self.run.side_effect = [Mock(returncode=code) for code in results]
+                self.assertFalse(self.apps.install_flatpak_if_needed())
+                self.assertFalse(any("remote-add" in call.args[0]
+                                     for call in self.run.call_args_list))
+
+    def test_flatpak_remote_failure_returns_false(self):
+        self.run.side_effect = [Mock(returncode=0), Mock(returncode=1)]
+        self.assertFalse(self.apps.install_flatpak_if_needed())
+
+    def test_remmina_failed_command_is_fatal_even_if_packages_present(self):
+        self.is_package_installed.side_effect = [False, True, True, True]
+        self.run.return_value = Mock(returncode=1)
+        with self.assertRaisesRegex(RuntimeError, "Remmina.*installation failed"):
+            self.apps.install_remmina(self.config)
+
+    def test_remmina_verifies_each_required_package(self):
+        packages = ("remmina", "remmina-plugin-rdp", "remmina-plugin-vnc")
+        for missing in packages:
+            with self.subTest(missing=missing):
+                self.is_package_installed.side_effect = lambda package: package != missing
+                with self.assertRaisesRegex(RuntimeError, "Remmina.*installation failed"):
+                    self.apps.install_remmina(self.config)
+
+    def test_remmina_repairs_plugins_then_rerun_skips_install(self):
+        installed = {"remmina"}
+        self.is_package_installed.side_effect = lambda package: package in installed
+
+        def install(command, **kwargs):
+            installed.update(("remmina-plugin-rdp", "remmina-plugin-vnc"))
+            return Mock(returncode=0)
+
+        self.run.side_effect = install
+        self.apps.install_remmina(self.config)
+        self.apps.install_remmina(self.config)
+        self.run.assert_called_once_with(
+            "apt-get install -y -qq remmina remmina-plugin-rdp remmina-plugin-vnc",
+            check=False,
+        )
+
+    def test_office_opt_out_runs_no_probes_or_commands(self):
+        self.config.install_office = False
+        self.config.use_flatpak = True
+        self.apps.install_office_apps(self.config)
+        self.run.assert_not_called()
+        self.is_package_installed.assert_not_called()
+        self.is_flatpak_app_installed.assert_not_called()
+
+    def test_office_apt_failed_command_or_missing_package_is_fatal(self):
+        for returncode, installed in ((1, True), (0, False)):
+            with self.subTest(returncode=returncode, installed=installed):
+                self.run.return_value = Mock(returncode=returncode)
+                self.is_package_installed.side_effect = [False, installed]
+                with self.assertRaisesRegex(RuntimeError, "LibreOffice installation failed"):
+                    self.apps.install_office_apps(self.config)
+
+    def test_office_apt_install_then_rerun_skips_command(self):
+        self.is_package_installed.side_effect = [False, True, True]
+        self.apps.install_office_apps(self.config)
+        self.apps.install_office_apps(self.config)
+        self.run.assert_called_once_with("apt-get install -y -qq libreoffice", check=False)
+
+    def test_office_flatpak_failed_command_or_missing_app_is_fatal(self):
+        self.config.use_flatpak = True
+        for returncode, installed in ((1, True), (0, False)):
+            with self.subTest(returncode=returncode, installed=installed):
+                self.run.return_value = Mock(returncode=returncode)
+                self.is_flatpak_app_installed.side_effect = [False, installed]
+                with patch.object(self.apps, "install_flatpak_if_needed", return_value=True):
+                    with self.assertRaisesRegex(RuntimeError, "LibreOffice Flatpak installation failed"):
+                        self.apps.install_office_apps(self.config)
+        self.is_package_installed.assert_not_called()
+        self.assertTrue(self.config.use_flatpak)
+
+    def test_office_flatpak_install_then_rerun_skips_command(self):
+        self.config.use_flatpak = True
+        self.is_flatpak_app_installed.side_effect = [False, True, True]
+        with patch.object(self.apps, "install_flatpak_if_needed", return_value=True) as prepare:
+            self.apps.install_office_apps(self.config)
+            self.apps.install_office_apps(self.config)
+        self.assertEqual(prepare.call_count, 2)
+        self.run.assert_called_once_with(
+            "flatpak install --system -y flathub org.libreoffice.LibreOffice", check=False,
+        )
+        self.is_package_installed.assert_not_called()
+
+    def test_office_remote_failure_falls_back_to_verified_apt(self):
+        self.config.use_flatpak = True
+        self.is_package_installed.side_effect = [False, True]
+        self.run.side_effect = [Mock(returncode=0), Mock(returncode=1), Mock(returncode=0)]
+        self.apps.install_office_apps(self.config)
+        self.assertFalse(self.config.use_flatpak)
+        self.assertEqual(self.run.call_args.args[0], "apt-get install -y -qq libreoffice")
+        self.is_flatpak_app_installed.assert_not_called()
+
+    def test_office_unavailable_flatpak_fallback_failure_is_fatal(self):
+        self.config.use_flatpak = True
+        with patch.object(self.apps, "install_flatpak_if_needed", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "LibreOffice installation failed"):
+                self.apps.install_office_apps(self.config)
+        self.assertFalse(self.config.use_flatpak)
+
+
 class TestMediaApps(unittest.TestCase):
     @patch("lib.remote_utils.subprocess.run")
     @patch("lib.remote_utils.run")
@@ -352,9 +500,12 @@ class TestMediaApps(unittest.TestCase):
 
 class TestBrowserSteps(unittest.TestCase):
     def setUp(self):
+        temporary_home = tempfile.TemporaryDirectory(prefix="basaltwater-browser-test-")
+        self.addCleanup(temporary_home.cleanup)
+        self.home = temporary_home.name
         home_patcher = patch(
             "desktop.browser_steps.get_user_home",
-            return_value="/home/testuser",
+            return_value=self.home,
         )
         self.addCleanup(home_patcher.stop)
         home_patcher.start()
@@ -382,10 +533,10 @@ class TestBrowserSteps(unittest.TestCase):
         configure_default_browser(config)
 
         mock_open.assert_any_call(
-            "/home/testuser/.config/mimeapps.list", "w", encoding="utf-8"
+            f"{self.home}/.config/mimeapps.list", "w", encoding="utf-8"
         )
         mock_open.assert_any_call(
-            "/home/testuser/.config/xfce4/helpers.rc", "w", encoding="utf-8"
+            f"{self.home}/.config/xfce4/helpers.rc", "w", encoding="utf-8"
         )
         write_calls = [call.args[0] for call in mock_open().write.call_args_list]
         self.assertIn("librewolf.desktop", "".join(write_calls))

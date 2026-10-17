@@ -43,25 +43,30 @@ def is_flatpak_installed() -> bool:
 
 
 def install_flatpak_if_needed() -> bool:
-    """Install flatpak if not already installed.
+    """Ensure Flatpak and the system Flathub remote are available.
     
     Returns:
-        True if flatpak is available, False if installation failed or not recommended.
+        True if Flatpak and Flathub are available, False if preparation failed.
     """
     if is_container():
         print("  ⚠ Warning: Flatpak typically does not work well in unprivileged containers")
         print("    Consider using --machine vm or --machine hardware if Flatpak is needed")
     
-    if is_flatpak_installed():
-        return True
+    if not is_flatpak_installed():
+        os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+        result = run("apt-get install -y -qq flatpak", check=False)
+        if result.returncode != 0 or not is_flatpak_installed():
+            print("  ⚠ Failed to install Flatpak")
+            return False
 
-    os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    result = run("apt-get install -y -qq flatpak", check=False)
+    result = run(
+        f"flatpak remote-add --system --if-not-exists {FLATPAK_REMOTE} "
+        "https://flathub.org/repo/flathub.flatpakrepo",
+        check=False,
+    )
     if result.returncode != 0:
-        print("  ⚠ Failed to install Flatpak")
+        print("  ⚠ Failed to configure the system Flathub remote")
         return False
-    
-    run(f"flatpak remote-add --if-not-exists {FLATPAK_REMOTE} https://flathub.org/repo/flathub.flatpakrepo", check=False)
     return True
 
 
@@ -97,11 +102,21 @@ def install_media_apps(config: SetupConfig) -> None:
 
 
 def install_remmina(config: SetupConfig) -> None:
-    """Install Remmina RDP client."""
+    """Install and verify Remmina with its required RDP and VNC plugins."""
+    packages = ("remmina", "remmina-plugin-rdp", "remmina-plugin-vnc")
+    if all(is_package_installed(package) for package in packages):
+        print("  ✓ Remmina and plugins already installed")
+        return
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get install -y -qq remmina remmina-plugin-rdp remmina-plugin-vnc", check=False)
-    if is_package_installed("remmina"):
-        print("  ✓ Remmina installed/updated")
+    result = run(
+        "apt-get install -y -qq remmina remmina-plugin-rdp remmina-plugin-vnc",
+        check=False,
+    )
+    if result.returncode != 0 or not all(
+        is_package_installed(package) for package in packages
+    ):
+        raise RuntimeError("Remmina and required plugins installation failed")
+    print("  ✓ Remmina installed/updated")
 
 
 def install_office_apps(config: SetupConfig) -> None:
@@ -118,9 +133,15 @@ def install_office_apps(config: SetupConfig) -> None:
             return
         else:
             print("  Installing LibreOffice via Flatpak...")
-            run(f"flatpak install -y {FLATPAK_REMOTE} org.libreoffice.LibreOffice", check=False)
-            if is_flatpak_app_installed("org.libreoffice.LibreOffice"):
-                print("  ✓ LibreOffice installed via Flatpak")
+            result = run(
+                f"flatpak install --system -y {FLATPAK_REMOTE} org.libreoffice.LibreOffice",
+                check=False,
+            )
+            if result.returncode != 0 or not is_flatpak_app_installed(
+                "org.libreoffice.LibreOffice"
+            ):
+                raise RuntimeError("LibreOffice Flatpak installation failed")
+            print("  ✓ LibreOffice installed via Flatpak")
             return
     
     if is_package_installed("libreoffice"):
@@ -128,9 +149,10 @@ def install_office_apps(config: SetupConfig) -> None:
         return
     print("  Installing LibreOffice...")
     os.environ["DEBIAN_FRONTEND"] = "noninteractive"
-    run("apt-get install -y -qq libreoffice", check=False)
-    if is_package_installed("libreoffice"):
-        print("  ✓ LibreOffice installed")
+    result = run("apt-get install -y -qq libreoffice", check=False)
+    if result.returncode != 0 or not is_package_installed("libreoffice"):
+        raise RuntimeError("LibreOffice installation failed")
+    print("  ✓ LibreOffice installed")
 
 
 def _microsoft_key_fingerprints(output: str) -> set[str]:
