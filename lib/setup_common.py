@@ -427,7 +427,7 @@ def _activate_local_runtime(build_dir: str) -> None:
         os.makedirs(parent_dir, exist_ok=True)
         stage_dir = tempfile.mkdtemp(prefix=".basaltwater-stage-", dir=parent_dir)
         backup_dir: Optional[str] = None
-        activated = False
+        activation_started = False
         try:
             shutil.copytree(build_dir, stage_dir, dirs_exist_ok=True, symlinks=True)
             os.chmod(stage_dir, 0o755)
@@ -436,18 +436,25 @@ def _activate_local_runtime(build_dir: str) -> None:
                     prefix=".basaltwater-previous-", dir=parent_dir,
                 )
                 os.rmdir(backup_dir)
-                os.rename(REMOTE_INSTALL_DIR, backup_dir)
             try:
+                if backup_dir:
+                    os.rename(REMOTE_INSTALL_DIR, backup_dir)
+                activation_started = True
                 os.rename(stage_dir, REMOTE_INSTALL_DIR)
                 stage_dir = ""
-                activated = True
                 _install_local_runtime_state_link()
-            except Exception:
-                if activated:
-                    shutil.rmtree(REMOTE_INSTALL_DIR)
-                if backup_dir and os.path.lexists(backup_dir):
-                    os.rename(backup_dir, REMOTE_INSTALL_DIR)
-                    backup_dir = None
+            except BaseException:
+                try:
+                    if activation_started and os.path.lexists(REMOTE_INSTALL_DIR):
+                        shutil.rmtree(REMOTE_INSTALL_DIR)
+                    if backup_dir and os.path.lexists(backup_dir):
+                        os.rename(backup_dir, REMOTE_INSTALL_DIR)
+                        backup_dir = None
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"Runtime recovery is incomplete at {REMOTE_INSTALL_DIR}; "
+                        f"recovery backup: {backup_dir or 'none (new installation)'}: {exc}"
+                    ) from exc
                 raise
             if backup_dir:
                 try:
@@ -471,6 +478,7 @@ def _activate_local_runtime(build_dir: str) -> None:
     backup_dir = ""
     replaced: list[tuple[str, bool]] = []
     rollback_errors: list[str] = []
+    cleanup_backup = False
     try:
         backup_dir = tempfile.mkdtemp(prefix=".basaltwater-managed-previous-", dir=parent_dir)
         for item in managed_items:
@@ -490,16 +498,22 @@ def _activate_local_runtime(build_dir: str) -> None:
             previous = os.path.join(backup_dir, item)
             candidate = os.path.join(stage_dir, item)
             had_previous = os.path.lexists(destination)
+            # Record intent before rename: an interruption can arrive just after
+            # the filesystem changes but before Python records its return.
+            replaced.append((item, had_previous))
             if had_previous:
                 os.rename(destination, previous)
-            replaced.append((item, had_previous))
             if os.path.lexists(candidate):
                 os.rename(candidate, destination)
-    except Exception:
+        cleanup_backup = True
+    except BaseException:
+        cleanup_backup = False
         for item, had_previous in reversed(replaced):
             destination = os.path.join(REMOTE_INSTALL_DIR, item)
             previous = os.path.join(backup_dir, item)
             try:
+                if had_previous and not os.path.lexists(previous):
+                    continue
                 if os.path.isdir(destination) and not os.path.islink(destination):
                     shutil.rmtree(destination)
                 elif os.path.lexists(destination):
@@ -513,17 +527,20 @@ def _activate_local_runtime(build_dir: str) -> None:
                 f"Managed runtime payload recovery is incomplete; backups at {backup_dir}: "
                 + "; ".join(rollback_errors)
             )
+        cleanup_backup = True
         raise
     finally:
         try:
             shutil.rmtree(stage_dir)
         except OSError as exc:
             print(f"  ⚠ Managed payload staging cleanup failed at {stage_dir}: {exc}")
-        if backup_dir and not rollback_errors:
+        if backup_dir and cleanup_backup:
             try:
                 shutil.rmtree(backup_dir)
             except OSError as exc:
                 print(f"  ⚠ Previous managed payload cleanup failed at {backup_dir}: {exc}")
+        elif backup_dir:
+            print(f"  ⚠ Managed runtime recovery backups retained at {backup_dir}")
 
 
 def prepare_deployments(config: SetupConfig, target_dir: str) -> None:

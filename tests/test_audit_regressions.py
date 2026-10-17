@@ -431,6 +431,125 @@ class SetupSafetyTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(directory, repository_stage_name(second_url) + ".commit")))
 
 
+class RuntimeActivationRecoveryTests(unittest.TestCase):
+    def test_failed_or_interrupted_rename_restores_previous_runtime(self) -> None:
+        for managed in (False, True):
+            for phase in ("backup", "activate"):
+                for after_rename in (False, True):
+                    for failure in (OSError, KeyboardInterrupt):
+                        with self.subTest(
+                            managed=managed, phase=phase, after_rename=after_rename,
+                            failure=failure.__name__,
+                        ), tempfile.TemporaryDirectory() as directory:
+                            runtime = os.path.join(directory, "basaltwater")
+                            source = os.path.join(directory, "source")
+                            os.makedirs(os.path.join(runtime, "deployments"))
+                            os.makedirs(os.path.join(source, "deployments"))
+                            if managed:
+                                os.mkdir(os.path.join(runtime, ".git"))
+                            marker = os.path.join(runtime, "deployments", "previous")
+                            with open(marker, "w", encoding="utf-8") as handle:
+                                handle.write("live")
+                            with open(os.path.join(source, "deployments", "new"), "w") as handle:
+                                handle.write("candidate")
+                            destination = os.path.join(runtime, "deployments") if managed else runtime
+                            stage_prefix = ".basaltwater-managed-stage-" if managed else ".basaltwater-stage-"
+                            real_rename = os.rename
+
+                            def rename(old, new):
+                                selected = (
+                                    old == destination if phase == "backup"
+                                    else stage_prefix in old and new == destination
+                                )
+                                if selected and not after_rename:
+                                    raise failure("interrupted rename")
+                                real_rename(old, new)
+                                if selected:
+                                    raise failure("interrupted rename")
+
+                            with (
+                                patch.object(setup_common, "SCRIPT_DIR", os.path.join(runtime, "lib")),
+                                patch.object(setup_common, "REMOTE_INSTALL_DIR", runtime),
+                                patch.object(setup_common, "PERSISTENT_STATE_DIR", os.path.join(directory, "state")),
+                                patch.object(setup_common.os, "rename", side_effect=rename),
+                            ):
+                                with self.assertRaises(failure):
+                                    setup_common._activate_local_runtime(source)
+                            with open(marker, encoding="utf-8") as handle:
+                                self.assertEqual(handle.read(), "live")
+                            self.assertFalse(os.path.exists(os.path.join(runtime, "deployments", "new")))
+                            if managed:
+                                self.assertTrue(os.path.isdir(os.path.join(runtime, ".git")))
+                            self.assertFalse(any(".basaltwater-" in name for name in os.listdir(directory)))
+
+    def test_interruption_after_activation_removes_new_installation(self) -> None:
+        for managed in (False, True):
+            with self.subTest(managed=managed), tempfile.TemporaryDirectory() as directory:
+                runtime = os.path.join(directory, "basaltwater")
+                source = os.path.join(directory, "source")
+                os.makedirs(os.path.join(source, "deployments"))
+                if managed:
+                    os.makedirs(os.path.join(runtime, ".git"))
+                destination = os.path.join(runtime, "deployments") if managed else runtime
+                stage_prefix = ".basaltwater-managed-stage-" if managed else ".basaltwater-stage-"
+                real_rename = os.rename
+
+                def rename(old, new):
+                    real_rename(old, new)
+                    if stage_prefix in old and new == destination:
+                        raise KeyboardInterrupt("activation interrupted")
+
+                with (
+                    patch.object(setup_common, "SCRIPT_DIR", os.path.join(runtime, "lib")),
+                    patch.object(setup_common, "REMOTE_INSTALL_DIR", runtime),
+                    patch.object(setup_common, "PERSISTENT_STATE_DIR", os.path.join(directory, "state")),
+                    patch.object(setup_common.os, "rename", side_effect=rename),
+                ):
+                    with self.assertRaises(KeyboardInterrupt):
+                        setup_common._activate_local_runtime(source)
+                self.assertFalse(os.path.lexists(destination))
+                if managed:
+                    self.assertTrue(os.path.isdir(os.path.join(runtime, ".git")))
+
+    def test_failed_or_interrupted_rollback_retains_previous_runtime_backup(self) -> None:
+        for managed in (False, True):
+            for failure in (OSError, KeyboardInterrupt):
+                with self.subTest(managed=managed, failure=failure.__name__), \
+                     tempfile.TemporaryDirectory() as directory:
+                    runtime = os.path.join(directory, "basaltwater")
+                    source = os.path.join(directory, "source")
+                    os.makedirs(os.path.join(runtime, "deployments"))
+                    os.makedirs(os.path.join(source, "deployments"))
+                    if managed:
+                        os.mkdir(os.path.join(runtime, ".git"))
+                    with open(os.path.join(runtime, "deployments", "previous"), "w") as handle:
+                        handle.write("live")
+                    destination = os.path.join(runtime, "deployments") if managed else runtime
+                    stage_prefix = ".basaltwater-managed-stage-" if managed else ".basaltwater-stage-"
+                    real_rename = os.rename
+
+                    def rename(old, new):
+                        if new == destination:
+                            if stage_prefix in old:
+                                raise OSError("activation failed")
+                            raise failure("rollback failed")
+                        real_rename(old, new)
+
+                    with (
+                        patch.object(setup_common, "SCRIPT_DIR", os.path.join(runtime, "lib")),
+                        patch.object(setup_common, "REMOTE_INSTALL_DIR", runtime),
+                        patch.object(setup_common, "PERSISTENT_STATE_DIR", os.path.join(directory, "state")),
+                        patch.object(setup_common.os, "rename", side_effect=rename),
+                    ):
+                        expected = RuntimeError if failure is OSError else KeyboardInterrupt
+                        with self.assertRaisesRegex(expected, "recovery is incomplete|rollback failed"):
+                            setup_common._activate_local_runtime(source)
+                    backups = [name for name in os.listdir(directory) if "previous-" in name]
+                    self.assertEqual(len(backups), 1)
+                    with open(os.path.join(directory, backups[0], "deployments", "previous"), encoding="utf-8") as handle:
+                        self.assertEqual(handle.read(), "live")
+
+
 class SysadminSafetyTests(unittest.TestCase):
     def test_stopped_service_returns_action_result(self) -> None:
         with patch.object(sysadmin_svc, "_resolve_credentials", return_value=("root", None)), \
