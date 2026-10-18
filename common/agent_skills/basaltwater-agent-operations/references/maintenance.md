@@ -14,3 +14,9 @@ release it while another task still depends on it. Release a hold you created
 when the protected work ends. Holds expire after at most 72 hours and do not
 override the host's forced-restart deadline. A task's runtime cap does not create
 or renew a hold automatically.
+
+Automatic restart protection follows active T3 runs/turns, standalone Codex
+turns, and executing provider CLI tasks. Idle provider servers, terminals,
+multiplexers, worktree processes, and the account's login do not imply active
+work. Use a bounded hold for standalone interactive Claude/OpenCode work or an
+independent build that must cross the restart window.

@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../
 from lib.logging_utils import get_service_logger, log_event
 from lib.atomic_io import write_json_atomic
 from lib.agent_maintenance import inspect_agent_maintenance
+from lib.agent_activity import active_agent_workloads
 from lib.config import validate_current_setup_fields
 from lib.kernel_restart import newer_installed_kernel
 from lib.machine_state import can_restart_system, load_setup_config
@@ -33,33 +34,6 @@ logger = get_service_logger('auto_restart_if_needed', 'common', use_syslog=True)
 
 STATE_FILE = "/var/lib/basaltwater/auto_restart_state.json"
 MIN_UPTIME_SECONDS = 30 * 60
-_AGENT_PROCESS_NAMES = frozenset(("claude", "codex", "opencode"))
-_BUILD_PROCESS_NAMES = frozenset(
-    (
-        "bun",
-        "cargo",
-        "cc",
-        "cc1",
-        "cc1plus",
-        "clang",
-        "clang++",
-        "cmake",
-        "deno",
-        "g++",
-        "gcc",
-        "git",
-        "go",
-        "ld",
-        "make",
-        "meson",
-        "ninja",
-        "npm",
-        "npx",
-        "pnpm",
-        "rustc",
-        "yarn",
-    )
-)
 
 
 def check_restart_required() -> bool:
@@ -77,19 +51,52 @@ def get_uptime_seconds() -> float | None:
 
 
 def get_active_sessions() -> list[str] | None:
-    """Return active loginctl sessions, or None when they cannot be queried."""
+    """Return non-idle human logins on hosts without managed coding agents.
+
+    A lingering user manager is registered with logind even before any login.
+    Agent hosts use live work rather than login state, so an open SSH/desktop
+    session cannot keep an idle agent VM up indefinitely.
+    """
+    config = load_setup_config() or {}
+    tools = config.get("agent_tools") or []
+    has_agents = any(tool in tools or config.get(f"install_{tool}") is True
+                     for tool in ("codex", "claude", "opencode", "t3code"))
+    if has_agents:
+        return []
     try:
         result = subprocess.run(
             ["loginctl", "list-sessions", "--no-legend"],
             capture_output=True,
             text=True,
             check=False,
+            timeout=10,
         )
-    except OSError:
+        if result.returncode != 0:
+            return None
+        sessions = []
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            session_id = line.split()[0]
+            if not session_id.isascii() or not session_id.isalnum():
+                return None
+            details = subprocess.run(
+                ["loginctl", "show-session", session_id,
+                 "--property=Class", "--property=State", "--property=IdleHint"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            if details.returncode != 0:
+                return None
+            properties = dict(row.split("=", 1) for row in details.stdout.splitlines() if "=" in row)
+            if not all(properties.get(key) for key in ("Class", "State", "IdleHint")):
+                return None
+            if properties["Class"] not in {"user", "user-early", "user-light", "user-early-light"}:
+                continue
+            if properties["State"] in {"active", "online"} and properties["IdleHint"] == "no":
+                sessions.append(line)
+        return sessions
+    except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
-        return None
-    return [line for line in result.stdout.splitlines() if line.strip()]
 
 
 def _configured_agent_account() -> pwd.struct_passwd | None:
@@ -105,37 +112,11 @@ def _configured_agent_account() -> pwd.struct_passwd | None:
     return account if os.path.isabs(account.pw_dir) else None
 
 
-def _within(path: str, parent: str) -> bool:
-    try:
-        resolved_parent = os.path.realpath(parent)
-        return os.path.commonpath(
-            (os.path.realpath(path), resolved_parent)
-        ) == resolved_parent
-    except ValueError:
-        return False
-
-
-def _process_workload_category(command_name: str) -> str | None:
-    normalized = command_name.strip().lower()
-    first_word = normalized.split(maxsplit=1)[0] if normalized else ""
-    if first_word in _AGENT_PROCESS_NAMES:
-        return "coding agent process"
-    if first_word in _BUILD_PROCESS_NAMES:
-        return "build or Git process"
-    if first_word.startswith("tmux") or first_word in {"screen", "screen-4.9.0"}:
-        return "terminal multiplexer process"
-    return None
-
-
 def get_active_agent_workloads(
     *,
     proc_root: str = "/proc",
 ) -> list[str] | None:
-    """Return category-only blockers for the configured agent account.
-
-    Process command lines and repository contents are deliberately not read or
-    logged. A disappearing process is an expected race and is skipped.
-    """
+    """Return explicit holds and verified live work for the coding account."""
     account = _configured_agent_account()
     if account is None:
         return []
@@ -147,49 +128,10 @@ def get_active_agent_workloads(
     elif hold["status"] == "invalid":
         categories.add("invalid agent maintenance hold")
 
-    managed_worktrees = os.path.join(
-        account.pw_dir,
-        ".local",
-        "share",
-        "basaltwater",
-        "worktrees",
-    )
-    try:
-        processes = list(os.scandir(proc_root))
-    except OSError:
+    workloads = active_agent_workloads(account.pw_uid, proc_root=proc_root)
+    if workloads is None:
         return None
-
-    for process in processes:
-        if not process.name.isdigit():
-            continue
-        try:
-            if (
-                not process.is_dir(follow_symlinks=False)
-                or process.stat(follow_symlinks=False).st_uid != account.pw_uid
-            ):
-                continue
-            with open(
-                os.path.join(process.path, "comm"),
-                encoding="utf-8",
-            ) as file_obj:
-                command_name = file_obj.read(128)
-        except (OSError, UnicodeError):
-            continue
-
-        category = _process_workload_category(command_name)
-        if category:
-            categories.add(category)
-        try:
-            working_directory = os.readlink(os.path.join(process.path, "cwd"))
-        except OSError:
-            continue
-        if working_directory != managed_worktrees and _within(
-            working_directory,
-            managed_worktrees,
-        ):
-            categories.add("managed agent worktree process")
-
-    return sorted(categories)
+    return sorted(categories.union(workloads))
 
 
 def _nonnegative_int(value: Any, default: int) -> int:

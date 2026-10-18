@@ -493,15 +493,33 @@ manual cleanup. Durations are limited to 1–72 hours. Creating another hold
 renews it; release is idempotent. The same operation can be requested from a
 control system with `basaltw agent maintenance hold HOST USER --hours 8`.
 
-When a restart is pending, the existing restart job also defers for recognized
-coding-agent, build, Git, terminal-multiplexer, and managed agent-worktree
-processes owned by the configured setup account. It records only workload
-categories: process command lines, prompts, and repository contents are not
-read, while working directories are used only to test membership in the fixed
-managed-worktree root and are never recorded. An invalid hold fails safe and
-is visible in `basaltw agent doctor --capability host`; release and
-recreate it. The configured forced-restart deadline still overrides sessions,
-holds, and workloads after its maximum deferral period.
+When a restart is pending, the restart job checks live agent work owned by the
+configured setup account. T3 Code's open orchestration database supplies run
+and provider-turn status; queued work, requests waiting for human input, and
+activity predating the current server process do not block a restart. This
+applies to all providers managed through T3. Standalone Codex turns are detected
+from lifecycle events in rollouts held open by the provider. Executing Codex
+`exec`/`review`, Claude `--print`, and OpenCode `run` commands also count as work.
+Standalone interactive Claude and OpenCode sessions need an explicit hold when
+their work must cross the restart window.
+
+Lingering login managers, background sessions, idle logins, idle provider
+servers, open terminals, tmux/screen, build/Git processes, and processes merely
+sitting in worktrees do not count as agent work. SSH/desktop logins alone do not
+defer restarts on hosts configured with coding agents; hosts without coding
+agents still protect non-idle human logins. Use a bounded hold for independent
+work that needs protection, such as an unattended build.
+
+The job records only workload categories. It reads T3 status/time metadata,
+bounded provider command arguments and Codex rollout tails locally; it does not
+log their contents or scan closed session history. An unreadable activity
+source defers the restart rather than reporting the host idle. An invalid hold
+also fails safe and is visible in `basaltw agent doctor --capability host`;
+release and recreate it. The configured forced-restart deadline still overrides
+known sessions, holds, and workloads after its maximum deferral period.
+
+These changes take effect on managed systems after their setup is refreshed;
+updating the orchestration checkout alone does not replace installed services.
 
 ## Related Configuration
 

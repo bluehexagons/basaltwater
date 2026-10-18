@@ -95,7 +95,7 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
         send.assert_not_called()
         self.assertNotIn("last_notified", save.call_args.args[0])
 
-    def test_detects_agent_build_multiplexer_and_managed_worktree_categories(self):
+    def test_idle_agent_build_multiplexer_and_worktree_processes_do_not_block(self):
         with (
             tempfile.TemporaryDirectory() as home,
             tempfile.TemporaryDirectory() as proc_root,
@@ -124,6 +124,11 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
                     encoding="utf-8",
                 ) as file_obj:
                     file_obj.write(command)
+                with open(os.path.join(process, "stat"), "w", encoding="utf-8") as file_obj:
+                    file_obj.write(f"{pid} ({command.strip()}) S 1 " + "0 " * 18)
+                os.mkdir(os.path.join(process, "fd"))
+                with open(os.path.join(process, "cmdline"), "wb") as file_obj:
+                    file_obj.write(b"codex\0app-server\0")
                 os.symlink(working_directory, os.path.join(process, "cwd"))
 
             account = SimpleNamespace(pw_uid=os.getuid(), pw_dir=home)
@@ -141,15 +146,7 @@ class TestAutoRestartIfNeeded(unittest.TestCase):
                     proc_root=proc_root
                 )
 
-        self.assertEqual(
-            categories,
-            [
-                "build or Git process",
-                "coding agent process",
-                "managed agent worktree process",
-                "terminal multiplexer process",
-            ],
-        )
+        self.assertEqual(categories, [])
 
     def test_active_maintenance_hold_is_a_restart_blocker(self):
         account = SimpleNamespace(pw_uid=os.getuid(), pw_dir="/home/agent")
