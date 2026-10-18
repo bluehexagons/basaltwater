@@ -224,7 +224,10 @@ def add_setup_arguments(
     parser.add_argument(
         "--ssh", dest="install_ssh", action=argparse.BooleanOptionalAction,
         default=None,
-        help="Manage key-only SSH on CachyOS; omit to leave SSH unchanged",
+        help=(
+            "Manage key-only SSH on CachyOS; local setup detects current state, "
+            "while remote-controller setup enables it by default"
+        ),
     )
     parser.add_argument(
         "--ssh-password-auth", action=argparse.BooleanOptionalAction,

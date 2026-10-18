@@ -21,6 +21,15 @@ def _make_config(**kwargs) -> SetupConfig:
     return SetupConfig(**defaults)
 
 
+def _make_setup_args() -> MagicMock:
+    """Create parsed-argument mocks with the real parser's SSH defaults."""
+    args = MagicMock()
+    args.install_ssh = None
+    args.ssh_password_auth = False
+    args.ssh_password_window = None
+    return args
+
+
 class TestSetupMainTimingPersistence(unittest.TestCase):
     """Verify setup_main always saves last_start_time/end_time/success."""
 
@@ -93,7 +102,7 @@ class TestSetupMainTimingPersistence(unittest.TestCase):
                  patch.object(setup_common, 'save_setup_command', side_effect=fake_save):
 
                 parser = MagicMock()
-                args = MagicMock()
+                args = _make_setup_args()
                 args.host = 'testhost'
                 args.username = 'testuser'
                 args.dry_run = False
@@ -138,7 +147,7 @@ class TestSetupMainTimingPersistence(unittest.TestCase):
                  patch.object(setup_common, 'save_setup_command', side_effect=fake_save):
 
                 parser = MagicMock()
-                args = MagicMock()
+                args = _make_setup_args()
                 args.host = 'testhost'
                 args.username = 'testuser'
                 args.dry_run = False
@@ -181,7 +190,7 @@ class TestSetupMainTimingPersistence(unittest.TestCase):
                  patch.object(setup_common, 'save_setup_command', side_effect=fake_save):
 
                 parser = MagicMock()
-                args = MagicMock()
+                args = _make_setup_args()
                 args.host = 'testhost'
                 args.username = 'testuser'
                 args.dry_run = False
@@ -225,7 +234,7 @@ class TestSetupMainTimingPersistence(unittest.TestCase):
                  patch.object(setup_common, 'save_setup_command', side_effect=fake_save):
 
                 parser = MagicMock()
-                args = MagicMock()
+                args = _make_setup_args()
                 args.host = 'testhost'
                 args.username = 'testuser'
                 args.dry_run = True
@@ -785,7 +794,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = "/bad/workspace"
         parser.parse_args.return_value = args
 
@@ -805,7 +814,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -829,7 +838,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -853,7 +862,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -877,7 +886,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -900,7 +909,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -923,7 +932,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -946,7 +955,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -969,7 +978,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -992,7 +1001,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -1015,7 +1024,7 @@ class TestSetupMainValidation(unittest.TestCase):
         from lib import setup_common
 
         parser = MagicMock()
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
@@ -1060,7 +1069,7 @@ class TestExpandRemoteArgs(unittest.TestCase):
 
 class TestHostedProvisioningDispatch(unittest.TestCase):
     def _make_args(self) -> MagicMock:
-        args = MagicMock()
+        args = _make_setup_args()
         args.workspace = None
         args.host = "testhost"
         args.username = "testuser"
