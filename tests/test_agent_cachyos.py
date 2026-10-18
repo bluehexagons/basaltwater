@@ -109,10 +109,9 @@ class CachyOSSetupTests(unittest.TestCase):
             self.config("--t3code-desktop", "--no-agent-tool", "codex")
 
     def test_desktop_dry_run_does_not_probe_or_install(self):
-        with patch("common.cachyos_t3.run") as run, patch("lib.cachyos.is_cachyos") as detect:
+        with patch("common.cachyos_t3.run") as run, patch("lib.cachyos.is_cachyos", return_value=False):
             self.assertEqual(remote_setup.run_cachyos_setup(self.config("--t3code-desktop", "--dry-run")), 0)
         run.assert_not_called()
-        detect.assert_not_called()
 
     def test_remote_parser_has_same_defaults(self):
         from lib.arg_parser import create_setup_argument_parser
@@ -124,10 +123,9 @@ class CachyOSSetupTests(unittest.TestCase):
     def test_dry_run_never_invokes_steps_or_system_probes(self):
         from lib.remote_utils import is_dry_run, set_dry_run
         set_dry_run(False)
-        with patch("lib.cachyos.is_cachyos") as detect, patch.object(steps, "run") as run:
+        with patch("lib.cachyos.is_cachyos", return_value=False), patch.object(steps, "run") as run:
             self.assertEqual(remote_setup.run_cachyos_setup(self.config("--dry-run")), 0)
         self.assertFalse(is_dry_run())
-        detect.assert_not_called()
         run.assert_not_called()
 
     def test_apply_rejects_non_cachyos_before_steps(self):
@@ -143,7 +141,7 @@ class CachyOSSetupTests(unittest.TestCase):
              patch("lib.cachyos.pwd.getpwnam", return_value=account), \
              patch("lib.cachyos.os.geteuid", return_value=0):
             with self.assertRaisesRegex(ValueError, "without sudo"):
-                preflight_cachyos(self.config())
+                preflight_cachyos(self.config("--no-ssh"))
         with patch("lib.cachyos.is_cachyos", return_value=True), \
              patch("lib.cachyos.platform.machine", return_value="x86_64"), \
              patch("lib.cachyos.pwd.getpwnam", return_value=account), \
@@ -151,7 +149,35 @@ class CachyOSSetupTests(unittest.TestCase):
              patch.dict(os.environ, {"SSH_CONNECTION": "", "SSH_TTY": ""}), \
              patch("lib.machine_state.detect_machine_type", return_value="vm"):
             with self.assertRaisesRegex(ValueError, "bare-metal"):
-                preflight_cachyos(self.config())
+                preflight_cachyos(self.config("--no-ssh"))
+
+    def test_preflight_allows_ssh_session_with_existing_account_and_home(self):
+        with tempfile.TemporaryDirectory() as home, \
+                patch("lib.cachyos.is_cachyos", return_value=True), \
+                patch("lib.cachyos.platform.machine", return_value="x86_64"), \
+                patch("lib.cachyos.pwd.getpwnam", return_value=SimpleNamespace(pw_uid=1000, pw_dir=home)), \
+                patch("lib.cachyos.os.geteuid", return_value=1000), \
+                patch("lib.cachyos.os.path.expanduser", return_value=home), \
+                patch.dict(os.environ, {"SSH_CONNECTION": "192.168.1.2 1234 192.168.1.3 22",
+                                        "SSH_TTY": "/dev/pts/1", "CODEX_HOME": ""}), \
+                patch("lib.machine_state.detect_machine_type", return_value="hardware"), \
+                patch("lib.cachyos.shutil.which", return_value="/usr/bin/mock"), \
+                patch("common.cachyos_software.preflight_software") as software, \
+                patch("common.cachyos_firewall.preflight_firewall") as firewall:
+            config = self.config()
+            preflight_cachyos(config)
+            with patch("lib.cachyos.os.path.expanduser", return_value=home + "/other"), \
+                    self.assertRaisesRegex(ValueError, "HOME must belong"):
+                preflight_cachyos(self.config("--no-ssh"))
+            with patch("lib.remote_utils.run", return_value=subprocess.CompletedProcess([], 1)) as bus, \
+                    self.assertRaisesRegex(ValueError, "active systemd user session"):
+                preflight_cachyos(self.config("--t3code-desktop", "--no-ssh"))
+            bus.assert_called_once_with(["systemctl", "--user", "show-environment"],
+                                        capture_output=True, check=False)
+        self.assertTrue(config.install_ssh)
+        self.assertTrue(config.lan_access)
+        software.assert_called_once_with(config)
+        firewall.assert_called_once_with(config)
 
     def test_package_install_retains_installed_packages_and_never_syncs(self):
         def command(argv, **kwargs):

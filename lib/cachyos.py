@@ -95,6 +95,9 @@ def cachyos_config_from_args(
         copied.web_interface_host = "127.0.0.1"
     config = SetupConfig.from_args(copied, PROFILE)
     validate_cachyos_config(config)
+    # Invocation context is deliberately not part of saved setup policy. Resolve
+    # fresh defaults only on the target, preserving explicit/replayed booleans.
+    config._cachyos_remote_setup = for_remote
     return config
 
 
@@ -178,9 +181,14 @@ def validate_cachyos_config(config: SetupConfig) -> None:
 def preflight_cachyos(config: SetupConfig) -> None:
     """Read-only checks; dry-run plans can also be generated on the CI host."""
     validate_cachyos_config(config)
+    from lib.cachyos_ssh_policy import resolve_ssh_policy
+
+    target_is_cachyos = is_cachyos()
     if config.dry_run:
+        resolve_ssh_policy(config, target_is_cachyos=target_is_cachyos)
+        validate_cachyos_config(config)
         return
-    if not is_cachyos() or platform.machine() != "x86_64":
+    if not target_is_cachyos or platform.machine() != "x86_64":
         raise ValueError("agent_cachyos requires CachyOS on x86_64")
     try:
         account = pwd.getpwnam(config.username)
@@ -188,8 +196,6 @@ def preflight_cachyos(config: SetupConfig) -> None:
         raise ValueError(f"Existing desktop account not found: {config.username}") from exc
     if os.geteuid() == 0 or os.geteuid() != account.pw_uid:
         raise ValueError("Run setup from a terminal as the existing desktop user, without sudo")
-    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
-        raise ValueError("Run agent_cachyos locally in the workstation's desktop session")
     from lib.machine_state import detect_machine_type
 
     if detect_machine_type() != "hardware":
@@ -223,6 +229,8 @@ def preflight_cachyos(config: SetupConfig) -> None:
         from common.cachyos_t3 import preflight
 
         preflight(config)
+    resolve_ssh_policy(config, target_is_cachyos=target_is_cachyos)
+    validate_cachyos_config(config)
     from common.cachyos_firewall import firewall_requested, preflight_firewall
 
     if firewall_requested(config):
