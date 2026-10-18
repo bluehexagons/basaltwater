@@ -755,7 +755,7 @@ class WebPanelState:
         self.agent_tasks = AgentTasks(agent_home, background_tick=self.publishing_tick)
         self.git_settings = AgentGitSettings(self.agent_tasks.home, manifest.get("username", ""))
         self.admin = PanelAdmin(manifest)
-        self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home)
+        self.agent_diagnostics = AgentDiagnostics(self.agent_tasks.home, features=self.features)
 
     def notification_ingest_enabled(self) -> bool:
         return self.manifest["features"].get("notification_ingest") is True
@@ -2545,6 +2545,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 if path == "/actions/agent-task":
                     manager.action(values.get("id", [""])[0], values.get("action", [""])[0])
                 else:
+                    if submitted.get("workspace") == "worktree" and "git" not in self.state.features().tools:
+                        raise ValueError("Git must be selected and installed to use a task worktree")
                     for option in ("network", "session_history", "temporary_files", "continue_until_done"):
                         if option in values and values[option] != ["1"]:
                             raise ValueError("Invalid checkbox option")

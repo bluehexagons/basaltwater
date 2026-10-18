@@ -74,7 +74,8 @@ the panel starts no prompt scheduler or publishing poll. Selected, installed
 Codex enables prompt scheduling;
 Butler/SteamCMD can enable publishing polling independently of Codex.
 Machines with other agent runtimes but no Codex show runtime diagnostics without
-prompt forms. Repository templates and the Git worktree option require Git.
+prompt forms. Repository templates and the Git worktree option require selected,
+installed Git; direct form submissions enforce the same worktree requirement.
 Dashboard notifications appear only with ingest enabled; certificate help appears
 when gateway metadata is available. Empty service and access sections are omitted.
 
@@ -512,12 +513,12 @@ templates still require you to select a suitable checkout.
 
 | Conditional template | Appears when | Default repeat / cap | Scope |
 | --- | --- | --- | --- |
-| Check T3 Code readiness | T3 Code runtime or user service unit is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
+| Check T3 Code readiness | T3 Code is selected and its runtime or user service unit is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
 | Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Workspace permissions; command network; private run directory |
-| Review GitHub Actions failures | `gh` is installed | Daily / 20 minutes | Workspace permissions for command network; prompt requests inspection only |
+| Review GitHub Actions failures | Git and `gh` are selected and installed | Daily / 20 minutes | Workspace permissions for command network; prompt requests inspection only |
 | Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
 | Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
 | Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
@@ -613,9 +614,12 @@ Removing the panel leaves independent tasks running; pause them explicitly.
 
 Under **Setup and diagnostics**, expand **Check installation and sign-in readiness**.
 **Check agent readiness** collects versions and local credential metadata for
-Codex, Claude Code, OpenCode, and GitHub CLI, plus maintenance-hold state and
-the timestamp of any saved readiness record. T3 Code is checked when installed;
-its update action appears for a configured installation.
+selected, installed Codex, Claude Code, OpenCode, and GitHub CLI, plus
+maintenance-hold state and the timestamp of any saved readiness record.
+T3 Code is checked when selected and installed; its update action appears for
+a configured installation.
+Leftover unselected agent tools and T3 installations are not probed or offered
+as starting templates. Each readiness request resolves current feature selections.
 Credential file presence is not proof of provider authentication. Checks run
 in the background and do not launch prompts or automatically repair the host.
 

@@ -8,11 +8,12 @@ import json
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from common.service_tools.web_panel_diagnostics import _redact_log_message
-from common.service_tools.web_panel_features import t3_installed
+from common.service_tools.web_panel_features import PanelFeatures
 from common.service_tools.web_panel_templates import render_document, render_heading
 from lib.agent_cli import _tool_path, inspect_agent_tools, inspect_t3code
 from lib.agent_maintenance import inspect_agent_maintenance
@@ -378,8 +379,9 @@ def render_agent_activity(state: Any) -> str:
 class AgentDiagnostics:
     """Run bounded existing checks on request, without blocking form submission."""
 
-    def __init__(self, home: str) -> None:
+    def __init__(self, home: str, *, features: Callable[[], PanelFeatures]) -> None:
         self.home = home
+        self._features = features
         self._lock = threading.Lock()
         self._snapshot: dict[str, Any] = {"status": "not_loaded"}
 
@@ -397,9 +399,10 @@ class AgentDiagnostics:
 
     def _collect(self) -> None:
         try:
-            tools = inspect_agent_tools(["codex", "claude", "opencode", "gh"], home=self.home)
-            t3_present = t3_installed(self.home)
-            t3 = inspect_t3code(home=self.home, fix=False) if t3_present else None
+            features = self._features()
+            tools = inspect_agent_tools([name for name in ("codex", "claude", "opencode", "gh")
+                                         if name in features.tools], home=self.home)
+            t3 = inspect_t3code(home=self.home, fix=False) if features.t3 else None
             record_error = ""
             try:
                 record = load_agent_readiness_record(home=self.home)
@@ -446,7 +449,7 @@ def _task_needs_review(task: dict[str, Any], runs: list[dict[str, Any]]) -> bool
         latest["status"] in {"failed", "interrupted"} or latest.get("outcome") in {"failed", "blocked"}))
 
 
-def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[str, Any]]:
+def _available_templates(manifest: dict[str, Any], home: str, selected: PanelFeatures) -> dict[str, dict[str, Any]]:
     """Use saved configuration and executable presence, without executing tools."""
 
     def labels(section: str) -> set[str]:
@@ -459,8 +462,7 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
     services, access = labels("services"), labels("access")
     features = manifest.get("features", {})
     capabilities = {
-        "t3": ("T3 Code configured" if features.get("t3_update") is True else
-               "T3 Code runtime detected") if t3_installed(home) else "",
+        "t3": "T3 Code configured" if selected.t3 else "",
         "containers": "Container CLI detected" if installed("docker", "podman") else "",
         "web_hosting": "Web server configured" if "Web server" in services else
                        "Web hosting command detected" if installed("basaltwater-web", "nginx") else "",
@@ -468,7 +470,7 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
                           "Shared storage command detected" if installed("smbd", "mount.cifs", "sshfs") else "",
         "remote_desktop": "Remote desktop configured" if "Remote desktop" in access else
                           "xrdp command detected" if installed("xrdp") else "",
-        "github": "GitHub CLI detected" if installed("gh") else "",
+        "github": "GitHub CLI detected" if "gh" in selected.tools else "",
         "browser": "Managed browser launcher detected" if installed("basaltwater-playwright-mcp") else "",
         "godot": "Godot command detected" if installed("godot", "godot4") else "",
         "homebox": "HomeBox configured" if "HomeBox" in services else "",
@@ -481,7 +483,7 @@ def _available_templates(manifest: dict[str, Any], home: str) -> dict[str, dict[
     return {key: {**template, "availability": capabilities.get(template.get("requires", ""), "")}
             for key, template in PROMPT_TEMPLATES.items()
             if ("requires" not in template or capabilities[template["requires"]])
-            and (template["scope"] != "repository" or installed("git"))}
+            and (template["scope"] != "repository" or "git" in selected.tools)}
 
 
 def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> str:
@@ -516,7 +518,8 @@ def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> st
 def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
-    if not state.features().prompts:
+    features = state.features()
+    if not features.prompts:
         return render_document(
             title=f"Agents · {state.manifest['host']}", style=style + _STYLE,
             header=f'<header><p class="eyebrow">Basaltwater web panel</p><h1>Agents</h1><p class="lede">Installed agent runtimes on <code>{_escape(state.manifest["host"])}</code>.</p></header>',
@@ -540,7 +543,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     account_ready = manager.available()
     ready = account_ready and not manager.error and not storage_error
     codex_installed = bool(_tool_path("codex", manager.home))
-    templates = _available_templates(state.manifest, manager.home)
+    templates = _available_templates(state.manifest, manager.home, features)
     defaults: dict[str, Any] = {"title": "", "prompt": "", "directory": manager.home,
                                "mode": "inspect", "interval": "once", "model": "", "network": False, "id": "",
                                "effort": "", "timeout_minutes": DEFAULT_TIMEOUT_MINUTES,
@@ -632,7 +635,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
     workspace_options = "".join(f'<option value="{key}"{" selected" if key == defaults["workspace"] else ""}>{label}</option>' for key, label in (
         ("existing", "Use the selected directory"), ("directory", "Persistent task directory"),
         ("worktree", "Persistent Git worktree"), ("run-directory", "Empty directory for each run"))
-        if key != "worktree" or "git" in state.features().tools)
+        if key != "worktree" or "git" in features.tools)
     deadline = defaults["deadline_at"]
     if isinstance(deadline, (int, float)):
         deadline = datetime.fromtimestamp(deadline, timezone.utc).isoformat().replace("+00:00", "Z") if deadline else ""
@@ -846,7 +849,7 @@ def _render_follow_up(run: dict[str, Any]) -> str:
 def _render_diagnostics(snapshot: dict[str, Any], csrf: str) -> str:
     form = f'''<form class="job-load" method="post" action="/actions/agent-diagnostics"><input type="hidden" name="csrf" value="{_escape(csrf)}"><button{' disabled' if snapshot['status'] == 'running' else ''}>Check agent readiness</button></form>'''
     if snapshot["status"] != "loaded":
-        return form + '<p class="empty">' + _escape(snapshot.get("message") or ("Checks are running. Refresh status to see results." if snapshot["status"] == "running" else "Check installation versions, credential metadata, T3 Code when present, and maintenance holds. Checks do not run prompts or repair the host.")) + '</p>'
+        return form + '<p class="empty">' + _escape(snapshot.get("message") or ("Checks are running. Refresh status to see results." if snapshot["status"] == "running" else "Check selected agent installation versions, credential metadata, configured T3 Code, and maintenance holds. Checks do not run prompts or repair the host.")) + '</p>'
     cards = []
     for tool in snapshot["tools"]:
         installed = tool["installed"]

@@ -1589,7 +1589,7 @@ class WebPanelEventTest(unittest.TestCase):
         self.assertIn("Notifications", rendered)
         self.assertIn(WEB_PANEL_NOTIFICATION_ENDPOINT, rendered)
         self.assertIn("--notify webhook", rendered)
-        self.assertIn("basaltw setup agent_vm", rendered)
+        self.assertIn("basaltw setup server_lite", rendered)
         self.assertIn("PANEL_HOST", rendered)
         self.assertIn("local network", rendered)
         self.assertIn("Reveal full sender link", rendered)

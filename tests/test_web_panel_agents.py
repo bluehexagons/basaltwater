@@ -647,7 +647,7 @@ class AgentScreenTest(unittest.TestCase):
         self.state = panel.WebPanelState({"host": "example.test", "username": "agent", "system_type": "agent_vm",
                                          "features": {}, "services": [], "access": []}, agent_home=self.temporary.name)
         self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
-        self.enterContext(patch.object(agents, "t3_installed", side_effect=lambda home: (Path(home) / ".t3/runtime").is_dir()))
+        self.state.agent_diagnostics = agents.AgentDiagnostics(self.temporary.name, features=lambda: self.state.features())
         for target, attribute, value in ((tasks.AgentTasks, "available", True), (tasks, "_tool_path", "/test/codex")):
             mocked = patch.object(target, attribute, return_value=value)
             mocked.start()
@@ -680,7 +680,7 @@ class AgentScreenTest(unittest.TestCase):
     def test_host_templates_prefill_home_and_repository_templates_require_a_checkout(self) -> None:
         host_templates = {"maintenance-local", "maintenance", "backups", "storage", "incident", "certificates"}
         with patch.object(tasks, "execute_prompt") as execute, patch.object(self.state.agent_diagnostics, "trigger") as checks:
-            for key in agents._available_templates(self.state.manifest, self.temporary.name):
+            for key in agents._available_templates(self.state.manifest, self.temporary.name, self.state.features()):
                 with self.subTest(template=key):
                     query = agents.parse_agent_query("template=" + key)
                     page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
@@ -745,9 +745,11 @@ class AgentScreenTest(unittest.TestCase):
         for key, configuration, commands, reason in cases:
             with self.subTest(template=key, configuration=configuration, commands=commands), patch.object(
                 agents, "_tool_path", side_effect=lambda name, home: f"/test/{name}" if name in (*commands, "codex", "git") else None,
-            ), patch.object(agents, "t3_installed", return_value=key == "t3-readiness"), patch.object(tasks.subprocess, "Popen") as spawn:
+            ), patch.object(self.state, "features", return_value=PanelFeatures(
+                tools=frozenset({"codex", "git", *commands}), t3=key == "t3-readiness",
+            )), patch.object(tasks.subprocess, "Popen") as spawn:
                 self.state.manifest = {**original, **configuration}
-                templates = agents._available_templates(self.state.manifest, self.temporary.name)
+                templates = agents._available_templates(self.state.manifest, self.temporary.name, self.state.features())
                 self.assertEqual({key for key, template in templates.items() if "requires" in template}, {key})
                 self.assertEqual(templates[key]["availability"], reason)
                 page = agents.render_agents(self.state, panel._PAGE_STYLE, agents.parse_agent_query("template=" + key))
@@ -758,14 +760,38 @@ class AgentScreenTest(unittest.TestCase):
                 self.assertEqual(self.state.agent_tasks.snapshot()["tasks"], [])
                 spawn.assert_not_called()
 
-    def test_t3_runtime_enables_template_without_a_manifest_flag(self) -> None:
+    def test_selected_t3_enables_template(self) -> None:
         runtime = Path(self.temporary.name) / ".t3/runtime"
         runtime.mkdir(parents=True)
+        self.state.features = Mock(return_value=PanelFeatures(tools=frozenset({"codex", "git"}), t3=True))
         page = agents.render_agents(self.state, panel._PAGE_STYLE, {"template": "t3-readiness"})
-        self.assertIn("T3 Code runtime detected", page)
+        self.assertIn("T3 Code configured", page)
         self.assertIn('href="/agents?template=t3-readiness" aria-current="true"', page)
         runtime.rmdir()
-        self.assertNotIn("t3-readiness", agents._available_templates(self.state.manifest, self.temporary.name))
+        self.state.features.return_value = PanelFeatures(tools=frozenset({"codex", "git"}))
+        self.assertNotIn("t3-readiness", agents._available_templates(self.state.manifest, self.temporary.name, self.state.features()))
+
+    def test_unselected_leftover_t3_and_github_are_not_probed_or_exposed(self) -> None:
+        with patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"}), t3=False)), \
+             patch.object(agents, "_tool_path", side_effect=lambda name, home: "/leftover" if name in {"gh", "git", "codex"} else None) as find_tool, \
+             patch.object(agents, "inspect_agent_tools", return_value=[]) as inspect_tools, \
+             patch.object(agents, "inspect_t3code") as inspect_t3, \
+             patch.object(agents, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}), \
+             patch.object(agents, "load_agent_readiness_record", return_value=None):
+            (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
+            templates = agents._available_templates(self.state.manifest, self.temporary.name, self.state.features())
+            page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            self.state.agent_diagnostics._collect()
+        self.assertNotIn("t3-readiness", templates)
+        self.assertNotIn("github-actions", templates)
+        self.assertNotIn("T3 Code readiness", page)
+        self.assertNotIn("GitHub Actions failures", page)
+        self.assertNotIn("Update T3 Code</button>", page)
+        inspect_tools.assert_called_once_with(["codex"], home=self.temporary.name)
+        self.assertEqual(self.state.agent_diagnostics.snapshot()["status"], "loaded")
+        self.assertFalse("Repository work ·" in page)
+        inspect_t3.assert_not_called()
+        self.assertFalse({"gh", "git", "claude", "opencode"} & {call.args[0] for call in find_tool.call_args_list})
 
     def test_unavailable_template_link_shows_error_without_prefilling_or_disabling_custom_work(self) -> None:
         query = agents.parse_agent_query("template=containers")
@@ -788,6 +814,9 @@ class AgentScreenTest(unittest.TestCase):
         self.assertEqual(self.state.agent_tasks.snapshot(), before)
 
     def test_new_template_defaults_are_visible_and_save_with_matching_permissions(self) -> None:
+        self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(
+            tools=frozenset({"codex", "git", "gh"}), t3=True,
+        )))
         (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
         self.state.manifest.update({"features": {"t3_update": True, "notification_ingest": True},
                                     "services": [{"label": label} for label in ("HomeBox", "Gogs", "Antistatic DB", "Privilege approvals")]})
@@ -862,6 +891,28 @@ class AgentScreenTest(unittest.TestCase):
         snapshot = self.state.agent_tasks.snapshot()
         self.assertTrue(snapshot["tasks"][0]["enabled"])
         self.assertFalse(snapshot["tasks"][0]["queued"])
+
+    def test_worktree_post_requires_selected_git_for_create_and_edit(self) -> None:
+        values = {"csrf": self.state.csrf_token, "title": "Worktree", "prompt": "Inspect later",
+                  "directory": self.temporary.name, "mode": "workspace", "interval": "once",
+                  "workspace": "worktree", "submit": "draft"}
+        identifier = self.state.agent_tasks.create({**values, "workspace": "existing"}, run_now=False, draft=True)
+        before = self.state.agent_tasks.snapshot()
+        for fields in (values, {**values, "id": identifier, "submit": "save"}):
+            with self.subTest(editing="id" in fields), patch.object(
+                self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex"})),
+            ), patch.object(self.state.agent_tasks, "create") as create, patch.object(self.state.agent_tasks, "update") as update:
+                handler = self.handler("/actions/agent-task/save", fields)
+                handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0].value, 422)
+                self.assertTrue("Git must be selected and installed" in handler._send.call_args.args[1])
+                create.assert_not_called()
+                update.assert_not_called()
+        self.assertEqual(self.state.agent_tasks.snapshot(), before)
+        handler = self.handler("/actions/agent-task/save", values)
+        handler.do_POST()
+        handler.send_response.assert_called_once_with(303)
+        self.assertEqual(self.state.agent_tasks.snapshot()["tasks"][-1]["workspace"], "worktree")
 
     def test_save_draft_accepts_every_form_field_without_launching_or_scheduling(self) -> None:
         values = {"csrf": self.state.csrf_token, "id": "", "title": "Prepare work", "prompt": "Inspect later",
@@ -1249,8 +1300,33 @@ class AgentScreenTest(unittest.TestCase):
             t3_check.assert_not_called()
             (Path(self.temporary.name) / ".t3/runtime").mkdir(parents=True)
             self.state.agent_diagnostics._collect()
-        tools_check.assert_called_with(["codex", "claude", "opencode", "gh"], home=self.temporary.name)
+            t3_check.assert_not_called()
+            self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(
+                tools=frozenset({"codex", "gh"}), t3=True,
+            )))
+            self.state.agent_diagnostics._collect()
+        self.assertEqual([call.args[0] for call in tools_check.call_args_list], [["codex"], ["codex"], ["codex", "gh"]])
         t3_check.assert_called_once_with(home=self.temporary.name, fix=False)
+
+    def test_state_diagnostics_resolve_features_again_after_selection_changes(self) -> None:
+        state = panel.WebPanelState(self.state.manifest, agent_home=self.temporary.name)
+        with (
+            patch.object(panel, "discover_features", side_effect=[
+                PanelFeatures(tools=frozenset({"codex", "gh"}), t3=True),
+                PanelFeatures(tools=frozenset({"codex"})),
+            ]) as discover,
+            patch.object(agents, "inspect_agent_tools", return_value=[]) as inspect_tools,
+            patch.object(agents, "inspect_t3code", return_value={"status": "healthy", "checks": {}}) as inspect_t3,
+            patch.object(agents, "inspect_agent_maintenance", return_value={"status": "inactive", "active": False}),
+            patch.object(agents, "load_agent_readiness_record", return_value=None),
+        ):
+            state.agent_diagnostics._collect()
+            self.assertIsNotNone(state.agent_diagnostics.snapshot()["t3"])
+            state.agent_diagnostics._collect()
+        self.assertEqual(discover.call_count, 2)
+        self.assertEqual([call.args[0] for call in inspect_tools.call_args_list], [["codex", "gh"], ["codex"]])
+        inspect_t3.assert_called_once_with(home=self.temporary.name, fix=False)
+        self.assertIsNone(state.agent_diagnostics.snapshot()["t3"])
 
     def test_t3_readiness_and_update_controls_use_the_agents_screen(self) -> None:
         self.state.agent_diagnostics._snapshot = {
@@ -1260,12 +1336,12 @@ class AgentScreenTest(unittest.TestCase):
         }
         with patch.object(self.state, "t3_update_available", return_value=True):
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {})
+            handler = self.handler("/actions/t3-update", {"csrf": self.state.csrf_token, "return": "agents"})
+            with patch.object(self.state, "trigger_t3_update", return_value=True) as update:
+                handler.do_POST()
         self.assertIn("Readiness details", page)
         self.assertIn("Needs attention", page)
         self.assertIn("Update T3 Code</button>", page)
-        handler = self.handler("/actions/t3-update", {"csrf": self.state.csrf_token, "return": "agents"})
-        with patch.object(self.state, "trigger_t3_update", return_value=True) as update:
-            handler.do_POST()
         update.assert_called_once()
         handler.send_header.assert_any_call("Location", "/agents")
 
