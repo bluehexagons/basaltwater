@@ -451,6 +451,9 @@ def _run_main() -> int:
     if args.system_type == "agent_cachyos":
         from lib.cachyos import cachyos_config_from_args
 
+        # This process is already on the target. The workstation mutation API
+        # accepts only local targets, independently of the controller address.
+        args.host = "localhost"
         return run_cachyos_setup(cachyos_config_from_args(args, for_remote=True))
     from lib.cachyos import is_cachyos
 
