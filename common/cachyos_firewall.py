@@ -111,7 +111,7 @@ def preflight_firewall(config: SetupConfig) -> None:
 
 def configure_firewall(config: SetupConfig) -> None:
     if config.dry_run or is_dry_run():
-        print("  Would enable UFW: deny incoming/routed, allow outgoing; restrict selected T3/Sunshine to private sources")
+        print("  Would enable UFW: deny incoming/routed, allow outgoing; restrict selected T3/Sunshine/SSH to private sources")
         return
     from common.cachyos_steps import _directory, _home
 
@@ -146,6 +146,11 @@ def _configure_firewall(config: SetupConfig) -> None:
     # guards permanently, and verify overlapping rule precedence before success.
     generation = PREFIX + "guard"
     guarded = set(GUARDED) | {("tcp", str(config.web_interface_port))}
+    # SSH is opt-in: do not change rules for an unrelated native SSH service.
+    if config.install_ssh is not None:
+        guarded.add(("tcp", "22"))
+    if config.ssh_password_window is not None or config.install_ssh is False:
+        guarded.add(("tcp", "2222"))
     for protocol, port in sorted(guarded):
         arguments = ("deny", "in", "proto", protocol, "from", "any", "to", "any",
                      "port", port, "comment", generation)
@@ -174,6 +179,10 @@ def _configure_firewall(config: SetupConfig) -> None:
         allowed.add(("tcp", str(config.web_interface_port)))
     if config.install_sunshine:
         allowed.update(STREAMING)
+    if config.install_ssh is True:
+        allowed.add(("tcp", "22"))
+        if config.ssh_password_window is not None:
+            allowed.add(("tcp", "2222"))
     for source in sources:
         for protocol, port in sorted(allowed):
             arguments = ("allow", "in", "proto", protocol, "from", source,
@@ -190,7 +199,7 @@ def _configure_firewall(config: SetupConfig) -> None:
     ufw("--force", "enable")
     _sudo_capture(["sudo", "-n", "systemctl", "enable", "--now", "ufw.service"])
     verify_rule_order(ufw("status", "numbered").stdout, guarded)
-    print("  UFW restricts new T3/Sunshine connections to: " + (", ".join(sources) or "local only"))
+    print("  UFW restricts selected T3/Sunshine/SSH connections to: " + (", ".join(sources) or "local only"))
     print("  Sunshine administration and legacy RDP remain local; unrelated rules are retained. "
           "Review sudo ufw status verbose. Existing connections may remain established.")
 

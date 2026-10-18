@@ -163,6 +163,8 @@ class CachyOSSetupTests(unittest.TestCase):
                 patch("lib.machine_state.detect_machine_type", return_value="hardware"), \
                 patch("lib.cachyos.shutil.which", return_value="/usr/bin/mock"), \
                 patch("common.cachyos_software.preflight_software") as software, \
+                patch("common.cachyos_ssh.preflight") as ssh, \
+                patch("common.cachyos_firewall.access_sources", return_value=["192.168.1.0/24"]), \
                 patch("common.cachyos_firewall.preflight_firewall") as firewall:
             config = self.config()
             preflight_cachyos(config)
@@ -177,6 +179,7 @@ class CachyOSSetupTests(unittest.TestCase):
         self.assertTrue(config.install_ssh)
         self.assertTrue(config.lan_access)
         software.assert_called_once_with(config)
+        ssh.assert_called_once_with(config)
         firewall.assert_called_once_with(config)
 
     def test_package_install_retains_installed_packages_and_never_syncs(self):

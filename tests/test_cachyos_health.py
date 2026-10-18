@@ -17,6 +17,40 @@ from lib.config import SetupConfig
 
 
 class HealthTests(unittest.TestCase):
+    def test_ssh_policy_and_bootstrap_deadline_are_observed_without_activation(self):
+        def collect(*, enabled=True, main=None, window=None):
+            calls = []
+
+            def probe(command, uid):
+                calls.append(command)
+                values = window if "bootstrap" in command[2] else main
+                return "ok", "\n".join(key + "=" + value for key, value in values.items()) + "\n"
+
+            result = {name: (state, reason) for name, state, reason in
+                      health.collect_ssh_health(probe, 1000, enabled=enabled)}
+            self.assertTrue(all(command[:2] == ["/usr/bin/systemctl", "show"] for command in calls))
+            self.assertNotIn("private-value", str(result))
+            return result
+
+        main = {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled"}
+        window = {"LoadState": "loaded", "ActiveState": "active", "RuntimeMaxUSec": "15min",
+                  "Transient": "yes", "KillMode": "control-group", "Restart": "no"}
+        result = collect(main=main, window=window)
+        self.assertEqual(result["service.ssh"][0], "available")
+        self.assertIn("not verified", result["service.ssh"][1])
+        self.assertEqual(result["security.ssh-bootstrap"][0], "deferred")
+        for changes in ({"RuntimeMaxUSec": "infinity"}, {"RuntimeMaxUSec": "61min"},
+                        {"Transient": "no"}, {"Restart": "always"}, {"KillMode": "process"}):
+            self.assertEqual(collect(main=main, window=window | changes)["security.ssh-bootstrap"][0], "failed")
+        self.assertEqual(collect(enabled=False, main=main, window=window)["security.ssh-bootstrap"][0], "failed")
+        self.assertEqual(collect(main=main | {"UnitFileState": "disabled"}, window=window)["service.ssh"][0], "failed")
+        closed = window | {"LoadState": "not-found", "ActiveState": "inactive"}
+        stopped = main | {"LoadState": "not-found", "ActiveState": "inactive", "UnitFileState": ""}
+        result = collect(enabled=False, main=stopped, window=closed)
+        self.assertTrue(all(state == "available" for state, _ in result.values()))
+        for bad in ({"private": "private-value"}, main | {"private": "private-value"}):
+            self.assertEqual(collect(main=bad, window=bad)["service.ssh"][0], "deferred")
+
     def test_sunshine_failed_service_is_reported_without_launching_it(self):
         calls = []
 
@@ -173,7 +207,8 @@ class HealthTests(unittest.TestCase):
             self.assertTrue(health._saved_remote_allows(broken, "ufw-user-input", 3773)[0])
 
     def test_firewall_range_all_port_and_udp_allows_are_checked_only_in_input_chains(self):
-        for rule in ("-p tcp -m multiport --dports 3000:5000", "", "-p udp --dport 47999",
+        for rule in ("-p tcp --dport 22", "-p tcp --dport 2222",
+                     "-p tcp -m multiport --dports 3000:5000", "", "-p udp --dport 47999",
                      "-p tcp --dport 47989", "-p tcp --dport 4001"):
             self.assertTrue(health._saved_remote_allows(
                 f"-A ufw-user-input {rule} -j ACCEPT", "ufw-user-input", 4001)[0])

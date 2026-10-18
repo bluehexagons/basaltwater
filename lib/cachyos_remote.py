@@ -125,8 +125,15 @@ def run_cachyos_remote_command(args: argparse.Namespace) -> int:
             f"tar xzf - -C {quoted} --no-same-owner --no-same-permissions; "
             "trap - EXIT HUP INT TERM"
         )
+        finish = (
+            "setup_result=$?; trap - EXIT HUP INT TERM; "
+            f"if ! {{ {cleanup}; }}; then "
+            "echo 'Could not remove private setup staging' >&2; "
+            '[ "$setup_result" -ne 0 ] || setup_result=1; fi; exit "$setup_result"'
+        )
         execute = (
-            f"set -eu; trap '{cleanup}' EXIT HUP INT TERM; "
+            f"set -eu; trap {shlex.quote(finish)} EXIT; "
+            "trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; "
             f"cd {quoted}; export PYTHONDONTWRITEBYTECODE=1; "
             f"python3 -u -m lib.cachyos_remote --target-args {quoted}/{ARGS_NAME}"
         )
@@ -138,6 +145,7 @@ def run_cachyos_remote_command(args: argparse.Namespace) -> int:
             ])
 
         status = 1
+        completed = False
         try:
             uploaded = run_streamed(
                 _ssh(args.host, args.username, key, bounded(upload, 300)),
@@ -153,19 +161,23 @@ def run_cachyos_remote_command(args: argparse.Namespace) -> int:
             # Inherit terminal stdin/stdout so sudo inside individual target
             # steps can prompt. The Python setup process itself stays non-root.
             status = subprocess.run(command, check=False, timeout=timeout + 15).returncode
+            # A definitive remote result includes its EXIT cleanup. A new SSH
+            # connection would fail after an intentional --no-ssh handover.
+            completed = 0 <= status < 255
         finally:
-            try:
-                result = subprocess.run(
-                    _ssh(args.host, args.username, key, bounded(cleanup, 30)),
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, timeout=45, check=False,
-                )
-                if result.returncode:
+            if not completed:
+                try:
+                    result = subprocess.run(
+                        _ssh(args.host, args.username, key, bounded(cleanup, 30)),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, timeout=45, check=False,
+                    )
+                    if result.returncode:
+                        print(f"Warning: Could not verify private staging cleanup at {stage}", file=sys.stderr)
+                        status = status or 1
+                except (OSError, subprocess.SubprocessError):
                     print(f"Warning: Could not verify private staging cleanup at {stage}", file=sys.stderr)
                     status = status or 1
-            except (OSError, subprocess.SubprocessError):
-                print(f"Warning: Could not verify private staging cleanup at {stage}", file=sys.stderr)
-                status = status or 1
         return status
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         # Subprocess exceptions can contain commands/output; keep webhook
@@ -190,13 +202,16 @@ def _target_runtime(source: Path):
     """Keep service helper paths stable after the temporary upload is removed."""
     home = Path.home()
     root = home
-    for component in (".local", "share", "basaltwater", "cachyos-remote"):
+    # Keep snapshots outside the installer's managed Git checkout: its cleanup
+    # intentionally removes untracked source and would delete live helpers.
+    for component in (".local", "share", "basaltwater-cachyos-remote"):
         root = root / component
         _private_directory(root)
     descriptor = os.open(root / "setup.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) != 0o600):
             raise ValueError("Unsafe CachyOS remote setup lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         runtime, previous = root / "runtime", root / "previous"
@@ -228,6 +243,16 @@ def _target_runtime(source: Path):
         os.close(descriptor)
 
 
+def _ensure_launcher(runtime: Path) -> None:
+    """Install the user command on new targets, preserving existing installers."""
+    from lib.orchestrator_bootstrap import install_launcher
+
+    directory = Path.home() / ".local/bin"
+    _private_directory(directory)
+    if not os.path.lexists(directory / "basaltw"):
+        install_launcher(str(runtime / "basaltwater.py"), target_dir=str(directory))
+
+
 def main() -> int:
     """Target entry point; preflight before publishing any persistent source."""
     from lib.arg_parser import create_setup_argument_parser
@@ -250,6 +275,7 @@ def main() -> int:
 
     write_json_atomic(args.target_args, tokens, mode=0o600)
     with _target_runtime(source) as runtime:
+        _ensure_launcher(runtime)
         return subprocess.run([
             sys.executable, "-u", str(runtime / "remote_setup.py"),
             "--args-file", args.target_args,

@@ -112,6 +112,18 @@ class FirewallTests(unittest.TestCase):
         command.assert_not_called()
         opened.assert_not_called()
 
+    def test_ssh_plan_restricts_sources_before_starting_daemon(self):
+        from common.cachyos_ssh import configure
+        from common.cachyos_steps import reconcile_cachyos_user_cache, save_cachyos_setup
+        from plugins.cachyos import build_cachyos_steps
+
+        config = self.config("--ssh", "--ssh-password-window", "15", "--access-source", "10.3.0.0/24")
+        functions = [function for _, function in build_cachyos_steps(config)]
+        self.assertLess(functions.index(firewall.configure_firewall), functions.index(configure))
+        self.assertLess(functions.index(reconcile_cachyos_user_cache), functions.index(configure))
+        self.assertLess(functions.index(configure), functions.index(save_cachyos_setup))
+        self.assertNotIn(configure, [function for _, function in build_cachyos_steps(self.config())])
+
     def test_broad_rules_restricted_rerun_and_deselection_close_access(self):
         # Model UFW's equivalence behavior: prepend skips matching tuples even
         # if the action/comment differs; non-positional commands replace them.
@@ -180,10 +192,15 @@ class FirewallTests(unittest.TestCase):
                 kwargs["on_output"](result.stdout)
                 return result.returncode
             stack.enter_context(patch.object(firewall, "run_streamed", side_effect=stream))
-            for options, sources in (
-                (("--access-source", "192.168.1.0/24"), {"192.168.1.0/24"}),
-                (("--lan-access", "--access-source", "192.168.68.0/22"), {"192.168.0.0/24", "192.168.68.0/22"}),
-                (("--no-lan-access", "--access-source", "10.3.0.0/24"), {"10.3.0.0/24"}),
+            guards = len(firewall.GUARDED)
+            for options, sources, ssh_ports in (
+                (("--access-source", "192.168.1.0/24"), {"192.168.1.0/24"}, set()),
+                (("--lan-access", "--access-source", "192.168.68.0/22"), {"192.168.0.0/24", "192.168.68.0/22"}, set()),
+                (("--no-lan-access", "--access-source", "10.3.0.0/24"), {"10.3.0.0/24"}, set()),
+                (("--ssh", "--ssh-password-window", "15", "--access-source", "10.3.0.0/24"),
+                 {"10.3.0.0/24"}, {"22", "2222"}),
+                (("--ssh", "--access-source", "10.3.0.0/24"), {"10.3.0.0/24"}, {"22"}),
+                (("--no-ssh", "--access-source", "10.3.0.0/24"), {"10.3.0.0/24"}, set()),
             ):
                 config = self.config("--t3code-desktop", "--sunshine", *options)
                 firewall.configure_firewall(config)
@@ -192,8 +209,11 @@ class FirewallTests(unittest.TestCase):
                 self.assertTrue(all(not rule[3] for rule in allows))
                 self.assertNotIn("47990", [rule[1] for rule in allows])
                 self.assertNotIn("3389", [rule[1] for rule in allows])
-                self.assertEqual(len(allows), 5 * len(sources))
-                self.assertEqual(len(rules), len(firewall.GUARDED) * 2 + 5 * len(sources))
+                self.assertEqual({rule[1] for rule in allows} & {"22", "2222"}, ssh_ports)
+                if "2222" in ssh_ports:
+                    guards = len(firewall.GUARDED) + 2
+                self.assertEqual(len(allows), (5 + len(ssh_ports)) * len(sources))
+                self.assertEqual(len(rules), guards * 2 + len(allows))
             firewall.configure_firewall(self.config("--no-lan-access"))
             self.assertFalse(any(rule[4] == "allow" for rule in rules))
         self.assertFalse(any("reset" in call for call in calls))

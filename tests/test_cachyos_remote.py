@@ -127,7 +127,7 @@ class CachyosRemoteTests(unittest.TestCase):
 
     def test_success_failure_and_cleanup_contract(self):
         for upload_status, setup_status, cleanup_status, expected in (
-            (0, 0, 0, 0), (0, 7, 0, 7), (6, 0, 0, 6), (0, 0, 1, 1),
+            (0, 0, 0, 0), (0, 7, 0, 7), (6, 0, 0, 6), (0, 255, 1, 255),
         ):
             with self.subTest(upload=upload_status, setup=setup_status, cleanup=cleanup_status), \
                     patch.object(remote, "_source_archive", return_value=b"private payload"), \
@@ -145,6 +145,7 @@ class CachyosRemoteTests(unittest.TestCase):
             self.assertIn("mkdir -m 700", upload_command[-1])
             self.assertNotIn("private payload", str(upload_command))
             self.assertIn("rm -rf", process.call_args.args[0][-1])
+            self.assertEqual(process.call_count, 2 if not upload_status and setup_status == 255 else 1)
             if not upload_status:
                 execution = process.call_args_list[0].args[0]
                 self.assertIn("-t", execution)
@@ -152,6 +153,14 @@ class CachyosRemoteTests(unittest.TestCase):
                 self.assertNotIn("sudo", execution[-1])
                 self.assertNotIn("setup_upgrade", execution[-1])
                 self.assertNotIn("root@", str(execution))
+
+    def test_remote_disable_finishes_on_existing_connection_without_reconnecting(self):
+        with patch.object(remote, "_source_archive", return_value=b"payload"), \
+                patch.object(remote, "run_streamed", return_value=0), \
+                patch.object(remote, "_ssh", return_value=["ssh", "remote-command"]), \
+                patch.object(remote.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as process:
+            self.assertEqual(remote.run_cachyos_remote_command(self.args("--no-ssh")), 0)
+        process.assert_called_once()
 
     def test_execution_exception_still_cleans_up(self):
         with patch.object(remote, "_source_archive", return_value=b"payload"), \
@@ -200,6 +209,7 @@ class CachyosRemoteTests(unittest.TestCase):
             Path(source, remote.ARGS_NAME).write_text('["secret"]')
             with patch.object(remote.Path, "home", return_value=home):
                 with remote._target_runtime(source) as runtime:
+                    self.assertEqual(runtime.parent, home / ".local/share/basaltwater-cachyos-remote")
                     self.assertEqual((runtime / "remote_setup.py").read_text(), "first")
                     self.assertFalse((runtime / remote.ARGS_NAME).exists())
                 Path(source, "remote_setup.py").write_text("second")
@@ -208,6 +218,21 @@ class CachyosRemoteTests(unittest.TestCase):
                     self.assertEqual((runtime / "remote_setup.py").read_text(), "second")
                 self.assertFalse((runtime.parent / "previous").exists())
                 self.assertEqual(sorted(p.name for p in runtime.parent.iterdir()), ["runtime", "setup.lock"])
+
+    def test_new_target_gets_launcher_without_replacing_existing_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / ".local").mkdir()
+            runtime = home / "runtime"
+            runtime.mkdir()
+            (runtime / "basaltwater.py").write_text("# runtime")
+            with patch.object(remote.Path, "home", return_value=home):
+                remote._ensure_launcher(runtime)
+                launcher = home / ".local/bin/basaltw"
+                self.assertIn(str(runtime / "basaltwater.py"), launcher.read_text())
+                launcher.write_text("# existing installer or personal command\n")
+                remote._ensure_launcher(runtime)
+                self.assertEqual(launcher.read_text(), "# existing installer or personal command\n")
 
     def test_runtime_rejects_symlink_parent(self):
         with tempfile.TemporaryDirectory() as directory:

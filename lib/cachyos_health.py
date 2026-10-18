@@ -13,6 +13,53 @@ import stat
 from lib.validation import validate_filesystem_path
 
 
+def collect_ssh_health(probe, uid: int, *, enabled: bool) -> list[tuple[str, str, str]]:
+    """Observe owned SSH units without privilege, activation, or reading keys."""
+    from common.cachyos_ssh import SERVICE, BOOTSTRAP_SERVICE
+
+    def properties(unit, names):
+        status, output = probe([
+            "/usr/bin/systemctl", "show", unit, *["--property=" + name for name in names],
+        ], uid)
+        values = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+        return values if (status == "ok" and len(output.splitlines()) == len(names)
+                          and set(values) == set(names)) else None
+
+    main = properties(SERVICE, ("LoadState", "ActiveState", "UnitFileState"))
+    known = bool(main and main["LoadState"] in {"loaded", "not-found", "masked"}
+                 and main["ActiveState"] in {"active", "inactive", "failed"}
+                 and main["UnitFileState"] in {"", "enabled", "disabled", "masked", "static"})
+    expected = False
+    if known:
+        expected = (main["LoadState"] == "loaded" and main["ActiveState"] == "active"
+                    and main["UnitFileState"] == "enabled") if enabled else (
+                        main["ActiveState"] == "inactive" and main["UnitFileState"] in {"", "disabled", "masked"})
+    results = [("service.ssh", "available" if expected else "failed" if known else "deferred",
+                "Managed SSH unit active and enabled at boot; authentication and client connectivity are not verified."
+                if expected and enabled else "Managed SSH unit is inactive and not enabled."
+                if expected else "Managed SSH unit differs from the selected policy; inspect its system service locally."
+                if known else "Managed SSH unit state unavailable or unrecognized; inspect systemctl locally.")]
+    window = properties(BOOTSTRAP_SERVICE, (
+        "LoadState", "ActiveState", "RuntimeMaxUSec", "Transient", "KillMode", "Restart",
+    ))
+    state, reason = "deferred", "Temporary SSH bootstrap state unavailable or unrecognized."
+    if window and window["LoadState"] == "not-found" and window["ActiveState"] == "inactive":
+        state, reason = "available", "No temporary SSH password bootstrap unit loaded."
+    elif window and window["LoadState"] == "loaded":
+        if window["ActiveState"] in {"inactive", "failed"}:
+            state, reason = "available", "Temporary SSH password bootstrap is closed."
+        elif window["ActiveState"] == "active":
+            limit = re.fullmatch(r"([1-9][0-9]*)(us|ms|s|min|h)", window["RuntimeMaxUSec"])
+            seconds = int(limit[1]) * {"us": 0.000001, "ms": 0.001, "s": 1, "min": 60, "h": 3600}[limit[2]] if limit else 0
+            bounded = (enabled and 0 < seconds <= 3600 and window["Transient"] == "yes"
+                       and window["KillMode"] == "control-group" and window["Restart"] == "no")
+            state = "deferred" if bounded else "failed"
+            reason = ("Temporary password access is active on port 2222 with a bounded lifetime; copy a key and test port 22."
+                      if bounded else "Active SSH bootstrap is not safely bounded or SSH is deselected; close it and inspect its unit.")
+    results.append(("security.ssh-bootstrap", state, reason))
+    return results
+
+
 def collect_sunshine_health(probe, uid: int, *, bus_ready: bool) -> list[tuple[str, str, str]]:
     """Observe service state and optional VA-API profiles without starting capture."""
     unit = "app-dev.lizardbyte.app.Sunshine.service"
@@ -163,7 +210,7 @@ def collect_host_health(probe, uid: int, *, home: Path | None = None) -> list[tu
 def _saved_remote_allows(content: str, chain: str, port: int) -> tuple[bool, bool]:
     """Classify saved broad input allows; only unconditional denies cover them."""
     targets = {(protocol, number) for protocol, numbers in (
-        ("tcp", {3773, port, 3389, 47984, 47989, 47990, 48010}),
+        ("tcp", {22, 2222, 3773, port, 3389, 47984, 47989, 47990, 48010}),
         ("udp", {3773, 3389, 47998, 47999, 48000}),
     ) for number in numbers}
     denied = set()
@@ -218,7 +265,8 @@ def _saved_remote_allows(content: str, chain: str, port: int) -> tuple[bool, boo
 def collect_network_health(probe, uid: int, port: int = 3773) -> list[tuple[str, str, str]]:
     status, output = probe(["/usr/bin/ss", "-H", "-lnt"], uid)
     results = []
-    for name, ports in (("t3", {port}), ("sunshine", {47984, 47989, 47990, 48010})):
+    for name, ports in (("t3", {port}), ("sunshine", {47984, 47989, 47990, 48010}),
+                        ("ssh", {22}), ("ssh-bootstrap", {2222})):
         exposed = False
         if status == "ok":
             for line in output.splitlines():

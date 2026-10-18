@@ -48,19 +48,22 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     from common.cachyos_software import install_software, selected_software
     from common.cachyos_development import install_cachyos_node_versions
     from common.cachyos_sunshine import configure as configure_sunshine
+    from common.cachyos_ssh import configure as configure_ssh
 
     validate_cachyos_config(config)
     steps = [
         ("Observing workstation health (read-only)", report_cachyos_host_health),
         ("Installing missing workstation packages (no system upgrade)", install_cachyos_packages),
+    ]
+    if config.install_node_versions:
+        steps.append(("Preparing user-local NVM for project Node versions", install_cachyos_node_versions))
+    if firewall_requested(config):
+        steps.append(("Restricting workstation inbound access with UFW", configure_firewall))
+    steps.extend([
         ("Installing or updating coding agents for the current user", install_cachyos_agents),
         ("Configuring agent context budgets", configure_cachyos_agent_context),
         ("Preparing the local coding workspace", prepare_cachyos_workspace),
-    ]
-    if firewall_requested(config):
-        steps.insert(2, ("Restricting workstation inbound access with UFW", configure_firewall))
-    if config.install_node_versions:
-        steps.insert(2, ("Preparing user-local NVM for project Node versions", install_cachyos_node_versions))
+    ])
     if selected_software(config):
         steps.append(("Installing selected publishing and material tools (AUR review required)", install_software))
     if config.t3code_desktop:
@@ -73,5 +76,9 @@ def build_cachyos_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
     steps.append(("Checking local coding tool readiness", report_cachyos_readiness))
     steps.append(("Pruning old CachyOS package downloads (keeps three versions and 30 days)", cleanup_cachyos_packages))
     steps.append(("Reconciling developer-tool caches", reconcile_cachyos_user_cache))
+    # Start an enrollment deadline after potentially lengthy tool installation,
+    # leaving the caller the requested window when setup returns.
+    if config.install_ssh is not None:
+        steps.append(("Configuring selected workstation SSH access", configure_ssh))
     steps.append(("Saving successful local setup for basaltw refresh", save_cachyos_setup))
     return steps

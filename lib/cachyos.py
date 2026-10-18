@@ -231,10 +231,16 @@ def preflight_cachyos(config: SetupConfig) -> None:
         preflight(config)
     resolve_ssh_policy(config, target_is_cachyos=target_is_cachyos)
     validate_cachyos_config(config)
+    from common.cachyos_ssh import preflight as preflight_ssh
+
+    preflight_ssh(config)
     from common.cachyos_firewall import firewall_requested, preflight_firewall
 
     if firewall_requested(config):
         preflight_firewall(config)
+    from lib.cachyos_ssh_policy import check_ssh_source
+
+    check_ssh_source(config)
     from common.cachyos_software import preflight_software
 
     preflight_software(config)

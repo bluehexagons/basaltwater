@@ -90,6 +90,24 @@ class CachyOSSSHDefaultsTests(unittest.TestCase):
         with patch.object(policy.subprocess, "run", side_effect=[OSError(), unit_state(active="active")]):
             self.assertIs(policy.detect_ssh_enabled(self.config()), True)
 
+    def test_duplicate_or_extra_state_fields_cannot_enable_or_disable_ssh(self):
+        for output in (unit_state().stdout + "ActiveState=active\n",
+                       unit_state().stdout + "private=secret\n"):
+            with patch.object(policy.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)):
+                self.assertIsNone(policy.detect_ssh_enabled(self.config()))
+
+    def test_current_ssh_client_must_survive_private_firewall_handover(self):
+        config = self.config("--ssh", "--access-source", "192.168.1.0/24")
+        with patch.dict(os.environ, {"SSH_CONNECTION": "192.168.1.2 1234 192.168.1.3 22"}):
+            policy.check_ssh_source(config)
+        for client in ("192.168.2.2", "8.8.8.8", "2001:db8::1"):
+            with patch.dict(os.environ, {"SSH_CONNECTION": client + " 1234 192.168.1.3 22"}), \
+                    self.assertRaisesRegex(ValueError, "outside the selected private"):
+                policy.check_ssh_source(config)
+        with patch.dict(os.environ, {"SSH_CONNECTION": "8.8.8.8 1234 192.168.1.3 22"}):
+            config.install_ssh = False
+            policy.check_ssh_source(config)
+
     def test_active_masked_service_is_still_on(self):
         with patch.object(policy.subprocess, "run", return_value=unit_state("masked", "active", "masked")):
             self.assertIs(policy.detect_ssh_enabled(self.config()), True)

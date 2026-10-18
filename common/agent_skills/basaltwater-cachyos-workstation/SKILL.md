@@ -19,8 +19,9 @@ on port 2222 can enroll a key for 1–60 minutes using the existing account
 password; `basaltw refresh --ssh --ssh-password-window 15 --lan-access` opens
 a fresh 15-minute window while preserving the selected tools. The window is
 never saved or replayed, and an ordinary refresh closes an active window. A
-key-only stock SSH service can be adopted only when the account has usable
-`authorized_keys`.
+stock SSH service can be adopted into key-only mode only when the account has
+usable `authorized_keys`, unless a password mode or enrollment window is
+explicitly selected.
 Use the [CachyOS guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#ssh-access)
 for adoption checks, password modes, and refresh behavior.
 

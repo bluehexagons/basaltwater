@@ -32,8 +32,7 @@ CONFIG_DIR = Path("/etc/basaltwater/cachyos-ssh")
 UNIT_DIR = Path("/etc/systemd/system")
 DESCRIPTION = "Basaltwater CachyOS SSH"
 BOOTSTRAP_DESCRIPTION = "Basaltwater CachyOS SSH password bootstrap"
-VENDOR_UNITS = ("sshd.service", "sshd.socket", "ssh.service", "ssh.socket",
-                "sshd@.service")
+VENDOR_UNITS = ("sshd.service", "sshd.socket", "ssh.service", "ssh.socket")
 VENDOR_DIR = Path("/usr/lib/systemd/system")
 PACKAGE_DB = Path("/var/lib/pacman/local")
 
@@ -264,7 +263,7 @@ def _native_states() -> dict[str, dict[str, str]]:
             if any(os.path.lexists(base / unit) for base in _unit_directories()):
                 raise ValueError(f"Unloaded SSH unit retained: {unit}")
             continue
-        if (unit not in {"sshd.service", "sshd.socket", "sshd@.service"}
+        if (unit not in {"sshd.service", "sshd.socket"}
                 or state.get("FragmentPath") != str(VENDOR_DIR / unit)
                 or state.get("Transient") != "no"
                 or any(os.path.lexists(base / unit) for base in _unit_directories() if base != VENDOR_DIR)):
@@ -282,8 +281,6 @@ def _native_states() -> dict[str, dict[str, str]]:
             # safe. Accept=yes templates can have uninspectable live instances.
             if state.get("Accept") != "no" or state.get("Triggers", "").split() != ["sshd.service"]:
                 raise ValueError("SSH socket must activate stock sshd.service with Accept=no")
-        elif state["ActiveState"] == "active" or state["UnitFileState"] in {"enabled", "enabled-runtime"}:
-            raise ValueError("Enabled or active SSH template retained")
         snapshots[unit] = state
     if "sshd.socket" in snapshots and "sshd.service" not in snapshots:
         raise ValueError("SSH socket has no recognizable stock daemon")
@@ -412,7 +409,8 @@ def inspect_setup(username: str, mode: str, minutes: int, *, metadata_only: bool
 def _validate_config(path: Path, username: str, mode: str) -> None:
     _command("/usr/bin/sshd", "-t", "-f", str(path))
     output = _command("/usr/bin/sshd", "-T", "-f", str(path))
-    actual = dict(line.split(" ", 1) for line in output.splitlines() if " " in line)
+    actual = {key.lower(): value for line in output.splitlines() if " " in line
+              for key, value in [line.split(" ", 1)]}
     expected = dict(line.lower().split(" ", 1) for line in _config(username, mode).splitlines()
                     if " " in line and not line.startswith("#"))
     for key in ("port", "addressfamily", "allowusers", "permitrootlogin", "permitemptypasswords",

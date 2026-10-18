@@ -64,6 +64,10 @@ def detect_ssh_enabled(config: SetupConfig) -> bool | None:
             continue
         properties = dict(line.split("=", 1) for line in result.stdout.splitlines()
                           if "=" in line)
+        if (len(result.stdout.splitlines()) != 3
+                or set(properties) != {"LoadState", "ActiveState", "UnitFileState"}):
+            unknown = True
+            continue
         load = properties.get("LoadState")
         active = properties.get("ActiveState")
         enabled = properties.get("UnitFileState")
@@ -106,3 +110,25 @@ def resolve_ssh_policy(config: SetupConfig, *, target_is_cachyos: bool) -> None:
     if config.dry_run:
         network = "private LAN discovery" if config.lan_access else "explicit/local-only access policy"
         print(f"[DRY-RUN] SSH policy: {'enabled' if config.install_ssh else 'disabled'}; {network}")
+
+
+def check_ssh_source(config: SetupConfig) -> None:
+    """Refuse a firewall handover that would exclude the current SSH client."""
+    if config.dry_run or config.install_ssh is not True:
+        return
+    connection = os.environ.get("SSH_CONNECTION", "").split()
+    if not _ssh_session() or len(connection) != 4:
+        return
+    from common.cachyos_firewall import access_sources, firewall_requested
+
+    if not firewall_requested(config):
+        return
+    try:
+        client = ipaddress.ip_address(connection[0])
+    except ValueError:
+        raise ValueError("Cannot validate the current SSH client; use a local terminal.") from None
+    if client.version != 4 or not any(
+        client in ipaddress.ip_network(source) for source in access_sources(config)
+    ):
+        raise ValueError("Current SSH client is outside the selected private IPv4 access sources. "
+                         "Connect over the private LAN and select a matching --access-source before applying SSH setup.")

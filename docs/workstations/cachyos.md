@@ -210,9 +210,10 @@ be one of the selected private IPv4 sources; otherwise setup stops without
 changing the firewall. Connect from an allowed private IPv4 address and avoid
 switching from a public or IPv6 SSH path during the handover.
 
-Adopting an already-enabled key-only stock SSH service requires a usable
+Adopting an active or enabled stock SSH service into key-only mode requires a usable
 `authorized_keys` file for the existing account. If it is missing or unsafe,
-setup refuses adoption to avoid locking out the account. A new key-only service
+setup refuses adoption to avoid locking out the account unless a password mode
+or enrollment window is explicitly selected. A new key-only service
 does not require a key before setup: explicitly open a temporary password
 bootstrap window to enroll one. It listens on port 2222 for 1–60 minutes, uses
 the existing account password, and stores no password. Verify the host
@@ -260,7 +261,18 @@ The controller does not create accounts, enable KDE autologin, or copy
 credentials. Setup uses the existing account's sudo access for privileged
 steps. Selected GUI tools that require the user's session still need that user
 bus/session. Remote setup verifies CachyOS on the target before applying
-profile steps. Its dry-run opens no SSH connections. See
+profile steps. Its dry-run opens no SSH connections. Use `--key PATH` (or
+`--ssh-key PATH`) for a controller identity; it is not copied to the target.
+Remote setup requires Python 3 and the existing SSH service before upload.
+The Debian `--restart-if-needed` / `--wait-for-restart` workflow is unsupported.
+
+Uploaded source remains in the user's private
+`~/.local/share/basaltwater-cachyos-remote/runtime` so selected service helpers
+survive temporary upload cleanup and ordinary installer updates. New targets
+receive `~/.local/bin/basaltw`; existing launchers are preserved. A launcher
+using this source snapshot is updated by repeating setup from the controller;
+it cannot use channel upgrade or `refresh`. Install through the local installer
+when channel-based upgrades and local refresh are wanted. See
 [remote development](cachyos-development.md) for commissioning details.
 
 ## Optional webhook notifications
@@ -690,6 +702,9 @@ non-loopback listeners, and potentially broad saved UFW input rules, including
 port ranges and Sunshine UDP. It distinguishes broad allows preceded by covering
 unconditional denies from uncovered or unparsed rules needing review. It never
 elevates privileges; saved rules do not prove effective packet filtering.
+When SSH policy is saved, it checks managed service activity and boot enablement
+and reports an active password bootstrap window separately. These observations
+do not verify authentication, key usability, or client connectivity.
 When Sunshine is selected, it checks the user service and, if `vainfo` is installed,
 VA-API encoding profiles without starting capture. A crashed Sunshine service is
 reported as failed; an inactive service may reflect an intentional quit.
@@ -717,8 +732,9 @@ operations; `common/cachyos_t3.py` owns staged T3 activation and recovery.
 `common/cachyos_cleanup.py` owns package-cache pruning. Arch package inputs use
 `lib.validation.validate_arch_package_name`, which accepts the distro's
 underscore and `@` characters without loosening APT validation. The
-CLI routes directly to the CachyOS runner rather than the SSH
-host lifecycle. Keep additions explicitly allowed and independently tested;
+CLI routes local targets directly to the CachyOS runner; remote controllers use
+`lib/cachyos_remote.py` to stage source and execute that same target boundary
+as the existing desktop user. Keep additions explicitly allowed and independently tested;
 mock pacman, sudo, downloads, service operations, and hardware probes.
 
 ## Later maintenance

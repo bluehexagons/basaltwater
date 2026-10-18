@@ -413,8 +413,12 @@ def collect_cachyos_doctor(*, config=None) -> dict[str, object]:
 
         from lib.cachyos_health import (
             collect_host_health, collect_network_health, collect_sunshine_health, collect_t3_storage_health,
+            collect_ssh_health,
         )
 
+        if config is not None and config.install_ssh is not None:
+            for name, state, reason in collect_ssh_health(_probe, uid, enabled=config.install_ssh):
+                record(name, state, reason, selected=config.install_ssh)
         if config is not None and config.install_sunshine:
             for name, state, reason in collect_sunshine_health(_probe, uid, bus_ready=bus_ready):
                 record(name, state, reason, selected=True)

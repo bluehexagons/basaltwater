@@ -206,12 +206,14 @@ class LifecycleTests(unittest.TestCase):
 
     def test_native_config_validation_effective_options(self):
         path = ssh._immutable_config("alice", "key")
-        output = "\n".join(line.lower() for line in ssh._config("alice", "key").splitlines())
-        self.command.side_effect = ["", output]
-        ssh._validate_config(path, "alice", "key")
-        self.command.side_effect = ["", output.replace("permitrootlogin no", "permitrootlogin yes")]
-        with self.assertRaises(RuntimeError):
-            ssh._validate_config(path, "alice", "key")
+        native_output = ssh._config("alice", "key")
+        for output in (native_output, native_output.lower()):
+            with self.subTest(keyword_case=output.splitlines()[1]):
+                self.command.side_effect = ["", output]
+                ssh._validate_config(path, "alice", "key")
+                self.command.side_effect = ["", output.replace("no", "yes")]
+                with self.assertRaises(RuntimeError):
+                    ssh._validate_config(path, "alice", "key")
 
     def test_vendor_conflicts_never_stopped(self):
         for fields in ({"ActiveState": "active"}, {"UnitFileState": "enabled"},
@@ -697,6 +699,16 @@ class EnrollmentTests(unittest.TestCase):
 
 
 class PackageFileTests(unittest.TestCase):
+    def test_native_probe_uses_loadable_unit_names_without_template_instances(self):
+        def command(*args):
+            self.assertNotIn("@.", args[2])
+            return "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n"
+
+        with patch.object(ssh, "_command", side_effect=command), \
+                patch.object(ssh, "_no_overrides"), \
+                patch.object(ssh, "_unit_directories", return_value=()):
+            self.assertEqual(ssh._native_states(), {})
+
     def test_native_unit_file_package_and_integrity_checks(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sshd.service"
