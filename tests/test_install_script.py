@@ -868,6 +868,41 @@ class TestInstallScript(unittest.TestCase):
             self.assertFalse(os.path.exists(log))
             self.assertEqual(os.listdir(home), [])
 
+    def test_cachyos_local_setup_plan_allows_ssh_session(self):
+        for ssh_environment in ({}, {"SSH_CONNECTION": "192.0.2.10 54321 192.0.2.20 22"},
+                                {"SSH_TTY": "/dev/pts/0"}):
+            with self.subTest(ssh_environment=ssh_environment), tempfile.TemporaryDirectory() as directory:
+                _home, _log, environment = self._create_fixture(directory)
+                environment.update(
+                    BASALTWATER_TEST_NON_ROOT="1",
+                    BASALTWATER_TEST_OS_ID="cachyos",
+                    BASALTWATER_TEST_SUDO_LOG=os.path.join(directory, "sudo.log"),
+                    **ssh_environment,
+                )
+                result = subprocess.run(
+                    ["sh", INSTALL_SCRIPT, "--plan", "--install-dir",
+                     os.path.join(directory, "installed"), "--local-setup", "agent_cachyos"],
+                    env=environment, capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Would run setup with arguments:", result.stdout)
+                self.assertIn("agent_cachyos", result.stdout)
+                self.assertFalse(os.path.exists(os.path.join(directory, "sudo.log")))
+
+    def test_remote_cachyos_setup_plan_is_allowed_from_supported_controller(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _home, _log, environment = self._create_fixture(directory)
+            environment.update(BASALTWATER_TEST_NON_ROOT="1", BASALTWATER_TEST_OS_ID="debian")
+            result = subprocess.run(
+                ["sh", INSTALL_SCRIPT, "--plan", "--install-dir",
+                 os.path.join(directory, "installed"), "--setup", "agent_cachyos",
+                 "cachyos.example", "testuser"],
+                env=environment, capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Installer plan for testuser (debian)", result.stdout)
+            self.assertIn("    agent_cachyos\n    cachyos.example\n    testuser", result.stdout)
+
     def _documented_installer_examples(self):
         for filename in ("README.md", "docs/getting-started/installation.md", "docs/workstations/cachyos.md"):
             document = Path(PROJECT_ROOT, filename).read_text()
