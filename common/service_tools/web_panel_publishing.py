@@ -151,7 +151,7 @@ def render_publishing(state, page_style: str, *, error: str = "") -> str:
             content += form("job", _hidden("job", job["id"]) + _hidden("action", "pause" if job["state"] == "enabled" else "resume"), "Pause" if job["state"] == "enabled" else "Resume with current project configuration")
             content += form("job", _hidden("job", job["id"]) + _hidden("action", "remove"), "Remove schedule")
         content += '</article>'
-    content += '</section><section id="writing"><h2>Writing and translations</h2><p>Draft or translate with an agent, then import the final text below. Review each language and destination separately. Exported plain text needs a final formatting check in the provider editor.</p>'
+    content += '</section><section id="writing"><h2>Writing and translations</h2><p>Import final drafts and translations below. Review each language and destination separately. Exported plain text needs a final formatting check in the provider editor.</p>'
     if features.prompts:
         content += form("writing-task", _select("project", "Project", project_options) + _input("language", "Draft/translation language", "es") +
                         _select("source", "Source revision for translation", source_options, optional=True) + _input("instructions", "Writing instructions / facts to use"), "Prepare agent writing task")

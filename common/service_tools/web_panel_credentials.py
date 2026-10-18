@@ -73,7 +73,7 @@ def render_credentials(state, page_style: str, query: dict[str, str], *, error: 
         identity_status = "Ready to commit" if snapshot["name"] and snapshot["email"] and not snapshot["git_error"] else "Commit identity needs attention"
         disabled = ' disabled aria-describedby="github-transport-help"' if not state.credential_transport_available() else ""
         transport_help = (
-            '<p id="github-transport-help">Token changes require this panel over HTTPS. Add <code>--ssl</code> through setup, or use <code>basaltw agent auth set HOST USER --tool gh --file PATH</code> over SSH.</p>'
+            '<p id="github-transport-help">Token changes require this panel over HTTPS. Add <code>--ssl</code> through setup, or configure the account’s GitHub CLI over SSH.</p>'
             if disabled else '<p id="github-transport-help">Tokens are written privately on this VM and are never displayed after submission.</p>'
         )
         content += '<nav class="catalog-nav" aria-label="Account settings"><a href="#git-identity">Commit identity</a>'

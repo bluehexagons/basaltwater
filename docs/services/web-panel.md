@@ -39,27 +39,39 @@ Light and dark themes follow
 the device preference. Memory and disk meters retain numeric values, and
 service states have text labels as well as color.
 
-Optional pages and controls follow the tools installed for the panel account:
+Agent and Git pages require both a saved setup selection and tools installed
+for the panel account. Host monitoring remains available without either:
 
 | Area | Appears when |
 | --- | --- |
-| Agents and Agent inbox | Codex, Claude Code, OpenCode, or a T3 Code runtime/user unit is present |
-| Prompt forms, Agent tools, agent-review shortcuts, and dashboard Agent activity | Codex is installed |
-| Git & credentials | Git is installed; GitHub token controls additionally require `gh` |
+| Agents and Agent inbox | A selected Codex, Claude Code, OpenCode, or T3 Code installation is present |
+| Prompt forms, Agent tools, agent-review shortcuts, and dashboard Agent activity | Codex is selected and installed |
+| Git & credentials | Setup configures Git for the account and Git is installed; GitHub token controls additionally require selected and installed `gh` |
 | Publishing | Butler or SteamCMD is installed; account controls show installed providers |
-| Maintenance agent | Its managed service and policy file are installed |
+| Maintenance agent | Agent features are selected and installed, and its managed service and policy file are installed |
 | GitHub runner | Its fixed policy and systemd unit are installed; see [runner setup](github-runner.md) |
 | Desktop | Its Guacamole gateway service is installed |
 | Console | Its private Guacamole SSH socket unit is installed |
 | Admin controls | A valid privilege approval service is configured |
 
-Discovery checks local executable paths and unit files without running tools,
-contacting providers, or testing sign-in. An installed feature remains visible
-when authentication or service health needs attention. Reload after installing
-or removing tools. Unavailable optional pages and their actions return HTTP 404.
+Discovery checks the panel's non-secret setup manifest, local executable paths,
+and unit files without running tools, contacting providers, or testing sign-in.
+Leftover executables, user units, and task history cannot enable agent UI on a
+monitoring-only host. This also suppresses agent review links, sign-in guidance,
+T3 controls and diagnostics, and panel prompt scheduling. Git's presence as a
+system dependency does not enable account configuration controls by itself.
+Unavailable optional pages and their actions return HTTP 404, including direct
+links to T3 diagnostics and its update action.
+
+A selected, installed feature remains visible when authentication or service
+health needs attention. Reload after installing or removing tools. Rerun setup
+or refresh the saved setup to publish changed selections and apply this policy
+to an existing installation. Older manifests without agent/Git selections keep
+those controls hidden until refreshed; they do not infer intent from binaries.
 Selecting `--web-panel` alone does not install agent tools or a task-worker
-service. On a server without Codex or publishing tools, the panel starts no
-prompt scheduler or publishing poll. Codex enables prompt scheduling;
+service. Without selected and installed Codex or installed publishing tools,
+the panel starts no prompt scheduler or publishing poll. Selected, installed
+Codex enables prompt scheduling;
 Butler/SteamCMD can enable publishing polling independently of Codex.
 Machines with other agent runtimes but no Codex show runtime diagnostics without
 prompt forms. Repository templates and the Git worktree option require Git.
@@ -164,8 +176,10 @@ Without TLS, Basic Auth crosses the network as plaintext.
 Add `--guacamole` to an HTTPS panel setup to install an embedded browser desktop.
 It enables the shared desktop without opening RDP ingress. Open **Desktop
 (Guacamole)** under **Services**, enter the setup account's Unix password, and
-connect to observe. **Take control** pauses agent desktop actions; **Resume
-agent** is explicit. The panel password and Unix password remain separate.
+connect to observe. On agent systems, **Take control** pauses agent desktop
+actions and **Resume agent** explicitly resumes them. Other systems show
+ordinary desktop controls, including **Release control**. The panel password
+and Unix password remain separate.
 Use `--no-guacamole` to remove browser access while retaining the desktop.
 The same installation provides **Console**, a separate Unix shell with phone
 keyboard controls, text sizes and terminal resizing. It uses the Unix password

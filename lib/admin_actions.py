@@ -20,7 +20,7 @@ ADMIN_ACTIONS = {
     },
     "refresh": {
         "title": "Refresh Basaltwater", "group": "Updates",
-        "effect": "Update Basaltwater and repeat this machine's last successful Debian setup. Services and active agent work may be interrupted; configuration will be reconciled.",
+        "effect": "Update Basaltwater and repeat this machine's last successful Debian setup. Services and running work may be interrupted; configuration will be reconciled.",
     },
     "check-web": {
         "title": "Check web configuration", "group": "Services",
@@ -32,7 +32,7 @@ ADMIN_ACTIONS = {
     },
     "restart-panel": {
         "title": "Restart web panel", "group": "Services",
-        "effect": "Restart basaltwater-web-panel.service. The panel and its prompt scheduler will stop; active prompts will be interrupted. Saved tasks and history remain on disk.",
+        "effect": "Restart basaltwater-web-panel.service. The panel will briefly disconnect. Independent background work continues; older installations may interrupt panel-owned work. Saved state remains on disk.",
     },
     "reboot": {
         "title": "Restart host", "group": "Power",

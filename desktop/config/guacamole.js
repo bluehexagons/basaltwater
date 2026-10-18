@@ -7,6 +7,7 @@
     const lifetime = byId("lifetime");
     const csrf = byId("csrf").value;
     const view = byId("desktop-view");
+    const agents = document.querySelector('[data-agent-features="true"]') !== null;
     const textInput = byId("desktop-keyboard");
     const modifierButtons = [...document.querySelectorAll("[data-modifier]")];
     const inputButtons = [...document.querySelectorAll("[data-key], [data-modifier]")];
@@ -86,7 +87,8 @@
         if (!result.controlled) observe();
         controlled = result.controlled;
         controls(connected);
-        status.textContent = controlled ? "You control the desktop. Agent desktop actions are paused."
+        status.textContent = !agents ? (controlled ? "You control the desktop." : "Observing only.")
+            : controlled ? "You control the desktop. Agent desktop actions are paused."
             : result.paused ? "Observing only. Agent desktop actions remain paused."
             : "Observing only. Agent desktop actions are enabled.";
         lifetime.textContent = `Session expires in ${Math.ceil(result.expires_in / 60)} min; inactivity expires in ${Math.ceil(result.idle_expires_in / 60)} min. Select Observe only to keep observing.`;
@@ -202,7 +204,9 @@
                 if (client !== current) return;
                 if (state === 3) {
                     connected = true;
-                    status.textContent = "Observing only. Select Take control to pause agent desktop actions.";
+                    status.textContent = agents
+                        ? "Observing only. Select Take control to pause agent desktop actions."
+                        : "Observing only. Select Take control to use the desktop.";
                     controls(true);
                     scale();
                     scheduleStatus();
@@ -262,7 +266,9 @@
         try {
             await post("disconnect", {session: attachment});
             reset();
-            status.textContent = "Disconnected. The desktop remains running. Browser control released; any separate agent pause is preserved.";
+            status.textContent = agents
+                ? "Disconnected. The desktop remains running. Browser control released; any separate agent pause is preserved."
+                : "Disconnected. The desktop remains running. Browser control released.";
         } catch (error) { status.textContent = error.message; }
         finally { busy = false; controls(connected); }
     });
@@ -367,7 +373,7 @@
         byId("inspect").disabled = true;
         try {
             const result = await post("inspect");
-            byId("desktop-status").textContent = `Desktop: ${result.state}${result.geometry ? ` · ${result.geometry.join(" × ")}` : ""}${result.state === "running" ? result.paused ? " · agent paused" : " · agent enabled" : ""}.`;
+            byId("desktop-status").textContent = `Desktop: ${result.state}${result.geometry ? ` · ${result.geometry.join(" × ")}` : ""}${agents && result.state === "running" ? result.paused ? " · agent paused" : " · agent enabled" : ""}.`;
         } catch (error) { byId("desktop-status").textContent = error.message; }
         finally { byId("inspect").disabled = false; }
     });

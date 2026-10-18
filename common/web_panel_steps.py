@@ -118,7 +118,7 @@ def build_web_panel_manifest(
         from lib.privilege_setup import privilege_broker_origin
 
         services.append({"label": "Privilege approvals", "url": privilege_broker_origin(config) + "/",
-                         "description": "Review agent requests using the separate approval password"})
+                         "description": "Review privileged operations using the separate approval password"})
     access: list[dict[str, str]] = [
         {
             "label": "SSH",
@@ -166,7 +166,7 @@ def build_web_panel_manifest(
     if config.guacamole:
         services.append({"label": "Desktop (Guacamole)",
                          "url": _http_url(host, config.web_panel_port, "https") + "desktop/",
-                         "description": "Observe the shared desktop or take control from the agent"})
+                         "description": "View and control the shared XRDP desktop"})
         services.append({"label": "Console (Guacamole)",
                          "url": _http_url(host, config.web_panel_port, "https") + "console/",
                          "description": "Unix shell in the browser without starting the desktop"})
@@ -229,6 +229,9 @@ def build_web_panel_manifest(
         "services": services,
         "access": access,
         "features": {
+            "agent_tools": config.selected_agent_tools(),
+            "git": bool(config.has_agent_features() or config.git_credentials
+                        or config.git_ca_pems or config.clear_git_credentials),
             "t3_update": "t3code" in (config.web_interfaces or []),
             "t3_github_readiness": config.github_auth_payload,
             "t3_git_identity_readiness": config.git_identity_payload,

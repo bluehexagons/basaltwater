@@ -35,7 +35,7 @@ class ConsoleGateway(Gateway):
                                                  (65364, "↓", "Down arrow"), (65363, "→", "Right arrow")))
         content = f'''<section class="desktop-panel"><h2>Unix shell</h2>
 <p>Connect as <strong>{html.escape(self.config['username'])}</strong> without starting the desktop.
-This shell has the account's normal permissions and does not pause agent tasks.</p>
+This shell has the account's normal permissions and runs independently of the desktop.</p>
 <p><a href="/desktop/">Open shared desktop</a></p>
 <form id="connect-form"><input type="hidden" id="csrf" value="{self.csrf}">
 <label>Account<input value="{html.escape(self.config['username'], quote=True)}" readonly autocomplete="username"></label>

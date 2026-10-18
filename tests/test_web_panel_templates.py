@@ -172,7 +172,8 @@ class PanelFeatureTest(unittest.TestCase):
     def setUp(self) -> None:
         self.home = self.enterContext(tempfile.TemporaryDirectory())
         self.state = panel.WebPanelState({"host": "minimal.example.test", "username": "operator",
-            "system_type": "server_web", "services": [], "access": [], "features": {"t3_update": True}},
+            "system_type": "server_web", "services": [], "access": [],
+            "features": {"t3_update": True, "agent_tools": ["codex", "claude", "opencode", "gh"], "git": True}},
             agent_home=self.home)
         self.tool = self.enterContext(patch.object(features, "_tool_path", return_value=None))
         self.units = self.enterContext(patch.object(features, "unit_installed", return_value=False))

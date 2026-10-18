@@ -55,7 +55,7 @@ class PanelAdmin:
 
     def snapshot(self) -> dict:
         if not self.approval_url:
-            return {"error": "Host controls require the optional privilege approval service. Configure it for a supported non-root agent VM with a separate approval password."}
+            return {"error": "Host controls require the optional privilege approval service. Configure it for a supported non-root account with a separate approval password."}
         try:
             result = exchange({"action": "admin-status"})
             if not isinstance(result, dict) or not isinstance(result.get("blocked"), dict) or not isinstance(result.get("requests"), list):

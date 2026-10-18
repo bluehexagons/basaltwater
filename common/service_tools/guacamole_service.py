@@ -191,10 +191,17 @@ class Gateway:
         except ValueError:
             raise web.HTTPBadRequest(text="Invalid desktop host") from None
         destination = html.escape(self.config['username'] + "@" + host, quote=True)
+        navigation = self.navigation("desktop")
+        agents = any(href == "/agents" for href, _label, _current in navigation)
+        connection_help = (
+            "Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control."
+            if agents else "Connect to view the shared desktop. Take control to use its keyboard and pointer. Disconnect releases your browser control."
+        )
+        resume_label = "Resume agent" if agents else "Release control"
         console_link = ('<p><a href="/console/">Open browser console</a> to log into a shell here without starting the desktop.</p>'
                         if "ssh_host_key" in self.config else "")
-        content = f'''<section class="desktop-panel"><h2>Shared desktop</h2>
-<p>Connect to observe the agent. Take control pauses agent desktop actions. Disconnect releases your browser control.</p>
+        content = f'''<section class="desktop-panel" data-agent-features="{str(agents).lower()}"><h2>Shared desktop</h2>
+<p>{connection_help}</p>
 <div class="desktop-inspection"><button id="inspect" type="button">Check desktop status</button>
 <span id="desktop-status" role="status">Check readiness without starting or connecting to the desktop.</span></div>
 <form id="connect-form"><input type="hidden" id="csrf" value="{self.csrf}">
@@ -203,7 +210,7 @@ class Gateway:
 <button id="connect">Connect to desktop</button></form>
 <div id="desktop-view">
 <div class="desktop-controls"><button id="take" class="primary-control" aria-pressed="false" disabled>Take control</button>
-<button id="observe" disabled>Observe only</button><button id="resume" disabled>Resume agent</button>
+<button id="observe" disabled>Observe only</button><button id="resume" disabled>{resume_label}</button>
 <button id="disconnect" type="button" aria-label="Disconnect browser session">Disconnect</button><button id="fullscreen" disabled>Fullscreen</button>
 <button id="keyboard-toggle" type="button" aria-expanded="false" aria-controls="keyboard-panel" disabled>Keyboard</button></div>
 <details id="display-options"><summary>Display &amp; touch settings</summary><div class="desktop-controls">
@@ -236,7 +243,6 @@ Keep administrator sign-ins and privilege approvals on your own device.</p>
 <label>SSH command<input id="ssh-command" value="ssh -- {destination}" readonly spellcheck="false"></label>
 <div class="desktop-inspection"><button id="copy-ssh" type="button">Copy SSH command</button><span id="ssh-status" role="status"></span></div>
 <p>This command uses the panel hostname and SSH port 22. Adjust the host or add <code>-p PORT</code> before <code>--</code> if your SSH endpoint differs.</p></section>'''
-        navigation = self.navigation("desktop")
         page = render_document(title="Desktop", style=CSS,
                                header='<header><p class="eyebrow">Workspace</p><h1>Desktop</h1></header>',
                                content=content, navigation=navigation,

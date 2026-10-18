@@ -37,7 +37,7 @@ from common.service_tools.web_panel_diagnostics import (
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
 from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
-from common.service_tools.web_panel_features import PanelFeatures, discover_features, unit_installed
+from common.service_tools.web_panel_features import AGENT_TOOLS, PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
 from lib.config import WEB_PANEL_CA_HTTP_PORT
 from common.service_tools.web_panel_host import (
@@ -165,9 +165,16 @@ def _load_manifest(path: str) -> dict[str, Any]:
         "t3_github_readiness",
         "t3_git_identity_readiness",
         "notification_ingest",
+        "git",
+        "t3_update",
     ):
         if not isinstance(value["features"].get(name, False), bool):
             raise RuntimeError("Web panel manifest has invalid feature settings")
+    agent_tools = value["features"].get("agent_tools", [])
+    if not isinstance(agent_tools, list) or any(
+        not isinstance(tool, str) or tool not in AGENT_TOOLS for tool in agent_tools
+    ):
+        raise RuntimeError("Web panel manifest has invalid agent selection")
     panel_url = value.get("panel_url")
     if panel_url is not None:
         safe_panel_url = _safe_url(panel_url)
@@ -754,7 +761,8 @@ class WebPanelState:
         return self.manifest["features"].get("notification_ingest") is True
 
     def features(self) -> PanelFeatures:
-        return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url))
+        return discover_features(self.agent_tasks.home, admin=bool(self.admin.approval_url),
+                                 configured=self.manifest["features"])
 
     def start_background_workers(self) -> None:
         """Start only the prompt or publishing workers available to this panel."""
@@ -774,7 +782,8 @@ class WebPanelState:
         from common.service_tools.web_panel_diagnostics import SOURCES
 
         return {unit: label for unit, label in SOURCES.items()
-                if unit_installed(unit, self.agent_tasks.home, user=unit == "t3code.service")}
+                if (unit != "t3code.service" or self.features().t3)
+                and unit_installed(unit, self.agent_tasks.home, user=unit == "t3code.service")}
 
     def publishing_tick(self) -> None:
         self.publishing.tick()
@@ -852,7 +861,7 @@ class WebPanelState:
         """Return whether T3 Code is both configured and present for this user."""
 
         return bool(
-            self.manifest["features"].get("t3_update")
+            self.manifest["features"].get("t3_update") is True
             and os.path.isdir(os.path.expanduser("~/.t3/runtime"))
         )
 
@@ -1611,7 +1620,7 @@ basaltwater-web ca --json</code></pre>
 <h3>Download, verify, and install with a script</h3>
 <p class="trust-intro">First enrollment uses HTTP for the public certificate and checks SHA-256 before installing. It does not require HTTPS that your client already trusts. If port 8442 is unavailable, copy <code>/srv/basaltwater/web/basaltwater-ca.crt</code> through SSH and choose Local certificate file.</p>
 {scripts}
-<p class="trust-next"><strong>After installation:</strong> fully quit and reopen your browser or T3 Code, then retry the server URL. If only one application still fails, check its separate certificate store.</p>
+<p class="trust-next"><strong>After installation:</strong> fully quit and reopen your browser or desktop client, then retry the server URL. If only one application still fails, check its separate certificate store.</p>
 <div class="trust-actions"><a class="trust-download" href="{trust_url}">Download VM CA certificate</a></div>
 <details><summary>Manual / GUI installation</summary>
 <p class="trust-intro">The download link uses verified HTTPS. For a new device, transfer the public certificate through SSH or another trusted device. Compare the file's SHA-256 with the independently obtained fingerprint before installation.</p><ul class="trust-gui">
@@ -1878,7 +1887,7 @@ def _render_notification_section(state: WebPanelState) -> str:
 <details class="notification-help"><summary>Configure a Basaltwater sender</summary>
 <p>From any managed system that can reach this panel over the local network or another available network, add the panel URL as a webhook target. During an initial sender setup, replace the placeholders with its profile, host, account, and a reachable panel host:</p>
 <p>Read the token on this panel host with <code>sudo cat /etc/basaltwater/web-panel/notification-ingest.token</code>.</p>
-<pre><code>basaltw setup agent_vm SENDER_HOST SENDER_USER \\
+<pre><code>basaltw setup server_lite SENDER_HOST SENDER_USER \\
   --notify webhook 'https://PANEL_HOST{WEB_PANEL_NOTIFICATION_ENDPOINT}#TOKEN_FROM_PANEL_HOST'</code></pre>
 <p>For an existing sender, use <code>basaltw patch SENDER_HOST SENDER_USER</code> with the same <code>--notify webhook</code> flag.</p>
 <p>The token fragment becomes a bearer header and is not sent in the request path. Keep the full fragment-bearing URL private.</p></details>
@@ -2135,6 +2144,8 @@ class WebPanelHandler(BaseHTTPRequestHandler):
     state: WebPanelState
 
     def _feature_available(self, path: str) -> bool:
+        if path == "/actions/t3-update":
+            return self.state.t3_update_available()
         pages = {
             "/github-runner": "github-runner",
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
@@ -2262,6 +2273,9 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 query = parse_diagnostic_query(parsed.query)
             except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, "Invalid diagnostic filters\n", "text/plain")
+                return
+            if query.service == "t3code.service" and not self.state.features().t3:
+                self._send(HTTPStatus.NOT_FOUND, "Feature is not configured on this machine\n", "text/plain")
                 return
             self._send(
                 HTTPStatus.OK,
