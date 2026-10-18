@@ -15,8 +15,7 @@ SSH_PORT = 22
 BOOTSTRAP_PORT = 2222
 
 
-def configure(config: SetupConfig) -> None:
-    """Authenticate once and run the privileged, one-shot lifecycle helper."""
+def _options(config: SetupConfig) -> tuple[str, int]:
     selected = getattr(config, "install_ssh", None)
     password = getattr(config, "ssh_password_auth", False)
     window = getattr(config, "ssh_password_window", None)
@@ -37,12 +36,34 @@ def configure(config: SetupConfig) -> None:
         raise ValueError("SSH requires an existing non-root desktop username")
     mode = ("leave" if selected is None else "off" if selected is False
             else "password" if password else "key")
+    return mode, window or 0
+
+
+def preflight(config: SetupConfig) -> None:
+    """Read-only, unprivileged checks before packages/firewall/setup mutations.
+
+    Call after resolving install_ssh defaults. The root helper repeats these
+    checks under its lock; this probe neither authorizes nor changes a service.
+    Dry runs validate arguments only. Hidden listener PIDs are checked by root.
+    """
+    mode, minutes = _options(config)
     if config.dry_run or is_dry_run():
-        print(f"  Would configure native SSH: {mode}; password bootstrap minutes: {window or 0}")
         return
     if not can_manage_system_services(config.machine_type):
         raise ValueError("This machine cannot manage system SSH services")
+    from common.service_tools.cachyos_ssh import inspect_setup
+
+    inspect_setup(config.username, mode, minutes, metadata_only=True)
+
+
+def configure(config: SetupConfig) -> None:
+    """Authenticate once and run the privileged, one-shot lifecycle helper."""
+    mode, minutes = _options(config)
+    if config.dry_run or is_dry_run():
+        print(f"  Would configure native SSH: {mode}; password bootstrap minutes: {minutes}")
+        return
+    preflight(config)
     helper = Path(__file__).resolve().parent / "service_tools/cachyos_ssh.py"
     run(["sudo", "-v"], interactive=True, timeout=120)
     run(["sudo", "-n", "/usr/bin/python3", "-I", str(helper), config.username,
-         mode, str(window or 0)], interactive=True, timeout=180)
+         mode, str(minutes)], interactive=True, timeout=180)
