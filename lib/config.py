@@ -372,6 +372,9 @@ class SetupConfig:
     harden_agent: bool = False
     harden_user: bool = False
     ssh_key: MaybeStr = None
+    install_ssh: bool | None = None
+    ssh_password_auth: bool = False
+    ssh_password_window: int | None = None
     timezone: str = "UTC"
     system_hostname: MaybeStr = None
     enable_mdns: bool = False
@@ -803,6 +806,7 @@ class SetupConfig:
             self.clear_lan_access = False
         elif self.clear_lan_access:
             self.lan_access = False
+        self._validate_ssh_settings()
         if self.enable_mdns:
             self.clear_mdns = False
         elif self.clear_mdns:
@@ -906,6 +910,38 @@ class SetupConfig:
         from lib.validation import validate_github_runner_settings
 
         validate_github_runner_settings(self)
+
+    def _validate_ssh_settings(self) -> None:
+        """Validate CachyOS SSH policy for parsed and reconstructed configs."""
+        if self.install_ssh is not None and type(self.install_ssh) is not bool:
+            raise ValueError("install_ssh must be a boolean or None")
+        if type(self.ssh_password_auth) is not bool:
+            raise ValueError("ssh_password_auth must be a boolean")
+        if self.ssh_password_window is not None and (
+            type(self.ssh_password_window) is not int or not 1 <= self.ssh_password_window <= 60
+        ):
+            raise ValueError("--ssh-password-window must be an integer between 1 and 60 minutes")
+        if self.system_type != "agent_cachyos" and (
+            self.install_ssh is not None or self.ssh_password_auth or self.ssh_password_window is not None
+        ):
+            raise ValueError("--ssh, --no-ssh, and SSH password options require the agent_cachyos profile")
+        if self.ssh_password_auth and self.ssh_password_window is not None:
+            raise ValueError("--ssh-password-auth and --ssh-password-window are mutually exclusive")
+        if self.ssh_password_auth or self.ssh_password_window is not None:
+            if self.install_ssh is not True:
+                raise ValueError("SSH password options require --ssh")
+            if not (self.lan_access or self.access_sources):
+                raise ValueError("SSH password options require --lan-access or a private --access-source")
+
+    def _ssh_args(self) -> StrList:
+        args: StrList = []
+        if self.install_ssh is not None:
+            args.append("--ssh" if self.install_ssh else "--no-ssh")
+        if self.ssh_password_auth:
+            args.append("--ssh-password-auth")
+        if self.ssh_password_window is not None:
+            args.append(f"--ssh-password-window {self.ssh_password_window}")
+        return args
 
     def selected_agent_tools(self) -> StrList:
         """Return selected coding agents in stable display/install order."""
@@ -1059,6 +1095,7 @@ class SetupConfig:
         """Generate command line arguments for remote execution."""
         args: StrList = []
         args.extend(self._homebox_args())
+        args.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args
 
         args.extend(setup_policy_args(self))
@@ -1542,6 +1579,7 @@ class SetupConfig:
         if include_username:
             cmd_parts.append(self.username)
         cmd_parts.extend(self._homebox_args())
+        cmd_parts.extend(self._ssh_args())
         from lib.maintenance_agent_config import setup_policy_args
 
         cmd_parts.extend(setup_policy_args(self))
@@ -2672,6 +2710,9 @@ class SetupConfig:
             harden_agent=_optional_bool_arg(args, 'harden_agent'),
             harden_user=_optional_bool_arg(args, 'harden_user'),
             ssh_key=getattr(args, 'ssh_key', None),
+            install_ssh=getattr(args, 'install_ssh', None),
+            ssh_password_auth=getattr(args, 'ssh_password_auth', False),
+            ssh_password_window=getattr(args, 'ssh_password_window', None),
             timezone=timezone,
             system_hostname=getattr(args, 'system_hostname', None),
             enable_mdns=enable_mdns,

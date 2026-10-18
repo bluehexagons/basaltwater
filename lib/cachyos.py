@@ -41,6 +41,7 @@ _OPTIONS = {
     "agent_workspace", "agent_repos", "web_interfaces",
     "web_interface_host", "web_interface_port", "t3code_desktop",
     "lan_access", "access_sources", "clear_access_sources",
+    "install_ssh", "ssh_password_auth", "ssh_password_window",
     "notify_specs", "notification_level", "notification_strict_https",
 }
 _CONTROLLER_OPTIONS = {"restart_if_needed", "wait_for_restart"}
@@ -81,7 +82,10 @@ def cachyos_config_from_args(
             raise ValueError(f"agent_cachyos does not support setup option {name!r}")
     copied = _default_args()
     for name in _OPTIONS:
-        if hasattr(args, name) and getattr(args, name) != defaults.get(name):
+        if hasattr(args, name) and (
+            name in {"install_ssh", "ssh_password_auth", "ssh_password_window"}
+            or getattr(args, name) != defaults.get(name)
+        ):
             setattr(copied, name, getattr(args, name))
     copied.host = getattr(args, "host", "localhost")
     copied.username = getattr(args, "username", None) or pwd.getpwuid(os.getuid()).pw_name
@@ -96,6 +100,7 @@ def cachyos_config_from_args(
 
 def validate_cachyos_config(config: SetupConfig) -> None:
     """Fail closed when generic callers select features outside this composition."""
+    config._validate_ssh_settings()
     baseline = SetupConfig.from_args(_default_args(), PROFILE)
     for field in fields(config):
         if field.name not in _CONFIG_OPTIONS and (
@@ -146,6 +151,11 @@ def validate_cachyos_config(config: SetupConfig) -> None:
         raise ValueError("--web-interface-host requires --web-interface t3code")
     elif config.web_interface_port != 3773:
         raise ValueError("--web-interface-port requires --web-interface t3code")
+    if config.web_interfaces and (
+        (config.install_ssh is not None and config.web_interface_port == 22)
+        or (config.ssh_password_window is not None and config.web_interface_port == 2222)
+    ):
+        raise ValueError("Choose a T3 port outside the managed SSH ports (22 and password-window port 2222)")
     if config.web_interfaces and (
         type(config.web_interface_port) is not int or not 1024 <= config.web_interface_port <= 65535
     ):

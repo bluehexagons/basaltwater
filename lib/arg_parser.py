@@ -222,6 +222,20 @@ def add_setup_arguments(
     )
     parser.add_argument("-t", "--timezone", help="Timezone (defaults to UTC)")
     parser.add_argument(
+        "--ssh", dest="install_ssh", action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Manage key-only SSH on CachyOS; omit to leave SSH unchanged",
+    )
+    parser.add_argument(
+        "--ssh-password-auth", action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Allow permanent SSH password authentication (CachyOS; requires --ssh and private access)",
+    )
+    parser.add_argument(
+        "--ssh-password-window", type=int, choices=range(1, 61), metavar="MINUTES",
+        help="Open a one-shot SSH password window for 1-60 minutes (CachyOS; requires --ssh and private access)",
+    )
+    parser.add_argument(
         "--hostname",
         dest="system_hostname",
         metavar="NAME",
