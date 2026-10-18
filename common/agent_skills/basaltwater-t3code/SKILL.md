@@ -116,11 +116,17 @@ alone do not supply.
 
 ## Long-running work
 
-Use `basaltwater-agent-tasks` for scheduled follow-ups and bounded goals.
-The task skill documents the available controls, handoff fields, and workspace
-choices. Stable scheduled runs use independent Codex context; they do not
-inherit this T3 thread's tools or browser. Native T3 thread execution is not
-part of the current stable workflow.
+Use the installed `basaltwater-subagents` skill's native orchestration reference
+for T3 delegation, live provider/model discovery, queues, forks, worktree
+bindings, PR watching, and review guides. A child task is distinct from a
+top-level conversation. Worktree isolation must be selected through T3 before
+starting a T3-owned editor; changing directories does not change thread binding.
+
+Use `basaltwater-agent-tasks` to choose between T3-native recurring work and
+independent Basaltwater Codex tasks. T3 schedules can return to this thread;
+Basaltwater tasks provide one-shot follow-ups and bounded goals with receipts.
+An independent Codex run does not inherit this thread's tools or browser.
+Use one scheduler per job and inspect its actual thread and workspace binding.
 
 Use the `basaltwater-agent-operations` skill for bounded maintenance holds and
 redacted readiness records. Holds are shared across this account's tasks;

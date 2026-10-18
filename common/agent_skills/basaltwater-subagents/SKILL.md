@@ -1,6 +1,6 @@
 ---
 name: basaltwater-subagents
-description: Plan bounded subagent tasks, choose cost-aware OpenAI models, and integrate work on Debian, CachyOS, or Ubuntu WSL.
+description: Plan bounded subagent tasks, choose cost-aware models, and coordinate T3 Code workflows on Debian, CachyOS, or Ubuntu WSL.
 metadata:
   managed-by: basaltwater
 ---
@@ -23,6 +23,18 @@ installation revision. Skill discovery still leaves session access unverified.
 Read [session context and skill access](references/session-context.md) when
 launching fresh workers, changing accounts or providers, or delegating from an
 unattended task. Skill files, selected guidance, and tools have separate scopes.
+
+In T3 Code, read [native orchestration](references/t3-orchestration.md) before
+delegating, choosing a worktree, coordinating queues or forks, or monitoring a
+PR. Discover the live provider/model catalog; use native same-provider workers
+when they support the chosen model, and T3 `delegate_task` otherwise. Ordinary
+top-level threads require a request for separate conversations. Use T3's worktree
+binding for T3-owned workers; the terminal lifecycle below applies to
+Basaltwater-owned worktrees.
+
+For authorized recurring work inside T3, read [T3 scheduling](references/t3-scheduling.md)
+to choose thread binding, cadence, safe provider options, and webhook controls.
+This shared reference does not require the independent Basaltwater task worker.
 
 Agents share the filesystem. Read-only reviewers may inspect the primary
 checkout; editors and checks that write files need separate managed worktrees.

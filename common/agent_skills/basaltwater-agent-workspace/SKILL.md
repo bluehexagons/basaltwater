@@ -10,6 +10,11 @@ metadata:
 For general repository workflow and local project instructions, read the
 installed `basaltwater-project-development` skill.
 
+For T3-owned work, first read the installed `basaltwater-subagents` skill's
+native orchestration reference. Select T3 worktree isolation or thread binding
+before starting an editor; a shell `cd` does not rebind T3. Keep T3-owned
+worktree cleanup with T3. The commands below manage Basaltwater-owned worktrees.
+
 Use managed worktrees when concurrent editors could touch the same checkout.
 Read-only review can use the primary checkout; checks generating files are edits.
 Delegate only within the session's authority and when independent scopes justify it.

@@ -1,4 +1,9 @@
-# Scheduled tasks and goals
+# Basaltwater scheduled tasks and goals
+
+For work owned by a T3 thread, first read the installed `basaltwater-subagents`
+skill's `references/t3-scheduling.md` to choose the scheduler. This reference
+describes the independent Basaltwater executor and its limits, checkpoints,
+and receipts.
 
 Use scheduling when needed to carry out an already authorized goal, deferred
 check, or recurring request. Continue within that scope without seeking fresh
@@ -92,12 +97,12 @@ while idle; it retains files and evidence and does not reapply the initial hando
 
 ## T3 and unattended boundaries
 
-Current stable execution uses an independent Codex process. It does not resume
+Basaltwater execution uses an independent Codex process. It does not resume
 this T3 thread, inherit its tools or preview, or automatically post its results
 back here. Summarize the thread's findings into the portable checkpoint rather
-than copying provider session IDs or modifying T3's database. Native T3
-scheduling and thread handoffs are not part of the current stable workflow; use
-one scheduling owner for each task.
+than copying provider session IDs or modifying T3's database. T3's native
+scheduler has its own thread binding and controls; use one scheduling owner
+for each task and inspect that owner's state when pausing or cancelling it.
 
 After managed skills or MCP configuration refresh, finish the current turn
 before using T3's **Restart agent session** command to reload the provider.

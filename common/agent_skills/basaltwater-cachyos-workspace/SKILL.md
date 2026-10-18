@@ -37,7 +37,10 @@ cost justification. Use actual session capabilities and reviewed project
 outcomes to adapt to new model releases. Do not autonomously choose fast mode,
 `max`, or `ultra`; explicit user selections govern exceptions.
 
-When concurrent work needs isolation, use the shared managed-worktree commands:
+For T3-owned work, first read the installed `basaltwater-subagents` skill's
+native orchestration reference. Select T3 worktree isolation or thread binding
+before starting an editor; a shell `cd` does not rebind T3. Keep T3-owned cleanup
+with T3. For Basaltwater-owned worktrees, use the shared commands:
 
 ```fish
 basaltw agent workspace create ~/repos/PROJECT TASK --base HEAD --json

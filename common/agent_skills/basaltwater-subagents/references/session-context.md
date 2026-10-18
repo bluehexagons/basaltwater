@@ -45,6 +45,11 @@ authorized capabilities.
 
 ## Coordinate through the active harness
 
+For T3-owned children, follow [native orchestration](t3-orchestration.md).
+Each delegated review round uses a fresh `delegate_task`, its own task ID, and
+an explicit brief; do not send the next review to the child's backing thread.
+The messaging examples below apply only to harnesses exposing those operations.
+
 When delegation is authorized, use the exposed parent/worker messaging tools for
 progress, blockers, questions, and scoped corrections. Include the parent's
 identity in a fresh worker's assignment when the harness does not supply it.
@@ -65,6 +70,11 @@ its own workers through native tools when available. Sharing a VM, worktree, or
 skill catalog does not connect independent CLI processes or T3 threads.
 
 ## Pass the needed context explicitly
+
+T3 delegated children receive the task prompt and optional role, not the parent's
+conversation. Include findings, relevant paths, constraints, and acceptance
+checks explicitly. A fork transfers conversation context; it does not create an
+isolated checkout or merge Git changes back.
 
 Codex custom agents inherit `skills.config` and MCP settings when their custom
 configuration omits overrides. This does not prove a worker received the parent's

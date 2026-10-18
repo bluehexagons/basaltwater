@@ -11,6 +11,12 @@ Use scheduling only when the request needs deferred, recurring, or continuing
 work. A stored task is not additional authority. Choose finite attempts or a
 deadline for follow-ups; indefinite recurrence needs authorization for it.
 
+In a T3 thread, first read the installed `basaltwater-subagents` skill's
+`references/t3-scheduling.md` when work should return to that conversation or
+use another T3 provider. Use Basaltwater tasks for independent Codex execution,
+one-shot follow-ups, or goals needing its lifetime limits and receipts. Choose
+one scheduler per job; do not duplicate it.
+
 For access discovery, use available task MCP tools or:
 
 ```bash

@@ -4,8 +4,10 @@ The web panel's **Agents** screen and `basaltw agent tasks` share saved Codex
 prompts, goals, checkpoints and managed workspaces independently of T3.
 Use `basaltw agent tasks capabilities --json` to inspect executor and worker
 availability. CLI controls and optional stdio MCP are available to standalone
-Codex and agents inside T3; native T3 thread binding is not part of the current
-stable workflow.
+Codex and agents inside T3. These Basaltwater tasks run independently of T3;
+native T3 schedules can instead return to their owning conversation. Use the
+installed `basaltwater-subagents` skill's T3 scheduling reference to choose one
+scheduler and inspect its actual target, limits, and provider settings.
 Use the `basaltwater-agent-tasks` skill to schedule authorized follow-ups,
 hand off current findings, or pursue bounded goals with persistent context.
 Read [the unattended task guidance](unattended-tasks.md) when preparing

@@ -2,9 +2,25 @@
 
 Debian agent-enabled setups, CachyOS workstations, and Ubuntu WSL coding profiles
 install the shared `basaltwater-subagents` skill with local lifecycle,
-model-selection, and session-context references.
+model-selection, session-context, and T3 orchestration references.
 Their workspace skills retain each platform's account and setup boundaries.
 Detailed guidance needs neither a Basaltwater checkout nor a GitHub connection.
+
+Inside T3 Code, follow the shipped
+[native orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
+for live provider/model discovery, child tasks, asynchronous results, worktree
+binding, queues, forks, and PR watches. Native workers are appropriate for
+same-provider work when they support the selected model; use T3 `delegate_task`
+otherwise, including cross-provider work. Top-level conversations need an
+explicit user request for separate threads. Each independent delegated review
+round is a fresh task with its own ID and explicit prior findings.
+
+Select T3 worktree isolation before starting a T3-owned editor. T3 owns that
+checkout's binding and cleanup; the Basaltwater commands below apply to
+Basaltwater-owned worktrees. A shell directory change does not rebind a T3
+thread. Fork/merge-back transfers conversation context separately from Git
+changes. Provider switching loses tool results and other context; delegation
+keeps the original harness's working session available.
 
 Fresh workers need the relevant project instructions and absolute skill paths
 in their assignment. Their enabled skills and tools depend on the provider,

@@ -7,6 +7,19 @@ metadata:
 
 # Local T3 Code and T3 Connect
 
+## Agent workflows
+
+Stable T3 0.1.0 supports native delegation, persistent queues, forks, and
+scheduling. Use the installed `basaltwater-subagents` skill's T3 orchestration
+reference for live provider/model discovery, child-task lifecycle, worktree
+binding, PR watches, and review guides. Its T3 scheduling reference covers native
+automations; this workstation profile does not provision the independent
+Basaltwater task worker. Select one owner for each schedule and worktree; a shell
+directory change does not rebind T3.
+These shared workflows also apply to desktop mode; the VM service commands do
+not. Inspect the selected provider's readiness instead of installing unselected
+providers to silence optional checks.
+
 ## Desktop mode
 
 `basaltw setup agent_cachyos localhost --t3code-desktop` installs missing

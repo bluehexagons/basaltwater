@@ -36,6 +36,8 @@ REQUIRED_WHEEL_PATHS = (
     "common/agent_skills/basaltwater-subagents/references/lifecycle.md",
     "common/agent_skills/basaltwater-subagents/references/model-selection.md",
     "common/agent_skills/basaltwater-subagents/references/session-context.md",
+    "common/agent_skills/basaltwater-subagents/references/t3-orchestration.md",
+    "common/agent_skills/basaltwater-subagents/references/t3-scheduling.md",
     "common/agent_skills/basaltwater-wsl-workspace/SKILL.md",
     "common/wsl_steps.py",
     "plugins/wsl.py",

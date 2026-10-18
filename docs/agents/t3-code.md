@@ -96,6 +96,78 @@ The removal path rejects dirty, untracked, or unmerged work and cannot remove
 the primary checkout. For a shareable diagnostic snapshot that omits log and
 credential contents, use `basaltw agent support-bundle`.
 
+## Stable feature baseline
+
+As checked on **2026-10-18**, GitHub's latest stable release and npm's `t3@latest`
+are **0.1.0**, released October 15. It makes Orchestrator V2 stable. Keep the
+server and every connected desktop client on compatible V2 releases; mobile
+requires the 2.0 app. See the [upstream release and migration notes](https://github.com/pingdotgg/t3code/releases/tag/v0.1.0).
+
+The release's minimum provider versions are Codex **0.159+**, Claude Code
+**2.1.280+**, Grok **1.0.13+**, OpenCode 2 **2.0.18+**, and Pi **0.80.5+**
+(1.0 recommended). Inspect **Settings → Providers** for the selected account,
+binary, version, and readiness. Setup manages only selected Basaltwater
+providers; T3's additional Pi, Muse Code, Cursor SDK, and ACP Registry choices
+do not imply that Basaltwater installed, authenticated, or qualified them.
+
+OpenCode 2 uses the separate `@opencode/cli` package and converts OpenCode's
+shared database on first run. Do not install/run 1.x and 2.x side by side or
+silently replace the managed OpenCode installation as part of a T3 update.
+Plan that provider migration separately with a private recovery copy. OpenCode
+1.x retains limited V2 support, but pending approvals/questions do not reappear
+after a T3 restart; answer or stop them before updating. Basaltwater does not
+claim OpenCode 2 qualification from installing the existing OpenCode tool.
+
+### Agent workflow integration
+
+The shared installed skills now route T3 agents to its native orchestration:
+
+| Work | Integration |
+| --- | --- |
+| Delegated children | Discover provider/model IDs through `orchestrator_capabilities`; use native same-provider workers when they support the chosen model, otherwise `delegate_task`. Retain task IDs, pass explicit context, and collect asynchronous results. Each independent review round is a fresh task. |
+| Editing isolation | Select `delegate_task` worktree isolation or an explicit top-level thread workspace before starting work. T3 owns its worktree binding and cleanup; Basaltwater commands manage their own ownership records. A shell `cd` does not rebind a thread. |
+| Conversation/context | Fork and merge-back transfer context separately from Git integration. Provider switches omit reasoning, tool results, and attachments; prefer delegation for help from another harness. Read omitted history in bounded pages. |
+| Queues and recovery | Choose queue versus steering explicitly and inspect pending messages before retrying. Persistent queues wait for user resume after restart; interrupted-turn auto-continuation and usage-reset resume have separate controls. |
+| Recurring work | Choose T3 schedules for work returning to a T3 thread, or Basaltwater tasks for independent Codex execution and bounded goals. Inspect timezone, inherited model/options, target binding, and stop controls. Use one scheduler per job. |
+| Pull requests | Register PRs through `link_pull_request`. For requested monitoring, use `watch_pull_request`, yield for wakeups, then unwatch before user handoff. Review guides supplement diff review and checks. |
+
+The shipped [T3 orchestration reference](../../common/agent_skills/basaltwater-subagents/references/t3-orchestration.md)
+and [T3 scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
+are shared by Debian, CachyOS, and WSL. They cover retries, cancellation,
+questions, workspace preparation, scheduler ownership, webhook signatures and
+private secret entry. They use T3's injected tools rather than a second
+Basaltwater orchestration service. Tool availability still depends on the active
+provider session. Finish the current turn and use **Restart agent session**
+after managed setup refreshes these resources.
+
+Inspect project overrides and environment settings before relying on tracked
+`t3.json`: repository defaults have lower precedence than both. Preserve setup
+actions, submodule policy, and branch naming when preparing a worktree. T3's
+opt-in cleanup can discard ignored files depending on its local-file setting;
+inspect retention before settling work or removing a checkout. Keep its cleanup
+separate from Basaltwater's owned-worktree ancestry checks and cache maintenance.
+
+### Stable feature qualification
+
+These are required live checks, **not completed qualification evidence**. Run
+them on disposable systems with the exact candidate commit and compatible stable
+client/server. Record the provider executable/version and model, runtime and
+permission modes, service versus desktop environment, checked result, and any
+blocked step. Mocked tests and service HTTP readiness cannot qualify these paths.
+
+| Case | Required evidence |
+| --- | --- |
+| Providers and migration | Fresh 0.1.0 setup and V1-to-V2 copy migration with matching client, selected Codex/Claude combinations, private recovery copy, pairing permissions, authenticated provider turn, and terminal. Qualify OpenCode 2 separately before claiming support. |
+| Delegation | Same-provider and cross-provider child results, explicit model/options, fresh review rounds, async wake, nested completion state, pending question, cancellation, and restart interruption without duplicated work. |
+| Workspace/context | Child worktree starts from committed local base, project setup completes, uncommitted edits stay in parent, explicit launch/handoff binding works, context fork/merge-back leaves Git integration explicit, and cleanup preserves unrelated work. |
+| Queues and limits | Queue order and attachments survive restart, queue awaits user resume, steering reaches the intended turn, auto-continuation is controlled, and usage-limit/reset recovery does not duplicate edits. |
+| Scheduling | Interval and server-time fixed schedules, current-thread and requested fresh-thread binding, safe model/options, pause/resume/delete, run-now result, and restart recovery. For webhooks, signature rejection, private secret entry, selected placeholders, stale/duplicate delivery, and absent Connect URL handling. |
+| PR workflow | Link all stack layers, receive checks/comment/conflict wakeups without polling, unwatch on handoff, and read review-guide results/staleness. Do not merge as a side effect of monitoring. |
+| Client and gateway | Update/reboot readiness, direct/private and Connect access, gateway TLS, preview attachment and recording transfer, and optional offline webhook storage only when deliberately selected. |
+
+Retain the overall status in [release qualification](../release-qualification.md).
+Native mobile/device SDK provisioning remains a [deferred plan](../plans/mobile-agent-support.md).
+
 ## Service and update model
 
 Basaltwater uses T3 Code's supported per-user background service. Upstream owns

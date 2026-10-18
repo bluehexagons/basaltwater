@@ -10,6 +10,24 @@ discoverable in agent catalogs. Agents can schedule necessary follow-ups within
 the user's authorized scope; an indefinite recurring job needs authorization
 covering that recurrence.
 
+## Choose the scheduling owner
+
+T3 Code 0.1.0 also provides native scheduling. In an active T3 session, use its
+`schedule_task` for authorized recurring work returning to that conversation,
+another T3 provider, or a supported webhook. The shipped
+[T3 scheduling reference](../../common/agent_skills/basaltwater-subagents/references/t3-scheduling.md)
+covers structured schedules, server timezone, current-thread versus fresh-thread
+binding, inherited model/options, controls, signing secrets, and Connect URLs.
+Use T3's PR watcher for requested PR monitoring instead of creating a timer.
+
+Use Basaltwater tasks for independent Codex execution, one-shot follow-ups, and
+goals needing its attempt/deadline/token limits, checkpoints, and receipts.
+T3's stable schedule types do not supply those lifetime goal limits. Choose one
+scheduler per job and inspect its own state when stopping work; the panel and
+CLI here do not control T3 automations. A T3 recurring task is active work, so
+do not turn a finite request into indefinite recurrence. The settings and
+recovery procedures below describe the Basaltwater executor.
+
 ## Choose context and workspace persistence
 
 These are independent settings:
