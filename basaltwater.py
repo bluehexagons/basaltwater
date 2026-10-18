@@ -296,6 +296,10 @@ def create_basaltwater_parser() -> Tuple[argparse.ArgumentParser, argparse.Argum
     )
     add_setup_arguments(setup_parser, allow_steps=True, include_system_type=True)
     setup_parser.add_argument(
+        "--ssh-key", dest="ssh_key", default=argparse.SUPPRESS,
+        help="Controller SSH private key path (alias for --key)",
+    )
+    setup_parser.add_argument(
         "--restart-if-needed",
         action="store_true",
         help="After successful setup, restart the target if a reboot is required",
@@ -1842,6 +1846,10 @@ def run_setup_command(args: argparse.Namespace) -> int:
         return 1
 
     if args.system_type == "agent_cachyos":
+        if not _is_local_host(args.host):
+            from lib.cachyos_remote import run_cachyos_remote_command
+
+            return run_cachyos_remote_command(args)
         from lib.cachyos import cachyos_config_from_args, run_cachyos_command
 
         returncode = run_cachyos_command(args)
