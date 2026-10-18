@@ -195,23 +195,29 @@ listeners are refused for review; Basaltwater does not take them over. Turning
 SSH off stops the managed service and recognizable stock native SSH, while
 foreign custom SSH remains untouched and can make disablement fail safely.
 
-When SSH is enabled without an explicit access-source choice, setup discovers
-the workstation's private IPv4 LAN source for managed UFW access. This
-discovery is resolved once and saved, so refresh reuses the chosen source
-instead of detecting again. Use `--access-source PRIVATE_IPV4_OR_CIDR` to
-specify private IPv4 sources, or `--no-lan-access` / `--no-access-source` to
-keep the existing local-only firewall policy and disable automatic discovery.
-Password modes still require explicit private access at the command line;
-automatic LAN discovery does not satisfy that requirement. No public IPv4 or
-IPv6 SSH grants are created, and unrelated firewall rules are retained.
+When SSH is enabled without explicit access flags, setup automatically enables
+private IPv4 LAN access for the selected T3, Sunshine, and SSH firewall scopes.
+LAN discovery runs on each setup and refresh, so a roaming workstation follows
+its current private IPv4 network. The private selection record saves the
+resolved SSH boolean; explicit `--access-source` values persist. Use
+`--access-source PRIVATE_IPV4_OR_CIDR` to specify private IPv4 sources, or
+`--no-lan-access` / `--no-access-source` to disable automatic discovery.
+Password modes still require explicit private access flags; automatic LAN
+discovery does not satisfy that requirement. No public IPv4 or IPv6 SSH grants
+are created, and unrelated firewall rules are retained. Before changing
+firewall policy, setup requires an active SSH client source (when present) to
+be one of the selected private IPv4 sources; otherwise setup stops without
+changing the firewall. Connect from an allowed private IPv4 address and avoid
+switching from a public or IPv6 SSH path during the handover.
 
-For key enrollment, first ensure the existing account has a safe
-`authorized_keys` file. If a key-only SSH service is already enabled but that
-file is missing or unsafe, setup refuses to risk lockout; copy a key safely or
-explicitly choose a password mode. The temporary password bootstrap service
-listens on port 2222, uses the existing account password, and stores no
-password. Verify the host fingerprint through a trusted local channel, copy
-the key, then test ordinary port-22 access before the window expires:
+Adopting an already-enabled key-only stock SSH service requires a usable
+`authorized_keys` file for the existing account. If it is missing or unsafe,
+setup refuses adoption to avoid locking out the account. A new key-only service
+does not require a key before setup: explicitly open a temporary password
+bootstrap window to enroll one. It listens on port 2222 for 1–60 minutes, uses
+the existing account password, and stores no password. Verify the host
+fingerprint through a trusted local channel, copy the key, then test ordinary
+port-22 access before the window expires:
 
 ```fish
 basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
@@ -228,6 +234,19 @@ password authentication for the existing account remains enabled until
 clears password selection. A refresh that includes a fresh window starts a new
 one-shot window; an ordinary refresh does not recreate one. Do not combine
 persistent password authentication with a temporary password window.
+
+To repeat a successful selection while opening a fresh 15-minute enrollment
+window, preserve the selected tools and explicitly select LAN access for this
+request:
+
+```fish
+basaltw refresh --ssh --ssh-password-window 15 --lan-access
+```
+
+The duration is used for this refresh only and is never saved. A saved refresh
+record containing a password window is rejected. An ordinary refresh closes
+any active bootstrap window; its port-2222 allow rule may remain until refresh
+removes it, but no listener remains after expiry.
 
 Remote setup is useful when a controller is separate from the workstation and
 the target already has reachable SSH and a non-root desktop account:
@@ -512,10 +531,10 @@ and the explicit sources. For ambiguous/VPN/multiple-network cases, use
 `--no-lan-access --access-source PRIVATE_IP_OR_CIDR` to select explicit sources
 without discovery. Explicit sources must be RFC1918 IPv4 addresses or subnets;
 public sources, IPv6 sources, and all-network wildcards are refused. When SSH
-is enabled without explicit access flags, the resolved private IPv4 LAN source
-is saved and reused on refresh rather than rediscovered. Use
-`--no-lan-access` or `--no-access-source` to retain local-only policy and turn
-off that automatic selection.
+is enabled without explicit access flags, private IPv4 LAN access is selected
+automatically. Discovery runs on each setup and refresh, while the saved record
+stores the resolved SSH boolean; explicit `--access-source` values persist.
+Use `--no-lan-access` or `--no-access-source` to turn off automatic discovery.
 
 Only selected T3 TCP and Sunshine streaming/pairing ports are allowed from those
 sources. Sunshine's administration port 47990, legacy RDP 3389, and T3 UDP remain
@@ -529,8 +548,11 @@ recover. Existing established connections and custom UFW before-rules are not
 revoked. Unrelated ports (including old development-server rules) require review.
 
 `--no-lan-access` with no explicit sources closes these managed ports remotely.
-Omitting access flags leaves these T3/Sunshine rules unchanged; SSH has the
-separate automatic private-source behavior described in [SSH access](#ssh-access).
+Omitting access flags with SSH disabled leaves the firewall unchanged. When
+SSH is enabled, automatic LAN access manages selected T3, Sunshine, and SSH
+ports from the discovered private source. Read [SSH access](#ssh-access) for
+the preflight requirement that the current SSH client source match a selected
+private IPv4 source before firewall handover.
 This does not change T3's bind address, start Sunshine, enable RDP, or open KDE
 Connect/Steam hosting ports. Desktop T3 uses port 3773 here; nonstandard
 desktop ports need manual firewall configuration. Sunshine with custom ports
