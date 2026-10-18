@@ -360,13 +360,14 @@ if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$INSTALL_QEMU_GUEST_AGENT" -eq 1 ]; then
 fi
 if [ "$HOST_OS_ID" = cachyos ]; then
     [ "$(id -u)" -ne 0 ] || fail "run the CachyOS installer as your desktop user without sudo"
-    [ -z "${SSH_CONNECTION:-}${SSH_TTY:-}" ] || fail "run CachyOS setup locally in a desktop terminal"
     if [ "$LOCAL_SETUP" -eq 1 ] && [ "$SETUP_SYSTEM_TYPE" != agent_cachyos ]; then
         fail "CachyOS local setup supports only agent_cachyos"
     fi
 fi
 if [ "$RUN_SETUP" -eq 1 ] && [ "$1" = agent_cachyos ]; then
-    [ "$HOST_OS_ID" = cachyos ] && [ "$LOCAL_SETUP" -eq 1 ] || fail "agent_cachyos requires local setup on CachyOS"
+    if [ "$LOCAL_SETUP" -eq 1 ]; then
+        [ "$HOST_OS_ID" = cachyos ] || fail "agent_cachyos local setup requires a CachyOS controller"
+    fi
 fi
 if [ "$HOST_OS_SUPPORTED" -eq 0 ] && [ "$HOST_OS_ID" != cachyos ] && [ "$LOCAL_SETUP" -eq 1 ]; then
     fail "local setup is not supported on an unsupported host; install the launcher and use remote setup instead"
