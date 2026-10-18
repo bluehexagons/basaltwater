@@ -25,7 +25,7 @@ basaltw setup server_github_runner ci.example.net operator \
 ```
 
 The operator account is separate from `basaltwater-runner`. The service account
-has a locked login shell, no supplementary groups, no sudo and no Docker
+has a locked login shell, a dedicated non-root primary group, no supplementary groups, no sudo and no Docker
 access. Basaltwater installs neither Docker nor the other webhook-based CI
 services. The runner is pinned to official `actions/runner` **2.338.0**, Linux
 x64, with SHA-256 verification before extraction. Native runtime libraries and
@@ -45,6 +45,10 @@ Add `--dry-run` to inspect the controller plan without a token or target
 mutation. A target-side dry run also verifies the Debian release and architecture.
 Optional `--web-panel PORT` uses the existing authenticated panel installation
 and TLS settings; see [web panel setup](web-panel.md).
+The runner profile rejects other workloads, deployments, tunnels, file sharing,
+storage jobs, privilege brokers and maintenance agents. Enabling its panel
+does not install maintenance-agent services. Configure those workloads on
+separate hosts.
 
 ## Job identity and gate
 
@@ -54,6 +58,8 @@ with the **complete** desired `--ci-allowed-user` set and the same repository an
 labels. An existing registration needs no new token for an allowlist change.
 The panel displays this policy read-only. Repository and label changes require
 the deliberate replacement procedure below.
+An allowlist update stops the listener and its current job before publishing
+policy, then restarts the service. Drain trusted jobs before repeating setup.
 
 | Event | Identity required |
 | --- | --- |
@@ -75,7 +81,8 @@ telemetry write failure kills the parent `Runner.Worker`. This also prevents
 steps with `if: always()` from running after a denied gate. The listener remains
 available for later jobs; GitHub may describe a denial as a lost job worker.
 The service refuses startup if critical policy/application files become
-non-root-owned, writable by another account or symlinked.
+non-root-owned, writable by another account, symlinked, unreadable, or the wrong
+file type, or if its binaries cannot execute as the service account.
 
 The application and hook live outside job-writable paths. The service uses a
 read-only system view with writes limited to
@@ -95,8 +102,12 @@ trusted and complete the qualification below before sending jobs here.
 ```bash
 sudo systemctl status basaltwater-github-runner.service
 sudo systemctl is-enabled basaltwater-github-runner.service
+sudo -u basaltwater-runner /usr/bin/python3 -I /opt/basaltwater/common/service_tools/github_runner_gate.py --check
 sudo journalctl -u basaltwater-github-runner.service --since today
 ```
+
+The `--check` entry point safely validates the local installation without
+running a job hook or submitting a GitHub job. A successful check exits zero.
 
 The service is enabled at boot and restarts its listener after failure. Local
 `active` status proves only that the service runs. Confirm **Idle/Online** in
@@ -162,15 +173,24 @@ On a disposable, clean Debian 13 x86-64 VM and a private test repository:
    has no supplementary groups, cannot write the policy/application/hook or
    access an operator's home, and has no sudo or Docker socket access.
 2. Confirm the runner is online. Reboot and confirm it returns online with the
-   service enabled, then run this Docker-free smoke workflow:
+   service enabled. Copy this Docker-free workflow into the private test
+   repository's `.github/workflows/runner-qualification.yml` on its default
+   branch, then create a `runner-qualification` branch from it:
 
    ```yaml
    name: Debian runner smoke
-   on: [workflow_dispatch]
+   on:
+     workflow_dispatch:
+     push:
+       branches: [runner-qualification]
+     pull_request:
+       branches: [runner-qualification]
+       types: [opened, reopened, synchronize]
    permissions: {}
    jobs:
      smoke:
        runs-on: [self-hosted, Linux, X64, debian-ci]
+       timeout-minutes: 5
        steps:
          - name: Smoke canary
            if: always()
@@ -180,7 +200,9 @@ On a disposable, clean Debian 13 x86-64 VM and a private test repository:
              printf 'RUNNER_SMOKE_STEP_EXECUTED\n'
    ```
 
-3. For every supported trigger, deliver allowed and denied actors; for PRs also
+3. Dispatch the workflow, push to `runner-qualification`, and open/update a
+   same-repository PR targeting that branch. For every supported trigger,
+   deliver allowed and denied actors; for PRs also
    vary the author independently. Confirm denied jobs never print the canary,
    including `always()` steps and action pre/post steps. Test malformed/missing
    identities offline with `make test TEST=tests.test_github_runner`; also run

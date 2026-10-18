@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Optional
 
 from lib.plugin_registry import PluginDefinition
+from lib.github_runner_config import PROFILE as GITHUB_RUNNER_PROFILE
 
 if TYPE_CHECKING:
     from lib.config import SetupConfig
@@ -179,9 +180,10 @@ def build_post_setup_steps(
 
         steps.append(("Configuring storage operations service", configure_storage_operations))
 
-    if config.maintenance_agent is not None or config.web_panel_port is not None or any(
+    maintenance_requested = config.maintenance_agent is not None or config.web_panel_port is not None or any(
         getattr(config, name) is not None for name in config.__dataclass_fields__ if name.startswith("maintenance_agent_")
-    ):
+    )
+    if config.system_type != GITHUB_RUNNER_PROFILE and maintenance_requested:
         from common.maintenance_agent_steps import configure_maintenance_agent
 
         steps.append(("Configuring tailored maintenance agent", configure_maintenance_agent))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import grp
 import os
 from pathlib import Path
 import platform
@@ -15,7 +16,9 @@ import tarfile
 import tempfile
 import urllib.request
 
-from lib.atomic_io import read_json_file, write_bytes_atomic, write_json_atomic, write_text_atomic
+from lib.atomic_io import (
+    fsync_tree, read_json_file, rename_path_durable, write_bytes_atomic, write_json_atomic, write_text_atomic,
+)
 from lib.config import SetupConfig
 from lib.github_runner_config import (
     ACCOUNT, APP, DATA, GATE, HOME, HOOK, HOOK_DIR, POLICY, SERVICE, SHA256, TOKEN_FILE, VERSION, validate_policy,
@@ -124,7 +127,8 @@ def _account() -> pwd.struct_passwd:
              "--shell", "/usr/sbin/nologin", ACCOUNT])
         account = pwd.getpwnam(ACCOUNT)
     groups = os.getgrouplist(ACCOUNT, account.pw_gid)
-    if (account.pw_uid == 0 or account.pw_dir != HOME or account.pw_shell != "/usr/sbin/nologin"
+    if (account.pw_uid == 0 or account.pw_gid == 0 or grp.getgrgid(account.pw_gid).gr_name != ACCOUNT
+            or account.pw_dir != HOME or account.pw_shell != "/usr/sbin/nologin"
             or groups != [account.pw_gid]):
         raise ValueError("Runner account must be dedicated, unprivileged and have no supplementary groups")
     return account
@@ -232,7 +236,7 @@ def setup_github_runner(config: SetupConfig) -> None:
         previous = validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
     except FileNotFoundError:
         previous = None
-    if previous and (previous["repository"] != policy["repository"] or previous["labels"] != policy["labels"]):
+    if previous and (previous["repository"].lower() != policy["repository"].lower() or previous["labels"] != policy["labels"]):
         raise ValueError("Repository/label replacement requires deliberate deregistration; see the runner guide")
     if previous is None and os.path.lexists(APP):
         raise ValueError("Unmanaged or interrupted runner installation exists; see runner recovery")
@@ -268,7 +272,8 @@ def setup_github_runner(config: SetupConfig) -> None:
             os.symlink(DATA + "/diag", application / "_diag")
             write_text_atomic(str(application / ".env"), "", mode=0o644)
             write_text_atomic(str(application / ".path"), "/usr/local/bin:/usr/bin:/bin", mode=0o644)
-            os.rename(application, APP)
+            fsync_tree(str(application))
+            rename_path_durable(str(application), APP)
     else:
         run(["systemctl", "stop", SERVICE], timeout=120)
     write_text_atomic(HOOK, render_hook(), mode=0o755)

@@ -79,6 +79,17 @@ def validate_github_runner_settings(config: Any) -> None:
     if any((config.enable_cicd, config.is_build_server, config.is_app_server,
             config.has_agent_features(), config.enable_rdp, config.guacamole)):
         raise ValueError("The dedicated runner profile cannot host agents, RDP or other CI services")
+    unrelated = (
+        "deploy_specs", "deploy_latest", "custom_steps", "enable_cloudflare", "enable_samba",
+        "samba_shares", "share_credentials", "enable_smbclient", "smb_mounts", "enable_syncthing",
+        "sync_specs", "backup_specs", "scrub_specs", "antistatic_server", "antistatic_db",
+        "gogs", "homebox", "device_pairing_providers", "disable_privilege_broker",
+    )
+    if any(getattr(config, name, None) for name in unrelated) or any(
+        value is not None for name, value in vars(config).items()
+        if name == "maintenance_agent" or name.startswith("maintenance_agent_")
+    ):
+        raise ValueError("The dedicated runner profile supports only runner setup and the optional web panel")
 
 
 def validate_systemd_exec_command(

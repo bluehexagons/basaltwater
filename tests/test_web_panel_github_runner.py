@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+import json
+import os
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -49,6 +53,30 @@ class RunnerPanelTests(unittest.TestCase):
         self.assertEqual(len(snapshot.issues), 3)
         self.assertEqual(snapshot.outcomes, [])
         self.assertNotIn("secret", str(snapshot))
+
+    def test_collector_handles_real_corrupt_oversized_and_nonregular_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            policy_file, history = directory / "policy.json", directory / "outcomes.json"
+            policy_file.write_text(json.dumps(policy()))
+            for kind, content in (("malformed", b'{"secret":"do-not-display"'), ("encoding", b"\xff"),
+                                  ("nesting", b"[" * 2000 + b"]" * 2000), ("oversize", b" " * (64 * 1024 + 1)),
+                                  ("symlink", b""), ("fifo", b"")):
+                history.unlink(missing_ok=True)
+                if kind == "symlink":
+                    history.symlink_to(policy_file)
+                elif kind == "fifo":
+                    os.mkfifo(history)
+                else:
+                    history.write_bytes(content)
+                with (self.subTest(kind=kind), patch.object(runner, "POLICY", str(policy_file)),
+                      patch.object(runner, "OUTCOMES", str(history)),
+                      patch.object(runner, "_bounded_command", return_value=("ActiveState=active\n", ""))):
+                    snapshot = runner.collect_runner_status()
+                self.assertEqual(snapshot.policy, policy())
+                self.assertEqual(snapshot.outcomes, [])
+                self.assertIn("Gate outcomes are unavailable or invalid.", snapshot.issues)
+                self.assertNotIn("do-not-display", str(snapshot))
 
     def test_navigation_and_feature_require_fixed_installation_evidence(self) -> None:
         self.assertNotIn("github-runner", features.PanelFeatures().pages)

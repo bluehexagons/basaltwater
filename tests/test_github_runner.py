@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tarfile
@@ -23,6 +24,7 @@ from lib.config import SetupConfig
 from lib.github_runner_config import ACCOUNT, PROFILE, SERVICE, VERSION, PAYLOAD_NAME
 from lib.setup_payloads import PAYLOAD_NAMES, receive_payloads
 from lib.system_types import get_steps_for_system_type
+from plugins.post_setup import build_post_setup_steps
 from web import github_runner_steps as steps
 
 
@@ -61,6 +63,7 @@ class IdentityTests(unittest.TestCase):
             del event["sender"]
             self.assertFalse(gate.evaluate_job(policy(), event, env)[0])
             for key in ("GITHUB_ACTOR", "GITHUB_RUN_ATTEMPT", "GITHUB_REPOSITORY", "GITHUB_SERVER_URL"):
+                event, env = delivery(name)
                 missing = dict(env)
                 missing.pop(key)
                 self.assertFalse(gate.evaluate_job(policy(), event, missing)[0])
@@ -109,6 +112,58 @@ class IdentityTests(unittest.TestCase):
         event["sender"]["login"] = "mallory"
         event["head_commit"] = {"author": {"name": "alice", "username": "alice"}}
         self.assertFalse(gate.evaluate_job(policy(), event, env)[0])
+
+    def test_supported_pr_actions_deleted_pushes_and_case_insensitive_identities(self) -> None:
+        for action in ("opened", "reopened", "synchronize", "closed", None):
+            event, env = delivery("pull_request")
+            event["action"] = action
+            self.assertEqual(gate.evaluate_job(policy(), event, env)[0], action in {"opened", "reopened", "synchronize"})
+        for deleted in (True, None, "false"):
+            event, env = delivery("push")
+            event["deleted"] = deleted
+            self.assertFalse(gate.evaluate_job(policy(), event, env)[0])
+        event, env = delivery("workflow_dispatch")
+        event["sender"]["login"] = "Alice"
+        event["repository"]["full_name"] = "OWNER/REPO"
+        env["GITHUB_ACTOR"] = "ALICE"
+        self.assertTrue(gate.evaluate_job(policy(), event, env)[0])
+
+    def test_preflight_rejects_untrusted_unreadable_and_special_installation_files(self) -> None:
+        executables = {gate.APP + "/bin/Runner.Listener", gate.APP + "/bin/Runner.Worker"}
+        files = {gate.POLICY, gate.HOOK, gate.GATE, *(gate.APP + "/" + name for name in
+                 (".env", ".path", ".runner", ".credentials", ".credentials_rsaparams")), *executables}
+
+        def metadata(path):
+            mode = (stat.S_IFREG | (0o755 if path in executables else 0o644)) if path in files else stat.S_IFDIR | 0o755
+            return SimpleNamespace(st_uid=0, st_mode=mode)
+
+        for failure in ("none", "owner", "writable", "symlink", "fifo", "directory", "unreadable", "not-executable"):
+            def inspect(path):
+                info = metadata(path)
+                if path == gate.HOOK:
+                    if failure == "owner":
+                        info.st_uid = 123
+                    if failure == "writable":
+                        info.st_mode |= 0o020
+                    if failure in {"symlink", "fifo", "directory"}:
+                        info.st_mode = {"symlink": stat.S_IFLNK, "fifo": stat.S_IFIFO, "directory": stat.S_IFDIR}[failure] | 0o755
+                return info
+
+            def accessible(path, access):
+                self.assertTrue(access & os.R_OK)
+                if path in executables:
+                    self.assertTrue(access & os.X_OK)
+                return not ((failure == "unreadable" and path == gate.HOOK)
+                            or (failure == "not-executable" and path in executables))
+
+            with (self.subTest(failure=failure), patch.object(gate.os, "lstat", side_effect=inspect),
+                  patch.object(gate.os, "access", side_effect=accessible),
+                  patch.object(gate, "read_json_file", return_value=policy())):
+                if failure == "none":
+                    self.assertEqual(gate.check_installation(), policy())
+                else:
+                    with self.assertRaises(ValueError):
+                        gate.check_installation()
 
     def test_hook_kills_worker_before_even_always_canary_on_every_failure(self) -> None:
         # Real, disposable child processes qualify the shell's parent boundary;
@@ -184,9 +239,25 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 config(**fields)
 
+    def test_dedicated_profile_rejects_unrelated_post_setup_work(self) -> None:
+        for fields in ({"deploy_specs": [["example.test", "https://example.test/repo.git"]]},
+                       {"enable_cloudflare": True}, {"enable_samba": True}, {"smb_mounts": [["fixture"]]},
+                       {"sync_specs": [["fixture"]]}, {"backup_specs": [["fixture"]]}, {"scrub_specs": [["fixture"]]},
+                       {"gogs": ["example.test"]}, {"antistatic_server": "example.test"},
+                       {"disable_privilege_broker": True}, {"maintenance_agent": True},
+                       {"maintenance_agent": False}, {"maintenance_agent_interval": 60},
+                       {"custom_steps": "reconcile_samba_shares"}):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                config(**fields)
+
     def test_profile_avoids_docker_and_unrelated_services_and_can_include_panel(self) -> None:
-        functions = [function.__name__ for _, function in get_steps_for_system_type(config(web_panel_port=8080))]
+        runner = config(web_panel_port=8080, enable_ssl=True, ssl_email="operator@example.test")
+        functions = [function.__name__ for _, function in
+                     get_steps_for_system_type(runner) + build_post_setup_steps(runner, lambda *_: ("", ""))]
         self.assertEqual(functions, ["check_runner_platform", "setup_user", "setup_github_runner", "configure_web_panel"])
+        other = SetupConfig(host="localhost", username="operator", system_type="server_lite", web_panel_port=8080)
+        self.assertIn("configure_maintenance_agent", [function.__name__ for _, function in
+                      build_post_setup_steps(other, lambda *_: ("", ""))])
         unit = steps.render_unit()
         for required in (f"User={ACCOUNT}", "NoNewPrivileges=yes", "ProtectSystem=strict", "WantedBy=multi-user.target"):
             self.assertIn(required, unit)
@@ -313,7 +384,7 @@ class ConfigurationTests(unittest.TestCase):
               patch.object(steps, "_directory"), patch.object(steps, "run") as run,
               patch.object(steps, "write_text_atomic"), patch.object(steps, "write_json_atomic") as write,
               patch.object(steps, "replace_units") as units, patch.object(steps, "_register") as register):
-            steps.setup_github_runner(config(ci_allowed_users=["bob"]))
+            steps.setup_github_runner(config(ci_repository="OWNER/REPO", ci_allowed_users=["bob"]))
             register.assert_not_called()
             self.assertIn(unittest.mock.call(["systemctl", "stop", SERVICE], timeout=120), run.call_args_list)
             self.assertEqual(write.call_args.args[1]["allowed_users"], ["bob"])
@@ -329,3 +400,119 @@ class ConfigurationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     steps.setup_github_runner(config())
                 run.assert_not_called()
+
+    def test_account_rejects_root_or_shared_primary_group_and_extra_groups(self) -> None:
+        for uid, gid, group, groups in ((0, 123, ACCOUNT, [123]), (123, 0, "root", [0]),
+                                       (123, 123, "shared", [123]), (123, 123, ACCOUNT, [123, 456]),
+                                       (123, 123, ACCOUNT, [123])):
+            account = SimpleNamespace(pw_uid=uid, pw_gid=gid, pw_dir=steps.HOME, pw_shell="/usr/sbin/nologin")
+            with (self.subTest(uid=uid, gid=gid, group=group, groups=groups),
+                  patch.object(steps.pwd, "getpwnam", return_value=account),
+                  patch.object(steps.grp, "getgrgid", return_value=SimpleNamespace(gr_name=group)),
+                  patch.object(steps.os, "getgrouplist", return_value=groups), patch.object(steps, "run") as run):
+                if uid == 123 and gid == 123 and group == ACCOUNT and groups == [123]:
+                    self.assertIs(steps._account(), account)
+                else:
+                    with self.assertRaises(ValueError):
+                        steps._account()
+                run.assert_not_called()
+
+
+class InstallationTests(unittest.TestCase):
+    """Exercise first publication in a private tree, mocking account/host commands."""
+
+    def setUp(self) -> None:
+        temporary_directory = tempfile.TemporaryDirectory
+        self.root = Path(self.enterContext(temporary_directory()))
+        self.opt = self.root / "opt"
+        self.opt.mkdir()
+        paths = {"APP": self.opt / "runner", "DATA": self.root / "data",
+                 "HOME": self.root / "data/home", "HOOK_DIR": self.root / "etc/hook",
+                 "HOOK": self.root / "etc/hook/job-started.sh", "POLICY": self.root / "etc/policy.json",
+                 "TOKEN_FILE": self.root / "registration-token"}
+        for name, path in paths.items():
+            self.enterContext(patch.object(steps, name, str(path)))
+        self.token = Path(steps.TOKEN_FILE)
+        self.token.write_bytes(b"A" * 40)
+        self.token.chmod(0o600)
+        self.enterContext(patch.object(steps, "check_runner_platform"))
+        self.enterContext(patch.object(steps, "is_dry_run", return_value=False))
+        self.enterContext(patch.object(steps, "_account", return_value=SimpleNamespace(pw_uid=123, pw_gid=123)))
+
+        def directory(path, **kwargs):
+            Path(path).mkdir(parents=True, exist_ok=True)
+            Path(path).chmod(kwargs.get("mode", 0o755))
+
+        def staging(**kwargs):
+            self.assertEqual(kwargs["dir"], "/opt")
+            return temporary_directory(**(kwargs | {"dir": str(self.opt)}))
+
+        def download(destination):
+            with tarfile.open(destination, "w:gz") as archive:
+                for name in ("bin/Runner.Listener", "bin/Runner.Worker", "config.sh"):
+                    member = tarfile.TarInfo(name)
+                    member.mode, member.size = 0o755, 4
+                    archive.addfile(member, io.BytesIO(b"code"))
+
+        def register(_archive, application, _policy, token, _account):
+            self.assertEqual(token, b"A" * 40)
+            for name in (".runner", ".credentials", ".credentials_rsaparams"):
+                (application / name).write_text("generated configuration")
+
+        self.enterContext(patch.object(steps, "_directory", side_effect=directory))
+        self.enterContext(patch.object(steps.tempfile, "TemporaryDirectory", side_effect=staging))
+        self.enterContext(patch.object(steps, "_download_release", side_effect=download))
+        self.register = self.enterContext(patch.object(steps, "_register", side_effect=register))
+        self.run = self.enterContext(patch.object(steps, "run"))
+
+        def activate(_units, **_kwargs):
+            self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
+            self.assertEqual(Path(steps.HOOK).read_text(), steps.render_hook())
+            for name in (".runner", ".credentials", ".credentials_rsaparams", ".env", ".path", "bin/Runner.Worker"):
+                self.assertTrue(Path(steps.APP, name).is_file())
+
+        self.units = self.enterContext(patch.object(steps, "replace_units", side_effect=activate))
+
+    def test_first_install_publishes_complete_durable_tree_before_activation(self) -> None:
+        with (patch.object(steps, "fsync_tree", wraps=steps.fsync_tree) as sync,
+              patch.object(steps, "rename_path_durable", wraps=steps.rename_path_durable) as rename):
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertEqual(sync.call_args.args[0], rename.call_args.args[0])
+        self.assertEqual(rename.call_args.args[1], steps.APP)
+        self.assertTrue(Path(steps.APP, "bin/Runner.Worker").is_file())
+        self.assertEqual(Path(steps.APP, "_diag").readlink(), Path(steps.DATA, "diag"))
+        self.assertEqual(Path(steps.APP, ".env").read_text(), "")
+        self.assertEqual(Path(steps.HOOK).read_text(), steps.render_hook())
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
+        self.assertFalse(self.token.exists())
+        self.assertEqual(list(self.opt.iterdir()), [Path(steps.APP)])
+        self.units.assert_called_once_with({SERVICE: steps.render_unit()}, activate=(SERVICE,))
+        self.assertTrue(all("docker" not in shlex.join(call.args[0]) for call in self.run.call_args_list))
+
+    def test_registration_failure_consumes_token_and_never_publishes_or_activates(self) -> None:
+        self.register.side_effect = RuntimeError("registration failed")
+        with self.assertRaisesRegex(RuntimeError, "registration failed"):
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertFalse(self.token.exists())
+        self.assertFalse(Path(steps.POLICY).exists())
+        self.assertEqual(list(self.opt.iterdir()), [])
+        self.units.assert_not_called()
+
+    def test_unusable_token_is_removed_before_host_mutations(self) -> None:
+        self.token.chmod(0o644)
+        with self.assertRaises(ValueError):
+            steps.setup_github_runner(config(ci_registration_payload=True))
+        self.assertFalse(self.token.exists())
+        self.assertFalse(Path(steps.DATA).exists())
+        self.run.assert_not_called()
+        self.units.assert_not_called()
+
+    def test_failed_policy_publication_leaves_stopped_runner_for_repair(self) -> None:
+        steps.setup_github_runner(config(ci_registration_payload=True))
+        self.units.reset_mock()
+        with patch.object(steps, "write_json_atomic", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                steps.setup_github_runner(config(ci_allowed_users=["bob"]))
+        self.assertEqual(self.run.call_args.args[0], ["systemctl", "stop", SERVICE])
+        self.assertEqual(json.loads(Path(steps.POLICY).read_text()), policy())
+        self.units.assert_not_called()

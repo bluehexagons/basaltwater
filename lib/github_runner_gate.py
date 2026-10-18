@@ -70,15 +70,22 @@ def evaluate_job(policy: dict, event: object, environment: dict[str, str]) -> tu
 
 def check_installation() -> dict:
     """Require root-controlled policy, hook, interpreter inputs and app files."""
+    executables = {APP + "/bin/Runner.Listener", APP + "/bin/Runner.Worker"}
     for path in (POLICY, HOOK, GATE, APP, APP + "/.env", APP + "/.path", APP + "/.runner",
                  APP + "/.credentials", APP + "/.credentials_rsaparams",
-                 APP + "/bin/Runner.Listener", APP + "/bin/Runner.Worker"):
+                 *sorted(executables)):
         current = path
         while current != "/":
             info = os.lstat(current)
             if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode):
                 raise ValueError("Runner installation is writable or contains a symlink")
+            directory = current != path or path == APP
+            if not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)):
+                raise ValueError("Runner installation contains an unexpected file type")
             current = os.path.dirname(current)
+        access = os.R_OK | (os.X_OK if path == APP or path in executables else 0)
+        if not os.access(path, access):
+            raise ValueError("Runner installation is not accessible to its service account")
     return validate_policy(read_json_file(POLICY, max_bytes=16 * 1024))
 
 
