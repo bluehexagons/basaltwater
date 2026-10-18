@@ -289,7 +289,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `agent_vm` | Headless agent coding VM; defaults to GitHub CLI and Codex |
 | `agent_workstation` | Graphical agent coding workstation; adds Firefox ESR |
 | `agent_code_vm` | Full graphical agent VM with T3 Code and Geany; Playwright is opt-in |
-| `agent_cachyos` | Local coding tools for an existing CachyOS KDE workstation; requires local setup on CachyOS |
+| `agent_cachyos` | Coding tools for an existing CachyOS KDE workstation; supports local setup and remote-controller setup over SSH |
 | `workstation_desktop` | Desktop workstation with GUI |
 | `workstation_dev` | Developer workstation |
 | `pc_dev` | PC development environment |
@@ -419,12 +419,13 @@ flag explicitly requests a restart as soon as setup finishes.
 ### Common Setup Flags
 
 On CachyOS, `--lan-access` uses the actual private IPv4 prefix of the single
-default-route interface. `--access-source` overrides discovery, and either
-option opts into desktop UFW management for selected T3/Sunshine services.
-When SSH is selected without explicit access flags, CachyOS also resolves a
-private IPv4 LAN source for SSH and saves that choice for refresh. Use
-`--no-lan-access` or `--no-access-source` to retain local-only policy and turn
-off automatic SSH access discovery. See
+default-route interface. `--access-source` supplies explicit sources, and
+either option opts into desktop UFW management for selected T3/Sunshine
+services. When SSH is enabled without explicit access flags, CachyOS selects
+automatic private IPv4 LAN access. The saved selection records the resolved
+SSH boolean, while LAN discovery runs again on every setup and refresh; explicit
+`--access-source` values are saved. Use `--no-lan-access` or
+`--no-access-source` to turn off automatic SSH access discovery. See
 [workstation firewall policy](../workstations/cachyos.md#optional-workstation-firewall).
 The target-address inference and server-service scope below apply to Debian.
 
@@ -665,23 +666,31 @@ services remain untouched and may make the operation refuse safely.
 | `--ssh-password-auth` / `--no-ssh-password-auth` | Persistently permit or disable existing-account password authentication; requires `--ssh` and explicit `--lan-access` or private `--access-source`. `--no-ssh` clears password selection. |
 | `--ssh-password-window MINUTES` | Open a separate temporary password bootstrap service on port 2222 for 1–60 minutes; requires `--ssh` and explicit private access. Never saved or replayed. |
 
-Password modes require an explicit private access selection; automatic
-discovery does not satisfy this validation. Otherwise, when SSH is enabled and
-no access flags are supplied, setup automatically chooses private IPv4 LAN
-access for UFW. The resolved boolean/source choice is saved so refresh replays
-the choice without re-detection. Use `--no-lan-access` or `--no-access-source`
-to keep the existing local-only policy and disable auto-detection, or pass
-private IPv4 `--access-source` values. No public IPv4 or IPv6 SSH grants are
-created, and unrelated firewall rules are retained. A key-only adoption of
-existing enabled SSH requires a valid safe `authorized_keys`; if it is absent
-or unsafe, setup refuses and instructs you to copy a key or select a password
-mode rather than risk lockout. Password windows remain one-shot: expiry or
-reboot closes the listener and its sessions; refresh does not save or replay a
-window. The managed root service boots without KDE. GUI operations that need a
-user bus/session still require the existing desktop session.
+Password modes require explicit private access flags; automatic discovery
+does not satisfy this validation. Otherwise, when SSH is enabled and no access
+flags are supplied, setup selects private IPv4 LAN access for UFW and manages
+the selected T3, Sunshine, and SSH port scopes. The saved selection records
+the resolved SSH boolean, and discovery runs again on every
+setup and refresh. Explicit `--access-source` values are saved. Use
+`--no-lan-access` or `--no-access-source` to disable automatic discovery, or
+pass private IPv4 `--access-source` values. No public IPv4 or IPv6 SSH grants
+are created, and unrelated firewall rules are retained. Key-only adoption of
+an enabled stock SSH service requires usable `authorized_keys`; a fresh
+key-only service can be paired with a password bootstrap window to enroll a key
+without a prior key. The bootstrap listener is never saved or replayed; expiry
+or reboot closes it and its sessions. The managed root service boots without
+KDE. GUI operations that need a user bus/session still require the existing
+desktop session.
+
+Before firewall handover, setup requires the current `SSH_CONNECTION` client
+address, when present, to be among the selected private IPv4 sources. If it is
+not, setup stops before changing the firewall. Connect the remote controller
+over an allowed private IPv4 path; switching from public IPv4 or IPv6 SSH
+during handover can lose access.
 
 For first-time key enrollment, start the window, then copy the key and test
-normal port-22 access before it expires:
+normal port-22 access before it expires. The existing account password is
+used only for this one-shot window:
 
 ```fish
 basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access

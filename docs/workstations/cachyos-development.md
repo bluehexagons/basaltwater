@@ -39,12 +39,18 @@ accepts `--ssh` or `--no-ssh` as explicit overrides. Remote-controller setup
 defaults to SSH. The root-managed service runs without KDE login and grants the
 existing non-root account key-only IPv4 port 22 access. When SSH is enabled,
 private LAN firewall discovery is selected by default unless explicit access
-flags preserve local-only policy or choose private sources. Password modes
-require explicit private access. For initial key enrollment, use a brief
-password window and complete `ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP`,
-then verify normal `ssh USER@WORKSTATION_PRIVATE_IP` before expiry. Verify the
-host fingerprint at the workstation. Read [SSH access](cachyos.md#ssh-access)
-for service adoption limits, password modes, and refresh behavior.
+flags disable automatic discovery or select private sources. When SSH is
+enabled, automatic discovery manages selected T3, Sunshine, and SSH firewall
+ports. Discovery runs again on each setup and refresh; explicit
+`--access-source` values persist. Password modes require explicit private
+access flags. For initial key enrollment, a one-shot password window accepts
+the existing account password on port 2222 for 1–60 minutes; complete
+`ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP`, then verify normal
+`ssh USER@WORKSTATION_PRIVATE_IP` before expiry. This works for a fresh
+key-only service without a preexisting key. Key-only adoption of enabled stock
+sshd requires usable `authorized_keys`. Verify the host fingerprint at the
+workstation. Read [SSH access](cachyos.md#ssh-access) for service adoption
+limits, password modes, and refresh behavior.
 
 From the controller, preview and apply with the existing desktop username:
 
@@ -53,8 +59,11 @@ basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run
 basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node
 ```
 
-The preview makes no SSH connection. Apply verifies the target OS and uses the
-existing account's sudo access for privileged steps. GUI selections that need
+The preview makes no SSH connection. Apply requires already reachable SSH for
+the existing non-root account and its sudo access for privileged steps. The
+controller must connect from a private IPv4 source allowed by the selected
+firewall policy; preflight stops before changing the firewall if the current
+SSH client source is outside those sources. GUI selections that need
 the desktop user bus/session still require that user's existing KDE session;
 SSH alone does not open a GUI session.
 

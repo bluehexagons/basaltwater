@@ -11,9 +11,16 @@ This is an existing human-operated CachyOS KDE desktop. The `agent_cachyos`
 profile installs selected tools; it does not manage the operating system,
 graphics drivers, login manager, account groups, network addressing, or power
 policy. Local setup detects current SSH service state; use `--ssh` or `--no-ssh`
-to override it. Remote-controller setup defaults to SSH and needs an existing
-reachable SSH account. SSH-enabled setup can select private IPv4 firewall
-access automatically; explicit no-access flags preserve local-only policy.
+to override it. Remote-controller setup defaults to SSH and needs an already
+reachable, existing non-root account with sudo. SSH-enabled setup selects
+private IPv4 firewall access automatically unless explicit policy flags disable
+it; LAN discovery runs again on refresh. A one-shot password bootstrap window
+on port 2222 can enroll a key for 1–60 minutes using the existing account
+password; `basaltw refresh --ssh --ssh-password-window 15 --lan-access` opens
+a fresh 15-minute window while preserving the selected tools. The window is
+never saved or replayed, and an ordinary refresh closes an active window. A
+key-only stock SSH service can be adopted only when the account has usable
+`authorized_keys`.
 Use the [CachyOS guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#ssh-access)
 for adoption checks, password modes, and refresh behavior.
 
@@ -49,8 +56,7 @@ restart selected services.
 For remote setup, use `basaltw setup agent_cachyos HOST USER`; the target must
 already accept SSH for its existing non-root desktop account. Review the
 [remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md)
-for controller setup, desktop-session limits, and service commissioning. Keep
-this skill concise and route detailed SSH behavior to the CachyOS guide.
+for controller setup, desktop-session limits, and service commissioning.
 
 Packages use pacman. Leave full OS upgrades to the user's CachyOS workflow and
 never repair a package failure with a partial `pacman -Sy` upgrade. Update
