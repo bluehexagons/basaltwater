@@ -7,10 +7,12 @@ systems; containers and isolated project environments are not part of this
 workstation role. Managed Git worktrees remain useful for concurrent editing.
 
 The owner logs into the existing KDE Wayland account initially. Subsequent work
-normally uses T3 Code, Sunshine/Moonlight, or SSH. Keep that desktop session and
-the user's applications intact. SSH access alone does not establish a usable
-graphical session. Basaltwater does not configure automatic login, unlock the
-desktop, or start a pre-login display.
+normally uses T3 Code, Sunshine/Moonlight, or SSH. A separate controller can
+also run `agent_cachyos` setup over SSH using the existing non-root desktop
+account; this does not create accounts, copy credentials, enable KDE autologin,
+or start a pre-login display. Keep the existing desktop session and its
+applications intact. SSH access alone does not establish a usable graphical
+session or user bus.
 
 ## Prepare the workstation
 
@@ -32,14 +34,29 @@ Moonlight belongs on the connecting client unless this workstation also needs
 to act as a streaming client. Pair Sunshine and configure the intended access
 policy through the existing setup and maintenance procedures.
 
-For remote shell access, SSH must be explicitly selected with `--ssh`; the
-managed service is key-only on IPv4 port 22 and runs without a KDE login. Add
-`--lan-access` or explicit private `--access-source` values to open the selected
-firewall path. For initial key enrollment, use a brief password window and
-complete `ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP`, then verify normal
-`ssh USER@WORKSTATION_PRIVATE_IP` before the window expires. Verify the host
-fingerprint at the workstation. Read [SSH access](cachyos.md#ssh-access) for
-password-mode requirements, refresh behavior, and service ownership boundaries.
+For remote shell access, local setup follows detected SSH service state and
+accepts `--ssh` or `--no-ssh` as explicit overrides. Remote-controller setup
+defaults to SSH. The root-managed service runs without KDE login and grants the
+existing non-root account key-only IPv4 port 22 access. When SSH is enabled,
+private LAN firewall discovery is selected by default unless explicit access
+flags preserve local-only policy or choose private sources. Password modes
+require explicit private access. For initial key enrollment, use a brief
+password window and complete `ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP`,
+then verify normal `ssh USER@WORKSTATION_PRIVATE_IP` before expiry. Verify the
+host fingerprint at the workstation. Read [SSH access](cachyos.md#ssh-access)
+for service adoption limits, password modes, and refresh behavior.
+
+From the controller, preview and apply with the existing desktop username:
+
+```fish
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node
+```
+
+The preview makes no SSH connection. Apply verifies the target OS and uses the
+existing account's sudo access for privileged steps. GUI selections that need
+the desktop user bus/session still require that user's existing KDE session;
+SSH alone does not open a GUI session.
 
 ## Verify remote access before leaving the machine
 
@@ -49,9 +66,10 @@ Use the actual remote client to verify each selected access path independently:
    controller input when used, and reconnection to the existing desktop.
 2. Open a T3 provider thread and terminal. Verify provider credentials and
    executable discovery from the KDE-launched app, not only from SSH.
-3. Connect through SSH as the same desktop account. Keep it available for
-   diagnostics when streaming or a graphical application fails. SSH service
-   and firewall configuration are separate from selecting Sunshine.
+3. Connect through SSH as the same desktop account, locally or from the
+   separate controller. Keep it available for diagnostics when streaming or a
+   graphical application fails. SSH service and firewall configuration are
+   separate from selecting Sunshine.
 4. If agent desktop control is wanted, approve the selected monitor and devices
    with `basaltw desktop --native start --remember`. Test restoration from the
    intended T3 context. A saved grant can still require renewed approval; handle

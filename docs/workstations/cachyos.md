@@ -129,7 +129,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access` and/or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access --no-access-source` closes managed access |
-| Remote shell access | `--ssh` for key-only SSH; add `--lan-access` or `--access-source` for private firewall access; password options are described under [SSH access](#ssh-access) |
+| Remote shell access | SSH follows detected service state on local setup; explicitly use `--ssh` or `--no-ssh` to override; remote setup defaults to SSH; see [SSH access](#ssh-access) |
 | Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
 
 Examples:
@@ -176,25 +176,42 @@ On CachyOS, `--av-tools` includes FFmpeg, ImageMagick, and ExifTool;
 
 ## SSH access
 
-SSH is opt-in for `agent_cachyos`; omission leaves SSH configuration untouched.
-`--ssh` enables a separate root-managed `basaltwater-cachyos-ssh.service` for
-the existing non-root desktop account, listening on IPv4 port 22 with
-key-only authentication. It does not rewrite distro SSH configuration or take
-over an existing sshd service, socket, or custom unit. A conflict or occupied
-port 22 safely stops setup. CachyOS already includes OpenSSH in its base system.
+Local setup resolves whether SSH is selected from the workstation's current
+service state. An active or enabled native `sshd.service`, `sshd.socket`, or
+Basaltwater-managed SSH service means SSH stays enabled; a disabled or absent
+service means it stays off. Merely having OpenSSH installed does not count as
+enablement. An existing valid SSH session also counts as enabled. Use
+`--ssh` or `--no-ssh` to choose explicitly. If local setup cannot determine the
+state, apply requires one of those flags; a dry-run reports that selection is
+deferred. Remote-controller setup defaults to SSH; `--no-ssh` opts out.
 
-Select `--lan-access` or explicit private IPv4 `--access-source` values when
-remote clients need firewall access. `--ssh` alone does not manage the
-firewall. SSH firewall rules are added only for an explicit SSH selection and
-selected private IPv4 sources. There are no public IPv4 or IPv6 grants, and
-unrelated firewall rules are retained.
+On a workstation without recognized SSH, Basaltwater can install its
+root-managed `basaltwater-cachyos-ssh.service` for the existing non-root desktop
+account on IPv4 port 22, with key-only authentication and no KDE login
+requirement. It does not rewrite distro SSH configuration. A recognizable
+packaged native SSH service can be safely adopted after validation, preserving
+existing SSH sessions. Foreign custom units, drop-ins, and unknown port-22
+listeners are refused for review; Basaltwater does not take them over. Turning
+SSH off stops the managed service and recognizable stock native SSH, while
+foreign custom SSH remains untouched and can make disablement fail safely.
 
-For first-time key enrollment, use the separate, short-lived password bootstrap
-listener. Its temporary service listens on port 2222, uses the existing account
-password, and creates or stores no password. Password modes require both
-`--ssh` and a private access selection. Verify the host fingerprint through a
-trusted local channel, copy the key, then test ordinary port-22 access before
-the window expires:
+When SSH is enabled without an explicit access-source choice, setup discovers
+the workstation's private IPv4 LAN source for managed UFW access. This
+discovery is resolved once and saved, so refresh reuses the chosen source
+instead of detecting again. Use `--access-source PRIVATE_IPV4_OR_CIDR` to
+specify private IPv4 sources, or `--no-lan-access` / `--no-access-source` to
+keep the existing local-only firewall policy and disable automatic discovery.
+Password modes still require explicit private access at the command line;
+automatic LAN discovery does not satisfy that requirement. No public IPv4 or
+IPv6 SSH grants are created, and unrelated firewall rules are retained.
+
+For key enrollment, first ensure the existing account has a safe
+`authorized_keys` file. If a key-only SSH service is already enabled but that
+file is missing or unsafe, setup refuses to risk lockout; copy a key safely or
+explicitly choose a password mode. The temporary password bootstrap service
+listens on port 2222, uses the existing account password, and stores no
+password. Verify the host fingerprint through a trusted local channel, copy
+the key, then test ordinary port-22 access before the window expires:
 
 ```fish
 basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
@@ -202,33 +219,30 @@ ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
 ssh USER@WORKSTATION_PRIVATE_IP
 ```
 
-Verify the workstation fingerprint through a trusted local channel before
-accepting it; `ssh-copy-id` prompts for the existing account password.
-Port 22 remains key-only during enrollment. The bootstrap listener and its
-sessions are terminated at the deadline; reboot also closes the window. The
-owned service has no restart policy. The bootstrap allow rule can remain in
-the firewall until a later refresh, but no listener remains after expiry.
+The temporary root service has a one-shot runtime, bounded stop, and no restart
+policy. Reboot or expiry stops its process group and closes active sessions;
+the refresh record never saves or replays a password window. Persistent
+password authentication for the existing account remains enabled until
+`--no-ssh-password-auth` or `--no-ssh` is selected. It requires explicit
+`--lan-access` or private `--access-source` on each request. `--no-ssh` also
+clears password selection. A refresh that includes a fresh window starts a new
+one-shot window; an ordinary refresh does not recreate one. Do not combine
+persistent password authentication with a temporary password window.
 
-To permit the existing account's password persistently, choose
-`--ssh-password-auth` instead of a timed window. This remains enabled until
-`--no-ssh-password-auth` or `--no-ssh` is selected. Do not combine permanent
-password authentication with `--ssh-password-window`.
-
-For an existing workstation, use refresh to preserve its saved tool selection
-while explicitly requesting a new temporary window:
+Remote setup is useful when a controller is separate from the workstation and
+the target already has reachable SSH and a non-root desktop account:
 
 ```fish
-basaltw refresh --ssh --ssh-password-window 15 --lan-access
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node --dry-run
+basaltw setup agent_cachyos WORKSTATION_PRIVATE_IP USER --godot --node
 ```
 
-Timed windows are neither saved nor replayed. An ordinary refresh closes an
-active window; a saved setup record that contains a timed window is rejected.
-Omitting the window on refresh removes the owned port-2222 allow rule. `--no-ssh`
-removes only Basaltwater's managed SSH service, closes its owned bootstrap
-listener, and clears saved SSH authentication selection; unrelated SSH units
-and rules are left alone. A missing SSH key is not a failed setup: use an
-existing key or the temporary enrollment window, so local desktop access is
-never locked out.
+The controller does not create accounts, enable KDE autologin, or copy
+credentials. Setup uses the existing account's sudo access for privileged
+steps. Selected GUI tools that require the user's session still need that user
+bus/session. Remote setup verifies CachyOS on the target before applying
+profile steps. Its dry-run opens no SSH connections. See
+[remote development](cachyos-development.md) for commissioning details.
 
 ## Optional webhook notifications
 
@@ -497,9 +511,11 @@ interface. Combining it with `--access-source` allows both the discovered LAN
 and the explicit sources. For ambiguous/VPN/multiple-network cases, use
 `--no-lan-access --access-source PRIVATE_IP_OR_CIDR` to select explicit sources
 without discovery. Explicit sources must be RFC1918 IPv4 addresses or subnets;
-public sources, IPv6 sources, and all-network wildcards are refused. Rerunning
-refresh re-evaluates the current LAN; use explicit device addresses when you do
-not want that behavior on a roaming workstation.
+public sources, IPv6 sources, and all-network wildcards are refused. When SSH
+is enabled without explicit access flags, the resolved private IPv4 LAN source
+is saved and reused on refresh rather than rediscovered. Use
+`--no-lan-access` or `--no-access-source` to retain local-only policy and turn
+off that automatic selection.
 
 Only selected T3 TCP and Sunshine streaming/pairing ports are allowed from those
 sources. Sunshine's administration port 47990, legacy RDP 3389, and T3 UDP remain
@@ -513,10 +529,12 @@ recover. Existing established connections and custom UFW before-rules are not
 revoked. Unrelated ports (including old development-server rules) require review.
 
 `--no-lan-access` with no explicit sources closes these managed ports remotely.
-Omitting all access flags leaves the firewall alone. This does not change T3's
-bind address, start Sunshine, enable SSH/RDP, or open KDE Connect/Steam hosting
-ports. Desktop T3 uses port 3773 here; nonstandard desktop ports need manual
-firewall configuration. Sunshine with custom ports also needs manual rules.
+Omitting access flags leaves these T3/Sunshine rules unchanged; SSH has the
+separate automatic private-source behavior described in [SSH access](#ssh-access).
+This does not change T3's bind address, start Sunshine, enable RDP, or open KDE
+Connect/Steam hosting ports. Desktop T3 uses port 3773 here; nonstandard
+desktop ports need manual firewall configuration. Sunshine with custom ports
+also needs manual rules.
 Managed T3 ports cannot overlap the protected RDP/Sunshine TCP ports.
 Inspect `sudo ufw status verbose` and verify access from the intended client.
 

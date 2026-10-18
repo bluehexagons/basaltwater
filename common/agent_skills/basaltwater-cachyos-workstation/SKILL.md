@@ -10,8 +10,12 @@ metadata:
 This is an existing human-operated CachyOS KDE desktop. The `agent_cachyos`
 profile installs selected tools; it does not manage the operating system,
 graphics drivers, login manager, account groups, network addressing, or power
-policy. Firewall changes require explicit `--lan-access`, `--access-source`,
-or `--no-lan-access` options.
+policy. Local setup detects current SSH service state; use `--ssh` or `--no-ssh`
+to override it. Remote-controller setup defaults to SSH and needs an existing
+reachable SSH account. SSH-enabled setup can select private IPv4 firewall
+access automatically; explicit no-access flags preserve local-only policy.
+Use the [CachyOS guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#ssh-access)
+for adoption checks, password modes, and refresh behavior.
 
 The main role is remote Godot development and playtesting through T3 Code,
 Sunshine/Moonlight, and same-user SSH after KDE login. Production builds and
@@ -42,15 +46,11 @@ use `basaltw refresh --dry-run` and then `basaltw refresh`. Refresh merges
 supported selection changes; finish active work before an update that may
 restart selected services.
 
-SSH is opt-in. Use `--ssh` for the independent key-only port-22 service and
-select `--lan-access` or private `--access-source` values when remote firewall
-access is needed. Password authentication requires explicit private access;
-prefer `--ssh-password-window MINUTES` for key enrollment, then verify normal
-key-based SSH before expiry. Use
-`basaltw refresh --ssh --ssh-password-window 15 --lan-access` to preserve the
-saved tool selection while opening a temporary window. See the
-[SSH setup guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#ssh-access)
-for service ownership, password modes, and refresh lifecycle details.
+For remote setup, use `basaltw setup agent_cachyos HOST USER`; the target must
+already accept SSH for its existing non-root desktop account. Review the
+[remote development guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos-development.md)
+for controller setup, desktop-session limits, and service commissioning. Keep
+this skill concise and route detailed SSH behavior to the CachyOS guide.
 
 Packages use pacman. Leave full OS upgrades to the user's CachyOS workflow and
 never repair a package failure with a partial `pacman -Sy` upgrade. Update
