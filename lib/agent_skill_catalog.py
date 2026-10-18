@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import stat
 
 from lib.agent_skill_bundles import (
     SKILL_CATALOG_PROVIDERS,
+    _INVENTORY,
     _MARKER,
+    _digest,
+    _inventory,
     _read,
     _source_bundle,
     check_skill_path,
@@ -42,8 +46,19 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                 elif _MARKER not in entrypoint:
                     status = "personal"
                 else:
-                    different = False
-                    for relative, (expected, _mode) in _source_bundle(source).items():
+                    files = _source_bundle(source)
+                    recorded = _inventory(destination, uid)
+                    inventory = destination / _INVENTORY
+                    if inventory.exists() and inventory.stat().st_mode & 0o022:
+                        raise RuntimeError(f"Unsafe managed agent skill inventory: {inventory}")
+                    expected_inventory = {
+                        name: _digest(content)
+                        for name, (content, _mode) in files.items() if name != "SKILL.md"
+                    }
+                    # Legacy bundles may lack an inventory. Existing records
+                    # must match too, including resources removed from source.
+                    different = inventory.exists() and recorded != expected_inventory
+                    for relative, (expected, mode) in files.items():
                         path = destination / relative
                         content = _read(path, uid)
                         if content is None:
@@ -52,7 +67,7 @@ def inspect_skill_catalogs(home: str) -> dict[str, object]:
                         if path.stat().st_mode & 0o022:
                             status = "unsafe"
                             break
-                        different = different or content != expected
+                        different = different or content != expected or stat.S_IMODE(path.stat().st_mode) != mode
                     if status == "current" and different:
                         status = "different"
             except (OSError, ValueError, RuntimeError):

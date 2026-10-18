@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -68,6 +69,51 @@ class SkillCatalogTests(unittest.TestCase):
         resource.write_text((self.source / "references/context.md").read_text())
         (self.source / "SKILL.md").write_text("name: basaltwater-example\nmanaged-by: basaltwater\nNew version\n")
         self.assertEqual(self.status(), "different")
+
+    def test_obsolete_managed_resources_are_reported_until_reconciled(self) -> None:
+        destination = self.install()
+        (self.source / "references/context.md").unlink()
+        self.assertEqual(self.status(), "different")
+        self.assertTrue((destination / "references/context.md").exists())
+        with patch("lib.agent_skill_bundles.os.chown"):
+            install_skill_bundle(self.source, destination, os.getuid(), os.getgid())
+        self.assertEqual(self.status(), "current")
+        self.assertFalse((destination / "references/context.md").exists())
+
+    def test_existing_inventory_is_validated_without_rewriting_it(self) -> None:
+        destination = self.install()
+        inventory = destination / ".basaltwater-files.json"
+        for body in ("{invalid", json.dumps({"version": 1, "files": {"../outside": "0" * 64}})):
+            with self.subTest(body=body):
+                inventory.write_text(body)
+                self.assertEqual(self.status(), "unsafe")
+                self.assertEqual(inventory.read_text(), body)
+
+    def test_inventory_digests_and_permissions_are_checked(self) -> None:
+        destination = self.install()
+        inventory = destination / ".basaltwater-files.json"
+        value = json.loads(inventory.read_text())
+        value["files"]["references/context.md"] = "0" * 64
+        inventory.write_text(json.dumps(value))
+        self.assertEqual(self.status(), "different")
+        inventory.chmod(0o666)
+        self.assertEqual(self.status(), "unsafe")
+        inventory.unlink()
+        self.assertEqual(self.status(), "current")  # Legacy bundles have no inventory.
+
+    def test_script_execute_permissions_are_part_of_source_freshness(self) -> None:
+        script = self.source / "scripts/check.sh"
+        script.parent.mkdir()
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+        destination = self.install()
+        installed = destination / "scripts/check.sh"
+        installed.chmod(0o644)
+        self.assertEqual(self.status(), "different")
+        self.assertEqual(installed.stat().st_mode & 0o777, 0o644)
+        with patch("lib.agent_skill_bundles.os.chown"):
+            install_skill_bundle(self.source, destination, os.getuid(), os.getgid())
+        self.assertEqual(self.status(), "current")
 
     def test_same_name_personal_override_is_preserved_and_reported(self) -> None:
         destination = self.install()

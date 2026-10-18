@@ -47,7 +47,12 @@ context and thread-scoped tools are separate. See the
 Run `basaltw agent manifest /absolute/project --json` as the provider account to
 list known Basaltwater entrypoints in both user catalogs. `skills` reports
 `current`, `different`, `incomplete`, `unsafe`, or `personal` against the running
-Basaltwater installation's source. `different` can mean an older bundle or local
+Basaltwater installation's source. The comparison includes file contents and
+permissions, including script executability. Existing ownership inventories are
+validated and compared with the source resource digests; obsolete recorded
+resources or stale digests report `different`, while malformed or unsafe
+inventories report `unsafe`. Legacy bundles without an inventory are compared
+directly with source files. `different` can also mean an older bundle or local
 edits; setup preserves edited supporting resources rather than overwriting them.
 This is an inventory of known Basaltwater names, not personal, plugin, repository,
 or system skills. `session_access` stays `unverified`; it does not read provider
