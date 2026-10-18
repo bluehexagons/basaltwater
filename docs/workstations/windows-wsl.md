@@ -1,11 +1,24 @@
 # Ubuntu WSL on Windows 11
 
-Basaltwater can prepare a fully updated x86-64 Windows 11 desktop installation
-for Ubuntu WSL builds and agent tools. Run setup from the Windows account that
-will own the build worker and T3 Code desktop. That account must have
-administrator rights for initial WSL installation. Windows Server editions,
-ARM, pre-login operation, and VM provisioning are outside this release.
-Windows activation is not a setup prerequisite.
+Basaltwater can prepare a fully updated x86-64 Windows 11 desktop installation,
+including a VM provisioned separately, for Ubuntu WSL builds and agent tools.
+Run setup from the Windows account that will own the build worker and T3 Code
+desktop. That account must have administrator rights for initial WSL
+installation. Windows Server editions, ARM, and pre-login operation are
+outside this release. Basaltwater does not provision VMs or configure the
+hypervisor. Windows activation is not a setup prerequisite.
+
+## Use a Proxmox Windows VM
+
+Create and install a Windows 11 x86-64 VM in Proxmox, and configure its CPU to
+expose virtualization extensions for nested virtualization. WSL 2 requires
+nested virtualization when Windows runs in a VM; see Microsoft's
+[WSL FAQ](https://learn.microsoft.com/en-us/windows/wsl/faq). Install Windows
+updates, log in as the intended owner, then use the install steps below.
+`-T3CodeDesktop` installs T3 Code natively on Windows; in T3 Code, connect to
+the Ubuntu distribution under Settings > Connections as described below. This
+is a supported setup path for a manually provisioned guest, but the guest's
+creation and lifecycle remain outside Basaltwater setup.
 
 ## Install
 
