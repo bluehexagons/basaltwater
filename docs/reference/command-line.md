@@ -633,6 +633,48 @@ list. Neither preview is a completed live setup.
 | `--butler` | CachyOS only: reviewed AUR itch.io publishing CLI; no login/upload |
 | `--steamcmd` | CachyOS only: reviewed AUR SteamCMD plus 32-bit runtime libraries; no startup/login/upload |
 
+### CachyOS SSH flags
+
+These options apply only to local `agent_cachyos` setup and refresh. SSH is
+opt-in; omitting the SSH options leaves SSH configuration untouched. `--ssh`
+installs an independent, root-managed `basaltwater-cachyos-ssh.service` on
+IPv4 port 22 for the existing non-root desktop account. It accepts keys only.
+It does not rewrite the distro's SSH configuration or disable an existing
+sshd service, socket, or custom unit; a conflict or occupied port 22 stops
+setup safely. `openssh` is already part of the CachyOS base system.
+
+| Flag | Description |
+|------|-------------|
+| `--ssh` / `--no-ssh` | Enable the owned key-only CachyOS SSH service, or remove/disable only that service. Omission leaves SSH untouched. |
+| `--ssh-password-auth` / `--no-ssh-password-auth` | With `--ssh`, persistently permit password authentication for the existing account; requires `--lan-access` or `--access-source`. Explicitly turn it off with `--no-ssh-password-auth` or `--no-ssh`. |
+| `--ssh-password-window MINUTES` | With `--ssh`, open a separate temporary password bootstrap service on port 2222 for 1–60 minutes; requires `--lan-access` or `--access-source`. It is not saved or replayed. |
+
+Password-authentication modes require a private access selection. `--ssh`
+alone does not manage the firewall; add `--lan-access` or one or more private
+IPv4 `--access-source` values if a remote client needs access. Only selected
+private IPv4 sources receive managed SSH firewall access; no public IPv4 or
+IPv6 SSH grants are created. Existing unrelated firewall rules are retained.
+Port 22 is managed only when SSH is explicitly selected. Port 2222 is opened
+only for a requested password window and its owned allow rule is removed when
+the window is omitted on a later refresh.
+
+For first-time key enrollment, start the window, then copy the key and test
+normal port-22 access before it expires:
+
+```fish
+basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
+ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
+ssh USER@WORKSTATION_PRIVATE_IP
+```
+
+Verify the workstation host fingerprint through a trusted local channel before
+accepting it; `ssh-copy-id` prompts for the existing account password. The normal
+SSH service remains key-only on port 22. The temporary
+service uses the existing account password, generates or stores no password,
+and is stopped at its deadline or reboot; expiry terminates its daemon and
+bootstrap sessions. A persistent password mode remains enabled until explicitly
+disabled. See [CachyOS SSH setup](../workstations/cachyos.md#ssh-access).
+
 Debian's `--blender` installs the configured release's `blender` APT package,
 including on headless `agent_vm` hosts. It does not download the newest upstream
 release, add a repository, or install a dedicated update timer; normal host

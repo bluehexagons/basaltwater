@@ -32,6 +32,15 @@ Moonlight belongs on the connecting client unless this workstation also needs
 to act as a streaming client. Pair Sunshine and configure the intended access
 policy through the existing setup and maintenance procedures.
 
+For remote shell access, SSH must be explicitly selected with `--ssh`; the
+managed service is key-only on IPv4 port 22 and runs without a KDE login. Add
+`--lan-access` or explicit private `--access-source` values to open the selected
+firewall path. For initial key enrollment, use a brief password window and
+complete `ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP`, then verify normal
+`ssh USER@WORKSTATION_PRIVATE_IP` before the window expires. Verify the host
+fingerprint at the workstation. Read [SSH access](cachyos.md#ssh-access) for
+password-mode requirements, refresh behavior, and service ownership boundaries.
+
 ## Verify remote access before leaving the machine
 
 Use the actual remote client to verify each selected access path independently:
