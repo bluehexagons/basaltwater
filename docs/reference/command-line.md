@@ -421,7 +421,10 @@ flag explicitly requests a restart as soon as setup finishes.
 On CachyOS, `--lan-access` uses the actual private IPv4 prefix of the single
 default-route interface. `--access-source` overrides discovery, and either
 option opts into desktop UFW management for selected T3/Sunshine services.
-`--no-lan-access` without explicit sources closes that managed access. See
+When SSH is selected without explicit access flags, CachyOS also resolves a
+private IPv4 LAN source for SSH and saves that choice for refresh. Use
+`--no-lan-access` or `--no-access-source` to retain local-only policy and turn
+off automatic SSH access discovery. See
 [workstation firewall policy](../workstations/cachyos.md#optional-workstation-firewall).
 The target-address inference and server-service scope below apply to Debian.
 
@@ -635,28 +638,47 @@ list. Neither preview is a completed live setup.
 
 ### CachyOS SSH flags
 
-These options apply only to local `agent_cachyos` setup and refresh. SSH is
-opt-in; omitting the SSH options leaves SSH configuration untouched. `--ssh`
-installs an independent, root-managed `basaltwater-cachyos-ssh.service` on
-IPv4 port 22 for the existing non-root desktop account. It accepts keys only.
-It does not rewrite the distro's SSH configuration or disable an existing
-sshd service, socket, or custom unit; a conflict or occupied port 22 stops
-setup safely. `openssh` is already part of the CachyOS base system.
+These options apply to local `agent_cachyos` setup and refresh, and to remote
+controller setup. Local setup detects current SSH service state: active or
+enabled native `sshd.service`, `sshd.socket`, or managed SSH means enabled;
+disabled or absent means off. Installed OpenSSH alone does not count. A valid
+existing SSH session also means enabled. Use `--ssh` or `--no-ssh` to override.
+If local apply cannot determine the state, choose explicitly; dry-run defers
+unknown state. Remote controller setup defaults to SSH and accepts
+`basaltw setup agent_cachyos HOST USER`; it requires reachable SSH and an
+existing non-root desktop account, creates no account, and does not configure
+autologin or copy credentials. Its dry-run makes zero SSH connections, and
+apply verifies the target OS.
+
+When no managed service exists, `--ssh` provides a root-managed
+`basaltwater-cachyos-ssh.service` on IPv4 port 22 for the existing non-root
+desktop account. It runs without KDE and accepts keys only. The service can
+safely adopt a recognizable packaged native sshd service after validation,
+without rewriting distro configuration and while preserving sessions. Foreign
+custom units, drop-ins, or unknown listeners on port 22 are refused. `--no-ssh`
+stops the managed service and recognizable stock native SSH; foreign custom
+services remain untouched and may make the operation refuse safely.
 
 | Flag | Description |
 |------|-------------|
-| `--ssh` / `--no-ssh` | Enable the owned key-only CachyOS SSH service, or remove/disable only that service. Omission leaves SSH untouched. |
-| `--ssh-password-auth` / `--no-ssh-password-auth` | With `--ssh`, persistently permit password authentication for the existing account; requires `--lan-access` or `--access-source`. Explicitly turn it off with `--no-ssh-password-auth` or `--no-ssh`. |
-| `--ssh-password-window MINUTES` | With `--ssh`, open a separate temporary password bootstrap service on port 2222 for 1–60 minutes; requires `--lan-access` or `--access-source`. It is not saved or replayed. |
+| `--ssh` / `--no-ssh` | Enable or disable SSH explicitly. On local setup, omission detects current service state; on remote-controller setup SSH defaults on. |
+| `--ssh-password-auth` / `--no-ssh-password-auth` | Persistently permit or disable existing-account password authentication; requires `--ssh` and explicit `--lan-access` or private `--access-source`. `--no-ssh` clears password selection. |
+| `--ssh-password-window MINUTES` | Open a separate temporary password bootstrap service on port 2222 for 1–60 minutes; requires `--ssh` and explicit private access. Never saved or replayed. |
 
-Password-authentication modes require a private access selection. `--ssh`
-alone does not manage the firewall; add `--lan-access` or one or more private
-IPv4 `--access-source` values if a remote client needs access. Only selected
-private IPv4 sources receive managed SSH firewall access; no public IPv4 or
-IPv6 SSH grants are created. Existing unrelated firewall rules are retained.
-Port 22 is managed only when SSH is explicitly selected. Port 2222 is opened
-only for a requested password window and its owned allow rule is removed when
-the window is omitted on a later refresh.
+Password modes require an explicit private access selection; automatic
+discovery does not satisfy this validation. Otherwise, when SSH is enabled and
+no access flags are supplied, setup automatically chooses private IPv4 LAN
+access for UFW. The resolved boolean/source choice is saved so refresh replays
+the choice without re-detection. Use `--no-lan-access` or `--no-access-source`
+to keep the existing local-only policy and disable auto-detection, or pass
+private IPv4 `--access-source` values. No public IPv4 or IPv6 SSH grants are
+created, and unrelated firewall rules are retained. A key-only adoption of
+existing enabled SSH requires a valid safe `authorized_keys`; if it is absent
+or unsafe, setup refuses and instructs you to copy a key or select a password
+mode rather than risk lockout. Password windows remain one-shot: expiry or
+reboot closes the listener and its sessions; refresh does not save or replay a
+window. The managed root service boots without KDE. GUI operations that need a
+user bus/session still require the existing desktop session.
 
 For first-time key enrollment, start the window, then copy the key and test
 normal port-22 access before it expires:
