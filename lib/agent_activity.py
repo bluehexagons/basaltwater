@@ -14,17 +14,47 @@ from lib.validation import validate_filesystem_path
 
 _PROVIDERS = frozenset({"codex", "claude", "opencode"})
 _ROLLOUT_LIMIT = 1024 * 1024
+_CODEX_VALUE_OPTIONS = frozenset({
+    b"-c", b"--config", b"--enable", b"--disable", b"--remote",
+    b"--remote-auth-token-env", b"-i", b"--image", b"-m", b"--model",
+    b"--local-provider", b"-p", b"--profile", b"-s", b"--sandbox",
+    b"-a", b"--ask-for-approval", b"-C", b"--cd", b"--add-dir",
+})
+_CODEX_SWITCHES = frozenset({
+    b"--strict-config", b"--oss", b"--approve-for-me", b"--full-auto",
+    b"--dangerously-bypass-approvals-and-sandbox", b"--dangerously-bypass-hook-trust",
+    b"--worktree", b"--search", b"--no-alt-screen", b"--no-daemon",
+    b"-h", b"--help", b"-V", b"--version",
+})
 
 
 def _one_shot(process: Path, name: str) -> bool:
     """Recognize executing CLI modes, excluding app servers and open prompts."""
     with (process / "cmdline").open("rb") as handle:
-        arguments = handle.read(4096).split(b"\0")
+        raw = handle.read(4097)
+    arguments = iter(raw[:4096].rstrip(b"\0").split(b"\0")[1:])
     if name == "claude":
-        return b"-p" in arguments[1:] or b"--print" in arguments[1:]
-    return len(arguments) > 1 and arguments[1] in (
-        (b"exec", b"e", b"review") if name == "codex" else (b"run",)
-    )
+        return any(argument in {b"-p", b"--print"} for argument in arguments)
+    if name != "codex":
+        return next(arguments, b"") == b"run"
+    for argument in arguments:
+        if argument == b"--":
+            return False  # A following prompt is not a subcommand.
+        option, separator, _ = argument.partition(b"=")
+        if option in _CODEX_VALUE_OPTIONS:
+            if not separator and next(arguments, None) is None:
+                raise ValueError("Incomplete Codex option")
+        elif argument[:2] in _CODEX_VALUE_OPTIONS and not argument.startswith(b"--"):
+            continue  # Attached short-option value, such as -cmodel=... .
+        elif argument in _CODEX_SWITCHES:
+            continue
+        elif argument.startswith(b"-"):
+            raise ValueError("Unknown Codex option; activity cannot be determined")
+        else:
+            return argument in {b"exec", b"e", b"review"}
+    if len(raw) > 4096:
+        raise ValueError("Codex command exceeds the activity inspection limit")
+    return False
 
 
 def _codex_turn_active(descriptor: Path) -> bool:
@@ -80,7 +110,7 @@ def _process_started_at(process: Path, proc_root: Path) -> str:
 
 
 def _t3_work_active(database: Path, started_at: str, uid: int) -> bool:
-    """Query only status/time columns, using the live WAL and no database writes."""
+    """Query activity metadata, using the live WAL and no database writes."""
     metadata = database.lstat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != uid:
         raise ValueError("Unsafe T3 activity database")
@@ -101,6 +131,19 @@ def _t3_work_active(database: Path, started_at: str, uid: int) -> bool:
         connection.set_progress_handler(progress, 1000)
         if database.name == "statev2.sqlite":
             query = """
+                WITH RECURSIVE waiting_nodes(node_id) AS (
+                    SELECT node_id FROM orchestration_v2_projection_runtime_requests
+                    WHERE status = 'pending'
+                    UNION
+                    SELECT child.subagent_id FROM orchestration_v2_projection_subagents AS child
+                    JOIN orchestration_v2_projection_runtime_requests AS request
+                      ON request.thread_id = child.child_thread_id
+                    WHERE request.status = 'pending'
+                    UNION
+                    SELECT node.parent_node_id FROM orchestration_v2_projection_nodes AS node
+                    JOIN waiting_nodes AS waiting ON waiting.node_id = node.node_id
+                    WHERE node.parent_node_id IS NOT NULL
+                )
                 SELECT 1 FROM orchestration_v2_projection_runs AS run
                 WHERE status IN ('preparing', 'starting', 'running')
                   AND julianday(requested_at) >= julianday(?)
@@ -113,11 +156,41 @@ def _t3_work_active(database: Path, started_at: str, uid: int) -> bool:
                 WHERE status = 'running' AND julianday(started_at) >= julianday(?)
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_runtime_requests AS request
-                    WHERE request.thread_id = turn.thread_id AND request.status = 'pending'
+                    WHERE request.status = 'pending' AND (
+                      request.provider_turn_id = turn.provider_turn_id OR
+                      (request.provider_turn_id IS NULL AND request.node_id = turn.node_id)
+                    )
+                  )
+                UNION ALL
+                SELECT 1 FROM orchestration_v2_projection_subagents AS child
+                WHERE origin = 'provider_native' AND status IN ('running', 'waiting')
+                  AND completed_at IS NULL AND julianday(started_at) >= julianday(?)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM waiting_nodes WHERE node_id = child.subagent_id
+                  )
+                UNION ALL
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS item
+                WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  AND status IN ('running', 'waiting') AND julianday(updated_at) >= julianday(?)
+                  AND NOT (type = 'dynamic_tool' AND
+                    COALESCE(json_extract(payload_json, '$.input.persistent'), 0) = 1)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS run
+                    WHERE run.run_id = item.run_id AND run.status = 'rolled_back'
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM waiting_nodes WHERE node_id = item.node_id
+                  )
+                UNION ALL
+                SELECT 1 FROM orchestration_v2_projection_provider_threads AS thread
+                WHERE status IN ('active', 'idle') AND julianday(updated_at) >= julianday(?)
+                  AND EXISTS (
+                    SELECT 1 FROM json_each(thread.payload_json, '$.pendingBackgroundTasks') AS task
+                    WHERE COALESCE(json_extract(task.value, '$.kind'), '') != 'monitor'
                   )
                 LIMIT 1
             """
-            parameters = (started_at, started_at)
+            parameters = (started_at,) * 5
         else:
             query = """
                 SELECT 1 FROM projection_thread_sessions

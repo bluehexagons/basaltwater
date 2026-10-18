@@ -154,6 +154,7 @@ stable -> 22.3 (-> v22.3.0) (default)
         self.assertIsNone(details)
         self.assertEqual(mock_run_nvm.call_count, 3)
         for call_args in mock_run_nvm.call_args_list:
+            self.assertEqual(call_args.args[0][:4], ["nvm", "exec", "default", "npm"])
             self.assertTrue(any(arg.startswith("--before=") for arg in call_args.args[0]))
 
     @patch("web.service_tools.auto_update_node.run_command")
@@ -164,13 +165,34 @@ stable -> 22.3 (-> v22.3.0) (default)
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
         self.assertEqual(args[0][:2], ["/bin/bash", "-lc"])
+        self.assertIn('. "$NVM_DIR/nvm.sh" --no-use && ', args[0][2])
         self.assertIn("nvm version default", args[0][2])
+        self.assertIs(kwargs["check"], False)
         self.assertEqual(kwargs["cwd"], "/home/user")
         self.assertEqual(kwargs["env"]["HOME"], "/home/user")
         self.assertIn("USER", kwargs["env"])
         self.assertIn("LOGNAME", kwargs["env"])
         self.assertNotIn("shell", kwargs)
         self.assertEqual(kwargs["timeout"], auto_update_node._NVM_COMMAND_TIMEOUT_SECONDS)
+
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_missing_default_does_not_raise_before_update_can_continue(self, mock_popen):
+        mock_popen.return_value.communicate.return_value = ("N/A\n", "")
+        mock_popen.return_value.returncode = 3
+
+        self.assertEqual(auto_update_node.get_current_version(), "")
+        mock_popen.assert_called_once()
+
+    @patch("lib.remote_utils.subprocess.Popen")
+    def test_install_failure_returns_details_to_updater(self, mock_popen):
+        mock_popen.return_value.communicate.return_value = ("", "download failed")
+        mock_popen.return_value.returncode = 1
+
+        success, details = auto_update_node.install_target_version("lts", "v20.12.3", "v20.12.2")
+
+        self.assertFalse(success)
+        self.assertEqual(details, "download failed")
+        mock_popen.assert_called_once()
 
     @patch("web.service_tools.auto_update_node.run_command")
     @patch("web.service_tools.auto_update_node.get_nvm_dir", return_value="/home/user/.nvm")

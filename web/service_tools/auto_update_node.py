@@ -54,13 +54,13 @@ def get_nvm_dir() -> str:
 
 
 def run_nvm_command(args: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run a command with nvm environment loaded."""
+    """Load nvm without activating a runtime and return failures to callers."""
     nvm_dir = get_nvm_dir()
     home_dir = os.path.dirname(nvm_dir)
     pw_entry = pwd.getpwuid(os.getuid())
     full_cmd = (
         f'export NVM_DIR={shlex.quote(nvm_dir)} && '
-        '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && '
+        '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" --no-use && '
         f'{shlex.join(args)}'
     )
 
@@ -68,6 +68,7 @@ def run_nvm_command(args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return run_command(
             command,
+            check=False,
             capture_output=True,
             text=True,
             cwd=home_dir,
@@ -431,7 +432,7 @@ def update_global_packages() -> tuple[bool, MaybeStr]:
     failures: list[str] = []
 
     for action, command in commands:
-        result = run_nvm_command(command)
+        result = run_nvm_command(["nvm", "exec", "default", *command])
         if not log_subprocess_result(logger, action, result):
             details = result.stderr.strip() or result.stdout.strip() or command
             failures.append(f"{action}: {details}")

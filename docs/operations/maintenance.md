@@ -165,6 +165,11 @@ Node.js and uv use a conservative default policy:
   removal/migration share a per-user lock; a runtime claimed by a project during
   an update keeps its existing global tools. A busy or unsafe lock defers the
   operation with an error instead of waiting or removing an unprotected target.
+  Maintenance loads nvm without activating the default runtime, so an LTS
+  alias pointing to a newly released, not-yet-installed version cannot block
+  installation or rollback. Opted-in global upgrades explicitly select the
+  default runtime. Nonzero nvm commands follow the updater's error reporting
+  and rollback paths rather than aborting with an uncaught command exception.
   A later setup rerun verifies the promised
   Node/npm/PNPM baseline by running each version command and repairs it if a
   manual change left one unavailable or unusable. Setup fails visibly when the
@@ -497,9 +502,15 @@ When a restart is pending, the restart job checks live agent work owned by the
 configured setup account. T3 Code's open orchestration database supplies run
 and provider-turn status; queued work, requests waiting for human input, and
 activity predating the current server process do not block a restart. This
-applies to all providers managed through T3. Standalone Codex turns are detected
+applies to all providers managed through T3, including native subagents and
+background commands that outlive their parent turn. A request waiting for human
+input does not hide work in another provider turn or child. Passive monitors
+and abandoned rolled-back work do not count as executing background tasks.
+Standalone Codex turns are detected
 from lifecycle events in rollouts held open by the provider. Executing Codex
-`exec`/`review`, Claude `--print`, and OpenCode `run` commands also count as work.
+`exec`/`review`, including scheduled tasks with global options before the
+subcommand and no saved rollout, Claude `--print`, and OpenCode `run` commands
+also count as work.
 Standalone interactive Claude and OpenCode sessions need an explicit hold when
 their work must cross the restart window.
 
@@ -510,7 +521,8 @@ defer restarts on hosts configured with coding agents; hosts without coding
 agents still protect non-idle human logins. Use a bounded hold for independent
 work that needs protection, such as an unattended build.
 
-The job records only workload categories. It reads T3 status/time metadata,
+The job records only workload categories. It reads T3 status/time metadata and
+background-task kinds and persistence flags,
 bounded provider command arguments and Codex rollout tails locally; it does not
 log their contents or scan closed session history. An unreadable activity
 source defers the restart rather than reporting the host idle. An invalid hold
