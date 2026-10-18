@@ -36,6 +36,7 @@ from common.service_tools.web_panel_diagnostics import (
     render_diagnostics,
 )
 from common.service_tools.web_panel_jobs import parse_job_query, render_jobs
+from common.service_tools.web_panel_github_runner import parse_runner_query, render_runner_page
 from common.service_tools.web_panel_features import PanelFeatures, discover_features, unit_installed
 from common.service_tools.web_panel_ca_ui import SCRIPT as CA_SCRIPT, SCRIPT_CSP as CA_SCRIPT_CSP, STYLE as CA_STYLE
 from lib.config import WEB_PANEL_CA_HTTP_PORT
@@ -2135,6 +2136,7 @@ class WebPanelHandler(BaseHTTPRequestHandler):
 
     def _feature_available(self, path: str) -> bool:
         pages = {
+            "/github-runner": "github-runner",
             "/agents": "agents", "/agent-tools": "agent-tools", "/agent-inbox": "agent-inbox",
             "/maintenance-agent": "maintenance-agent", "/credentials": "credentials",
             "/publishing": "publishing", "/admin": "admin",
@@ -2291,6 +2293,17 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                 ),
                 "text/html",
             )
+            return
+        if path == "/github-runner":
+            try:
+                load = parse_runner_query(parsed.query)
+            except ValueError:
+                self._send(HTTPStatus.BAD_REQUEST, "Invalid runner query\n", "text/plain")
+                return
+            self._send(HTTPStatus.OK, render_runner_page(
+                load, _PAGE_STYLE, self.state.manifest["host"],
+                navigation=self.state.navigation("github-runner"),
+            ), "text/html")
             return
         if path == "/services":
             try:

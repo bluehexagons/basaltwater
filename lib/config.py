@@ -6,7 +6,7 @@ import argparse
 import ipaddress
 import shlex
 import socket
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from functools import lru_cache
 from typing import Optional, cast
 from lib.plugin_registry import get_system_type_definition, get_system_type_names
@@ -526,6 +526,11 @@ class SetupConfig:
     enable_cloudflare: bool = False
     cloudflare_allow_direct: Optional[bool] = False
     enable_cicd: bool = False
+    ci_repository: str = ""
+    ci_allowed_users: Optional[StrList] = None
+    ci_labels: Optional[StrList] = None
+    ci_registration_token_file: MaybeStr = field(default=None, repr=False)
+    ci_registration_payload: bool = False
     is_build_server: bool = False
     is_app_server: bool = False
     deploy_targets: Optional[StrList] = None
@@ -898,6 +903,9 @@ class SetupConfig:
 
         validate_broker_settings(self)
         self.web_ports = list(dict.fromkeys(self.web_ports or [])) or None
+        from lib.validation import validate_github_runner_settings
+
+        validate_github_runner_settings(self)
 
     def selected_agent_tools(self) -> StrList:
         """Return selected coding agents in stable display/install order."""
@@ -1386,6 +1394,9 @@ class SetupConfig:
         
         if self.enable_cicd:
             args.append("--cicd")
+        args.extend(self._github_runner_args())
+        if self.ci_registration_payload:
+            args.append("--ci-registration-payload")
         
         if self.is_build_server:
             args.append("--build-server")
@@ -1970,6 +1981,7 @@ class SetupConfig:
         # CI/CD
         if self.enable_cicd:
             cmd_parts.append("--cicd")
+        cmd_parts.extend(self._github_runner_args())
         
         # Build/App Server
         if self.is_build_server:
@@ -2140,6 +2152,12 @@ class SetupConfig:
                 args.append(f"--homebox-{flag} {shlex.quote(str(value))}")
         return args
 
+    def _github_runner_args(self) -> StrList:
+        args = [f"--ci-repository {shlex.quote(self.ci_repository)}"] if self.ci_repository else []
+        args.extend(f"--ci-allowed-user {shlex.quote(user)}" for user in self.ci_allowed_users or [])
+        args.extend(f"--ci-label {shlex.quote(label)}" for label in self.ci_labels or [])
+        return args
+
     def to_dict(self) -> JSONDict:
         data = asdict(self)
         data.pop('host', None)
@@ -2161,6 +2179,8 @@ class SetupConfig:
             'agent_config_source',
             'agent_payload',
             'github_auth_payload',
+            'ci_registration_token_file',
+            'ci_registration_payload',
             'git_identity_payload',
             'device_pairing_auth_file',
             'device_pairing_auth_username',
@@ -2246,6 +2266,8 @@ class SetupConfig:
         # loaded for deploy, patch, or reconstruction.
         data.pop('activate_network', None)
         data.pop('disable_syncthing', None)
+        data.pop('ci_registration_token_file', None)
+        data.pop('ci_registration_payload', None)
         tags_str = data.get('tags')
         if tags_str and isinstance(tags_str, str):
             data['tags'] = [tag.strip() for tag in tags_str.split(',') if tag.strip()]
@@ -2836,6 +2858,11 @@ class SetupConfig:
             enable_cloudflare=getattr(args, 'enable_cloudflare', False),
             cloudflare_allow_direct=_optional_bool_arg(args, 'cloudflare_allow_direct'),
             enable_cicd=getattr(args, 'enable_cicd', False),
+            ci_repository=_optional_str_arg(args, 'ci_repository') or '',
+            ci_allowed_users=(args.ci_allowed_users if isinstance(getattr(args, 'ci_allowed_users', None), list) else None),
+            ci_labels=(args.ci_labels if isinstance(getattr(args, 'ci_labels', None), list) else None),
+            ci_registration_token_file=_optional_str_arg(args, 'ci_registration_token_file'),
+            ci_registration_payload=_optional_bool_arg(args, 'ci_registration_payload') is True,
             is_build_server=is_build_server,
             is_app_server=is_app_server,
             deploy_targets=getattr(args, 'deploy_targets', None),

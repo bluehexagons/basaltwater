@@ -14,6 +14,7 @@ under the panel account; no T3 Code installation is required.
 | Open a shell without starting a desktop | Console, or Desktop → Open browser console | Guacamole SSH terminal with the Unix password; Desktop also offers an SSH command for an existing client |
 | Inspect a service | Local service status or Service diagnostics | On-demand state, fixed runtime details, and filtered logs |
 | Check maintenance | Scheduled jobs | Timer state, last result, and selected job logs |
+| Inspect a GitHub runner | GitHub runner | On-demand local service state, repository, labels, read-only allowlist and recent gate outcomes |
 | Enable tailored supervision | Maintenance agent | Host checks, security audits, opt-in housekeeping, bounded AI reviews, and retained findings |
 | Exchange messages across sessions | Agent inbox | Account-local mailboxes with durable unread messages and explicit acknowledgement |
 | Run agent work | Agents | Persistent Codex context and workspaces, bounded goals, recurring schedules, run evidence, and optional T3 Code diagnostics |
@@ -47,6 +48,7 @@ Optional pages and controls follow the tools installed for the panel account:
 | Git & credentials | Git is installed; GitHub token controls additionally require `gh` |
 | Publishing | Butler or SteamCMD is installed; account controls show installed providers |
 | Maintenance agent | Its managed service and policy file are installed |
+| GitHub runner | Its fixed policy and systemd unit are installed; see [runner setup](github-runner.md) |
 | Desktop | Its Guacamole gateway service is installed |
 | Console | Its private Guacamole SSH socket unit is installed |
 | Admin controls | A valid privilege approval service is configured |

@@ -55,6 +55,7 @@ class TestPluginRegistry(unittest.TestCase):
                 "server_wsl",
                 "server_dev",
                 "server_web",
+                "server_github_runner",
                 "server_lite",
                 "server_proxmox",
                 "custom_steps",

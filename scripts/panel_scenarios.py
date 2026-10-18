@@ -13,6 +13,7 @@ import uuid
 from common.service_tools import web_panel_admin as admin
 from common.service_tools import web_panel_agents as agents
 from common.service_tools import web_panel_diagnostics as diagnostics
+from common.service_tools import web_panel_github_runner as github_runner
 from common.service_tools import web_panel_jobs as jobs
 from common.service_tools import web_panel_maintenance as maintenance
 from common.service_tools import web_panel_service as panel
@@ -21,6 +22,7 @@ from common.service_tools.web_panel_features import PanelFeatures
 from lib import agent_tasks
 from lib.agent_inbox import AgentInbox
 from lib.atomic_io import read_json_file, write_json_atomic
+from lib.github_runner_config import VERSION as RUNNER_VERSION
 from lib.maintenance_agent_config import DEFAULTS, validate_policy
 from lib.validation import validate_git_author_email, validate_git_author_name, validate_github_token
 from scripts.panel_samples import job_rows
@@ -44,6 +46,7 @@ class Scenario:
         }
         self.features = PanelFeatures() if name == "minimal" else PanelFeatures(
             tools=frozenset({"codex", "git", "gh", "butler", "steamcmd"}), t3=True, maintenance=True, admin=True,
+            github_runner=True,
         )
         self.install()
 
@@ -79,6 +82,20 @@ class Scenario:
         self.replace(jobs, "collect_jobs", return_value=jobs.JobSnapshot(
             [] if self.name == "empty" else job_rows(),
             ["Synthetic timer collection incomplete"] if self.name == "degraded" else [], absent=9,
+        ))
+        self.replace(github_runner, "collect_runner_status", return_value=github_runner.RunnerSnapshot(
+            policy={"repository": "example/private-project", "runner_version": RUNNER_VERSION,
+                    "allowed_users": ["operator", "maintainer"], "labels": ["debian-ci"]},
+            service={"ActiveState": "failed" if self.name == "degraded" else "active",
+                     "SubState": "failed" if self.name == "degraded" else "running",
+                     "UnitFileState": "enabled", "Result": "exit-code" if self.name == "degraded" else "success"},
+            outcomes=[] if self.name == "empty" else [
+                {"time": "2026-01-01T09:00:00Z", "allowed": allowed, "reason": reason,
+                 "identity": identity, "event": "workflow_dispatch", "run_id": run_id}
+                for allowed, reason, identity, run_id in ((False, "actor-denied", "visitor", "102"),
+                                                        (True, "allowed", "operator", "101"))
+            ],
+            issues=["Synthetic runner inspection incomplete"] if self.name == "degraded" else [],
         ))
         self.replace(storage, "load_storage_snapshot", return_value={"available": False, "jobs": []})
         self.replace(diagnostics, "collect_diagnostics", side_effect=self.diagnostics)

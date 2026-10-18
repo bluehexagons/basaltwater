@@ -295,6 +295,7 @@ contract, unattended job ownership, exact-text review, recovery and limits.
 | `pc_dev` | PC development environment |
 | `server_dev` | Development server |
 | `server_web` | Web server |
+| `server_github_runner` | Dedicated Debian 13 x86-64 GitHub Actions runner for one private repository |
 | `server_lite` | Lightweight server |
 | `server_wsl` | Local Ubuntu tools inside Windows 11 WSL 2; see [Windows WSL](../workstations/windows-wsl.md) |
 | `server_proxmox` | Proxmox host server |
@@ -1519,6 +1520,14 @@ deployment workflows.
 | `--app-server` | Configure an app server to receive deployments |
 | `--deploy-target HOST` | Target app server for deployments |
 | `--cicd` | Install the signed GitHub webhook receiver and isolated executor |
+| `--ci-repository OWNER/REPO` | Private github.com repository for `server_github_runner` |
+| `--ci-allowed-user LOGIN` | Trusted human GitHub identity; repeat to supply the full allowlist |
+| `--ci-label LABEL` | Additional runner label; repeat as needed |
+| `--ci-registration-token-file PATH` | Private local file containing a one-hour repository registration token; transient handoff only |
+
+See [Debian GitHub runner](../services/github-runner.md) for the dedicated
+profile, supported triggers, local fail-closed gate, read-only panel and
+qualification requirements. Docker is not required or installed.
 
 See [`cicd.md`](../services/cicd.md) for webhook configuration, service units, and
 deployment-boundary behavior.

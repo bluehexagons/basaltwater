@@ -24,7 +24,7 @@ from lib.setup_prompts import PROMPT_RELAY_ENV
 
 
 PAYLOAD_ROOT = "/run/basaltwater-setup"
-PAYLOAD_NAMES = ("agent_payload", "device_pairing_payload", "web_panel_payload", ".remote_setup_args.json")
+PAYLOAD_NAMES = ("agent_payload", "device_pairing_payload", "web_panel_payload", "github_runner_payload", ".remote_setup_args.json")
 MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
 
 

@@ -73,6 +73,7 @@ NAVIGATION_ICONS = {
     "Publishing": "export",
     "Maintenance agent": "maintenance", "Agent inbox": "notifications",
     "Certificate trust": "certificate", "Maintenance": "maintenance",
+    "GitHub runner": "jobs",
     "Local service status": "service-status", "Scheduled jobs": "jobs",
     "Service diagnostics": "diagnostics",
 }
@@ -87,6 +88,7 @@ PAGE_ICONS = {
     "admin": "admin", "services": "service-status", "jobs": "jobs", "logs": "diagnostics",
     "credentials": "access",
     "publishing": "export",
+    "github-runner": "jobs",
     "desktop": "web-services", "console": "diagnostics",
     "maintenance-agent": "maintenance", "agent-inbox": "notifications",
 }
@@ -100,6 +102,7 @@ BRAND_TEXTURES = {
     "mineral": (64, 64, "M8 12l4-4 M40 44l4-4 M48 16h3 M16 48h3"),
 }
 PAGE_TEXTURES = {
+    "github-runner": "facets",
     "agents": "contours", "agent-tools": "contours", "publishing": "contours",
     "admin": "facets", "maintenance-agent": "facets", "jobs": "facets",
     "credentials": "mineral", "agent-inbox": "mineral", "logs": "mineral",
@@ -298,6 +301,7 @@ def panel_navigation(
         (
             ("/services", "Local service status", "services"),
             ("/jobs", "Scheduled jobs", "jobs"),
+            ("/github-runner", "GitHub runner", "github-runner"),
             ("/logs", "Service diagnostics", "logs"),
         )
     )

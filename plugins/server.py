@@ -18,6 +18,12 @@ PLUGIN = PluginDefinition(
     dependencies=("common", "core", "desktop", "security", "sync", "web"),
     system_types=(
         SystemTypeDefinition(
+            name="server_github_runner",
+            description="Dedicated Debian GitHub Actions runner",
+            order=55,
+            step_builder="plugins.server:build_github_runner_steps",
+        ),
+        SystemTypeDefinition(
             name="control_plane",
             description="Infrastructure control plane",
             order=35,
@@ -58,6 +64,21 @@ PLUGIN = PluginDefinition(
         ),
     ),
 )
+
+
+def build_github_runner_steps(config: SetupConfig) -> list[tuple[str, StepFunc]]:
+    """Keep the runner account separate from optional authenticated panel setup."""
+    from web.github_runner_steps import check_runner_platform, setup_github_runner
+    from common.steps import setup_user
+    from plugins.common import extend_web_panel_steps
+
+    steps: list[tuple[str, StepFunc]] = [
+        ("Checking Debian GitHub runner prerequisites", check_runner_platform),
+        ("Setting up operator account", setup_user),
+        ("Installing GitHub runner and author gate", setup_github_runner),
+    ]
+    extend_web_panel_steps(config, steps)
+    return steps
 
 
 def extend_antistatic_steps(config: SetupConfig, steps: list[tuple[str, StepFunc]]) -> None:

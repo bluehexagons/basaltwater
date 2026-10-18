@@ -1326,6 +1326,18 @@ def add_setup_arguments(
                        default=None if not for_remote else False,
                        help="Install webhook-based CI/CD system for GitHub Actions")
     
+    parser.add_argument("--ci-repository", metavar="OWNER/REPO",
+                       help="Private github.com repository for server_github_runner (Debian 13 x86-64)")
+    parser.add_argument("--ci-allowed-user", dest="ci_allowed_users", action="append", metavar="LOGIN",
+                       help="Trusted GitHub identity allowed by the runner job gate; repeat for each user")
+    parser.add_argument("--ci-label", dest="ci_labels", action="append", metavar="LABEL",
+                       help="Additional GitHub runner label; repeat as needed")
+    if for_remote:
+        parser.add_argument("--ci-registration-payload", action="store_true", help=argparse.SUPPRESS)
+    else:
+        parser.add_argument("--ci-registration-token-file", metavar="PATH",
+                           help="Private file containing a one-hour repository runner registration token")
+
     parser.add_argument("--build-server", dest="is_build_server",
                        action=argparse.BooleanOptionalAction if not for_remote else "store_true",
                        default=None if not for_remote else False,

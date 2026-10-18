@@ -137,6 +137,19 @@ trust instead of publicly trusted.
 
 ## On-demand views
 
+**GitHub runner** is exposed by the fixed
+`/etc/basaltwater/github-runner.json` policy and
+`basaltwater-github-runner.service` unit. Discovery starts no process or network
+request. `GET /github-runner` collects nothing; `?load=1` inspects the fixed unit
+with a five-second, 64 KiB command limit, bounded 16 KiB policy and 64 KiB outcome
+reads, and one concurrent collector. Unknown or duplicate query fields return
+HTTP 400. The page shows repository, labels, pinned version, read-only allowlist,
+local service state/boot enablement and the last 100 gate outcomes. Local service
+health does not prove GitHub connectivity. Outcomes are runner-writable telemetry,
+not an audit trail. No runner credentials, full event payloads or workflow logs
+are displayed. There are no registration, replacement, queue, lifecycle or
+allowlist-edit controls. See [GitHub runner](github-runner.md).
+
 **Local service status** checks a fixed set of installed units, including
 Nginx, SSH, Gogs, HomeBox, Docker, Samba, xrdp, fail2ban, auditd, and the
 panel user's T3 Code unit. It does no collection until selected, limits each

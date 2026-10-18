@@ -1,6 +1,10 @@
 # GitHub self-hosted runner support
 
-Status: planned. Implement the Debian phase first, then Windows parity.
+Status: Debian phase 1 implementation is available, with offline identity,
+credential and worker-denial checks. Clean Debian VM, reboot, GitHub-connected
+trigger qualification and upgrade/re-registration evidence remain open; do not
+claim production readiness yet. See [Debian runner operations](../services/github-runner.md).
+Windows parity remains deferred.
 
 ## Decisions
 

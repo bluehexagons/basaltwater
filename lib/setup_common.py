@@ -34,6 +34,7 @@ from lib.agent_credentials import codex_auth_warning, inspect_codex_auth_file
 from lib.config import DEFAULT_MACHINE_TYPE, SetupConfig, _normalize_nested_specs
 from lib.credentials import prepare_runtime_config, store_cli_credentials
 from lib.homebox_config import validate_homebox_settings
+from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.network_transition import finish_network_transition
 from lib.proxmox_hosts import ProxmoxHost, find_proxmox_host, sync_proxmox_host
 from lib.validators import validate_host, validate_username
@@ -41,6 +42,7 @@ from lib.validation import (
     validate_apt_packages,
     validate_agent_repositories,
     validate_agent_git_settings,
+    validate_github_runner_settings,
     validate_git_author_email,
     validate_git_author_name,
     validate_browser_automation_settings,
@@ -471,6 +473,7 @@ def _activate_local_runtime(build_dir: str) -> None:
         AGENT_PAYLOAD_DIRNAME,
         DEVICE_PAIRING_PAYLOAD_DIRNAME,
         WEB_PANEL_PAYLOAD_DIRNAME,
+        RUNNER_PAYLOAD_NAME,
         REMOTE_ARGS_FILENAME,
     )
     parent_dir = os.path.dirname(REMOTE_INSTALL_DIR)
@@ -1280,6 +1283,7 @@ def prepare_validated_runtime_config(
     validate_apt_packages(runtime_config.apt_packages)
     validate_agent_repositories(runtime_config.agent_repos)
     validate_agent_git_settings(runtime_config)
+    validate_github_runner_settings(runtime_config)
     validate_browser_automation_settings(runtime_config)
     validate_notification_args(runtime_config.notify_specs)
     validate_ssl_email(runtime_config.ssl_email)
@@ -1451,6 +1455,12 @@ def _run_remote_setup_locked(config: SetupConfig) -> int:
             )
             prepare_web_panel_payload(config, web_panel_payload_dir)
             config.web_panel_payload = True
+
+        if config.ci_registration_token_file and not config.dry_run:
+            from web.github_runner_steps import stage_registration_token
+
+            stage_registration_token(config.ci_registration_token_file, os.path.join(build_dir, RUNNER_PAYLOAD_NAME))
+            config.ci_registration_payload = True
 
         remote_arg_tokens = _expand_remote_args(config.to_remote_args())
         if config.agent_auth_source == "login" and config.install_codex:

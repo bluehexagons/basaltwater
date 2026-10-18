@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from lib.agent_cli import _tool_path
 from lib.guacamole_config import SERVICE as DESKTOP_SERVICE, SSH_SERVICE
 from lib.maintenance_agent_config import POLICY_FILE, SERVICE_NAME
+from lib.github_runner_config import POLICY as RUNNER_POLICY, SERVICE as RUNNER_SERVICE
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class PanelFeatures:
     admin: bool = False
     desktop: bool = False
     console: bool = False
+    github_runner: bool = False
 
     @property
     def prompts(self) -> bool:
@@ -48,6 +50,8 @@ class PanelFeatures:
             pages.add("desktop")
         if self.console:
             pages.add("console")
+        if self.github_runner:
+            pages.add("github-runner")
         return frozenset(pages)
 
 
@@ -83,4 +87,5 @@ def discover_features(home: str, *, admin: bool) -> PanelFeatures:
         admin=admin,
         desktop=unit_installed(DESKTOP_SERVICE + ".service", home),
         console=unit_installed(SSH_SERVICE + ".socket", home),
+        github_runner=os.path.isfile(RUNNER_POLICY) and unit_installed(RUNNER_SERVICE, home),
     )

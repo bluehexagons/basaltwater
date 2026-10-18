@@ -31,6 +31,56 @@ def validate_no_control_characters(value: str, name: str) -> None:
         raise ValueError(f"{name} must not contain control characters")
 
 
+def validate_github_runner_repository(value: object) -> str:
+    """Accept a single github.com OWNER/REPO, never a URL or organization."""
+    from lib.validators import validate_github_login
+
+    if not isinstance(value, str) or value.count("/") != 1:
+        raise ValueError("--ci-repository requires OWNER/REPO on github.com")
+    owner, repository = value.split("/")
+    if (not validate_github_login(owner) or repository in {".", ".."}
+            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", repository)):
+        raise ValueError("--ci-repository requires OWNER/REPO on github.com")
+    return value
+
+
+def validate_github_runner_labels(value: object) -> None:
+    if (not isinstance(value, list) or len(value) > 20
+            or any(not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", label)
+                   for label in value)):
+        raise ValueError("GitHub runner labels must be up to 20 simple labels of 1–64 characters")
+
+
+def validate_github_runner_settings(config: Any) -> None:
+    """Validate runner inputs before staging credentials or changing a target."""
+    from lib.github_runner_config import ACCOUNT, PROFILE, VERSION, validate_policy
+
+    repository = getattr(config, "ci_repository", "")
+    users = getattr(config, "ci_allowed_users", None)
+    labels = getattr(config, "ci_labels", None)
+    token = getattr(config, "ci_registration_token_file", None)
+    payload = getattr(config, "ci_registration_payload", False)
+    if config.system_type != PROFILE:
+        if repository or users or labels or token or payload:
+            raise ValueError("--ci-* runner options require server_github_runner")
+        return
+    if config.username == ACCOUNT:
+        raise ValueError("The setup/panel account must differ from the dedicated runner account")
+    if config.machine_type in {"oci", "wsl", "unprivileged", "privileged"}:
+        raise ValueError("GitHub runner phase 1 requires a native Debian VM or hardware")
+    validate_policy(dict(schema=1, repository=repository, allowed_users=users,
+                         labels=labels or [], runner_version=VERSION))
+    if type(payload) is not bool:
+        raise ValueError("ci_registration_payload must be boolean")
+    if token is not None:
+        if not isinstance(token, str):
+            raise ValueError("--ci-registration-token-file must be a path")
+        validate_filesystem_path(token)
+    if any((config.enable_cicd, config.is_build_server, config.is_app_server,
+            config.has_agent_features(), config.enable_rdp, config.guacamole)):
+        raise ValueError("The dedicated runner profile cannot host agents, RDP or other CI services")
+
+
 def validate_systemd_exec_command(
     value: str,
     name: str = "systemd ExecStart command",

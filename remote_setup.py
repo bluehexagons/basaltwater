@@ -18,6 +18,7 @@ from lib.arg_parser import create_setup_argument_parser
 from lib.admin_status import JOB_ID_ENV, valid_job_id
 from lib.config import SetupConfig
 from lib.homebox_config import validate_homebox_settings
+from lib.github_runner_config import PAYLOAD_NAME as RUNNER_PAYLOAD_NAME
 from lib.display import print_setup_summary
 from lib.machine_state import (
     STATE_DIR,
@@ -186,6 +187,7 @@ def _remove_secret_payloads() -> None:
         REMOTE_AGENT_PAYLOAD_DIR,
         REMOTE_DEVICE_PAIRING_PAYLOAD_DIR,
         REMOTE_WEB_PANEL_PAYLOAD_DIR,
+        "/opt/basaltwater/" + RUNNER_PAYLOAD_NAME,
     ):
         if not os.path.isdir(payload_dir):
             continue

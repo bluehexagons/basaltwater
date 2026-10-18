@@ -121,6 +121,7 @@ TEST_SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
     "deployment": (
         "tests/test_audit_regressions.py",
         "tests/test_cicd*.py",
+        "tests/test_github_runner*.py",
         "tests/test_common_steps.py",
         "tests/test_deploy*.py",
         "tests/test_install*.py",

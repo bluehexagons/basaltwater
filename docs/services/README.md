@@ -11,6 +11,7 @@ see [Storage](../storage/README.md).
 | [Deployment safety](deployment-safety.md) | Persistent data, verified backups, rollback, and safety boundaries |
 | [Internal web and previews](internal-web.md) | Internal HTTPS, live previews, TLS trust, and cleanup |
 | [CI/CD webhooks](cicd.md) | Webhook jobs, build servers, and executor behavior |
+| [GitHub runner](github-runner.md) | Dedicated Debian runner, local author gate, health and qualification |
 | [Cloudflare tunnels](cloudflare.md) | Public ingress, tunnel setup, firewall policy, and webhooks |
 | [Gogs](gogs.md) | Self-hosted Git, SSH access, storage, and updates |
 | [HomeBox](homebox.md) | Inventory setup, onboarding, updates, health, and backup/restore |
