@@ -42,6 +42,16 @@ use `basaltw refresh --dry-run` and then `basaltw refresh`. Refresh merges
 supported selection changes; finish active work before an update that may
 restart selected services.
 
+SSH is opt-in. Use `--ssh` for the independent key-only port-22 service and
+select `--lan-access` or private `--access-source` values when remote firewall
+access is needed. Password authentication requires explicit private access;
+prefer `--ssh-password-window MINUTES` for key enrollment, then verify normal
+key-based SSH before expiry. Use
+`basaltw refresh --ssh --ssh-password-window 15 --lan-access` to preserve the
+saved tool selection while opening a temporary window. See the
+[SSH setup guide](https://github.com/bluehexagons/basaltwater/blob/main/docs/workstations/cachyos.md#ssh-access)
+for service ownership, password modes, and refresh lifecycle details.
+
 Packages use pacman. Leave full OS upgrades to the user's CachyOS workflow and
 never repair a package failure with a partial `pacman -Sy` upgrade. Update
 externally managed tools with their original package manager. Setup cleanup is

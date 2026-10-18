@@ -129,6 +129,7 @@ Append options to `--local-setup agent_cachyos` in the installer command, or to
 | Machine declaration | `--machine hardware` (the bare-metal check still runs) |
 | Setup plan only | `--dry-run` (use installer `--plan` before `--local-setup` for a full preview) |
 | Restrict inbound workstation access | `--lan-access` and/or `--access-source PRIVATE_IP_OR_CIDR`; `--no-lan-access --no-access-source` closes managed access |
+| Remote shell access | `--ssh` for key-only SSH; add `--lan-access` or `--access-source` for private firewall access; password options are described under [SSH access](#ssh-access) |
 | Setup-result webhooks | `--notify webhook URL` (repeatable), `--notification-level LEVEL`, `--notification-strict-https` |
 
 Examples:
@@ -172,6 +173,62 @@ and pnpm for `--node`, and Python and uv for `--python`. A missing or broken
 companion tool makes setup incomplete even if the main runtime works.
 On CachyOS, `--av-tools` includes FFmpeg, ImageMagick, and ExifTool;
 `--gl-tools` includes Mesa/Vulkan diagnostics and apitrace.
+
+## SSH access
+
+SSH is opt-in for `agent_cachyos`; omission leaves SSH configuration untouched.
+`--ssh` enables a separate root-managed `basaltwater-cachyos-ssh.service` for
+the existing non-root desktop account, listening on IPv4 port 22 with
+key-only authentication. It does not rewrite distro SSH configuration or take
+over an existing sshd service, socket, or custom unit. A conflict or occupied
+port 22 safely stops setup. CachyOS already includes OpenSSH in its base system.
+
+Select `--lan-access` or explicit private IPv4 `--access-source` values when
+remote clients need firewall access. `--ssh` alone does not manage the
+firewall. SSH firewall rules are added only for an explicit SSH selection and
+selected private IPv4 sources. There are no public IPv4 or IPv6 grants, and
+unrelated firewall rules are retained.
+
+For first-time key enrollment, use the separate, short-lived password bootstrap
+listener. Its temporary service listens on port 2222, uses the existing account
+password, and creates or stores no password. Password modes require both
+`--ssh` and a private access selection. Verify the host fingerprint through a
+trusted local channel, copy the key, then test ordinary port-22 access before
+the window expires:
+
+```fish
+basaltw setup agent_cachyos localhost --ssh --ssh-password-window 15 --lan-access
+ssh-copy-id -p 2222 USER@WORKSTATION_PRIVATE_IP
+ssh USER@WORKSTATION_PRIVATE_IP
+```
+
+Verify the workstation fingerprint through a trusted local channel before
+accepting it; `ssh-copy-id` prompts for the existing account password.
+Port 22 remains key-only during enrollment. The bootstrap listener and its
+sessions are terminated at the deadline; reboot also closes the window. The
+owned service has no restart policy. The bootstrap allow rule can remain in
+the firewall until a later refresh, but no listener remains after expiry.
+
+To permit the existing account's password persistently, choose
+`--ssh-password-auth` instead of a timed window. This remains enabled until
+`--no-ssh-password-auth` or `--no-ssh` is selected. Do not combine permanent
+password authentication with `--ssh-password-window`.
+
+For an existing workstation, use refresh to preserve its saved tool selection
+while explicitly requesting a new temporary window:
+
+```fish
+basaltw refresh --ssh --ssh-password-window 15 --lan-access
+```
+
+Timed windows are neither saved nor replayed. An ordinary refresh closes an
+active window; a saved setup record that contains a timed window is rejected.
+Omitting the window on refresh removes the owned port-2222 allow rule. `--no-ssh`
+removes only Basaltwater's managed SSH service, closes its owned bootstrap
+listener, and clears saved SSH authentication selection; unrelated SSH units
+and rules are left alone. A missing SSH key is not a failed setup: use an
+existing key or the temporary enrollment window, so local desktop access is
+never locked out.
 
 ## Optional webhook notifications
 
