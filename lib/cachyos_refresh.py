@@ -53,9 +53,10 @@ def add_refresh_arguments(parser: argparse.ArgumentParser, setup_parser: argpars
                             metavar=action.metavar, help="CachyOS refresh: " + (action.help or ""))
 
 
-def _replay_arguments(config: SetupConfig) -> list[str]:
+def _replay_arguments(config: SetupConfig, *, include_one_shot: bool = False) -> list[str]:
     selected = config.selected_agent_tools()
     replay = replace(config, agent_tools=selected,
+                     ssh_password_window=config.ssh_password_window if include_one_shot else None,
                      agent_tools_removed=[tool for tool in AGENT_TOOLS if tool not in selected])
     arguments = shlex.split(" ".join(replay.to_setup_command()))[1:]
     existing_options = set(zip(arguments, arguments[1:]))
@@ -67,6 +68,7 @@ def _replay_arguments(config: SetupConfig) -> list[str]:
 
 
 def _merge_overrides(arguments: list[str], overrides: dict[str, list[str]]) -> tuple[list[str], SetupConfig]:
+    _parse_saved_arguments(arguments)
     parser = _SavedSetupParser(add_help=False, allow_abbrev=False)
     add_setup_arguments(parser, allow_steps=True, include_system_type=True)
     saved = parser.parse_args(arguments[1:])
@@ -103,9 +105,16 @@ def _merge_overrides(arguments: list[str], overrides: dict[str, list[str]]) -> t
         saved.access_sources = additions.access_sources
     elif "access_sources" in overrides:
         saved.clear_access_sources = False
+    if "install_ssh" in overrides and additions.install_ssh is False:
+        saved.ssh_password_auth = False
+        saved.ssh_password_window = None
+        if additions.ssh_password_auth or additions.ssh_password_window is not None:
+            raise ValueError("SSH password options require --ssh")
+    elif "ssh_password_window" in overrides and "ssh_password_auth" not in overrides:
+        saved.ssh_password_auth = False
     config = cachyos_config_from_args(saved)
-    arguments = _replay_arguments(config)
-    return arguments, _parse_saved_arguments(arguments)
+    arguments = _replay_arguments(config, include_one_shot=True)
+    return arguments, _parse_execution_arguments(arguments)
 
 
 def _account() -> pwd.struct_passwd:
@@ -134,6 +143,14 @@ def _record_path() -> Path:
 
 
 def _parse_saved_arguments(arguments: object) -> SetupConfig:
+    config = _parse_execution_arguments(arguments)
+    if config.ssh_password_window is not None:
+        raise ValueError("Saved CachyOS setup must not contain --ssh-password-window; rerun setup to replace it")
+    return config
+
+
+def _parse_execution_arguments(arguments: object) -> SetupConfig:
+    """Validate immediate execution without treating one-shot authorization as saved policy."""
     if (not isinstance(arguments, list) or not 3 <= len(arguments) <= 512
             or any(not isinstance(value, str) or not value or len(value) > 4096
                    or any(ord(char) < 32 or ord(char) == 127 for char in value)
