@@ -15,6 +15,11 @@ from lib.atomic_io import write_json_atomic
 from lib.privilege_client import PrivilegeRequestRejected, exchange
 
 
+def follow_up_requires_review(proposal: dict[str, Any]) -> bool:
+    """Older proposals need an explicit access review, not a synthetic blocker."""
+    return not {"writable_directories", "operator_requirements", "service_restarts"} <= set(proposal)
+
+
 def follow_up_state(manager: AgentTasks, identifier: str, run_id: str) -> dict[str, Any]:
     """Read only local decision data; list rendering never polls the broker."""
     manager.contexts.receipt(identifier, run_id)  # Validate IDs and provenance first.
@@ -37,10 +42,6 @@ def prepare_follow_up(manager: AgentTasks, identifier: str, run_id: str, *, revi
     settings.update(interval="once", max_runs=1, source_task_id=identifier, source_run_id=run_id)
     settings["prompt"] = (f"Follow-up to task {identifier}, run {run_id}. "
         "Recheck retained evidence; verify completed service prerequisites without repeating them.\n\n" + settings["prompt"])
-    # Old proposals cannot express prelaunch prerequisites. Make that limitation
-    # explicit instead of offering the same unusable one-click launch again.
-    if not {"writable_directories", "operator_requirements", "service_restarts"} <= set(proposal):
-        settings["operator_requirements"] = ["Review this older proposal's write targets and service approval prerequisites before launching"]
     if review:
         # Receipt validation establishes the proposal's provenance and bounds.
         # Display invalid grants for correction; only submission validates them
@@ -106,6 +107,9 @@ def decide_follow_up(manager: AgentTasks, identifier: str, run_id: str, decision
         # Use the same exact-unit validation for edited reviews as reports.
         original = manager.contexts.receipt(identifier, run_id)["follow_up"]
         validate_follow_up({**original, "service_restarts": restarts})
+        if decision == "approve" and settings is None and follow_up_requires_review(original):
+            raise ValueError("Review this older proposal before approval. Open Review follow-up task, "
+                             "check its access and prerequisites, then select Approve once.")
         if decision == "request-privilege":
             if not restarts:
                 raise ValueError("No service restarts were requested")

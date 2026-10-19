@@ -128,18 +128,14 @@ prevents a caller's stale bus address or core-only environment inheritance from
 breaking live diagnostics. Explicit administrator policies and shell include
 filters still apply; the runner does not widen environment inheritance.
 
-The maintenance examples offer three starting points:
-
-| Template | Access and behavior |
-| --- | --- |
-| Restricted host maintenance check | Inspect only, no command network or writes; reports unavailable live checks |
-| Host maintenance review | Private run directory and command network; live checks and recommendations, without repairs |
-| Apply reviewed maintenance fixes | Selected directory and command network; one attempt to apply an explicit supplied repair plan using account access |
-
-The repair example requires a directory and exact plan before running. Include
-targets, permitted changes, verification, and rollback. It reports blocked when
-no plan is supplied. Root actions still use the configured privilege approval
-workflow; workspace mode does not grant root access.
+Use **Host maintenance review** for a one-time live check, or **Daily
+maintenance checks** to prepare a recurring review. Both use a private run
+directory and command network access, with prompts prohibiting host repairs.
+Restricted saved inspection tasks can still report unavailable service state;
+opening their current template prepares the access needed for a new check.
+Repair proposals need exact targets, permitted changes, verification, and
+rollback. Root actions still use the configured privilege approval workflow;
+workspace mode does not grant root access.
 
 `writable_directories` adds up to eight specific, existing account-owned
 directories to workspace mode. These grants accompany the execution directory,
@@ -247,8 +243,13 @@ For example, a restricted check can request live diagnostics:
 }
 ```
 
-New reports supply these fields. Older requests remain readable but require
-manual prerequisite review before launch. Its prompt accepts up to 3800 UTF-8 bytes
+New reports supply these fields. Older requests remain readable and offer
+**Review follow-up task** instead of a disabled approval button. Review their
+write targets and operator prerequisites, then select **Approve once** in the
+form. Missing fields default to no additional grants or prerequisites; the
+review requirement is not inserted as an unresolved operator action. Existing
+prerequisites still need to be completed and cleared explicitly.
+Its prompt accepts up to 3800 UTF-8 bytes
 and should include concrete targets, actions, verification, and rollback for
 repairs. `directory` must be absolute; the normal task validator rechecks its
 existence and the account's workspace boundary before preparation.

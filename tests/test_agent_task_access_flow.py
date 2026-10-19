@@ -136,8 +136,22 @@ class TaskAccessFlowTests(unittest.TestCase):
     def test_unresolved_operator_requirements_stop_approval_and_provider_launch(self) -> None:
         requirement = "Operator must provision the private repair directory"
         identifier, run_id = self.record_proposal(operator_requirements=[requirement])
+        from common.service_tools import web_panel_agents as agents
+
+        run = self.manager.contexts.receipt(identifier, run_id)
+        page = agents._render_follow_up(run, self.manager, "csrf")
+        self.assertIn(requirement, page)
+        self.assertIn("Complete the operator prerequisites", page)
+        self.assertIn("Review follow-up task", page)
+        self.assertNotIn('value="follow-up-approve"', page)
         with self.assertRaisesRegex(ValueError, "Resolve prerequisites"):
             followups.decide_follow_up(self.manager, identifier, run_id, "approve")
+        legacy_proposal = {key: value for key, value in run["follow_up"].items() if key != "writable_directories"}
+        with patch.object(self.manager.contexts, "receipt", return_value={**run, "follow_up": legacy_proposal}):
+            reviewed = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)
+            self.assertEqual(reviewed["operator_requirements"], [requirement])
+            with self.assertRaisesRegex(ValueError, "Resolve prerequisites"):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve", settings=reviewed)
         task = {**self.values, "operator_requirements": [requirement]}
         with (patch.object(tasks.os, "geteuid", return_value=1234),
               patch.object(tasks.subprocess, "Popen") as spawn):
@@ -187,11 +201,21 @@ class TaskAccessFlowTests(unittest.TestCase):
         for name in ("writable_directories", "operator_requirements", "service_restarts"):
             self.proposal.pop(name)
         identifier, run_id = self.record_proposal()
-        prepared = followups.prepare_follow_up(self.manager, identifier, run_id)
-        self.assertTrue(prepared["operator_requirements"])
-        with self.assertRaisesRegex(ValueError, "Resolve prerequisites"):
+        prepared = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)
+        self.assertEqual(prepared["operator_requirements"], [])
+        self.assertEqual(prepared["writable_directories"], [])
+        self.assertEqual(prepared["service_restarts"], [])
+        with self.assertRaisesRegex(ValueError, "Review this older proposal before approval"):
             followups.decide_follow_up(self.manager, identifier, run_id, "approve")
         self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+        child = followups.decide_follow_up(self.manager, identifier, run_id, "approve", settings=prepared)
+        task = next(item for item in self.manager.snapshot()["tasks"] if item["id"] == child)
+        self.assertTrue(task["queued"])
+        self.assertEqual(task["operator_requirements"], [])
+        self.assertEqual(task["writable_directories"], [])
+        self.assertEqual((task["mode"], task["workspace"], task["network"]),
+                         (self.proposal["mode"], self.proposal["workspace"], self.proposal["network"]))
+        self.assertEqual(followups.decide_follow_up(self.new_manager(), identifier, run_id, "approve"), child)
 
     def test_invalid_proposal_can_be_blocked_after_its_directory_disappears(self) -> None:
         directory = Path(self.home) / "removed"

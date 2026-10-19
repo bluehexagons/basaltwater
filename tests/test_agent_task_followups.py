@@ -62,6 +62,8 @@ class TaskFollowUpTests(unittest.TestCase):
         with patch.object(tasks, "execute_prompt") as execute:
             page = agents.render_agents(self.state, panel._PAGE_STYLE, {"run": run_id})
             self.assertIn("Review follow-up task", page)
+            self.assertIn("This older proposal needs an access review", page)
+            self.assertNotIn('value="follow-up-approve"', page)
             query = agents.parse_agent_query("follow-up=" + reference)
             page = agents.render_agents(self.state, panel._PAGE_STYLE, query)
             self.assertIn("No task has been saved or queued", page)
@@ -75,6 +77,9 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(form["id"], "")
         self.assertEqual((form["mode"], form["workspace"], form["network"]), ("workspace", "run-directory", "1"))
         self.assertEqual((form["interval"], form["max_runs"], form["start_at"]), ("once", "1", ""))
+        self.assertEqual(form["operator_requirements"], "")
+        self.assertEqual(form["writable_directories"], "")
+        self.assertIn('value="run">Approve once</button>', page)
         form["submit"] = "draft"
         body = urlencode(form).encode()
         handler = object.__new__(panel.WebPanelHandler)
@@ -87,6 +92,7 @@ class TaskFollowUpTests(unittest.TestCase):
         new_id = self.manager.snapshot()["tasks"][-1]["id"]
         saved = api.call("show", {"id": new_id})["task"]
         self.assertTrue(saved["draft"])
+        self.assertEqual(saved["operator_requirements"], [])
         self.assertFalse(saved["queued"])
         self.assertFalse(saved["enabled"])
         self.assertTrue(saved["prompt"].endswith(self.proposal["prompt"]))

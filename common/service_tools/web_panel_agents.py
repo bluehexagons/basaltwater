@@ -21,7 +21,7 @@ from lib.agent_maintenance import inspect_agent_maintenance
 from lib.agent_readiness import load_agent_readiness_record
 from lib.agent_task_api import worker_status
 from lib.agent_task_context import validate_follow_up
-from lib.agent_task_followups import follow_up_state, prepare_follow_up
+from lib.agent_task_followups import follow_up_requires_review, follow_up_state, prepare_follow_up
 from lib.agent_task_policy import task_policy_issues
 from lib.agent_task_templates import HOST_REVIEW_PROMPT, HOST_REVIEW_SETTINGS, NETWORK_REVIEW_PROMPT, UPDATE_REVIEW_PROMPT
 from lib.agent_tasks import (
@@ -227,6 +227,7 @@ _STYLE = """
 .agent-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .agent-buttons form { margin: 0; }
 .agent-buttons button { min-height: 44px; font-size: .8rem; }
+.agent-buttons button:disabled { cursor: not-allowed; }
 .agent-buttons a { color: var(--accent); min-height: 44px; display: inline-flex; align-items: center; }
 .agent-secondary { background: var(--accent-soft); color: var(--accent); }
 .agent-primary { background: var(--accent); color: var(--panel) !important; text-decoration: none; }
@@ -640,6 +641,10 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
             source_note = ("Requested by a previous run: " + _redact_log_message(proposal["reason"])
                            + " Review the evidence, actions, directory, and requested access before submitting. "
                            "No task has been saved or queued. Privileged actions still require the configured Admin approval workflow.")
+            if follow_up_requires_review(proposal):
+                source_note += (" This older proposal did not record all access prerequisites. "
+                                "Check its write targets and operator prerequisites below before approving. "
+                                "Any service action still needs separate authorization.")
         except (OSError, ValueError, RuntimeError) as exc:
             error = error or f"Follow-up request unavailable: {exc}"
     if submitted:
@@ -738,7 +743,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-fields"><label>Minimum failure backoff (minutes)<input type="number" name="backoff_minutes" min="0" max="{MAX_REPEAT_MINUTES}" value="{_escape(defaults['backoff_minutes'])}" required></label><label>Retained evidence runs<input type="number" name="history_limit" min="1" max="1000" value="{_escape(defaults['history_limit'])}" required></label></div>
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
 <label class="agent-check"><input type="checkbox" name="keep" value="1"{' checked' if defaults['keep'] else ''}><span>Keep this one-time task in saved tasks after it finishes.</span></label>
-<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>Start task</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
+<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>' + ('Approve once' if defaults['source_task_id'] else 'Start task') + '</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
 <a href="/agents?view=tasks">Back to tasks</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Start task runs now and activates the selected repetition, event trigger, or goal continuation. Create schedule uses the first-run time or waits one interval. Save draft stays inactive. Saving changes preserves an existing schedule's active or paused state.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
@@ -980,17 +985,20 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
     pending = status['status'] == 'pending'
     actions = ''
     if pending:
-        legacy = not {'writable_directories', 'operator_requirements', 'service_restarts'} <= set(proposal)
+        legacy = follow_up_requires_review(proposal)
         blocked = legacy or bool(proposal.get('operator_requirements'))
-        def button(action: str, label: str, *, disabled: bool = False) -> str:
-            return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}"{' disabled' if disabled else ''}>{label}</button></form>'''
-        actions = button('follow-up-approve', 'Approve once', disabled=blocked)
+        def button(action: str, label: str) -> str:
+            return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
+        if not blocked:
+            actions = button('follow-up-approve', 'Approve once')
         actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
         actions += button('follow-up-block', 'Block')
         if proposal.get('service_restarts'):
             actions += button('follow-up-privilege', 'Request service approval')
-        if blocked:
-            actions += '<p class="agent-help">Review and resolve prelaunch prerequisites before approval. A later agent cannot grant its own access.</p>'
+        if legacy:
+            actions += '<p class="agent-help">This older proposal needs an access review. Select Review follow-up task, check its permissions and prerequisites, then Approve once.</p>'
+        elif blocked:
+            actions += '<p class="agent-help">Complete the operator prerequisites listed above, then remove their resolved entries in Review follow-up task and Approve once.</p>'
     else:
         actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
     from common.service_tools.web_panel_admin import _https_url
