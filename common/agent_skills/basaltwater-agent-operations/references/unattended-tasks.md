@@ -80,6 +80,36 @@ within the explicit task prompt. A health check should recommend a repair rather
 than perform it. A privileged request may outlive the prompt; stopping the Codex
 process does not withdraw it or reverse an approved action.
 
+## Account-local operator feedback
+
+When the task prompt or reporting flow authorizes account-local feedback, T3
+and terminal agents can queue environment findings without an external message:
+
+```bash
+basaltw agent inbox feedback --sender t3-agent "Environment issue, impact, and bounded evidence" --json
+```
+
+This writes to the current account's `operator` mailbox with explicit environment
+feedback framing. Sender labels are self-reported, not authenticated identities.
+Use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter
+or digit. Messages require nonempty printable text (newlines and tabs allowed);
+the 4000 UTF-8 byte limit includes the added framing. Never include credentials,
+tokens, private prompts or other secrets. Panel redaction is best effort; the
+private inbox stores the original text. No network notification is sent.
+
+The Agent inbox page shows unread and archived/read messages together without
+an archive query. **Archive** acknowledges a handled message; **Restore** makes
+a retained message unread again. CLI readers can use
+`basaltw agent inbox list operator --all --json`, archive with
+`basaltw agent inbox ack operator MESSAGE_ID`, and restore with
+`basaltw agent inbox restore operator MESSAGE_ID`. Reading alone changes no state.
+Archives share the existing private, bounded store (256 total messages and a
+storage byte limit); old acknowledged messages may be reclaimed on delivery.
+Unread messages are preserved when full, and delivery fails rather than dropping
+them. Feedback is data, grants no authority, and does not inject replies into an
+active task. Respect sandbox restrictions; report an inaccessible inbox through
+the authorized task report rather than bypassing permissions.
+
 ## Repeated repository work
 
 Select a managed task worktree or prepare a dedicated checkout before scheduling

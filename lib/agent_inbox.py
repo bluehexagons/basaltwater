@@ -21,6 +21,7 @@ from lib.validation import validate_filesystem_path
 MAX_MESSAGES = 256
 MAX_MESSAGE_BYTES = 4000
 MAX_STORAGE_BYTES = 2 * 1024 * 1024
+FEEDBACK_PREFIX = "Environment feedback (self-reported; account-local):\n"
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _ID = re.compile(r"[a-f0-9]{32}\Z")
 
@@ -29,6 +30,12 @@ def mailbox_name(value: object) -> str:
     if not isinstance(value, str) or not _LABEL.fullmatch(value):
         raise ValueError("Mailbox names require 1–64 letters, digits, dots, underscores or hyphens")
     return value
+
+
+def _message_text(message: object) -> None:
+    if (not isinstance(message, str) or not message.strip() or len(message.encode("utf-8")) > MAX_MESSAGE_BYTES
+            or any(ord(char) < 32 and char not in "\n\t" or ord(char) == 127 for char in message)):
+        raise ValueError(f"Messages require printable text, up to {MAX_MESSAGE_BYTES} UTF-8 bytes")
 
 
 class AgentInbox:
@@ -105,10 +112,7 @@ class AgentInbox:
             raise ValueError("Invalid message ID")
         for key in ("sender", "recipient"):
             mailbox_name(record[key])
-        message = record["message"]
-        if (not isinstance(message, str) or not message.strip() or len(message.encode("utf-8")) > MAX_MESSAGE_BYTES
-                or any(ord(char) < 32 and char not in "\n\t" or ord(char) == 127 for char in message)):
-            raise ValueError(f"Messages require printable text, up to {MAX_MESSAGE_BYTES} UTF-8 bytes")
+        _message_text(record["message"])
         if type(record["created_at"]) is not int or record["created_at"] < 0 or type(record["acknowledged"]) is not bool:
             raise ValueError("Invalid message metadata")
 
@@ -126,6 +130,15 @@ class AgentInbox:
                 state["messages"].remove(acknowledged)
             self._save(state)
         return record
+
+    def feedback(self, sender: str, message: str) -> dict[str, Any]:
+        """Queue environment feedback for the local operator, within normal bounds.
+
+        The framing counts toward the byte limit. Sender labels are self-reported;
+        this stores data only and never sends an external notification.
+        """
+        _message_text(message)
+        return self.send(sender, "operator", FEEDBACK_PREFIX + message)
 
     @staticmethod
     def _storage_size(state: dict[str, Any]) -> int:
@@ -145,6 +158,14 @@ class AgentInbox:
                 and (include_acknowledged or not record["acknowledged"])]
 
     def acknowledge(self, recipient: str, identifier: str) -> None:
+        """Archive a message; retained archives remain readable until reclaimed."""
+        self._set_acknowledged(recipient, identifier, True)
+
+    def restore(self, recipient: str, identifier: str) -> None:
+        """Return a retained archived message to the unread mailbox."""
+        self._set_acknowledged(recipient, identifier, False)
+
+    def _set_acknowledged(self, recipient: str, identifier: str, acknowledged: bool) -> None:
         mailbox_name(recipient)
         if not isinstance(identifier, str) or not _ID.fullmatch(identifier):
             raise ValueError("Invalid message ID")
@@ -153,7 +174,7 @@ class AgentInbox:
             record = next((item for item in state["messages"] if item["recipient"] == recipient and item["id"] == identifier), None)
             if record is None:
                 raise ValueError("Message was not found in this mailbox")
-            record["acknowledged"] = True
+            record["acknowledged"] = acknowledged
             self._save(state)
 
     def wait(self, recipient: str, *, timeout: int = 60) -> list[dict[str, Any]]:
@@ -172,14 +193,15 @@ class AgentInbox:
 def add_inbox_parser(commands: argparse._SubParsersAction) -> None:
     parser = commands.add_parser("inbox", help="Durable messages and cooperative wake for local agents")
     actions = parser.add_subparsers(dest="agent_inbox_command", required=True)
-    for action in ("send", "list", "wait", "ack"):
+    for action in ("send", "feedback", "list", "wait", "ack", "restore"):
         command = actions.add_parser(action)
-        command.add_argument("recipient", metavar="MAILBOX")
+        if action != "feedback":
+            command.add_argument("recipient", metavar="MAILBOX")
         command.add_argument("--json", action="store_true")
-        if action == "send":
+        if action in {"send", "feedback"}:
             command.add_argument("--sender", required=True)
             command.add_argument("message", metavar="MESSAGE")
-        elif action == "ack":
+        elif action in {"ack", "restore"}:
             command.add_argument("identifier", metavar="MESSAGE_ID")
         elif action == "wait":
             command.add_argument("--timeout", type=int, default=60)
@@ -192,9 +214,14 @@ def run_inbox_command(args: argparse.Namespace) -> int:
         inbox = AgentInbox()
         if args.agent_inbox_command == "send":
             result: object = inbox.send(args.sender, args.recipient, args.message)
+        elif args.agent_inbox_command == "feedback":
+            result = inbox.feedback(args.sender, args.message)
         elif args.agent_inbox_command == "ack":
             inbox.acknowledge(args.recipient, args.identifier)
             result = {"acknowledged": args.identifier}
+        elif args.agent_inbox_command == "restore":
+            inbox.restore(args.recipient, args.identifier)
+            result = {"restored": args.identifier}
         elif args.agent_inbox_command == "wait":
             result = inbox.wait(args.recipient, timeout=args.timeout)
             if not result:

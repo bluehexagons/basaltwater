@@ -146,6 +146,55 @@ class WebPanelMaintenanceTest(unittest.TestCase):
         status, _, _ = self.request("/actions/agent-inbox", {"csrf": self.state.csrf_token, "submit": "ack", "recipient": "parent", "id": inbox.list("parent")[0]["id"]})
         self.assertEqual(status, 303)
         self.assertEqual(AgentInbox(self.home).list("parent"), [])
+        status, body, _ = self.request("/agent-inbox?mailbox=parent")
+        self.assertEqual(status, 200)
+        self.assertIn("Worker complete", body.split('aria-labelledby="archive-heading"')[1])
+        self.assertIn('value="restore">Restore</button>', body)
+        self.assertNotIn('value="ack">Archive</button>', body)
+        identifier = inbox.list("parent", include_acknowledged=True)[0]["id"]
+        status, _, location = self.request("/actions/agent-inbox", {"csrf": self.state.csrf_token, "submit": "restore", "recipient": "parent", "id": identifier})
+        self.assertEqual(status, 303)
+        self.assertEqual(location, "/agent-inbox?mailbox=parent")
+        self.assertEqual(inbox.list("parent")[0]["id"], identifier)
+
+    def test_feedback_archive_is_visible_redacted_and_escaped_on_default_page(self) -> None:
+        inbox = AgentInbox(self.home)
+        record = inbox.feedback("t3-agent", '<script>issue & evidence</script>\nAuthorization: Bearer fixture-secret')
+        inbox.acknowledge("operator", record["id"])
+        unread = inbox.send("worker", "operator", "Pending evidence")
+        status, body, _ = self.request("/agent-inbox")
+        self.assertEqual(status, 200)
+        self.assertIn("1 unread · 1 archived/read", body)
+        unread_section, archive_section = body.split('aria-labelledby="archive-heading"')
+        self.assertIn("Pending evidence", unread_section)
+        self.assertIn('value="ack">Archive</button>', unread_section)
+        self.assertIn("Environment feedback", archive_section)
+        self.assertIn("&lt;script&gt;issue &amp; evidence&lt;/script&gt;", archive_section)
+        self.assertNotIn("<script>", body)
+        self.assertNotIn("fixture-secret", body)
+        self.assertIn("[redacted]", archive_section)
+        self.assertIn('name="csrf" value="csrf-fixture"', archive_section)
+        self.assertIn('value="restore">Restore</button>', archive_section)
+        self.assertIn("basaltw agent inbox feedback --sender", body)
+        self.assertIn("self-reported", body)
+        self.assertEqual(inbox.list("operator"), [unread])
+        self.assertIn("fixture-secret", inbox.list("operator", include_acknowledged=True)[0]["message"])
+
+    def test_archive_restore_reject_csrf_duplicate_and_extra_fields_without_mutation(self) -> None:
+        inbox = AgentInbox(self.home)
+        record = inbox.feedback("worker", "issue")
+        for action in ("ack", "restore"):
+            if action == "restore":
+                inbox.acknowledge("operator", record["id"])
+            before = inbox.path.read_bytes()
+            values = {"csrf": self.state.csrf_token, "submit": action, "recipient": "operator", "id": record["id"]}
+            for changes, status in (({"csrf": "wrong"}, 403), ({"extra": "1"}, 422),
+                                    ({"recipient": "other"}, 422), ({"id": "bad"}, 422)):
+                with self.subTest(action=action, changes=changes):
+                    self.assertEqual(self.request("/actions/agent-inbox", values | changes)[0], status)
+                    self.assertEqual(inbox.path.read_bytes(), before)
+            self.assertEqual(self.request("/actions/agent-inbox", [*values.items(), ("id", record["id"])])[0], 400)
+            self.assertEqual(inbox.path.read_bytes(), before)
 
     def test_get_views_escape_messages_and_validate_routes(self) -> None:
         AgentInbox(self.home).send("worker", "operator", "<script>do_bad_things()</script>")
