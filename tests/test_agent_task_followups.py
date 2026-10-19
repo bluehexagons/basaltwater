@@ -33,6 +33,7 @@ class TaskFollowUpTests(unittest.TestCase):
         self.enterContext(patch.object(tasks.AgentTasks, "available", return_value=True))
         self.enterContext(patch.object(tasks, "_tool_path", return_value="/test/codex"))
         self.enterContext(patch.object(agents, "_tool_path", return_value="/test/codex"))
+        self.enterContext(patch("lib.agent_task_followups.load_policy", return_value={"services": {}}))
         self.enterContext(patch.object(self.state, "features", return_value=PanelFeatures(tools=frozenset({"codex", "git"}))))
         self.proposal = {"title": "Verify live maintenance state", "reason": "The local service socket was denied <check>.\nAuthorization: Bearer follow-up-secret",
                          "prompt": "Read live unit state and verify the T3 endpoint. Do not change the host.",
@@ -194,6 +195,65 @@ class TaskFollowUpTests(unittest.TestCase):
         self.assertEqual(validate_report(report()), report())
         self.assertIsNone(validate_report({**report(), "follow_up": None})["follow_up"])
         self.assertIn("follow_up", REPORT_SCHEMA["required"])
+
+    def test_service_approval_is_staged_inline_then_launches_once_after_success(self) -> None:
+        unit = "auto-update-node.service"
+        self.proposal.update(writable_directories=[], operator_requirements=[], service_restarts=[unit])
+        for reviewed in (False, True):
+            with self.subTest(reviewed=reviewed):
+                identifier, run_id = self.record_request()
+                page = agents.render_agents(self.state, panel._PAGE_STYLE, {"follow-up": identifier + "." + run_id})
+                form = TaskForm(page).values
+                form.update(submit="run", prompt="Retain my reviewed verification")
+                entries = form if reviewed else {"csrf": self.state.csrf_token, "id": identifier,
+                    "run_id": run_id, "action": "follow-up-approve"}
+                body = urlencode(entries).encode()
+                handler = object.__new__(panel.WebPanelHandler)
+                handler.state = self.state
+                handler.path = "/actions/agent-task/save" if reviewed else "/actions/agent-task"
+                handler.headers = {"Content-Length": str(len(body))}
+                for name in ("_send", "send_response", "send_header", "end_headers"):
+                    setattr(handler, name, Mock())
+                request = {"id": "c" * 32, "state": "pending", "review_url": "https://host.example:9444/requests/" + "c" * 32}
+                with patch("lib.agent_task_followups.exchange", return_value=request) as broker, \
+                     patch("lib.agent_task_followups.load_policy", return_value={"services": {} if reviewed else {unit: "approve"}}):
+                    for _ in range(2):
+                        handler.rfile = BytesIO(body)
+                        handler.do_POST()
+                        self.assertEqual(handler._send.call_args.args[0], 200)
+                        document = handler._send.call_args.args[1]
+                        self.assertNotIn('role="alert"', document)
+                        self.assertIn('target="_blank" rel="noopener noreferrer">Open service approval', document)
+                        self.assertIn("Check approval and launch", document)
+                        self.assertEqual([item for item in self.manager.snapshot()["tasks"] if item["queued"]], [])
+                        if reviewed:
+                            self.assertEqual(TaskForm(document).values["prompt"], form["prompt"])
+                    self.assertEqual([call.args[0]["action"] for call in broker.call_args_list], ["request", "status"])
+                    operation = "command.run" if reviewed else "service.restart"
+                    parameters = {"argv": ["/usr/bin/systemctl", "--no-ask-password", "restart", "--", unit]} if reviewed else {"unit": unit}
+                    self.assertEqual(broker.call_args_list[0].args[0]["operation"], operation)
+                    self.assertEqual(broker.call_args_list[0].args[0]["parameters"], parameters)
+                    if reviewed:
+                        for wrong in ({"operation": "service.restart", "parameters": {"unit": unit}},
+                                      {"operation": "command.run", "parameters": {"argv": parameters["argv"] + ["--no-block"]}},
+                                      {"operation": "command.run", "parameters": {"argv": parameters["argv"][:-1] + ["other.service"]}}):
+                            broker.return_value = {"state": "succeeded", "plan": wrong}
+                            handler.rfile = BytesIO(body)
+                            handler.do_POST()
+                            self.assertEqual(handler._send.call_args.args[0], 422)
+                            self.assertEqual([task for task in self.manager.snapshot()["tasks"] if task["queued"]], [])
+                    broker.return_value = {"state": "succeeded", "plan": {
+                        "operation": operation, "parameters": parameters}}
+                    for _ in range(2):
+                        handler.rfile = BytesIO(body)
+                        handler.do_POST()
+                    self.assertEqual([call.args for call in handler.send_response.call_args_list], [(303,), (303,)])
+                children = [task for task in self.manager.snapshot()["tasks"] if task["source_run_id"] == run_id]
+                self.assertEqual(len(children), 1)
+                self.assertTrue(children[0]["queued"])
+                if reviewed:
+                    self.assertEqual(children[0]["prompt"], form["prompt"])
+                self.manager.action(children[0]["id"], "cancel")
 
     def test_invalid_follow_up_does_not_discard_diagnostic_report(self) -> None:
         diagnostic = {**report("blocked"), "summary": "Service check completed", "evidence": ["unit was inactive"],

@@ -50,6 +50,7 @@ from common.service_tools.web_panel_templates import (
 from common.service_tools.web_panel_admin import PanelAdmin, parse_admin_query, render_admin
 from common.service_tools.web_panel_agent_tools import FORM_FIELDS, parse_tools_query, prepare_tool, render_tools, tool_link
 from lib.agent_tasks import AgentTasks
+from lib.agent_task_followups import ServiceApprovalPending, ServiceApprovalUnavailable
 from lib.agent_task_api import worker_status
 from lib.agent_git_settings import AgentGitSettings
 from common.service_tools.web_panel_credentials import parse_credentials_query, render_credentials
@@ -2561,6 +2562,11 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                             "follow-up-privilege": "request-privilege",
                         }[action]
                         decide_follow_up(manager, identifier, values.get("run_id", [""])[0], decision)
+                        if decision == "request-privilege":
+                            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {
+                                "follow-up": identifier + "." + values.get("run_id", [""])[0],
+                            }), "text/html")
+                            return
                         redirect = "/agents?" + urllib.parse.urlencode({"run": values.get("run_id", [""])[0]})
                     else:
                         manager.action(identifier, action)
@@ -2579,13 +2585,16 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                     if bool(source_task_id) != bool(source_run_id):
                         raise ValueError("Follow-up source task and run are both required")
                     if source_task_id:
-                        if identifier or choice not in {"run", "draft"}:
-                            raise ValueError("Select Start task or Save draft for a follow-up")
+                        if identifier or choice not in {"run", "draft", "privilege"}:
+                            raise ValueError("Select Approve once, Request service approval, or Save draft for a follow-up")
                         from lib.agent_task_followups import decide_follow_up
                         decide_follow_up(
-                            manager, source_task_id, source_run_id, "approve",
+                            manager, source_task_id, source_run_id, "request-privilege" if choice == "privilege" else "approve",
                             settings=submitted, run_now=choice == "run", draft=choice == "draft",
                         )
+                        if choice == "privilege":
+                            self._send(HTTPStatus.OK, render_agents(self.state, _PAGE_STYLE, {}, submitted=submitted), "text/html")
+                            return
                         redirect = "/agents?" + urllib.parse.urlencode({"run": source_run_id})
                     elif submitted.get("service_restarts"):
                         raise ValueError("Service restart prerequisites are only available for follow-up tasks")
@@ -2599,6 +2608,16 @@ class WebPanelHandler(BaseHTTPRequestHandler):
                             raise ValueError("Select Start task, Create schedule, or Save draft")
                         submitted.pop("service_restarts", None)
                         manager.create(submitted, run_now=choice == "run", draft=choice == "draft")
+            except (ServiceApprovalPending, ServiceApprovalUnavailable) as exc:
+                query = {} if path.endswith("/save") else {
+                    "follow-up": submitted.get("id", "") + "." + submitted.get("run_id", ""),
+                }
+                unavailable = isinstance(exc, ServiceApprovalUnavailable)
+                self._send(HTTPStatus.SERVICE_UNAVAILABLE if unavailable else HTTPStatus.OK, render_agents(
+                    self.state, _PAGE_STYLE, query, **{"error" if unavailable else "notice": str(exc)},
+                    submitted=submitted if path.endswith("/save") else None,
+                ), "text/html")
+                return
             except ValueError as exc:
                 self._send(HTTPStatus.UNPROCESSABLE_ENTITY, render_agents(
                     self.state, _PAGE_STYLE, {}, error=str(exc),

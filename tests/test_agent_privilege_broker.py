@@ -63,6 +63,36 @@ class BrokerTests(unittest.TestCase):
             self.broker.status(request["id"], 1001)
         with self.assertRaises(PermissionError):
             self.broker.request(1001, "system.reboot", {}, "test")
+        with patch("common.service_tools.privilege_broker.job_status", return_value={"blocked": {}}):
+            with self.assertRaises(PermissionError):
+                self.broker.dispatch({"action": "admin-status"}, 1001)
+            command = self.broker.request(1000, "command.run", {"argv": ["/usr/bin/true", "private-argument"]}, "private-reason")
+            result = self.broker.dispatch({"action": "admin-status"}, 1000)
+        self.assertEqual(result["requests"], [])
+        records = {row['id']: row for row in result['privilege_requests']}
+        self.assertEqual(records[request['id']]['target'], 'demo.service')
+        self.assertEqual(records[command['id']]['operation'], 'command.run')
+        self.assertEqual(records[command['id']]['target'], '')
+        self.assertEqual(records[command['id']]['expires'], command['expires'])
+        self.assertNotIn('private-', canonical(result))
+        self.assertNotIn('digest', canonical(result))
+        self.runner.assert_not_called()
+
+    def test_admin_status_bounds_owned_metadata_and_preserves_administration_gating(self):
+        self.policy['origin'] = 'https://' + '.'.join(['a' * 63] * 3 + ['example']) + ':9444'
+        for _ in range(25):
+            request = self.broker.request(1000, 'admin.run', {'action': 'refresh'}, 'Reviewed maintenance')
+            self.broker.cancel(request['id'], 1000)
+        with self.broker.db:
+            self.broker.db.execute('UPDATE requests SET uid=1001 WHERE id=?', (request['id'],))
+        with patch('common.service_tools.privilege_broker.job_status', return_value={'blocked': {}}):
+            result = self.broker.dispatch({'action': 'admin-status'}, 1000)
+        self.assertEqual(len(result['requests']), 20)
+        self.assertGreater(len(result['privilege_requests']), 0)
+        self.assertLessEqual(len(result['privilege_requests']), 20)
+        self.assertLessEqual(len(canonical({'ok': True, 'result': result}).encode()), MAX_MESSAGE)
+        self.assertNotIn(request['id'], canonical(result))
+        self.runner.assert_not_called()
 
     def test_owner_cancellation_is_durable_and_rejects_stale_approval(self):
         request = self.request()

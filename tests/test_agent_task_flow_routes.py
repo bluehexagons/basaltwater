@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from common.service_tools import web_panel_service as panel
 from common.service_tools.web_panel_features import PanelFeatures
 from lib.agent_tasks import AgentTasks
+from lib.agent_task_followups import ServiceApprovalPending, ServiceApprovalUnavailable
 
 
 class AgentTaskFlowRouteTests(unittest.TestCase):
@@ -52,12 +53,17 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
                     "id": "a" * 32, "run_id": "b" * 32, "action": action,
                 })
                 with patch.dict(sys.modules, {"lib.agent_task_followups": self.followups_module(decide)}), \
-                     patch.object(self.state.agent_tasks, "action") as ordinary:
+                     patch.object(self.state.agent_tasks, "action") as ordinary, \
+                     patch.object(panel, "render_agents", return_value="Service review") as render:
                     handler.do_POST()
                 decide.assert_called_once_with(self.state.agent_tasks, "a" * 32, "b" * 32, decision)
                 ordinary.assert_not_called()
-                handler.send_response.assert_called_once_with(303)
-                handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
+                if decision == "request-privilege":
+                    self.assertEqual(handler._send.call_args.args[0], 200)
+                    self.assertEqual(render.call_args.args[2], {"follow-up": "a" * 32 + "." + "b" * 32})
+                else:
+                    handler.send_response.assert_called_once_with(303)
+                    handler.send_header.assert_any_call("Location", "/agents?run=" + "b" * 32)
 
     def settings(self, **changes: str) -> dict[str, str]:
         return {"title": "Follow-up", "prompt": "Inspect", "directory": self.home,
@@ -124,6 +130,26 @@ class AgentTaskFlowRouteTests(unittest.TestCase):
         self.assertEqual(submitted["writable_directories"], ["/srv/data"])
         self.assertTrue(submitted["keep"])
         self.assertIn("both required", render.call_args.kwargs["error"])
+
+    def test_service_approval_wait_and_outage_retain_review_edits(self) -> None:
+        for reviewed, unavailable in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(reviewed=reviewed, unavailable=unavailable):
+                fields = self.settings(source_task_id="a" * 32, source_run_id="b" * 32,
+                    submit="run", prompt="Keep this reviewed repair", service_restarts="app.service") if reviewed else {
+                    "id": "a" * 32, "run_id": "b" * 32, "action": "follow-up-approve"}
+                handler = self.handler("/actions/agent-task/save" if reviewed else "/actions/agent-task", fields)
+                error = ServiceApprovalUnavailable("Broker unavailable") if unavailable else ServiceApprovalPending("Open service approval")
+                decide = Mock(side_effect=error)
+                with patch.dict(sys.modules, {"lib.agent_task_followups": self.followups_module(decide)}), \
+                     patch.object(panel, "render_agents", return_value="Awaiting approval") as render:
+                    handler.do_POST()
+                self.assertEqual(handler._send.call_args.args[0], 503 if unavailable else 200)
+                self.assertEqual(render.call_args.kwargs["error" if unavailable else "notice"], str(error))
+                self.assertNotIn("notice" if unavailable else "error", render.call_args.kwargs)
+                if reviewed:
+                    self.assertEqual(render.call_args.kwargs["submitted"]["prompt"], "Keep this reviewed repair")
+                else:
+                    self.assertEqual(render.call_args.args[2], {"follow-up": "a" * 32 + "." + "b" * 32})
 
     def test_decision_errors_render_existing_agents_error_response(self) -> None:
         for error, status in ((ValueError("Run no longer available"), 422),

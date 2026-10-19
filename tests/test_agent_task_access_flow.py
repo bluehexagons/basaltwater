@@ -28,6 +28,7 @@ class TaskAccessFlowTests(unittest.TestCase):
         self.enterContext(patch.object(tasks, "_tool_path", return_value="/test/codex"))
         self.enterContext(patch.object(tasks, "task_policy_issues", return_value=[]))
         self.enterContext(patch.object(followups, "task_policy_issues", return_value=[]))
+        self.enterContext(patch.object(followups, "load_policy", return_value={"services": {"example.service": "approve"}}))
         self.values = {"title": "Inspect environment", "prompt": "Inspect the local environment",
                        "directory": self.home, "mode": "inspect", "interval": "once"}
         self.proposal = {"title": "Repair environment", "reason": "A specific repair is needed",
@@ -170,14 +171,21 @@ class TaskAccessFlowTests(unittest.TestCase):
         unit = "example.service"
         identifier, run_id = self.record_proposal(service_restarts=[unit],
             operator_requirements=["Confirm the service restart maintenance window"])
-        with patch.object(followups, "exchange") as broker:
-            for draft in (False, True):
-                with self.subTest(missing_request=True, draft=draft), self.assertRaises(ValueError):
-                    followups.decide_follow_up(self.manager, identifier, run_id, "approve",
-                                              draft=draft, run_now=not draft)
+        with patch.object(followups, "exchange") as broker, \
+             patch.object(followups, "load_policy", return_value={"services": {unit: "approve"}}):
+            with self.assertRaises(followups.ServiceApprovalPending):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve", draft=True, run_now=False)
             broker.assert_not_called()
             broker.return_value = {"id": "request-1", "state": "pending", "review_url": "/review/request-1"}
-            followups.decide_follow_up(self.manager, identifier, run_id, "request-privilege")
+            with self.assertRaises(followups.ServiceApprovalPending):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve")
+            self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+            self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["requests"][unit]["id"], "request-1")
+            edited = followups.prepare_follow_up(self.manager, identifier, run_id, review=True)
+            edited["service_restarts"] = []
+            with self.assertRaisesRegex(ValueError, "removing a unit"):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve", settings=edited)
+            self.assertEqual(broker.call_count, 1)
             followups.decide_follow_up(self.new_manager(), identifier, run_id, "request-privilege")
             self.assertEqual(broker.call_count, 2)
             self.assertEqual(broker.call_args_list[0].args[0], {"action": "request", "operation": "service.restart",
@@ -193,10 +201,12 @@ class TaskAccessFlowTests(unittest.TestCase):
             for reply in invalid:
                 broker.return_value = reply
                 for draft in (False, True):
-                    with self.subTest(reply=reply, draft=draft), self.assertRaisesRegex(ValueError, "not succeeded"):
+                    exception = followups.ServiceApprovalPending if reply["state"] != "succeeded" else ValueError
+                    with self.subTest(reply=reply, draft=draft), self.assertRaises(exception):
                         followups.decide_follow_up(self.new_manager(), identifier, run_id, "approve",
                                                   draft=draft, run_now=not draft)
                     self.assertEqual(len(self.manager.snapshot()["tasks"]), 1)
+                    self.assertEqual(broker.call_args.args[0], {"action": "status", "id": "request-1"})
             broker.return_value = {"state": "succeeded", "plan": plan}
             child = followups.decide_follow_up(self.new_manager(), identifier, run_id, "approve")
             self.assertEqual(broker.call_args.args[0], {"action": "status", "id": "request-1"})
@@ -267,9 +277,19 @@ class TaskAccessFlowTests(unittest.TestCase):
     def test_definitive_submission_failures_can_retry_and_block_cancels_owned_request(self) -> None:
         identifier, run_id = self.record_proposal(service_restarts=["example.service"])
         with patch.object(followups, "exchange", side_effect=FileNotFoundError):
-            with self.assertRaises(FileNotFoundError):
+            with self.assertRaises(followups.ServiceApprovalUnavailable):
                 followups.decide_follow_up(self.manager, identifier, run_id, "request-privilege")
         self.assertEqual(followups.follow_up_state(self.manager, identifier, run_id)["requests"], {})
+        with patch.object(followups, "exchange", side_effect=TimeoutError):
+            with self.assertRaises(followups.ServiceApprovalUnavailable):
+                followups.decide_follow_up(self.manager, identifier, run_id, "approve")
+        with patch.object(followups, "exchange") as broker:
+            for decision in ("approve", "request-privilege"):
+                with self.assertRaises(followups.ServiceApprovalPending):
+                    followups.decide_follow_up(self.manager, identifier, run_id, decision)
+            broker.assert_not_called()
+        # Use another proposal to verify a definitive failure can be retried.
+        identifier, run_id = self.record_proposal(service_restarts=["example.service"])
         with patch.object(followups, "exchange", return_value={"id": "request-2", "state": "pending"}) as broker:
             followups.decide_follow_up(self.manager, identifier, run_id, "request-privilege")
             broker.return_value = {"id": "request-2", "state": "cancelled"}

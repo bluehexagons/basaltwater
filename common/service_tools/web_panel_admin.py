@@ -166,6 +166,48 @@ def _request_history(snapshot: dict, csrf: str) -> str:
     return content + '</section>'
 
 
+def _privilege_requests(snapshot: dict, csrf: str, approval_url: str | None) -> str:
+    """Browse owned broker metadata without giving the panel approval access."""
+    escape = html.escape
+    content = '<section aria-labelledby="privilege-requests-heading"><div class="section-heading">' + render_heading(
+        'Privilege approvals', 'security', heading_id='privilege-requests-heading') + '</div>'
+    if approval_url:
+        content += f'<p class="endpoint"><a class="inline-link" href="{escape(approval_url, quote=True)}" target="_blank" rel="noopener noreferrer">Open approval portal ↗</a> · Sign in there with your separate approval password.</p>'
+    records = snapshot.get('privilege_requests')
+    if isinstance(snapshot.get('restartable_services'), list):
+        targets = ', '.join(str(unit) for unit in snapshot['restartable_services']) or 'None registered'
+        content += '<p class="endpoint">Registered service restarts: ' + escape(targets) + '. Other exact restart commands require individual command approval; no service rule is added.</p>'
+    if not isinstance(records, list):
+        return content + '<p class="empty">Broker request listing is unavailable. Use the approval portal; rerun setup to update an older broker.</p></section>'
+    rows = []
+    titles = {'service.restart': 'Service restart', 'system.reboot': 'Reboot',
+              'command.run': 'Privileged command', 'admin.run': 'Administration job'}
+    for record in records[:20]:
+        operation = record.get('operation', '')
+        target = str(record.get('target', ''))
+        title = ADMIN_ACTIONS.get(target, {}).get('title', target) if operation == 'admin.run' else target
+        title = titles.get(operation, 'Privilege request') + (': ' + title if title else '')
+        status = str(record.get('state', 'unavailable'))
+        tone = 'success' if status == 'succeeded' else 'error' if status == 'failed' else 'warning'
+        url = _https_url(record.get('review_url'))
+        actions = f'<a class="refresh-link" href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">Review exact action ↗</a>' if url else ''
+        identifier = record.get('id')
+        if status in {'pending', 'approved'} and isinstance(identifier, str) and ID_PATTERN.fullmatch(identifier):
+            actions += f'<form method="post" action="/actions/admin/cancel">{csrf}<input type="hidden" name="id" value="{identifier}"><button>Cancel request</button></form>'
+        detail = ''
+        execution = record.get('execution')
+        if isinstance(execution, dict):
+            detail = '<p class="event-meta">Exit code: ' + escape(str(execution.get('exit_code', 'Unavailable'))) + ' · ' + escape(str(execution.get('failure') or 'Execution finished')) + '</p>'
+        rows.append(f'<li><div class="event-head"><strong>{escape(title)}</strong><span class="badge {tone}">{escape(status)}</span></div><p class="event-meta">Requested {_timestamp(record.get("created"))} · Approval expires {_timestamp(record.get("expires"))}</p>{detail}<div class="admin-request-actions">{actions}</div></li>')
+    if not rows:
+        return content + '<p class="empty">No privilege requests for this panel account.</p></section>'
+    content += '<p class="endpoint">Latest 20 requests for this account. Includes agent follow-ups and terminal requests. Refresh status after an action finishes; failed or uncertain actions are not retried here.</p>'
+    content += '<ol class="admin-history">' + ''.join(rows[:5]) + '</ol>'
+    if len(rows) > 5:
+        content += f'<details><summary>Show {len(rows) - 5} more privilege requests</summary><ol class="admin-history" start="6">' + ''.join(rows[5:]) + '</ol></details>'
+    return content + '</section>'
+
+
 def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = "") -> str:
     prompts = state.features().prompts
     manager = state.admin
@@ -215,9 +257,11 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
         body += '<section aria-label="Agent maintenance tools">' + render_heading("Agent maintenance tools", "agent-tools") + '<div class="admin-tools">' + tool_link("checkup", "System checkup") + tool_link("maintenance", "Plan maintenance") + tool_link("storage", "Review disk cleanup") + '</div><p class="endpoint">Prepare an inspection task, then run or schedule it in Agents. Reports recommend repairs for separate approval.</p></section>'
     # Keep existing requests near the top for approvals; empty history can follow
     # the controls so it does not displace the actions the user came to find.
-    history = _request_history(snapshot, csrf)
+    history = '' if isinstance(snapshot.get('privilege_requests'), list) else _request_history(snapshot, csrf)
     if snapshot.get("requests"):
         body += history
+    if manager.approval_url:
+        body += _privilege_requests(snapshot, csrf, manager.approval_url)
     action = query.get("action")
     if action:
         spec = action_spec(action)
@@ -232,7 +276,7 @@ def render_admin(state: Any, style: str, query: dict[str, str], *, error: str = 
 <form method="post" action="/actions/admin">{csrf}<input type="hidden" name="action" value="{action}">
 <input type="hidden" name="ticket" value="{ticket}">{confirmation}<button>Create approval request</button></form>
 <a class="refresh-link" href="/admin">Cancel review</a></section>'''
-    body += '<nav class="catalog-nav" aria-label="Administration categories"><span>Jump to</span><a href="#admin-updates">Updates</a><a href="#admin-services">Services</a><a href="#admin-power">Power</a></nav>'
+    body += '<nav class="catalog-nav" aria-label="Administration categories"><span>Jump to</span>' + ('<a href="#privilege-requests-heading">Privilege approvals</a>' if manager.approval_url else '') + '<a href="#admin-updates">Updates</a><a href="#admin-services">Services</a><a href="#admin-power">Power</a></nav>'
     for group in ("Updates", "Services", "Power"):
         icon = _GROUP_ICONS[group]
         tone = "water" if group == "Services" else "stone"

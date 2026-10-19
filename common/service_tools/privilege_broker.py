@@ -232,6 +232,7 @@ class Broker:
             if uid != policy["requester_uid"]:
                 raise PermissionError("Account is not authorized")
             result = job_status()
+            result["restartable_services"] = sorted(policy["services"])
             if policy["reboot"] == "deny":
                 result["blocked"].update({key: "Power control is denied by administrator policy." for key in ("reboot", "shutdown")})
             with self.lock, self.db:
@@ -241,6 +242,20 @@ class Broker:
                                        "action": json.loads(row["plan"])["parameters"]["action"],
                                        "review_url": policy["origin"] + "/requests/" + row["id"]}
                                       for row in rows if json.loads(row["plan"])["operation"] == "admin.run"][:20]
+                # The panel can inspect its account's broker work, but receives
+                # neither approval authority nor potentially sensitive argv.
+                rows = self.db.execute("SELECT id,created,expires,state,plan,execution FROM requests WHERE uid=? ORDER BY created DESC LIMIT 20", (uid,)).fetchall()
+                result["privilege_requests"] = []
+                for row in rows:
+                    plan = json.loads(row["plan"])
+                    target = (plan["parameters"]["unit"] if plan["operation"] == "service.restart" else
+                              plan["parameters"]["action"] if plan["operation"] == "admin.run" else "")
+                    result["privilege_requests"].append({"id": row["id"], "created": row["created"],
+                        "expires": row["expires"], "state": row["state"], "operation": plan["operation"],
+                        "target": target, "execution": json.loads(row["execution"]) if row["execution"] else None,
+                        "review_url": policy["origin"] + "/requests/" + row["id"]})
+                while (result["privilege_requests"] or result["requests"]) and len(canonical({"ok": True, "result": result}).encode()) > MAX_MESSAGE:
+                    (result["privilege_requests"] or result["requests"]).pop()
             return result
         if approval and action == "list" and set(message) == {"action"}:
             with self.lock, self.db:

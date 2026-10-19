@@ -110,9 +110,21 @@ unsuccessfully for a cancelled action, while `cancel` succeeds for a cancelled
 or already closed, unexecuted request. Setup must refresh both the CLI and the
 broker before using this command on an existing VM.
 
-When the optional [web panel](../services/web-panel.md) is installed, its **Services** area
-links to the approval page. The panel has a different password and cannot read
-approval credentials or approve requests.
+When the optional [web panel](../services/web-panel.md) is installed, **Admin
+controls → Privilege approvals** lists this account's recent requests from task
+follow-ups, terminal agents and Admin controls. It shows status, approval expiry,
+safe execution results, cancellation for unclaimed work, and links to review
+the exact actions. Use **Refresh status** after an action finishes. Command
+arguments and agent explanations stay on the approval portal.
+Follow-up restart prerequisites use registered service rules when available.
+Otherwise they request one-time command approval for the exact `systemctl`
+restart arguments; the portal still requires your decision and no service
+allowlist entry is created. The panel verifies the successful receipt's exact
+operation and arguments before launching the task.
+The panel has a different password and cannot read approval credentials or
+approve requests. The standalone HTTPS approval portal remains available on
+minimal installations without the web panel; installing the broker does not
+require or enable the broader dashboard.
 
 ## Rotate or remove it
 

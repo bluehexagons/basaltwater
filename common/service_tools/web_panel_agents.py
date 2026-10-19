@@ -550,7 +550,7 @@ def _render_templates(selected: str, templates: dict[str, dict[str, Any]]) -> st
     return "".join(groups)
 
 
-def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
+def render_agents(state: Any, style: str, query: dict[str, str], *, error: str = "", notice: str = "", submitted: dict[str, Any] | None = None, prepared: bool = False) -> str:
     """Render forms, diagnostics, schedules, and history without running agents."""
 
     features = state.features()
@@ -659,6 +659,8 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
         retry = ('<p>Your settings are shown below. Copy your prompt and settings before reloading to retry storage.</p>'
                  if composing else '<p><a class="inline-link" href="/agents">Retry task storage</a></p>')
     alert = f'<aside class="status failed" role="alert"><strong>{alert_title}</strong><p>{_escape(error or manager.error)}</p>{retry}</aside>' if error or manager.error else ""
+    if notice:
+        alert += f'<aside class="status" role="status"><strong>Service approval</strong><p>{_escape(notice)}</p></aside>'
     if not account_ready:
         alert += '<p class="empty">Prompt execution requires a non-root panel account with its own home directory. Diagnostics remain available.</p>'
     elif not codex_installed:
@@ -671,6 +673,22 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
                   'Adjust the task settings or save a draft for review. The runner preserves administrator restrictions.</p></aside>')
     disabled = " disabled" if not ready or not codex_installed else ""
     save_disabled = " disabled" if not ready else ""
+    service_approval = ""
+    approve_label = "Approve once"
+    if defaults["source_task_id"] and defaults["service_restarts"] and not editing:
+        try:
+            decision = follow_up_state(manager, defaults["source_task_id"], defaults["source_run_id"])
+        except (OSError, ValueError, RuntimeError):
+            decision = {"requests": {}}
+        service_approval = _render_service_requests(decision)
+        if decision["requests"]:
+            approve_label = "Check approval and launch"
+            service_approval += '<p class="agent-help">Submitted service units cannot be removed here. Block the source proposal to cancel unclaimed requests before preparing a revised task.</p>'
+        service_approval += ('<p class="agent-help">Approve once requests any missing service approvals. '
+            'Open the approval link with your separate approval password, then return here and select '
+            'Check approval and launch. Status is checked when you submit; this page does not poll.</p>'
+            '<button class="agent-secondary" name="submit" value="privilege"' + save_disabled
+            + '>Request or refresh service approval</button>')
     options = "".join(f'<option value="{key}"{" selected" if key == defaults["interval"] else ""}>{label}</option>' for key, label in (
         ("once", "Once"), ("event", "On external event"), ("hourly", "Every hour"), ("daily", "Every 24 hours"), ("weekly", "Every 7 days"), ("custom", "Custom interval")))
     modes = "".join(f'<option value="{key}"{" selected" if key == defaults["mode"] else ""}>{label}</option>' for key, label in (
@@ -712,7 +730,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <p class="agent-help">One existing account-owned directory per line. These grants accompany the execution directory; a private task directory does not grant writes to the source directory. Credential and task-control stores cannot be added.</p>
 <label>Operator prerequisites<textarea name="operator_requirements" rows="2" placeholder="Actions needed before this task can run">{_escape(chr(10).join(defaults['operator_requirements']))}</textarea></label>
 <p class="agent-help">{'Approve once confirms that the prerequisites listed here are satisfied and authorizes this task. Complete any outside preparation first; you do not need to remove resolved lines. Save draft keeps them unresolved. Service approvals remain separate.' if defaults['source_task_id'] and not editing else 'One prerequisite per line. Complete these outside the unattended task, then remove resolved lines. Tasks with unresolved prerequisites cannot launch.'}</p>
-{('<label>Service restart prerequisites<textarea name="service_restarts" rows="2" readonly>' + _escape(chr(10).join(defaults['service_restarts'])) + '</textarea></label><p class="agent-help">Use Request service approval on the source proposal. The separate privilege portal must authorize each exact service; the runner verifies successful execution before launch, including before saving a draft.</p>') if defaults['source_task_id'] and not editing else ''}
+{('<label>Service restart prerequisites<textarea name="service_restarts" rows="2">' + _escape(chr(10).join(defaults['service_restarts'])) + '</textarea></label><p class="agent-help">These actions execute before the agent starts, including before saving a draft. If a repair must happen first, remove its restart here and edit the prompt to perform only that preparation and propose a separate restart verification afterward.</p>' + service_approval) if defaults['source_task_id'] and not editing else ''}
 </details>
 <p class="agent-help">Inspection uses Codex's read-only sandbox and can block local service sockets and endpoint probes. Workspace changes may edit the execution directory inside this account's home, plus temporary directories when allowed. Host service reviews use command network access and a private run directory; their prompts prohibit host changes. Provider requests still use the network in either mode. Configured hooks and MCP integrations retain their own permissions.</p></fieldset>
 <div class="agent-fields"><label>Maximum runtime (minutes)<input type="number" name="timeout_minutes" min="1" max="{MAX_TIMEOUT_MINUTES}" step="1" value="{_escape(defaults['timeout_minutes'])}" required></label><label>Repeat<select name="interval">{options}</select></label></div>
@@ -743,7 +761,7 @@ def render_agents(state: Any, style: str, query: dict[str, str], *, error: str =
 <div class="agent-fields"><label>Minimum failure backoff (minutes)<input type="number" name="backoff_minutes" min="0" max="{MAX_REPEAT_MINUTES}" value="{_escape(defaults['backoff_minutes'])}" required></label><label>Retained evidence runs<input type="number" name="history_limit" min="1" max="1000" value="{_escape(defaults['history_limit'])}" required></label></div>
 <p class="agent-help">A goal needs completion criteria and at least one total limit: attempts, deadline, or tokens. A Once goal uses its continuation interval; other goals use their repeat cadence. Zero disables an individual usage limit. Token usage is checked after a run and can exceed the budget during that run; runtime and deadline caps stop active processes. Attempts include failed and interrupted runs. Retention applies to generated receipts and logs, preserving workspace files.</p></details>
 <label class="agent-check"><input type="checkbox" name="keep" value="1"{' checked' if defaults['keep'] else ''}><span>Keep this one-time task in saved tasks after it finishes.</span></label>
-<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>' + ('Approve once' if defaults['source_task_id'] else 'Start task') + '</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
+<div class="agent-buttons">{'<button name="submit" value="save"' + save_disabled + '>Save changes</button>' if editing else '<button name="submit" value="run"' + disabled + '>' + (approve_label if defaults['source_task_id'] else 'Start task') + '</button>' + ('' if defaults['source_task_id'] else '<button class="agent-secondary" name="submit" value="schedule"' + disabled + '>Create schedule</button>') + '<button class="agent-secondary" name="submit" value="draft"' + save_disabled + '>Save draft</button>'}
 <a href="/agents?view=tasks">Back to tasks</a></div>
 <p class="agent-help">Runs execute as {_escape(state.manifest['username'])}. Start task runs now and activates the selected repetition, event trigger, or goal continuation. Create schedule uses the first-run time or waits one interval. Save draft stays inactive. Saving changes preserves an existing schedule's active or paused state.</p></form></div>'''
     template_links = _render_templates(query.get("template", ""), templates)
@@ -976,6 +994,18 @@ def _follow_up_status(manager: AgentTasks, run: dict[str, Any]) -> dict[str, Any
         return {"status": "unavailable", "requests": {}}
 
 
+def _render_service_requests(status: dict[str, Any]) -> str:
+    from common.service_tools.web_panel_admin import _https_url
+
+    rows = []
+    for unit, request in status.get('requests', {}).items():
+        url = _https_url(request.get('review_url'))
+        rows.append('<p class="agent-help">' + _escape(unit) + ': ' + _escape(request.get('state', 'unknown'))
+            + (' · one-time exact command approval' if request.get('operation') == 'command.run' else '')
+            + (f' · <a href="{_escape(url)}" target="_blank" rel="noopener noreferrer">Open service approval ↗</a>' if url else '') + '</p>')
+    return ''.join(rows)
+
+
 def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> str:
     proposal = run.get("follow_up")
     if not isinstance(proposal, dict):
@@ -989,7 +1019,7 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
         def button(action: str, label: str) -> str:
             return f'''<form method="post" action="/actions/agent-task"><input type="hidden" name="csrf" value="{_escape(csrf)}"><input type="hidden" name="id" value="{_escape(run['task']['id'])}"><input type="hidden" name="run_id" value="{_escape(run['id'])}"><button name="action" value="{action}">{label}</button></form>'''
         if not legacy:
-            actions = button('follow-up-approve', 'Approve once')
+            actions = button('follow-up-approve', 'Check approval and launch' if status['requests'] else 'Approve once')
         actions += f'<a class="refresh-link" href="/agents?{_escape(reference)}">Review follow-up task</a>'
         actions += button('follow-up-block', 'Block')
         if proposal.get('service_restarts'):
@@ -1000,11 +1030,7 @@ def _render_follow_up(run: dict[str, Any], manager: AgentTasks, csrf: str) -> st
             actions += '<p class="agent-help">Approve once confirms that the prerequisites listed above are satisfied and authorizes this task. Complete any outside preparation first; service approvals remain separate.</p>'
     else:
         actions = '<p class="agent-help">Follow-up ' + _escape(status['status']) + '.</p>'
-    from common.service_tools.web_panel_admin import _https_url
-    requests = ''
-    for unit, request in status.get('requests', {}).items():
-        url = _https_url(request.get('review_url'))
-        requests += '<p class="agent-help">' + _escape(unit) + ': ' + _escape(request.get('state', 'unknown')) + (f' · <a href="{_escape(url)}">Open separate approval</a>' if url else '') + '</p>'
+    requests = _render_service_requests(status)
     access_details = []
     for label, field in (('Additional writes', 'writable_directories'), ('Operator prerequisites', 'operator_requirements'), ('Service restarts', 'service_restarts')):
         if proposal.get(field):

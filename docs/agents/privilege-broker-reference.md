@@ -162,7 +162,21 @@ an older running broker; source files and loaded service code remain separate.
 There can be only one pending/approved/executing administration request at a
 time. A new `admin-status` requester message returns bounded owned request
 metadata and sanitized job state; it cannot execute actions, decide requests, or
-read command output. The separate approval interface and existing request
+read command output. Its `privilege_requests` field lists up to 20 recent
+requests owned by the requester, across all supported operations, with status,
+approval expiry, a fixed operation/target summary, safe execution metadata and
+the independently authenticated review URL. It omits command arguments,
+agent explanations and approval digests, and trims the list to the transport
+size limit. `restartable_services` names the registered structured restart
+targets. Unregistered follow-up targets can use individual approval of the
+exact restart argv through the existing `command.run` contract; their receipt
+must match that exact operation and argument vector before launch. This does
+not add a service rule or relax broker policy. `requests` retains
+administration-only metadata for job gating and can also be trimmed to fit.
+An older broker omits the new field; the panel links to the standalone portal
+and reports the listing as unavailable. Neither panel installation nor these
+read-only metadata fields change the standalone portal or approval identity.
+The separate approval interface and existing request
 quotas remain in force. A lost dispatch response remains uncertain, and a
 broker restart never retries it. Root refresh additionally checks all installed
 code and Git metadata for root ownership, symlinks, and writable permissions.

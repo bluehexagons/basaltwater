@@ -12,6 +12,8 @@ FOLLOW_UP_ACCESS_PROMPT = (
     "grants must name specific directories and cannot include credentials, agent configuration, or control state. "
     "operator_requirements is a checklist of concrete outside preparation for the operator to confirm. "
     "Do not list review or approval of this proposal itself as a prerequisite; Approve once supplies that authorization. "
+    "service_restarts execute before launch. If a repair must precede a restart, propose the repair first, "
+    "then a separate restart-verification follow-up. Live service checks need network=true. "
     "If no coherent proposal is possible, use follow_up=null and explain the prerequisite in environment_feedback. "
 )
 FOLLOW_UP_PROMPT = (

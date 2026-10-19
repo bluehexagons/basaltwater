@@ -131,6 +131,23 @@ class AdminScreenTests(unittest.TestCase):
         self.assertIn("Open approval review", document)
         self.assertNotIn('href="/admin?action=', document)
         self.assertNotIn('name="approve"', document)
+        value['privilege_requests'] = [{"id": "b" * 32, "operation": "service.restart", "target": "auto-update-node.service",
+            "state": "pending", "created": 0, "expires": 3600, "execution": None,
+            "review_url": "https://vm.example:9444/requests/" + "b" * 32},
+            {"id": "c" * 32, "operation": "command.run", "state": "failed", "target": "",
+             "execution": {"exit_code": 7, "failure": "nonzero_exit"}, "review_url": "javascript:alert(1)"}]
+        with patch("common.service_tools.web_panel_admin.exchange", return_value=value) as broker:
+            document = render_admin(self.state, _PAGE_STYLE, {})
+        broker.assert_called_once_with({"action": "admin-status"})
+        for text in ('Privilege approvals', 'auto-update-node.service', 'Approval expires',
+                     'Review exact action', 'nonzero_exit', 'Exit code: 7', 'Privileged command'):
+            self.assertIn(text, document)
+        self.assertNotIn('javascript:', document)
+        self.assertNotIn('name="approve"', document)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', document)
+        with patch("common.service_tools.web_panel_admin.exchange") as broker:
+            self.manager.cancel('b' * 32)
+        broker.assert_called_once_with({"action": "cancel", "id": 'b' * 32})
 
     def handler(self, path, values):
         handler = object.__new__(WebPanelHandler)

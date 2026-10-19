@@ -225,7 +225,12 @@ page and documented in [Agent authentication](../agents/agent-authentication.md)
 
 An agent VM configured with `--privilege-broker [PORT]` receives a
 **Privilege approvals** service link. It opens a separate HTTPS page with its
-own password and service identity. The panel cannot approve actions or read the
+own password and service identity. **Admin controls → Privilege approvals**
+also lists this account's recent broker requests, including agent follow-ups,
+service restarts and commands. Review status, expiry and safe execution results,
+cancel unclaimed requests, or open the exact action in the approval portal.
+The standalone portal works on minimal installations without the web panel.
+The panel cannot approve actions or read the
 approval credential. Use [Privilege approvals](../agents/privilege-approvals.md) for the
 agent and user workflow.
 
@@ -258,7 +263,7 @@ approve it before the two-minute deadline, or use the administrator console.
 After power-off, starting the machine requires its VM controller or physical
 access.
 
-The screen shows recent requests, panel prompt activity, and the latest
+The screen shows recent broker requests across all operations, panel prompt activity, and the latest
 maintenance job's result, timestamps, and exit code. **Dispatched** means the
 maintenance service started, not that its commands finished. A successful power
 job confirms scheduling only. Other agent sessions are not included in the
@@ -294,13 +299,13 @@ These shortcuts open a setup form and never run a prompt automatically.
 
 | Tool | Result | Suggested repeat / cap |
 | --- | --- | --- |
-| System checkup | Evidence-backed resource, service, update, backup, and agent readiness findings | Daily / 20 minutes |
-| Review service logs | Grouped errors, likely causes, and next checks for a fixed service and rolling time window | Daily / 15 minutes |
+| System checkup | Evidence-backed resource, service, update, backup, and agent readiness findings | Once / 20 minutes |
+| Review service logs | Grouped errors, likely causes, and next checks for a fixed service and rolling time window | Once / 15 minutes |
 | Review a scheduled job | Timer and process evidence, missed runs, failures, and possible overlap | Once / 15 minutes |
-| Check Debian update health | Package consistency, held packages, existing index age, update results, and pending reboot evidence | Weekly / 15 minutes |
-| Review disk cleanup | Space consumers, ownership, retention implications, and cleanup candidates | Weekly / 15 minutes |
+| Check Debian update health | Package consistency, held packages, existing index age, update results, and pending reboot evidence | Once / 15 minutes |
+| Review disk cleanup | Space consumers, ownership, retention implications, and cleanup candidates | Once / 15 minutes |
 | Check network and clock readiness | Local routes, resolver and clock state, plus bounded probes to explicitly configured endpoints | Once / 15 minutes |
-| Plan system maintenance | Prioritized repairs with prerequisites, interruption risks, commands, and verification steps for operator review | Weekly / 30 minutes |
+| Plan system maintenance | Prioritized repairs with prerequisites, interruption risks, commands, and verification steps for operator review | Once / 30 minutes |
 | Check data quality | Aggregate schema, encoding, missing-value, duplicate, and consistency findings | Once / 20 minutes |
 | Import and normalize data | A new CSV, JSON, or JSONL dataset with count/type and round-trip validation | Once / 30 minutes |
 | Export a dataset | A local directory bundle with checksums, a manifest, and offline restore instructions | Once / 30 minutes |
@@ -467,19 +472,19 @@ editable before submission; selecting a template does not run or schedule it.
 
 | Template | Default repeat | Runtime cap | Scope |
 | --- | --- | --- | --- |
-| Repository health check | Weekly | 30 minutes | Inspect only |
+| Repository health check | Once | 30 minutes | Inspect only |
 | Repair failing checks | Once | 60 minutes | Workspace changes; command network and temporary writes |
 | Update repository dependencies | Once | 30 minutes | Workspace changes; command network and temporary writes |
 | Update repository documentation | Once | 30 minutes | Workspace changes; temporary writes |
-| Review repository security | Weekly | 30 minutes | Inspect only; live web search for advisories |
+| Review repository security | Once | 30 minutes | Inspect only; live web search for advisories |
 | Review release readiness | Once | 20 minutes | Inspect only |
-| Host maintenance review | Daily | 30 minutes | Workspace permissions; command network; private run directory |
-| Check Debian update health | Weekly | 15 minutes | Workspace permissions; command network; private run directory |
+| Host maintenance review | Once | 30 minutes | Workspace permissions; command network; private run directory |
+| Check Debian update health | Once | 15 minutes | Workspace permissions; command network; private run directory |
 | Check network and clock readiness | Once | 15 minutes | Workspace permissions; command network; private run directory |
-| Check backup health | Daily | 15 minutes | Workspace permissions; command network; private run directory |
-| Review storage cleanup | Weekly | 15 minutes | Inspect only |
+| Check backup health | Once | 15 minutes | Workspace permissions; command network; private run directory |
+| Review storage cleanup | Once | 15 minutes | Inspect only |
 | Triage a service incident | Once | 20 minutes | Workspace permissions; command network; private run directory |
-| Check certificate expiry | Daily | 10 minutes | Workspace permissions; command network; private run directory |
+| Check certificate expiry | Once | 10 minutes | Workspace permissions; command network; private run directory |
 
 Repository editing templates ask for a clean existing/shared checkout,
 including untracked files, and leave changes for review. They default to Once
@@ -520,6 +525,12 @@ permissions in the normal task form, defaulting to Once and one attempt. Review
 the original evidence, adjust scope, then save or submit. Opening it never
 creates or runs work, changes the original task, or approves privileged actions.
 Requests remain available in retained receipts after recent history is evicted.
+For a service prerequisite, **Approve once** creates the missing broker request
+and shows **Open service approval** in the form. Approve the exact operation
+with the separate portal password, return, then **Check approval and launch**.
+The panel preserves reviewed settings and checks status only on submission.
+Restarts run before the task starts: a repair that must precede a restart needs
+separate preparation and restart-verification proposals.
 
 Additional templates appear when the panel's saved setup configuration or
 commands installed for its account indicate a relevant integration. Each shows
@@ -537,19 +548,19 @@ configuration layers and integrations retain their own permissions.
 
 | Conditional template | Appears when | Default repeat / cap | Scope |
 | --- | --- | --- | --- |
-| Check T3 Code readiness | T3 Code is selected and its runtime or user service unit is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Review container health | `docker` or `podman` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Daily / 10 minutes | Workspace permissions; command network; private run directory |
-| Review GitHub Actions failures | Git and `gh` are selected and installed | Daily / 20 minutes | Command network; private run directory; source checkout read-only |
+| Check T3 Code readiness | T3 Code is selected and its runtime or user service unit is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Review container health | `docker` or `podman` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Review web hosting | Web server is configured, or `basaltwater-web` or `nginx` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Check shared storage | Samba is configured, or `smbd`, `mount.cifs`, or `sshfs` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Check remote desktop readiness | Remote desktop is configured or `xrdp` is installed | Once / 10 minutes | Workspace permissions; command network; private run directory |
+| Review GitHub Actions failures | Git and `gh` are selected and installed | Once / 20 minutes | Command network; private run directory; source checkout read-only |
 | Run browser smoke checks | `basaltwater-playwright-mcp` is installed | Once / 30 minutes | Workspace changes; command network and temporary writes |
 | Validate Godot web export | `godot` or `godot4` is installed | Once / 60 minutes | Workspace changes; temporary writes |
-| Check HomeBox data protection | HomeBox is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Check Antistatic services | Antistatic lobby or DB is configured | Daily / 15 minutes | Workspace permissions; command network; private run directory |
-| Check notification delivery | Panel notification ingest is enabled | Daily / 10 minutes | Workspace permissions; command network; private run directory |
-| Check privilege approval readiness | Privilege approvals are configured | Weekly / 15 minutes | Workspace permissions; command network; private run directory |
+| Check HomeBox data protection | HomeBox is configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Check Gogs repository hosting | Gogs is configured or `gogs` is installed | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Check Antistatic services | Antistatic lobby or DB is configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
+| Check notification delivery | Panel notification ingest is enabled | Once / 10 minutes | Workspace permissions; command network; private run directory |
+| Check privilege approval readiness | Privilege approvals are configured | Once / 15 minutes | Workspace permissions; command network; private run directory |
 
 GitHub CI inspection needs command network access; the runner offers that in
 workspace mode with a private run directory. Its prompt uses the recorded source

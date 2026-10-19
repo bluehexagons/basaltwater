@@ -116,6 +116,7 @@ class Scenario:
         state.admin.approval_url = "https://127.0.0.1/fixture-approvals"
         self.replace(admin, "exchange", side_effect=self.exchange)
         self.replace(agent_task_followups, "exchange", side_effect=self.exchange)
+        self.replace(agent_task_followups, "load_policy", return_value={"services": {"example.service": "approve"}})
         self.replace(maintenance, "load_policy", side_effect=lambda: copy.deepcopy(self.data["policy"]))
         self.replace(maintenance, "load_reports", side_effect=self.reports)
         self.replace(maintenance, "configure_policy", side_effect=self.policy)
@@ -165,12 +166,20 @@ class Scenario:
     def exchange(self, message: dict) -> dict:
         with self.lock:
             if message["action"] == "admin-status":
-                return {"blocked": {}, "requests": copy.deepcopy(self.data["requests"]), "unit_state": "inactive"}
+                records = copy.deepcopy(self.data["requests"])
+                privilege = [{"id": row["id"], "created": row["created"], "expires": row["created"] + 3600,
+                    "state": row["state"], "operation": row.get("plan", {}).get("operation", "admin.run"),
+                    "target": "" if row.get("plan", {}).get("operation") == "command.run" else row.get("plan", {}).get("parameters", {}).get("unit", row["action"]),
+                    "execution": None, "review_url": row.get("review_url", "https://127.0.0.1/fixture-approvals/" + row["id"])}
+                    for row in records]
+                return {"blocked": {}, "requests": [row for row in records if row.get("plan", {}).get("operation", "admin.run") == "admin.run"],
+                        "privilege_requests": privilege, "restartable_services": ["example.service"], "unit_state": "inactive"}
             if message["action"] == "request":
-                if message["operation"] == "service.restart":
-                    request = {"id": uuid.uuid4().hex, "action": "service.restart",
+                if message["operation"] in {"service.restart", "command.run"}:
+                    request = {"id": uuid.uuid4().hex, "action": message["operation"],
                                "state": "failed" if self.name == "degraded" else "succeeded", "created": time.time(),
-                               "plan": {"operation": "service.restart", "parameters": message["parameters"]}}
+                               "plan": {"operation": message["operation"], "parameters": message["parameters"]}}
+                    request["review_url"] = "https://127.0.0.1/fixture-approvals/" + request["id"]
                     self.data["requests"].insert(0, request)
                     self.save()
                     return copy.deepcopy(request)
